@@ -36,9 +36,7 @@ _DEFAULT_PATTERNS: List[Tuple[str, re.Pattern]] = [
     ),
     (
         "api_key",
-        re.compile(
-            r"\b(?:sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36})\b"
-        ),
+        re.compile(r"\b(?:sk-[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36})\b"),
     ),
     (
         "bearer_token",
@@ -104,7 +102,9 @@ class RegexScanner(ContentScanner):
         redacted = content
         # Redact in reverse order to preserve positions
         for f in sorted(findings, key=lambda x: x.start, reverse=True):
-            redacted = redacted[: f.start] + f"[{f.pattern_name.upper()}]" + redacted[f.end :]
+            redacted = (
+                redacted[: f.start] + f"[{f.pattern_name.upper()}]" + redacted[f.end :]
+            )
 
         return ScanResult(
             allowed=not self._block,

@@ -4,7 +4,6 @@ import json
 from typing import Any, Dict, List, Optional, Tuple, Callable
 import ast
 
-
 CALL_TYPES = {
     "function_call": ("name", "arguments"),
     "custom_tool_call": ("name", "input"),

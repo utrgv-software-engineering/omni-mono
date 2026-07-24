@@ -190,7 +190,10 @@ def test_resolve_platform_partial_env_falls_to_store(monkeypatch):
 def test_resolve_platform_custom_loader_and_failure():
     assert client.resolve_platform() is None
     loaded = client.resolve_platform(
-        credentials_loader=lambda: {"platform_url": "https://l.test/", "access_token": "lt"}
+        credentials_loader=lambda: {
+            "platform_url": "https://l.test/",
+            "access_token": "lt",
+        }
     )
     assert loaded == {
         "platform_url": "https://l.test",
@@ -211,9 +214,7 @@ def test_resolve_platform_custom_loader_and_failure():
 
 def test_refresh_access_token_updates_store(monkeypatch):
     client.save_credentials(_CREDS)
-    calls = _patch_post(
-        monkeypatch, [_FakeResponse(payload={"access_token": "at-2"})]
-    )
+    calls = _patch_post(monkeypatch, [_FakeResponse(payload={"access_token": "at-2"})])
     assert client.refresh_access_token() == "at-2"
     assert calls[0]["url"] == "https://platform.test/api/v1/auth/refresh"
     assert calls[0]["headers"]["Authorization"] == "Bearer rt-1"
@@ -224,7 +225,9 @@ def test_refresh_access_token_failures(monkeypatch):
     # No credentials at all
     assert client.refresh_access_token() is None
     # Credentials without a refresh token
-    client.save_credentials({"platform_url": "https://platform.test", "access_token": "a"})
+    client.save_credentials(
+        {"platform_url": "https://platform.test", "access_token": "a"}
+    )
     assert client.refresh_access_token() is None
     # HTTP failure
     client.save_credentials(_CREDS)

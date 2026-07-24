@@ -21,7 +21,6 @@ from omniagents.core.config.user_mcp import (
 )
 from omniagents.core.agents.specs import MCPServerConfig
 
-
 # =============================================================================
 # Environment Variable Expansion Tests
 # =============================================================================

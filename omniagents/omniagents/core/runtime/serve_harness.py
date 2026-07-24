@@ -338,7 +338,9 @@ async def _create_or_resume_session(
         try:
             state_session_uuid = _uuid.UUID(session_id)
         except ValueError:
-            state_session_uuid = _uuid.uuid5(_uuid.NAMESPACE_URL, f"omni-serve:{session_id}")
+            state_session_uuid = _uuid.uuid5(
+                _uuid.NAMESPACE_URL, f"omni-serve:{session_id}"
+            )
         state = DockerSandboxSessionState(
             session_id=state_session_uuid,
             manifest=manifest,
@@ -824,7 +826,9 @@ async def bring_up_session(
         # working `gh` / `az devops` for the agent's own commands. Written as the
         # profile's run_as identity so creds land in the HOME the agent uses.
         await _configure_credentials(
-            session, credentials_parsed or [], run_as_user=_run_as_exec_user(profile.raw)
+            session,
+            credentials_parsed or [],
+            run_as_user=_run_as_exec_user(profile.raw),
         )
         await _run_init(session, profile.init)
         started_services = await _start_services(session, profile.services)
@@ -1274,7 +1278,9 @@ def _install_host_terminal_manager(
     if service is None:
         return
 
-    resolved_cwd = terminal.cwd or (str(default_cwd) if default_cwd is not None else None)
+    resolved_cwd = terminal.cwd or (
+        str(default_cwd) if default_cwd is not None else None
+    )
 
     service.terminal_manager = TerminalManager(
         backend=HostPtyBackend(),

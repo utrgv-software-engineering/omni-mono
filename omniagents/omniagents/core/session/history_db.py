@@ -38,7 +38,6 @@ from .storage.sqlite import (
     set_encryption_provider as _sqlite_set_encryption_provider,
 )
 
-
 # Module-level alias kept for the test conftest, which iterates this dict
 # at teardown to close connections. The PG backend ignores it.
 _STORES: dict[str, Tuple[sqlite3.Connection, Lock]] = _SQLITE_STORES

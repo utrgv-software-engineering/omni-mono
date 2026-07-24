@@ -5,7 +5,6 @@ from hypothesis import given, settings, strategies as st
 
 from omniagents.rpc.agents.remote import RemoteAgent
 
-
 identifier = st.text(
     alphabet=st.characters(
         min_codepoint=32, max_codepoint=126, blacklist_characters=["\\"]

@@ -70,30 +70,22 @@ def test_discover_server_functions_in_dir_warns_on_duplicates(tmp_path, capsys):
     base_dir = tmp_path / package_name
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
-    (base_dir / "alpha.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "alpha.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
 
 
             @server_function(name="duplicate")
             def one():
                 return 1
-            """
-        )
-    )
-    (base_dir / "beta.py").write_text(
-        textwrap.dedent(
-            """
+            """))
+    (base_dir / "beta.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
 
 
             @server_function(name="duplicate")
             def two():
                 return 2
-            """
-        )
-    )
+            """))
     try:
         discovered = discover_server_functions_in_dir(str(base_dir))
     finally:
@@ -123,18 +115,14 @@ def test_discover_server_functions_in_dir_skips_import_errors(tmp_path, capsys):
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
     (base_dir / "broken.py").write_text("import missing_module")
-    (base_dir / "valid.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "valid.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
 
 
             @server_function
             def ok():
                 return "ok"
-            """
-        )
-    )
+            """))
     try:
         discovered = discover_server_functions_in_dir(str(base_dir))
     finally:
@@ -221,30 +209,22 @@ def test_make_server_functions_registrar_filters_names(tmp_path, capsys):
     base_dir = tmp_path / package_name
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
-    (base_dir / "alpha.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "alpha.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
 
 
             @server_function
             def alpha():
                 return "alpha"
-            """
-        )
-    )
-    (base_dir / "beta.py").write_text(
-        textwrap.dedent(
-            """
+            """))
+    (base_dir / "beta.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
 
 
             @server_function
             def beta():
                 return "beta"
-            """
-        )
-    )
+            """))
     try:
         registrar = make_server_functions_registrar_from_dir(
             str(base_dir), ["alpha", "missing", "alpha"]
@@ -271,30 +251,22 @@ def test_register_server_functions_from_dir_registers_selected(tmp_path):
     base_dir = tmp_path / package_name
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
-    (base_dir / "alpha.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "alpha.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
 
 
             @server_function
             def alpha():
                 return "alpha"
-            """
-        )
-    )
-    (base_dir / "beta.py").write_text(
-        textwrap.dedent(
-            """
+            """))
+    (base_dir / "beta.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
 
 
             @server_function
             def beta():
                 return "beta"
-            """
-        )
-    )
+            """))
 
     class Recorder:
         def __init__(self):

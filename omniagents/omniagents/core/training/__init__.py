@@ -67,7 +67,11 @@ Example usage:
 """
 
 from .rewards import measure_to_reward, MeasureRewardAdapter, combine_rewards
-from .dataset import eval_suite_to_hf_dataset, eval_cases_to_hf_dataset, records_to_hf_dataset
+from .dataset import (
+    eval_suite_to_hf_dataset,
+    eval_cases_to_hf_dataset,
+    records_to_hf_dataset,
+)
 from .grpo import GRPOTrainingConfig, GRPOTrainingResult, train_grpo, GRPOTrainer
 from .curriculum import (
     CurriculumStage,
@@ -125,7 +129,11 @@ def __getattr__(name):
         from .echo import EchoGRPOTrainer
 
         return EchoGRPOTrainer
-    if name in ("SandboxTrainingEnvironment", "make_environment_factory", "sandbox_verifier_reward"):
+    if name in (
+        "SandboxTrainingEnvironment",
+        "make_environment_factory",
+        "sandbox_verifier_reward",
+    ):
         from . import sandbox_env
 
         return getattr(sandbox_env, name)

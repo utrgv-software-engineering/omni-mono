@@ -146,9 +146,7 @@ def test_handle_sessions_summarize_with_fake_summarizer(capsys):
 
     set_session_summarizer(summarizer)
 
-    code = handle_sessions_command(
-        _summarize_args("session-4", model="some/model-ref")
-    )
+    code = handle_sessions_command(_summarize_args("session-4", model="some/model-ref"))
 
     assert code == 0
     out = json.loads(capsys.readouterr().out)

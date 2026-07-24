@@ -85,7 +85,9 @@ def query_sessions(
     conn = sqlite3.connect(str(db_path))
     try:
         # Check if context_json column exists
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+        cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+        }
         has_context = "context_json" in cols
 
         select_cols = "s.session_id, s.archived, s.created_at"

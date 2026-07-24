@@ -39,8 +39,7 @@ def test_sqlite_storage_migrates_legacy_categories(tmp_path):
     db_path = tmp_path / "legacy.db"
     conn = sqlite3.connect(str(db_path))
     try:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE analysis (
                 group_id TEXT PRIMARY KEY,
                 project TEXT NOT NULL,
@@ -51,8 +50,7 @@ def test_sqlite_storage_migrates_legacy_categories(tmp_path):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
+            """)
         conn.execute(
             "INSERT INTO analysis (group_id, project, marked_for_analysis, judgment, notes) VALUES (?, ?, ?, ?, ?)",
             ("group-1", "proj", 1, "acceptable", "sample"),
@@ -95,8 +93,7 @@ def test_sqlite_storage_migrates_categories_without_failure_table(tmp_path):
     db_path = tmp_path / "legacy_no_failure.db"
     conn = sqlite3.connect(str(db_path))
     try:
-        conn.execute(
-            """
+        conn.execute("""
             CREATE TABLE analysis (
                 group_id TEXT PRIMARY KEY,
                 project TEXT NOT NULL,
@@ -107,8 +104,7 @@ def test_sqlite_storage_migrates_categories_without_failure_table(tmp_path):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """
-        )
+            """)
         conn.execute(
             "INSERT INTO analysis (group_id, project) VALUES (?, ?)",
             ("group-2", "proj"),

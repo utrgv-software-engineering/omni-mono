@@ -14,7 +14,6 @@ from omniagents.rpc.terminal import (
 )
 from omniagents.rpc.terminal_backends import PtyBackend
 
-
 TIMEOUT = 5.0
 
 
@@ -150,7 +149,9 @@ async def test_create_terminal_defaults(monkeypatch, terminal_env):
 @pytest.mark.asyncio
 async def test_create_terminal_uses_default_shell_when_provided():
     backend = FakePtyBackend()
-    manager = TerminalManager(backend=backend, default_shell="bash -i", default_cwd="/workspace")
+    manager = TerminalManager(
+        backend=backend, default_shell="bash -i", default_cwd="/workspace"
+    )
     async with asyncio.timeout(TIMEOUT):
         result = await manager.create_terminal("s1")
         assert result["shell"] == "bash -i"

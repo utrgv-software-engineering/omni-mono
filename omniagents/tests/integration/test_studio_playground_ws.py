@@ -444,9 +444,7 @@ def test_playground_ws_passes_per_session_workspace_root_to_stream(
         }
 
     monkeypatch.setattr(bridge, "stream_agent", capturing_stream)
-    monkeypatch.setattr(
-        "omniagents.core.agents.service.stream_agent", capturing_stream
-    )
+    monkeypatch.setattr("omniagents.core.agents.service.stream_agent", capturing_stream)
 
     def _drive(session_id: str) -> None:
         with studio_client.websocket_connect(

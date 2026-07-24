@@ -80,7 +80,12 @@ def is_sandboxed() -> bool:
             # In the root namespace, uid_map is "0 0 4294967295" (identity map).
             # In a user namespace, it's a restricted mapping.
             parts = uid_map.split()
-            if len(parts) >= 3 and parts[0] == "0" and parts[1] == "0" and int(parts[2]) > 1000000:
+            if (
+                len(parts) >= 3
+                and parts[0] == "0"
+                and parts[1] == "0"
+                and int(parts[2]) > 1000000
+            ):
                 pass  # Root namespace — not sandboxed (check env var below)
             else:
                 return True  # Restricted mapping — genuinely sandboxed

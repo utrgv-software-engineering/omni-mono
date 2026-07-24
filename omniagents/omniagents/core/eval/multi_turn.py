@@ -184,9 +184,7 @@ def _load_user_mcp_for_eval(
         project_yml = project_root / candidate
         if project_yml.is_file():
             try:
-                proj_cfg = (
-                    yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
-                )
+                proj_cfg = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
             except Exception:
                 proj_cfg = {}
             break
@@ -584,6 +582,7 @@ async def _run_scripted_single_turn(
     eval_ctx._environment_context = context
 
     from omniagents.core.eval.measure_tiers import parse_measures, tag_results
+
     _measure_names, _tier_by_name = parse_measures(scenario.get("measures"))
     measures_out = (
         run_measures(eval_ctx, measures=_measure_names) if _measure_names else []
@@ -831,6 +830,7 @@ async def _run_scripted_multi_turn(
     eval_ctx._environment_context = context
 
     from omniagents.core.eval.measure_tiers import parse_measures, tag_results
+
     _measure_names, _tier_by_name = parse_measures(scenario.get("measures"))
     measures_out = (
         run_measures(eval_ctx, measures=_measure_names) if _measure_names else []
@@ -992,6 +992,7 @@ async def _run_synthetic_scenario(
     eval_ctx._environment_context = context
 
     from omniagents.core.eval.measure_tiers import parse_measures, tag_results
+
     _measure_names, _tier_by_name = parse_measures(scenario.get("measures"))
     measures_out = (
         run_measures(eval_ctx, measures=_measure_names) if _measure_names else []
@@ -1191,6 +1192,7 @@ async def run_evaluation_with_environment_async(
     # Filter scenarios
     if not include_unmeasured:
         from omniagents.core.eval.measure_tiers import measure_names
+
         scenarios = [sc for sc in scenarios if measure_names(sc.get("measures"))]
 
     all_runs: List[Dict[str, Any]] = []

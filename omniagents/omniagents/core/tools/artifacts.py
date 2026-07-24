@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from typing import Callable, Optional
 
+
 class OfficeConversionError(Exception):
     """Raised when LibreOffice conversion to PDF fails."""
 
@@ -109,4 +110,3 @@ def emit_artifact(
             callback(title, content, mode, artifact_id)
         except Exception as e:
             print(f"Error during artifact callback: {e}")
-

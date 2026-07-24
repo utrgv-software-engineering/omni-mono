@@ -140,7 +140,9 @@ def load_openthoughts_rl(
     if limit is not None:
         ds = ds.select(range(min(limit, len(ds))))
     return [
-        task_spec_from_binary(row["path"], row["task_binary"], build_images=build_images)
+        task_spec_from_binary(
+            row["path"], row["task_binary"], build_images=build_images
+        )
         for row in ds
     ]
 

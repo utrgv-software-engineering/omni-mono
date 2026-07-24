@@ -32,7 +32,6 @@ from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tupl
 
 from omniagents.workspace import ProcessHandle
 
-
 _log = logging.getLogger(__name__)
 
 
@@ -170,9 +169,7 @@ async def _notify_job_exit(job: Job) -> None:
             source="bash_jobs.exit",
         )
     except Exception as e:
-        _log.warning(
-            "enqueue_notification failed for %s: %s", job.job_id, e
-        )
+        _log.warning("enqueue_notification failed for %s: %s", job.job_id, e)
 
 
 class _JobRegistry:

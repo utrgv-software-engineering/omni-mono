@@ -6,7 +6,6 @@ from typing import Any, Union, List
 from agents.items import TResponseInputItem
 import time
 
-
 # Simple rate limiting using a basic counter
 _request_times = []
 RATE_LIMIT = 5  # Max 5 requests per minute

@@ -22,8 +22,15 @@ async def _fake_sf():
 
 def _sf_registry(*names):
     return {
-        n: {"func": _fake_sf, "name": n, "description": None, "params_schema": None,
-            "result_schema": None, "on_invoke": None, "strict": True}
+        n: {
+            "func": _fake_sf,
+            "name": n,
+            "description": None,
+            "params_schema": None,
+            "result_schema": None,
+            "on_invoke": None,
+            "strict": True,
+        }
         for n in names
     }
 

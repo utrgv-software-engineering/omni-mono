@@ -41,7 +41,7 @@ class TaskSpec:
     verifier: str = ""
     tags: list[str] = field(default_factory=list)
     dockerfile: Optional[str] = None
-    split: str = "train"            # "train" | "val" (load-time membership)
+    split: str = "train"  # "train" | "val" (load-time membership)
     world_model_only: bool = False  # verifier-free: feeds ECHO only, no policy gradient
 
     def to_record(self) -> dict[str, Any]:

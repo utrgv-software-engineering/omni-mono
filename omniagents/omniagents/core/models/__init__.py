@@ -61,7 +61,9 @@ _SETUP_HINT: str = "No model configured."
 _EXPLICIT_HINT: bool = False
 
 
-def set_model_store(store: ModelConfigStore, *, setup_hint: Optional[str] = None) -> None:
+def set_model_store(
+    store: ModelConfigStore, *, setup_hint: Optional[str] = None
+) -> None:
     """Explicitly install *store* as the process-wide model registry.
 
     An explicit install always wins: later conventional (catalog)

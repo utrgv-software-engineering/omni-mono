@@ -122,9 +122,7 @@ def manifest_slash_handler(name: str) -> Optional[Callable[..., Any]]:
     return _handler
 
 
-async def run_slash_agent(
-    name: str, binding: dict, arg: Optional[str] = None
-) -> str:
+async def run_slash_agent(name: str, binding: dict, arg: Optional[str] = None) -> str:
     """Run the project agent a slash binding names and format its result.
 
     See the module docstring for the binding schema and semantics. *arg*
@@ -170,9 +168,7 @@ async def run_slash_agent(
     if isinstance(attach, dict):
         rel = str(attach.get("path") or "").strip()
         when = attach.get("when_status")
-        statuses = (
-            {str(s) for s in when} if isinstance(when, list) and when else None
-        )
+        statuses = {str(s) for s in when} if isinstance(when, list) and when else None
         language = str(attach.get("language") or "markdown")
         if rel and (statuses is None or status in statuses):
             file_path = base_dir / rel

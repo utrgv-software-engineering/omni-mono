@@ -31,9 +31,7 @@ class TestCandidateOrder:
 
     def test_no_candidates_returns_fallback(self, tmp_path: Path):
         assert resolve_prompt_file([], FALLBACK) == FALLBACK
-        assert (
-            resolve_prompt_file([tmp_path / "nope.md"], FALLBACK) == FALLBACK
-        )
+        assert resolve_prompt_file([tmp_path / "nope.md"], FALLBACK) == FALLBACK
 
     def test_empty_or_whitespace_file_is_skipped(self, tmp_path: Path):
         empty = tmp_path / "empty.md"

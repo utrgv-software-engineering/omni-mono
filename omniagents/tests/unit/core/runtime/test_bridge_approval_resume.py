@@ -188,9 +188,9 @@ async def test_resume_does_not_pass_context_to_runner():
 
     # Initial call: bridge seeds context= from the caller and the input
     # is the raw prompt (a list of input items, not a RunState).
-    assert "context" in initial["kwargs"], (
-        "initial run_streamed call must receive context= from the bridge"
-    )
+    assert (
+        "context" in initial["kwargs"]
+    ), "initial run_streamed call must receive context= from the bridge"
     assert initial["kwargs"]["context"] is sentinel_ctx
     assert not isinstance(initial["input"], RunState)
 

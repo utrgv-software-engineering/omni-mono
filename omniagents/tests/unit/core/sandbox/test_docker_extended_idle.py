@@ -144,6 +144,7 @@ async def test_after_start_arms_watcher_by_default(session, monkeypatch):
     """The watcher should be on by default — no embedder opt-in required.
     Verifies that ``_after_start`` starts the watcher when the threshold
     is its default value."""
+
     # Stub the parent _after_start to avoid touching workspace_root_ready.
     async def _parent_after_start_noop(self_):
         return None
@@ -167,6 +168,7 @@ async def test_after_start_arms_watcher_by_default(session, monkeypatch):
 async def test_after_start_skips_watcher_when_threshold_zero(session, monkeypatch):
     """Embedders that explicitly disable via ``set_idle_threshold(0)``
     before ``start()`` should NOT get a watcher armed."""
+
     async def _parent_after_start_noop(self_):
         return None
 

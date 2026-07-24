@@ -48,16 +48,12 @@ class TestUserMcpFixtureStager:
     def test_stage_file_copies_existing_fixture(self, tmp_path: Path):
         src = tmp_path / "fixture.db"
         src.write_bytes(b"db-bytes")
-        stager = UserMcpFixtureStager(
-            tmp_path / "ws", product_config_name="p"
-        )
+        stager = UserMcpFixtureStager(tmp_path / "ws", product_config_name="p")
         dest = stager.stage_file(src, "projects.db")
         assert dest == stager.config_dir / "projects.db"
         assert dest.read_bytes() == b"db-bytes"
 
-    def test_stage_file_returns_planned_path_for_missing_fixture(
-        self, tmp_path: Path
-    ):
+    def test_stage_file_returns_planned_path_for_missing_fixture(self, tmp_path: Path):
         stager = UserMcpFixtureStager(tmp_path, product_config_name="p")
         dest = stager.stage_file(tmp_path / "nope.db", "projects.db")
         assert dest == stager.config_dir / "projects.db"
@@ -75,9 +71,7 @@ class TestUserMcpFixtureStager:
         assert (dest / "a.md").read_text() == "A"
         assert (dest / "sub" / "b.md").read_text() == "B"
 
-    def test_stage_tree_creates_empty_dir_when_fixture_missing(
-        self, tmp_path: Path
-    ):
+    def test_stage_tree_creates_empty_dir_when_fixture_missing(self, tmp_path: Path):
         stager = UserMcpFixtureStager(tmp_path, product_config_name="p")
         dest = stager.stage_tree(None, "projects")
         assert dest.is_dir()

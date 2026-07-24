@@ -27,7 +27,6 @@ from azure.identity.aio import DefaultAzureCredential
 from azure.mgmt.containerinstance import models as m
 from azure.mgmt.containerinstance.aio import ContainerInstanceManagementClient
 
-
 # --------------------------------------------------------------------------- #
 # Config / specs
 # --------------------------------------------------------------------------- #
@@ -101,7 +100,9 @@ class AciManager:
     def __init__(self, config: AciConfig, credential: Optional[object] = None) -> None:
         self._config = config
         self._credential = credential or DefaultAzureCredential()
-        self._client = ContainerInstanceManagementClient(self._credential, config.subscription_id)
+        self._client = ContainerInstanceManagementClient(
+            self._credential, config.subscription_id
+        )
 
     def _build_group(self, spec: AciContainerSpec) -> m.ContainerGroup:
         env = [m.EnvironmentVariable(name=k, value=v) for k, v in spec.env.items()]
@@ -179,7 +180,9 @@ class AciManager:
         # or not it exposes ports — so a no-service sandbox can still reach
         # private endpoints (Storage/ACR) inside the VNet. ip_address is only set
         # when ports are exposed: Private (in-VNet) or Public (no subnet).
-        subnet_ids = [m.ContainerGroupSubnetId(id=spec.subnet_id)] if spec.subnet_id else None
+        subnet_ids = (
+            [m.ContainerGroupSubnetId(id=spec.subnet_id)] if spec.subnet_id else None
+        )
         ip_address = None
         if effective_ports:
             ports = [m.Port(port=p, protocol="TCP") for p in effective_ports]
@@ -200,6 +203,7 @@ class AciManager:
         # deployment wants to tag multiple distinct fleets in the same RG.
         from datetime import datetime, timezone
         import os
+
         launcher_tag = os.getenv("OMNI_LAUNCHER_TAG", self._config.resource_group)
         tags = {
             "omni-launcher": launcher_tag,
@@ -226,18 +230,24 @@ class AciManager:
         await poller.result()
 
     async def get_state(self, name: str) -> str:
-        group = await self._client.container_groups.get(self._config.resource_group, name)
+        group = await self._client.container_groups.get(
+            self._config.resource_group, name
+        )
         iv = getattr(group, "instance_view", None)
         return (getattr(iv, "state", None) or "Unknown") if iv else "Unknown"
 
     async def get_ip(self, name: str) -> str:
         """The group's IP — private (VNet) or public, depending on how it was
         created. Empty string if the group has no exposed ports / IP yet."""
-        group = await self._client.container_groups.get(self._config.resource_group, name)
+        group = await self._client.container_groups.get(
+            self._config.resource_group, name
+        )
         ip = getattr(group, "ip_address", None)
         return (getattr(ip, "ip", None) or "") if ip else ""
 
-    async def wait_running(self, name: str, timeout: float = 240.0, interval: float = 3.0) -> None:
+    async def wait_running(
+        self, name: str, timeout: float = 240.0, interval: float = 3.0
+    ) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
@@ -247,15 +257,25 @@ class AciManager:
             if state in ("Failed", "Terminated"):
                 raise RuntimeError(f"ACI container {name} entered state {state}")
             if loop.time() >= deadline:
-                raise TimeoutError(f"ACI container {name} not Running after {timeout}s (state={state})")
+                raise TimeoutError(
+                    f"ACI container {name} not Running after {timeout}s (state={state})"
+                )
             await asyncio.sleep(interval)
 
     async def delete(self, name: str) -> None:
-        poller = await self._client.container_groups.begin_delete(self._config.resource_group, name)
+        poller = await self._client.container_groups.begin_delete(
+            self._config.resource_group, name
+        )
         await poller.result()
 
     async def open_exec(
-        self, group: str, container: str, *, command: str = "/bin/sh", rows: int = 24, cols: int = 120
+        self,
+        group: str,
+        container: str,
+        *,
+        command: str = "/bin/sh",
+        rows: int = 24,
+        cols: int = 120,
     ) -> tuple[str, str]:
         """Mint an exec WebSocket. Returns ``(web_socket_uri, password)``."""
         resp = await self._client.containers.execute_command(
@@ -334,7 +354,11 @@ class AciExecChannel:
 
     async def iter_output(self) -> AsyncIterator[bytes]:
         async for frame in self._ws:
-            yield frame if isinstance(frame, (bytes, bytearray)) else frame.encode("utf-8", "replace")
+            yield (
+                frame
+                if isinstance(frame, (bytes, bytearray))
+                else frame.encode("utf-8", "replace")
+            )
 
     async def close(self) -> None:
         try:
@@ -355,7 +379,9 @@ class AciExecChannel:
             exit_marker = f"__OMNIX_{tok}__"
             # Real number after the marker on the executed line; the echoed
             # input line carries a literal "$?", so the regex matches only output.
-            await self._ws.send(f'{{ {cmd} ; }} >{out_f} 2>{err_f}; printf "{exit_marker}%d\\n" "$?"\n')
+            await self._ws.send(
+                f'{{ {cmd} ; }} >{out_f} 2>{err_f}; printf "{exit_marker}%d\\n" "$?"\n'
+            )
             exit_code = await self._read_exit(exit_marker, timeout)
             stdout = await self._read_file_b64(out_f, tok, timeout)
             stderr = await self._read_file_b64(err_f, tok, timeout)
@@ -401,7 +427,9 @@ class AciExecChannel:
             block += 1
         return bytes(out)
 
-    async def _read_chunk_b64(self, path: str, block: int, tok: str, timeout: float) -> bytes:
+    async def _read_chunk_b64(
+        self, path: str, block: int, tok: str, timeout: float
+    ) -> bytes:
         # Emit the block's base64 AND its true byte length, then verify the
         # decode matches — a dropped burst yields a bad length / invalid base64
         # and is retried (a fresh attempt marker keeps stale output from
@@ -417,9 +445,15 @@ class AciExecChannel:
             # the echoed command keeps markers on one line, so it can't
             # false-match. The bare ``echo`` guarantees a newline even for an
             # empty block. ``<e>\n<len>\n<z>`` carries the verification length.
-            await self._ws.send(f"echo {s}; {dd} | base64; echo; echo {e}; {dd} | wc -c; echo {z}\n")
+            await self._ws.send(
+                f"echo {s}; {dd} | base64; echo; echo {e}; {dd} | wc -c; echo {z}\n"
+            )
             pat = re.compile(
-                re.escape(s) + r"\r?\n(.*?)\r?\n" + re.escape(e) + r"\r?\n\s*(\d+)\s*\r?\n" + re.escape(z),
+                re.escape(s)
+                + r"\r?\n(.*?)\r?\n"
+                + re.escape(e)
+                + r"\r?\n\s*(\d+)\s*\r?\n"
+                + re.escape(z),
                 re.DOTALL,
             )
             buf = ""
@@ -437,9 +471,13 @@ class AciExecChannel:
                     break
                 if len(data) == expected:
                     return data
-                last_err = ValueError(f"block {block}: got {len(data)} bytes, expected {expected}")
+                last_err = ValueError(
+                    f"block {block}: got {len(data)} bytes, expected {expected}"
+                )
                 break
-        raise OSError(f"exec read: block {block} failed after {_READ_CHUNK_RETRIES} attempts ({last_err})")
+        raise OSError(
+            f"exec read: block {block} failed after {_READ_CHUNK_RETRIES} attempts ({last_err})"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -479,7 +517,7 @@ class AciFilesChannel:
             return ""
         prefix = mount + "/"
         if abs_path.startswith(prefix):
-            return abs_path[len(prefix):]
+            return abs_path[len(prefix) :]
         return None
 
     async def _ensure_dirs(self, share, rel_dir: str) -> None:

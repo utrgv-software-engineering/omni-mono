@@ -25,7 +25,6 @@ from omniagents.core.runtime.runner import Runner
 from omniagents.core.debug import Debug
 from omniagents.core.session.cli import add_sessions_subparser, handle_sessions_command
 
-
 CODESPACES_ENV = any(
     os.environ.get(key)
     for key in (
@@ -100,7 +99,9 @@ def _resolve_studio_project_value(
     return project_value, manifest_path, derived
 
 
-def run_codex_auth_command(command: str = "login", *, prog: Optional[str] = None) -> int:
+def run_codex_auth_command(
+    command: str = "login", *, prog: Optional[str] = None
+) -> int:
     """Run a ``<prog> auth codex {login,logout,status}`` command.
 
     Public so products wrapping the framework CLI can reuse the exact
@@ -312,9 +313,7 @@ def _run_auth_command(args) -> None:
             argv.append(platform_url)
         status = run_platform_auth_command(argv)
     else:
-        print(
-            "usage: omniagents auth {login,logout,status,codex}", file=sys.stderr
-        )
+        print("usage: omniagents auth {login,logout,status,codex}", file=sys.stderr)
         sys.exit(1)
 
     if status:
@@ -2044,9 +2043,13 @@ def main():
                     if not _agent_arg:
                         try:
                             import yaml as _yaml_mod
-                            _cfg = _yaml_mod.safe_load(
-                                _P(compiled_cfg_path).read_text(encoding="utf-8")
-                            ) or {}
+
+                            _cfg = (
+                                _yaml_mod.safe_load(
+                                    _P(compiled_cfg_path).read_text(encoding="utf-8")
+                                )
+                                or {}
+                            )
                             _agent_arg = str(_cfg.get("name") or "").strip()
                         except Exception:
                             _agent_arg = ""
@@ -2059,6 +2062,7 @@ def main():
                     )
                     print(f"Wrote results: {final_out}")
                 from omniagents.core.eval.measure_tiers import gates_ci, DEFAULT_TIER
+
                 checks = []
                 runs = data.get("runs", []) or []
                 metrics = data.get("metrics", []) or []

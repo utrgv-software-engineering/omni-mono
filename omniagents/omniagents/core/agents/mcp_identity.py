@@ -64,7 +64,9 @@ def lookup_identity(session: Any, public_name: str) -> McpToolIdentity | None:
     return identities.get(public_name)
 
 
-async def stamp_mcp_tool_identities(agent: Any, run_context: Any, tools: Any, session: Any) -> None:
+async def stamp_mcp_tool_identities(
+    agent: Any, run_context: Any, tools: Any, session: Any
+) -> None:
     """Pair MCP-derived tools with their (server, original) identity.
 
     Stamps ``_mcp_identity`` on each MCP-origin tool and records the pair
@@ -112,7 +114,9 @@ async def stamp_mcp_tool_identities(agent: Any, run_context: Any, tools: Any, se
             listed = await server.list_tools(run_context, agent)
             originals = [str(getattr(t, "name", "") or "") for t in (listed or [])]
         except Exception:
-            logger.debug("mcp_identity: list_tools failed for %s", server_name, exc_info=True)
+            logger.debug(
+                "mcp_identity: list_tools failed for %s", server_name, exc_info=True
+            )
             originals = None
 
         if originals is None or len(originals) != len(converted) or not all(originals):

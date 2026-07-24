@@ -25,12 +25,20 @@ EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
 TRAIN = EXAMPLE_ROOT / "training" / "train.py"
 
 
-def run_arm(variant: str, coeff: float, seed: int, config: str | None, extra: list[str]) -> None:
+def run_arm(
+    variant: str, coeff: float, seed: int, config: str | None, extra: list[str]
+) -> None:
     out = EXAMPLE_ROOT / "results" / variant / f"seed{seed}"
-    cmd = [sys.executable, str(TRAIN),
-           "--world-model-coeff", str(coeff),
-           "--seed", str(seed),
-           "--output-dir", str(out)]
+    cmd = [
+        sys.executable,
+        str(TRAIN),
+        "--world-model-coeff",
+        str(coeff),
+        "--seed",
+        str(seed),
+        "--output-dir",
+        str(out),
+    ]
     if config:
         cmd += ["--config", config]
     cmd += extra
@@ -60,7 +68,9 @@ def main() -> int:
         if args.only != "baseline":
             run_arm("echo", 0.05, seed, args.config, extra)
 
-    print("\nDone. Evaluate: experiments/evaluate.py  |  Aggregate/plots: experiments/analyze.py")
+    print(
+        "\nDone. Evaluate: experiments/evaluate.py  |  Aggregate/plots: experiments/analyze.py"
+    )
     return 0
 
 

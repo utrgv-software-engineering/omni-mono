@@ -27,7 +27,6 @@ from omniagents.rpc.realtime_events import (
     map_realtime_session_event_to_rpc,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -107,7 +106,9 @@ def _resolve_realtime_deployment_name(
     return "gpt-realtime"
 
 
-def _resolve_realtime_model_name(spec: AgentSpec, settings: Dict[str, Any]) -> Optional[str]:
+def _resolve_realtime_model_name(
+    spec: AgentSpec, settings: Dict[str, Any]
+) -> Optional[str]:
     candidates = [
         settings.get("openai_realtime_model"),
         os.getenv("OPENAI_REALTIME_MODEL"),
@@ -336,7 +337,9 @@ class RealtimeSession:
                     for server in servers:
                         server_name = getattr(server, "name", "unknown")
                         try:
-                            if hasattr(server, "__aenter__") and hasattr(server, "__aexit__"):
+                            if hasattr(server, "__aenter__") and hasattr(
+                                server, "__aexit__"
+                            ):
                                 active = await stack.enter_async_context(server)
                             else:
                                 await server.connect()
@@ -362,7 +365,8 @@ class RealtimeSession:
 
         self._mcp_shutdown = asyncio.Event()
         self._mcp_lifecycle_task = asyncio.create_task(
-            mcp_lifecycle_manager(), name=f"realtime_mcp_lifecycle_{self.session_id[:8]}"
+            mcp_lifecycle_manager(),
+            name=f"realtime_mcp_lifecycle_{self.session_id[:8]}",
         )
         await servers_ready.wait()
         return active_servers_holder["servers"]
@@ -438,7 +442,9 @@ class RealtimeSession:
                 logger.warning(f"Failed to build context: {e}")
         elif self.spec.context:
             # Use pre-built context if available
-            context_dict = self.spec.context if isinstance(self.spec.context, dict) else {}
+            context_dict = (
+                self.spec.context if isinstance(self.spec.context, dict) else {}
+            )
 
         # Include search paths for {% include %} fragments (set by the YAML
         # loader from the instructions file's directory + _shared conventions).
@@ -455,6 +461,7 @@ class RealtimeSession:
         )
         if raw_instructions and (context_dict or (search_paths and has_include)):
             from omniagents.core.utils.jinja_instructions import render_template
+
             try:
                 instructions = render_template(
                     raw_instructions,
@@ -581,9 +588,7 @@ class RealtimeSession:
 
         realtime_url = _get_setting_or_env(
             "openai_realtime_url", "OPENAI_REALTIME_URL"
-        ) or _get_setting_or_env(
-            "openai_realtime_base_url", "OPENAI_REALTIME_BASE_URL"
-        )
+        ) or _get_setting_or_env("openai_realtime_base_url", "OPENAI_REALTIME_BASE_URL")
         base_url = _get_setting_or_env("openai_base_url", "OPENAI_BASE_URL")
 
         logger.debug(

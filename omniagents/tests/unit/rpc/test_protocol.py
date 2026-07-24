@@ -16,7 +16,6 @@ from omniagents.rpc.transport import TransportClosedError
 from omniagents.rpc.transport.inmemory import InMemoryTransport
 from omniagents.rpc.transport.websocket import ServerWebSocketTransport
 
-
 TIMEOUT = 5.0
 
 

@@ -23,14 +23,10 @@ CHAIN_SEED = "omniagents_audit_v1"
 def compute_hmac(entry_json: str, previous_hmac: str, signing_key: str) -> str:
     """Compute HMAC-SHA256 over ``previous_hmac + entry_json``."""
     message = (previous_hmac + entry_json).encode("utf-8")
-    return _hmac.new(
-        signing_key.encode("utf-8"), message, hashlib.sha256
-    ).hexdigest()
+    return _hmac.new(signing_key.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
-def verify_audit_log(
-    path: str, signing_key: str
-) -> tuple[bool, int, Optional[str]]:
+def verify_audit_log(path: str, signing_key: str) -> tuple[bool, int, Optional[str]]:
     """Verify HMAC chain integrity of a JSON-lines audit log.
 
     Returns ``(valid, lines_checked, error_message)``.
@@ -53,9 +49,7 @@ def verify_audit_log(
             stored = obj.pop(HMAC_FIELD, None)
             if stored is None:
                 continue  # unsigned entry — skip
-            canonical = json.dumps(
-                obj, sort_keys=True, default=str, ensure_ascii=False
-            )
+            canonical = json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False)
             expected = compute_hmac(canonical, prev, signing_key)
             if not _hmac.compare_digest(stored, expected):
                 return False, line_num, f"Line {line_num}: HMAC mismatch"

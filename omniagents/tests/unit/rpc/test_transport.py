@@ -20,7 +20,6 @@ from omniagents.rpc.transport.websocket import (
 )
 from omniagents.rpc.transport.inmemory import InMemoryTransport
 
-
 TIMEOUT = 5.0
 
 

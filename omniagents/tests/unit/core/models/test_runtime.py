@@ -44,7 +44,9 @@ def _store(tmp_path, **kwargs):
 
 def test_normalize_strips_unknown_provider_prefix():
     assert (
-        normalize_model_name("openai/prefixed", {"provider": "openai", "model": "vendor/model-x"})
+        normalize_model_name(
+            "openai/prefixed", {"provider": "openai", "model": "vendor/model-x"}
+        )
         == "model-x"
     )
 
@@ -55,14 +57,18 @@ def test_normalize_keeps_openai_and_litellm_prefixes():
         == "openai/gpt-test"
     )
     assert (
-        normalize_model_name(None, {"provider": "openai-compatible", "model": "litellm/x"})
+        normalize_model_name(
+            None, {"provider": "openai-compatible", "model": "litellm/x"}
+        )
         == "litellm/x"
     )
 
 
 def test_normalize_keeps_full_id_for_litellm_provider():
     assert (
-        normalize_model_name(None, {"provider": "litellm", "model": "anthropic/claude-x"})
+        normalize_model_name(
+            None, {"provider": "litellm", "model": "anthropic/claude-x"}
+        )
         == "anthropic/claude-x"
     )
 

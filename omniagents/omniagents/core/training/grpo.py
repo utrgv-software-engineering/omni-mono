@@ -21,7 +21,6 @@ import subprocess
 from .rewards import measure_to_reward, MeasureRewardAdapter, combine_rewards
 from .dataset import eval_suite_to_hf_dataset
 
-
 # Response schema for Qwen2.5 models (similar to TRL's qwen3_schema but without <think> blocks)
 # This allows TRL's GRPOTrainer to parse tool calls from Qwen2.5 models.
 # Format: <tool_call>\n{"name": "func", "arguments": {...}}\n</tool_call>
@@ -80,11 +79,11 @@ def _extract_hf_model_name(model: str) -> str:
 
     # Strip litellm/ollama_chat prefix
     if model.startswith("litellm/ollama_chat/"):
-        model = model[len("litellm/ollama_chat/"):]
+        model = model[len("litellm/ollama_chat/") :]
 
     # Handle hf.co prefix (Ollama HuggingFace models)
     if model.startswith("hf.co/"):
-        model = model[len("hf.co/"):]
+        model = model[len("hf.co/") :]
         # Format: Qwen/Qwen3-0.6B-GGUF:Q8_0
         # Strip quantization tag
         if ":" in model:
@@ -138,17 +137,17 @@ def _extract_tools_as_json_schemas(agent: "Agent") -> List[ToolSchemaWrapper]:
     wrappers = []
     for tool in agent.tools:
         # FunctionTool from agents SDK already has the parsed schema
-        if hasattr(tool, 'params_json_schema'):
+        if hasattr(tool, "params_json_schema"):
             schema = {
                 "type": "function",
                 "function": {
                     "name": tool.name,
                     "description": tool.description or "",
-                    "parameters": tool.params_json_schema
-                }
+                    "parameters": tool.params_json_schema,
+                },
             }
             # Get the original function for direct invocation by TRL
-            if hasattr(tool, '_original_func'):
+            if hasattr(tool, "_original_func"):
                 func = tool._original_func
             else:
                 raise ValueError(
@@ -228,7 +227,9 @@ class GRPOTrainingConfig:
     mask_truncated_completions: bool = True
 
     # Memory optimization
-    gradient_checkpointing: bool = False  # Trade compute for memory (useful for 8GB VRAM)
+    gradient_checkpointing: bool = (
+        False  # Trade compute for memory (useful for 8GB VRAM)
+    )
     torch_dtype: str = "bfloat16"  # Model dtype: "bfloat16", "float16", "float32"
 
     # LoRA / QLoRA (parameter-efficient fine-tuning). Trains small adapters
@@ -288,8 +289,10 @@ class GRPOTrainingConfig:
         effective_batch = self.per_device_batch_size * self.gradient_accumulation_steps
         if effective_batch % self.num_generations != 0:
             adjusted_accum = self.num_generations
-            print(f"Note: Adjusting gradient_accumulation_steps from {self.gradient_accumulation_steps} "
-                  f"to {adjusted_accum} to be divisible by num_generations={self.num_generations}")
+            print(
+                f"Note: Adjusting gradient_accumulation_steps from {self.gradient_accumulation_steps} "
+                f"to {adjusted_accum} to be divisible by num_generations={self.num_generations}"
+            )
         else:
             adjusted_accum = self.gradient_accumulation_steps
 
@@ -324,7 +327,9 @@ class GRPOTrainingConfig:
         try:
             from peft import LoraConfig
         except ImportError:
-            raise ImportError("LoRA training requires peft. Install with: pip install peft")
+            raise ImportError(
+                "LoRA training requires peft. Install with: pip install peft"
+            )
         return LoraConfig(
             r=self.lora_r,
             lora_alpha=self.lora_alpha,
@@ -428,10 +433,13 @@ class GRPOTrainingResult:
             # Step 1: Convert safetensors to GGUF using llama.cpp
             print(f"  Converting to GGUF format (quantization: {quantization})...")
             convert_cmd = [
-                "python", str(convert_script),
+                "python",
+                str(convert_script),
                 str(path),
-                "--outtype", quantization,
-                "--outfile", str(gguf_path),
+                "--outtype",
+                quantization,
+                "--outfile",
+                str(gguf_path),
             ]
 
             result = subprocess.run(
@@ -449,7 +457,7 @@ class GRPOTrainingResult:
             modelfile_content = f"FROM {gguf_path}\n\n"
             if template:
                 # Escape for Python string
-                escaped_template = template.replace('\\', '\\\\').replace('"', '\\"')
+                escaped_template = template.replace("\\", "\\\\").replace('"', '\\"')
                 modelfile_content += f'TEMPLATE """{template}"""\n\n'
             for stop in stop_tokens:
                 modelfile_content += f'PARAMETER stop "{stop}"\n'
@@ -494,7 +502,9 @@ class GRPOTrainingResult:
             script = Path(llama_cpp_path) / "convert_hf_to_gguf.py"
             if script.exists():
                 return script
-            raise FileNotFoundError(f"convert_hf_to_gguf.py not found at {llama_cpp_path}")
+            raise FileNotFoundError(
+                f"convert_hf_to_gguf.py not found at {llama_cpp_path}"
+            )
 
         # Check LLAMA_CPP_PATH environment variable
         env_path = os.environ.get("LLAMA_CPP_PATH")
@@ -637,7 +647,7 @@ class GRPOTrainingResult:
 
         model = self.trainer.model
         model.eval()
-        if hasattr(model, 'gradient_checkpointing_disable'):
+        if hasattr(model, "gradient_checkpointing_disable"):
             model.gradient_checkpointing_disable()
 
         self._inference_ready = True
@@ -682,7 +692,9 @@ class GRPOTrainingResult:
 
         # Use provided overrides or fall back to training values
         effective_tools = tools if tools is not None else self.tools
-        effective_instructions = instructions if instructions is not None else self.instructions
+        effective_instructions = (
+            instructions if instructions is not None else self.instructions
+        )
 
         # Build messages
         messages = []
@@ -717,8 +729,7 @@ class GRPOTrainingResult:
 
         # Decode only the new tokens
         response = tokenizer.decode(
-            outputs[0][inputs["input_ids"].shape[-1]:],
-            skip_special_tokens=True
+            outputs[0][inputs["input_ids"].shape[-1] :], skip_special_tokens=True
         )
 
         # Strip thinking tags if present (Qwen3 uses <think>...</think>)
@@ -858,7 +869,9 @@ class GRPOTrainer:
                 bnb_4bit_use_double_quant=True,
             )
             print("  Loading base in 4-bit (QLoRA)")
-        self._model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
+        self._model = AutoModelForCausalLM.from_pretrained(
+            self.model_name, **model_kwargs
+        )
 
         if self.config.load_in_4bit:
             from peft import prepare_model_for_kbit_training
@@ -931,7 +944,9 @@ class GRPOTrainer:
             self._load_model()
 
         self._build_reward_fn()
-        reward_funcs = ([self._reward_fn] if self._reward_fn is not None else []) + self.extra_reward_funcs
+        reward_funcs = (
+            [self._reward_fn] if self._reward_fn is not None else []
+        ) + self.extra_reward_funcs
         if not reward_funcs:
             raise ValueError(
                 "No reward functions: provide reward_measures and/or extra_reward_funcs."
@@ -969,8 +984,10 @@ class GRPOTrainer:
         peft_config = self.config.build_peft_config()
         if peft_config is not None:
             trainer_kwargs["peft_config"] = peft_config
-            print(f"  LoRA: r={self.config.lora_r}, alpha={self.config.lora_alpha}"
-                  f"{', 4-bit base (QLoRA)' if self.config.load_in_4bit else ''}")
+            print(
+                f"  LoRA: r={self.config.lora_r}, alpha={self.config.lora_alpha}"
+                f"{', 4-bit base (QLoRA)' if self.config.load_in_4bit else ''}"
+            )
 
         # Tools come from the training environment when one is provided (its
         # public methods become the tools); otherwise from the agent.
@@ -979,12 +996,16 @@ class GRPOTrainer:
             print("  Rollout: custom rollout_func")
         elif self.environment_factory is not None:
             trainer_kwargs["environment_factory"] = self.environment_factory
-            print("  Training environment: per-rollout sandbox (tools from environment)")
+            print(
+                "  Training environment: per-rollout sandbox (tools from environment)"
+            )
         elif self.tools:
             trainer_kwargs["tools"] = self.tools
         if self.config.use_vllm:
-            print(f"  vLLM: {self.config.vllm_mode} (gpu_mem_util={self.config.vllm_gpu_memory_utilization}, "
-                  f"max_model_len={self.config.vllm_max_model_len})")
+            print(
+                f"  vLLM: {self.config.vllm_mode} (gpu_mem_util={self.config.vllm_gpu_memory_utilization}, "
+                f"max_model_len={self.config.vllm_max_model_len})"
+            )
 
         # Enable the ECHO auxiliary world-modeling loss when configured.
         if self.config.world_model_coeff > 0:
@@ -998,7 +1019,9 @@ class GRPOTrainer:
             from .echo import EchoGRPOTrainer
 
             trainer_kwargs["world_model_coeff"] = self.config.world_model_coeff
-            trainer_kwargs["world_loss_normalization"] = self.config.world_loss_normalization
+            trainer_kwargs["world_loss_normalization"] = (
+                self.config.world_loss_normalization
+            )
             print(
                 f"  ECHO world-model loss: coeff={self.config.world_model_coeff}, "
                 f"normalization={self.config.world_loss_normalization}"
@@ -1013,7 +1036,9 @@ class GRPOTrainer:
 
         # Collect metrics
         metrics = []
-        if hasattr(self._trl_trainer, "state") and hasattr(self._trl_trainer.state, "log_history"):
+        if hasattr(self._trl_trainer, "state") and hasattr(
+            self._trl_trainer.state, "log_history"
+        ):
             metrics = self._trl_trainer.state.log_history
 
         final_loss = None

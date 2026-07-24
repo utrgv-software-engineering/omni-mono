@@ -189,9 +189,7 @@ def kill_workspace_processes(
         except (FileNotFoundError, PermissionError, OSError):
             continue
         cwd_real = os.path.realpath(cwd)
-        if cwd_real == workspace_real or cwd_real.startswith(
-            workspace_real + os.sep
-        ):
+        if cwd_real == workspace_real or cwd_real.startswith(workspace_real + os.sep):
             targets.append(pid)
 
     if not targets:
@@ -267,9 +265,7 @@ def copy_fixture_respecting_gitignore(src: Path, dst: Path) -> None:
 def init_git_repo(path: str) -> None:
     """Initialize a minimal git repo with an initial commit. Best-effort."""
     try:
-        subprocess.run(
-            ["git", "init", "-q"], cwd=path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "init", "-q"], cwd=path, check=True, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "eval@test.local"],
             cwd=path,
@@ -282,9 +278,7 @@ def init_git_repo(path: str) -> None:
             check=True,
             capture_output=True,
         )
-        subprocess.run(
-            ["git", "add", "-A"], cwd=path, check=True, capture_output=True
-        )
+        subprocess.run(["git", "add", "-A"], cwd=path, check=True, capture_output=True)
         subprocess.run(
             ["git", "commit", "-q", "-m", "initial fixture", "--allow-empty"],
             cwd=path,

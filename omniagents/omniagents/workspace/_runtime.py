@@ -18,7 +18,6 @@ from typing import Optional
 from .base import Workspace
 from .host import HostWorkspace
 
-
 _workspace_var: contextvars.ContextVar[Optional[Workspace]] = contextvars.ContextVar(
     "omniagents_workspace", default=None
 )

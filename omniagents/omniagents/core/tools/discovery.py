@@ -13,7 +13,6 @@ from omniagents.core.debug import Debug
 # Import the original decorator from the agents library
 from agents.tool import function_tool as original_function_tool, FunctionTool
 
-
 # --- Rich Tool Output Class --- #
 
 
@@ -319,8 +318,7 @@ def discover_functions_in_dir(
     synth_pkg_registered = False
     if use_synthetic:
         synth_pkg = (
-            "_omniagents_disco_"
-            + hashlib.md5(str(base_path).encode()).hexdigest()[:12]
+            "_omniagents_disco_" + hashlib.md5(str(base_path).encode()).hexdigest()[:12]
         )
         if synth_pkg not in sys.modules:
             pkg = types.ModuleType(synth_pkg)

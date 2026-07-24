@@ -16,4 +16,10 @@ try:
 except ImportError:
     pass
 
-__all__ = ["AuthProvider", "AuthResult", "UserIdentity", "NoneAuthProvider", "TokenAuthProvider"]
+__all__ = [
+    "AuthProvider",
+    "AuthResult",
+    "UserIdentity",
+    "NoneAuthProvider",
+    "TokenAuthProvider",
+]

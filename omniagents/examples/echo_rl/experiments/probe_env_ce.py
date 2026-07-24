@@ -38,7 +38,9 @@ from tasks.schema import task_expect  # noqa: E402
 
 
 def _instructions() -> str:
-    return yaml.safe_load((EXAMPLE_ROOT / "agents/terminal_agent/agent.yml").read_text())["instructions"]
+    return yaml.safe_load(
+        (EXAMPLE_ROOT / "agents/terminal_agent/agent.yml").read_text()
+    )["instructions"]
 
 
 def _env_mask_for(tok, messages, tools) -> tuple[list[int], list[int]]:
@@ -52,8 +54,11 @@ def _env_mask_for(tok, messages, tools) -> tuple[list[int], list[int]]:
     prev_len = 0
     for k in range(1, len(messages) + 1):
         ids = tok.apply_chat_template(
-            messages[:k], tools=tools, add_generation_prompt=False,
-            tokenize=True, return_dict=True,
+            messages[:k],
+            tools=tools,
+            add_generation_prompt=False,
+            tokenize=True,
+            return_dict=True,
         )["input_ids"]
         new = ids[prev_len:]
         is_env = messages[k - 1].get("role") == "tool"
@@ -74,28 +79,58 @@ def build_pool(args) -> None:
         tok.pad_token = tok.eos_token
     if not getattr(tok, "response_schema", None) and "qwen2" in args.teacher.lower():
         tok.response_schema = QWEN25_RESPONSE_SCHEMA
-    model = AutoModelForCausalLM.from_pretrained(args.teacher, torch_dtype=torch.bfloat16, device_map="auto")
+    model = AutoModelForCausalLM.from_pretrained(
+        args.teacher, torch_dtype=torch.bfloat16, device_map="auto"
+    )
     model.eval()
 
     instr = _instructions()
-    tasks = [t for t in load_builtin(split=args.split, limit=args.limit) if not t.world_model_only]
+    tasks = [
+        t
+        for t in load_builtin(split=args.split, limit=args.limit)
+        if not t.world_model_only
+    ]
     env = TerminalSandboxEnvironment(image=args.image, exec_timeout=15.0)
     pool = []
     try:
         for t in tasks:
             for _ in range(args.rollouts):
-                env.reset(prompt=None, **{k: v for k, v in task_expect(t.to_record()).items() if k != "id"})
-                messages = [{"role": "system", "content": instr}, {"role": "user", "content": t.prompt}]
+                env.reset(
+                    prompt=None,
+                    **{
+                        k: v for k, v in task_expect(t.to_record()).items() if k != "id"
+                    },
+                )
+                messages = [
+                    {"role": "system", "content": instr},
+                    {"role": "user", "content": t.prompt},
+                ]
                 for _turn in range(args.max_turns):
-                    enc = tok.apply_chat_template(messages, tools=[env.bash], add_generation_prompt=True,
-                                                  tokenize=True, return_dict=True, return_tensors="pt")
+                    enc = tok.apply_chat_template(
+                        messages,
+                        tools=[env.bash],
+                        add_generation_prompt=True,
+                        tokenize=True,
+                        return_dict=True,
+                        return_tensors="pt",
+                    )
                     enc = {k: v.to(model.device) for k, v in enc.items()}
                     with torch.no_grad():
-                        out = model.generate(**enc, max_new_tokens=args.max_new_tokens, do_sample=True,
-                                              temperature=0.6, pad_token_id=tok.pad_token_id)
-                    parsed = parse_response(tok, out[0][enc["input_ids"].shape[-1]:].tolist())
+                        out = model.generate(
+                            **enc,
+                            max_new_tokens=args.max_new_tokens,
+                            do_sample=True,
+                            temperature=0.6,
+                            pad_token_id=tok.pad_token_id,
+                        )
+                    parsed = parse_response(
+                        tok, out[0][enc["input_ids"].shape[-1] :].tolist()
+                    )
                     calls = parsed.get("tool_calls") or []
-                    msg = {"role": "assistant", "content": parsed.get("content", "") or ""}
+                    msg = {
+                        "role": "assistant",
+                        "content": parsed.get("content", "") or "",
+                    }
                     if calls:
                         msg["tool_calls"] = calls
                     messages.append(msg)
@@ -105,9 +140,23 @@ def build_pool(args) -> None:
                         fn = c.get("function", {})
                         a = fn.get("arguments")
                         a = json.loads(a) if isinstance(a, str) else (a or {})
-                        res = (env._run(env._abash(str(a.get("command", "")), int(a.get("timeout", 30) or 30)))
-                               if fn.get("name") == "bash" else f"unknown tool {fn.get('name')}")
-                        messages.append({"role": "tool", "name": fn.get("name"), "content": str(res)})
+                        res = (
+                            env._run(
+                                env._abash(
+                                    str(a.get("command", "")),
+                                    int(a.get("timeout", 30) or 30),
+                                )
+                            )
+                            if fn.get("name") == "bash"
+                            else f"unknown tool {fn.get('name')}"
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "name": fn.get("name"),
+                                "content": str(res),
+                            }
+                        )
                 full_ids, env_mask = _env_mask_for(tok, messages, [env.bash])
                 if sum(env_mask) > 0:
                     pool.append({"task": t.id, "ids": full_ids, "env_mask": env_mask})
@@ -116,7 +165,9 @@ def build_pool(args) -> None:
 
     outp = Path(args.out)
     outp.parent.mkdir(parents=True, exist_ok=True)
-    outp.write_text(json.dumps({"teacher": args.teacher, "trajectories": pool}, indent=2))
+    outp.write_text(
+        json.dumps({"teacher": args.teacher, "trajectories": pool}, indent=2)
+    )
     n_env = sum(sum(p["env_mask"]) for p in pool)
     print(f"Built pool: {len(pool)} trajectories, {n_env} env tokens -> {outp}")
 
@@ -127,7 +178,7 @@ def score(args) -> None:
     from omniagents.core.training.echo import compute_world_model_loss
 
     pool = json.loads(Path(args.pool).read_text())["trajectories"]
-    model, tok = load_policy(args.model)   # handles LoRA adapters + full models
+    model, tok = load_policy(args.model)  # handles LoRA adapters + full models
 
     ce_sum, tok_sum = 0.0, 0
     for traj in pool:
@@ -135,21 +186,41 @@ def score(args) -> None:
         with torch.no_grad():
             logits = model(ids).logits[:, :-1, :] / 1.0
         labels = ids[:, 1:]
-        logps = torch.log_softmax(logits.float(), dim=-1).gather(-1, labels.unsqueeze(-1)).squeeze(-1)  # (1, T-1)
-        env_mask = torch.tensor([traj["env_mask"][1:]], device=model.device, dtype=torch.float)  # align to labels
-        _, metrics = compute_world_model_loss(logps, env_mask, coeff=1.0, normalization="selected_tokens")
+        logps = (
+            torch.log_softmax(logits.float(), dim=-1)
+            .gather(-1, labels.unsqueeze(-1))
+            .squeeze(-1)
+        )  # (1, T-1)
+        env_mask = torch.tensor(
+            [traj["env_mask"][1:]], device=model.device, dtype=torch.float
+        )  # align to labels
+        _, metrics = compute_world_model_loss(
+            logps, env_mask, coeff=1.0, normalization="selected_tokens"
+        )
         n = int(env_mask.sum().item())
         ce_sum += metrics["world_model/ce_per_token"] * n
         tok_sum += n
 
     mean_ce = ce_sum / max(tok_sum, 1)
     label = args.label or Path(args.model).name
-    out = EXAMPLE_ROOT / "results" / "probe"; out.mkdir(parents=True, exist_ok=True)
-    (out / f"ce_{label}.json").write_text(json.dumps(
-        {"label": label, "model": args.model, "pool": args.pool,
-         "mean_env_ce": mean_ce, "env_tokens": tok_sum}, indent=2))
-    print(f"{label}: mean env-token CE = {mean_ce:.4f} over {tok_sum} tokens "
-          f"(lower = better world model)")
+    out = EXAMPLE_ROOT / "results" / "probe"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f"ce_{label}.json").write_text(
+        json.dumps(
+            {
+                "label": label,
+                "model": args.model,
+                "pool": args.pool,
+                "mean_env_ce": mean_ce,
+                "env_tokens": tok_sum,
+            },
+            indent=2,
+        )
+    )
+    print(
+        f"{label}: mean env-token CE = {mean_ce:.4f} over {tok_sum} tokens "
+        f"(lower = better world model)"
+    )
 
 
 def main() -> int:

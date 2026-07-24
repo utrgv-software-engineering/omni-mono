@@ -20,11 +20,8 @@ import uuid
 
 import pytest
 
-
 PG_URL = os.getenv("OMNIAGENTS_TEST_PG_URL")
-pytestmark = pytest.mark.skipif(
-    not PG_URL, reason="OMNIAGENTS_TEST_PG_URL not set"
-)
+pytestmark = pytest.mark.skipif(not PG_URL, reason="OMNIAGENTS_TEST_PG_URL not set")
 
 
 @pytest.fixture
@@ -41,6 +38,7 @@ def pg_history_db(monkeypatch):
     monkeypatch.setenv("OMNIAGENTS_TENANT_ID", tenant)
 
     import omniagents.core.session.history_db as history_db
+
     importlib.reload(history_db)
 
     yield history_db
@@ -50,9 +48,7 @@ def pg_history_db(monkeypatch):
     backend = history_db._resolve_backend()
     with backend._conn() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM audio_metadata WHERE tenant_id = %s", (tenant,)
-            )
+            cur.execute("DELETE FROM audio_metadata WHERE tenant_id = %s", (tenant,))
             cur.execute("DELETE FROM history WHERE tenant_id = %s", (tenant,))
             cur.execute("DELETE FROM sessions WHERE tenant_id = %s", (tenant,))
         conn.commit()
@@ -86,12 +82,8 @@ def test_register_session_is_idempotent(pg_history_db):
     # Second register with a different user_id should NOT overwrite —
     # matches sqlite's INSERT OR IGNORE behaviour.
     history_db.register_session(sid, project_slug="p", agent_slug="a", user_id="u2")
-    history_db.update_session_user_id(
-        sid, "u3", project_slug="p", agent_slug="a"
-    )
-    sessions = history_db.list_sessions_for_user(
-        "u3", project_slug="p", agent_slug="a"
-    )
+    history_db.update_session_user_id(sid, "u3", project_slug="p", agent_slug="a")
+    sessions = history_db.list_sessions_for_user("u3", project_slug="p", agent_slug="a")
     assert len(sessions) == 1
     assert sessions[0]["id"] == sid
 
@@ -107,9 +99,7 @@ def test_metadata_round_trip(pg_history_db):
         project_slug="p",
         agent_slug="a",
     )
-    ctx, vars_ = history_db.get_session_metadata(
-        sid, project_slug="p", agent_slug="a"
-    )
+    ctx, vars_ = history_db.get_session_metadata(sid, project_slug="p", agent_slug="a")
     assert ctx == {"goal": "ship it"}
     assert vars_ == {"counter": 3}
 
@@ -150,9 +140,7 @@ def test_delete_session_cascades(pg_history_db):
 
     assert history_db.delete_session(sid, project_slug="p", agent_slug="a") is True
     assert history_db.load_history(sid, project_slug="p", agent_slug="a") == []
-    assert history_db.get_audio_metadata(
-        sid, project_slug="p", agent_slug="a"
-    ) == []
+    assert history_db.get_audio_metadata(sid, project_slug="p", agent_slug="a") == []
     # Second delete returns False — session no longer exists.
     assert history_db.delete_session(sid, project_slug="p", agent_slug="a") is False
 
@@ -207,9 +195,7 @@ def test_get_user_messages_filters(pg_history_db):
         agent_slug="a",
     )
 
-    msgs = history_db.get_user_messages(
-        limit=10, project_slug="p", agent_slug="a"
-    )
+    msgs = history_db.get_user_messages(limit=10, project_slug="p", agent_slug="a")
     # Only the two string-content user messages — assistant + list-content
     # should be filtered out. Results are reversed to oldest-first.
     assert [m["content"] for m in msgs] == ["alpha", "beta"]
@@ -231,9 +217,7 @@ def test_audio_metadata_round_trip(pg_history_db):
     )
     assert row_id > 0
 
-    rows = history_db.get_audio_metadata(
-        sid, project_slug="p", agent_slug="a"
-    )
+    rows = history_db.get_audio_metadata(sid, project_slug="p", agent_slug="a")
     assert len(rows) == 1
     assert rows[0]["item_id"] == "item-1"
     assert rows[0]["file_path"] == "audio.pcm16"
@@ -244,13 +228,9 @@ def test_audio_metadata_round_trip(pg_history_db):
     assert by_item is not None
     assert by_item["session_id"] == sid
 
-    deleted = history_db.delete_audio_metadata(
-        sid, project_slug="p", agent_slug="a"
-    )
+    deleted = history_db.delete_audio_metadata(sid, project_slug="p", agent_slug="a")
     assert deleted == 1
-    assert history_db.get_audio_metadata(
-        sid, project_slug="p", agent_slug="a"
-    ) == []
+    assert history_db.get_audio_metadata(sid, project_slug="p", agent_slug="a") == []
 
 
 def test_purge_old_sessions_respects_hold(pg_history_db):
@@ -275,13 +255,9 @@ def test_purge_old_sessions_respects_hold(pg_history_db):
             )
         conn.commit()
 
-    purged = history_db.purge_old_sessions(
-        7, project_slug="p", agent_slug="a"
-    )
+    purged = history_db.purge_old_sessions(7, project_slug="p", agent_slug="a")
     assert purged == 1
-    assert history_db.get_archived(
-        held, project_slug="p", agent_slug="a"
-    ) is False  # held survives
-    assert history_db.get_session_hold(
-        held, project_slug="p", agent_slug="a"
-    ) is True
+    assert (
+        history_db.get_archived(held, project_slug="p", agent_slug="a") is False
+    )  # held survives
+    assert history_db.get_session_hold(held, project_slug="p", agent_slug="a") is True

@@ -24,7 +24,6 @@ from omniagents.core.paths import get_sessions_db_path
 
 from .base import SessionStorageBackend, _UNSET
 
-
 # Module-level connection cache shared with history_db (the conftest fixture
 # closes connections through this same dict). Keyed by absolute db path so
 # different (project, agent) shards each get their own sqlite3.Connection.

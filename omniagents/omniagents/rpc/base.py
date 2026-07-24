@@ -3,7 +3,6 @@
 from contextvars import ContextVar
 from typing import Optional
 
-
 _current_channel: ContextVar[Optional["JsonRpcChannel"]] = ContextVar(
     "omniagents_rpc_channel", default=None
 )

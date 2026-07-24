@@ -15,11 +15,12 @@ from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
 from omniagents.rpc.terminal import TerminalManager
 from omniagents.rpc.terminal_backends import SessionPtyBackend
 
-
 TIMEOUT = 10.0
 
 
-async def _read_until(manager, descriptor, needle: str, *, deadline_s: float = 3.0) -> str:
+async def _read_until(
+    manager, descriptor, needle: str, *, deadline_s: float = 3.0
+) -> str:
     """Drain the descriptor's output_queue until *needle* appears or deadline expires."""
     chunks: list[bytes] = []
     deadline = asyncio.get_event_loop().time() + deadline_s
@@ -55,9 +56,7 @@ async def test_session_pty_backend_round_trip():
             backend = SessionPtyBackend(inner)
             manager = TerminalManager(backend=backend, default_shell="bash --norc -i")
 
-            record = await manager.create_terminal(
-                "session-1", cols=100, rows=30
-            )
+            record = await manager.create_terminal("session-1", cols=100, rows=30)
             descriptor = await manager.authorize(
                 "session-1", record["terminal_id"], record["token"]
             )
@@ -99,7 +98,9 @@ async def test_session_pty_backend_cleanup_closes_streams():
 
             await manager.cleanup_session("session-2")
             # The output_queue eventually receives the None sentinel.
-            sentinel = await asyncio.wait_for(descriptor.output_queue.get(), timeout=2.0)
+            sentinel = await asyncio.wait_for(
+                descriptor.output_queue.get(), timeout=2.0
+            )
             # The reader loop may have emitted real chunks before the sentinel
             # (e.g. shell prompt). Drain until we find None.
             tries = 50

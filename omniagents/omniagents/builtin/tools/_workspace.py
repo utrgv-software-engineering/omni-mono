@@ -38,9 +38,7 @@ def workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]
     return None
 
 
-def require_workspace_root(
-    ctx: RunContextWrapper[Any] | None, *, where: str
-) -> str:
+def require_workspace_root(ctx: RunContextWrapper[Any] | None, *, where: str) -> str:
     """Return the workspace_root from the run context, or raise.
 
     Args:
@@ -53,9 +51,7 @@ def require_workspace_root(
     return wr
 
 
-def shell_unavailable_payload(
-    *, tool: str, command: str
-) -> Tuple[str, Dict[str, Any]]:
+def shell_unavailable_payload(*, tool: str, command: str) -> Tuple[str, Dict[str, Any]]:
     """Standard error shape for shell-needing tools against shell-less backends.
 
     Returns ``(llm_output, ui_metadata)`` ready to drop into a

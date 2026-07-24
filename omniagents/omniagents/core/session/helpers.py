@@ -44,6 +44,7 @@ def session_from_ctx(ctx: Any) -> Optional[Any]:
         return None
     try:
         from omniagents.core.agents.service import current_service
+
         svc = current_service()
     except Exception:
         return None

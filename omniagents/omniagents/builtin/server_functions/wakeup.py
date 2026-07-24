@@ -26,7 +26,6 @@ from omniagents.core.autonomy.wakeup import (  # noqa: F401  (re-exported surfac
     wakeup_snapshot_dict,
 )
 
-
 # ---------------------------------------------------------------------------
 # Server functions — slash commands for user-facing inspection + cancel.
 # ---------------------------------------------------------------------------

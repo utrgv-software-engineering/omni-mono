@@ -120,7 +120,9 @@ def compute_world_model_loss(
                 "max_completion_length is required for world_loss_normalization="
                 "'seq_mean_token_sum_norm'."
             )
-        unscaled = (world_ce * env_mask).sum() / (per_token_logps.size(0) * max_completion_length)
+        unscaled = (world_ce * env_mask).sum() / (
+            per_token_logps.size(0) * max_completion_length
+        )
     elif normalization == "selected_tokens":
         unscaled = (world_ce * env_mask).sum() / selected.clamp(min=1.0)
     else:

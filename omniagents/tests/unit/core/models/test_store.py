@@ -222,7 +222,9 @@ def test_default_model_fallback(tmp_path):
 
 def test_has_models_configured_variants(tmp_path, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    store = _store(tmp_path, default_providers=_defaults, default_model_fallback=lambda: "gpt-test")
+    store = _store(
+        tmp_path, default_providers=_defaults, default_model_fallback=lambda: "gpt-test"
+    )
     assert store.has_models_configured() is False
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk")

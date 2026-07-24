@@ -118,9 +118,7 @@ def product_prompt_template(
         return None
     if not dirs:
         return None
-    text = resolve_prompt_file(
-        [d / name for d in dirs], "", max_bytes=max_bytes
-    )
+    text = resolve_prompt_file([d / name for d in dirs], "", max_bytes=max_bytes)
     return text or None
 
 

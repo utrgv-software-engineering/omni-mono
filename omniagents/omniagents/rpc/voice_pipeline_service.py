@@ -10,7 +10,6 @@ from omniagents.rpc.base import _current_channel
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.debug import Debug
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -364,7 +363,9 @@ class VoicePipelineService(RpcMethodsBase):
                     "reason": f"Voice settings unavailable: {exc}",
                 }
 
-        api_key = (effective_settings or {}).get("openai_api_key") or (effective_settings or {}).get("api_key")
+        api_key = (effective_settings or {}).get("openai_api_key") or (
+            effective_settings or {}
+        ).get("api_key")
         if not api_key:
             return {
                 "enabled": False,

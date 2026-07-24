@@ -88,7 +88,9 @@ async def sandbox_wait_until_ready(
 
     sw = get_switch_context()
     if sw is None:
-        return json.dumps({"ready": True, "profile": None, "reason": "no live sandbox server"})
+        return json.dumps(
+            {"ready": True, "profile": None, "reason": "no live sandbox server"}
+        )
     try:
         await asyncio.wait_for(sw.ready_event.wait(), timeout=timeout_seconds)
     except asyncio.TimeoutError:

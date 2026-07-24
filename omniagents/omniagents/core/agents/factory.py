@@ -99,7 +99,11 @@ async def create_unified_agent(
                 # resolved first, then spec on top (spec wins)
                 merged = dict(resolved_ms)
                 for k, v in spec.model_settings.items():
-                    if k in merged and isinstance(v, dict) and isinstance(merged[k], dict):
+                    if (
+                        k in merged
+                        and isinstance(v, dict)
+                        and isinstance(merged[k], dict)
+                    ):
                         merged[k] = {**merged[k], **v}
                     else:
                         merged[k] = v

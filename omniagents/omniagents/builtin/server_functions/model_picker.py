@@ -388,6 +388,4 @@ setattr(list_models, "_server_function_on_invoke", _list_models_on_invoke)
 setattr(switch_model, "_server_function_on_invoke", _switch_model_on_invoke)
 setattr(set_reasoning, "_server_function_on_invoke", _set_reasoning_on_invoke)
 setattr(list_voice_models, "_server_function_on_invoke", _list_voice_models_on_invoke)
-setattr(
-    switch_voice_model, "_server_function_on_invoke", _switch_voice_model_on_invoke
-)
+setattr(switch_voice_model, "_server_function_on_invoke", _switch_voice_model_on_invoke)

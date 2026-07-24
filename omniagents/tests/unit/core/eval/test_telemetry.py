@@ -10,7 +10,6 @@ from omniagents.core.eval.telemetry import (
     _empty_usage,
 )
 
-
 # --- consume_stream_events ---
 
 

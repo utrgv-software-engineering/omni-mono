@@ -39,11 +39,18 @@ def test_sdk_capabilities_pre_registered():
     """sdk_* names resolve to the SDK Capability subclasses without any
     explicit register_capability call."""
     registered = list_registered_capabilities()
-    for name in ("sdk_filesystem", "sdk_shell", "sdk_skills", "sdk_memory", "sdk_compaction"):
+    for name in (
+        "sdk_filesystem",
+        "sdk_shell",
+        "sdk_skills",
+        "sdk_memory",
+        "sdk_compaction",
+    ):
         assert name in registered, f"{name} should be auto-registered"
 
     fs_cls = resolve_capability_class("sdk_filesystem")
     from agents.sandbox.capabilities import Filesystem as SdkFilesystem
+
     assert fs_cls is SdkFilesystem
 
 
@@ -56,6 +63,7 @@ def test_parse_capability_with_sdk_type(tmp_path):
         tool_registry={},
     )
     from agents.sandbox.capabilities import Filesystem as SdkFilesystem
+
     assert isinstance(cap, SdkFilesystem)
     assert cap.capability_name == "fs_sandbox"
 

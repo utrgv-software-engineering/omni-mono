@@ -166,9 +166,7 @@ async def run_agent_once(
         return result.final_output_as(str)
 
 
-def resolve_project_agent_yaml(
-    agent_key: str, project_path: Any = None
-) -> Path:
+def resolve_project_agent_yaml(agent_key: str, project_path: Any = None) -> Path:
     """Locate ``<agents-dir>/<agent_key>/agent.yml`` via a project manifest.
 
     *project_path* is a project.yml path or a directory containing one;

@@ -168,7 +168,9 @@ async def test_endpoint_accepts_args_field():
 
 
 class ChannelContextMethods(RpcMethodsBase):
-    def __init__(self, ready_a: asyncio.Event, ready_b: asyncio.Event, go: asyncio.Event):
+    def __init__(
+        self, ready_a: asyncio.Event, ready_b: asyncio.Event, go: asyncio.Event
+    ):
         super().__init__()
         self._ready_a = ready_a
         self._ready_b = ready_b

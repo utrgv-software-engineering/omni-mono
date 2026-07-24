@@ -219,7 +219,9 @@ async def _proxy_flow():
             remote_auth_token_key=remote_token_env,
         )
 
-        gateway_app = server_app.build_app(spec=gateway_spec, default_workspace_root="/tmp")
+        gateway_app = server_app.build_app(
+            spec=gateway_spec, default_workspace_root="/tmp"
+        )
         gateway_port = _get_free_port()
         gateway_server, gateway_task = await _run_server(gateway_app, gateway_port)
 

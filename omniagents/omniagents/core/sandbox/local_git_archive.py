@@ -261,7 +261,9 @@ def _list_git_paths(src: Path, include_untracked: bool) -> list[str]:
         )
 
     raw = completed.stdout
-    return [name for name in raw.decode("utf-8", errors="replace").split("\x00") if name]
+    return [
+        name for name in raw.decode("utf-8", errors="replace").split("\x00") if name
+    ]
 
 
 def _build_workspace_tar(src: Path, include_untracked: bool) -> bytes:
@@ -332,9 +334,7 @@ def _build_workspace_tar(src: Path, include_untracked: bool) -> bytes:
 _GIT_TOP_LEVEL_SKIP = frozenset({"logs", "worktrees"})
 
 
-def _add_git_dir_to_tar(
-    src: Path, tar: tarfile.TarFile, seen_dirs: set[str]
-) -> None:
+def _add_git_dir_to_tar(src: Path, tar: tarfile.TarFile, seen_dirs: set[str]) -> None:
     """Append the host's ``.git/`` directory to *tar*.
 
     No-op when ``src/.git`` is not a directory (linked-worktree case),

@@ -585,7 +585,11 @@ class Runner:
         # Create and display IFrame (only use display(), don't return to avoid double display)
         iframe = IFrame(url, width=width, height=height)
         display(iframe)
-        display(HTML(f'<div style="margin: 8px 0;"><a href="{url}" target="_blank" rel="noopener">Open in new tab</a></div>'))
+        display(
+            HTML(
+                f'<div style="margin: 8px 0;"><a href="{url}" target="_blank" rel="noopener">Open in new tab</a></div>'
+            )
+        )
 
     @staticmethod
     def _find_available_port(start_port: int, max_attempts: int = 20) -> int:

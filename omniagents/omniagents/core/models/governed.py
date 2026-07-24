@@ -189,9 +189,7 @@ def apply_platform_model_governance(config_dir: Path | str | None = None) -> Non
         return
 
     # model_providers is a top-level policy key (not nested under project)
-    platform_providers = policy.get("model_providers") or project.get(
-        "model_providers"
-    )
+    platform_providers = policy.get("model_providers") or project.get("model_providers")
     if not platform_providers:
         return
 

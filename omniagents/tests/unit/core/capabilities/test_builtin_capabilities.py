@@ -62,9 +62,7 @@ def test_builtin_capabilities_auto_discovered(tmp_path):
     # project without SERPAPI_API_KEY can still use web_fetch / download_file.
     web_tool_names = {t.name for t in proj.capability_registry["web"].tools()}
     assert web_tool_names == {"web_fetch", "download_file"}
-    serpapi_tool_names = {
-        t.name for t in proj.capability_registry["serpapi"].tools()
-    }
+    serpapi_tool_names = {t.name for t in proj.capability_registry["serpapi"].tools()}
     assert serpapi_tool_names == {"web_search", "youtube_search", "scholar_search"}
 
 
@@ -150,9 +148,7 @@ def test_notebook_readonly_and_slash_builtins(tmp_path):
         "glob_files",
         "grep_files",
     }
-    sh_ro_tools = {
-        t.name for t in proj.capability_registry["shell_readonly"].tools()
-    }
+    sh_ro_tools = {t.name for t in proj.capability_registry["shell_readonly"].tools()}
     assert sh_ro_tools == {"execute_bash"}
 
     slash_tools = {t.name for t in proj.capability_registry["slash"].tools()}

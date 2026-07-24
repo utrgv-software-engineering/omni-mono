@@ -183,8 +183,16 @@ def test_run_notebook_enables_realtime_for_voice_spec(monkeypatch):
             self.args = args
             self.kwargs = kwargs
 
-    monkeypatch.setitem(__import__("sys").modules, "fastapi.staticfiles", types.SimpleNamespace(StaticFiles=DummyStaticFiles))
-    monkeypatch.setitem(__import__("sys").modules, "uvicorn", types.SimpleNamespace(run=lambda **kwargs: None))
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "fastapi.staticfiles",
+        types.SimpleNamespace(StaticFiles=DummyStaticFiles),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "uvicorn",
+        types.SimpleNamespace(run=lambda **kwargs: None),
+    )
 
     class DummyApp:
         def add_middleware(self, *args, **kwargs):
@@ -193,7 +201,9 @@ def test_run_notebook_enables_realtime_for_voice_spec(monkeypatch):
         def mount(self, *args, **kwargs):
             return None
 
-    monkeypatch.setattr("omniagents.backends.server.app.build_app", lambda **kwargs: DummyApp())
+    monkeypatch.setattr(
+        "omniagents.backends.server.app.build_app", lambda **kwargs: DummyApp()
+    )
     monkeypatch.setattr(Runner, "_resolve_web_ui_dist", lambda self: None)
     monkeypatch.setattr(Runner, "_find_available_port", lambda *args, **kwargs: 8123)
 

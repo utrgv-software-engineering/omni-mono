@@ -30,7 +30,6 @@ from omniagents.builtin.tools.worker_tools import (
     workers_snapshot,
 )
 
-
 _log = logging.getLogger(__name__)
 
 
@@ -74,9 +73,7 @@ setattr(workers_list, "_server_function_on_invoke", _workers_list_on_invoke)
     strict=True,
     name_override="workers.kill",
 )
-async def workers_kill(
-    worker_id: str, _session_id: Optional[str] = None
-) -> dict:
+async def workers_kill(worker_id: str, _session_id: Optional[str] = None) -> dict:
     handle = manager().workers.get(worker_id)
     if handle is None:
         return {
@@ -120,9 +117,7 @@ async def workers_kill(
 async def _workers_kill_on_invoke(service, session, args=None):
     args = args or {}
     sid = getattr(session, "id", None)
-    result = await workers_kill(
-        worker_id=args.get("worker_id"), _session_id=sid
-    )
+    result = await workers_kill(worker_id=args.get("worker_id"), _session_id=sid)
     # ``manager().close`` waits for the worker's terminal state, which
     # triggers ``_on_worker_complete`` and that callback already
     # broadcasts. The extra broadcast here is a belt-and-braces refresh

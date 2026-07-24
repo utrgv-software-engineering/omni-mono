@@ -47,7 +47,9 @@ class FakeExecWs:
         #   dd … | wc -c; echo {z}
         # Respond with the requested block's base64 + its true length, mirroring
         # the real protocol so the channel's reassembly/verification is exercised.
-        mb = re.search(r"__OMNS_([0-9a-f]+)_(\d+)_(\d+)__; dd if=(\S+) bs=(\d+) skip=(\d+)", data)
+        mb = re.search(
+            r"__OMNS_([0-9a-f]+)_(\d+)_(\d+)__; dd if=(\S+) bs=(\d+) skip=(\d+)", data
+        )
         if mb:
             tok, block, attempt = mb.group(1), int(mb.group(2)), int(mb.group(3))
             path, bs, skip = mb.group(4), int(mb.group(5)), int(mb.group(6))
@@ -130,7 +132,12 @@ def test_build_group_mounts_workspace_share():
         AciContainerSpec(
             name="g",
             image="img",
-            file_share=AciFileShare(account_name="a", account_key="k", share_name="ws", mount_path="/workspace"),
+            file_share=AciFileShare(
+                account_name="a",
+                account_key="k",
+                share_name="ws",
+                mount_path="/workspace",
+            ),
         )
     )
     container = grp.containers[0]
@@ -164,7 +171,9 @@ def test_build_group_subnet_without_ports_joins_vnet_no_ip():
     # A no-service sandbox still joins the subnet (private IP) so it can reach
     # private endpoints, but exposes no ports.
     sid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/v/subnets/aci"
-    grp = _manager()._build_group(AciContainerSpec(name="g", image="img", subnet_id=sid))
+    grp = _manager()._build_group(
+        AciContainerSpec(name="g", image="img", subnet_id=sid)
+    )
     assert grp.ip_address is None
     assert [s.id for s in grp.subnet_ids] == [sid]
 
@@ -176,7 +185,9 @@ def _files_channel():
     from omniagents.core.sandbox.aci_engine import AciFileShare, AciFilesChannel
 
     return AciFilesChannel(
-        AciFileShare(account_name="a", account_key="k", share_name="s", mount_path="/workspace")
+        AciFileShare(
+            account_name="a", account_key="k", share_name="s", mount_path="/workspace"
+        )
     )
 
 
@@ -203,7 +214,8 @@ def test_build_group_registry_managed_identity():
     mi = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mi"
     grp = _manager()._build_group(
         AciContainerSpec(
-            name="g", image="acr.azurecr.io/img:latest",
+            name="g",
+            image="acr.azurecr.io/img:latest",
             registry=AciRegistry(server="acr.azurecr.io", identity=mi),
         )
     )
@@ -220,7 +232,8 @@ def test_build_group_registry_admin_creds_still_work():
 
     grp = _manager()._build_group(
         AciContainerSpec(
-            name="g", image="acr.azurecr.io/img:latest",
+            name="g",
+            image="acr.azurecr.io/img:latest",
             registry=AciRegistry(server="acr.azurecr.io", username="u", password="p"),
         )
     )

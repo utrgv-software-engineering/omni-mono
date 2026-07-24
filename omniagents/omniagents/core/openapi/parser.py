@@ -199,7 +199,13 @@ def parse_openapi_spec(
             if not operation_id:
                 # Generate operationId from method + path
                 # e.g., GET /data/obs/{regionCode}/recent -> get_data_obs_regionCode_recent
-                path_part = path_str.lstrip("/").replace("/", "_").replace("{", "").replace("}", "").replace("-", "_")
+                path_part = (
+                    path_str.lstrip("/")
+                    .replace("/", "_")
+                    .replace("{", "")
+                    .replace("}", "")
+                    .replace("-", "_")
+                )
                 operation_id = f"{method}_{path_part}"
 
             if operation_id in exclude_set:

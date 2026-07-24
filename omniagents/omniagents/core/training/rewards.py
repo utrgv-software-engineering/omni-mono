@@ -18,7 +18,9 @@ from omniagents.core.evaluation.context import EvalContext, build_eval_context, 
 from omniagents.core.evaluation.registry import get_measure, _MEASURES
 
 
-def _normalize_completion_to_history(completion: Union[str, List[Dict], Dict]) -> List[Dict]:
+def _normalize_completion_to_history(
+    completion: Union[str, List[Dict], Dict],
+) -> List[Dict]:
     """Normalize a completion to a list of message dicts.
 
     TRL's GRPOTrainer with tools may provide completions as:
@@ -49,11 +51,15 @@ def _normalize_completion_to_history(completion: Union[str, List[Dict], Dict]) -
         normalized = []
         for msg in completion:
             if isinstance(msg, str):
-                normalized.append({"role": "assistant", "content": msg, "type": "message"})
+                normalized.append(
+                    {"role": "assistant", "content": msg, "type": "message"}
+                )
             elif isinstance(msg, dict):
                 normalized.extend(_flatten_message(msg))
             else:
-                normalized.append({"role": "assistant", "content": str(msg), "type": "message"})
+                normalized.append(
+                    {"role": "assistant", "content": str(msg), "type": "message"}
+                )
         return normalized
 
     # Unknown format - try to convert to string
@@ -83,7 +89,8 @@ def _flatten_message(msg: Dict) -> List[Dict]:
         # Convert TRL tool output to omniagents format
         flattened = {
             "type": "function_call_output",
-            "call_id": msg.get("tool_call_id") or msg.get("name"),  # TRL may use tool_call_id or name
+            "call_id": msg.get("tool_call_id")
+            or msg.get("name"),  # TRL may use tool_call_id or name
             "output": msg.get("content"),
         }
         result.append(flattened)
@@ -318,7 +325,9 @@ def measure_to_reward(
         measure_name = measure
     else:
         measure_fn = measure
-        measure_name = getattr(measure, "_measure_name", None) or getattr(measure, "__name__", "")
+        measure_name = getattr(measure, "_measure_name", None) or getattr(
+            measure, "__name__", ""
+        )
 
     return MeasureRewardAdapter(
         measure_fn=measure_fn,
@@ -357,9 +366,13 @@ def combine_rewards(
         weights = [1.0 / len(rewards)] * len(rewards)
 
     if len(weights) != len(rewards):
-        raise ValueError(f"weights length ({len(weights)}) must match rewards length ({len(rewards)})")
+        raise ValueError(
+            f"weights length ({len(weights)}) must match rewards length ({len(rewards)})"
+        )
 
-    def combined_reward(completions: List[Union[str, List[Dict]]], **kwargs) -> List[float]:
+    def combined_reward(
+        completions: List[Union[str, List[Dict]]], **kwargs
+    ) -> List[float]:
         # Compute rewards from each function
         all_rewards = []
         for reward_fn in rewards:
@@ -369,10 +382,7 @@ def combine_rewards(
         # Combine with weights
         combined = []
         for i in range(len(completions)):
-            total = sum(
-                w * all_rewards[j][i]
-                for j, w in enumerate(weights)
-            )
+            total = sum(w * all_rewards[j][i] for j, w in enumerate(weights))
             combined.append(total)
 
         return combined

@@ -97,13 +97,27 @@ class PartialCloneGitRepo(GitRepo):
             return init
 
         remote_add = await session.exec(
-            "git", "-C", tmp_dir, "remote", "add", "origin", _normalize_clone_url(url), shell=False
+            "git",
+            "-C",
+            tmp_dir,
+            "remote",
+            "add",
+            "origin",
+            _normalize_clone_url(url),
+            shell=False,
         )
         if not remote_add.ok():
             return remote_add
 
         fetch = await session.exec(
-            "git", "-C", tmp_dir, "fetch", "--filter=blob:none", "origin", self.ref, shell=False
+            "git",
+            "-C",
+            tmp_dir,
+            "fetch",
+            "--filter=blob:none",
+            "origin",
+            self.ref,
+            shell=False,
         )
         if not fetch.ok():
             return fetch

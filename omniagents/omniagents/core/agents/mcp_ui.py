@@ -122,9 +122,7 @@ def extract_ui_resources(call_tool_result: Any) -> List[Dict[str, Any]]:
     return out
 
 
-def record(
-    server_name: str, tool_name: str, ui_resource: Dict[str, Any]
-) -> None:
+def record(server_name: str, tool_name: str, ui_resource: Dict[str, Any]) -> None:
     """Stash a UI resource block for later pickup by the bridge.
 
     ``server_name`` is preserved in the payload so the launcher can route

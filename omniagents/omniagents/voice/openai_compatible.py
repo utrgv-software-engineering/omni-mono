@@ -4,7 +4,6 @@ from typing import Any, Optional
 
 from omniagents.core.debug import Debug
 
-
 DEBUG_VOICE = (
     os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in {"1", "true"}
     or Debug.enabled()

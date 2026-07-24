@@ -149,7 +149,11 @@ async def _fs_list_dir_in_sandbox(
     parent = str(PurePosixPath(base).parent)
     # Only expose "up" while it stays within the manifest root — the picker
     # can't navigate above the workspace boundary.
-    up = parent if (parent != base and clamp_within(parent, manifest_root) == parent) else None
+    up = (
+        parent
+        if (parent != base and clamp_within(parent, manifest_root) == parent)
+        else None
+    )
     return {"path": base, "parent": up, "entries": entries}
 
 

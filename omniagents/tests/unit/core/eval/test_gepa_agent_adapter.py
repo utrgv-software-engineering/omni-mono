@@ -11,16 +11,14 @@ def _basic_config(tmp_path):
     cfg_dir.mkdir()
     cfg = cfg_dir / "compiled.yaml"
     cfg.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             name: Unit Agent
             label: Unit Label
             evaluation:
               failure_categories:
                 unit:
                   - numeric_accuracy
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     return cfg

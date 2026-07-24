@@ -151,10 +151,16 @@ class StageResult:
         """Rich HTML display for Jupyter notebooks."""
         import html
 
-        status_color = "#22c55e" if self.pass_rate and self.pass_rate >= 0.8 else "#f59e0b"
-        early_badge = ' <span style="color: #22c55e; font-size: 0.8em;">(advanced early)</span>' if self.advanced_early else ""
+        status_color = (
+            "#22c55e" if self.pass_rate and self.pass_rate >= 0.8 else "#f59e0b"
+        )
+        early_badge = (
+            ' <span style="color: #22c55e; font-size: 0.8em;">(advanced early)</span>'
+            if self.advanced_early
+            else ""
+        )
 
-        return f'''
+        return f"""
         <div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin: 4px 0;">
             <div style="font-weight: bold; color: {status_color};">
                 {html.escape(self.name)}{early_badge}
@@ -165,7 +171,7 @@ class StageResult:
                 Pass rate: {f"{self.pass_rate:.0%}" if self.pass_rate is not None else 'N/A'}
             </div>
         </div>
-        '''
+        """
 
 
 @dataclass
@@ -246,7 +252,7 @@ class CurriculumTrainingResult:
 
         model = self.trainer.model
         model.eval()
-        if hasattr(model, 'gradient_checkpointing_disable'):
+        if hasattr(model, "gradient_checkpointing_disable"):
             model.gradient_checkpointing_disable()
 
         self._inference_ready = True
@@ -286,7 +292,9 @@ class CurriculumTrainingResult:
         try:
             import matplotlib.pyplot as plt
         except ImportError:
-            raise ImportError("matplotlib required for plotting. Install with: pip install matplotlib")
+            raise ImportError(
+                "matplotlib required for plotting. Install with: pip install matplotlib"
+            )
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
 
@@ -295,19 +303,22 @@ class CurriculumTrainingResult:
         pass_rates = [s.pass_rate or 0 for s in self.stages]
 
         # Loss plot
-        ax1.bar(stage_names, losses, color='steelblue')
-        ax1.set_ylabel('Final Loss')
-        ax1.set_title('Loss by Curriculum Stage')
-        ax1.tick_params(axis='x', rotation=45)
+        ax1.bar(stage_names, losses, color="steelblue")
+        ax1.set_ylabel("Final Loss")
+        ax1.set_title("Loss by Curriculum Stage")
+        ax1.tick_params(axis="x", rotation=45)
 
         # Pass rate plot
-        colors = ['#22c55e' if pr >= 0.8 else '#f59e0b' if pr >= 0.5 else '#ef4444' for pr in pass_rates]
+        colors = [
+            "#22c55e" if pr >= 0.8 else "#f59e0b" if pr >= 0.5 else "#ef4444"
+            for pr in pass_rates
+        ]
         ax2.bar(stage_names, pass_rates, color=colors)
-        ax2.set_ylabel('Pass Rate')
-        ax2.set_title('Pass Rate by Curriculum Stage')
+        ax2.set_ylabel("Pass Rate")
+        ax2.set_title("Pass Rate by Curriculum Stage")
         ax2.set_ylim(0, 1)
-        ax2.axhline(y=0.8, color='gray', linestyle='--', alpha=0.5)
-        ax2.tick_params(axis='x', rotation=45)
+        ax2.axhline(y=0.8, color="gray", linestyle="--", alpha=0.5)
+        ax2.tick_params(axis="x", rotation=45)
 
         plt.tight_layout()
         plt.show()
@@ -318,21 +329,31 @@ class CurriculumTrainingResult:
 
         stages_html = ""
         for stage in self.stages:
-            status_color = "#22c55e" if stage.pass_rate and stage.pass_rate >= 0.8 else "#f59e0b"
-            early_badge = ' <span style="color: #22c55e; font-size: 0.8em;">(early)</span>' if stage.advanced_early else ""
-            pass_rate_str = f"{stage.pass_rate:.0%}" if stage.pass_rate is not None else "N/A"
-            loss_str = f"{stage.final_loss:.4f}" if stage.final_loss is not None else "N/A"
+            status_color = (
+                "#22c55e" if stage.pass_rate and stage.pass_rate >= 0.8 else "#f59e0b"
+            )
+            early_badge = (
+                ' <span style="color: #22c55e; font-size: 0.8em;">(early)</span>'
+                if stage.advanced_early
+                else ""
+            )
+            pass_rate_str = (
+                f"{stage.pass_rate:.0%}" if stage.pass_rate is not None else "N/A"
+            )
+            loss_str = (
+                f"{stage.final_loss:.4f}" if stage.final_loss is not None else "N/A"
+            )
 
-            stages_html += f'''
+            stages_html += f"""
             <tr style="border-bottom: 1px solid #f3f4f6;">
                 <td style="padding: 6px 12px;">{html.escape(stage.name)}{early_badge}</td>
                 <td style="padding: 6px 12px; text-align: center;">{stage.epochs_completed}</td>
                 <td style="padding: 6px 12px; text-align: center;">{loss_str}</td>
                 <td style="padding: 6px 12px; text-align: center; color: {status_color};">{pass_rate_str}</td>
             </tr>
-            '''
+            """
 
-        return f'''
+        return f"""
         <div style="font-family: system-ui, sans-serif; margin: 8px 0;">
             <div style="font-size: 18px; font-weight: bold; margin-bottom: 8px;">
                 Curriculum Training Complete
@@ -354,7 +375,7 @@ class CurriculumTrainingResult:
                 </tbody>
             </table>
         </div>
-        '''
+        """
 
     def __repr__(self) -> str:
         return f"CurriculumTrainingResult({len(self.stages)} stages, {self.total_epochs} epochs)"
@@ -379,7 +400,9 @@ def _filter_suite_by_tags(
     # Import here to avoid circular imports
     from omniagents.notebook.evaluation import EvalSuite as EvalSuiteClass, TestCase
 
-    filtered = EvalSuiteClass(name=f"{suite.name} (filtered)", description=suite.description)
+    filtered = EvalSuiteClass(
+        name=f"{suite.name} (filtered)", description=suite.description
+    )
     for case in suite.cases:
         if case.tags and any(t in case.tags for t in tags):
             filtered.cases.append(case)
@@ -542,12 +565,14 @@ def train_grpo_curriculum(
         stage_suite = _filter_suite_by_tags(suite, stage.tags)
         if len(stage_suite) == 0:
             print(f"  Warning: No cases match tags {stage.tags}, skipping stage")
-            stage_results.append(StageResult(
-                name=stage.name,
-                epochs_completed=0,
-                final_loss=None,
-                pass_rate=None,
-            ))
+            stage_results.append(
+                StageResult(
+                    name=stage.name,
+                    epochs_completed=0,
+                    final_loss=None,
+                    pass_rate=None,
+                )
+            )
             continue
 
         print(f"  Training cases: {len(stage_suite)} (tags: {stage.tags or 'all'})")
@@ -604,7 +629,9 @@ def train_grpo_curriculum(
         )
 
         # Convert suite to dataset
-        stage_dataset = eval_suite_to_hf_dataset(stage_suite, system_prompt=instructions)
+        stage_dataset = eval_suite_to_hf_dataset(
+            stage_suite, system_prompt=instructions
+        )
         print(f"  Dataset ready: {len(stage_dataset)} samples")
 
         # Build trainer
@@ -643,14 +670,16 @@ def train_grpo_curriculum(
         advanced_early = False
 
         # Record stage result
-        stage_results.append(StageResult(
-            name=stage.name,
-            epochs_completed=epochs_completed,
-            final_loss=final_loss,
-            metrics=metrics,
-            pass_rate=pass_rate,
-            advanced_early=advanced_early,
-        ))
+        stage_results.append(
+            StageResult(
+                name=stage.name,
+                epochs_completed=epochs_completed,
+                final_loss=final_loss,
+                metrics=metrics,
+                pass_rate=pass_rate,
+                advanced_early=advanced_early,
+            )
+        )
 
         total_epochs += epochs_completed
         print(f"  Completed: loss={f'{final_loss:.4f}' if final_loss else 'N/A'}")

@@ -121,9 +121,9 @@ def default_goal_tick_prompt(*, goal: str, max_turns: int) -> str:
     return (
         f"[goal] Tick. Goal: {goal} (budget {max_turns} turns total). "
         "Take the next concrete step. Reuse context — don't re-gather what you already have. "
-        "If the goal is achieved and verified, call `goal_complete(reason=\"achieved\", evidence=\"...\")`. "
+        'If the goal is achieved and verified, call `goal_complete(reason="achieved", evidence="...")`. '
         "If you're truly blocked on something requiring human input, "
-        "call `goal_complete(reason=\"blocked\", evidence=\"...\")`. "
+        'call `goal_complete(reason="blocked", evidence="...")`. '
         "For long-running work, start it in the background and end your turn — "
         "the completion notification will wake you."
     )
@@ -187,9 +187,7 @@ def build_initial_prompt(goal: str, max_turns: int) -> str:
 def build_tick_prompt(*, goal: str, max_turns: int) -> str:
     if _tick_prompt_builder is not default_goal_tick_prompt:
         return _tick_prompt_builder(goal=goal, max_turns=max_turns)
-    rendered = _render_product_template(
-        "goal_tick.md", goal=goal, max_turns=max_turns
-    )
+    rendered = _render_product_template("goal_tick.md", goal=goal, max_turns=max_turns)
     if rendered is not None:
         return rendered
     return default_goal_tick_prompt(goal=goal, max_turns=max_turns)

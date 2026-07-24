@@ -89,7 +89,9 @@ def _docker_args(tmp_path: Path, *, with_tar: bool):
 def test_resume_tier_reused(tmp_path):
     client = FakeDockerClient(container_survives=True)
     session, tier = asyncio.run(
-        _create_or_resume_session(client=client, **_docker_args(tmp_path, with_tar=True))
+        _create_or_resume_session(
+            client=client, **_docker_args(tmp_path, with_tar=True)
+        )
     )
     assert tier == "reused"
     assert session.state.container_id == "ctr-old"
@@ -100,7 +102,9 @@ def test_resume_tier_reused(tmp_path):
 def test_resume_tier_rehydrated_when_container_gone_but_tar_exists(tmp_path):
     client = FakeDockerClient(container_survives=False)
     session, tier = asyncio.run(
-        _create_or_resume_session(client=client, **_docker_args(tmp_path, with_tar=True))
+        _create_or_resume_session(
+            client=client, **_docker_args(tmp_path, with_tar=True)
+        )
     )
     assert tier == "rehydrated"
     assert session.state.container_id == "ctr-replacement"

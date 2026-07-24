@@ -32,7 +32,9 @@ class TerminalSandboxEnvironment(SandboxTrainingEnvironment):
         """
         # async so TRL gathers bash calls ACROSS rollouts -> their container
         # execs run concurrently (the work happens on the shared pool loop).
-        return await asyncio.wrap_future(self._pool.submit(self._abash(command, timeout)))
+        return await asyncio.wrap_future(
+            self._pool.submit(self._abash(command, timeout))
+        )
 
     async def _abash(self, command: str, timeout: int) -> str:
         self._bind_workspace()  # route omniagents.workspace.* into this container

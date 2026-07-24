@@ -10,7 +10,9 @@ from omniagents.core.runtime.ephemeral import run_agent_once as _raw
 def test_temporary_environ_sets_and_restores(monkeypatch):
     monkeypatch.setenv("EPH_KEEP", "orig")
     monkeypatch.delenv("EPH_NEW", raising=False)
-    with temporary_environ({"EPH_KEEP": "changed", "EPH_NEW": "added", "EPH_GONE": None}):
+    with temporary_environ(
+        {"EPH_KEEP": "changed", "EPH_NEW": "added", "EPH_GONE": None}
+    ):
         assert os.environ["EPH_KEEP"] == "changed"
         assert os.environ["EPH_NEW"] == "added"
         assert "EPH_GONE" not in os.environ
@@ -57,7 +59,9 @@ async def test_run_agent_once_wires_everything(monkeypatch, tmp_path):
     import agents as agents_mod
 
     monkeypatch.setattr(builder_mod, "_default_build_agent", fake_build)
-    monkeypatch.setattr(agents_mod.Runner, "run_streamed", staticmethod(fake_run_streamed))
+    monkeypatch.setattr(
+        agents_mod.Runner, "run_streamed", staticmethod(fake_run_streamed)
+    )
     monkeypatch.delenv("EPH_RUN_KEY", raising=False)
 
     sentinel_provider = object()
@@ -105,7 +109,9 @@ async def test_run_agent_once_explicit_workspace_root_wins(monkeypatch):
     import agents as agents_mod
 
     monkeypatch.setattr(builder_mod, "_default_build_agent", fake_build)
-    monkeypatch.setattr(agents_mod.Runner, "run_streamed", staticmethod(fake_run_streamed))
+    monkeypatch.setattr(
+        agents_mod.Runner, "run_streamed", staticmethod(fake_run_streamed)
+    )
 
     session = SimpleNamespace(context={"workspace_root": "/from/session"})
     await run_agent_once(

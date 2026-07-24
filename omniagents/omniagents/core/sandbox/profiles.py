@@ -347,7 +347,11 @@ def _load_env_file(config_dir: Path) -> Dict[str, str]:
         try:
             from dotenv import dotenv_values  # type: ignore
 
-            return {k: v for k, v in (dotenv_values(str(path)) or {}).items() if k and v is not None}
+            return {
+                k: v
+                for k, v in (dotenv_values(str(path)) or {}).items()
+                if k and v is not None
+            }
         except ImportError:
             out: Dict[str, str] = {}
             for raw in path.read_text(encoding="utf-8").splitlines():

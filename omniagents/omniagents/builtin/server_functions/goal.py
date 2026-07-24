@@ -30,6 +30,7 @@ from omniagents.core.autonomy.goal import (  # noqa: F401  (re-exported surface)
     status_impl,
     stop_impl,
 )
+
 # Backwards-compatible handler aliases (tests and older callers import
 # these names from this module).
 _goal_start_on_invoke = start_impl

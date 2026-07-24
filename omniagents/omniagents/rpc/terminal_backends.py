@@ -48,7 +48,6 @@ except ImportError:  # pragma: no cover - Windows
 
 from omniagents.core.sandbox.pty_stream import PtyStreamingSession
 
-
 __all__ = [
     "PtyBackend",
     "HostPtyBackend",
@@ -197,7 +196,9 @@ class HostPtyBackend:
         try:
             while True:
                 try:
-                    chunk = await loop.run_in_executor(None, os.read, handle.master_fd, 4096)
+                    chunk = await loop.run_in_executor(
+                        None, os.read, handle.master_fd, 4096
+                    )
                 except OSError:
                     break
                 if not chunk:

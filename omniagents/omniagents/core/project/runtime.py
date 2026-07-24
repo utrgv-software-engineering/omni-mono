@@ -239,9 +239,7 @@ def load_project(
     # install winning only among conventional installs.
     from omniagents.core.models.catalog import install_model_catalog
 
-    install_model_catalog(
-        (p if p.is_file() else (base_dir / "project.yml")), data=proj
-    )
+    install_model_catalog((p if p.is_file() else (base_dir / "project.yml")), data=proj)
 
     paths_cfg = proj.get("paths") or {}
 
@@ -518,9 +516,7 @@ def load_project(
         inline_caps = proj.get("capabilities")
         if inline_caps is not None:
             if not isinstance(inline_caps, list):
-                print(
-                    "Warning: project.yml 'capabilities' must be a list. Ignoring."
-                )
+                print("Warning: project.yml 'capabilities' must be a list. Ignoring.")
             else:
                 for cap_spec in inline_caps:
                     cap = parse_capability_spec(
@@ -531,7 +527,9 @@ def load_project(
                         capability_registry=capability_registry,
                         source="project.yml",
                     )
-                    cap_name = getattr(cap, "capability_name", None) or cap_spec.get("name")
+                    cap_name = getattr(cap, "capability_name", None) or cap_spec.get(
+                        "name"
+                    )
                     if cap_name in project_cap_names:
                         raise ValueError(
                             f"Duplicate capability name {cap_name!r}: defined inline "

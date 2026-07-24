@@ -24,7 +24,6 @@ from omniagents.core.sandbox.local_git_archive import (
     LocalGitArchiveError,
 )
 
-
 # --- fixtures --------------------------------------------------------- #
 
 
@@ -74,7 +73,9 @@ def _make_session() -> MagicMock:
     return session
 
 
-def _apply(entry: LocalGitArchive, session: Any, dest: Path = Path("/workspace")) -> None:
+def _apply(
+    entry: LocalGitArchive, session: Any, dest: Path = Path("/workspace")
+) -> None:
     asyncio.run(entry.apply(session=session, dest=dest, base_dir=Path("/")))
 
 
@@ -504,5 +505,3 @@ def test_unix_local_session_is_pure_noop(repo_with_commit: Path, tmp_path: Path)
     session.write.assert_not_awaited()
     session.exec.assert_not_awaited()
     assert not dest.exists()
-
-

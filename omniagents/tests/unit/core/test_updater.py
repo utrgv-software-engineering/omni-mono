@@ -51,7 +51,9 @@ def test_check_for_update_compares_current_and_latest(monkeypatch, tmp_path):
 
 def test_maybe_print_update_notice_uses_cache(monkeypatch, tmp_path, capsys):
     # cache_dir may be a zero-arg callable resolved at call time
-    config = make_config(tmp_path, cache_dir=lambda: tmp_path, update_command_hint="omni update")
+    config = make_config(
+        tmp_path, cache_dir=lambda: tmp_path, update_command_hint="omni update"
+    )
     monkeypatch.setattr(updater, "get_current_version", lambda _package: "0.4.2")
     monkeypatch.setattr(updater.time, "time", lambda: 1000.0)
     monkeypatch.setattr(updater, "fetch_latest_version", lambda **_: "0.4.3")

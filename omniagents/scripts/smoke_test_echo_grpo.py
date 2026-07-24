@@ -32,7 +32,13 @@ def main() -> int:
     import torch
 
     from omniagents import Agent, function_tool
-    from omniagents.notebook import EvalSuite, measure, EvalContext, pass_reason, fail_reason
+    from omniagents.notebook import (
+        EvalSuite,
+        measure,
+        EvalContext,
+        pass_reason,
+        fail_reason,
+    )
     from omniagents.training import train_grpo, GRPOTrainingConfig, EchoGRPOTrainer
 
     # --- A tool, so there are tool-result ("environment") tokens for ECHO ----
@@ -60,7 +66,9 @@ def main() -> int:
 
     @measure
     def correct_answer(ctx: EvalContext):
-        response = ctx.final_assistant_message.text if ctx.final_assistant_message else ""
+        response = (
+            ctx.final_assistant_message.text if ctx.final_assistant_message else ""
+        )
         expected = str(ctx.expect.get("answer", ""))
         if expected and expected in response:
             return pass_reason(f"Found {expected}")
@@ -89,7 +97,7 @@ def main() -> int:
         max_completion_length=64,
         temperature=0.8,
         max_tool_calling_iterations=2,
-        world_model_coeff=0.05,            # <-- enables ECHO
+        world_model_coeff=0.05,  # <-- enables ECHO
         world_loss_normalization="selected_tokens",
         output_dir=tmp_out,
         report_to="none",
@@ -108,11 +116,13 @@ def main() -> int:
     )
 
     trainer = result.trainer
-    assert isinstance(trainer, EchoGRPOTrainer), (
-        f"expected EchoGRPOTrainer, got {type(trainer).__name__}"
-    )
+    assert isinstance(
+        trainer, EchoGRPOTrainer
+    ), f"expected EchoGRPOTrainer, got {type(trainer).__name__}"
     assert trainer.world_model_coeff == 0.05
-    print(f"  OK: trainer is EchoGRPOTrainer (world_model_coeff={trainer.world_model_coeff})")
+    print(
+        f"  OK: trainer is EchoGRPOTrainer (world_model_coeff={trainer.world_model_coeff})"
+    )
     print(f"  Final loss: {result.final_loss}")
 
     # Did ECHO metrics show up during the real run? (only if the model emitted
@@ -127,10 +137,14 @@ def main() -> int:
             for entry in result.metrics
             if "world_model/env_tokens" in entry
         ]
-        print(f"  OK: ECHO metrics logged during rollout (env_tokens seen: {env_tokens})")
+        print(
+            f"  OK: ECHO metrics logged during rollout (env_tokens seen: {env_tokens})"
+        )
     else:
-        print("  NOTE: tiny model produced no tool calls this run -> no env tokens "
-              "during rollout (ECHO loss was a graceful 0). Forcing the path below.")
+        print(
+            "  NOTE: tiny model produced no tool calls this run -> no env tokens "
+            "during rollout (ECHO loss was a graceful 0). Forcing the path below."
+        )
 
     # ----------------------------------------------------------------------
     print("=" * 70)
@@ -172,8 +186,10 @@ def main() -> int:
     # Capture state must be reset.
     assert trainer._echo_capture is False
     assert trainer._echo_logps is None
-    print(f"  OK: _compute_loss ran, loss={float(loss.detach()):.4f}, "
-          f"env_tokens={env_tokens}, ce_per_token={ce:.4f}")
+    print(
+        f"  OK: _compute_loss ran, loss={float(loss.detach()):.4f}, "
+        f"env_tokens={env_tokens}, ce_per_token={ce:.4f}"
+    )
 
     # Sanity: with coeff temporarily 0 the loss must drop the aux term.
     trainer.world_model_coeff = 0.0
@@ -181,10 +197,12 @@ def main() -> int:
     trainer.world_model_coeff = 0.05
     assert torch.isfinite(base_loss)
     with_aux, without_aux = float(loss.detach()), float(base_loss.detach())
-    assert abs(with_aux - without_aux) > 1e-6, (
-        "ECHO term made no difference to the loss -- aux loss not applied"
+    assert (
+        abs(with_aux - without_aux) > 1e-6
+    ), "ECHO term made no difference to the loss -- aux loss not applied"
+    print(
+        f"  OK: ECHO term changes loss (with={with_aux:.4f}, without={without_aux:.4f})"
     )
-    print(f"  OK: ECHO term changes loss (with={with_aux:.4f}, without={without_aux:.4f})")
 
     print("=" * 70)
     print("SMOKE TEST PASSED")

@@ -52,12 +52,16 @@ def test_write_governed_config_does_not_mutate_caller_dicts(tmp_path):
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permissions")
 def test_write_governed_config_owner_only_perms(tmp_path):
-    path = write_governed_config(tmp_path, _platform_providers(), None, allow_user_models=True)
+    path = write_governed_config(
+        tmp_path, _platform_providers(), None, allow_user_models=True
+    )
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
     # Rewriting an existing file keeps the perms clamped.
     path.chmod(0o644)
-    path = write_governed_config(tmp_path, _platform_providers(), None, allow_user_models=True)
+    path = write_governed_config(
+        tmp_path, _platform_providers(), None, allow_user_models=True
+    )
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 

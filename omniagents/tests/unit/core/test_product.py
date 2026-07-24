@@ -487,7 +487,9 @@ def test_module_underscore_state_not_leaked():
 # ---------------------------------------------------------------------------
 
 
-def _install_product_package(tmp_path, monkeypatch, package="acmepkg", slug="acme_code"):
+def _install_product_package(
+    tmp_path, monkeypatch, package="acmepkg", slug="acme_code"
+):
     """A fake installed product package shipping a project.yml, plus its
     entry point declared in the ``omniagents.products`` group."""
     from types import SimpleNamespace
@@ -496,17 +498,13 @@ def _install_product_package(tmp_path, monkeypatch, package="acmepkg", slug="acm
     pkg.mkdir(parents=True, exist_ok=True)
     (pkg / "__init__.py").write_text("")
     manifest = pkg / "project.yml"
-    manifest.write_text(
-        dedent(
-            f"""
+    manifest.write_text(dedent(f"""
             name: {slug}
             product:
               name: {slug.replace("_", "-")}
               prog: acme
               slug: {slug}
-            """
-        )
-    )
+            """))
     monkeypatch.syspath_prepend(str(tmp_path))
     import sys as _sys
 
@@ -586,9 +584,7 @@ def test_multiple_products_pick_deterministically_and_warn(
         tmp_path, monkeypatch, package="zzzpkg", slug="zzz_code"
     )
     # Declaration order must not matter: lexicographically smallest wins.
-    monkeypatch.setattr(
-        product_mod, "_load_product_entry_points", lambda: [ep_b, ep_a]
-    )
+    monkeypatch.setattr(product_mod, "_load_product_entry_points", lambda: [ep_b, ep_a])
 
     info = product_info()
     assert info.slug == "aaa_code"

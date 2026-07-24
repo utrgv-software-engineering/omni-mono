@@ -32,7 +32,6 @@ from typing import Any, Optional
 
 from .arbitration import has_active_tick
 
-
 _log = logging.getLogger(__name__)
 
 
@@ -47,12 +46,12 @@ class WakeupSchedule:
     interval_seconds: float
     message: str
     recurring: bool = True
-    end_at: Optional[float] = None        # unix timestamp; whichever bound fires first wins
-    end_after: Optional[int] = None       # remaining fire count (mutated as it fires)
+    end_at: Optional[float] = None  # unix timestamp; whichever bound fires first wins
+    end_after: Optional[int] = None  # remaining fire count (mutated as it fires)
     started_at: float = field(default_factory=time.time)
-    fires: int = 0                        # diagnostic: how many ticks have fired
+    fires: int = 0  # diagnostic: how many ticks have fired
     cancelled: bool = False
-    task: Any = None                      # asyncio.Task — opaque to callers
+    task: Any = None  # asyncio.Task — opaque to callers
 
 
 # Session-id -> WakeupSchedule. In-memory; survives only if rehydrated
@@ -139,7 +138,9 @@ async def _persist(service, session, state: WakeupSchedule | None) -> None:
     payload = _serialize(state) if state is not None else None
     try:
         await service.update_session_variables(
-            session.id, {VAR_KEY: payload}, silent=True,
+            session.id,
+            {VAR_KEY: payload},
+            silent=True,
         )
     except Exception as e:
         _log.warning("wakeup variable sync failed: %s", e)
@@ -250,7 +251,7 @@ async def _conclude(service, session, state: WakeupSchedule) -> None:
         return
     body = (
         f"[wakeup] Watch concluded after {state.fires} fires "
-        f"(\"{state.message}\"). The recurring schedule has ended on its "
+        f'("{state.message}"). The recurring schedule has ended on its '
         f"own. Summarize what you observed and stop — no further wakeups "
         f"will arrive unless you schedule a new one."
     )
@@ -321,7 +322,10 @@ async def maybe_rehydrate(service, session) -> Optional[WakeupSchedule]:
     )
     _log.info(
         "wakeup rehydrated session=%s interval=%.1fs end_after=%s end_at=%s",
-        sid, state.interval_seconds, state.end_after, state.end_at,
+        sid,
+        state.interval_seconds,
+        state.end_after,
+        state.end_at,
     )
     return state
 

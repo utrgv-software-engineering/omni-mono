@@ -62,8 +62,14 @@ class _SandboxPool:
     fresh container per rollout.
     """
 
-    def __init__(self, sandbox_config: Optional[dict], *, pool_size: int,
-                 max_concurrent_builds: int, prewarm_image: str) -> None:
+    def __init__(
+        self,
+        sandbox_config: Optional[dict],
+        *,
+        pool_size: int,
+        max_concurrent_builds: int,
+        prewarm_image: str,
+    ) -> None:
         self._sandbox_config = sandbox_config
         self._pool_size = pool_size
         self._max_builds = max_concurrent_builds
@@ -109,7 +115,9 @@ class _SandboxPool:
 
     async def _acreate(self, image: str):
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._build_pool, self._blocking_create, self._options_for(image))
+        return await loop.run_in_executor(
+            self._build_pool, self._blocking_create, self._options_for(image)
+        )
 
     async def _arefill(self, image: str) -> None:
         # Single-threaded loop: this check/add is atomic (no await before add).
@@ -118,7 +126,10 @@ class _SandboxPool:
         self._refilling.add(image)
         try:
             deficit = self._pool_size - len(self._ready[image])
-            tasks = [asyncio.create_task(self._acreate(image)) for _ in range(max(0, deficit))]
+            tasks = [
+                asyncio.create_task(self._acreate(image))
+                for _ in range(max(0, deficit))
+            ]
             for t in tasks:
                 try:
                     self._ready[image].append(await t)
@@ -128,14 +139,22 @@ class _SandboxPool:
             self._refilling.discard(image)
 
     async def _aacquire(self, image: str):
-        session = self._ready[image].popleft() if self._ready[image] else await self._acreate(image)
-        asyncio.create_task(self._arefill(image))  # top the pool back up in the background
+        session = (
+            self._ready[image].popleft()
+            if self._ready[image]
+            else await self._acreate(image)
+        )
+        asyncio.create_task(
+            self._arefill(image)
+        )  # top the pool back up in the background
         return session
 
     async def _adelete(self, session) -> None:
         try:
             loop = asyncio.get_running_loop()
-            await loop.run_in_executor(self._build_pool, lambda: asyncio.run(self._client.delete(session)))
+            await loop.run_in_executor(
+                self._build_pool, lambda: asyncio.run(self._client.delete(session))
+            )
         except Exception:
             pass
 
@@ -187,12 +206,20 @@ class _SandboxPool:
 _POOLS: dict[str, _SandboxPool] = {}
 
 
-def _get_pool(sandbox_config, pool_size, max_concurrent_builds, prewarm_image) -> _SandboxPool:
-    key = json.dumps(sandbox_config or {"docker": True}, sort_keys=True) + f"|{pool_size}|{max_concurrent_builds}"
+def _get_pool(
+    sandbox_config, pool_size, max_concurrent_builds, prewarm_image
+) -> _SandboxPool:
+    key = (
+        json.dumps(sandbox_config or {"docker": True}, sort_keys=True)
+        + f"|{pool_size}|{max_concurrent_builds}"
+    )
     if key not in _POOLS:
-        _POOLS[key] = _SandboxPool(sandbox_config, pool_size=pool_size,
-                                   max_concurrent_builds=max_concurrent_builds,
-                                   prewarm_image=prewarm_image)
+        _POOLS[key] = _SandboxPool(
+            sandbox_config,
+            pool_size=pool_size,
+            max_concurrent_builds=max_concurrent_builds,
+            prewarm_image=prewarm_image,
+        )
     else:
         _POOLS[key].warm(prewarm_image)  # ensure this image is being pre-warmed too
     return _POOLS[key]
@@ -262,17 +289,29 @@ class SandboxTrainingEnvironment:
 
     async def _areset(self) -> Optional[str]:
         if self._session is not None:
-            asyncio.create_task(self._pool._adelete(self._session))  # async teardown of the used container
+            asyncio.create_task(
+                self._pool._adelete(self._session)
+            )  # async teardown of the used container
             self._session = None
         # "docker_image" preferred; "image" collides with TRL's multimodal column detection.
-        image = self._task.get("docker_image") or self._task.get("image") or self._default_image
-        self._session = await self._pool._aacquire(image)  # a pristine, never-used container
+        image = (
+            self._task.get("docker_image")
+            or self._task.get("image")
+            or self._default_image
+        )
+        self._session = await self._pool._aacquire(
+            image
+        )  # a pristine, never-used container
         self._workspace = SandboxWorkspace(
-            session=self._session, root=self._workspace_root, default_user=self._run_as,
+            session=self._session,
+            root=self._workspace_root,
+            default_user=self._run_as,
         )
         set_workspace(self._workspace)
         for cmd in self._task.get("setup") or []:
-            await self._session.exec(cmd, shell=True, timeout=self._exec_timeout, user=self._run_as)
+            await self._session.exec(
+                cmd, shell=True, timeout=self._exec_timeout, user=self._run_as
+            )
         return None
 
     # ---- verifier (underscored so TRL does not expose it as a tool) ----

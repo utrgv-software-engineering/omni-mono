@@ -125,7 +125,9 @@ class PlatformCredentialProvider:
             logger.warning("Invalid credential response for %s: %s", cache_key, exc)
             return None
         if not isinstance(data, dict):
-            logger.warning("Invalid credential response for %s: not an object", cache_key)
+            logger.warning(
+                "Invalid credential response for %s: not an object", cache_key
+            )
             return None
 
         # Cache with a margin before actual expiry so callers never hold a

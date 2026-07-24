@@ -238,17 +238,23 @@ def _load_extensions(
         ) from e
 
     preflights_raw = getattr(module, "PREFLIGHT", [])
-    if not isinstance(preflights_raw, Sequence) or isinstance(preflights_raw, (str, bytes)):
+    if not isinstance(preflights_raw, Sequence) or isinstance(
+        preflights_raw, (str, bytes)
+    ):
         raise ValueError(f"{module_path}.PREFLIGHT must be a list of callables")
     preflights: List[Preflight] = []
     for hook in preflights_raw:
         if not callable(hook):
-            raise ValueError(f"{module_path}.PREFLIGHT entries must be callable, got {hook!r}")
+            raise ValueError(
+                f"{module_path}.PREFLIGHT entries must be callable, got {hook!r}"
+            )
         preflights.append(hook)
 
     commands_raw = getattr(module, "COMMANDS", {})
     if not isinstance(commands_raw, Mapping):
-        raise ValueError(f"{module_path}.COMMANDS must be a mapping of name -> callable")
+        raise ValueError(
+            f"{module_path}.COMMANDS must be a mapping of name -> callable"
+        )
     commands: Dict[str, CommandHandler] = {}
     for name, handler in commands_raw.items():
         if not isinstance(name, str) or not name.strip():
@@ -481,9 +487,7 @@ def _get_arg_value(args: Sequence[str], *flags: str) -> Optional[str]:
     return None
 
 
-def _intercept_embedded(
-    args: List[str], info: ProductInfo
-) -> tuple[List[str], bool]:
+def _intercept_embedded(args: List[str], info: ProductInfo) -> tuple[List[str], bool]:
     """Embedded (desktop-launcher) mode for the fallthrough agent run.
 
     Part of the launcher contract (``docs/serve-protocol.md``): strip

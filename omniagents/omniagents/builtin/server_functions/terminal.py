@@ -28,7 +28,6 @@ from omniagents import server_function
 from omniagents.core.server_functions.helpers import session_workspace_root
 from omniagents.core.session import Session
 
-
 _terminal_manager = None
 _terminal_import_error: Optional[Exception] = None
 
@@ -38,7 +37,9 @@ def _get_terminal_manager():
     if _terminal_manager is not None:
         return _terminal_manager
     if _terminal_import_error is not None:
-        raise RuntimeError("Terminal support is unavailable on this platform") from _terminal_import_error
+        raise RuntimeError(
+            "Terminal support is unavailable on this platform"
+        ) from _terminal_import_error
     try:
         from omniagents.rpc.terminal import TerminalManager
     except ImportError as exc:  # pragma: no cover - platform dependent

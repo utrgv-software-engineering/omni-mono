@@ -53,7 +53,9 @@ class JsonRpcChannel:
         }
         if data is not None:
             payload["error"]["data"] = data
-        Debug.log(f"[srv]   ← error id={call_id} code={code} message={message} data={data}")
+        Debug.log(
+            f"[srv]   ← error id={call_id} code={code} message={message} data={data}"
+        )
         await self.transport.send_json(payload)
 
     # Backward compatibility property

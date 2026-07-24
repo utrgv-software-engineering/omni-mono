@@ -87,7 +87,10 @@ def _az_login_calls(session: MagicMock) -> list[str]:
 
 def _configured_git_helper(session: MagicMock) -> bool:
     # The git helper + credentials write are one flock-guarded shell command now.
-    return any("git config --global credential.helper store" in c for c in _git_cred_writes(session))
+    return any(
+        "git config --global credential.helper store" in c
+        for c in _git_cred_writes(session)
+    )
 
 
 def _entry() -> AuthenticatedGitRepo:
@@ -154,7 +157,11 @@ async def test_boot_github_configures_git_and_gh():
     session.exec = AsyncMock(side_effect=_exec_router(gh_present=True))
 
     await configure_host_credentials(
-        session, host="github.com", repo="acme/private", username="x-access-token", token="ghp_secret"
+        session,
+        host="github.com",
+        repo="acme/private",
+        username="x-access-token",
+        token="ghp_secret",
     )
 
     assert _configured_git_helper(session)
@@ -173,7 +180,11 @@ async def test_boot_github_skips_gh_when_not_installed():
     session.exec = AsyncMock(side_effect=_exec_router(gh_present=False))
 
     await configure_host_credentials(
-        session, host="github.com", repo="acme/private", username="x-access-token", token="ghp_secret"
+        session,
+        host="github.com",
+        repo="acme/private",
+        username="x-access-token",
+        token="ghp_secret",
     )
 
     # gh missing → no login, but git credentials are still configured.
@@ -187,7 +198,11 @@ async def test_boot_azure_devops_logs_in_per_org():
     session.exec = AsyncMock(side_effect=_exec_router(az_present=True))
 
     await configure_host_credentials(
-        session, host="dev.azure.com", repo="myorg/proj/_git/repo", username="pat", token="azpat"
+        session,
+        host="dev.azure.com",
+        repo="myorg/proj/_git/repo",
+        username="pat",
+        token="azpat",
     )
 
     az = _az_login_calls(session)
@@ -205,7 +220,11 @@ async def test_boot_azure_devops_visualstudio_host():
     session.exec = AsyncMock(side_effect=_exec_router(az_present=True))
 
     await configure_host_credentials(
-        session, host="myorg.visualstudio.com", repo="proj/_git/repo", username="pat", token="azpat"
+        session,
+        host="myorg.visualstudio.com",
+        repo="proj/_git/repo",
+        username="pat",
+        token="azpat",
     )
 
     az = _az_login_calls(session)
@@ -219,7 +238,11 @@ async def test_boot_azure_devops_skips_when_az_not_installed():
     session.exec = AsyncMock(side_effect=_exec_router(az_present=False))
 
     await configure_host_credentials(
-        session, host="dev.azure.com", repo="myorg/proj/_git/repo", username="pat", token="azpat"
+        session,
+        host="dev.azure.com",
+        repo="myorg/proj/_git/repo",
+        username="pat",
+        token="azpat",
     )
 
     assert _az_login_calls(session) == []
@@ -234,14 +257,18 @@ async def test_git_credentials_write_is_race_safe():
     session = _session()
 
     await configure_host_credentials(
-        session, host="github.com", repo="acme/private", username="x-access-token", token="t"
+        session,
+        host="github.com",
+        repo="acme/private",
+        username="x-access-token",
+        token="t",
     )
 
     cmd = _git_cred_writes(session)[0]
     assert "flock" in cmd
     assert "mktemp" in cmd
     assert 'mv "$t" "$f"' in cmd
-    assert '.git-credentials.tmp' not in cmd  # the old shared-temp bug
+    assert ".git-credentials.tmp" not in cmd  # the old shared-temp bug
 
 
 @pytest.mark.asyncio
@@ -270,7 +297,11 @@ async def test_boot_host_mode_does_nothing():
     session.exec = AsyncMock(side_effect=_exec_router())
 
     await configure_host_credentials(
-        session, host="github.com", repo="acme/private", username="x-access-token", token="ghp_secret"
+        session,
+        host="github.com",
+        repo="acme/private",
+        username="x-access-token",
+        token="ghp_secret",
     )
 
     # Host mode: leave the real user's git/CLI auth untouched.
@@ -295,8 +326,14 @@ def test_azure_devops_org_url(host, repo, expected):
 @pytest.mark.parametrize(
     "url,expected",
     [
-        ("https://dev.azure.com/org/proj/_git/repo.git", "https://dev.azure.com/org/proj/_git/repo"),
-        ("https://org.visualstudio.com/proj/_git/repo.git", "https://org.visualstudio.com/proj/_git/repo"),
+        (
+            "https://dev.azure.com/org/proj/_git/repo.git",
+            "https://dev.azure.com/org/proj/_git/repo",
+        ),
+        (
+            "https://org.visualstudio.com/proj/_git/repo.git",
+            "https://org.visualstudio.com/proj/_git/repo",
+        ),
         ("https://github.com/owner/name.git", "https://github.com/owner/name.git"),
         ("https://gitlab.com/group/repo.git", "https://gitlab.com/group/repo.git"),
     ],
@@ -306,16 +343,29 @@ def test_normalize_clone_url(url, expected):
 
 
 def _https_args(session):
-    return [a for c in session.exec.call_args_list for a in c.args if isinstance(a, str) and a.startswith("https://")]
+    return [
+        a
+        for c in session.exec.call_args_list
+        for a in c.args
+        if isinstance(a, str) and a.startswith("https://")
+    ]
 
 
 @pytest.mark.asyncio
 async def test_clone_strips_git_suffix_for_azure():
     session = _session()
     entry = AuthenticatedGitRepo(
-        host="dev.azure.com", repo="org/proj/_git/repo", ref="main", username="pat", token_env="X"
+        host="dev.azure.com",
+        repo="org/proj/_git/repo",
+        ref="main",
+        username="pat",
+        token_env="X",
     )
-    await entry._clone_named_ref(session=session, url="https://dev.azure.com/org/proj/_git/repo.git", tmp_dir="/tmp/x")
+    await entry._clone_named_ref(
+        session=session,
+        url="https://dev.azure.com/org/proj/_git/repo.git",
+        tmp_dir="/tmp/x",
+    )
     urls = _https_args(session)
     assert "https://dev.azure.com/org/proj/_git/repo" in urls
     assert all(not u.endswith(".git") for u in urls)
@@ -325,9 +375,15 @@ async def test_clone_strips_git_suffix_for_azure():
 async def test_clone_keeps_git_suffix_for_github():
     session = _session()
     entry = AuthenticatedGitRepo(
-        host="github.com", repo="owner/name", ref="main", username="x-access-token", token_env="X"
+        host="github.com",
+        repo="owner/name",
+        ref="main",
+        username="x-access-token",
+        token_env="X",
     )
-    await entry._clone_named_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    await entry._clone_named_ref(
+        session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x"
+    )
     assert "https://github.com/owner/name.git" in _https_args(session)
 
 
@@ -340,9 +396,15 @@ async def test_clone_omits_branch_for_blank_ref(blank_ref):
     # that checks out the remote's default branch instead.
     session = _session()
     entry = AuthenticatedGitRepo(
-        host="github.com", repo="owner/name", ref=blank_ref, username="x-access-token", token_env="X"
+        host="github.com",
+        repo="owner/name",
+        ref=blank_ref,
+        username="x-access-token",
+        token_env="X",
     )
-    await entry._clone_named_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    await entry._clone_named_ref(
+        session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x"
+    )
     calls = _exec_calls(session)
     assert len(calls) == 1
     args = calls[0]
@@ -357,9 +419,15 @@ async def test_clone_uses_branch_for_explicit_ref():
     # A real branch name clones with --branch, but NOT single-branch/shallow.
     session = _session()
     entry = AuthenticatedGitRepo(
-        host="github.com", repo="owner/name", ref="dev", username="x-access-token", token_env="X"
+        host="github.com",
+        repo="owner/name",
+        ref="dev",
+        username="x-access-token",
+        token_env="X",
     )
-    await entry._clone_named_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    await entry._clone_named_ref(
+        session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x"
+    )
     args = _exec_calls(session)[0]
     assert "--branch" in args
     assert "dev" in args
@@ -374,9 +442,15 @@ async def test_clone_is_blobless_never_shallow(ref):
     # clone instead: full history, all refs, normal refspec.
     session = _session()
     entry = AuthenticatedGitRepo(
-        host="github.com", repo="owner/name", ref=ref, username="x-access-token", token_env="X"
+        host="github.com",
+        repo="owner/name",
+        ref=ref,
+        username="x-access-token",
+        token_env="X",
     )
-    await entry._clone_named_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    await entry._clone_named_ref(
+        session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x"
+    )
     args = _exec_calls(session)[0]
     assert "--filter=blob:none" in args
     assert "--depth" not in args
@@ -394,7 +468,9 @@ async def test_fetch_commit_ref_is_blobless_never_shallow():
         username="x-access-token",
         token_env="X",
     )
-    await entry._fetch_commit_ref(session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x")
+    await entry._fetch_commit_ref(
+        session=session, url="https://github.com/owner/name.git", tmp_dir="/tmp/x"
+    )
     fetch_calls = [c for c in _exec_calls(session) if "fetch" in c]
     assert len(fetch_calls) == 1
     assert "--filter=blob:none" in fetch_calls[0]

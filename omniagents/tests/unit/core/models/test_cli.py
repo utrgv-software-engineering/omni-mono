@@ -24,10 +24,19 @@ def _run(store, argv, prog="myagent"):
 
 
 def test_add_list_show_remove_roundtrip(store, capsys):
-    _run(store, [
-        "add", "--name", "azure-prod/gpt-x", "--model", "deploy-x",
-        "--label", "GPT X", "--default",
-    ])
+    _run(
+        store,
+        [
+            "add",
+            "--name",
+            "azure-prod/gpt-x",
+            "--model",
+            "deploy-x",
+            "--label",
+            "GPT X",
+            "--default",
+        ],
+    )
     assert "Saved model 'azure-prod/gpt-x'" in capsys.readouterr().out
 
     _run(store, ["list"])

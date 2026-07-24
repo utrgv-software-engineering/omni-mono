@@ -26,7 +26,9 @@ def make_spec(**overrides):
     base = {
         "name": overrides.pop("name", "TestAgent"),
         "welcome_text": "Welcome",
-        "get_agent_instructions": overrides.pop("get_agent_instructions", lambda: "Test instructions"),
+        "get_agent_instructions": overrides.pop(
+            "get_agent_instructions", lambda: "Test instructions"
+        ),
         "build_agent": overrides.pop("build_agent", None),
     }
     base.update(overrides)
@@ -59,7 +61,10 @@ class TestSessionModelFields:
         session = Session(project_slug="test", agent_slug="test")
 
         session.active_model = "claude-sonnet"
-        session.model_config = {"provider": "litellm", "model": "anthropic/claude-3-5-sonnet"}
+        session.model_config = {
+            "provider": "litellm",
+            "model": "anthropic/claude-3-5-sonnet",
+        }
         session.reasoning_effort = "high"
         session._reasoning_explicitly_set = True
 
@@ -128,9 +133,7 @@ class TestBuilderSessionReasoningOverride:
     @pytest.mark.asyncio
     async def test_builder_uses_spec_reasoning_without_session(self):
         """Without session, builder should use reasoning from spec."""
-        spec = make_spec(
-            model_settings={"reasoning": {"effort": "low"}}
-        )
+        spec = make_spec(model_settings={"reasoning": {"effort": "low"}})
 
         agent = await _default_build_agent({}, None, spec, None, session=None)
 
@@ -141,9 +144,7 @@ class TestBuilderSessionReasoningOverride:
     @pytest.mark.asyncio
     async def test_builder_applies_session_reasoning_override(self):
         """With session reasoning_effort, builder should override."""
-        spec = make_spec(
-            model_settings={"reasoning": {"effort": "low"}}
-        )
+        spec = make_spec(model_settings={"reasoning": {"effort": "low"}})
         session = Session(project_slug="test", agent_slug="test")
         session.reasoning_effort = "high"
 
@@ -290,7 +291,9 @@ class TestBridgeModelProviderParameter:
         assert model_provider_param.default is None
 
     @pytest.mark.asyncio
-    async def test_bridge_run_config_includes_model_provider_when_set(self, monkeypatch):
+    async def test_bridge_run_config_includes_model_provider_when_set(
+        self, monkeypatch
+    ):
         """Bridge should include model_provider in RunConfig when provided."""
         from agents import RunConfig
 

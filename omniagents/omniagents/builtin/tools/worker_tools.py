@@ -350,10 +350,10 @@ def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> str:
     return require_workspace_root(ctx, where="worker_tools")
 
 
-def _error_output(worker_id: str, error: str, summary: str, preview: str) -> RichToolOutput:
-    llm_output = json.dumps(
-        {"worker_id": worker_id, "status": "error", "error": error}
-    )
+def _error_output(
+    worker_id: str, error: str, summary: str, preview: str
+) -> RichToolOutput:
+    llm_output = json.dumps({"worker_id": worker_id, "status": "error", "error": error})
     return RichToolOutput(
         llm_output,
         {

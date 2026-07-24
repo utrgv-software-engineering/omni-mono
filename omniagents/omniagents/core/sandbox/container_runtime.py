@@ -71,6 +71,5 @@ def container_runtime_available(
 ) -> bool:
     """Return True when the configured container runtime is on PATH."""
     return (
-        shutil.which(container_runtime(env_vars=env_vars, default=default))
-        is not None
+        shutil.which(container_runtime(env_vars=env_vars, default=default)) is not None
     )

@@ -13,8 +13,12 @@ class _DebugFileHandler(logging.Handler):
     def __init__(self, log_file):
         super().__init__()
         self._log_file = log_file
-        self.setFormatter(logging.Formatter("[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
-                                            datefmt="%H:%M:%S"))
+        self.setFormatter(
+            logging.Formatter(
+                "[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
+                datefmt="%H:%M:%S",
+            )
+        )
 
     def emit(self, record):
         try:

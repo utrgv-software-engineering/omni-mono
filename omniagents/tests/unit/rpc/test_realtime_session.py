@@ -181,11 +181,15 @@ async def test_agents_sdk_realtime_agent_includes_mcp_tools_in_get_all_tools():
     agent = RealtimeAgent(name="rt", instructions="hi", mcp_servers=[fake_server])
     ctx = RunContextWrapper(context=None)
 
-    async def _fake_get_all_function_tools(servers, convert_schemas_to_strict, run_context, agent):
+    async def _fake_get_all_function_tools(
+        servers, convert_schemas_to_strict, run_context, agent
+    ):
         assert servers == [fake_server]
         return [mcp_tool]
 
-    with patch("agents.agent.MCPUtil.get_all_function_tools", new=_fake_get_all_function_tools):
+    with patch(
+        "agents.agent.MCPUtil.get_all_function_tools", new=_fake_get_all_function_tools
+    ):
         tools = await agent.get_all_tools(ctx)
         assert tools == [mcp_tool]
 

@@ -145,9 +145,7 @@ def test_missing_include_error_names_searched_paths(tmp_path):
     agent_dir = tmp_path / "agents" / "voice"
     agent_dir.mkdir(parents=True)
     paths = instruction_search_paths(agent_dir)
-    fn = create_jinja2_instructions(
-        "{% include 'nope.md' %}", search_paths=paths
-    )
+    fn = create_jinja2_instructions("{% include 'nope.md' %}", search_paths=paths)
     with pytest.raises(InstructionIncludeNotFoundError) as excinfo:
         _render(fn)
     msg = str(excinfo.value)
@@ -186,8 +184,7 @@ def test_render_template_without_search_paths_keeps_fallback():
 # backward-compatibility regression: no includes => byte-identical output
 # ---------------------------------------------------------------------------
 
-_REGRESSION_TEMPLATE = textwrap.dedent(
-    """\
+_REGRESSION_TEMPLATE = textwrap.dedent("""\
     # Agent
 
     Hello {{ name }}!
@@ -198,8 +195,7 @@ _REGRESSION_TEMPLATE = textwrap.dedent(
     {% endfor %}
     Missing renders empty: [{{ not_defined }}]
     JSON: {{ payload | tojson }}
-    """
-)
+    """)
 
 # Exact output of the pre-include implementation (Environment() with
 # SilentUndefined and the tojson filter, no loader) for the context below.

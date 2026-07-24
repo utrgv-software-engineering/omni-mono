@@ -56,7 +56,9 @@ def test_build_audio_storage_blob_constructs_when_env_set(monkeypatch):
 @pytest.mark.asyncio
 async def test_local_audio_storage_round_trip(tmp_path):
     storage = LocalAudioStorage(base_path=tmp_path)
-    rel = await storage.save_audio_chunk("sess", "item", 0, b"hello", audio_format="pcm16")
+    rel = await storage.save_audio_chunk(
+        "sess", "item", 0, b"hello", audio_format="pcm16"
+    )
     assert rel == "sess/item_0.pcm16"
     assert await storage.get_audio_chunk(rel) == b"hello"
     assert await storage.get_session_audio_size("sess") == 5

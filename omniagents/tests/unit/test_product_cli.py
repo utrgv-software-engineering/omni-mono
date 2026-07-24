@@ -185,8 +185,7 @@ def test_reserved_auth_help_renders_prog(tmp_path, capsys):
 def test_reserved_sessions_pins_project_and_entrypoint_agent(tmp_path, monkeypatch):
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + """
+        ACME_PRODUCT + """
 agents:
   entrypoint: main_agent
 """,
@@ -209,8 +208,7 @@ agents:
 def test_sessions_explicit_agent_flag_wins(tmp_path, monkeypatch):
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + """
+        ACME_PRODUCT + """
 agents:
   entrypoint: main_agent
 """,
@@ -278,7 +276,13 @@ def test_update_command_falls_through_without_update_block(tmp_path, monkeypatch
     assert product_main(manifest, ["update"]) == 0
     # Not mounted: "update" is an ordinary prompt word.
     assert called["argv"] == [
-        "omniagents", "run", "--project", str(manifest), "--mode", "ink", "update",
+        "omniagents",
+        "run",
+        "--project",
+        str(manifest),
+        "--mode",
+        "ink",
+        "update",
     ]
 
 
@@ -332,8 +336,7 @@ def test_preflight_ordering_and_argv_mutation(tmp_path, monkeypatch):
     ext = _make_extensions(monkeypatch, PREFLIGHT=[first, second])
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + f"""
+        ACME_PRODUCT + f"""
 cli:
   extensions: {ext}
 """,
@@ -361,11 +364,12 @@ def test_preflight_runs_before_command_dispatch(tmp_path, monkeypatch):
         calls.append("serve")
         return 0
 
-    ext = _make_extensions(monkeypatch, PREFLIGHT=[preflight], COMMANDS={"serve": serve})
+    ext = _make_extensions(
+        monkeypatch, PREFLIGHT=[preflight], COMMANDS={"serve": serve}
+    )
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + f"""
+        ACME_PRODUCT + f"""
 cli:
   extensions: {ext}
 """,
@@ -382,8 +386,7 @@ def test_preflight_can_veto_with_system_exit(tmp_path, monkeypatch):
     ext = _make_extensions(monkeypatch, PREFLIGHT=[veto])
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + f"""
+        ACME_PRODUCT + f"""
 cli:
   extensions: {ext}
 """,
@@ -409,8 +412,7 @@ def test_product_command_dispatch_and_exit_status(tmp_path, monkeypatch):
     ext = _make_extensions(monkeypatch, COMMANDS={"serve": serve})
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + f"""
+        ACME_PRODUCT + f"""
 cli:
   extensions: {ext}
 """,
@@ -434,8 +436,7 @@ def test_command_override_of_reserved_delegates_to_default(tmp_path, monkeypatch
     ext = _make_extensions(monkeypatch, COMMANDS={"sessions": sessions_override})
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + f"""
+        ACME_PRODUCT + f"""
 agents:
   entrypoint: main_agent
 cli:
@@ -471,16 +472,22 @@ def test_fallthrough_builds_run_argv(tmp_path, monkeypatch):
 
     assert product_main(manifest, ["fix", "the", "bug"]) == 0
     assert called["argv"] == [
-        "omniagents", "run", "--project", str(manifest), "--mode", "ink",
-        "fix", "the", "bug",
+        "omniagents",
+        "run",
+        "--project",
+        str(manifest),
+        "--mode",
+        "ink",
+        "fix",
+        "the",
+        "bug",
     ]
 
 
 def test_fallthrough_default_mode_from_manifest(tmp_path, monkeypatch):
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + """
+        ACME_PRODUCT + """
 cli:
   default_mode: web
 """,
@@ -489,7 +496,12 @@ cli:
 
     assert product_main(manifest, []) == 0
     assert called["argv"] == [
-        "omniagents", "run", "--project", str(manifest), "--mode", "web",
+        "omniagents",
+        "run",
+        "--project",
+        str(manifest),
+        "--mode",
+        "web",
     ]
 
 
@@ -526,7 +538,9 @@ def test_dispatches_to_command_gate(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_top_level_help_renders_product_prog_and_commands(tmp_path, monkeypatch, capsys):
+def test_top_level_help_renders_product_prog_and_commands(
+    tmp_path, monkeypatch, capsys
+):
     def serve(args):
         """Run the acme host server."""
         return 0
@@ -534,9 +548,7 @@ def test_top_level_help_renders_product_prog_and_commands(tmp_path, monkeypatch,
     ext = _make_extensions(monkeypatch, COMMANDS={"serve": serve})
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + ACME_UPDATE
-        + f"""
+        ACME_PRODUCT + ACME_UPDATE + f"""
 cli:
   extensions: {ext}
 """,
@@ -569,8 +581,7 @@ def test_top_level_help_hides_update_when_not_declared(tmp_path, capsys):
 def test_cli_section_defaults_and_parse(tmp_path):
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + """
+        ACME_PRODUCT + """
 agents:
   entrypoint: main_agent
 cli:
@@ -591,8 +602,7 @@ cli:
 def test_cli_section_rejects_unknown_keys(tmp_path):
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + """
+        ACME_PRODUCT + """
 cli:
   default_mod: web
 """,
@@ -604,8 +614,7 @@ cli:
 def test_missing_extensions_module_raises_clear_error(tmp_path):
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + """
+        ACME_PRODUCT + """
 cli:
   extensions: not_a_real_module_xyz
 """,
@@ -788,9 +797,7 @@ def test_models_wizard_runs_when_unconfigured(
     manifest = _write_manifest(tmp_path, ACME_PRODUCT)
     order = []
     _capture_run(monkeypatch)
-    monkeypatch.setattr(
-        fw_cli, "main", lambda: order.append("run")
-    )
+    monkeypatch.setattr(fw_cli, "main", lambda: order.append("run"))
     store = _FakeStore(configured=False)
     _install_fake_store(monkeypatch, store)
     monkeypatch.setattr(
@@ -818,9 +825,7 @@ def test_embedded_no_models_emits_json_error(
     assert '"error"' in capsys.readouterr().out
 
 
-def test_embedded_strips_flag_and_sets_env(
-    tmp_path, monkeypatch, _clean_bootstrap_env
-):
+def test_embedded_strips_flag_and_sets_env(tmp_path, monkeypatch, _clean_bootstrap_env):
     import os
 
     manifest = _write_manifest(tmp_path, ACME_PRODUCT)
@@ -833,9 +838,7 @@ def test_embedded_strips_flag_and_sets_env(
     assert "--embedded" not in called["argv"]
 
 
-def test_embedded_web_forces_json_output(
-    tmp_path, monkeypatch, _clean_bootstrap_env
-):
+def test_embedded_web_forces_json_output(tmp_path, monkeypatch, _clean_bootstrap_env):
     manifest = _write_manifest(tmp_path, ACME_PRODUCT)
     called = _capture_run(monkeypatch)
     _install_fake_store(monkeypatch, _FakeStore())
@@ -852,9 +855,9 @@ def test_embedded_web_preserves_explicit_output(
     called = _capture_run(monkeypatch)
     _install_fake_store(monkeypatch, _FakeStore())
 
-    assert product_main(
-        manifest, ["--embedded", "--mode", "web", "--output", "text"]
-    ) == 0
+    assert (
+        product_main(manifest, ["--embedded", "--mode", "web", "--output", "text"]) == 0
+    )
     argv = called["argv"]
     assert argv[argv.index("--output") + 1] == "text"
     assert argv.count("--output") == 1
@@ -884,8 +887,7 @@ def test_embedded_flag_not_intercepted_on_command_dispatch(
     )
     manifest = _write_manifest(
         tmp_path,
-        ACME_PRODUCT
-        + f"""
+        ACME_PRODUCT + f"""
 cli:
   extensions: {ext}
 """,

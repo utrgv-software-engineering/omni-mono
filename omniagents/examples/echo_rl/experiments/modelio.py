@@ -23,17 +23,24 @@ def load_policy(path: str, *, dtype: str = "bfloat16"):
 
         base = json.loads(adapter_cfg.read_text())["base_model_name_or_path"]
         tok = AutoTokenizer.from_pretrained(base)
-        model = AutoModelForCausalLM.from_pretrained(base, torch_dtype=dt, device_map="auto")
+        model = AutoModelForCausalLM.from_pretrained(
+            base, torch_dtype=dt, device_map="auto"
+        )
         model = PeftModel.from_pretrained(model, str(path))
         schema_name = base
     else:
         tok = AutoTokenizer.from_pretrained(path)
-        model = AutoModelForCausalLM.from_pretrained(path, torch_dtype=dt, device_map="auto")
+        model = AutoModelForCausalLM.from_pretrained(
+            path, torch_dtype=dt, device_map="auto"
+        )
         schema_name = path
 
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
-    if not getattr(tok, "response_schema", None) and "qwen2" in str(schema_name).lower():
+    if (
+        not getattr(tok, "response_schema", None)
+        and "qwen2" in str(schema_name).lower()
+    ):
         tok.response_schema = QWEN25_RESPONSE_SCHEMA
     model.eval()
     return model, tok

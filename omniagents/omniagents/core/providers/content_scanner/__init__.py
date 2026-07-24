@@ -1,6 +1,10 @@
 """Content scanner provider domain."""
 
-from omniagents.core.providers.content_scanner.base import ContentScanner, ScanResult, Finding
+from omniagents.core.providers.content_scanner.base import (
+    ContentScanner,
+    ScanResult,
+    Finding,
+)
 from omniagents.core.providers.content_scanner.none import NoneScanner
 from omniagents.core.providers.content_scanner.regex import RegexScanner
 from omniagents.core.providers import register_provider

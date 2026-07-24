@@ -20,9 +20,7 @@ def test_discover_guardrails_in_dir_finds_and_warns_duplicates(tmp_path, capsys)
     base_dir = tmp_path / package_name
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
-    (base_dir / "alpha.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "alpha.py").write_text(textwrap.dedent("""
             from agents.guardrail import InputGuardrail, OutputGuardrail
 
 
@@ -36,12 +34,8 @@ def test_discover_guardrails_in_dir_finds_and_warns_duplicates(tmp_path, capsys)
 
             input_guard = InputGuardrail(allow, name="shared")
             output_guard = OutputGuardrail(audit, name="output-one")
-            """
-        )
-    )
-    (base_dir / "beta.py").write_text(
-        textwrap.dedent(
-            """
+            """))
+    (base_dir / "beta.py").write_text(textwrap.dedent("""
             from agents.guardrail import InputGuardrail
 
 
@@ -50,9 +44,7 @@ def test_discover_guardrails_in_dir_finds_and_warns_duplicates(tmp_path, capsys)
 
 
             duplicate_guard = InputGuardrail(deny, name="shared")
-            """
-        )
-    )
+            """))
     try:
         input_guardrails, output_guardrails, _, _ = discover_guardrails_in_dir(
             str(base_dir)
@@ -91,9 +83,7 @@ def test_discover_guardrails_in_dir_restores_sys_path(tmp_path):
     base_dir = tmp_path / package_name
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
-    (base_dir / "items.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "items.py").write_text(textwrap.dedent("""
             from agents.guardrail import InputGuardrail
 
 
@@ -102,9 +92,7 @@ def test_discover_guardrails_in_dir_restores_sys_path(tmp_path):
 
 
             guard = InputGuardrail(allow, name="sample")
-            """
-        )
-    )
+            """))
     original_sys_path = list(sys.path)
     try:
         discover_guardrails_in_dir(str(base_dir))
@@ -119,9 +107,7 @@ def test_discover_guardrails_in_dir_finds_tool_level_guardrails(tmp_path):
     base_dir = tmp_path / package_name
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
-    (base_dir / "tool_guards.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "tool_guards.py").write_text(textwrap.dedent("""
             from agents.tool_guardrails import (
                 ToolInputGuardrail,
                 ToolOutputGuardrail,
@@ -139,9 +125,7 @@ def test_discover_guardrails_in_dir_finds_tool_level_guardrails(tmp_path):
 
             tool_in_guard = ToolInputGuardrail(_allow_in, name="rate-limit")
             tool_out_guard = ToolOutputGuardrail(_allow_out, name="redact")
-            """
-        )
-    )
+            """))
     try:
         _, _, tool_in, tool_out = discover_guardrails_in_dir(str(base_dir))
     finally:
@@ -158,9 +142,7 @@ def test_discover_guardrails_in_dir_handles_import_errors(tmp_path, capsys):
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
     (base_dir / "broken.py").write_text("import missing_module")
-    (base_dir / "valid.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "valid.py").write_text(textwrap.dedent("""
             from agents.guardrail import InputGuardrail
 
 
@@ -169,9 +151,7 @@ def test_discover_guardrails_in_dir_handles_import_errors(tmp_path, capsys):
 
 
             guard = InputGuardrail(allow, name="ok")
-            """
-        )
-    )
+            """))
     try:
         input_guardrails, output_guardrails, tool_in, tool_out = (
             discover_guardrails_in_dir(str(base_dir))

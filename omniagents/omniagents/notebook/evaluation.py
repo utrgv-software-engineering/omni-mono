@@ -18,6 +18,7 @@ from agents import Agent, Runner as AgentRunner
 # Users can opt-in to tracing by setting it up explicitly before importing
 try:
     from agents import set_trace_processors
+
     set_trace_processors([])
 except ImportError:
     pass
@@ -41,7 +42,6 @@ from omniagents.core.eval.environment import (
     NoOpEnvironment,
 )
 
-
 # -----------------------------------------------------------------------------
 # Result Data Classes
 # -----------------------------------------------------------------------------
@@ -63,7 +63,9 @@ class MeasureResult:
             name=data.get("name", "unknown"),
             passed=data.get("passed", False),
             reason=data.get("reason"),
-            extra={k: v for k, v in data.items() if k not in ("name", "passed", "reason")},
+            extra={
+                k: v for k, v in data.items() if k not in ("name", "passed", "reason")
+            },
         )
 
     def _repr_html_(self) -> str:
@@ -102,12 +104,12 @@ class JudgeResult:
         icon = "✓" if self.passed else "✗"
         color = "#22c55e" if self.passed else "#ef4444"
         score_html = f" ({self.score:.0%})" if self.score is not None else ""
-        return f'''
+        return f"""
         <div style="border-left: 3px solid {color}; padding-left: 8px; margin: 4px 0;">
             <span style="color: {color}; font-weight: bold;">{icon} {html.escape(self.name)}{score_html}</span>
             <div style="color: #6b7280; font-size: 0.9em; margin-top: 2px;">{html.escape(self.reasoning)}</div>
         </div>
-        '''
+        """
 
 
 @dataclass
@@ -124,13 +126,15 @@ class Turn:
         tools_html = ""
         if self.tools_used:
             tools_html = f' <span style="color: #6b7280; font-size: 0.8em;">({", ".join(self.tools_used)})</span>'
-        content_display = self.content[:200] + "..." if len(self.content) > 200 else self.content
-        return f'''
+        content_display = (
+            self.content[:200] + "..." if len(self.content) > 200 else self.content
+        )
+        return f"""
         <div style="margin: 4px 0; padding: 8px; background: #f9fafb; border-radius: 4px;">
             <span style="color: {role_color}; font-weight: bold;">{role_label}:</span>{tools_html}
             <div style="margin-top: 4px;">{html.escape(content_display)}</div>
         </div>
-        '''
+        """
 
 
 @dataclass
@@ -148,7 +152,9 @@ class EvalResult:
     error: Optional[str] = None
     name: Optional[str] = None  # For named test cases
     turns: Optional[List[Turn]] = None  # For multi-turn conversations
-    completion_reason: Optional[str] = None  # For synthetic: "done", "give_up", "max_turns"
+    completion_reason: Optional[str] = (
+        None  # For synthetic: "done", "give_up", "max_turns"
+    )
 
     @property
     def tool_calls(self) -> List[ToolCall]:
@@ -226,12 +232,12 @@ class EvalResult:
                 icon = "✓" if j.passed else "✗"
                 color = "#22c55e" if j.passed else "#ef4444"
                 score_str = f" ({j.score:.0%})" if j.score is not None else ""
-                judges_html += f'''
+                judges_html += f"""
                 <div style="border-left: 3px solid {color}; padding-left: 8px; margin: 4px 0;">
                     <span style="color: {color}; font-weight: bold;">{icon} {html.escape(j.name)}{score_str}</span>
                     <div style="color: #6b7280; font-size: 0.9em;">{html.escape(j.reasoning[:150] + "..." if len(j.reasoning) > 150 else j.reasoning)}</div>
                 </div>
-                '''
+                """
             judges_html += "</td></tr>"
 
         # Error section
@@ -248,27 +254,45 @@ class EvalResult:
             turns_html = '<tr style="border-bottom: 1px solid #f3f4f6;"><td style="padding: 8px 12px; vertical-align: top;"><strong>Conversation</strong></td><td style="padding: 8px 12px;">'
             for turn in self.turns:
                 role_label = "User" if turn.role == "user" else "Assistant"
-                role_color = "#6b7280" if turn.role == "user" else "#059669"  # Gray for user, green for assistant
+                role_color = (
+                    "#6b7280" if turn.role == "user" else "#059669"
+                )  # Gray for user, green for assistant
                 tools_badge = ""
                 if turn.tools_used:
                     tools_badge = f' <span style="color: #9ca3af; font-size: 0.8em;">({", ".join(turn.tools_used)})</span>'
-                content_display = turn.content[:150] + "..." if len(turn.content) > 150 else turn.content
-                turns_html += f'''
+                content_display = (
+                    turn.content[:150] + "..."
+                    if len(turn.content) > 150
+                    else turn.content
+                )
+                turns_html += f"""
                 <div style="margin: 4px 0; padding: 6px 8px; background: white; border-radius: 4px; border: 1px solid #e5e7eb; border-left: 3px solid {role_color};">
                     <span style="color: {role_color}; font-weight: 600; font-size: 0.85em;">{role_label}</span>{tools_badge}
                     <div style="margin-top: 2px; font-size: 0.9em; color: #374151;">{html.escape(content_display)}</div>
                 </div>
-                '''
+                """
             turns_html += "</td></tr>"
 
             # Completion reason for synthetic
             completion_html = ""
             if self.completion_reason:
-                reason_color = "#22c55e" if self.completion_reason == "done" else "#f59e0b" if self.completion_reason == "max_turns" else "#ef4444"
-                reason_label = {"done": "Goal achieved", "give_up": "User gave up", "max_turns": "Max turns reached"}.get(self.completion_reason, self.completion_reason)
+                reason_color = (
+                    "#22c55e"
+                    if self.completion_reason == "done"
+                    else (
+                        "#f59e0b"
+                        if self.completion_reason == "max_turns"
+                        else "#ef4444"
+                    )
+                )
+                reason_label = {
+                    "done": "Goal achieved",
+                    "give_up": "User gave up",
+                    "max_turns": "Max turns reached",
+                }.get(self.completion_reason, self.completion_reason)
                 completion_html = f'<tr style="border-bottom: 1px solid #f3f4f6;"><td style="padding: 8px 12px;"><strong>Completion</strong></td><td style="padding: 8px 12px; color: {reason_color};">{reason_label}</td></tr>'
 
-            return f'''
+            return f"""
             <div style="border: 1px solid #e5e7eb; border-radius: 8px; margin: 8px 0; font-family: system-ui, sans-serif;">
                 <div style="background: {status_bg}; color: {status_color}; padding: 8px 12px; font-weight: bold; border-radius: 8px 8px 0 0;">
                     {status}{name_html} <span style="font-weight: normal; font-size: 0.9em;">({len(self.turns)} turns)</span>
@@ -289,13 +313,17 @@ class EvalResult:
                     {error_html}
                 </table>
             </div>
-            '''
+            """
 
         # Single-turn display (original)
-        input_display = self.input[:100] + "..." if len(self.input) > 100 else self.input
-        output_display = self.output[:200] + "..." if len(self.output) > 200 else self.output
+        input_display = (
+            self.input[:100] + "..." if len(self.input) > 100 else self.input
+        )
+        output_display = (
+            self.output[:200] + "..." if len(self.output) > 200 else self.output
+        )
 
-        return f'''
+        return f"""
         <div style="border: 1px solid #e5e7eb; border-radius: 8px; margin: 8px 0; font-family: system-ui, sans-serif;">
             <div style="background: {status_bg}; color: {status_color}; padding: 8px 12px; font-weight: bold; border-radius: 8px 8px 0 0;">
                 {status}{name_html}
@@ -322,7 +350,7 @@ class EvalResult:
                 {error_html}
             </table>
         </div>
-        '''
+        """
 
     def __repr__(self) -> str:
         status = "PASSED" if self.passed else "FAILED"
@@ -357,11 +385,13 @@ async def check_expectations_async(
     if "verify" in expect:
         verify_spec = expect["verify"]
         if ctx.environment is None:
-            results.append(ExpectationResult(
-                name="verify",
-                passed=False,
-                reason="verify requires an EvalEnvironment but none was provided",
-            ))
+            results.append(
+                ExpectationResult(
+                    name="verify",
+                    passed=False,
+                    reason="verify requires an EvalEnvironment but none was provided",
+                )
+            )
         else:
             try:
                 verify_result = await ctx.verify(verify_spec)
@@ -369,24 +399,32 @@ async def check_expectations_async(
                 details = verify_result.get("results", {})
                 reason = f"verification {'passed' if passed else 'failed'}"
                 if details:
-                    detail_str = ", ".join(f"{k}={v}" for k, v in list(details.items())[:3])
+                    detail_str = ", ".join(
+                        f"{k}={v}" for k, v in list(details.items())[:3]
+                    )
                     reason = f"{reason}: {detail_str}"
-                results.append(ExpectationResult(
-                    name="verify",
-                    passed=passed,
-                    reason=reason,
-                ))
+                results.append(
+                    ExpectationResult(
+                        name="verify",
+                        passed=passed,
+                        reason=reason,
+                    )
+                )
             except Exception as e:
-                results.append(ExpectationResult(
-                    name="verify",
-                    passed=False,
-                    reason=f"verification error: {str(e)}",
-                ))
+                results.append(
+                    ExpectationResult(
+                        name="verify",
+                        passed=False,
+                        reason=f"verification error: {str(e)}",
+                    )
+                )
 
     return results
 
 
-def check_expectations(ctx: EvalContext, expect: Dict[str, Any]) -> List[ExpectationResult]:
+def check_expectations(
+    ctx: EvalContext, expect: Dict[str, Any]
+) -> List[ExpectationResult]:
     """Check expectations against evaluation context.
 
     Expectation keys:
@@ -410,11 +448,13 @@ def check_expectations(ctx: EvalContext, expect: Dict[str, Any]) -> List[Expecta
             tools = [tools]
         for tool in tools:
             called = bool(ctx.tool_calls(tool))
-            results.append(ExpectationResult(
-                name=f"tool_called:{tool}",
-                passed=called,
-                reason=f"{tool} {'was' if called else 'was NOT'} called",
-            ))
+            results.append(
+                ExpectationResult(
+                    name=f"tool_called:{tool}",
+                    passed=called,
+                    reason=f"{tool} {'was' if called else 'was NOT'} called",
+                )
+            )
 
     # tool_not_called
     if "tool_not_called" in expect:
@@ -423,11 +463,13 @@ def check_expectations(ctx: EvalContext, expect: Dict[str, Any]) -> List[Expecta
             tools = [tools]
         for tool in tools:
             called = bool(ctx.tool_calls(tool))
-            results.append(ExpectationResult(
-                name=f"tool_not_called:{tool}",
-                passed=not called,
-                reason=f"{tool} {'was' if called else 'was NOT'} called",
-            ))
+            results.append(
+                ExpectationResult(
+                    name=f"tool_not_called:{tool}",
+                    passed=not called,
+                    reason=f"{tool} {'was' if called else 'was NOT'} called",
+                )
+            )
 
     # tool_sequence
     if "tool_sequence" in expect:
@@ -441,52 +483,68 @@ def check_expectations(ctx: EvalContext, expect: Dict[str, Any]) -> List[Expecta
                 seq_idx += 1
 
         passed = seq_idx == len(expected_seq)
-        results.append(ExpectationResult(
-            name=f"tool_sequence:{' → '.join(expected_seq)}",
-            passed=passed,
-            reason=f"actual: {' → '.join(actual_calls) if actual_calls else 'none'}",
-        ))
+        results.append(
+            ExpectationResult(
+                name=f"tool_sequence:{' → '.join(expected_seq)}",
+                passed=passed,
+                reason=f"actual: {' → '.join(actual_calls) if actual_calls else 'none'}",
+            )
+        )
 
     # tool_called_times
     if "tool_called_times" in expect:
         for tool, expected_count in expect["tool_called_times"].items():
             actual_count = len(ctx.tool_calls(tool))
             passed = actual_count == expected_count
-            results.append(ExpectationResult(
-                name=f"tool_called_times:{tool}={expected_count}",
-                passed=passed,
-                reason=f"called {actual_count} time(s)",
-            ))
+            results.append(
+                ExpectationResult(
+                    name=f"tool_called_times:{tool}={expected_count}",
+                    passed=passed,
+                    reason=f"called {actual_count} time(s)",
+                )
+            )
 
     # response_contains
     if "response_contains" in expect:
         needles = expect["response_contains"]
         if isinstance(needles, str):
             needles = [needles]
-        text = ctx.final_assistant_message.text.lower() if ctx.final_assistant_message else ""
+        text = (
+            ctx.final_assistant_message.text.lower()
+            if ctx.final_assistant_message
+            else ""
+        )
         for needle in needles:
             found = needle.lower() in text
             display_needle = needle[:30] + "..." if len(needle) > 30 else needle
-            results.append(ExpectationResult(
-                name=f"response_contains:{display_needle}",
-                passed=found,
-                reason=f"'{needle}' {'found' if found else 'NOT found'} in response",
-            ))
+            results.append(
+                ExpectationResult(
+                    name=f"response_contains:{display_needle}",
+                    passed=found,
+                    reason=f"'{needle}' {'found' if found else 'NOT found'} in response",
+                )
+            )
 
     # response_not_contains
     if "response_not_contains" in expect:
         needles = expect["response_not_contains"]
         if isinstance(needles, str):
             needles = [needles]
-        text = ctx.final_assistant_message.text.lower() if ctx.final_assistant_message else ""
+        text = (
+            ctx.final_assistant_message.text.lower()
+            if ctx.final_assistant_message
+            else ""
+        )
         for needle in needles:
             found = needle.lower() in text
             display_needle = needle[:30] + "..." if len(needle) > 30 else needle
-            results.append(ExpectationResult(
-                name=f"response_not_contains:{display_needle}",
-                passed=not found,
-                reason=f"'{needle}' {'found' if found else 'NOT found'} in response",
-            ))
+            results.append(
+                ExpectationResult(
+                    name=f"response_not_contains:{display_needle}",
+                    passed=not found,
+                    reason=f"'{needle}' {'found' if found else 'NOT found'} in response",
+                )
+            )
 
     return results
 
@@ -501,7 +559,9 @@ class TestCase:
     """A single test case in an evaluation suite."""
 
     name: str
-    input: Optional[str] = None  # Single-turn input (mutually exclusive with prompts/goal)
+    input: Optional[str] = (
+        None  # Single-turn input (mutually exclusive with prompts/goal)
+    )
     prompts: Optional[List[str]] = None  # Multi-turn scripted prompts
     goal: Optional[str] = None  # Synthetic user goal
     persona: Optional[Dict[str, Any]] = None  # Synthetic user persona
@@ -531,7 +591,9 @@ class EvalSuiteResults:
         try:
             import pandas as pd
         except ImportError:
-            raise ImportError("pandas is required for DataFrame output. Install with: pip install pandas")
+            raise ImportError(
+                "pandas is required for DataFrame output. Install with: pip install pandas"
+            )
 
         rows = []
         for r in self.results:
@@ -605,7 +667,9 @@ class EvalSuiteResults:
         try:
             import pandas as pd
         except ImportError:
-            raise ImportError("pandas required for breakdown(). Install with: pip install pandas")
+            raise ImportError(
+                "pandas required for breakdown(). Install with: pip install pandas"
+            )
 
         # Extract metadata from measure extras
         rows = []
@@ -631,7 +695,9 @@ class EvalSuiteResults:
             Total=("passed", "count"),
             Passed=("passed", "sum"),
         )
-        stats["Accuracy"] = (stats["Passed"] / stats["Total"]).apply(lambda x: f"{x:.1%}")
+        stats["Accuracy"] = (stats["Passed"] / stats["Total"]).apply(
+            lambda x: f"{x:.1%}"
+        )
         stats["Passed"] = stats["Passed"].astype(int)
 
         return stats
@@ -639,26 +705,38 @@ class EvalSuiteResults:
     def _repr_html_(self) -> str:
         """Rich HTML display."""
         s = self.summary
-        status_color = "#22c55e" if s["pass_rate"] >= 0.8 else "#f59e0b" if s["pass_rate"] >= 0.5 else "#ef4444"
+        status_color = (
+            "#22c55e"
+            if s["pass_rate"] >= 0.8
+            else "#f59e0b" if s["pass_rate"] >= 0.5 else "#ef4444"
+        )
 
         # Build results table
         table_rows = ""
         for r in self.results:
             icon = "✓" if r.passed else "✗"
             color = "#22c55e" if r.passed else "#ef4444"
-            name_cell = f"<td style='padding: 6px 12px;'>{html.escape(r.name or '')}</td>" if any(x.name for x in self.results) else ""
+            name_cell = (
+                f"<td style='padding: 6px 12px;'>{html.escape(r.name or '')}</td>"
+                if any(x.name for x in self.results)
+                else ""
+            )
             input_display = r.input[:40] + "..." if len(r.input) > 40 else r.input
             tools = ", ".join(r.tools_used) if r.tools_used else "-"
-            table_rows += f'''
+            table_rows += f"""
             <tr style="border-bottom: 1px solid #f3f4f6;">
                 {name_cell}
                 <td style="padding: 6px 12px;">{html.escape(input_display)}</td>
                 <td style="padding: 6px 12px; color: {color}; text-align: center;">{icon}</td>
                 <td style="padding: 6px 12px;">{html.escape(tools)}</td>
             </tr>
-            '''
+            """
 
-        name_header = "<th style='padding: 6px 12px; text-align: left;'>Name</th>" if any(x.name for x in self.results) else ""
+        name_header = (
+            "<th style='padding: 6px 12px; text-align: left;'>Name</th>"
+            if any(x.name for x in self.results)
+            else ""
+        )
 
         # Show failures detail if any
         failures_html = ""
@@ -678,7 +756,7 @@ class EvalSuiteResults:
                 reason_str = "; ".join(reasons) if reasons else "unknown reason"
                 failures_html += f'<div style="margin-left: 12px; color: #6b7280;">• {name}{html.escape(reason_str)}</div>'
 
-        return f'''
+        return f"""
         <div style="font-family: system-ui, sans-serif; margin: 8px 0;">
             <div style="font-size: 18px; font-weight: bold; margin-bottom: 4px;">
                 {html.escape(self.suite.name)}
@@ -701,11 +779,13 @@ class EvalSuiteResults:
             </table>
             {failures_html}
         </div>
-        '''
+        """
 
     def __repr__(self) -> str:
         s = self.summary
-        return f"EvalSuiteResults({self.suite.name!r}, {s['passed']}/{s['total']} passed)"
+        return (
+            f"EvalSuiteResults({self.suite.name!r}, {s['passed']}/{s['total']} passed)"
+        )
 
     def __len__(self) -> int:
         return len(self.results)
@@ -840,19 +920,21 @@ class EvalSuite:
                 persona={"name": "Alice", "department": "Engineering"},
             )
         """
-        self.cases.append(TestCase(
-            name=name,
-            input=input,
-            prompts=prompts,
-            goal=goal,
-            persona=persona,
-            max_exchanges=max_exchanges,
-            expect=expect,
-            measures=measures,
-            judges=judges,
-            tags=tags,
-            description=description,
-        ))
+        self.cases.append(
+            TestCase(
+                name=name,
+                input=input,
+                prompts=prompts,
+                goal=goal,
+                persona=persona,
+                max_exchanges=max_exchanges,
+                expect=expect,
+                measures=measures,
+                judges=judges,
+                tags=tags,
+                description=description,
+            )
+        )
         return self
 
     async def run(
@@ -1072,7 +1154,7 @@ class Judge:
             return self.instructions
 
         if self.criteria:
-            return f'''You are an evaluation judge. Your task is to determine if an AI agent's response meets the following criteria:
+            return f"""You are an evaluation judge. Your task is to determine if an AI agent's response meets the following criteria:
 
 **Criteria:** {self.criteria}
 
@@ -1081,14 +1163,14 @@ Evaluate the agent's response and return a JSON object with:
 - "reasoning": A brief explanation of your judgment (1-2 sentences)
 - "score": Optional score from 0.0 to 1.0 indicating how well the criteria was met
 
-Be strict but fair. Focus on whether the core criteria is satisfied.'''
+Be strict but fair. Focus on whether the core criteria is satisfied."""
 
-        return '''You are an evaluation judge. Evaluate the AI agent's response for quality and correctness.
+        return """You are an evaluation judge. Evaluate the AI agent's response for quality and correctness.
 
 Return a JSON object with:
 - "passed": true if the response is good, false otherwise
 - "reasoning": A brief explanation of your judgment
-- "score": Optional score from 0.0 to 1.0'''
+- "score": Optional score from 0.0 to 1.0"""
 
     def _build_prompt(
         self,
@@ -1186,7 +1268,11 @@ Return a JSON object with:
             )
 
     def __repr__(self) -> str:
-        criteria_preview = self.criteria[:50] + "..." if self.criteria and len(self.criteria) > 50 else self.criteria
+        criteria_preview = (
+            self.criteria[:50] + "..."
+            if self.criteria and len(self.criteria) > 50
+            else self.criteria
+        )
         return f"Judge({self.name!r}, criteria={criteria_preview!r})"
 
 
@@ -1285,7 +1371,11 @@ class SyntheticUser:
         for key, value in self.persona.items():
             label = key.replace("_", " ").title()
             info_lines.append(f"- {label}: {value}")
-        info_block = "\n".join(info_lines) if info_lines else "- No specific information provided"
+        info_block = (
+            "\n".join(info_lines)
+            if info_lines
+            else "- No specific information provided"
+        )
 
         return f"""You are a simulated user interacting with an AI assistant called "{agent_name}".
 
@@ -1345,14 +1435,14 @@ Your goal: {self.goal}
 
 Write only the message, nothing else. Be natural and conversational."""
 
-        result = await AgentRunner.run(
-            self._get_agent(agent_name), prompt, max_turns=1
-        )
+        result = await AgentRunner.run(self._get_agent(agent_name), prompt, max_turns=1)
         response = str(result.final_output or "")
         self._history.append({"role": "assistant", "content": response})
         return response
 
-    async def respond(self, assistant_message: str, agent_name: str = "Assistant") -> str:
+    async def respond(
+        self, assistant_message: str, agent_name: str = "Assistant"
+    ) -> str:
         """Generate the user's response to the assistant's message."""
         if self._completed:
             return "[DONE] (already completed)"
@@ -1456,7 +1546,10 @@ async def _evaluate_multi_turn(
                 turn_tools: List[str] = []
                 if hasattr(run_result, "new_items"):
                     for item in run_result.new_items:
-                        if hasattr(item, "type") and item.type == "function_call_output":
+                        if (
+                            hasattr(item, "type")
+                            and item.type == "function_call_output"
+                        ):
                             if hasattr(item, "name"):
                                 turn_tools.append(item.name)
                         elif hasattr(item, "call_id"):
@@ -1468,19 +1561,30 @@ async def _evaluate_multi_turn(
                 if hasattr(run_result, "to_input_list"):
                     new_items = run_result.to_input_list()
                     for item in new_items:
-                        if isinstance(item, dict) and item.get("type") == "function_call":
+                        if (
+                            isinstance(item, dict)
+                            and item.get("type") == "function_call"
+                        ):
                             tool_name = item.get("name", "")
                             if tool_name and tool_name not in turn_tools:
                                 turn_tools.append(tool_name)
 
                 all_tools_used.extend(turn_tools)
-                turns.append(Turn(role="assistant", content=assistant_output, tools_used=turn_tools))
+                turns.append(
+                    Turn(
+                        role="assistant",
+                        content=assistant_output,
+                        tools_used=turn_tools,
+                    )
+                )
 
                 # Update conversation for next turn
                 if hasattr(run_result, "to_input_list"):
                     conversation_input = run_result.to_input_list()
                 else:
-                    conversation_input.append({"role": "assistant", "content": assistant_output})
+                    conversation_input.append(
+                        {"role": "assistant", "content": assistant_output}
+                    )
 
                 all_history = conversation_input.copy()
 
@@ -1513,19 +1617,30 @@ async def _evaluate_multi_turn(
                 if hasattr(run_result, "to_input_list"):
                     new_items = run_result.to_input_list()
                     for item in new_items:
-                        if isinstance(item, dict) and item.get("type") == "function_call":
+                        if (
+                            isinstance(item, dict)
+                            and item.get("type") == "function_call"
+                        ):
                             tool_name = item.get("name", "")
                             if tool_name and tool_name not in turn_tools:
                                 turn_tools.append(tool_name)
 
                 all_tools_used.extend(turn_tools)
-                turns.append(Turn(role="assistant", content=assistant_output, tools_used=turn_tools))
+                turns.append(
+                    Turn(
+                        role="assistant",
+                        content=assistant_output,
+                        tools_used=turn_tools,
+                    )
+                )
 
                 # Update conversation
                 if hasattr(run_result, "to_input_list"):
                     conversation_input = run_result.to_input_list()
                 else:
-                    conversation_input.append({"role": "assistant", "content": assistant_output})
+                    conversation_input.append(
+                        {"role": "assistant", "content": assistant_output}
+                    )
 
                 # Check if synthetic user is done
                 if synthetic_user.completed:
@@ -1534,7 +1649,9 @@ async def _evaluate_multi_turn(
 
                 # Get next user response
                 if exchange < max_exchanges - 1:
-                    user_msg = await synthetic_user.respond(assistant_output, agent_name)
+                    user_msg = await synthetic_user.respond(
+                        assistant_output, agent_name
+                    )
                     turns.append(Turn(role="user", content=user_msg))
                     conversation_input.append({"role": "user", "content": user_msg})
 
@@ -1552,7 +1669,10 @@ async def _evaluate_multi_turn(
             history=all_history,
             tools=agent.tools if hasattr(agent, "tools") else [],
             agent=agent,
-            metadata={"scenario": scenario, "environment_context": env_context.data if env_context else {}},
+            metadata={
+                "scenario": scenario,
+                "environment_context": env_context.data if env_context else {},
+            },
         )
 
         # Wire environment into context for verify() and get_env_data()
@@ -1737,11 +1857,13 @@ async def evaluate(
         results = await suite.run(agent)
     """
     # Validate input modes are mutually exclusive
-    modes_provided = sum([
-        input is not None,
-        prompts is not None,
-        goal is not None,
-    ])
+    modes_provided = sum(
+        [
+            input is not None,
+            prompts is not None,
+            goal is not None,
+        ]
+    )
 
     if modes_provided == 0:
         raise ValueError("Must provide one of: input, prompts, or goal")
@@ -1837,14 +1959,21 @@ async def _evaluate_single_turn(
             history = run_result.to_input_list()
         elif hasattr(run_result, "new_items"):
             # Convert items to input list format
-            history = [item.to_input_item() for item in run_result.new_items if hasattr(item, "to_input_item")]
+            history = [
+                item.to_input_item()
+                for item in run_result.new_items
+                if hasattr(item, "to_input_item")
+            ]
 
         # Build evaluation context
         ctx = build_eval_context(
             history=history,
             tools=agent.tools if hasattr(agent, "tools") else [],
             agent=agent,
-            metadata={"scenario": scenario, "environment_context": env_context.data if env_context else {}},
+            metadata={
+                "scenario": scenario,
+                "environment_context": env_context.data if env_context else {},
+            },
         )
 
         # Wire environment into context for verify() and get_env_data()

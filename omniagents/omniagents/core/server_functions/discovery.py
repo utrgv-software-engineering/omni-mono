@@ -224,7 +224,9 @@ def discover_server_functions_in_dir(
     base_path = Path(base_dir).resolve()
 
     if not base_path.is_dir():
-        Debug.log(f"Warning: Server function directory '{base_dir}' not found or not a directory.")
+        Debug.log(
+            f"Warning: Server function directory '{base_dir}' not found or not a directory."
+        )
         return discovered
 
     Debug.log(f"Starting server function discovery in directory: {base_path}")
@@ -278,7 +280,9 @@ def discover_server_functions_in_dir(
                 sub_name = ".".join(relative_path.with_suffix("").parts)
                 module_path = f"{module_prefix}.{sub_name}"
             except Exception:
-                Debug.log(f"Warning: Skipping file {filepath} outside expected parent {base_path.parent}")
+                Debug.log(
+                    f"Warning: Skipping file {filepath} outside expected parent {base_path.parent}"
+                )
                 continue
 
             try:
@@ -323,13 +327,17 @@ def discover_server_functions_in_dir(
                         "on_invoke": getattr(obj, "_server_function_on_invoke", None),
                         "strict": getattr(obj, "_server_function_strict", None),
                     }
-                    Debug.log(f"Warning: Duplicate server function name '{fn_name}' in {module_path}; overwriting.")
+                    Debug.log(
+                        f"Warning: Duplicate server function name '{fn_name}' in {module_path}; overwriting."
+                    )
                     discovered[fn_name] = meta
 
     finally:
         sys.path = original_sys_path
 
-    Debug.log(f"Completed server function discovery: Found {len(discovered)} functions in '{base_dir}'.")
+    Debug.log(
+        f"Completed server function discovery: Found {len(discovered)} functions in '{base_dir}'."
+    )
     return discovered
 
 

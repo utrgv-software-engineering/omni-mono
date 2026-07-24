@@ -3,10 +3,10 @@ import os
 import pytest
 from omniagents.builtin.tools.notebook_tools import read_notebook, edit_notebook
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_notebook(cells, nbformat=4, nbformat_minor=5):
     """Build a minimal v4 notebook dict."""
@@ -61,10 +61,12 @@ class TestReadNotebook:
 
     def test_read_basic_notebook(self, invoke_tool, tmp_path):
         """Read a notebook with code and markdown cells."""
-        nb = _make_notebook([
-            _md_cell("# Hello", cell_id="md1"),
-            _code_cell("print('hi')", cell_id="c1"),
-        ])
+        nb = _make_notebook(
+            [
+                _md_cell("# Hello", cell_id="md1"),
+                _code_cell("print('hi')", cell_id="c1"),
+            ]
+        )
         nb_path = str(tmp_path / "test.ipynb")
         _write_nb(nb_path, nb)
 
@@ -418,11 +420,13 @@ class TestEditNotebookDelete:
 
     def test_delete_cell(self, invoke_tool, tmp_path):
         """Delete a cell by index."""
-        nb = _make_notebook([
-            _md_cell("keep"),
-            _code_cell("remove me"),
-            _md_cell("also keep"),
-        ])
+        nb = _make_notebook(
+            [
+                _md_cell("keep"),
+                _code_cell("remove me"),
+                _md_cell("also keep"),
+            ]
+        )
         nb_path = str(tmp_path / "del.ipynb")
         _write_nb(nb_path, nb)
 
@@ -538,10 +542,12 @@ class TestRoundTrip:
 
     def test_read_edit_read(self, invoke_tool, tmp_path):
         """Full round-trip: read, edit, read back to verify."""
-        nb = _make_notebook([
-            _md_cell("# Original"),
-            _code_cell("x = 1"),
-        ])
+        nb = _make_notebook(
+            [
+                _md_cell("# Original"),
+                _code_cell("x = 1"),
+            ]
+        )
         nb_path = str(tmp_path / "rt.ipynb")
         _write_nb(nb_path, nb)
 

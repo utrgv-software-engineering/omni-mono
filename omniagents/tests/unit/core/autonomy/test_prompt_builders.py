@@ -80,9 +80,7 @@ def test_goal_product_builders_win_when_installed():
     session = FakeSession()
     service = FakeService(session)
     result = asyncio.run(
-        goal_mod.start_impl(
-            service, session, {"goal": "do the thing", "max_turns": 3}
-        )
+        goal_mod.start_impl(service, session, {"goal": "do the thing", "max_turns": 3})
     )
     assert result["ok"] is True
     assert service.enqueued_messages[0]["content"] == "PRODUCT-INITIAL do the thing 3"
@@ -95,7 +93,11 @@ def test_goal_product_builders_win_when_installed():
 
 def test_loop_generic_defaults_and_product_override():
     default_tick = loop_mod.build_tick_prompt(
-        task_id="abc123", prompt="check the queue", fires=0, expires_at=None, mode="dynamic"
+        task_id="abc123",
+        prompt="check the queue",
+        fires=0,
+        expires_at=None,
+        mode="dynamic",
     )
     assert default_tick.startswith("[loop:abc123]")
     assert "loop_continue" in default_tick

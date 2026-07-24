@@ -72,7 +72,9 @@ class ExtendedUnixLocalSandboxSession(UnixLocalSandboxSession, PtyStreamingSessi
         entry = self._pty_processes.get(process_id)
         if entry is None:
             raise ValueError(f"unknown pty process_id {process_id}")
-        q: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=_STREAM_QUEUE_MAX_CHUNKS)
+        q: asyncio.Queue[Optional[bytes]] = asyncio.Queue(
+            maxsize=_STREAM_QUEUE_MAX_CHUNKS
+        )
 
         async with entry.output_lock:
             while entry.output_chunks:
@@ -135,7 +137,9 @@ class ExtendedUnixLocalSandboxSession(UnixLocalSandboxSession, PtyStreamingSessi
         loop = asyncio.get_running_loop()
         while True:
             try:
-                chunk = await loop.run_in_executor(None, os.read, primary_fd, _PTY_READ_CHUNK_BYTES)
+                chunk = await loop.run_in_executor(
+                    None, os.read, primary_fd, _PTY_READ_CHUNK_BYTES
+                )
             except OSError as e:
                 if e.errno in {errno.EIO, errno.EBADF}:
                     break
@@ -165,7 +169,9 @@ class ExtendedUnixLocalSandboxSession(UnixLocalSandboxSession, PtyStreamingSessi
                     pass
 
 
-class ExtendedUnixLocalSandboxClient(LifecycleSessionClientMixin, UnixLocalSandboxClient):
+class ExtendedUnixLocalSandboxClient(
+    LifecycleSessionClientMixin, UnixLocalSandboxClient
+):
     def _make_inner_session(
         self, state: UnixLocalSandboxSessionState
     ) -> UnixLocalSandboxSession:
@@ -207,7 +213,9 @@ class ExtendedUnixLocalSandboxClient(LifecycleSessionClientMixin, UnixLocalSandb
             if manifest is None:
                 manifest = Manifest(root=workspace_dir)
             else:
-                manifest = manifest.model_copy(update={"root": workspace_dir}, deep=True)
+                manifest = manifest.model_copy(
+                    update={"root": workspace_dir}, deep=True
+                )
             _ = Path(workspace_dir)
 
         session_id = uuid.uuid4()

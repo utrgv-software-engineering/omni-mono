@@ -63,7 +63,12 @@ def plot(variants=("grpo_baseline", "echo")) -> None:
     colors = {"grpo_baseline": "#1b9e77", "echo": "#d6336c"}
     panels = [
         ("rewards/sandbox_verifier/mean", axes[0], "Verifier pass-rate", "pass-rate"),
-        ("world_model/ce_per_token", axes[1], "Terminal-output cross-entropy", "nats / env-token"),
+        (
+            "world_model/ce_per_token",
+            axes[1],
+            "Terminal-output cross-entropy",
+            "nats / env-token",
+        ),
     ]
     for key, ax, title, ylabel in panels:
         for v in variants:
@@ -71,13 +76,20 @@ def plot(variants=("grpo_baseline", "echo")) -> None:
             if not steps:
                 continue
             import numpy as np
+
             mean, std = np.array(mean), np.array(std)
             ax.plot(steps, mean, label=v, color=colors.get(v), marker="o", ms=3)
             if (std > 0).any():
-                ax.fill_between(steps, mean - std, mean + std, color=colors.get(v), alpha=0.2)
-        ax.set_title(title); ax.set_xlabel("GRPO step"); ax.set_ylabel(ylabel); ax.legend()
+                ax.fill_between(
+                    steps, mean - std, mean + std, color=colors.get(v), alpha=0.2
+                )
+        ax.set_title(title)
+        ax.set_xlabel("GRPO step")
+        ax.set_ylabel(ylabel)
+        ax.legend()
     fig.tight_layout()
-    out = RESULTS / "plots"; out.mkdir(parents=True, exist_ok=True)
+    out = RESULTS / "plots"
+    out.mkdir(parents=True, exist_ok=True)
     fig.savefig(out / "echo_vs_baseline.png", dpi=120)
     print(f"wrote {out / 'echo_vs_baseline.png'}")
 
@@ -90,10 +102,14 @@ def significance(label_a: str, label_b: str) -> None:
     pr = lambda d, t: sum(s >= 1.0 for s in d["per_task"][t]) / len(d["per_task"][t])
     xa = [pr(a, t) for t in tasks]
     xb = [pr(b, t) for t in tasks]
-    da = sum(xa) / len(xa); db = sum(xb) / len(xb)
-    print(f"{label_a}: pass-rate={da:.3f}  |  {label_b}: pass-rate={db:.3f}  (n={len(tasks)} tasks)")
+    da = sum(xa) / len(xa)
+    db = sum(xb) / len(xb)
+    print(
+        f"{label_a}: pass-rate={da:.3f}  |  {label_b}: pass-rate={db:.3f}  (n={len(tasks)} tasks)"
+    )
     try:
         from scipy.stats import wilcoxon
+
         diffs = [x - y for x, y in zip(xa, xb)]
         if any(d != 0 for d in diffs):
             stat, p = wilcoxon(xa, xb)
@@ -106,7 +122,9 @@ def significance(label_a: str, label_b: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sig", nargs=2, metavar=("A", "B"), help="significance: eval labels A vs B")
+    ap.add_argument(
+        "--sig", nargs=2, metavar=("A", "B"), help="significance: eval labels A vs B"
+    )
     args = ap.parse_args()
     if args.sig:
         significance(*args.sig)
@@ -117,4 +135,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

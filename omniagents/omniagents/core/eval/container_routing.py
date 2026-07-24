@@ -192,9 +192,7 @@ class ContainerRoutingMixin:
                 deep=True,
             )
 
-        session = await client.create(
-            manifest=manifest, options=options, snapshot=None
-        )
+        session = await client.create(manifest=manifest, options=options, snapshot=None)
         await session.start()
 
         # Run the profile's init hooks (user remap, daemon init, ...)
@@ -270,9 +268,7 @@ class ContainerRoutingMixin:
         else:
             existing.session = record["session"]
 
-    def run_command(
-        self, context: Any, command: str, timeout: int = 120
-    ) -> tuple:
+    def run_command(self, context: Any, command: str, timeout: int = 120) -> tuple:
         record = self._sessions.get(context.session_id) if context else None
         if not record:
             # Host-only scenario — defer to the composing environment.

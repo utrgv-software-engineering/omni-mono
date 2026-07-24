@@ -36,13 +36,11 @@ def _make_project(tmp_path, *, agents_dir="agents", paths_block=None, key="util"
     agent_yaml = tmp_path / agents_dir / key / "agent.yml"
     agent_yaml.parent.mkdir(parents=True, exist_ok=True)
     agent_yaml.write_text(
-        dedent(
-            f"""
+        dedent(f"""
             name: {key}
             instructions: You are a spec-level utility agent.
             tools: []
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     manifest = tmp_path / "project.yml"
@@ -146,9 +144,7 @@ def _patch_run_stack(monkeypatch, captured):
 
 
 @pytest.mark.asyncio
-async def test_run_project_agent_once_plain_path_no_overrides(
-    monkeypatch, tmp_path
-):
+async def test_run_project_agent_once_plain_path_no_overrides(monkeypatch, tmp_path):
     """Without model_settings/instructions the spec is loaded from the
     resolved yaml by run_agent_once itself."""
     manifest, _ = _make_project(tmp_path)
@@ -196,25 +192,19 @@ async def test_run_project_agent_once_stamps_settings_and_instructions(
 
 
 @pytest.mark.asyncio
-async def test_run_project_agent_once_empty_settings_not_stamped(
-    monkeypatch, tmp_path
-):
+async def test_run_project_agent_once_empty_settings_not_stamped(monkeypatch, tmp_path):
     manifest, _ = _make_project(tmp_path)
     captured = {}
     _patch_run_stack(monkeypatch, captured)
 
-    await run_project_agent_once(
-        "util", "p", project_path=manifest, model_settings={}
-    )
+    await run_project_agent_once("util", "p", project_path=manifest, model_settings={})
     # Empty dict means "nothing to stamp": the spec keeps its own value
     # (the loader's default is None for a spec that declares none).
     assert captured["built_spec"].model_settings is None
 
 
 @pytest.mark.asyncio
-async def test_run_project_agent_once_adapts_runtime_to_provider(
-    monkeypatch, tmp_path
-):
+async def test_run_project_agent_once_adapts_runtime_to_provider(monkeypatch, tmp_path):
     manifest, _ = _make_project(tmp_path)
     captured = {}
     _patch_run_stack(monkeypatch, captured)
@@ -228,9 +218,7 @@ async def test_run_project_agent_once_adapts_runtime_to_provider(
 
     import omniagents.core.models as models_mod
 
-    monkeypatch.setattr(
-        models_mod, "provider_from_runtime", fake_provider_from_runtime
-    )
+    monkeypatch.setattr(models_mod, "provider_from_runtime", fake_provider_from_runtime)
 
     await run_project_agent_once(
         "util", "p", project_path=manifest, runtime={"provider": "openai"}
@@ -267,9 +255,7 @@ async def test_run_project_agent_once_explicit_provider_wins_over_runtime(
 
 
 @pytest.mark.asyncio
-async def test_run_project_agent_once_session_workspace_fallback(
-    monkeypatch, tmp_path
-):
+async def test_run_project_agent_once_session_workspace_fallback(monkeypatch, tmp_path):
     manifest, _ = _make_project(tmp_path)
     captured = {}
     _patch_run_stack(monkeypatch, captured)

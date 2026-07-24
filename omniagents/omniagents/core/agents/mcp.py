@@ -95,7 +95,9 @@ def _harvest_tool_ui_meta(server_name: str, tools: Any) -> None:
             meta = tool.get("meta") or tool.get("_meta")
         if not meta:
             continue
-        ui_meta = meta.get("ui") if isinstance(meta, dict) else getattr(meta, "ui", None)
+        ui_meta = (
+            meta.get("ui") if isinstance(meta, dict) else getattr(meta, "ui", None)
+        )
         if not ui_meta:
             continue
         uri = (
@@ -160,7 +162,8 @@ def _attach_ui_capture(server: MCPServer) -> MCPServer:
         # dataclass). Fall back to the original method — losing UI capture
         # for this server but staying functional.
         logger.debug(
-            "Could not attach UI capture to MCP server %r", server,
+            "Could not attach UI capture to MCP server %r",
+            server,
             exc_info=True,
         )
 
@@ -171,6 +174,7 @@ def _attach_ui_capture(server: MCPServer) -> MCPServer:
     # tests/test-doubles may call it with no args.
     list_orig = getattr(server, "list_tools", None)
     if list_orig is not None and callable(list_orig):
+
         async def list_tools(*args, **kwargs):
             tools = await list_orig(*args, **kwargs)
             try:
@@ -183,7 +187,8 @@ def _attach_ui_capture(server: MCPServer) -> MCPServer:
             server.list_tools = list_tools  # type: ignore[method-assign]
         except (AttributeError, TypeError):
             logger.debug(
-                "Could not wrap list_tools on MCP server %r", server,
+                "Could not wrap list_tools on MCP server %r",
+                server,
                 exc_info=True,
             )
 
@@ -239,9 +244,7 @@ def _instantiate_server(cfg: MCPServerConfig, params: Dict[str, Any]) -> MCPServ
             raise ValueError(
                 f"MCP server '{cfg.name}' requires a url for streamable_http transport"
             )
-        return _attach_ui_capture(
-            MCPServerStreamableHttp(params, **common_kwargs)
-        )
+        return _attach_ui_capture(MCPServerStreamableHttp(params, **common_kwargs))
     raise ValueError(
         f"Unsupported MCP server type '{cfg.type}' for server '{cfg.name}'"
     )

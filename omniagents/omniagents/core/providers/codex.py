@@ -190,7 +190,9 @@ def extract_account_id(tokens: Dict[str, Any]) -> Optional[str]:
         orgs = claims.get("organizations") or []
         return (
             claims.get("chatgpt_account_id")
-            or (auth_ns.get("chatgpt_account_id") if isinstance(auth_ns, dict) else None)
+            or (
+                auth_ns.get("chatgpt_account_id") if isinstance(auth_ns, dict) else None
+            )
             or (orgs[0].get("id") if orgs and isinstance(orgs[0], dict) else None)
         )
 
@@ -295,7 +297,9 @@ def _ensure_fresh_sync() -> Optional[Dict[str, Any]]:
     if not tokens or not tokens.get("refresh"):
         return None
     expires = tokens.get("expires")
-    fresh = isinstance(expires, (int, float)) and (expires - _EXPIRY_SKEW_MS) > (time.time() * 1000)
+    fresh = isinstance(expires, (int, float)) and (expires - _EXPIRY_SKEW_MS) > (
+        time.time() * 1000
+    )
     if fresh:
         return tokens
     with httpx.Client(timeout=30) as client:
@@ -367,7 +371,10 @@ def list_codex_models(force: bool = False) -> Optional[Dict[str, Dict[str, Any]]
         fresh = _ensure_fresh_sync()
         if not fresh:
             return None
-        headers = {"Authorization": f"Bearer {fresh['access']}", "originator": ORIGINATOR}
+        headers = {
+            "Authorization": f"Bearer {fresh['access']}",
+            "originator": ORIGINATOR,
+        }
         if fresh.get("account_id"):
             headers["ChatGPT-Account-Id"] = fresh["account_id"]
         with httpx.Client(timeout=30) as client:
@@ -387,7 +394,10 @@ def list_codex_models(force: bool = False) -> Optional[Dict[str, Dict[str, Any]]
     except Exception:
         return None
 
-    _models_cache[account] = {"models": models, "expires_at": time.time() + _MODELS_TTL_SECONDS}
+    _models_cache[account] = {
+        "models": models,
+        "expires_at": time.time() + _MODELS_TTL_SECONDS,
+    }
     return models
 
 
@@ -437,7 +447,9 @@ def device_login(poll: bool = True) -> Dict[str, Any]:
                     },
                 )
                 if token_resp.status_code != 200:
-                    raise RuntimeError(f"Token exchange failed: {token_resp.status_code}")
+                    raise RuntimeError(
+                        f"Token exchange failed: {token_resp.status_code}"
+                    )
                 tokens = _normalize_token_response(token_resp.json())
                 save_tokens(tokens)
                 return tokens

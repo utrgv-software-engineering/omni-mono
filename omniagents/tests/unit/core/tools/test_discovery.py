@@ -77,9 +77,7 @@ def test_discover_functions_in_dir_detects_marked_tools(tmp_path, capsys):
     base_dir = tmp_path / package_name
     base_dir.mkdir()
     (base_dir / "__init__.py").write_text("")
-    (base_dir / "alpha.py").write_text(
-        textwrap.dedent(
-            """
+    (base_dir / "alpha.py").write_text(textwrap.dedent("""
             from omniagents.core.tools.discovery import function_tool
 
 
@@ -90,12 +88,8 @@ def test_discover_functions_in_dir_detects_marked_tools(tmp_path, capsys):
 
             def helper():
                 return "ignored"
-            """
-        )
-    )
-    (base_dir / "zzz_second.py").write_text(
-        textwrap.dedent(
-            """
+            """))
+    (base_dir / "zzz_second.py").write_text(textwrap.dedent("""
             from omniagents.core.tools.discovery import (
                 function_tool,
                 rich_function_tool,
@@ -116,9 +110,7 @@ def test_discover_functions_in_dir_detects_marked_tools(tmp_path, capsys):
             @rich_function_tool
             async def rich_only():
                 return RichToolOutput("rich", {"y": 2})
-            """
-        )
-    )
+            """))
     try:
         discovered = discovery.discover_functions_in_dir(str(base_dir))
     finally:
@@ -153,35 +145,27 @@ def test_discover_functions_in_dir_isolates_same_named_dirs(tmp_path):
     host = tmp_path / "host" / "tools"
     host.mkdir(parents=True)
     (host / "__init__.py").write_text("")
-    (host / "host_only.py").write_text(
-        textwrap.dedent(
-            """
+    (host / "host_only.py").write_text(textwrap.dedent("""
             from omniagents.core.tools.discovery import function_tool
 
 
             @function_tool
             def host_only_tool():
                 return "host"
-            """
-        )
-    )
+            """))
 
     # Second "tools" package — same dirname, different content.
     other = tmp_path / "other" / "tools"
     other.mkdir(parents=True)
     (other / "__init__.py").write_text("")
-    (other / "other_only.py").write_text(
-        textwrap.dedent(
-            """
+    (other / "other_only.py").write_text(textwrap.dedent("""
             from omniagents.core.tools.discovery import function_tool
 
 
             @function_tool
             def other_only_tool():
                 return "other"
-            """
-        )
-    )
+            """))
 
     # Pre-bind `tools` in sys.modules pointing at the first package, the
     # way a host app would after a real `from tools.host_only import ...`.
@@ -214,18 +198,14 @@ def test_discover_functions_in_dir_cleans_synthetic_modules(tmp_path):
     and holding them would only leak."""
     pkg = tmp_path / "no_init_dir"
     pkg.mkdir()
-    (pkg / "tool_a.py").write_text(
-        textwrap.dedent(
-            """
+    (pkg / "tool_a.py").write_text(textwrap.dedent("""
             from omniagents.core.tools.discovery import function_tool
 
 
             @function_tool
             def tool_a():
                 return "a"
-            """
-        )
-    )
+            """))
     original_modules = set(sys.modules)
     try:
         discovered = discovery.discover_functions_in_dir(str(pkg))
@@ -253,9 +233,7 @@ def test_discover_functions_in_dir_preserves_canonical_singletons(tmp_path):
     pkg.mkdir()
     (pkg / "__init__.py").write_text("")
     (pkg / "_state.py").write_text("REGISTRY = {}\n")
-    (pkg / "reg_tool.py").write_text(
-        textwrap.dedent(
-            """
+    (pkg / "reg_tool.py").write_text(textwrap.dedent("""
             from omniagents.core.tools.discovery import function_tool
 
             from ._state import REGISTRY
@@ -265,9 +243,7 @@ def test_discover_functions_in_dir_preserves_canonical_singletons(tmp_path):
             def add_item():
                 REGISTRY["k"] = "v"
                 return "ok"
-            """
-        )
-    )
+            """))
     sys.path.insert(0, str(tmp_path))
     try:
         discovered = discovery.discover_functions_in_dir(str(pkg))
@@ -349,18 +325,14 @@ def test_discover_functions_in_dir_debug_logging(tmp_path, capsys):
     base = tmp_path / pkg_name
     base.mkdir()
     (base / "__init__.py").write_text("")
-    (base / "tool.py").write_text(
-        textwrap.dedent(
-            """
+    (base / "tool.py").write_text(textwrap.dedent("""
             from omniagents.core.tools.discovery import function_tool
 
 
             @function_tool
             def sample():
                 return "value"
-            """
-        )
-    )
+            """))
     prev = Debug.enabled()
     Debug.set_enabled(True)
     capsys.readouterr()

@@ -114,8 +114,7 @@ def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
         fake_build_agent,
     )
 
-    config_text = textwrap.dedent(
-        """
+    config_text = textwrap.dedent("""
         name: Multi Judge Agent
         evaluation:
           judges:
@@ -133,8 +132,7 @@ def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
                 - accuracy_agent
                 - completeness_agent
           metrics: []
-        """
-    )
+        """)
     cfg_path = tmp_path / "agent.yaml"
     cfg_path.write_text(config_text)
 
@@ -205,8 +203,7 @@ def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
         fake_build_agent,
     )
 
-    config_text = textwrap.dedent(
-        """
+    config_text = textwrap.dedent("""
         name: Judge Selection Agent
         evaluation:
           judges:
@@ -240,8 +237,7 @@ def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
               measures:
                 - quality_agent
           metrics: []
-        """
-    )
+        """)
     cfg_path = tmp_path / "agent.yaml"
     cfg_path.write_text(config_text)
 

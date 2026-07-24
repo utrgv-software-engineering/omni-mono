@@ -123,7 +123,10 @@ def _build_docker_client(client_kwargs: Dict[str, Any]) -> Any:
     except Exception as e:  # pragma: no cover - exercised when extra missing
         raise ImportError(_missing_extra_message("docker", "sandbox-docker")) from e
 
-    from omniagents.core.sandbox.docker_extended import BindSpec, ExtendedDockerSandboxClient
+    from omniagents.core.sandbox.docker_extended import (
+        BindSpec,
+        ExtendedDockerSandboxClient,
+    )
 
     # YAML-driven docker clients always come from the local engine. Callers
     # who need a custom docker SDK client can construct the sandbox client
@@ -171,7 +174,13 @@ def _parse_binds(raw: Any) -> list[Any]:
             raise ValueError(f"sandbox.client.binds[{idx}].source is required (string)")
         if not isinstance(target, str) or not target:
             raise ValueError(f"sandbox.client.binds[{idx}].target is required (string)")
-        out.append(BindSpec(source=source, target=target, read_only=bool(item.get("read_only", False))))
+        out.append(
+            BindSpec(
+                source=source,
+                target=target,
+                read_only=bool(item.get("read_only", False)),
+            )
+        )
     return out
 
 

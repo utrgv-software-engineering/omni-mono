@@ -30,7 +30,9 @@ def _converter():
     return _md_converter
 
 
-def _error_output(error_msg: str, *, error_type: str, file_path: str, preview: str, summary: str) -> RichToolOutput:
+def _error_output(
+    error_msg: str, *, error_type: str, file_path: str, preview: str, summary: str
+) -> RichToolOutput:
     return RichToolOutput(
         error_msg,
         {
@@ -176,9 +178,7 @@ async def convert_to_markdown(
 
         # Convert file to markdown (host-side library call; runs off the
         # event loop so we don't stall other coroutines).
-        result = await asyncio.to_thread(
-            converter.convert, local_path_for_markitdown
-        )
+        result = await asyncio.to_thread(converter.convert, local_path_for_markitdown)
         content = result.text_content
 
         # Create preview (first 500 chars)

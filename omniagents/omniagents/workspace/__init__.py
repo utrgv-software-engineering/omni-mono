@@ -63,6 +63,7 @@ from .types import (
 # import *` cleanly.
 try:
     from .pyodide import PyodideWorkspace, pyodide_worker_available
+
     _HAS_PYODIDE_WORKSPACE = True
 except Exception:  # pragma: no cover - defensive; module has no hard deps
     PyodideWorkspace = None  # type: ignore[assignment]

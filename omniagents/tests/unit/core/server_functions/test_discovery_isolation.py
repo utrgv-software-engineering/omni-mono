@@ -6,16 +6,14 @@ from omniagents.core.server_functions.discovery import (
     discover_server_functions_in_dir,
 )
 
-_SF_SRC = textwrap.dedent(
-    """
+_SF_SRC = textwrap.dedent("""
     from omniagents.core.server_functions.discovery import server_function
 
 
     @server_function(description="d", name_override="%(name)s")
     async def fn():
         return {"ok": True}
-    """
-)
+    """)
 
 
 def test_same_named_dirs_do_not_collide(tmp_path):

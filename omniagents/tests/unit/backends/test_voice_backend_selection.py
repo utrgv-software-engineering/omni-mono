@@ -29,6 +29,8 @@ def test_build_app_registers_pipeline_voice_backend():
     assert isinstance(app.state.realtime_service, VoicePipelineService)
 
     websocket_routes = [
-        route for route in app.router.routes if getattr(route, "path", None) == "/ws/realtime"
+        route
+        for route in app.router.routes
+        if getattr(route, "path", None) == "/ws/realtime"
     ]
     assert websocket_routes

@@ -19,7 +19,9 @@ class AuditConfig:
     backend: str = "file"  # "file" | "none"  (Phase 2 adds "remote")
     path: str = ""  # empty = default (~/.omniagents/audit/{project}.jsonl)
     retention_days: int = 0  # 0 = no purge
-    max_detail_chars: int = 4096  # truncation limit for tool input/output in audit events
+    max_detail_chars: int = (
+        4096  # truncation limit for tool input/output in audit events
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "AuditConfig":

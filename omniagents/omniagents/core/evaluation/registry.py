@@ -46,6 +46,7 @@ def evaluation_measure(
         def my_measure(ctx):
             return {"passed": True}
     """
+
     def decorator(f: Callable[[Any], Dict[str, Any]]):
         if not callable(f):
             raise TypeError("evaluation_measure expects a callable")

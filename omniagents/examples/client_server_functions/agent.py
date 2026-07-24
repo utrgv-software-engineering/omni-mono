@@ -14,13 +14,11 @@ from server_functions.note import set_note, get_note
 load_dotenv()
 
 
-INSTRUCTIONS = (
-    """
+INSTRUCTIONS = ("""
 You are a friendly assistant.
 Use `get_current_time` when a user asks for the current time.
 Use `flip_coin` when asked to flip a coin.
-"""
-).strip()
+""").strip()
 
 
 @function_tool

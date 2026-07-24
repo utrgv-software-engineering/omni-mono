@@ -87,9 +87,7 @@ class PlatformPolicyFetcher:
             return self._policy
         return {}
 
-    def apply_to_security_config(
-        self, spec: Any, policy: Dict[str, Any]
-    ) -> None:
+    def apply_to_security_config(self, spec: Any, policy: Dict[str, Any]) -> None:
         """Apply platform policy to the agent's SecurityConfig.
 
         Maps management plane policy fields to omniagents security config:
@@ -166,15 +164,13 @@ def create_policy_hook(
     Returns a hook that fires on ``"run_started"`` events. Should be
     registered via ``service.register_runtime_hook("run_started", hook)``.
     """
-    platform_url = _expand_env(
-        policy_config.get("platform_url", "")
-    ) or _expand_env("${OMNI_PLATFORM_URL}")
+    platform_url = _expand_env(policy_config.get("platform_url", "")) or _expand_env(
+        "${OMNI_PLATFORM_URL}"
+    )
     runtime_token = _expand_env(
         policy_config.get("runtime_token", "${OMNI_RUNTIME_TOKEN}")
     )
-    session_id = _expand_env(
-        policy_config.get("session_id", "${OMNI_SESSION_ID}")
-    )
+    session_id = _expand_env(policy_config.get("session_id", "${OMNI_SESSION_ID}"))
 
     fetcher = PlatformPolicyFetcher(
         platform_url=platform_url,

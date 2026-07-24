@@ -147,7 +147,9 @@ class ModelConfigStore:
         default_providers: Optional[Callable[[], Dict[str, Dict[str, Any]]]] = None,
         default_model_fallback: Optional[Callable[[], Optional[str]]] = None,
         governed_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
-        oauth_models: Optional[Callable[[], Optional[Dict[str, Dict[str, Any]]]]] = None,
+        oauth_models: Optional[
+            Callable[[], Optional[Dict[str, Dict[str, Any]]]]
+        ] = None,
         oauth_authenticated: Optional[Callable[[], bool]] = None,
         credential_resolver: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
         default_provider_name: str = "openai",
@@ -701,7 +703,9 @@ class ModelConfigStore:
         for name, provider in merged.items():
             if not isinstance(provider, dict):
                 continue
-            provider_type = provider.get("type") or provider.get("provider") or "unknown"
+            provider_type = (
+                provider.get("type") or provider.get("provider") or "unknown"
+            )
             models = provider.get("models")
             model_count = len(models) if isinstance(models, dict) else 0
             results.append(

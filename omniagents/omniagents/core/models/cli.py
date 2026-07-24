@@ -85,7 +85,9 @@ def prompt_choice(prompt: str, options: list, default: Optional[str] = None) -> 
         print("Invalid choice. Please try again.")
 
 
-def prompt_text(label: str, default: Optional[str] = None, required: bool = False) -> Optional[str]:
+def prompt_text(
+    label: str, default: Optional[str] = None, required: bool = False
+) -> Optional[str]:
     while True:
         suffix = f" [{default}]" if default else ""
         raw = input(f"{label}{suffix}: ").strip()
@@ -100,7 +102,9 @@ def prompt_text(label: str, default: Optional[str] = None, required: bool = Fals
         return raw
 
 
-def prompt_secret(label: str, default: Optional[str] = None, required: bool = False) -> Optional[str]:
+def prompt_secret(
+    label: str, default: Optional[str] = None, required: bool = False
+) -> Optional[str]:
     while True:
         suffix = " (leave blank to keep existing)" if default else ""
         raw = getpass(f"{label}{suffix}: ").strip()
@@ -118,8 +122,14 @@ def prompt_secret(label: str, default: Optional[str] = None, required: bool = Fa
 PROVIDER_TYPE_OPTIONS = [
     {"value": "openai", "label": "OpenAI (api.openai.com)"},
     {"value": "azure", "label": "Azure OpenAI"},
-    {"value": "openai-compatible", "label": "OpenAI-compatible (Ollama, LM Studio, vLLM, etc.)"},
-    {"value": "litellm", "label": "Other provider via LiteLLM (Anthropic, Google, etc.)"},
+    {
+        "value": "openai-compatible",
+        "label": "OpenAI-compatible (Ollama, LM Studio, vLLM, etc.)",
+    },
+    {
+        "value": "litellm",
+        "label": "Other provider via LiteLLM (Anthropic, Google, etc.)",
+    },
 ]
 
 
@@ -133,10 +143,14 @@ def _prompt_provider_fields(provider_type: str) -> dict:
     elif provider_type == "azure":
         fields["api_key"] = prompt_secret("Azure OpenAI API key", required=True)
         fields["base_url"] = prompt_text("Azure endpoint URL", required=True)
-        fields["api_version"] = prompt_text("API version", "2024-08-01-preview", required=True)
+        fields["api_version"] = prompt_text(
+            "API version", "2024-08-01-preview", required=True
+        )
 
     elif provider_type == "openai-compatible":
-        fields["base_url"] = prompt_text("Base URL (e.g., http://localhost:11434/v1)", required=True)
+        fields["base_url"] = prompt_text(
+            "Base URL (e.g., http://localhost:11434/v1)", required=True
+        )
         needs_key = prompt_text("Requires API key? (y/n)", "n")
         if needs_key and needs_key.lower() in ("y", "yes"):
             fields["api_key"] = prompt_secret("API key", required=True)
@@ -173,7 +187,9 @@ def _setup_new_provider(ctx) -> tuple[str, str]:
         "litellm": "litellm",
     }.get(provider_type, "openai")
 
-    provider_name = prompt_text("Provider name", default_name, required=True) or default_name
+    provider_name = (
+        prompt_text("Provider name", default_name, required=True) or default_name
+    )
 
     fields = _prompt_provider_fields(provider_type)
     ctx.store.add_provider(provider_name, provider_type, **fields)
@@ -195,7 +211,10 @@ def _prompt_model_fields(ctx, provider_name: str, provider_type: str) -> dict:
     model_id = prompt_text(prompt_label, required=True) or ""
 
     default_key = model_id.split("/")[-1] if "/" in model_id else model_id
-    model_key = prompt_text("Model name (for /model)", default_key, required=True) or default_key
+    model_key = (
+        prompt_text("Model name (for /model)", default_key, required=True)
+        or default_key
+    )
 
     label = prompt_text("Display label", model_key) or model_key
 
@@ -210,9 +229,15 @@ def _prompt_model_fields(ctx, provider_name: str, provider_type: str) -> dict:
     reasoning_value = None if reasoning == "low" else reasoning
 
     model_settings = None
-    if "gpt-5" in model_id.lower() or "o1" in model_id.lower() or "o3" in model_id.lower():
+    if (
+        "gpt-5" in model_id.lower()
+        or "o1" in model_id.lower()
+        or "o3" in model_id.lower()
+    ):
         print()
-        print("Detected reasoning model. Adding required model_settings for store=false.")
+        print(
+            "Detected reasoning model. Adding required model_settings for store=false."
+        )
         model_settings = {
             "store": False,
             "extra_body": {"include": ["reasoning.encrypted_content"]},
@@ -240,7 +265,9 @@ def cmd_setup(ctx, args):
     existing_config = ctx.store.load_config()
     providers = ctx.store.list_providers()
     # Only show user-defined providers that already have credentials configured
-    usable_providers = [p for p in providers if p["has_api_key"] or p["type"] == "openai-compatible"]
+    usable_providers = [
+        p for p in providers if p["has_api_key"] or p["type"] == "openai-compatible"
+    ]
 
     # --- Phase 1: Provider ---
     print()
@@ -254,8 +281,12 @@ def cmd_setup(ctx, args):
         for p in usable_providers:
             ptype = p["type"]
             models_n = p["model_count"]
-            suffix = f" ({models_n} model{'s' if models_n != 1 else ''})" if models_n else ""
-            options.append({"value": p["name"], "label": f"{p['name']} [{ptype}]{suffix}"})
+            suffix = (
+                f" ({models_n} model{'s' if models_n != 1 else ''})" if models_n else ""
+            )
+            options.append(
+                {"value": p["name"], "label": f"{p['name']} [{ptype}]{suffix}"}
+            )
         options.append({"value": "__new__", "label": "Create a new provider"})
 
         choice = prompt_choice("Select a provider", options)
@@ -316,11 +347,15 @@ def cmd_list(ctx, args):
     if getattr(args, "json", False):
         import json
 
-        print(json.dumps({
-            "models": models,
-            "default": default_name,
-            "voice_default": voice_default,
-        }))
+        print(
+            json.dumps(
+                {
+                    "models": models,
+                    "default": default_name,
+                    "voice_default": voice_default,
+                }
+            )
+        )
         return
 
     if not models:
@@ -339,11 +374,19 @@ def cmd_list(ctx, args):
         reasoning = f" [reasoning: {m['reasoning']}]" if m.get("reasoning") else ""
         tokens = ""
         if m.get("max_input_tokens") or m.get("max_output_tokens"):
-            input_t = f"{m['max_input_tokens']//1000}k" if m.get("max_input_tokens") else "?"
-            output_t = f"{m['max_output_tokens']//1000}k" if m.get("max_output_tokens") else "?"
+            input_t = (
+                f"{m['max_input_tokens']//1000}k" if m.get("max_input_tokens") else "?"
+            )
+            output_t = (
+                f"{m['max_output_tokens']//1000}k"
+                if m.get("max_output_tokens")
+                else "?"
+            )
             tokens = f" [{input_t}/{output_t}]"
         key_indicator = " [key]" if m.get("has_api_key") else ""
-        print(f"  {marker} {m['name']} - {m['label']} [{m['provider']}]{default_label}{reasoning}{tokens}{key_indicator}")
+        print(
+            f"  {marker} {m['name']} - {m['label']} [{m['provider']}]{default_label}{reasoning}{tokens}{key_indicator}"
+        )
 
     if builtin_models:
         print("Built-in models:")
@@ -364,7 +407,9 @@ def cmd_list(ctx, args):
             marker = "*" if m["name"] == voice_default else " "
             default_label = " (voice default)" if m.get("is_voice_default") else ""
             key_indicator = " [key]" if m.get("has_api_key") else ""
-            print(f"  {marker} {m['name']} - {m['label']} [{m['provider']}]{default_label}{key_indicator}")
+            print(
+                f"  {marker} {m['name']} - {m['label']} [{m['provider']}]{default_label}{key_indicator}"
+            )
 
 
 def cmd_add(ctx, args):
@@ -381,7 +426,9 @@ def cmd_add(ctx, args):
             print("Invalid model reference.")
             sys.exit(1)
         provider_name, model_name = (
-            target_ref.split("/", 1) if "/" in target_ref else (ctx.store.default_provider_name, target_ref)
+            target_ref.split("/", 1)
+            if "/" in target_ref
+            else (ctx.store.default_provider_name, target_ref)
         )
     elif args.provider:
         provider_name = args.provider.strip()
@@ -389,7 +436,9 @@ def cmd_add(ctx, args):
     else:
         # Interactive: pick from existing providers
         providers = ctx.store.list_providers()
-        usable = [p for p in providers if p["has_api_key"] or p["type"] == "openai-compatible"]
+        usable = [
+            p for p in providers if p["has_api_key"] or p["type"] == "openai-compatible"
+        ]
         if usable:
             print("Select a provider for this model:")
             options = [
@@ -406,7 +455,9 @@ def cmd_add(ctx, args):
             print()
 
         if not provider_name:
-            print(f"No providers configured. Create one first with: {ctx.prog} provider add")
+            print(
+                f"No providers configured. Create one first with: {ctx.prog} provider add"
+            )
             sys.exit(1)
 
         model_name = (ref or "").strip() if ref else None
@@ -417,11 +468,17 @@ def cmd_add(ctx, args):
     # Look up provider to get its type
     existing_provider = ctx.store.get_provider(provider_name)
     if not existing_provider:
-        print(f"Provider '{provider_name}' not found. Create it first with: {ctx.prog} provider add")
+        print(
+            f"Provider '{provider_name}' not found. Create it first with: {ctx.prog} provider add"
+        )
         sys.exit(1)
 
     if not provider_type:
-        provider_type = existing_provider.get("type") or existing_provider.get("provider") or "openai"
+        provider_type = (
+            existing_provider.get("type")
+            or existing_provider.get("provider")
+            or "openai"
+        )
 
     # --- Model name ---
     if not model_name:
@@ -440,13 +497,19 @@ def cmd_add(ctx, args):
     # --- Model identifier ---
     model_id = args.model
     if not model_id:
-        prompt_label = "Deployment name" if provider_type == "azure" else "Model identifier"
+        prompt_label = (
+            "Deployment name" if provider_type == "azure" else "Model identifier"
+        )
         model_id = prompt_text(prompt_label, model_name, required=True)
 
     label = args.label or model_name
 
     model_settings = None
-    if "gpt-5" in (model_id or "").lower() or "o1" in (model_id or "").lower() or "o3" in (model_id or "").lower():
+    if (
+        "gpt-5" in (model_id or "").lower()
+        or "o1" in (model_id or "").lower()
+        or "o3" in (model_id or "").lower()
+    ):
         print("Detected reasoning model. Adding required model_settings.")
         model_settings = {
             "store": False,
@@ -537,7 +600,7 @@ def cmd_test(ctx, args):
             import litellm
 
             if api_key:
-            
+
                 os.environ[litellm_api_key_env(model)] = api_key
 
             response = litellm.completion(
@@ -624,7 +687,11 @@ def cmd_show(ctx, args):
         if isinstance(key, str) and key.startswith("${"):
             print(f"  API Key: {key}")
         elif isinstance(key, str):
-            print(f"  API Key: {key[:8]}...{key[-4:]}" if len(key) > 12 else "  API Key: ****")
+            print(
+                f"  API Key: {key[:8]}...{key[-4:]}"
+                if len(key) > 12
+                else "  API Key: ****"
+            )
     if config.get("reasoning"):
         print(f"  Reasoning: {config.get('reasoning')}")
     if config.get("max_input_tokens"):
@@ -720,7 +787,11 @@ def cmd_provider_show(ctx, args):
         if isinstance(key, str) and key.startswith("${"):
             print(f"  API Key: {key}")
         elif isinstance(key, str):
-            print(f"  API Key: {key[:8]}...{key[-4:]}" if len(key) > 12 else "  API Key: ****")
+            print(
+                f"  API Key: {key[:8]}...{key[-4:]}"
+                if len(key) > 12
+                else "  API Key: ****"
+            )
     if provider.get("realtime_url"):
         print(f"  Realtime URL: {provider['realtime_url']}")
     if provider.get("realtime_base_url"):
@@ -788,7 +859,9 @@ def cmd_provider_update(ctx, args):
     if args.api_version:
         kwargs["api_version"] = args.api_version
     elif args.interactive and provider_type == "azure":
-        new_ver = prompt_text("API version", provider.get("api_version"), required=False)
+        new_ver = prompt_text(
+            "API version", provider.get("api_version"), required=False
+        )
         if new_ver:
             kwargs["api_version"] = new_ver
 
@@ -826,7 +899,6 @@ def cmd_provider_remove(ctx, args):
         sys.exit(1)
 
 
-
 def run_model_command(
     argv=None,
     *,
@@ -847,12 +919,22 @@ def run_model_command(
     list_parser.add_argument(
         "--json", action="store_true", help="Emit the model list as JSON"
     )
-    subparsers.add_parser("check", help="Check if models are configured (exit 0=yes, 1=no)")
+    subparsers.add_parser(
+        "check", help="Check if models are configured (exit 0=yes, 1=no)"
+    )
 
-    add_parser = subparsers.add_parser("add", help="Add a model to an existing provider")
-    add_parser.add_argument("--name", "-n", help="Model reference (e.g. gpt-5.1 or azure-prod/gpt-5.2)")
-    add_parser.add_argument("--provider", "-p", help="Provider name to add the model to")
-    add_parser.add_argument("--model", "-m", help="Model identifier (or Azure deployment name)")
+    add_parser = subparsers.add_parser(
+        "add", help="Add a model to an existing provider"
+    )
+    add_parser.add_argument(
+        "--name", "-n", help="Model reference (e.g. gpt-5.1 or azure-prod/gpt-5.2)"
+    )
+    add_parser.add_argument(
+        "--provider", "-p", help="Provider name to add the model to"
+    )
+    add_parser.add_argument(
+        "--model", "-m", help="Model identifier (or Azure deployment name)"
+    )
     add_parser.add_argument("--label", "-l", help="Display label")
     add_parser.add_argument(
         "--reasoning",
@@ -874,20 +956,26 @@ def run_model_command(
         action="store_true",
         help="Mark this model as voice/realtime-capable",
     )
-    add_parser.add_argument("--default", dest="set_default", action="store_true", help="Set as default")
+    add_parser.add_argument(
+        "--default", dest="set_default", action="store_true", help="Set as default"
+    )
     add_parser.add_argument(
         "--voice-default",
         dest="set_voice_default",
         action="store_true",
         help="Set as voice default model",
     )
-    add_parser.add_argument("--force", action="store_true", help="Overwrite if model already exists")
+    add_parser.add_argument(
+        "--force", action="store_true", help="Overwrite if model already exists"
+    )
 
     remove_parser = subparsers.add_parser("remove", help="Remove a model")
     remove_parser.add_argument("name", nargs="?", help="Model reference to remove")
 
     default_parser = subparsers.add_parser("default", help="Set default model")
-    default_parser.add_argument("name", nargs="?", help="Model reference to set as default")
+    default_parser.add_argument(
+        "name", nargs="?", help="Model reference to set as default"
+    )
 
     voice_default_parser = subparsers.add_parser(
         "voice-default", help="Set voice default model"
@@ -897,7 +985,9 @@ def run_model_command(
     )
 
     test_parser = subparsers.add_parser("test", help="Test model connection")
-    test_parser.add_argument("name", nargs="?", help="Model reference to test (default: current)")
+    test_parser.add_argument(
+        "name", nargs="?", help="Model reference to test (default: current)"
+    )
 
     show_parser = subparsers.add_parser("show", help="Show model details")
     show_parser.add_argument("name", nargs="?", help="Model reference to show")
@@ -928,8 +1018,6 @@ def run_model_command(
         sys.exit(1)
 
 
-
-
 def run_provider_command(
     argv=None,
     *,
@@ -949,7 +1037,9 @@ def run_provider_command(
 
     add_parser = subparsers.add_parser("add", help="Add a new provider")
     add_parser.add_argument("--name", "-n", help="Provider name")
-    add_parser.add_argument("--force", action="store_true", help="Overwrite if provider already exists")
+    add_parser.add_argument(
+        "--force", action="store_true", help="Overwrite if provider already exists"
+    )
 
     show_parser = subparsers.add_parser("show", help="Show provider details")
     show_parser.add_argument("name", nargs="?", help="Provider name")
@@ -959,9 +1049,16 @@ def run_provider_command(
     update_parser.add_argument("--api-key", "-k", help="New API key")
     update_parser.add_argument("--base-url", "-u", help="New base URL")
     update_parser.add_argument("--api-version", help="New API version")
-    update_parser.add_argument("--interactive", "-i", action="store_true", help="Prompt for fields interactively")
+    update_parser.add_argument(
+        "--interactive",
+        "-i",
+        action="store_true",
+        help="Prompt for fields interactively",
+    )
 
-    remove_parser = subparsers.add_parser("remove", help="Remove a user-defined provider")
+    remove_parser = subparsers.add_parser(
+        "remove", help="Remove a user-defined provider"
+    )
     remove_parser.add_argument("name", nargs="?", help="Provider name")
 
     args = parser.parse_args(argv)
@@ -984,4 +1081,3 @@ def run_provider_command(
     else:
         parser.print_help()
         sys.exit(1)
-

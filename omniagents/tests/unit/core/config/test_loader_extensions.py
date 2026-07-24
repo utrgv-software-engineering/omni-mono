@@ -332,17 +332,13 @@ def test_loader_resolves_is_enabled_via_predicates_dir(tmp_path):
     # Stand up a predicates/ subfolder next to the YAML.
     pdir = tmp_path / "predicates"
     pdir.mkdir()
-    (pdir / "preds.py").write_text(
-        textwrap.dedent(
-            """
+    (pdir / "preds.py").write_text(textwrap.dedent("""
             from omniagents.core.predicates.discovery import is_enabled_predicate
 
             @is_enabled_predicate
             def gate_open(ctx, agent):
                 return True
-            """
-        )
-    )
+            """))
     sub_path = tmp_path / "sub.yaml"
     _write(sub_path, "name: Sub\ninstructions: x")
     main_path = tmp_path / "main.yaml"

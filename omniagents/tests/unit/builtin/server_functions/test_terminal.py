@@ -22,9 +22,17 @@ class _FakeManager:
         self.create_calls = []
         self.close_calls = []
 
-    async def create_terminal(self, session_id, *, shell=None, cwd=None, cols=None, rows=None):
+    async def create_terminal(
+        self, session_id, *, shell=None, cwd=None, cols=None, rows=None
+    ):
         self.create_calls.append(
-            {"session_id": session_id, "shell": shell, "cwd": cwd, "cols": cols, "rows": rows}
+            {
+                "session_id": session_id,
+                "shell": shell,
+                "cwd": cwd,
+                "cols": cols,
+                "rows": rows,
+            }
         )
         return {
             "terminal_id": "t-1",

@@ -67,9 +67,7 @@ def export_transcript(
         )
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        name = _safe_name(
-            scenario.get("name") or scenario.get("id") or "scenario"
-        )
+        name = _safe_name(scenario.get("name") or scenario.get("id") or "scenario")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]  # ms precision
         out_path = out_dir / f"{ts}-{name}.json"
 

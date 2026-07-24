@@ -220,7 +220,7 @@ async def write_git_credential_helper(
         'f="$HOME/.git-credentials"; touch "$f"; '
         't="$(mktemp "$f.XXXXXX")" || exit 12; '
         f"{{ grep -vF {shlex.quote(f'@{host}')} \"$f\" 2>/dev/null || true; "
-        f"printf '%s\\n' {shlex.quote(cred_line)}; }} > \"$t\" && mv \"$t\" \"$f\" || exit 13"
+        f'printf \'%s\\n\' {shlex.quote(cred_line)}; }} > "$t" && mv "$t" "$f" || exit 13'
     )
     # Lock under $HOME, not a shared /tmp path: clone-time runs as root and the
     # boot pass as the run_as user (uid 1000), so a single /tmp lock created by
@@ -277,7 +277,12 @@ async def _gh_login(
 
 
 async def _az_devops_login(
-    session: "BaseSandboxSession", host: str, repo: str, token: str, *, user: str | None = None
+    session: "BaseSandboxSession",
+    host: str,
+    repo: str,
+    token: str,
+    *,
+    user: str | None = None,
 ) -> None:
     """Log the Azure CLI's azure-devops extension into the org derived from
     ``(host, repo)`` as ``user``. ``az devops login --organization <url>`` reads
@@ -353,7 +358,9 @@ async def configure_host_credentials(
     )
 
     if isinstance(session, UnixLocalSandboxSession):
-        logger.info("credentials: host mode — leaving ambient git/CLI auth for %s", host)
+        logger.info(
+            "credentials: host mode — leaving ambient git/CLI auth for %s", host
+        )
         return
 
     await write_git_credential_helper(session, host, username, token, user=user)

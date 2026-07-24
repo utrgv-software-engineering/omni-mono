@@ -65,14 +65,20 @@ def _patch_get(monkeypatch, responses):
 
 
 def test_fetch_success_and_cache_hit(provider, monkeypatch):
-    cred = {"credential_type": "api_key", "api_key": "sk-1", "expires_at": _iso_in(3600)}
+    cred = {
+        "credential_type": "api_key",
+        "api_key": "sk-1",
+        "expires_at": _iso_in(3600),
+    }
     calls = _patch_get(monkeypatch, [_FakeResponse(payload=cred)])
 
     assert provider.get_credential_sync(42) == cred
     # Second call served from cache — no new HTTP request.
     assert provider.get_credential_sync(42) == cred
     assert len(calls) == 1
-    assert calls[0]["url"] == "https://platform.test/api/v1/sessions/sess-1/credentials/42"
+    assert (
+        calls[0]["url"] == "https://platform.test/api/v1/sessions/sess-1/credentials/42"
+    )
     assert calls[0]["headers"]["Authorization"] == "Bearer rt-token"
 
 
@@ -104,7 +110,9 @@ def test_by_ref_resolves_session_placeholder(provider, monkeypatch):
 
     ref = "/api/v1/sessions/{session_id}/credentials/7"
     assert provider.get_credential_by_ref_sync(ref) == cred
-    assert calls[0]["url"] == "https://platform.test/api/v1/sessions/sess-1/credentials/7"
+    assert (
+        calls[0]["url"] == "https://platform.test/api/v1/sessions/sess-1/credentials/7"
+    )
     # Cached under the unresolved ref.
     assert provider.get_credential_by_ref_sync(ref) == cred
     assert len(calls) == 1
@@ -189,7 +197,9 @@ def test_ensure_session_no_env_export_when_disabled(monkeypatch):
     monkeypatch.setattr(
         requests,
         "post",
-        lambda *a, **k: _FakeResponse(payload={"session_id": "s", "session_token": "t"}),
+        lambda *a, **k: _FakeResponse(
+            payload={"session_id": "s", "session_token": "t"}
+        ),
     )
     monkeypatch.delenv("OMNI_SESSION_ID", raising=False)
     session = ensure_platform_session(
@@ -245,7 +255,9 @@ def test_loader_supplies_credentials():
 
 
 def test_loader_without_access_token_ignored():
-    bootstrap.set_platform_credentials_loader(lambda: {"platform_url": "https://p.test"})
+    bootstrap.set_platform_credentials_loader(
+        lambda: {"platform_url": "https://p.test"}
+    )
     assert bootstrap._find_stored_credentials() is None
 
 

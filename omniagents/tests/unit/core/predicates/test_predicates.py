@@ -67,9 +67,7 @@ def test_discover_predicates_in_dir(tmp_path):
     # Build a fake agent directory with predicates/ subfolder.
     pdir = tmp_path / "predicates"
     pdir.mkdir()
-    (pdir / "preds.py").write_text(
-        textwrap.dedent(
-            """
+    (pdir / "preds.py").write_text(textwrap.dedent("""
             from omniagents.core.predicates.discovery import is_enabled_predicate
 
             @is_enabled_predicate
@@ -82,9 +80,7 @@ def test_discover_predicates_in_dir(tmp_path):
 
             def not_a_predicate():
                 pass
-            """
-        )
-    )
+            """))
 
     discovered = discover_predicates_in_dir(tmp_path)
     assert "is_admin" in discovered

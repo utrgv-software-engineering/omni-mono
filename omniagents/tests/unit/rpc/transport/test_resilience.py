@@ -11,7 +11,6 @@ from omniagents.rpc.transport.websocket import (
     ServerWebSocketTransport,
 )
 
-
 TIMEOUT = 5.0
 
 

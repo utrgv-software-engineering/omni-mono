@@ -17,7 +17,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-
 # ── Event type constants ─────────────────────────────────────────────
 
 RUN_STARTED = "run_started"

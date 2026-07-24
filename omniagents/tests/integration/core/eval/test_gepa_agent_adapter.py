@@ -11,8 +11,7 @@ def _write_agent_files(tmp_path: Path) -> Path:
     cfg_dir.mkdir()
     measures = cfg_dir / "measures.py"
     measures.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             from omniagents.core.evaluation import evaluation_measure, pass_reason, fail_reason
 
             @evaluation_measure
@@ -26,14 +25,12 @@ def _write_agent_files(tmp_path: Path) -> Path:
             @evaluation_measure
             def tool_compliance(ctx):
                 return {**fail_reason("tool_failure"), "name": "tool_compliance"}
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     config = cfg_dir / "compiled.yaml"
     config.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             name: Sample Agent
             label: Sample Label
             description: Sample Description
@@ -43,8 +40,7 @@ def _write_agent_files(tmp_path: Path) -> Path:
                   - numeric_accuracy
                   - formatting_consistency
                   - tool_compliance
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     return config

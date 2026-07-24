@@ -377,7 +377,11 @@ def fetch_policy(
         elif resp.status_code == 403:
             logger.warning(
                 "Not entitled to %s — contact your admin",
-                f"session {session_id}" if session_id else f"the {slug or get_product_slug()} project",
+                (
+                    f"session {session_id}"
+                    if session_id
+                    else f"the {slug or get_product_slug()} project"
+                ),
             )
         else:
             logger.warning(

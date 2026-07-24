@@ -135,13 +135,15 @@ async def test_cancel_during_approval_leaves_no_orphan_function_call():
         if session_arg is not None and not isinstance(run_input, _FakeState):
             # Schedule the SDK-side persistence to happen before the
             # bridge consumes the stream so ordering matches production.
-            session_arg.history.append({
-                "type": "function_call",
-                "id": f"fc_{call_id}",
-                "call_id": call_id,
-                "name": tool_name,
-                "arguments": "{}",
-            })
+            session_arg.history.append(
+                {
+                    "type": "function_call",
+                    "id": f"fc_{call_id}",
+                    "call_id": call_id,
+                    "name": tool_name,
+                    "arguments": "{}",
+                }
+            )
         return result
 
     # Service whose request_tool_approval hangs forever (the user never

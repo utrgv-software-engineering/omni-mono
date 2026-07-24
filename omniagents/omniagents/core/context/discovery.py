@@ -115,13 +115,17 @@ def discover_context_factories(agent_dir: Path) -> Dict[str, Callable]:
                     obj = getattr(module, name)
                     if callable(obj) and getattr(obj, "_is_context_factory", False):
                         if name in discovered:
-                            Debug.log(f"Warning: Duplicate context factory '{name}' "
-                                    f"found in {py_file}. Overwriting.")
+                            Debug.log(
+                                f"Warning: Duplicate context factory '{name}' "
+                                f"found in {py_file}. Overwriting."
+                            )
                         discovered[name] = obj
                         Debug.log(f"Discovered context factory: {name} from {py_file}")
 
             except Exception as e:
-                Debug.log(f"Warning: Error loading {py_file} for context discovery: {e}")
+                Debug.log(
+                    f"Warning: Error loading {py_file} for context discovery: {e}"
+                )
                 continue
 
     finally:
@@ -217,15 +221,23 @@ def discover_model_config_resolvers(agent_dir: Path) -> Dict[str, Callable]:
                     if name.startswith("_"):
                         continue
                     obj = getattr(module, name)
-                    if callable(obj) and getattr(obj, "_is_model_config_resolver", False):
+                    if callable(obj) and getattr(
+                        obj, "_is_model_config_resolver", False
+                    ):
                         if name in discovered:
-                            Debug.log(f"Warning: Duplicate model config resolver '{name}' "
-                                    f"found in {py_file}. Overwriting.")
+                            Debug.log(
+                                f"Warning: Duplicate model config resolver '{name}' "
+                                f"found in {py_file}. Overwriting."
+                            )
                         discovered[name] = obj
-                        Debug.log(f"Discovered model config resolver: {name} from {py_file}")
+                        Debug.log(
+                            f"Discovered model config resolver: {name} from {py_file}"
+                        )
 
             except Exception as e:
-                Debug.log(f"Warning: Error loading {py_file} for model config resolver discovery: {e}")
+                Debug.log(
+                    f"Warning: Error loading {py_file} for model config resolver discovery: {e}"
+                )
                 continue
 
     finally:
@@ -308,10 +320,14 @@ def discover_realtime_settings_resolvers(agent_dir: Path) -> Dict[str, Callable]
                         obj, "_is_realtime_settings_resolver", False
                     ):
                         discovered[name] = obj
-                        Debug.log(f"Discovered realtime settings resolver: {name} from {py_file}")
+                        Debug.log(
+                            f"Discovered realtime settings resolver: {name} from {py_file}"
+                        )
 
             except Exception as e:
-                Debug.log(f"Warning: Error loading {py_file} for realtime settings resolver discovery: {e}")
+                Debug.log(
+                    f"Warning: Error loading {py_file} for realtime settings resolver discovery: {e}"
+                )
                 continue
 
     finally:

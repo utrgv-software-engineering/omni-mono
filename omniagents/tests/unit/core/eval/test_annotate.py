@@ -11,34 +11,28 @@ def test_annotate_scenarios_maps_failure_categories(monkeypatch, tmp_path):
     db_dir.mkdir()
     db_path = db_dir / "proj.db"
     conn = sqlite3.connect(db_path)
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TABLE traces (
             trace_id TEXT,
             group_id TEXT,
             workflow_name TEXT,
             metadata TEXT
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE failure_categories (
             id INTEGER,
             name TEXT,
             project TEXT
         )
-        """
-    )
-    conn.execute(
-        """
+        """)
+    conn.execute("""
         CREATE TABLE analysis_categories (
             project TEXT,
             group_id TEXT,
             category_id INTEGER
         )
-        """
-    )
+        """)
     workflow_name = "base_scenarios_set_2025_01_02_03_04_05"
     metadata = json.dumps({"omniagents": {"scenario": {"id": "abc"}}})
     conn.execute(

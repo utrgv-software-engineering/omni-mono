@@ -179,13 +179,11 @@ def _install_session_product(tmp_path, *, with_agent=True, sessions_block=""):
         agent_yaml = tmp_path / "agents" / "session_summarizer" / "agent.yml"
         agent_yaml.parent.mkdir(parents=True, exist_ok=True)
         agent_yaml.write_text(
-            dedent(
-                """
+            dedent("""
                 name: session_summarizer
                 instructions: Emit the project JSON schema.
                 tools: []
-                """
-            ),
+                """),
             encoding="utf-8",
         )
     manifest = tmp_path / "project.yml"
@@ -264,15 +262,11 @@ def test_conventional_session_summarizer_no_model_names_prog(
     assert summarizer is not None
     with pytest.raises(RuntimeError, match="Run: sessprog model setup"):
         asyncio.run(
-            summarizer(
-                "p", model=None, project=None, agent=None, session_id="x"
-            )
+            summarizer("p", model=None, project=None, agent=None, session_id="x")
         )
 
 
-def test_missing_conventional_agent_behaves_as_uninstalled(
-    _fresh_identity, tmp_path
-):
+def test_missing_conventional_agent_behaves_as_uninstalled(_fresh_identity, tmp_path):
     _install_session_product(tmp_path, with_agent=False)
     set_session_summarizer(None)
     assert session_summarizer() is None
@@ -280,9 +274,7 @@ def test_missing_conventional_agent_behaves_as_uninstalled(
         asyncio.run(summarize_session("whatever"))
 
 
-def test_explicit_session_summarizer_wins_over_convention(
-    _fresh_identity, tmp_path
-):
+def test_explicit_session_summarizer_wins_over_convention(_fresh_identity, tmp_path):
     _install_session_product(tmp_path, with_agent=True)
 
     async def explicit(prompt, **kwargs):

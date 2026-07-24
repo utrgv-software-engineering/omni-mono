@@ -164,7 +164,7 @@ async def booking_verified_in_db(ctx: EvalContext) -> Dict[str, Any]:
 # built, so registering here is enough; evaluation.yml then declares
 #
 #     environment:
-#       type: booking_demo
+# type: booking_demo
 #       api_base_url: http://localhost:3000
 # ---------------------------------------------------------------------------
 

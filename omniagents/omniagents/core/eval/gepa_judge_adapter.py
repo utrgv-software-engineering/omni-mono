@@ -537,7 +537,9 @@ class OmniAgentsJudgeAdapter:
                         import uuid as _uuid
 
                         run_uid = _uuid.uuid4().hex[:8]
-                        expected_block = item.get("expect") if isinstance(item, dict) else None
+                        expected_block = (
+                            item.get("expect") if isinstance(item, dict) else None
+                        )
                         meta = {
                             "omniagents": {
                                 "run_type": "optimizer",
@@ -550,7 +552,11 @@ class OmniAgentsJudgeAdapter:
                                     "label": bool(item.get("label")),
                                 },
                                 "run": {"id": run_uid},
-                                **({"expected": expected_block} if expected_block else {}),
+                                **(
+                                    {"expected": expected_block}
+                                    if expected_block
+                                    else {}
+                                ),
                             }
                         }
                         with studio_trace(

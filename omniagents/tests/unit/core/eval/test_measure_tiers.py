@@ -35,11 +35,13 @@ class TestParseMeasures:
         assert tiers == {"a": DEFAULT_TIER, "b": DEFAULT_TIER, "c": DEFAULT_TIER}
 
     def test_dict_shape_assigns_per_tier(self):
-        names, tiers = parse_measures({
-            "outcome": ["bug_caught_by_tests", "db_row_exists"],
-            "process": ["ticket_moved_through_pipeline"],
-            "guard": ["no_remote_operations"],
-        })
+        names, tiers = parse_measures(
+            {
+                "outcome": ["bug_caught_by_tests", "db_row_exists"],
+                "process": ["ticket_moved_through_pipeline"],
+                "guard": ["no_remote_operations"],
+            }
+        )
         assert set(names) == {
             "bug_caught_by_tests",
             "db_row_exists",
@@ -66,10 +68,12 @@ class TestParseMeasures:
         assert tiers == {"m1": "weird"}
 
     def test_duplicate_name_last_tier_wins(self):
-        names, tiers = parse_measures({
-            "outcome": ["dupe"],
-            "process": ["dupe"],
-        })
+        names, tiers = parse_measures(
+            {
+                "outcome": ["dupe"],
+                "process": ["dupe"],
+            }
+        )
         assert names == ["dupe"]  # only listed once
         assert tiers["dupe"] == "process"  # last tier wins
 

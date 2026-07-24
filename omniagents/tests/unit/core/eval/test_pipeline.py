@@ -10,8 +10,7 @@ from omniagents.core.evaluation import registry
 
 
 def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
-    config_text = textwrap.dedent(
-        """
+    config_text = textwrap.dedent("""
         evaluation:
           defaults:
             runs_per_prompt: 2
@@ -30,8 +29,7 @@ def test_run_evaluation_async_handles_failure_categories(monkeypatch, tmp_path):
               prompt: bye
           metrics:
             - name: pass_rate
-        """
-    )
+        """)
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
@@ -176,8 +174,7 @@ def test_run_judges_parses_coded_output(monkeypatch, tmp_path):
 
 
 def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path):
-    config_text = textwrap.dedent(
-        """
+    config_text = textwrap.dedent("""
         evaluation:
           scenarios:
             - name: Solo
@@ -186,8 +183,7 @@ def test_run_evaluation_async_progress_callback_exceptions(monkeypatch, tmp_path
                 - m1
           metrics:
             - name: pass_rate
-        """
-    )
+        """)
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 
@@ -244,15 +240,11 @@ def test_load_local_measures_discovers_project_paths(tmp_path):
 
     project_root = agents_dir.parent
     project_yaml = project_root / "project.yml"
-    project_yaml.write_text(
-        textwrap.dedent(
-            """
+    project_yaml.write_text(textwrap.dedent("""
             paths:
               evaluations:
                 - custom_eval
-            """
-        )
-    )
+            """))
 
     eval_dir = project_root / "custom_eval"
     eval_dir.mkdir()
@@ -323,18 +315,14 @@ def test_run_judges_records_failure(monkeypatch, tmp_path):
 
 def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     agent_yaml = tmp_path / "agent.yaml"
-    agent_yaml.write_text(
-        textwrap.dedent(
-            """
+    agent_yaml.write_text(textwrap.dedent("""
             evaluation:
               synthetic_data_generation:
                 dimensions:
                   - name: tone
                     values:
                       - name: serious
-            """
-        )
-    )
+            """))
 
     spec_holder = {}
 
@@ -573,14 +561,12 @@ def test_run_evaluation_with_environment_returns_error_on_failed_build(
 
     # Config with an unknown environment type and no scenarios so no
     # actual agent runs.
-    config_text = textwrap.dedent(
-        """
+    config_text = textwrap.dedent("""
         evaluation:
           environment:
             type: nonexistent_type
           scenarios: []
-        """
-    )
+        """)
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
 

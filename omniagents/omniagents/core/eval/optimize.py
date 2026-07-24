@@ -94,29 +94,43 @@ def optimize_agent_from_project(
         return candidate if candidate.exists() else None
 
     # Resolve file paths only for roles not covered by a selector.
-    tr_path = None if train_via_select is not None else (
-        _resolve_split("train", train_file)
-        if (cat or not train_file)
+    tr_path = (
+        None
+        if train_via_select is not None
         else (
-            _P(train_file)
-            if _P(train_file).is_absolute()
-            else (base / train_file).resolve()
+            _resolve_split("train", train_file)
+            if (cat or not train_file)
+            else (
+                _P(train_file)
+                if _P(train_file).is_absolute()
+                else (base / train_file).resolve()
+            )
         )
     )
-    dv_path = None if dev_via_select is not None else (
-        _resolve_split("dev", dev_file)
-        if (cat or not dev_file)
+    dv_path = (
+        None
+        if dev_via_select is not None
         else (
-            _P(dev_file) if _P(dev_file).is_absolute() else (base / dev_file).resolve()
+            _resolve_split("dev", dev_file)
+            if (cat or not dev_file)
+            else (
+                _P(dev_file)
+                if _P(dev_file).is_absolute()
+                else (base / dev_file).resolve()
+            )
         )
     )
-    ts_path = None if test_via_select is not None else (
-        _resolve_split("test", test_file)
-        if (cat or not test_file)
+    ts_path = (
+        None
+        if test_via_select is not None
         else (
-            _P(test_file)
-            if _P(test_file).is_absolute()
-            else (base / test_file).resolve()
+            _resolve_split("test", test_file)
+            if (cat or not test_file)
+            else (
+                _P(test_file)
+                if _P(test_file).is_absolute()
+                else (base / test_file).resolve()
+            )
         )
     )
 

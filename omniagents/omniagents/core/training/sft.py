@@ -203,10 +203,13 @@ class SFTTrainingResult:
             # Step 1: Convert safetensors to GGUF using llama.cpp
             print(f"  Converting to GGUF format (quantization: {quantization})...")
             convert_cmd = [
-                "python", str(convert_script),
+                "python",
+                str(convert_script),
                 str(path),
-                "--outtype", quantization,
-                "--outfile", str(gguf_path),
+                "--outtype",
+                quantization,
+                "--outfile",
+                str(gguf_path),
             ]
 
             result = subprocess.run(
@@ -267,7 +270,9 @@ class SFTTrainingResult:
             script = Path(llama_cpp_path) / "convert_hf_to_gguf.py"
             if script.exists():
                 return script
-            raise FileNotFoundError(f"convert_hf_to_gguf.py not found at {llama_cpp_path}")
+            raise FileNotFoundError(
+                f"convert_hf_to_gguf.py not found at {llama_cpp_path}"
+            )
 
         # Check LLAMA_CPP_PATH environment variable
         env_path = os.environ.get("LLAMA_CPP_PATH")
@@ -532,7 +537,9 @@ class SFTTrainer:
 
         # Collect metrics
         metrics = []
-        if hasattr(self._trl_trainer, "state") and hasattr(self._trl_trainer.state, "log_history"):
+        if hasattr(self._trl_trainer, "state") and hasattr(
+            self._trl_trainer.state, "log_history"
+        ):
             metrics = self._trl_trainer.state.log_history
 
         final_loss = None
@@ -908,7 +915,9 @@ def export_traces_for_sft(
             ctx = build_eval_context(history=history)
             try:
                 result = measure_fn(ctx)
-                passed = result.get("passed", False) if isinstance(result, dict) else False
+                passed = (
+                    result.get("passed", False) if isinstance(result, dict) else False
+                )
             except Exception:
                 # If measure fails to run, skip this session
                 continue
@@ -936,7 +945,9 @@ def export_traces_for_sft(
     elif format == "prompt_completion":
         data = _to_prompt_completion_format(filtered_histories, include_system)
     else:
-        raise ValueError(f"Unknown format: {format}. Must be 'conversational' or 'prompt_completion'")
+        raise ValueError(
+            f"Unknown format: {format}. Must be 'conversational' or 'prompt_completion'"
+        )
 
     return Dataset.from_dict(data)
 
@@ -1085,14 +1096,16 @@ def _convert_history_to_openai_format(
                     else:
                         args_str = _json.dumps(args)
 
-                    tool_calls.append({
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": args_str,
+                    tool_calls.append(
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": args_str,
+                            },
                         }
-                    })
+                    )
                     j += 1
                 elif next_item.get("type") == "function_call_output":
                     # Tool output - we'll handle after adding assistant message
@@ -1129,14 +1142,16 @@ def _convert_history_to_openai_format(
                 args_str = _json.dumps(args)
 
             # Look for more consecutive tool calls
-            tool_calls = [{
-                "id": call_id,
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "arguments": args_str,
+            tool_calls = [
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": args_str,
+                    },
                 }
-            }]
+            ]
 
             j = i + 1
             while j < len(history):
@@ -1150,23 +1165,27 @@ def _convert_history_to_openai_format(
                     else:
                         nc_args_str = _json.dumps(nc_args)
 
-                    tool_calls.append({
-                        "id": nc_id,
-                        "type": "function",
-                        "function": {
-                            "name": nc_name,
-                            "arguments": nc_args_str,
+                    tool_calls.append(
+                        {
+                            "id": nc_id,
+                            "type": "function",
+                            "function": {
+                                "name": nc_name,
+                                "arguments": nc_args_str,
+                            },
                         }
-                    })
+                    )
                     j += 1
                 else:
                     break
 
-            messages.append({
-                "role": "assistant",
-                "content": "",
-                "tool_calls": tool_calls,
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": tool_calls,
+                }
+            )
             i = j
             continue
 
@@ -1177,11 +1196,13 @@ def _convert_history_to_openai_format(
             if isinstance(output, dict):
                 output = _json.dumps(output)
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": str(output),
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": str(output),
+                }
+            )
             i += 1
             continue
 

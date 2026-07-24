@@ -1202,7 +1202,9 @@ class ScenarioEntryModel(BaseModel):
     label: Optional[bool] = None
     metadata: Optional[Dict[str, Any]] = None
     analysis: Optional[Dict[str, Any]] = None
-    expect: Optional[Dict[str, Any]] = None  # Reference data (e.g. doctor_answer, source) — surfaced in dataset-split view
+    expect: Optional[Dict[str, Any]] = (
+        None  # Reference data (e.g. doctor_answer, source) — surfaced in dataset-split view
+    )
 
 
 class ScenarioSetModel(BaseModel):
@@ -3860,9 +3862,7 @@ def create_api_app(
                 ]
                 if filtered:
                     failure_categories = filtered
-            raw_tags = (
-                item.get("tags") if isinstance(item.get("tags"), list) else None
-            )
+            raw_tags = item.get("tags") if isinstance(item.get("tags"), list) else None
             tags: Optional[List[str]] = None
             if raw_tags:
                 filtered_tags = [
@@ -6715,9 +6715,7 @@ def create_api_app(
             # With dim filter we need to inspect per-trace metadata, so we materialize
             # the filtered groups in Python and paginate there.
             if not dim_map:
-                page_sql = (
-                    base_sql
-                    + f"""
+                page_sql = base_sql + f"""
                     SELECT group_id, trace_count,
                            datetime(created_at_raw) || 'Z' AS created_at,
                            workflow_name, metadata, first_trace_id, has_errors,
@@ -6727,13 +6725,10 @@ def create_api_app(
                     ORDER BY created_at_raw DESC
                     LIMIT ? OFFSET ?
                     """
-                )
                 rows = list(storage.conn.execute(page_sql, [*params, limit, offset]))
                 total = rows[0]["total_rows"] if rows else 0
             else:
-                all_sql = (
-                    base_sql
-                    + f"""
+                all_sql = base_sql + f"""
                     SELECT group_id, trace_count,
                            datetime(created_at_raw) || 'Z' AS created_at,
                            workflow_name, metadata, first_trace_id, has_errors
@@ -6741,7 +6736,6 @@ def create_api_app(
                     {where_sql}
                     ORDER BY created_at_raw DESC
                     """
-                )
                 all_rows = list(storage.conn.execute(all_sql, params))
                 matching_ids = _filter_groups_by_dim(
                     storage.conn, [r["group_id"] for r in all_rows], dim_map
@@ -7851,7 +7845,9 @@ def create_api_app(
             #      eval pipeline (e.g., interactive playground sessions).
             group_id = run.get("trace_group_id")
             if not group_id:
-                metadata = run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
+                metadata = (
+                    run.get("metadata") if isinstance(run.get("metadata"), dict) else {}
+                )
                 group_id = metadata.get("group_id")
             if not group_id:
                 session_id = run.get("session_id")

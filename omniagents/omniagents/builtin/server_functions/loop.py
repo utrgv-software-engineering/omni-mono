@@ -31,6 +31,8 @@ from omniagents.core.autonomy.loop import (  # noqa: F401  (re-exported surface)
     workspace_root_from_session,
     _format_status,
 )
+
+
 @server_function(
     description="Run a prompt on a recurring loop. Slash form: /loop [interval] [prompt].",
     strict=True,

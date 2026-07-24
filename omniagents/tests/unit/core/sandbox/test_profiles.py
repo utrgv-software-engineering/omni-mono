@@ -50,9 +50,7 @@ def test_layer_order_default_then_user_then_project(tmp_path):
 
 
 def test_explicit_path_skips_user_layers(tmp_path):
-    default = _write(
-        tmp_path / "pkg" / "default.yml", "client: {type: docker}\n"
-    )
+    default = _write(tmp_path / "pkg" / "default.yml", "client: {type: docker}\n")
     cfg = tmp_path / "cfg"
     _write(cfg / "sandbox" / "default.yml", "options: {image: user:2}\n")
     explicit = _write(tmp_path / "explicit.yml", "options: {image: explicit:9}\n")

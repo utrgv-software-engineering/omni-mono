@@ -53,7 +53,10 @@ async def test_stamp_pairs_tools_across_servers_with_overlapping_names():
 
     await stamp_mcp_tool_identities(agent, None, tools, session)
 
-    assert lookup_identity(session, "mcp_alpha__create_page") == ("alpha", "create_page")
+    assert lookup_identity(session, "mcp_alpha__create_page") == (
+        "alpha",
+        "create_page",
+    )
     assert lookup_identity(session, "mcp_alpha__list_items") == ("alpha", "list_items")
     assert lookup_identity(session, "mcp_beta__create_page") == ("beta", "create_page")
     assert lookup_identity(session, "read_file") is None
@@ -74,8 +77,14 @@ async def test_stamp_falls_back_to_public_name_on_length_mismatch():
 
     await stamp_mcp_tool_identities(agent, None, tools, session)
 
-    assert lookup_identity(session, "mcp_drifty__tool_a") == ("drifty", "mcp_drifty__tool_a")
-    assert lookup_identity(session, "mcp_drifty__tool_b") == ("drifty", "mcp_drifty__tool_b")
+    assert lookup_identity(session, "mcp_drifty__tool_a") == (
+        "drifty",
+        "mcp_drifty__tool_a",
+    )
+    assert lookup_identity(session, "mcp_drifty__tool_b") == (
+        "drifty",
+        "mcp_drifty__tool_b",
+    )
 
 
 @pytest.mark.asyncio
@@ -154,5 +163,7 @@ async def test_mcp_predicate_spec_names_and_patterns_match_public_name():
     )
     assert await by_pattern(None, {}, "c2") is False
 
-    default = _make_mcp_predicate(("srv", "hello"), "mcp_srv__hello", session, set(), [], False)
+    default = _make_mcp_predicate(
+        ("srv", "hello"), "mcp_srv__hello", session, set(), [], False
+    )
     assert await default(None, {}, "c3") is True

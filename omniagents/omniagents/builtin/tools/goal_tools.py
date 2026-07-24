@@ -28,7 +28,6 @@ from omniagents.core.tools import (
     session_id_from_ctx as _session_id_from_ctx,
 )
 
-
 _log = logging.getLogger(__name__)
 
 
@@ -86,12 +85,18 @@ async def goal_complete(
         "goal_complete fired for session=%s reason=%s evidence=%s",
         sid,
         reason,
-        (state.evidence[:120] + "…") if state.evidence and len(state.evidence) > 120 else state.evidence,
+        (
+            (state.evidence[:120] + "…")
+            if state.evidence and len(state.evidence) > 120
+            else state.evidence
+        ),
     )
     return _ack(reason=reason, applied=True, evidence=state.evidence)
 
 
-def _ack(*, reason: str, applied: bool, evidence: Optional[str] = None) -> RichToolOutput:
+def _ack(
+    *, reason: str, applied: bool, evidence: Optional[str] = None
+) -> RichToolOutput:
     """Build the tool result. ``display_type: "hidden"`` tells the
     frontend to skip rendering both the tool-call row and the result
     row — the goal panel is the visual feedback channel for this."""

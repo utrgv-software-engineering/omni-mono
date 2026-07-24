@@ -26,7 +26,9 @@ def make_spec(**overrides):
     base = {
         "name": overrides.pop("name", "TestAgent"),
         "welcome_text": "Welcome",
-        "get_agent_instructions": overrides.pop("get_agent_instructions", lambda: "Test instructions"),
+        "get_agent_instructions": overrides.pop(
+            "get_agent_instructions", lambda: "Test instructions"
+        ),
         "build_agent": overrides.pop("build_agent", None),
     }
     base.update(overrides)
@@ -98,7 +100,12 @@ def _resolve_model_provider(session_model_config):
         _api_key = session_model_config.get("api_key")
 
         def _expand(val):
-            if val and isinstance(val, str) and val.startswith("${") and val.endswith("}"):
+            if (
+                val
+                and isinstance(val, str)
+                and val.startswith("${")
+                and val.endswith("}")
+            ):
                 return os.getenv(val[2:-1])
             return val
 
@@ -115,8 +122,7 @@ def _resolve_model_provider(session_model_config):
             _base_url = "https://api.openai.com/v1"
 
         is_azure = (
-            "openai.azure.com" in _base_url
-            or "services.ai.azure.com" in _base_url
+            "openai.azure.com" in _base_url or "services.ai.azure.com" in _base_url
         )
 
         if _api_key and is_azure:
@@ -143,12 +149,17 @@ class TestModelSwitchChangesEndpoint:
     async def test_builtin_openai_model_does_not_use_stale_env_base_url(self):
         """Core bug reproduction: after switching to built-in gpt-5.2 (no base_url),
         the resolved client must NOT use OPENAI_BASE_URL from the environment."""
-        with patch.dict(os.environ, {
-            "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
-            "OPENAI_API_KEY": "sk-real-openai-key",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
+                "OPENAI_API_KEY": "sk-real-openai-key",
+            },
+        ):
             provider = _resolve_model_provider(BUILTIN_GPT52_CONFIG)
-            assert provider is not None, "model_provider should be created for openai provider"
+            assert (
+                provider is not None
+            ), "model_provider should be created for openai provider"
 
             client = provider._get_client()
             client_base_url = _get_client_base_url(client)
@@ -157,53 +168,62 @@ class TestModelSwitchChangesEndpoint:
                 f"BUG: After switching to built-in gpt-5.2, client still points to "
                 f"rgvaiclass.com: {client_base_url}"
             )
-            assert "api.openai.com" in (client_base_url or ""), (
-                f"Expected api.openai.com, got: {client_base_url}"
-            )
+            assert "api.openai.com" in (
+                client_base_url or ""
+            ), f"Expected api.openai.com, got: {client_base_url}"
 
     @pytest.mark.asyncio
     async def test_openai_compatible_model_uses_custom_base_url(self):
         """RGVAI model should route to rgvaiclass.com."""
-        with patch.dict(os.environ, {
-            "OPENAI_API_KEY": "sk-real-openai-key",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "sk-real-openai-key",
+            },
+        ):
             provider = _resolve_model_provider(RGVAI_MODEL_CONFIG)
             assert provider is not None
 
             client = provider._get_client()
             client_base_url = _get_client_base_url(client)
 
-            assert "rgvaiclass.com" in (client_base_url or ""), (
-                f"RGVAI model should point to rgvaiclass.com, got: {client_base_url}"
-            )
+            assert "rgvaiclass.com" in (
+                client_base_url or ""
+            ), f"RGVAI model should point to rgvaiclass.com, got: {client_base_url}"
 
     @pytest.mark.asyncio
     async def test_azure_model_uses_azure_base_url_and_header(self):
         """Azure model should use azure base_url with api-key header."""
-        with patch.dict(os.environ, {
-            "AZURE_OPENAI_API_KEY": "azure-test-key",
-            "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "AZURE_OPENAI_API_KEY": "azure-test-key",
+                "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
+            },
+        ):
             provider = _resolve_model_provider(AZURE_MODEL_CONFIG)
             assert provider is not None
 
             client = provider._get_client()
             client_base_url = _get_client_base_url(client)
 
-            assert "openai.azure.com" in (client_base_url or ""), (
-                f"Azure model should point to azure, got: {client_base_url}"
-            )
-            assert "rgvaiclass.com" not in (client_base_url or ""), (
-                f"Azure model should NOT point to rgvaiclass, got: {client_base_url}"
-            )
+            assert "openai.azure.com" in (
+                client_base_url or ""
+            ), f"Azure model should point to azure, got: {client_base_url}"
+            assert "rgvaiclass.com" not in (
+                client_base_url or ""
+            ), f"Azure model should NOT point to rgvaiclass, got: {client_base_url}"
 
     @pytest.mark.asyncio
     async def test_switch_from_rgvai_to_builtin_changes_endpoint(self):
         """Full scenario: start with RGVAI, switch to built-in, verify endpoint changes."""
-        with patch.dict(os.environ, {
-            "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
-            "OPENAI_API_KEY": "sk-real-openai-key",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
+                "OPENAI_API_KEY": "sk-real-openai-key",
+            },
+        ):
             # Step 1: RGVAI model
             rgvai_provider = _resolve_model_provider(RGVAI_MODEL_CONFIG)
             rgvai_client = rgvai_provider._get_client()
@@ -224,10 +244,13 @@ class TestModelSwitchChangesEndpoint:
     @pytest.mark.asyncio
     async def test_openai_provider_api_key_not_from_stale_env(self):
         """The built-in model should use OPENAI_API_KEY, not the rgvai key."""
-        with patch.dict(os.environ, {
-            "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
-            "OPENAI_API_KEY": "sk-real-openai-key",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
+                "OPENAI_API_KEY": "sk-real-openai-key",
+            },
+        ):
             provider = _resolve_model_provider(BUILTIN_GPT52_CONFIG)
             client = provider._get_client()
 
@@ -236,16 +259,23 @@ class TestModelSwitchChangesEndpoint:
     @pytest.mark.asyncio
     async def test_env_var_expansion_in_api_key(self):
         """Model configs with ${VAR} api_key should expand from env."""
-        with patch.dict(os.environ, {
-            "AZURE_OPENAI_API_KEY": "expanded-azure-key",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "AZURE_OPENAI_API_KEY": "expanded-azure-key",
+            },
+        ):
             provider = _resolve_model_provider(AZURE_MODEL_CONFIG)
             assert provider is not None
 
             client = provider._get_client()
             # Azure uses api-key header, client itself has "dummy"
             headers = getattr(client, "_custom_headers", {}) or {}
-            default_headers = dict(client._custom_headers) if hasattr(client, "_custom_headers") else {}
+            default_headers = (
+                dict(client._custom_headers)
+                if hasattr(client, "_custom_headers")
+                else {}
+            )
             # The key should be in default_headers
             assert "openai.azure.com" in _get_client_base_url(client)
 
@@ -257,10 +287,13 @@ class TestModelSwitchChangesEndpoint:
         from agents.models.openai_provider import OpenAIProvider
         from openai import AsyncOpenAI
 
-        with patch.dict(os.environ, {
-            "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
-            "OPENAI_API_KEY": "sk-real-openai-key",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
+                "OPENAI_API_KEY": "sk-real-openai-key",
+            },
+        ):
             # Create explicit provider for standard OpenAI
             client = AsyncOpenAI(
                 api_key="sk-real-openai-key",
@@ -275,9 +308,9 @@ class TestModelSwitchChangesEndpoint:
             model_url = _get_client_base_url(model_client)
 
             assert model_url is not None, "Could not find _client on resolved model"
-            assert "api.openai.com" in model_url, (
-                f"RunConfig model_provider should use explicit client, got: {model_url}"
-            )
+            assert (
+                "api.openai.com" in model_url
+            ), f"RunConfig model_provider should use explicit client, got: {model_url}"
             assert "rgvaiclass.com" not in model_url
 
     @pytest.mark.asyncio
@@ -285,10 +318,13 @@ class TestModelSwitchChangesEndpoint:
         """Without explicit model_provider, default RunConfig reads env (this is the bug path)."""
         from agents import RunConfig
 
-        with patch.dict(os.environ, {
-            "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
-            "OPENAI_API_KEY": "sk-real-openai-key",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_BASE_URL": "https://rgvaiclass.com/chat/api/v1",
+                "OPENAI_API_KEY": "sk-real-openai-key",
+            },
+        ):
             run_config = RunConfig()
             model = run_config.model_provider.get_model("gpt-5.2")
             model_client = getattr(model, "_client", None)
@@ -297,9 +333,9 @@ class TestModelSwitchChangesEndpoint:
             assert model_url is not None, "Could not find _client on resolved model"
             # This SHOULD go to rgvaiclass because no override was given --
             # this demonstrates why the service MUST pass an explicit provider.
-            assert "rgvaiclass.com" in model_url, (
-                f"Default RunConfig should use env OPENAI_BASE_URL, got: {model_url}"
-            )
+            assert (
+                "rgvaiclass.com" in model_url
+            ), f"Default RunConfig should use env OPENAI_BASE_URL, got: {model_url}"
 
     @pytest.mark.asyncio
     async def test_builder_model_name_override_is_correct(self):

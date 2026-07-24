@@ -37,9 +37,7 @@ slash_commands:
 def fake_product(tmp_path):
     manifest = tmp_path / "project.yml"
     manifest.write_text(MANIFEST, encoding="utf-8")
-    info = replace(
-        product_info_from_mapping({"name": "acme"}), manifest_path=manifest
-    )
+    info = replace(product_info_from_mapping({"name": "acme"}), manifest_path=manifest)
     set_product_info(info)
     yield tmp_path
     reset_product_info()

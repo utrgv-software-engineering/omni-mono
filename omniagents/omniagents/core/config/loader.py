@@ -9,7 +9,6 @@ import warnings
 from pathlib import Path
 from typing import Dict, Any, List, Callable, Optional, Set
 
-
 _SAFE_AGENT_DEPRECATION_WARNED: Set[str] = set()
 
 
@@ -1629,9 +1628,7 @@ def load_agent_spec_from_yaml(
     resolved_capabilities_list: List[Any] = []
     capabilities_config = config.get("capabilities", [])
     if capabilities_config and not isinstance(capabilities_config, list):
-        print(
-            f"Warning: 'capabilities' key in {config_path} must be a list. Ignoring."
-        )
+        print(f"Warning: 'capabilities' key in {config_path} must be a list. Ignoring.")
         capabilities_config = []
 
     for cap_entry in capabilities_config:
@@ -2066,7 +2063,7 @@ def load_agent_spec_from_yaml(
     # YAML schema:
     #   session:
     #     backend:                  # opt-in SDK-managed backend
-    #       type: redis | sqlalchemy | mongodb | encrypted | openai_conversations | sqlite
+    # type: redis | sqlalchemy | mongodb | encrypted | openai_conversations | sqlite
     #       # backend-specific kwargs (url, session_id, ttl, inner, ...)
     #     compaction:               # opt-in SDK-native context compaction
     #       enabled: true
@@ -2110,13 +2107,13 @@ def load_agent_spec_from_yaml(
     #     use_sandbox_agent: false
     #     run_as: "user"
     #     client:
-    #       type: unix_local | docker | e2b | modal | runloop |
+    # type: unix_local | docker | e2b | modal | runloop |
     #             daytona | blaxel | vercel | cloudflare
     #     options: { ... }
     #     manifest:
     #       entries: { ... }
     #     snapshot:
-    #       type: local | remote | noop
+    # type: local | remote | noop
     #     concurrency_limits:
     #       manifest_entries: 4
     #       local_dir_files: 8

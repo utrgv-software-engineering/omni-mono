@@ -50,7 +50,6 @@ from .types import (
     WorkspaceFeatureUnavailable,
 )
 
-
 # --------------------------------------------------------------------------- #
 # Worker client                                                               #
 # --------------------------------------------------------------------------- #
@@ -59,7 +58,9 @@ from .types import (
 class PyodideWorkerError(WorkspaceError):
     """Raised when the worker reports an error or exits unexpectedly."""
 
-    def __init__(self, message: str, *, op: Optional[str] = None, errno: Optional[int] = None) -> None:
+    def __init__(
+        self, message: str, *, op: Optional[str] = None, errno: Optional[int] = None
+    ) -> None:
         super().__init__(message)
         self.op = op
         self.errno = errno
@@ -128,7 +129,9 @@ class _PyodideWorker:
 
         loop = asyncio.get_running_loop()
         self._ready = loop.create_future()
-        self._reader_task = asyncio.create_task(self._reader_loop(), name="pyodide-worker-reader")
+        self._reader_task = asyncio.create_task(
+            self._reader_loop(), name="pyodide-worker-reader"
+        )
 
         # Wait for the worker's one-line "ready" handshake.
         ready_payload = await asyncio.wait_for(self._ready, timeout=120.0)
@@ -185,7 +188,11 @@ class _PyodideWorker:
                     # Log and ignore; worker stderr will have details.
                     continue
                 msg_id = msg.get("id")
-                if msg.get("ready") and self._ready is not None and not self._ready.done():
+                if (
+                    msg.get("ready")
+                    and self._ready is not None
+                    and not self._ready.done()
+                ):
                     self._ready.set_result(msg)
                     continue
                 if msg_id is None:
@@ -197,11 +204,19 @@ class _PyodideWorker:
         finally:
             # Wake the readiness handshake if the worker died before signalling.
             if self._ready is not None and not self._ready.done():
-                self._ready.set_result({"ok": False, "error": {"message": "worker exited before ready"}})
+                self._ready.set_result(
+                    {"ok": False, "error": {"message": "worker exited before ready"}}
+                )
 
     # ---- request/response ----------------------------------------------- #
 
-    async def call(self, op: str, params: Optional[Dict[str, Any]] = None, *, timeout: Optional[float] = None) -> Dict[str, Any]:
+    async def call(
+        self,
+        op: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
         if self._proc is None:
             raise PyodideWorkerError("worker not started")
         if self._proc.returncode is not None:
@@ -212,7 +227,12 @@ class _PyodideWorker:
         fut: asyncio.Future[Dict[str, Any]] = loop.create_future()
         self._pending[req_id] = fut
 
-        payload = json.dumps({"id": req_id, "op": op, "params": params or {}}, separators=(",", ":")).encode("utf-8") + b"\n"
+        payload = (
+            json.dumps(
+                {"id": req_id, "op": op, "params": params or {}}, separators=(",", ":")
+            ).encode("utf-8")
+            + b"\n"
+        )
         async with self._write_lock:
             assert self._proc.stdin is not None
             self._proc.stdin.write(payload)
@@ -236,7 +256,10 @@ class _PyodideWorker:
 def _default_worker_script() -> str:
     """Find ``worker.mjs`` whether running from source or an installed wheel."""
     try:
-        path = importlib_resources.files("omniagents.workspace.pyodide_worker") / "worker.mjs"
+        path = (
+            importlib_resources.files("omniagents.workspace.pyodide_worker")
+            / "worker.mjs"
+        )
         return str(path)
     except Exception:
         # Fallback: alongside this file at source layout.
@@ -407,7 +430,9 @@ class PyodideWorkspace(Workspace):
         if candidate.is_absolute():
             full = PurePosixPath(os.path.normpath(str(candidate)))
         else:
-            full = PurePosixPath(os.path.normpath(str(PurePosixPath(self.root) / candidate)))
+            full = PurePosixPath(
+                os.path.normpath(str(PurePosixPath(self.root) / candidate))
+            )
         # Defense in depth — disallow escape.
         try:
             full.relative_to(self.root)
@@ -563,7 +588,9 @@ class PyodideWorkspace(Workspace):
             name = entry.get("name", "")
             if not include_hidden and isinstance(name, str) and name.startswith("."):
                 continue
-            child_abs = absolute.rstrip("/") + "/" + name if absolute != "/" else "/" + name
+            child_abs = (
+                absolute.rstrip("/") + "/" + name if absolute != "/" else "/" + name
+            )
             try:
                 rel = str(PurePosixPath(child_abs).relative_to(self.root))
             except ValueError:
@@ -613,7 +640,9 @@ class PyodideWorkspace(Workspace):
         # we inject params as a Python dict named ``__params__`` via a small
         # prelude. Cheaper than a per-op JSON parse on the JS side.
         code = _wrap_with_params(_GLOB_CODE, params)
-        result = await self._worker.call("exec_python", {"code": code, "capture_stdout": True})
+        result = await self._worker.call(
+            "exec_python", {"code": code, "capture_stdout": True}
+        )
         if result.get("exit_code", 0) != 0:
             raise PyodideWorkerError(f"glob failed: {result.get('stderr', '').strip()}")
         return list(json.loads(result.get("stdout", "[]").strip() or "[]"))
@@ -638,7 +667,9 @@ class PyodideWorkspace(Workspace):
             "workspace_root": self.root,
         }
         code = _wrap_with_params(_GREP_CODE, params)
-        result = await self._worker.call("exec_python", {"code": code, "capture_stdout": True})
+        result = await self._worker.call(
+            "exec_python", {"code": code, "capture_stdout": True}
+        )
         if result.get("exit_code", 0) != 0:
             raise PyodideWorkerError(f"grep failed: {result.get('stderr', '').strip()}")
         raw = json.loads(result.get("stdout", "[]").strip() or "[]")
@@ -716,6 +747,7 @@ class PyodideWorkspace(Workspace):
         """
         await self._ensure_started()
         import time as _time
+
         start = _time.perf_counter()
         result = await self._worker.call(
             "exec_python",

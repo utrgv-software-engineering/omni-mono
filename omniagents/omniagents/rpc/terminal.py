@@ -198,7 +198,9 @@ class TerminalManager:
         existing = self._resize_tasks.get(key)
         if existing is not None and not existing.done():
             return  # the running task will pick up the latest pending value
-        self._resize_tasks[key] = asyncio.create_task(self._apply_resize_worker(key, terminal))
+        self._resize_tasks[key] = asyncio.create_task(
+            self._apply_resize_worker(key, terminal)
+        )
 
     async def _apply_resize_worker(
         self, key: str, terminal: TerminalDescriptor

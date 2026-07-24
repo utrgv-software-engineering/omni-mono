@@ -74,9 +74,7 @@ def test_verify_failures(tmp_path):
     assert result["results"]["missing.py"]["reason"] == "file not found"
     assert result["results"]["a.py2"] == {"matched": True}
 
-    result = asyncio.run(
-        env.verify(ctx, {"a.py": {"not_contains": ["import os"]}})
-    )
+    result = asyncio.run(env.verify(ctx, {"a.py": {"not_contains": ["import os"]}}))
     assert result["success"] is False
     assert "forbidden pattern" in result["results"]["a.py"]["reason"]
 

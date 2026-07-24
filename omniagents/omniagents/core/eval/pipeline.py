@@ -174,6 +174,7 @@ def _collect_judges_for_scenario(
         judges_cfg = {}
 
     from omniagents.core.eval.measure_tiers import measure_names
+
     measures = measure_names(scenario.get("measures"))
     derived = _derive_judge_keys_from_measures(measures)
 
@@ -549,6 +550,7 @@ async def _run_scenario(
         )
 
         from omniagents.core.eval.measure_tiers import parse_measures, tag_results
+
         measures, tier_by_name = parse_measures(scenario.get("measures"))
         judge_metadata = await _run_judges(
             Path(agent_yaml), eval_cfg, scenario, history, eval_dir=eval_dir

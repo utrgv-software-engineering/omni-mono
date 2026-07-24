@@ -173,9 +173,7 @@ class PermissiveLocalDir(BaseEntry):
             return []
 
         max_bytes = _resolve_max_seed_bytes(self.max_bytes)
-        archive_bytes = await asyncio.to_thread(
-            _build_dir_tar, src_resolved, max_bytes
-        )
+        archive_bytes = await asyncio.to_thread(_build_dir_tar, src_resolved, max_bytes)
 
         await session.mkdir(dest, parents=True)
         staging_path = dest / _STAGING_TAR_NAME
@@ -258,7 +256,9 @@ def _walk(
 
     try:
         for entry in entries:
-            rel_path = rel_dir / entry.name if rel_dir != Path(".") else Path(entry.name)
+            rel_path = (
+                rel_dir / entry.name if rel_dir != Path(".") else Path(entry.name)
+            )
             rel_posix = rel_path.as_posix()
 
             try:
@@ -334,7 +334,7 @@ def _is_ignored(
             prefix = anchor_rel + "/"
             if not rel_posix.startswith(prefix):
                 continue
-            scoped = rel_posix[len(prefix):] + ("/" if is_dir else "")
+            scoped = rel_posix[len(prefix) :] + ("/" if is_dir else "")
         else:
             scoped = candidate
         if spec.match_file(scoped):

@@ -27,7 +27,6 @@ from omniagents.rpc.realtime_events import (
     map_realtime_session_event_to_rpc,
 )
 
-
 # --- Event Type Creation Tests ---
 
 

@@ -220,9 +220,7 @@ class McpFixtureConfig:
             if p.is_file():
                 return p
         hint = (
-            f"Set {self.cli_env_var} to the cli path, or "
-            if self.cli_env_var
-            else ""
+            f"Set {self.cli_env_var} to the cli path, or " if self.cli_env_var else ""
         )
         raise RuntimeError(
             f"Scenario specifies {self.scenario_key!r} but the MCP server cli "
@@ -281,12 +279,8 @@ class _WorkspaceStagingEnvironment(LocalWorkspaceEnvironment):
         mcp_env: Optional[Dict[str, str]] = None
         if fixture_key:
             mcp_cli = mf.resolve_cli()
-            stager = UserMcpFixtureStager(
-                tmp_dir, product_config_name=mf.config_name
-            )
-            db_path = stager.stage_file(
-                mf.dbs_dir / f"{fixture_key}.db", mf.db_dest
-            )
+            stager = UserMcpFixtureStager(tmp_dir, product_config_name=mf.config_name)
+            db_path = stager.stage_file(mf.dbs_dir / f"{fixture_key}.db", mf.db_dest)
             pages_dir = stager.stage_tree(
                 mf.dbs_dir / f"{fixture_key}.pages", mf.pages_dest
             )
@@ -408,9 +402,7 @@ def _import_attr(ref: str) -> Any:
     """Import ``pkg.mod.attr`` (or ``pkg.mod:attr``)."""
     import importlib
 
-    module_name, _, attr = (
-        ref.rpartition(":") if ":" in ref else ref.rpartition(".")
-    )
+    module_name, _, attr = ref.rpartition(":") if ":" in ref else ref.rpartition(".")
     if not module_name:
         raise ValueError(f"not an importable reference: {ref!r}")
     return getattr(importlib.import_module(module_name), attr)
@@ -500,9 +492,7 @@ def _build_local_workspace(
     if config.get("fixtures_dir"):
         kwargs["fixtures_dir"] = _resolve_path(config["fixtures_dir"], base)
     if config.get("workspace_root"):
-        kwargs["workspace_cache_dir"] = Path(
-            str(config["workspace_root"])
-        ).expanduser()
+        kwargs["workspace_cache_dir"] = Path(str(config["workspace_root"])).expanduser()
     for key in ("skills_subdir", "keep_tempdir_env", "tempdir_prefix"):
         if config.get(key):
             kwargs[key] = str(config[key])

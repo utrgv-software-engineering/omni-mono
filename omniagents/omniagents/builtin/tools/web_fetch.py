@@ -5,7 +5,6 @@ from typing import Any, Optional
 from omniagents.core.tools import rich_function_tool, RichToolOutput
 from agents.run_context import RunContextWrapper
 
-
 # Constants for web_fetch
 _WEB_FETCH_DEFAULT_TIMEOUT = 10
 _WEB_FETCH_MAX_LINKS = 100
@@ -185,7 +184,9 @@ def web_fetch(
             if html_truncated:
                 header += f" | [HTML truncated: showing 5000 of {len(raw_html)} chars]"
 
-            llm_output = header + "\n\n" + (raw_html[:5000] if html_truncated else raw_html)
+            llm_output = (
+                header + "\n\n" + (raw_html[:5000] if html_truncated else raw_html)
+            )
 
             ui_metadata = {
                 "value": raw_html,
@@ -207,7 +208,9 @@ def web_fetch(
 
     except requests.Timeout:
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
-        error_msg = f"Request timed out after {timeout} seconds (elapsed: {elapsed_ms}ms)"
+        error_msg = (
+            f"Request timed out after {timeout} seconds (elapsed: {elapsed_ms}ms)"
+        )
         ui_metadata = {
             "value": error_msg,
             "display_type": "error",

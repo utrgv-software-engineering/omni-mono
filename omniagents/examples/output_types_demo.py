@@ -113,8 +113,7 @@ def explain_yaml_mapping():
         print(f"  {yaml_type:20} → {description}")
 
     print("\nExample YAML configurations:")
-    print(
-        """
+    print("""
   # String output (default)
   output_type: str
   
@@ -126,8 +125,7 @@ def explain_yaml_mapping():
   
   # No type constraint
   output_type: any
-    """
-    )
+    """)
 
     print("\nLimitations in YAML:")
     print("  - Cannot define custom classes (dataclasses, Pydantic models)")

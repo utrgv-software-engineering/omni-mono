@@ -8,7 +8,9 @@ register_provider("session_encryption", "none", NoneEncryption)
 
 # SQLCipher — only registered when pysqlcipher3 is installed
 try:
-    from omniagents.core.providers.session_encryption.sqlcipher import SQLCipherEncryption
+    from omniagents.core.providers.session_encryption.sqlcipher import (
+        SQLCipherEncryption,
+    )
 
     register_provider("session_encryption", "sqlcipher", SQLCipherEncryption)
 except ImportError:

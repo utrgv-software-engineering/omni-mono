@@ -29,19 +29,15 @@ def install_summarizer_product(tmp_path, *, agent_key=None, slug="conv_proj"):
         agent_yaml = tmp_path / "agents" / agent_key / "agent.yml"
         agent_yaml.parent.mkdir(parents=True, exist_ok=True)
         agent_yaml.write_text(
-            dedent(
-                f"""
+            dedent(f"""
                 name: {agent_key}
                 instructions: "Project-owned summarizer prompt."
                 tools: []
-                """
-            ),
+                """),
             encoding="utf-8",
         )
     manifest = tmp_path / "project.yml"
-    manifest.write_text(
-        f"name: {slug}\nproduct:\n  slug: {slug}\n", encoding="utf-8"
-    )
+    manifest.write_text(f"name: {slug}\nproduct:\n  slug: {slug}\n", encoding="utf-8")
     bootstrap_product(manifest)
     return manifest
 
@@ -131,7 +127,9 @@ def test_conventional_summarizer_runs_recapper_under_its_own_instructions(
     summarizer = recap_summarizer()
     assert summarizer is not None
     session = _ConvSession()
-    text = asyncio.run(summarizer("transcript", service=_ConvService(), session=session))
+    text = asyncio.run(
+        summarizer("transcript", service=_ConvService(), session=session)
+    )
 
     assert text == "recap text"
     assert captured["agent_key"] == "recapper"

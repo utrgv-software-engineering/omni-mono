@@ -39,7 +39,9 @@ def load_tasks(cfg: dict):
     source = ds.get("source", "builtin")
     limit = ds.get("limit")
     if source == "builtin":
-        return load_builtin(ds.get("categories"), split=ds.get("split", "train"), limit=limit)
+        return load_builtin(
+            ds.get("categories"), split=ds.get("split", "train"), limit=limit
+        )
     if source == "openthoughts":
         return load_openthoughts_rl(limit=limit)
     if source == "echo_parquet":
@@ -52,10 +54,14 @@ def main() -> int:
     ap.add_argument("--config", default=str(Path(__file__).parent / "config.yaml"))
     ap.add_argument("--source", help="override dataset.source")
     ap.add_argument("--limit", type=int, help="override dataset.limit")
-    ap.add_argument("--world-model-coeff", type=float, help="override echo.world_model_coeff")
+    ap.add_argument(
+        "--world-model-coeff", type=float, help="override echo.world_model_coeff"
+    )
     ap.add_argument("--seed", type=int, help="override seed")
     ap.add_argument("--model", help="override model")
-    ap.add_argument("--use-vllm", action="store_true", help="enable vLLM colocate generation")
+    ap.add_argument(
+        "--use-vllm", action="store_true", help="enable vLLM colocate generation"
+    )
     ap.add_argument("--output-dir", help="override output_dir")
     args = ap.parse_args()
 
@@ -88,14 +94,22 @@ def main() -> int:
     )
 
     # Agent (matches agents/terminal_agent/agent.yml).
-    agent_yml = yaml.safe_load((EXAMPLE_ROOT / "agents/terminal_agent/agent.yml").read_text())
-    agent = Agent(name=agent_yml["name"], model=cfg["model"], instructions=agent_yml["instructions"])
+    agent_yml = yaml.safe_load(
+        (EXAMPLE_ROOT / "agents/terminal_agent/agent.yml").read_text()
+    )
+    agent = Agent(
+        name=agent_yml["name"],
+        model=cfg["model"],
+        instructions=agent_yml["instructions"],
+    )
 
     tasks = load_tasks(cfg)
     n_wmo = sum(1 for t in tasks if t.world_model_only)
     src = cfg.get("dataset", {}).get("source")
-    print(f"Loaded {len(tasks)} train tasks (source={src}, split={cfg.get('dataset', {}).get('split', 'train')}, "
-          f"world_model_only={n_wmo})")
+    print(
+        f"Loaded {len(tasks)} train tasks (source={src}, split={cfg.get('dataset', {}).get('split', 'train')}, "
+        f"world_model_only={n_wmo})"
+    )
     if src == "builtin":
         n_val = len(load_builtin(split="val"))
         print(f"Held-out val tasks available: {n_val} (see evaluations/README.md)")
@@ -123,7 +137,9 @@ def main() -> int:
         load_in_4bit=cfg.get("lora", {}).get("load_in_4bit", False),
         use_vllm=cfg.get("vllm", {}).get("use_vllm", False),
         vllm_mode=cfg.get("vllm", {}).get("mode", "colocate"),
-        vllm_gpu_memory_utilization=cfg.get("vllm", {}).get("gpu_memory_utilization", 0.3),
+        vllm_gpu_memory_utilization=cfg.get("vllm", {}).get(
+            "gpu_memory_utilization", 0.3
+        ),
         vllm_max_model_len=cfg.get("vllm", {}).get("max_model_len", None),
         output_dir=output_dir,
         report_to=cfg.get("report_to", "none"),
@@ -150,18 +166,25 @@ def main() -> int:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     if cfg.get("save_model", True):
-        result.save_model(str(out / "model"))   # so experiments/evaluate.py can load it
+        result.save_model(str(out / "model"))  # so experiments/evaluate.py can load it
         print(f"Saved model to {out / 'model'}")
-    (out / "metrics.json").write_text(json.dumps({
-        "variant": variant,
-        "world_model_coeff": e["world_model_coeff"],
-        "seed": cfg.get("seed", 0),
-        "num_tasks": len(tasks),
-        "final_loss": result.final_loss,
-        "log_history": result.metrics,
-    }, indent=2))
-    print(f"Saved metrics to {out / 'metrics.json'} "
-          f"(EchoGRPOTrainer={isinstance(result.trainer, EchoGRPOTrainer)})")
+    (out / "metrics.json").write_text(
+        json.dumps(
+            {
+                "variant": variant,
+                "world_model_coeff": e["world_model_coeff"],
+                "seed": cfg.get("seed", 0),
+                "num_tasks": len(tasks),
+                "final_loss": result.final_loss,
+                "log_history": result.metrics,
+            },
+            indent=2,
+        )
+    )
+    print(
+        f"Saved metrics to {out / 'metrics.json'} "
+        f"(EchoGRPOTrainer={isinstance(result.trainer, EchoGRPOTrainer)})"
+    )
     return 0
 
 

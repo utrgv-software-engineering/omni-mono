@@ -99,9 +99,7 @@ def test_goal_builders_render_product_templates(fake_product):
         "TICK {{ goal }}/{{ max_turns }}\n", encoding="utf-8"
     )
     assert goal_mod.build_initial_prompt("ship it", 9) == "INITIAL ship it budget=9"
-    assert (
-        goal_mod.build_tick_prompt(goal="ship it", max_turns=9) == "TICK ship it/9"
-    )
+    assert goal_mod.build_tick_prompt(goal="ship it", max_turns=9) == "TICK ship it/9"
 
 
 def test_goal_templates_resolve_independently(fake_product):
@@ -112,7 +110,9 @@ def test_goal_templates_resolve_independently(fake_product):
     )
     initial = goal_mod.build_initial_prompt("ship it", 9)
     assert initial == goal_mod.default_goal_initial_prompt("ship it", 9)
-    assert goal_mod.build_tick_prompt(goal="ship it", max_turns=9) == "TICK-ONLY ship it"
+    assert (
+        goal_mod.build_tick_prompt(goal="ship it", max_turns=9) == "TICK-ONLY ship it"
+    )
 
 
 def test_explicit_goal_builders_beat_product_templates(fake_product):

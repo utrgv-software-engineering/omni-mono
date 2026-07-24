@@ -99,9 +99,7 @@ def test_container_setup_mounts_workspace_and_runs_init(tmp_path, fake_factory):
     Env = _env_class(resolver)
     env = Env(workspace_cache_dir=tmp_path / "cache")
 
-    ctx = asyncio.run(
-        env.setup({"environment": {"profile": str(profile_file)}})
-    )
+    ctx = asyncio.run(env.setup({"environment": {"profile": str(profile_file)}}))
     try:
         raw = captured["client_raw"]
         assert raw["manifest"]["root"] == "/workspace"
@@ -122,7 +120,9 @@ def test_image_override_uses_default_profile(tmp_path, fake_factory):
     client, captured = fake_factory
     default_profile = tmp_path / "default.yml"
     default_profile.write_text("client: {type: docker}\n")
-    resolver = _resolver_for({"client": {"type": "docker"}, "options": {"image": "base"}})
+    resolver = _resolver_for(
+        {"client": {"type": "docker"}, "options": {"image": "base"}}
+    )
     Env = _env_class(resolver, default_profile_path=default_profile)
     env = Env(workspace_cache_dir=tmp_path / "cache")
 

@@ -90,7 +90,9 @@ def _make_mcp_predicate(
     covering everything).
     """
 
-    async def needs_approval(ctx: Any, args: dict, call_id: str) -> bool:  # noqa: ANN401
+    async def needs_approval(
+        ctx: Any, args: dict, call_id: str
+    ) -> bool:  # noqa: ANN401
         if skip_approvals:
             return False
         if session_allows_mcp_tool(session, identity[0], identity[1]):

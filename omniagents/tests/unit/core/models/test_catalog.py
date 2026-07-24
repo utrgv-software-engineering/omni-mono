@@ -208,7 +208,9 @@ def test_catalog_store_defaults_and_fallback(tmp_path):
 
 
 def test_oauth_hooks_only_for_oauth_catalogs(tmp_path):
-    plain = build_catalog_store(load_model_catalog(_write(tmp_path / "a.yml", CATALOG_YAML)))
+    plain = build_catalog_store(
+        load_model_catalog(_write(tmp_path / "a.yml", CATALOG_YAML))
+    )
     assert plain._oauth_models is None
     assert plain._oauth_authenticated is None
 

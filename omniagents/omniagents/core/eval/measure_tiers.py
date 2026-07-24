@@ -25,7 +25,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-
 # Tier names recognized by the framework. Custom tiers are allowed but
 # treated as gating unless explicitly excluded.
 KNOWN_TIERS: Tuple[str, ...] = ("outcome", "quality", "process", "guard")
@@ -60,7 +59,7 @@ def parse_measures(value: Any) -> Tuple[List[str], Dict[str, str]]:
         tier_by_name: Dict[str, str] = {}
         for tier_name, names in value.items():
             tier = str(tier_name)
-            for n in (names or []):
+            for n in names or []:
                 if n is None:
                     continue
                 m = str(n)

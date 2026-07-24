@@ -266,9 +266,7 @@ class WorktreeIsolation:
         # path-policy-checked typed methods may refuse it while exec can
         # operate anywhere the shell has permission.
         async def _scratch_exists(p: str) -> bool:
-            probe = await _ws.exec(
-                f"test -e {shlex.quote(p)}", shell=True, timeout=5.0
-            )
+            probe = await _ws.exec(f"test -e {shlex.quote(p)}", shell=True, timeout=5.0)
             return probe.exit_code == 0
 
         if await _scratch_exists(worktree_path):
@@ -473,9 +471,7 @@ class MultiSourceWorktreeIsolation(WorktreeIsolation):
         worker_root = os.path.join(worktrees_dir, worker_root_name)
 
         async def _scratch_exists(p: str) -> bool:
-            probe = await _ws.exec(
-                f"test -e {shlex.quote(p)}", shell=True, timeout=5.0
-            )
+            probe = await _ws.exec(f"test -e {shlex.quote(p)}", shell=True, timeout=5.0)
             return probe.exit_code == 0
 
         if await _scratch_exists(worker_root):
@@ -636,9 +632,7 @@ class MultiSourceWorktreeIsolation(WorktreeIsolation):
                 except Exception:
                     pass
         try:
-            await _ws.exec(
-                f"rm -rf {shlex.quote(wt_path)}", shell=True, timeout=10.0
-            )
+            await _ws.exec(f"rm -rf {shlex.quote(wt_path)}", shell=True, timeout=10.0)
         except Exception:
             pass
         return True

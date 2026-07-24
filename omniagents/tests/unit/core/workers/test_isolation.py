@@ -88,9 +88,7 @@ def test_worker_defaults_set_get():
     def loader(model=None):
         return object(), {}
 
-    set_worker_defaults(
-        WorkerDefaults(spec_loader=loader, default_isolation="copy")
-    )
+    set_worker_defaults(WorkerDefaults(spec_loader=loader, default_isolation="copy"))
     d = worker_defaults()
     assert d.spec_loader is loader
     assert d.default_isolation == "copy"

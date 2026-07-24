@@ -88,8 +88,7 @@ class SQLiteStorage:
     def _create_tables(self):
         """Create tables if they don't exist"""
         with self.conn:
-            self.conn.executescript(
-                """
+            self.conn.executescript("""
                 CREATE TABLE IF NOT EXISTS traces (
                     trace_id TEXT PRIMARY KEY,
                     workflow_name TEXT,
@@ -145,8 +144,7 @@ class SQLiteStorage:
                 CREATE INDEX IF NOT EXISTS idx_analysis_judgment
                 ON analysis(project, judgment);
                 
-            """
-            )
+            """)
             self._ensure_analysis_categories_column()
             self._migrate_analysis_categories()
 
@@ -181,13 +179,11 @@ class SQLiteStorage:
                 group_id = row["group_id"]
                 grouped.setdefault(group_id, set()).add(str(row["category_id"]))
         else:
-            entries = self.conn.execute(
-                """
+            entries = self.conn.execute("""
                 SELECT ac.group_id, fc.name
                 FROM analysis_categories ac
                 JOIN failure_categories fc ON fc.id = ac.category_id
-                """
-            ).fetchall()
+                """).fetchall()
             if not entries:
                 return
             grouped = {}
@@ -381,14 +377,12 @@ class SQLiteStorage:
 
     def get_workflow_names(self) -> List[str]:
         """Get distinct workflow names present in traces"""
-        cursor = self.conn.execute(
-            """
+        cursor = self.conn.execute("""
             SELECT DISTINCT workflow_name
             FROM traces
             WHERE workflow_name IS NOT NULL AND workflow_name != ''
             ORDER BY workflow_name COLLATE NOCASE
-        """
-        )
+        """)
         return [row["workflow_name"] for row in cursor]
 
     @staticmethod

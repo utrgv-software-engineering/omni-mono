@@ -25,7 +25,6 @@ from agents.sandbox.sandboxes import (
     UnixLocalSandboxClientOptions,
 )
 
-
 # Daemon writes a tick every TICK_INTERVAL seconds. Short so the test
 # finishes fast; bump it (and the sleeps below) if CI is flaky.
 TICK_INTERVAL = 0.25
@@ -88,9 +87,7 @@ async def test_pty_daemon_survives_intervening_session_work():
             await session.write(
                 PurePosixPath(f"{scratch_root}/{i}/note.txt"), _b(f"turn {i}")
             )
-            stream = await session.read(
-                PurePosixPath(f"{scratch_root}/{i}/note.txt")
-            )
+            stream = await session.read(PurePosixPath(f"{scratch_root}/{i}/note.txt"))
             try:
                 assert stream.read() == f"turn {i}".encode()
             finally:

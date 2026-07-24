@@ -212,7 +212,10 @@ def _run_hook(hook, service, session, *, is_context=True):
             service=service,
             session=session,
             run_id="run-1",
-            params={"error": RuntimeError("x"), "is_context_length_exceeded": is_context},
+            params={
+                "error": RuntimeError("x"),
+                "is_context_length_exceeded": is_context,
+            },
             event="error",
         )
     )
@@ -226,9 +229,7 @@ def test_auto_compact_hook_compacts_and_retries():
     result = _run_hook(hook, service, session)
 
     assert result == {"retry": True}
-    assert service.calls == [
-        {"command": "compact", "args": {}, "session_id": "sess-1"}
-    ]
+    assert service.calls == [{"command": "compact", "args": {}, "session_id": "sess-1"}]
     state = session.variables["prod"]
     assert state["needs_context_compression"] is True
     assert state["context_error_run_id"] == "run-1"
@@ -297,9 +298,7 @@ def test_auto_compact_token_hook_compacts_above_threshold():
 
     _run_token_hook(hook, service, session, total=95, max_input=100)
 
-    assert service.calls == [
-        {"command": "compact", "args": {}, "session_id": "sess-1"}
-    ]
+    assert service.calls == [{"command": "compact", "args": {}, "session_id": "sess-1"}]
     state = session.variables["prod"]
     assert state["needs_context_compression"] is True
     assert state["context_utilization"] == 0.95
@@ -416,7 +415,9 @@ def test_conventional_summarizer_runs_compactor_under_its_own_instructions(
         summarizer = compaction_summarizer()
         assert summarizer is not None
         body = asyncio.run(
-            summarizer("transcript", service=SimpleNamespace(spec=None), session=session)
+            summarizer(
+                "transcript", service=SimpleNamespace(spec=None), session=session
+            )
         )
         assert body == "checkpoint body"
         assert captured["agent_key"] == "compactor"

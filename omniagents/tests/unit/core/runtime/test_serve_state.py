@@ -53,9 +53,7 @@ def test_slots_round_trip_and_clear():
 
 
 def test_sources_round_trip_preserves_unknown_keys():
-    published = [
-        {"kind": "local", "mountName": "app", "path": "/host/app", "extra": 1}
-    ]
+    published = [{"kind": "local", "mountName": "app", "path": "/host/app", "extra": 1}]
     serve_state.set_sources(published)
     assert serve_state.get_sources() == published
 

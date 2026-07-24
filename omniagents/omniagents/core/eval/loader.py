@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-
 # ---------------------------------------------------------------------------
 # Data class returned to callers
 # ---------------------------------------------------------------------------

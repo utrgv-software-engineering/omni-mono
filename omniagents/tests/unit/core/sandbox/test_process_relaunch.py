@@ -192,7 +192,9 @@ def test_editable_discovery_dedupes_and_handles_missing_lib(tmp_path):
 # machine-local venv/editable/config binds leak in).
 
 
-def _request_from_governance_config(config: dict, workspace: str) -> SandboxRelaunchRequest:
+def _request_from_governance_config(
+    config: dict, workspace: str
+) -> SandboxRelaunchRequest:
     network_targets = config.get("network_targets", [])
     hosts = [t["hostname"] for t in network_targets if t.get("hostname")]
     limits = config.get("resource_limits", {})
@@ -226,43 +228,93 @@ TAIL = ["--", "/nonexistent-venv/bin/omni", "serve"]
 
 PARITY_CASES = [
     (
-        {"backend": "bwrap", "network_targets": [], "resource_limits": {},
-         "network_mode": "allowlist", "security_profile": {}},
+        {
+            "backend": "bwrap",
+            "network_targets": [],
+            "resource_limits": {},
+            "network_mode": "allowlist",
+            "security_profile": {},
+        },
         [BIN, "exec", "--workspace", WS, *TAIL],
     ),
     (
-        {"backend": "bwrap", "network_targets": [], "resource_limits": {},
-         "network_mode": "open", "security_profile": {}},
+        {
+            "backend": "bwrap",
+            "network_targets": [],
+            "resource_limits": {},
+            "network_mode": "open",
+            "security_profile": {},
+        },
         [BIN, "exec", "--workspace", WS, "--net", *TAIL],
     ),
     (
-        {"backend": "bwrap", "network_targets": [],
-         "resource_limits": {"pids_limit": 256},
-         "network_mode": "allowlist", "security_profile": {}},
+        {
+            "backend": "bwrap",
+            "network_targets": [],
+            "resource_limits": {"pids_limit": 256},
+            "network_mode": "allowlist",
+            "security_profile": {},
+        },
         [BIN, "exec", "--workspace", WS, "--pids-limit", "256", *TAIL],
     ),
     (
-        {"backend": "bwrap", "network_targets": [], "resource_limits": {},
-         "network_mode": "allowlist",
-         "security_profile": {"protected_subpaths": [".git", ".env", "secrets"]}},
-        [BIN, "exec", "--workspace", WS,
-         "--protect", ".git", "--protect", ".env", "--protect", "secrets", *TAIL],
+        {
+            "backend": "bwrap",
+            "network_targets": [],
+            "resource_limits": {},
+            "network_mode": "allowlist",
+            "security_profile": {"protected_subpaths": [".git", ".env", "secrets"]},
+        },
+        [
+            BIN,
+            "exec",
+            "--workspace",
+            WS,
+            "--protect",
+            ".git",
+            "--protect",
+            ".env",
+            "--protect",
+            "secrets",
+            *TAIL,
+        ],
     ),
     (
         # Maximal enforceable config: every argv-building branch at once.
-        {"backend": "bwrap", "network_targets": [],
-         "resource_limits": {"pids_limit": 64},
-         "network_mode": "open",
-         "security_profile": {"seccomp_enabled": False, "read_only_root": False,
-                              "protected_subpaths": [".git"]}},
-        [BIN, "exec", "--workspace", WS, "--net", "--pids-limit", "64",
-         "--protect", ".git", *TAIL],
+        {
+            "backend": "bwrap",
+            "network_targets": [],
+            "resource_limits": {"pids_limit": 64},
+            "network_mode": "open",
+            "security_profile": {
+                "seccomp_enabled": False,
+                "read_only_root": False,
+                "protected_subpaths": [".git"],
+            },
+        },
+        [
+            BIN,
+            "exec",
+            "--workspace",
+            WS,
+            "--net",
+            "--pids-limit",
+            "64",
+            "--protect",
+            ".git",
+            *TAIL,
+        ],
     ),
     (
         # network_targets without hostnames: no refusal, and no --net even
         # in open mode (governance's elif semantics).
-        {"backend": "bwrap", "network_targets": [{}], "resource_limits": {},
-         "network_mode": "open", "security_profile": {}},
+        {
+            "backend": "bwrap",
+            "network_targets": [{}],
+            "resource_limits": {},
+            "network_mode": "open",
+            "security_profile": {},
+        },
         [BIN, "exec", "--workspace", WS, *TAIL],
     ),
 ]
@@ -286,9 +338,14 @@ def test_extra_binds_emitted_in_caller_order(tmp_path):
     )
     args = build_relaunch_argv(BIN, request)
     assert args == [
-        BIN, "exec", "--workspace", WS,
-        "--ro-bind", str(ro_dir),
-        "--rw-bind", str(rw_dir),
+        BIN,
+        "exec",
+        "--workspace",
+        WS,
+        "--ro-bind",
+        str(ro_dir),
+        "--rw-bind",
+        str(rw_dir),
         *TAIL,
     ]
 
@@ -306,10 +363,17 @@ def test_venv_and_editable_binds_discovered(tmp_path):
     request = SandboxRelaunchRequest(workspace=WS, argv=[entry, "serve"])
     args = build_relaunch_argv(BIN, request)
     assert args == [
-        BIN, "exec", "--workspace", WS,
-        "--ro-bind", str(venv),
-        "--ro-bind", str(src),
-        "--", entry, "serve",
+        BIN,
+        "exec",
+        "--workspace",
+        WS,
+        "--ro-bind",
+        str(venv),
+        "--ro-bind",
+        str(src),
+        "--",
+        entry,
+        "serve",
     ]
 
 
@@ -333,9 +397,7 @@ def test_host_allowlist_fails_closed(capsys):
 
 
 def test_disk_limit_fails_closed(capsys):
-    request = SandboxRelaunchRequest(
-        workspace=WS, disk_limit_gb=10, argv=FAKE_ARGV
-    )
+    request = SandboxRelaunchRequest(workspace=WS, disk_limit_gb=10, argv=FAKE_ARGV)
     with pytest.raises(SystemExit) as exc:
         build_relaunch_argv(BIN, request)
     assert exc.value.code == 1
@@ -399,14 +461,29 @@ def test_relaunch_sets_marker_and_execs(monkeypatch, capsys):
 
 def test_builder_never_emits_net_allow():
     args = omni_sandbox_exec_argv(
-        BIN, WS, allow_net=True, pids_limit=8,
+        BIN,
+        WS,
+        allow_net=True,
+        pids_limit=8,
         protected_subpaths=[".git"],
         binds=[SandboxBind("/a"), SandboxBind("/b", writable=True)],
         command=["/bin/true"],
     )
     assert "--net-allow" not in args
     assert args == [
-        BIN, "exec", "--workspace", WS, "--net", "--pids-limit", "8",
-        "--protect", ".git", "--ro-bind", "/a", "--rw-bind", "/b",
-        "--", "/bin/true",
+        BIN,
+        "exec",
+        "--workspace",
+        WS,
+        "--net",
+        "--pids-limit",
+        "8",
+        "--protect",
+        ".git",
+        "--ro-bind",
+        "/a",
+        "--rw-bind",
+        "/b",
+        "--",
+        "/bin/true",
     ]

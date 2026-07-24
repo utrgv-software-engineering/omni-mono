@@ -10,7 +10,6 @@ from omniagents.rpc.agents._events import (
     new_item_event,
 )
 
-
 identifier = st.text(
     alphabet=st.characters(
         min_codepoint=32, max_codepoint=126, blacklist_characters=["\\"]

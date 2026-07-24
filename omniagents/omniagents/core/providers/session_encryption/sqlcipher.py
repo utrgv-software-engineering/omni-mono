@@ -81,6 +81,6 @@ class SQLCipherEncryption(SessionEncryptionProvider):
 
         key = self._resolve_key()
         conn = sqlcipher.connect(db_path, check_same_thread=False)
-        conn.execute(f"PRAGMA key = \"{key}\"")
+        conn.execute(f'PRAGMA key = "{key}"')
         conn.execute("PRAGMA cipher_memory_security = ON")
         return conn

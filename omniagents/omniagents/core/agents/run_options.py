@@ -308,7 +308,9 @@ def build_model_provider(config: Optional[Dict[str, Any]]) -> Optional[Any]:
     elif provider_type in _CUSTOM_PROVIDER_BUILDERS:
         provider = _CUSTOM_PROVIDER_BUILDERS[provider_type](config)
         if provider is None:
-            logger.warning(f"Registered builder for {provider_type!r} returned no provider")
+            logger.warning(
+                f"Registered builder for {provider_type!r} returned no provider"
+            )
             return None
     else:
         logger.warning(f"Unknown model_provider.type {provider_type!r}")

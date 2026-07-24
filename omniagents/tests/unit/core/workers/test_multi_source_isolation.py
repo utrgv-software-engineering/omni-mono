@@ -172,10 +172,7 @@ def test_collision_suffix(tmp_path, scratch_workspace):
     )
     assert ws1.root != ws2.root
     assert ws2.root.endswith("-2")
-    assert (
-        ws2.metadata["worktree_branch"]
-        == "worker/workspace-worker-pip-2/repo-a"
-    )
+    assert ws2.metadata["worktree_branch"] == "worker/workspace-worker-pip-2/repo-a"
     asyncio.run(strategy.cleanup("pip", ws1))
     asyncio.run(strategy.cleanup("pip", ws2))
 

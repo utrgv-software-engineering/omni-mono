@@ -107,20 +107,11 @@ async def export_audit_log(
                 and entry.get("event_type") != filters["event_type"]
             ):
                 continue
-            if (
-                filters.get("user_id")
-                and entry.get("user_id") != filters["user_id"]
-            ):
+            if filters.get("user_id") and entry.get("user_id") != filters["user_id"]:
                 continue
-            if (
-                filters.get("after")
-                and entry.get("timestamp", "") < filters["after"]
-            ):
+            if filters.get("after") and entry.get("timestamp", "") < filters["after"]:
                 continue
-            if (
-                filters.get("before")
-                and entry.get("timestamp", "") > filters["before"]
-            ):
+            if filters.get("before") and entry.get("timestamp", "") > filters["before"]:
                 continue
 
             # Redact sensitive fields in details

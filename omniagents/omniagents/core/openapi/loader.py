@@ -131,6 +131,7 @@ def _create_tool(
     # Create the invoke handler
     async def on_invoke(ctx, input_json: str) -> Any:
         import json
+
         args = json.loads(input_json) if input_json else {}
 
         # Separate path, query, and body params

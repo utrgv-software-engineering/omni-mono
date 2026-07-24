@@ -26,7 +26,6 @@ from omniagents.core.sandbox.permissive_local_dir import (
     PermissiveLocalDirError,
 )
 
-
 # --- helpers ---------------------------------------------------------- #
 
 
@@ -43,7 +42,9 @@ def _make_session() -> MagicMock:
     return session
 
 
-def _apply(entry: PermissiveLocalDir, session: Any, dest: Path = Path("/workspace")) -> None:
+def _apply(
+    entry: PermissiveLocalDir, session: Any, dest: Path = Path("/workspace")
+) -> None:
     asyncio.run(entry.apply(session=session, dest=dest, base_dir=Path("/")))
 
 
@@ -290,7 +291,9 @@ def test_seed_under_cap_builds_full_tar(tmp_path: Path):
     (src / "a.bin").write_bytes(b"x" * 1000)
     (src / "b.bin").write_bytes(b"x" * 1000)
 
-    tar = tarfile.open(fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=10_000)), mode="r")
+    tar = tarfile.open(
+        fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=10_000)), mode="r"
+    )
     assert _file_names(tar) == {"a.bin", "b.bin"}
 
 
@@ -303,7 +306,9 @@ def test_gitignored_files_dont_count_toward_cap(tmp_path: Path):
 
     # Cap below big.bin but above the kept content: succeeds because the
     # size check runs after the gitignore filter (big.bin never counts).
-    tar = tarfile.open(fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=1000)), mode="r")
+    tar = tarfile.open(
+        fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=1000)), mode="r"
+    )
     assert _file_names(tar) == {".gitignore", "keep.txt"}
 
 
@@ -312,7 +317,9 @@ def test_cap_disabled_with_none(tmp_path: Path):
     src.mkdir()
     (src / "big.bin").write_bytes(b"x" * 50_000)
     # max_bytes=None at the build level means no cap.
-    tar = tarfile.open(fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=None)), mode="r")
+    tar = tarfile.open(
+        fileobj=io.BytesIO(_build_dir_tar(src, max_bytes=None)), mode="r"
+    )
     assert _file_names(tar) == {"big.bin"}
 
 

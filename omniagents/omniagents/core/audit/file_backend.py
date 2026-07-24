@@ -45,7 +45,9 @@ class FileAuditBackend:
     # Public
     # ------------------------------------------------------------------
 
-    async def handle_event(self, *, service: Any = None, event: str = "", **kwargs: Any) -> None:
+    async def handle_event(
+        self, *, service: Any = None, event: str = "", **kwargs: Any
+    ) -> None:
         """Runtime-hook entry point — called for every ``"audit"`` event."""
         line = self._serialise(kwargs)
         if line is None:

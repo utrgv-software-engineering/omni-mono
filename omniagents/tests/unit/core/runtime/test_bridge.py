@@ -1255,7 +1255,11 @@ def test_stream_event_payload_mcp_identity_labels(monkeypatch):
 
     mcp_call = types.SimpleNamespace(
         type="tool_call_item",
-        to_input_item=lambda: {"name": "mcp_srv__hello", "arguments": "{}", "call_id": "c1"},
+        to_input_item=lambda: {
+            "name": "mcp_srv__hello",
+            "arguments": "{}",
+            "call_id": "c1",
+        },
     )
     method, payload = bridge._stream_event_payload(
         mcp_call, "run-1", session_id="s1", session=session

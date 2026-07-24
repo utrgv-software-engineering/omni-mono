@@ -171,9 +171,7 @@ def parse_capability_spec(
 
     name = spec.get("name")
     if not isinstance(name, str) or not name.strip():
-        raise ValueError(
-            f"Capability at {source} requires a non-empty 'name' field"
-        )
+        raise ValueError(f"Capability at {source} requires a non-empty 'name' field")
 
     tools_list = spec.get("tools") or []
     agent_tools_list = spec.get("agent_tools") or []
@@ -377,9 +375,7 @@ def parse_capability_spec(
         exclude_tools = set(spec.get("exclude_tools") or [])
         exclude_sfs = set(spec.get("exclude_server_functions") or [])
 
-        base_tool_names = {
-            getattr(t, "name", None) for t in base_cap.resolved_tools
-        }
+        base_tool_names = {getattr(t, "name", None) for t in base_cap.resolved_tools}
         unknown_tools = exclude_tools - base_tool_names
         if unknown_tools:
             raise ValueError(
@@ -476,7 +472,9 @@ def discover_capabilities_in_dir(
             with yaml_file.open("r", encoding="utf-8") as f:
                 spec = yaml.safe_load(f)
         except Exception as e:
-            logger.warning("Failed to read capability YAML %s: %s. Skipping.", yaml_file, e)
+            logger.warning(
+                "Failed to read capability YAML %s: %s. Skipping.", yaml_file, e
+            )
             continue
         if spec is None:
             continue

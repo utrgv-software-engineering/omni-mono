@@ -350,9 +350,7 @@ def _entry_point_manifest(value: str) -> Path:
         candidate = Path(module_file).resolve().parent / "project.yml"
         if candidate.is_file():
             return candidate
-    raise FileNotFoundError(
-        f"module {module_name!r} does not package a project.yml"
-    )
+    raise FileNotFoundError(f"module {module_name!r} does not package a project.yml")
 
 
 def _discover_product_info() -> Optional[ProductInfo]:

@@ -39,9 +39,7 @@ class InstructionIncludeNotFoundError(Exception):
                 "(instructions were not loaded from a file, so there is no "
                 "directory to resolve includes against)."
             )
-        super().__init__(
-            f"Instruction include {template_name!r} not found. {detail}"
-        )
+        super().__init__(f"Instruction include {template_name!r} not found. {detail}")
 
 
 def instruction_search_paths(
@@ -170,9 +168,7 @@ def render_template(
         return str(tmpl.render(**kwargs))
     except TemplateNotFound as e:
         if search_paths:
-            raise InstructionIncludeNotFoundError(
-                str(e.name), search_paths
-            ) from e
+            raise InstructionIncludeNotFoundError(str(e.name), search_paths) from e
         return template_str
     except Exception:
         return template_str

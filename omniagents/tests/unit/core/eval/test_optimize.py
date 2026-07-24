@@ -581,16 +581,14 @@ def test_optimize_agent_requires_gepa(monkeypatch, tmp_path):
 def test_optimize_agent_missing_splits(monkeypatch, tmp_path):
     compiled_path = tmp_path / "compiled.yaml"
     compiled_path.write_text(
-        (
-            """
+        ("""
 evaluation:
   failure_categories:
     safety:
       measures:
         - safety_agent
   metrics: []
-        """.strip()
-        ),
+        """.strip()),
         encoding="utf-8",
     )
 

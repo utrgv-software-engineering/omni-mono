@@ -105,8 +105,7 @@ def test_mcp_configuration_signature_sorted(tmp_path):
 def test_build_mcp_servers_stdio(tmp_path):
     """Test building stdio MCP servers from YAML configuration."""
     yaml_path = tmp_path / "agent.yml"
-    yaml_path.write_text(
-        """
+    yaml_path.write_text("""
 name: stdio_agent
 instructions: hello
 mcp_servers:
@@ -116,8 +115,7 @@ mcp_servers:
       command: echo
       args:
         - hi
-"""
-    )
+""")
     spec = load_agent_spec_from_yaml(str(yaml_path))
     servers = build_mcp_servers(spec, {})
     assert len(servers) == 1
@@ -127,8 +125,7 @@ mcp_servers:
 def test_build_mcp_servers_sse_placeholder_resolution(tmp_path):
     """Test building SSE MCP servers with setting placeholders from YAML."""
     yaml_path = tmp_path / "agent.yml"
-    yaml_path.write_text(
-        """
+    yaml_path.write_text("""
 name: sse_agent
 instructions: hi
 mcp_servers:
@@ -140,8 +137,7 @@ mcp_servers:
       headers:
         Authorization:
           setting: mcp_token
-"""
-    )
+""")
     spec = load_agent_spec_from_yaml(str(yaml_path))
     settings = {"mcp_url": "https://example", "mcp_token": "secret"}
     servers = build_mcp_servers(spec, settings)
@@ -155,8 +151,7 @@ mcp_servers:
 def test_build_mcp_servers_missing_url_raises_yaml(tmp_path):
     """Test that YAML configs with missing required params raise ValueError."""
     yaml_path = tmp_path / "agent.yml"
-    yaml_path.write_text(
-        """
+    yaml_path.write_text("""
 name: sse_agent
 instructions: hi
 mcp_servers:
@@ -165,8 +160,7 @@ mcp_servers:
     params:
       headers:
         Authorization: token
-"""
-    )
+""")
     spec = load_agent_spec_from_yaml(str(yaml_path))
     with pytest.raises(ValueError):
         build_mcp_servers(spec, {})
@@ -180,8 +174,7 @@ mcp_servers:
 def test_user_mcp_servers_merged_with_agent_defined(tmp_path):
     """Test user MCP servers merge with agent.yml defined servers."""
     yaml_path = tmp_path / "agent.yml"
-    yaml_path.write_text(
-        """
+    yaml_path.write_text("""
 name: test_agent
 instructions: hello
 mcp_servers:
@@ -189,8 +182,7 @@ mcp_servers:
     type: stdio
     params:
       command: agent-cmd
-"""
-    )
+""")
 
     user_mcp_servers = [
         MCPServerConfig(
@@ -210,8 +202,7 @@ mcp_servers:
 def test_user_mcp_overrides_same_name_agent_server(tmp_path):
     """Test user server with same name replaces agent.yml server."""
     yaml_path = tmp_path / "agent.yml"
-    yaml_path.write_text(
-        """
+    yaml_path.write_text("""
 name: test_agent
 instructions: hello
 mcp_servers:
@@ -219,8 +210,7 @@ mcp_servers:
     type: stdio
     params:
       command: agent-cmd
-"""
-    )
+""")
 
     user_mcp_servers = [
         MCPServerConfig(
@@ -241,8 +231,7 @@ mcp_servers:
 def test_user_mcp_servers_none_preserves_agent_defined(tmp_path):
     """Test that None user_mcp_servers preserves agent-defined servers."""
     yaml_path = tmp_path / "agent.yml"
-    yaml_path.write_text(
-        """
+    yaml_path.write_text("""
 name: test_agent
 instructions: hello
 mcp_servers:
@@ -250,8 +239,7 @@ mcp_servers:
     type: stdio
     params:
       command: agent-cmd
-"""
-    )
+""")
 
     spec = load_agent_spec_from_yaml(str(yaml_path), user_mcp_servers=None)
 
@@ -262,8 +250,7 @@ mcp_servers:
 def test_user_mcp_servers_empty_list_preserves_agent_defined(tmp_path):
     """Test that empty user_mcp_servers list preserves agent-defined servers."""
     yaml_path = tmp_path / "agent.yml"
-    yaml_path.write_text(
-        """
+    yaml_path.write_text("""
 name: test_agent
 instructions: hello
 mcp_servers:
@@ -271,8 +258,7 @@ mcp_servers:
     type: stdio
     params:
       command: agent-cmd
-"""
-    )
+""")
 
     spec = load_agent_spec_from_yaml(str(yaml_path), user_mcp_servers=[])
 

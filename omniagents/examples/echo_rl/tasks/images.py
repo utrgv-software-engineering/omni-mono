@@ -18,10 +18,14 @@ def image_tag_for(dockerfile: str, prefix: str = "echo-rl-task") -> str:
 
 
 def image_exists(tag: str) -> bool:
-    return subprocess.run(
-        ["docker", "image", "inspect", tag],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ).returncode == 0
+    return (
+        subprocess.run(
+            ["docker", "image", "inspect", tag],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode
+        == 0
+    )
 
 
 def ensure_image(dockerfile: str, *, prefix: str = "echo-rl-task") -> str:
@@ -37,7 +41,8 @@ def ensure_image(dockerfile: str, *, prefix: str = "echo-rl-task") -> str:
     proc = subprocess.run(
         ["docker", "build", "-t", tag, "-"],
         input=dockerfile.encode("utf-8"),
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
     if proc.returncode != 0:
         raise RuntimeError(

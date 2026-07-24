@@ -36,7 +36,6 @@ from omniagents.core.debug import Debug
 
 from .base import SessionStorageBackend, _UNSET
 
-
 logger = logging.getLogger(__name__)
 
 # Sentinel tenant id used when the env var isn't set — keeps the

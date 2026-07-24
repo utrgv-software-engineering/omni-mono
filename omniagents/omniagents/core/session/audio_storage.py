@@ -34,7 +34,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -177,7 +176,9 @@ class AzureBlobAudioStorage(AudioStorageBackend):
         return self._client
 
     @staticmethod
-    def _blob_name(session_id: str, item_id: str, content_index: int, audio_format: str) -> str:
+    def _blob_name(
+        session_id: str, item_id: str, content_index: int, audio_format: str
+    ) -> str:
         return f"{session_id}/{item_id}_{content_index}.{audio_format}"
 
     async def save_audio_chunk(

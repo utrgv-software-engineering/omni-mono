@@ -17,7 +17,6 @@ import pytest
 import omniagents.builtin.tools.bash_tool as bash_tool
 from omniagents.builtin.tools._bash_jobs import get_registry
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -48,6 +47,8 @@ def _meta(result):
 
 def _snapshot(result):
     return result.ui_metadata.get("bash_jobs_snapshot")
+
+
 # ---------------------------------------------------------------------------
 # Background mode
 # ---------------------------------------------------------------------------

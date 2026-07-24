@@ -717,8 +717,7 @@ scenarios:
     name: Case One
   - id: case2
     name: Case Two
-        """.strip()
-        + "\n",
+        """.strip() + "\n",
         encoding="utf-8",
     )
 
@@ -822,8 +821,7 @@ evaluation:
 scenarios:
   - id: case1
     name: Case One
-        """.strip()
-        + "\n",
+        """.strip() + "\n",
         encoding="utf-8",
     )
 
@@ -908,8 +906,7 @@ tracing:
 scenarios:
   - id: case1
     name: Case One
-        """.strip()
-        + "\n",
+        """.strip() + "\n",
         encoding="utf-8",
     )
 
@@ -1298,9 +1295,7 @@ def test_generate_optimizer(monkeypatch, tmp_path, capsys):
 def test_run_codex_auth_status_not_signed_in_uses_prog(monkeypatch, capsys):
     from omniagents.cli import run_codex_auth_command
 
-    monkeypatch.setattr(
-        "omniagents.core.providers.codex.load_tokens", lambda: None
-    )
+    monkeypatch.setattr("omniagents.core.providers.codex.load_tokens", lambda: None)
 
     status = run_codex_auth_command("status", prog="omni")
 
@@ -1369,9 +1364,7 @@ def _platform_client(tmp_path, monkeypatch):
     client.set_product_slug(prior_slug)
 
 
-def test_run_platform_auth_status_not_authenticated_uses_prog(
-    _platform_client, capsys
-):
+def test_run_platform_auth_status_not_authenticated_uses_prog(_platform_client, capsys):
     from omniagents.cli import run_platform_auth_command
 
     status = run_platform_auth_command(["status"], prog="omni")
@@ -1440,7 +1433,11 @@ def test_run_platform_auth_logout_clears_store(_platform_client, capsys):
 
     client = _platform_client
     client.save_credentials(
-        {"platform_url": "https://p.test", "access_token": "a", "user": {"email": "e@test"}}
+        {
+            "platform_url": "https://p.test",
+            "access_token": "a",
+            "user": {"email": "e@test"},
+        }
     )
 
     assert run_platform_auth_command(["logout"]) == 0
@@ -1451,9 +1448,7 @@ def test_run_platform_auth_logout_clears_store(_platform_client, capsys):
     assert "Not logged in." in capsys.readouterr().out
 
 
-def test_run_platform_auth_status_authenticated(
-    _platform_client, monkeypatch, capsys
-):
+def test_run_platform_auth_status_authenticated(_platform_client, monkeypatch, capsys):
     import requests
 
     from omniagents.cli import run_platform_auth_command
