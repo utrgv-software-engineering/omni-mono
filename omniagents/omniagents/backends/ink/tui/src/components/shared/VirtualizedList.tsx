@@ -112,7 +112,6 @@ export function VirtualizedList<T>({
         if (changed) scheduleMeasureFlush();
       }),
     // Observer lives for the lifetime of the list.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 
@@ -135,7 +134,6 @@ export function VirtualizedList<T>({
       itemHeights: heightsArr,
     };
     // Re-run when items change or any measured height changes (forceUpdate bumps).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data, keyExtractor, estimatedItemHeight]);
 
   // Visible range. With containerHeight <= 0, fall back to rendering all

@@ -56,7 +56,10 @@ type Props = {
   focused: boolean;
   onUnfocus: () => void;
   onKill: (job_id: string) => Promise<unknown>;
-  onTail: (job_id: string, lines?: number) => Promise<{
+  onTail: (
+    job_id: string,
+    lines?: number,
+  ) => Promise<{
     ok?: boolean;
     text?: string;
     total_lines?: number;
@@ -69,298 +72,307 @@ type Props = {
 // the unfocused presentation; adds keyboard-driven navigation when the
 // parent App flips ``focused`` (Ctrl+B chord). Server-side kill/tail are
 // reused via the same callbacks the web buttons use.
-export const BashJobs = React.memo(({ focused, onUnfocus, onKill, onTail }: Props) => {
-  const allJobs = useBashJobs();
-  const dismissed = useDismissedJobIds();
-  const thinking = useThinking();
-  // Filter out jobs the user moved past on their last submit; then apply
-  // the idle-mode rule. Running jobs always stay visible regardless of
-  // dismissal; failed exits (non-zero or null exit_code) stick around
-  // until explicitly dismissed so a quietly-failed background job isn't
-  // lost behind the next prompt.
-  const live = allJobs.filter((j) => j.running || !dismissed.has(j.job_id));
-  const jobs = thinking
-    ? live
-    : live.filter((j) => j.running || j.exit_code !== 0);
+export const BashJobs = React.memo(
+  ({ focused, onUnfocus, onKill, onTail }: Props) => {
+    const allJobs = useBashJobs();
+    const dismissed = useDismissedJobIds();
+    const thinking = useThinking();
+    // Filter out jobs the user moved past on their last submit; then apply
+    // the idle-mode rule. Running jobs always stay visible regardless of
+    // dismissal; failed exits (non-zero or null exit_code) stick around
+    // until explicitly dismissed so a quietly-failed background job isn't
+    // lost behind the next prompt.
+    const live = allJobs.filter((j) => j.running || !dismissed.has(j.job_id));
+    const jobs = thinking
+      ? live
+      : live.filter((j) => j.running || j.exit_code !== 0);
 
-  // 1Hz tick while at least one job is running so elapsed time updates.
-  const [, setNowTick] = useState(0);
-  const anyRunning = jobs.some((j) => j.running);
-  useEffect(() => {
-    if (!anyRunning) return;
-    const id = setInterval(() => setNowTick((n) => n + 1), 1000);
-    return () => clearInterval(id);
-  }, [anyRunning]);
+    // 1Hz tick while at least one job is running so elapsed time updates.
+    const [, setNowTick] = useState(0);
+    const anyRunning = jobs.some((j) => j.running);
+    useEffect(() => {
+      if (!anyRunning) return;
+      const id = setInterval(() => setNowTick((n) => n + 1), 1000);
+      return () => clearInterval(id);
+    }, [anyRunning]);
 
-  // Visual layout: running first, then most-recent exited. Same ordering as
-  // the unfocused render so Ctrl+B doesn't reshuffle rows under the cursor.
-  const running = jobs.filter((j) => j.running);
-  const exited = jobs.filter((j) => !j.running);
-  const failed = exited.filter((j) => (j.exit_code ?? 0) !== 0);
-  const ordered = [
-    ...running,
-    ...exited.slice().sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0)),
-  ];
-  const visible = ordered.slice(0, MAX_VISIBLE);
-  const overflow = ordered.length - visible.length;
+    // Visual layout: running first, then most-recent exited. Same ordering as
+    // the unfocused render so Ctrl+B doesn't reshuffle rows under the cursor.
+    const running = jobs.filter((j) => j.running);
+    const exited = jobs.filter((j) => !j.running);
+    const failed = exited.filter((j) => (j.exit_code ?? 0) !== 0);
+    const ordered = [
+      ...running,
+      ...exited
+        .slice()
+        .sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0)),
+    ];
+    const visible = ordered.slice(0, MAX_VISIBLE);
+    const overflow = ordered.length - visible.length;
 
-  // Selection state — clamped whenever the visible list changes so we don't
-  // strand the cursor past the end after a job exits or another spawns.
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  useEffect(() => {
-    setSelectedIndex((prev) => {
-      if (visible.length === 0) return 0;
-      return Math.min(prev, visible.length - 1);
-    });
-  }, [visible.length]);
+    // Selection state — clamped whenever the visible list changes so we don't
+    // strand the cursor past the end after a job exits or another spawns.
+    const [selectedIndex, setSelectedIndex] = useState(0);
+    useEffect(() => {
+      setSelectedIndex((prev) => {
+        if (visible.length === 0) return 0;
+        return Math.min(prev, visible.length - 1);
+      });
+    }, [visible.length]);
 
-  // Inline log preview: when set, renders a Box with the tail of the job's
-  // log file below the row list. Toggled by 'l' on the selected row;
-  // dismissed by Esc or 'l' again.
-  const [logsForJobId, setLogsForJobId] = useState<string | null>(null);
-  const [logsText, setLogsText] = useState<string>("");
-  const [logsTotalLines, setLogsTotalLines] = useState<number>(0);
-  const [logsLoading, setLogsLoading] = useState<boolean>(false);
-  const [logsError, setLogsError] = useState<string | null>(null);
-  const [statusLine, setStatusLine] = useState<string | null>(null);
+    // Inline log preview: when set, renders a Box with the tail of the job's
+    // log file below the row list. Toggled by 'l' on the selected row;
+    // dismissed by Esc or 'l' again.
+    const [logsForJobId, setLogsForJobId] = useState<string | null>(null);
+    const [logsText, setLogsText] = useState<string>("");
+    const [logsTotalLines, setLogsTotalLines] = useState<number>(0);
+    const [logsLoading, setLogsLoading] = useState<boolean>(false);
+    const [logsError, setLogsError] = useState<string | null>(null);
+    const [statusLine, setStatusLine] = useState<string | null>(null);
 
-  // Auto-clear transient status messages after a short window.
-  useEffect(() => {
-    if (!statusLine) return;
-    const id = setTimeout(() => setStatusLine(null), 2500);
-    return () => clearTimeout(id);
-  }, [statusLine]);
+    // Auto-clear transient status messages after a short window.
+    useEffect(() => {
+      if (!statusLine) return;
+      const id = setTimeout(() => setStatusLine(null), 2500);
+      return () => clearTimeout(id);
+    }, [statusLine]);
 
-  const loadLogs = async (jobId: string) => {
-    setLogsForJobId(jobId);
-    setLogsLoading(true);
-    setLogsError(null);
-    setLogsText("");
-    setLogsTotalLines(0);
-    try {
-      const res = await onTail(jobId, LOGS_TAIL_REQUEST_LINES);
-      if (!res?.ok) {
-        setLogsError(res?.message ?? res?.error ?? "Could not read logs");
-      } else {
-        setLogsText(res.text ?? "");
-        setLogsTotalLines(res.total_lines ?? 0);
+    const loadLogs = async (jobId: string) => {
+      setLogsForJobId(jobId);
+      setLogsLoading(true);
+      setLogsError(null);
+      setLogsText("");
+      setLogsTotalLines(0);
+      try {
+        const res = await onTail(jobId, LOGS_TAIL_REQUEST_LINES);
+        if (!res?.ok) {
+          setLogsError(res?.message ?? res?.error ?? "Could not read logs");
+        } else {
+          setLogsText(res.text ?? "");
+          setLogsTotalLines(res.total_lines ?? 0);
+        }
+      } catch (e) {
+        setLogsError((e as Error).message ?? String(e));
+      } finally {
+        setLogsLoading(false);
       }
-    } catch (e) {
-      setLogsError((e as Error).message ?? String(e));
-    } finally {
-      setLogsLoading(false);
-    }
-  };
+    };
 
-  // Two keyboard layers, both gated on focused so they don't interfere with
-  // the prompt when the panel isn't active.
-  //
-  //   1) Logs preview is open: any key dismisses it (escape returns focus to
-  //      the row list; everything else falls through to row-list handling on
-  //      the next keypress).
-  //   2) Row list active: arrows move, x kills, l toggles log preview,
-  //      Enter is an alias for l, Esc unfocuses the panel entirely.
-  useKeypress(
-    (_input, key) => {
-      if (key.escape) {
-        setLogsForJobId(null);
-        setLogsError(null);
-        return true;
-      }
-      // Any other key dismisses logs and falls through to the next render's
-      // row-list handler — feels natural ("press anything to close").
-      setLogsForJobId(null);
-      return true;
-    },
-    {
-      isActive: focused && logsForJobId !== null,
-      priority: KeypressPriority.Critical,
-    },
-  );
-
-  useKeypress(
-    (input, key) => {
-      if (key.escape) {
-        onUnfocus();
-        return true;
-      }
-      if (visible.length === 0) return false;
-      if (key.upArrow) {
-        setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
-        return true;
-      }
-      if (key.downArrow) {
-        setSelectedIndex((prev) =>
-          prev < visible.length - 1 ? prev + 1 : prev,
-        );
-        return true;
-      }
-      const sel = visible[selectedIndex];
-      if (!sel) return false;
-      if (input === "x") {
-        if (!sel.running) {
-          setStatusLine(`${sel.job_id} already exited`);
+    // Two keyboard layers, both gated on focused so they don't interfere with
+    // the prompt when the panel isn't active.
+    //
+    //   1) Logs preview is open: any key dismisses it (escape returns focus to
+    //      the row list; everything else falls through to row-list handling on
+    //      the next keypress).
+    //   2) Row list active: arrows move, x kills, l toggles log preview,
+    //      Enter is an alias for l, Esc unfocuses the panel entirely.
+    useKeypress(
+      (_input, key) => {
+        if (key.escape) {
+          setLogsForJobId(null);
+          setLogsError(null);
           return true;
         }
-        setStatusLine(`Killing ${sel.job_id}…`);
-        onKill(sel.job_id)
-          .then(() => setStatusLine(`Killed ${sel.job_id}`))
-          .catch((e) =>
-            setStatusLine(`Kill failed: ${(e as Error).message ?? String(e)}`),
-          );
+        // Any other key dismisses logs and falls through to the next render's
+        // row-list handler — feels natural ("press anything to close").
+        setLogsForJobId(null);
         return true;
-      }
-      if (input === "l" || key.return) {
-        loadLogs(sel.job_id);
-        return true;
-      }
-      return false;
-    },
-    {
-      isActive: focused && logsForJobId === null,
-      priority: KeypressPriority.High,
-    },
-  );
-
-  if (!jobs || jobs.length === 0) {
-    return null;
-  }
-
-  // Collapsed form — only surfaced when something is actively running.
-  // Mirrors StatusIndicator's "Thinking…" structure exactly so the spinner
-  // glyph lands in the same column and the text picks up where the status
-  // row's text would. Done/failed counts intentionally omitted: they're
-  // history, not ambient signal. Ctrl+B opens the full panel for review.
-  if (!focused) {
-    if (running.length === 0) return null;
-    const noun = running.length === 1 ? "background job" : "background jobs";
-    return (
-      // Borderless single-line panel — aligns with the InlineStatus
-      // spinner and the other borderless dock items above. Parent
-      // owns vertical spacing via gap={1}.
-      <Box>
-        <Text>
-          <Text color={TokyoNightTheme.info}>
-            <Spinner type="dots" />
-          </Text>{" "}
-          <Text color={TokyoNightTheme.info}>{running.length}</Text>
-          <Text color={TokyoNightTheme.defaultText}>
-            {" "}
-            {noun} running
-          </Text>
-          <Text color={TokyoNightTheme.help}>   Ctrl+B to manage</Text>
-        </Text>
-      </Box>
+      },
+      {
+        isActive: focused && logsForJobId !== null,
+        priority: KeypressPriority.Critical,
+      },
     );
-  }
 
-  const nowMs = Date.now();
+    useKeypress(
+      (input, key) => {
+        if (key.escape) {
+          onUnfocus();
+          return true;
+        }
+        if (visible.length === 0) return false;
+        if (key.upArrow) {
+          setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+          return true;
+        }
+        if (key.downArrow) {
+          setSelectedIndex((prev) =>
+            prev < visible.length - 1 ? prev + 1 : prev,
+          );
+          return true;
+        }
+        const sel = visible[selectedIndex];
+        if (!sel) return false;
+        if (input === "x") {
+          if (!sel.running) {
+            setStatusLine(`${sel.job_id} already exited`);
+            return true;
+          }
+          setStatusLine(`Killing ${sel.job_id}…`);
+          onKill(sel.job_id)
+            .then(() => setStatusLine(`Killed ${sel.job_id}`))
+            .catch((e) =>
+              setStatusLine(
+                `Kill failed: ${(e as Error).message ?? String(e)}`,
+              ),
+            );
+          return true;
+        }
+        if (input === "l" || key.return) {
+          loadLogs(sel.job_id);
+          return true;
+        }
+        return false;
+      },
+      {
+        isActive: focused && logsForJobId === null,
+        priority: KeypressPriority.High,
+      },
+    );
 
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={TokyoNightTheme.info}
-    >
-      <Box>
-        <Text color={TokyoNightTheme.defaultText}>Bash jobs  </Text>
-        <Text color={TokyoNightTheme.info}>{running.length}</Text>
-        <Text color={TokyoNightTheme.defaultText}> running · </Text>
-        <Text color={TokyoNightTheme.success}>{exited.length - failed.length}</Text>
-        <Text color={TokyoNightTheme.defaultText}> done · </Text>
-        <Text color={TokyoNightTheme.error}>{failed.length}</Text>
-        <Text color={TokyoNightTheme.defaultText}> failed</Text>
-      </Box>
+    if (!jobs || jobs.length === 0) {
+      return null;
+    }
 
-      {visible.map((j, idx) => {
-        const elapsed = formatElapsed(liveElapsedMs(j, nowMs));
-        const tail = j.running ? elapsed : `exit ${j.exit_code} · ${elapsed}`;
-        const isSelected = focused && idx === selectedIndex;
-        const max = focused ? COMMAND_TRUNCATE_FOCUSED : COMMAND_TRUNCATE_UNFOCUSED;
-        return (
-          <Box key={j.job_id}>
-            <Text color={TokyoNightTheme.info}>{isSelected ? "▶ " : "  "}</Text>
-            <Text color={statusColor(j)}>{statusGlyph(j)} </Text>
-            <Text color={TokyoNightTheme.defaultText}>{j.job_id} </Text>
-            <Text
-              color={
-                j.running
-                  ? TokyoNightTheme.inputText
-                  : TokyoNightTheme.toolResult
-              }
-              strikethrough={!j.running}
-            >
-              {shortCommand(j.command, max)}
-            </Text>
-            <Text color={TokyoNightTheme.defaultText}>  {tail}</Text>
-          </Box>
-        );
-      })}
-
-      {overflow > 0 && (
-        <Text color={TokyoNightTheme.defaultText}>… +{overflow} more</Text>
-      )}
-
-      {logsForJobId === null && (
+    // Collapsed form — only surfaced when something is actively running.
+    // Mirrors StatusIndicator's "Thinking…" structure exactly so the spinner
+    // glyph lands in the same column and the text picks up where the status
+    // row's text would. Done/failed counts intentionally omitted: they're
+    // history, not ambient signal. Ctrl+B opens the full panel for review.
+    if (!focused) {
+      if (running.length === 0) return null;
+      const noun = running.length === 1 ? "background job" : "background jobs";
+      return (
+        // Borderless single-line panel — aligns with the InlineStatus
+        // spinner and the other borderless dock items above. Parent
+        // owns vertical spacing via gap={1}.
         <Box>
-          <Text color={TokyoNightTheme.help}>
-            ↑↓ select · x kill · l logs · esc exit
+          <Text>
+            <Text color={TokyoNightTheme.info}>
+              <Spinner type="dots" />
+            </Text>{" "}
+            <Text color={TokyoNightTheme.info}>{running.length}</Text>
+            <Text color={TokyoNightTheme.defaultText}> {noun} running</Text>
+            <Text color={TokyoNightTheme.help}> Ctrl+B to manage</Text>
           </Text>
         </Box>
-      )}
+      );
+    }
 
-      {statusLine && (
+    const nowMs = Date.now();
+
+    return (
+      <Box
+        flexDirection="column"
+        borderStyle="round"
+        borderColor={TokyoNightTheme.info}
+      >
         <Box>
-          <Text color={TokyoNightTheme.warning} italic>
-            {statusLine}
+          <Text color={TokyoNightTheme.defaultText}>Bash jobs </Text>
+          <Text color={TokyoNightTheme.info}>{running.length}</Text>
+          <Text color={TokyoNightTheme.defaultText}> running · </Text>
+          <Text color={TokyoNightTheme.success}>
+            {exited.length - failed.length}
           </Text>
+          <Text color={TokyoNightTheme.defaultText}> done · </Text>
+          <Text color={TokyoNightTheme.error}>{failed.length}</Text>
+          <Text color={TokyoNightTheme.defaultText}> failed</Text>
         </Box>
-      )}
 
-      {logsForJobId && (
-        <Box flexDirection="column" marginTop={1}>
-          <Box>
-            <Text color={TokyoNightTheme.info} bold>
-              {logsForJobId}
-            </Text>
-            <Text color={TokyoNightTheme.defaultText}>
-              {"  "}
-              {logsLoading
-                ? "loading…"
-                : logsError
-                ? "error"
-                : `${logsText.split("\n").slice(-LOGS_PREVIEW_LINES).length} of ${logsTotalLines} lines`}
-            </Text>
-          </Box>
-          {logsError ? (
-            <Text color={TokyoNightTheme.error}>{logsError}</Text>
-          ) : logsLoading ? (
-            <Text color={TokyoNightTheme.help} italic>
-              fetching tail…
-            </Text>
-          ) : logsText ? (
-            <Box flexDirection="column">
-              {logsText
-                .split("\n")
-                .slice(-LOGS_PREVIEW_LINES)
-                .map((line, i) => (
-                  <Text key={i} color={TokyoNightTheme.toolResult}>
-                    {line}
-                  </Text>
-                ))}
+        {visible.map((j, idx) => {
+          const elapsed = formatElapsed(liveElapsedMs(j, nowMs));
+          const tail = j.running ? elapsed : `exit ${j.exit_code} · ${elapsed}`;
+          const isSelected = focused && idx === selectedIndex;
+          const max = focused
+            ? COMMAND_TRUNCATE_FOCUSED
+            : COMMAND_TRUNCATE_UNFOCUSED;
+          return (
+            <Box key={j.job_id}>
+              <Text color={TokyoNightTheme.info}>
+                {isSelected ? "▶ " : "  "}
+              </Text>
+              <Text color={statusColor(j)}>{statusGlyph(j)} </Text>
+              <Text color={TokyoNightTheme.defaultText}>{j.job_id} </Text>
+              <Text
+                color={
+                  j.running
+                    ? TokyoNightTheme.inputText
+                    : TokyoNightTheme.toolResult
+                }
+                strikethrough={!j.running}
+              >
+                {shortCommand(j.command, max)}
+              </Text>
+              <Text color={TokyoNightTheme.defaultText}> {tail}</Text>
             </Box>
-          ) : (
-            <Text color={TokyoNightTheme.help} italic>
-              (no log output)
-            </Text>
-          )}
+          );
+        })}
+
+        {overflow > 0 && (
+          <Text color={TokyoNightTheme.defaultText}>… +{overflow} more</Text>
+        )}
+
+        {logsForJobId === null && (
           <Box>
             <Text color={TokyoNightTheme.help}>
-              any key to close · esc returns to list
+              ↑↓ select · x kill · l logs · esc exit
             </Text>
           </Box>
-        </Box>
-      )}
-    </Box>
-  );
-});
+        )}
+
+        {statusLine && (
+          <Box>
+            <Text color={TokyoNightTheme.warning} italic>
+              {statusLine}
+            </Text>
+          </Box>
+        )}
+
+        {logsForJobId && (
+          <Box flexDirection="column" marginTop={1}>
+            <Box>
+              <Text color={TokyoNightTheme.info} bold>
+                {logsForJobId}
+              </Text>
+              <Text color={TokyoNightTheme.defaultText}>
+                {"  "}
+                {logsLoading
+                  ? "loading…"
+                  : logsError
+                    ? "error"
+                    : `${logsText.split("\n").slice(-LOGS_PREVIEW_LINES).length} of ${logsTotalLines} lines`}
+              </Text>
+            </Box>
+            {logsError ? (
+              <Text color={TokyoNightTheme.error}>{logsError}</Text>
+            ) : logsLoading ? (
+              <Text color={TokyoNightTheme.help} italic>
+                fetching tail…
+              </Text>
+            ) : logsText ? (
+              <Box flexDirection="column">
+                {logsText
+                  .split("\n")
+                  .slice(-LOGS_PREVIEW_LINES)
+                  .map((line, i) => (
+                    <Text key={i} color={TokyoNightTheme.toolResult}>
+                      {line}
+                    </Text>
+                  ))}
+              </Box>
+            ) : (
+              <Text color={TokyoNightTheme.help} italic>
+                (no log output)
+              </Text>
+            )}
+            <Box>
+              <Text color={TokyoNightTheme.help}>
+                any key to close · esc returns to list
+              </Text>
+            </Box>
+          </Box>
+        )}
+      </Box>
+    );
+  },
+);

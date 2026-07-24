@@ -53,9 +53,7 @@ export const Scrollable: React.FC<ScrollableProps> = ({
   maxWidth,
   maxHeight,
   hasFocus,
-  scrollToBottom,
   flexGrow,
-  contentVersion,
 }) => {
   const [scrollTop, setScrollTop] = useState(0);
   const ref = useRef<DOMElement>(null);
@@ -127,7 +125,11 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     // clears the pin when the user scrolls up via mouse wheel or
     // shift+arrow so streamed events don't yank them back; once they
     // return to bottom the pin re-engages.
-    if ((contentGrew || containerShrank) && pinToBottomRef.current && !guardTripped) {
+    if (
+      (contentGrew || containerShrank) &&
+      pinToBottomRef.current &&
+      !guardTripped
+    ) {
       const bottom = Math.max(0, scrollHeight - innerHeight);
       setScrollTop(bottom);
       selfUpdateRef.current = true;

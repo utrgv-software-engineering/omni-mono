@@ -71,8 +71,7 @@ export const Tasks = React.memo(() => {
       borderColor={TokyoNightTheme.border}
     >
       <Box>
-        <Text color={TokyoNightTheme.defaultText}>
-          Tasks  </Text>
+        <Text color={TokyoNightTheme.defaultText}>Tasks </Text>
         <Text color={TokyoNightTheme.info}>{counts.in_progress}</Text>
         <Text color={TokyoNightTheme.defaultText}> active · </Text>
         <Text color={TokyoNightTheme.defaultText}>{counts.pending}</Text>
@@ -95,7 +94,9 @@ export const Tasks = React.memo(() => {
         const blocked = (t.blockedBy ?? []).length > 0;
         return (
           <Box key={t.id}>
-            <Text color={STATUS_COLOR[t.status]}>{STATUS_GLYPH[t.status]} </Text>
+            <Text color={STATUS_COLOR[t.status]}>
+              {STATUS_GLYPH[t.status]}{" "}
+            </Text>
             <Text color={TokyoNightTheme.defaultText}>#{t.id} </Text>
             <Text
               color={
@@ -109,16 +110,15 @@ export const Tasks = React.memo(() => {
             </Text>
             {blocked && (
               <Text color={TokyoNightTheme.warning}>
-                {" "}› blocked by #{t.blockedBy!.join(", #")}
+                {" "}
+                › blocked by #{t.blockedBy!.join(", #")}
               </Text>
             )}
           </Box>
         );
       })}
       {overflow > 0 && (
-        <Text color={TokyoNightTheme.defaultText}>
-          … +{overflow} more
-        </Text>
+        <Text color={TokyoNightTheme.defaultText}>… +{overflow} more</Text>
       )}
     </Box>
   );

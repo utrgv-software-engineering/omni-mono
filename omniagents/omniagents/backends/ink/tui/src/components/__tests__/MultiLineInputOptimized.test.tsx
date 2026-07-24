@@ -49,7 +49,9 @@ const send = async (text: string, key: Partial<typeof baseKey> = {}) => {
 const normalize = (frame: string | undefined) => {
   if (!frame) return [];
   const lines = frame.split("\n").map((line) => stripAnsi(line));
-  const content = /[┌┏╔]/u.test(lines[0]?.[0] ?? "") ? lines.slice(1, -1) : lines;
+  const content = /[┌┏╔]/u.test(lines[0]?.[0] ?? "")
+    ? lines.slice(1, -1)
+    : lines;
   return content
     .map((line) => line.replace(/^│\s?/u, "").replace(/\s?│$/u, ""))
     .map((line) => line.replace(/\s+$/u, ""));
@@ -73,10 +75,6 @@ class TestStdout extends PassThrough {
         }
       }
     });
-  }
-
-  write(frame: string, encoding?: BufferEncoding, cb?: (error?: Error | null) => void) {
-    return super.write(frame, encoding, cb);
   }
 
   lastFrame() {
@@ -113,10 +111,6 @@ class TestStderr extends PassThrough {
     });
   }
 
-  write(frame: string, encoding?: BufferEncoding, cb?: (error?: Error | null) => void) {
-    return super.write(frame, encoding, cb);
-  }
-
   lastFrame() {
     return this.last;
   }
@@ -132,10 +126,6 @@ class TestStdin extends PassThrough {
   constructor() {
     super();
     this.setEncoding("utf8");
-  }
-
-  write(data: string, encoding?: BufferEncoding, cb?: (error?: Error | null) => void) {
-    return super.write(data, encoding, cb);
   }
 
   setRawMode(_mode: boolean) {}
@@ -169,7 +159,9 @@ beforeAll(async () => {
   ({ MultiLineInputOptimized } = await import("../MultiLineInputOptimized.js"));
 });
 
-const renderInput = (props: React.ComponentProps<typeof MultiLineInputOptimized>) => {
+const renderInput = (
+  props: React.ComponentProps<typeof MultiLineInputOptimized>,
+) => {
   if (!MultiLineInputOptimized) {
     throw new Error("MultiLineInputOptimized not loaded");
   }
@@ -206,7 +198,10 @@ afterEach(() => {
 describe("MultiLineInputOptimized", () => {
   it("renders placeholder with visible cursor", async () => {
     const onSubmit = vi.fn();
-    const { lastFrame } = renderInput({ onSubmit, placeholder: "Say something" });
+    const { lastFrame } = renderInput({
+      onSubmit,
+      placeholder: "Say something",
+    });
     await flush();
     const frame = lastFrame();
     expect(frame).toBeDefined();

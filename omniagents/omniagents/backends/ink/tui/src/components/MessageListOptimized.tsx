@@ -34,7 +34,9 @@ function messageKey(message: Message, index: number): string {
   const role = message.role || "unknown";
   return (
     message.toolCall?.call_id ||
-    (message.timestamp ? `${role}-${message.timestamp.getTime()}` : undefined) ||
+    (message.timestamp
+      ? `${role}-${message.timestamp.getTime()}`
+      : undefined) ||
     `${role}-${contentPreview}-${index}`
   );
 }
@@ -219,10 +221,7 @@ const AssistantMessage = React.memo<{ message: Message }>(
     );
 
     // Split by newlines to preserve line breaks in Ink
-    const lines = useMemo(
-      () => renderedContent.split("\n"),
-      [renderedContent],
-    );
+    const lines = useMemo(() => renderedContent.split("\n"), [renderedContent]);
 
     return (
       <Box flexDirection="column">

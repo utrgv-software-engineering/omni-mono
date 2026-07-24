@@ -3,7 +3,12 @@
  * Uses useReducer to batch cursor + content updates in single render
  */
 
-import React, { useReducer, useCallback, useEffect, useLayoutEffect } from "react";
+import React, {
+  useReducer,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+} from "react";
 import { Box, Text } from "ink";
 import chalk from "chalk";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -63,7 +68,9 @@ function inputReducer(state: InputState, action: InputAction): InputState {
   switch (action.type) {
     case "INSERT_TEXT": {
       let nextState = state;
-      const normalized = action.text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      const normalized = action.text
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n");
       for (const char of normalized) {
         if (char === "\n") {
           nextState = inputReducer(nextState, { type: "INSERT_NEWLINE" });
@@ -235,7 +242,10 @@ function inputReducer(state: InputState, action: InputAction): InputState {
       };
 
     case "SET_VALUE": {
-      const newLines = action.value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+      const newLines = action.value
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+        .split("\n");
       return {
         ...state,
         lines: newLines.length > 0 ? newLines : [""],
@@ -248,7 +258,10 @@ function inputReducer(state: InputState, action: InputAction): InputState {
       return {
         ...state,
         historyIndex: action.index,
-        lines: action.value.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n"),
+        lines: action.value
+          .replace(/\r\n/g, "\n")
+          .replace(/\r/g, "\n")
+          .split("\n"),
         cursorRow: 0,
         cursorCol: 0,
       };
@@ -384,91 +397,90 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
 
     useKeypress(
       (input, key) => {
-      const current = stateRef.current;
+        const current = stateRef.current;
 
-
-      if (key.escape) {
-        onEscape?.();
-        return;
-      }
-
-      if (key.return) {
-        if (key.meta || key.ctrl) {
-          dispatch({ type: "INSERT_NEWLINE" });
-        } else {
-          if (!disableSubmit) {
-            handleSubmit();
-          }
+        if (key.escape) {
+          onEscape?.();
+          return;
         }
-      } else if (key.backspace) {
-        dispatch({ type: "DELETE_CHAR" });
-      } else if (key.delete) {
-        dispatch({ type: "DELETE_CHAR" });
-      } else if (key.ctrl && input === "d") {
-        dispatch({ type: "DELETE_CHAR_FORWARD" });
-      } else if (key.upArrow) {
-        if (key.shift) {
-          if (current.cursorRow > 0) {
+
+        if (key.return) {
+          if (key.meta || key.ctrl) {
+            dispatch({ type: "INSERT_NEWLINE" });
+          } else {
+            if (!disableSubmit) {
+              handleSubmit();
+            }
+          }
+        } else if (key.backspace) {
+          dispatch({ type: "DELETE_CHAR" });
+        } else if (key.delete) {
+          dispatch({ type: "DELETE_CHAR" });
+        } else if (key.ctrl && input === "d") {
+          dispatch({ type: "DELETE_CHAR_FORWARD" });
+        } else if (key.upArrow) {
+          if (key.shift) {
+            if (current.cursorRow > 0) {
+              dispatch({ type: "MOVE_UP" });
+            }
+          } else if (current.cursorRow === 0) {
+            handleHistoryUp();
+          } else {
             dispatch({ type: "MOVE_UP" });
           }
-        } else if (current.cursorRow === 0) {
-          handleHistoryUp();
-        } else {
-          dispatch({ type: "MOVE_UP" });
-        }
-      } else if (key.downArrow) {
-        if (key.shift) {
-          if (current.cursorRow < current.lines.length - 1) {
+        } else if (key.downArrow) {
+          if (key.shift) {
+            if (current.cursorRow < current.lines.length - 1) {
+              dispatch({ type: "MOVE_DOWN" });
+            }
+          } else if (current.cursorRow === current.lines.length - 1) {
+            handleHistoryDown();
+          } else {
             dispatch({ type: "MOVE_DOWN" });
           }
-        } else if (current.cursorRow === current.lines.length - 1) {
-          handleHistoryDown();
-        } else {
-          dispatch({ type: "MOVE_DOWN" });
-        }
-      } else if (key.leftArrow) {
-        dispatch({ type: "MOVE_LEFT" });
-      } else if (key.rightArrow) {
-        dispatch({ type: "MOVE_RIGHT" });
-      } else if (input && !key.ctrl && !key.meta) {
-        if (input === "\x1b[200~" || input === "[200~") {
-          pasteModeRef.current = true;
-          return;
-        }
+        } else if (key.leftArrow) {
+          dispatch({ type: "MOVE_LEFT" });
+        } else if (key.rightArrow) {
+          dispatch({ type: "MOVE_RIGHT" });
+        } else if (input && !key.ctrl && !key.meta) {
+          if (input === "\x1b[200~" || input === "[200~") {
+            pasteModeRef.current = true;
+            return;
+          }
 
-        if (input === "\x1b[201~" || input === "[201~") {
-          pasteModeRef.current = false;
-          return;
+          if (input === "\x1b[201~" || input === "[201~") {
+            pasteModeRef.current = false;
+            return;
+          }
+
+          const normalized = input
+            .replace(/\x1b\[200~/g, "")
+            .replace(/\x1b\[201~/g, "")
+            .replace(/\[200~/g, "")
+            .replace(/\[201~/g, "")
+            .replace(/\r\n/g, "\n")
+            .replace(/\r/g, "\n");
+
+          if (normalized === "\x7f" || normalized === "\b") {
+            dispatch({ type: "DELETE_CHAR" });
+            return;
+          }
+
+          const withoutMouse = normalized
+            .replace(/(?:\x1b)?\[<\d+;\d+;\d+[Mm]/g, "")
+            .replace(/(?:\x1b)?<\d+;\d+;\d+[Mm]/g, "")
+            .replace(/(?:\x1b)?\[M[\s\S]{3}/g, "");
+
+          if (!withoutMouse) {
+            return;
+          }
+
+          const clean = stripAnsi(withoutMouse);
+          if (clean) {
+            insertText(clean);
+          }
         }
-
-        const normalized = input
-          .replace(/\x1b\[200~/g, "")
-          .replace(/\x1b\[201~/g, "")
-          .replace(/\[200~/g, "")
-          .replace(/\[201~/g, "")
-          .replace(/\r\n/g, "\n")
-          .replace(/\r/g, "\n");
-
-        if (normalized === "\x7f" || normalized === "\b") {
-          dispatch({ type: "DELETE_CHAR" });
-          return;
-        }
-
-        const withoutMouse = normalized
-          .replace(/(?:\x1b)?\[<\d+;\d+;\d+[Mm]/g, "")
-          .replace(/(?:\x1b)?<\d+;\d+;\d+[Mm]/g, "")
-          .replace(/(?:\x1b)?\[M[\s\S]{3}/g, "");
-
-        if (!withoutMouse) {
-          return;
-        }
-
-        const clean = stripAnsi(withoutMouse);
-        if (clean) {
-          insertText(clean);
-        }
-      }
-    },
+      },
       { isActive: !disabled, priority: KeypressPriority.Normal },
     );
 
@@ -511,14 +523,19 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
             const chars = Array.from(line);
             const beforeRaw = chars.slice(0, state.cursorCol).join("");
             const cursorRaw = chars[state.cursorCol];
-            const afterRaw = cursorRaw === undefined ? "" : chars.slice(state.cursorCol + 1).join("");
+            const afterRaw =
+              cursorRaw === undefined
+                ? ""
+                : chars.slice(state.cursorCol + 1).join("");
             const beforeColored = beforeRaw ? textColor(beforeRaw) : "";
             const cursorColored = chalk.inverse(cursorRaw ?? " ");
             const afterColored = afterRaw ? textColor(afterRaw) : "";
             lineDisplay = `${beforeColored}${cursorColored}${afterColored}`;
           } else {
             const showPlaceholder = state.lines.every((l) => l === "");
-            const displayValue = line || (showPlaceholder && actualIdx === 0 && !line ? placeholder : "");
+            const displayValue =
+              line ||
+              (showPlaceholder && actualIdx === 0 && !line ? placeholder : "");
             lineDisplay = displayValue ? textColor(displayValue) : "";
           }
 

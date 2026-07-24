@@ -39,7 +39,9 @@ export function BaseSelectionList<V extends string>({
   selectedIndex: controlledIndex,
 }: BaseSelectionListProps<V>) {
   const [uncontrolledIndex, setUncontrolledIndex] = useState(0);
-  const selectedIndex = manageInput ? uncontrolledIndex : (controlledIndex ?? 0);
+  const selectedIndex = manageInput
+    ? uncontrolledIndex
+    : (controlledIndex ?? 0);
 
   useKeypress(
     (input, key) => {

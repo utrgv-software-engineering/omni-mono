@@ -767,7 +767,6 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.unregisterClientFunction("ui.recap");
       client.unregisterClientFunction("escalate");
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, sessionId, rpcReady, batcher]);
 
   // Return approval handler function — sends the user's decision over the

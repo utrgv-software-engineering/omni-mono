@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
-import {
-  useActions,
-  useNotifications,
-} from "../store/appStore.js";
+import { useActions, useNotifications } from "../store/appStore.js";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { TokyoNightTheme } from "../theme.js";
@@ -91,13 +88,14 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
       borderColor={focused ? TokyoNightTheme.info : TokyoNightTheme.toolResult}
     >
       <Box>
-        <Text color={TokyoNightTheme.defaultText}>Notifications  </Text>
+        <Text color={TokyoNightTheme.defaultText}>Notifications </Text>
         <Text color={TokyoNightTheme.info}>{notifications.length}</Text>
         <Text color={TokyoNightTheme.defaultText} dimColor>
-          {" "}{noun}
+          {" "}
+          {noun}
         </Text>
         {!focused && (
-          <Text color={TokyoNightTheme.help}>   Ctrl+N to manage</Text>
+          <Text color={TokyoNightTheme.help}> Ctrl+N to manage</Text>
         )}
       </Box>
 

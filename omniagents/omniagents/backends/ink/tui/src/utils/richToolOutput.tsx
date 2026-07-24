@@ -41,8 +41,11 @@ export const RichToolOutput = React.memo<{
       case "diff":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>  └─ {summaryText}</Text>
-            {hasDetails && <Text>{" "}</Text>}
+            <Text color={TokyoNightTheme.toolResult}>
+              {"  └─ "}
+              {summaryText}
+            </Text>
+            {hasDetails && <Text> </Text>}
             {value && <RenderDiffPreview value={value} />}
           </Box>
         );
@@ -50,8 +53,11 @@ export const RichToolOutput = React.memo<{
       case "table":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>  └─ {summaryText}</Text>
-            {hasDetails && <Text>{" "}</Text>}
+            <Text color={TokyoNightTheme.toolResult}>
+              {"  └─ "}
+              {summaryText}
+            </Text>
+            {hasDetails && <Text> </Text>}
             {metadata.table && (
               <RenderTable table={metadata.table} truncated={truncated} />
             )}
@@ -61,8 +67,11 @@ export const RichToolOutput = React.memo<{
       case "search_results":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>  └─ {summaryText}</Text>
-            {hasDetails && <Text>{" "}</Text>}
+            <Text color={TokyoNightTheme.toolResult}>
+              {"  └─ "}
+              {summaryText}
+            </Text>
+            {hasDetails && <Text> </Text>}
             {preview && (
               <RenderSearchResults preview={preview} truncated={truncated} />
             )}
@@ -72,8 +81,11 @@ export const RichToolOutput = React.memo<{
       case "directory_listing":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>  └─ {summaryText}</Text>
-            {hasDetails && <Text>{" "}</Text>}
+            <Text color={TokyoNightTheme.toolResult}>
+              {"  └─ "}
+              {summaryText}
+            </Text>
+            {hasDetails && <Text> </Text>}
             {preview && (
               <RenderDirectoryListing
                 preview={preview}
@@ -91,7 +103,7 @@ export const RichToolOutput = React.memo<{
               {"  └─ "}
               <Text color={TokyoNightTheme.error}>{summaryText}</Text>
             </Text>
-            {hasDetails && <Text>{" "}</Text>}
+            {hasDetails && <Text> </Text>}
             {preview && (
               <RenderErrorPreview preview={preview} truncated={truncated} />
             )}
@@ -101,8 +113,11 @@ export const RichToolOutput = React.memo<{
       case "command":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>  └─ {summaryText}</Text>
-            {hasDetails && <Text>{" "}</Text>}
+            <Text color={TokyoNightTheme.toolResult}>
+              {"  └─ "}
+              {summaryText}
+            </Text>
+            {hasDetails && <Text> </Text>}
             {preview && (
               <RenderCommandOutput
                 preview={preview}
@@ -116,8 +131,11 @@ export const RichToolOutput = React.memo<{
       case "file_content":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>  └─ {summaryText}</Text>
-            {hasDetails && <Text>{" "}</Text>}
+            <Text color={TokyoNightTheme.toolResult}>
+              {"  └─ "}
+              {summaryText}
+            </Text>
+            {hasDetails && <Text> </Text>}
             {preview && (
               <RenderFileContent
                 preview={preview}
@@ -131,8 +149,11 @@ export const RichToolOutput = React.memo<{
       case "web_content":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>  └─ {summaryText}</Text>
-            {hasDetails && <Text>{" "}</Text>}
+            <Text color={TokyoNightTheme.toolResult}>
+              {"  └─ "}
+              {summaryText}
+            </Text>
+            {hasDetails && <Text> </Text>}
             {preview && (
               <RenderWebContent preview={preview} truncated={truncated} />
             )}
@@ -143,8 +164,11 @@ export const RichToolOutput = React.memo<{
         // Default: plain text rendering
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>  └─ {summaryText}</Text>
-            {hasDetails && <Text>{" "}</Text>}
+            <Text color={TokyoNightTheme.toolResult}>
+              {"  └─ "}
+              {summaryText}
+            </Text>
+            {hasDetails && <Text> </Text>}
             {preview && (
               <RenderPlainPreview preview={preview} truncated={truncated} />
             )}
@@ -372,7 +396,11 @@ const RenderDirectoryListing = React.memo<{
                 </Text>
                 <Text
                   bold={isDir}
-                  color={isSymlink ? TokyoNightTheme.info : TokyoNightTheme.toolResult}
+                  color={
+                    isSymlink
+                      ? TokyoNightTheme.info
+                      : TokyoNightTheme.toolResult
+                  }
                 >
                   {entryName}
                 </Text>
@@ -401,8 +429,8 @@ const RenderDirectoryListing = React.memo<{
             {totalEntries !== undefined
               ? `... ${totalEntries.toLocaleString()} total entries`
               : fileCount !== undefined && dirCount !== undefined
-              ? `... ${fileCount} files, ${dirCount} directories total`
-              : "... more entries"}
+                ? `... ${fileCount} files, ${dirCount} directories total`
+                : "... more entries"}
           </Text>
         )}
       </Box>
@@ -488,7 +516,9 @@ const RenderCommandOutput = React.memo<{
         {/* Status line */}
         {exitCode !== undefined && (
           <Text color={TokyoNightTheme.defaultText}>
-            <Text color={success ? TokyoNightTheme.info : TokyoNightTheme.error}>
+            <Text
+              color={success ? TokyoNightTheme.info : TokyoNightTheme.error}
+            >
               Exit: {exitCode}
             </Text>
             {wallTimeMs !== undefined && (
@@ -496,7 +526,8 @@ const RenderCommandOutput = React.memo<{
             )}
             {wasTruncated && charsTruncated && (
               <Text color={TokyoNightTheme.defaultText}>
-                {" "}[{charsTruncated.toLocaleString()} chars truncated]
+                {" "}
+                [{charsTruncated.toLocaleString()} chars truncated]
               </Text>
             )}
           </Text>
@@ -540,10 +571,8 @@ const RenderFileContent = React.memo<{
   metadata?: Record<string, unknown>;
   truncated?: boolean;
 }>(
-  ({ preview, metadata, truncated }) => {
+  ({ preview, truncated }) => {
     const lines = preview.split("\n").slice(0, 15);
-    const startLine = metadata?.start_line as number | undefined;
-
     return (
       <Box flexDirection="column" paddingLeft={4}>
         {/* Content with line numbers preserved from L{n}: format */}

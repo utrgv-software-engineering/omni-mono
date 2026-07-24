@@ -9,12 +9,7 @@ import type {
   JSONRPCResponse,
   JSONRPCNotification,
   ServerEvent,
-  ClientRequest,
   WebSocketMessage,
-  SendMessageResponse,
-  GetHistoryResponse,
-  ListSessionsResponse,
-  GetAgentInfoResponse,
 } from "../types/protocol.js";
 
 export interface RPCClientOptions {
@@ -47,7 +42,6 @@ export class RPCClient extends EventEmitter {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
-  private rpcReady = false;
 
   constructor(options: RPCClientOptions) {
     super();
@@ -101,7 +95,6 @@ export class RPCClient extends EventEmitter {
           // This matches the bubbletea backend's approach which delays before
           // signaling RPC readiness to avoid race conditions
           setTimeout(() => {
-            this.rpcReady = true;
             this.emit("rpc_ready");
             this.log("RPC ready");
           }, 50);
@@ -120,7 +113,6 @@ export class RPCClient extends EventEmitter {
 
         this.ws.on("close", () => {
           this.log("Disconnected from server");
-          this.rpcReady = false;
           this.emit("disconnected");
           this.attemptReconnect();
         });
@@ -141,7 +133,6 @@ export class RPCClient extends EventEmitter {
    */
   disconnect(): void {
     if (this.ws) {
-      this.rpcReady = false;
       this.ws.close();
       this.ws = null;
     }
@@ -374,14 +365,13 @@ export class RPCClient extends EventEmitter {
     if (opts?.role) params.role = opts.role;
     if (opts?.triggerRun) params.trigger_run = true;
     if (opts?.variables) params.variables = opts.variables;
-    if (opts?.safeToolOverrides) params.safe_tool_overrides = opts.safeToolOverrides;
+    if (opts?.safeToolOverrides)
+      params.safe_tool_overrides = opts.safeToolOverrides;
     if (opts?.source) params.source = opts.source;
     return this.call("enqueue_message", params);
   }
 
-  async listQueue(
-    sessionId: string,
-  ): Promise<{
+  async listQueue(sessionId: string): Promise<{
     session_id: string;
     depth: number;
     items: Array<{
@@ -526,7 +516,10 @@ export class RPCClient extends EventEmitter {
         this.emit("queue_changed", event.params);
         break;
       default:
-        this.log("Unknown notification method:", event.method);
+        this.log(
+          "Unknown notification method:",
+          (event as JSONRPCNotification).method,
+        );
     }
   }
 
@@ -579,40 +572,6 @@ export class RPCClient extends EventEmitter {
         message: `Function execution failed: ${(error as Error).message}`,
       });
     }
-  }
-
-  /**
-   * Send a JSON-RPC response
-   */
-  private sendResponse(id: string | number, result: unknown): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    const response: JSONRPCResponse = {
-      jsonrpc: "2.0",
-      id,
-      result,
-    };
-
-    this.ws.send(JSON.stringify(response));
-  }
-
-  /**
-   * Send a JSON-RPC error response
-   */
-  private sendError(id: string | number, code: number, message: string): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-
-    const response: JSONRPCResponse = {
-      jsonrpc: "2.0",
-      id,
-      error: { code, message },
-    };
-
-    this.ws.send(JSON.stringify(response));
   }
 
   /**

@@ -11,9 +11,21 @@ type InkRender = InkModule["render"];
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 class FakeClient extends EventEmitter {
-  private functions = new Map<string, (args: Record<string, unknown>) => Promise<unknown>>();
+  private functions = new Map<
+    string,
+    (args: Record<string, unknown>) => Promise<unknown>
+  >();
+  approvalResponses: Array<{
+    callId: string;
+    decision: "approve" | "reject";
+    alwaysApprove: boolean;
+    rejectionMessage?: string;
+  }> = [];
 
-  registerClientFunction(name: string, handler: (args: Record<string, unknown>) => Promise<unknown>) {
+  registerClientFunction(
+    name: string,
+    handler: (args: Record<string, unknown>) => Promise<unknown>,
+  ) {
     this.functions.set(name, handler);
   }
 
@@ -26,11 +38,26 @@ class FakeClient extends EventEmitter {
     if (!handler) throw new Error(`missing handler: ${name}`);
     return handler(args);
   }
+
+  async toolApprovalResponse(
+    callId: string,
+    decision: "approve" | "reject",
+    alwaysApprove = false,
+    rejectionMessage?: string,
+  ) {
+    this.approvalResponses.push({
+      callId,
+      decision,
+      alwaysApprove,
+      rejectionMessage,
+    });
+    return true;
+  }
 }
 
 let inkRender: InkRender;
 let Text: InkModule["Text"];
-let useMessagesOptimized: typeof import("../useMessagesNew.js")["useMessagesOptimized"];
+let useMessagesOptimized: (typeof import("../useMessagesNew.js"))["useMessagesOptimized"];
 
 const instances: Array<ReturnType<InkRender>> = [];
 
@@ -59,71 +86,82 @@ describe("approval queue", () => {
       | null = null;
 
     const Harness = ({ rpcClient }: { rpcClient: RPCClient }) => {
-      const api = useMessagesOptimized({ client: rpcClient });
+      const api = useMessagesOptimized({ client: rpcClient, rpcReady: true });
       useEffect(() => {
         approveToolCall = api.approveToolCall;
       }, [api.approveToolCall]);
       return <Text>ok</Text>;
     };
 
-    const instance = inkRender(<Harness rpcClient={client as unknown as RPCClient} />, {
-      stdout: process.stdout,
-      stderr: process.stderr,
-      stdin: process.stdin,
-      debug: false,
-      exitOnCtrlC: false,
-      patchConsole: false,
-    });
+    const instance = inkRender(
+      <Harness rpcClient={client as unknown as RPCClient} />,
+      {
+        stdout: process.stdout,
+        stderr: process.stderr,
+        stdin: process.stdin,
+        debug: false,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    );
     instances.push(instance);
 
     await flush();
     expect(approveToolCall).toBeTruthy();
 
-    const p1 = client.callClientFunction("ui.request_tool_approval", {
-      request_id: "r1",
-      approval_id: "a1",
-      tool: "execute_bash",
+    client.emit("tool_approval_requested", {
+      call_id: "a1",
+      tool_name: "execute_bash",
       arguments: "cmd: 1",
       session_id: "s",
       run_id: "run",
     });
-    const p2 = client.callClientFunction("ui.request_tool_approval", {
-      request_id: "r2",
-      approval_id: "a2",
-      tool: "execute_bash",
+    client.emit("tool_approval_requested", {
+      call_id: "a2",
+      tool_name: "execute_bash",
       arguments: "cmd: 2",
       session_id: "s",
       run_id: "run",
     });
-    const p3 = client.callClientFunction("ui.request_tool_approval", {
-      request_id: "r3",
-      approval_id: "a3",
-      tool: "execute_bash",
+    client.emit("tool_approval_requested", {
+      call_id: "a3",
+      tool_name: "execute_bash",
       arguments: "cmd: 3",
       session_id: "s",
       run_id: "run",
     });
 
     await flush();
-    expect(useAppStore.getState().approval?.request_id).toBe("r1");
+    expect(useAppStore.getState().approval?.call_id).toBe("a1");
 
     await approveToolCall!(true, false);
     await flush();
-    expect(await p1).toEqual({ approved: true, always_approve: false });
-    expect(useAppStore.getState().approval?.request_id).toBe("r2");
+    expect(client.approvalResponses[0]).toEqual({
+      callId: "a1",
+      decision: "approve",
+      alwaysApprove: false,
+      rejectionMessage: undefined,
+    });
+    expect(useAppStore.getState().approval?.call_id).toBe("a2");
 
     await approveToolCall!(false, false);
     await flush();
-    expect(await p2).toEqual({
-      approved: false,
-      always_approve: false,
-      error_message: "User rejected tool call",
+    expect(client.approvalResponses[1]).toEqual({
+      callId: "a2",
+      decision: "reject",
+      alwaysApprove: false,
+      rejectionMessage: "User rejected tool call",
     });
-    expect(useAppStore.getState().approval?.request_id).toBe("r3");
+    expect(useAppStore.getState().approval?.call_id).toBe("a3");
 
     await approveToolCall!(true, true);
     await flush();
-    expect(await p3).toEqual({ approved: true, always_approve: true });
+    expect(client.approvalResponses[2]).toEqual({
+      callId: "a3",
+      decision: "approve",
+      alwaysApprove: true,
+      rejectionMessage: undefined,
+    });
     expect(useAppStore.getState().approval).toBeNull();
   });
 });

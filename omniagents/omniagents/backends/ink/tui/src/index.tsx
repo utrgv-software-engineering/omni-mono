@@ -78,8 +78,17 @@ const cli = meow(
   },
 );
 
-const { server, name, token, session, resume, welcome, initialMessage, debug, mouse } =
-  cli.flags;
+const {
+  server,
+  name,
+  token,
+  session,
+  resume,
+  welcome,
+  initialMessage,
+  debug,
+  mouse,
+} = cli.flags;
 
 // Enable debug logging to file if requested
 if (debug) {

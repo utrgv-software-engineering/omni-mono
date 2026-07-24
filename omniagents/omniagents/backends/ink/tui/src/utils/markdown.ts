@@ -21,14 +21,13 @@ import chalk from "chalk";
  */
 export function renderMarkdown(markdown: string): string {
   try {
-    let output = markdown;
+    const output = markdown;
 
     // Process line by line to handle code blocks and lists
     const lines = output.split("\n");
     const processedLines: string[] = [];
     let inCodeBlock = false;
     let codeBlockContent: string[] = [];
-    let codeBlockLanguage = "";
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -38,7 +37,6 @@ export function renderMarkdown(markdown: string): string {
         if (!inCodeBlock) {
           // Start of code block
           inCodeBlock = true;
-          codeBlockLanguage = line.trim().slice(3).trim();
           codeBlockContent = [];
         } else {
           // End of code block
@@ -62,7 +60,6 @@ export function renderMarkdown(markdown: string): string {
       // Handle headers
       const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
       if (headerMatch) {
-        const level = headerMatch[1].length;
         const text = headerMatch[2];
         // Bold blue for headers (matching Glamour)
         processedLines.push(chalk.bold.hex("#7aa2f7")(text));
@@ -73,7 +70,6 @@ export function renderMarkdown(markdown: string): string {
       const listMatch = line.match(/^(\s*)([-*]|\d+\.)\s+(.+)$/);
       if (listMatch) {
         const indent = listMatch[1];
-        const bullet = listMatch[2];
         const text = listMatch[3];
         // Process inline markdown in list items
         const processedText = processInlineMarkdown(text);

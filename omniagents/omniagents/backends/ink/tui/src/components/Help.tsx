@@ -16,7 +16,9 @@ function formatNumber(n: number): string {
 function formatUsage(usage: UsageInfo, modelOverride?: string | null): string {
   const modelName = modelOverride || usage.model || "unknown";
   if (usage.maxInputTokens && usage.maxInputTokens > 0) {
-    const percentage = Math.round((usage.totalTokens / usage.maxInputTokens) * 100);
+    const percentage = Math.round(
+      (usage.totalTokens / usage.maxInputTokens) * 100,
+    );
     return `context window: ${percentage}% • ${modelName}`;
   }
   return `tokens: ${formatNumber(usage.totalTokens)} • ${modelName}`;

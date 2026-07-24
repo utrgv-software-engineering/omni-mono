@@ -515,7 +515,7 @@ export const useAppStore = create<AppState>()(
           }
         }),
 
-      cancelRun: (runId) =>
+      cancelRun: () =>
         set((state) => {
           // Mark running tools as cancelled
           state.messages.forEach((msg) => {

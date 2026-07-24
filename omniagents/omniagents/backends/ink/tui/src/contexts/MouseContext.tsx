@@ -9,7 +9,14 @@
  * MouseProvider sees the SGR mouse sequences alongside ink's keypress parser.
  */
 
-import React, { createContext, useContext, useEffect, useRef, useCallback, useMemo } from "react";
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { useStdin } from "ink";
 
 export interface MouseEvent {
@@ -27,10 +34,10 @@ interface MouseContextType {
 
 const MouseContext = createContext<MouseContextType | null>(null);
 
-export const MouseProvider: React.FC<{ children: React.ReactNode; mouseEventsEnabled?: boolean }> = ({
-  children,
-  mouseEventsEnabled = false,
-}) => {
+export const MouseProvider: React.FC<{
+  children: React.ReactNode;
+  mouseEventsEnabled?: boolean;
+}> = ({ children, mouseEventsEnabled = false }) => {
   const stdinCtx = useStdin();
   const handlersRef = useRef<Set<MouseHandler>>(new Set());
 
@@ -48,12 +55,14 @@ export const MouseProvider: React.FC<{ children: React.ReactNode; mouseEventsEna
     }
     // `internal_eventEmitter` is added by ink 7; gate on its presence so we
     // also work under older ink versions during a transitional install.
-    const emitter = (stdinCtx as unknown as {
-      internal_eventEmitter?: {
-        on: (event: string, listener: (chunk: string) => void) => void;
-        off: (event: string, listener: (chunk: string) => void) => void;
-      };
-    }).internal_eventEmitter;
+    const emitter = (
+      stdinCtx as unknown as {
+        internal_eventEmitter?: {
+          on: (event: string, listener: (chunk: string) => void) => void;
+          off: (event: string, listener: (chunk: string) => void) => void;
+        };
+      }
+    ).internal_eventEmitter;
     if (!emitter) return;
 
     process.stdout.write("\x1b[?1002h\x1b[?1006h");

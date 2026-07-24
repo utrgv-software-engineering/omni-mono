@@ -24,7 +24,8 @@ export const EscalationBanner = React.memo(() => {
           <Spinner type="dots" />
         </Text>
         <Text color={TokyoNightTheme.warning} bold>
-          {" "}Agent escalated — your next message will be sent back as the reply.
+          {" "}
+          Agent escalated — your next message will be sent back as the reply.
         </Text>
       </Box>
       <Box>

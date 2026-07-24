@@ -50,9 +50,7 @@ export const Wakeup = React.memo(() => {
     } else if (wakeup.end_at !== null && wakeup.end_at !== undefined) {
       parts.push(`until ${formatTimeRemaining(wakeup.end_at)}`);
     } else if (wakeup.fires > 0) {
-      parts.push(
-        `${wakeup.fires} fire${wakeup.fires === 1 ? "" : "s"}`,
-      );
+      parts.push(`${wakeup.fires} fire${wakeup.fires === 1 ? "" : "s"}`);
     }
   } else {
     if (wakeup.end_at !== null && wakeup.end_at !== undefined) {
@@ -64,9 +62,7 @@ export const Wakeup = React.memo(() => {
 
   return (
     <Box>
-      <Text color={glyphColor}>
-        {isActive ? <Spinner type="dots" /> : "✗"}
-      </Text>
+      <Text color={glyphColor}>{isActive ? <Spinner type="dots" /> : "✗"}</Text>
       <Text color={TokyoNightTheme.defaultText}> wakeup </Text>
       <Text color={TokyoNightTheme.toolResult}>· </Text>
       <Text color={TokyoNightTheme.inputText}>

@@ -61,7 +61,9 @@ export const Workers = React.memo(() => {
   // Idle mode: hide successfully-completed workers (they're already in
   // the dismissed set after the next submit anyway), keep failures
   // (error/cancelled) visible until the user dismisses them.
-  const workers = thinking ? live : live.filter((w) => w.status !== "completed");
+  const workers = thinking
+    ? live
+    : live.filter((w) => w.status !== "completed");
 
   // 1Hz tick while at least one worker is running so elapsed time updates.
   const [, setNowTick] = useState(0);
@@ -83,9 +85,7 @@ export const Workers = React.memo(() => {
 
   const ordered = [
     ...running,
-    ...exited
-      .slice()
-      .sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0)),
+    ...exited.slice().sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0)),
   ];
   const visible = ordered.slice(0, MAX_VISIBLE);
   const overflow = ordered.length - visible.length;
@@ -98,7 +98,7 @@ export const Workers = React.memo(() => {
       borderColor={TokyoNightTheme.border}
     >
       <Box>
-        <Text color={TokyoNightTheme.defaultText}>Workers  </Text>
+        <Text color={TokyoNightTheme.defaultText}>Workers </Text>
         <Text color={TokyoNightTheme.info}>{running.length}</Text>
         <Text color={TokyoNightTheme.defaultText}> running · </Text>
         <Text color={TokyoNightTheme.success}>{succeeded}</Text>
@@ -136,7 +136,7 @@ export const Workers = React.memo(() => {
             >
               {shortTask(w.task, TASK_TRUNCATE)}
             </Text>
-            <Text color={TokyoNightTheme.defaultText}>  {tail}</Text>
+            <Text color={TokyoNightTheme.defaultText}> {tail}</Text>
           </Box>
         );
       })}

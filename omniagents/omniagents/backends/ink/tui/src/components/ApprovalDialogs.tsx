@@ -122,7 +122,12 @@ export const FileWriteApproval = React.memo<
   BaseApprovalProps & { tool: string; metadata: RichMetadata }
 >(({ metadata, onApprove }) => {
   const summary = metadata.summary || "File Write";
-  const content = (metadata.value as string) || metadata.preview || "";
+  const content =
+    (typeof metadata.value?.content === "string"
+      ? metadata.value.content
+      : undefined) ||
+    metadata.preview ||
+    "";
 
   return (
     <DialogShell title={summary} footer={APPROVAL_FOOTER}>

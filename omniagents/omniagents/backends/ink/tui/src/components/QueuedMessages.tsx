@@ -31,7 +31,7 @@ export const QueuedMessages = React.memo(() => {
       borderColor={TokyoNightTheme.border}
     >
       <Box>
-        <Text color={TokyoNightTheme.defaultText}>Up next  </Text>
+        <Text color={TokyoNightTheme.defaultText}>Up next </Text>
         <Text color={TokyoNightTheme.info}>{items.length}</Text>
         <Text color={TokyoNightTheme.defaultText}> queued</Text>
       </Box>

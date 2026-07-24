@@ -483,7 +483,6 @@ export const App: React.FC<AppProps> = ({
     if (initialSessionId) {
       actions.setSessionId(initialSessionId);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSessionId]);
 
   // Load global user history from server when RPC is ready
@@ -581,7 +580,6 @@ export const App: React.FC<AppProps> = ({
     if (!connected) {
       actions.setStatus("Disconnected from server", "error", false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, uiState]);
 
   // Handle session list navigation
@@ -624,7 +622,6 @@ export const App: React.FC<AppProps> = ({
         }
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [availableSessions, selectedSessionIndex, debug],
   );
 
@@ -857,7 +854,6 @@ export const App: React.FC<AppProps> = ({
         actions.setThinking(false, `Error: ${errorMessage}`);
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       client,
       connected,
