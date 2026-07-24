@@ -806,6 +806,12 @@ async def _default_build_agent(
         instructions=_cacheable_instructions_text(raw_instructions) or "",
         tools=tools,
     )
+    # The ChatGPT Codex backend 400s on `prompt_cache_retention`
+    # ("Unsupported parameter") — it's an API-billing knob; the subscription
+    # backend manages its own caching. Strip it for openai-oauth models even
+    # when set explicitly. `prompt_cache_key` stays: the backend accepts it.
+    if (session_model_config or {}).get("provider") == "openai-oauth":
+        model_settings_kwargs.pop("prompt_cache_retention", None)
     _normalize_prompt_cache_settings(model_settings_kwargs)
 
     # If tools are available and tool_choice not explicitly set, default to "auto"
