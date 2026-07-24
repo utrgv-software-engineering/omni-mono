@@ -2,12 +2,10 @@ import asyncio
 import json
 
 import pytest
+from agents.tool_context import ToolContext
 
-from omniagents.core.tools.artifacts import (
-    set_artifact_callback,
-    emit_artifact,
-    display_artifact,
-)
+from omniagents.builtin.tools.artifacts import display_artifact
+from omniagents.core.tools.artifacts import emit_artifact, set_artifact_callback
 
 
 @pytest.fixture(autouse=True)
@@ -27,17 +25,24 @@ def test_emit_artifact_callback():
 def test_display_artifact_tool():
     records = []
     set_artifact_callback(lambda t, c, m, aid: records.append((t, c, m, aid)))
+    arguments = json.dumps(
+        {
+            "title": "a",
+            "content": "b",
+            "mode": "html",
+            "artifact_id": "2",
+        }
+    )
     asyncio.run(
         display_artifact.on_invoke_tool(
-            None,
-            json.dumps(
-                {
-                    "title": "a",
-                    "content": "b",
-                    "mode": "html",
-                    "artifact_id": "2",
-                }
+            ToolContext(
+                context=None,
+                usage=None,
+                tool_name="display_artifact",
+                tool_call_id="test-call",
+                tool_arguments=arguments,
             ),
+            arguments,
         )
     )
     assert records == [("a", "b", "html", "2")]
