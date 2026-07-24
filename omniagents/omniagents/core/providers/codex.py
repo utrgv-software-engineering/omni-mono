@@ -129,6 +129,30 @@ def save_tokens(tokens: Dict[str, Any]) -> None:
     path.chmod(0o600)
 
 
+# OAuth statuses that mean "the grant itself was rejected" (revoked/expired
+# refresh token) rather than a transient failure. Only these stamp the store —
+# a network blip or 5xx must never mark a healthy session broken.
+_AUTH_REJECTED_STATUSES = (400, 401, 403)
+
+
+def _stamp_auth_error(status_code: int) -> None:
+    """Record a rejected refresh in the token store.
+
+    ``codex.json`` is the cross-process contract file; the launcher's
+    ``codex:status`` reads this stamp to distinguish "signed in" from
+    "sign-in broken — re-authenticate". Cleared implicitly by any successful
+    refresh or fresh sign-in (both write a clean token dict).
+    """
+    tokens = load_tokens()
+    if not tokens:
+        return
+    tokens["auth_error"] = {"code": status_code, "at": int(time.time() * 1000)}
+    try:
+        save_tokens(tokens)
+    except OSError:
+        pass
+
+
 def clear_tokens() -> None:
     path = _store_path()
     if path.exists():
@@ -214,6 +238,8 @@ async def _refresh_async(refresh_token: str) -> Dict[str, Any]:
             },
         )
     if resp.status_code != 200:
+        if resp.status_code in _AUTH_REJECTED_STATUSES:
+            _stamp_auth_error(resp.status_code)
         raise RuntimeError(f"Codex token refresh failed: {resp.status_code}")
     return _normalize_token_response(resp.json())
 
@@ -283,6 +309,8 @@ def _ensure_fresh_sync() -> Optional[Dict[str, Any]]:
             },
         )
     if resp.status_code != 200:
+        if resp.status_code in _AUTH_REJECTED_STATUSES:
+            _stamp_auth_error(resp.status_code)
         raise RuntimeError(f"Codex token refresh failed: {resp.status_code}")
     refreshed = _normalize_token_response(resp.json())
     if "account_id" not in refreshed and tokens.get("account_id"):
