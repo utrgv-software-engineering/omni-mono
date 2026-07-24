@@ -689,6 +689,33 @@ def test_filter_history_for_api_drops_output_whose_call_is_gone():
     assert sum(1 for r in result if r.get("type") == "message") == 2
 
 
+def test_filter_history_for_api_dedupes_repeated_outputs():
+    """A retried run re-persists the tool output, leaving one call with two
+    outputs. The API pairs the first and 400s the second ("No tool call
+    found for function call output …" — the 2026-07-24 resident brick was
+    this shape, dozens of duplicates per session). Only the first output
+    per call_id survives."""
+    history = [
+        {"type": "reasoning", "id": "rs_1", "summary": []},
+        {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "ls"},
+        {
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "done"}],
+        },
+        {"type": "function_call_output", "call_id": "call_1", "output": "first"},
+        {"role": "user", "content": "and again?"},
+        {"type": "function_call_output", "call_id": "call_1", "output": "duplicate"},
+    ]
+
+    result = filter_history_for_api(history)
+
+    outs = [r for r in result if r.get("type") == "function_call_output"]
+    assert len(outs) == 1
+    assert outs[0]["output"] == "first"
+
+
 def test_filter_history_for_api_placeholder_for_call_without_output():
     """The mirror orphan — a call whose output was never persisted — also
      400s the input ("No tool output found for function call"). The repair

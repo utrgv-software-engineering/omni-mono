@@ -368,6 +368,13 @@ def _repair_orphaned_call_pairs(items: list[dict]) -> list[dict]:
     output STILL unmatched here is truly orphaned. Drop those; give
     orphaned ``function_call``s a placeholder output (other ``*_call``
     types have bespoke output schemas — drop the call instead of guessing).
+
+    DUPLICATE outputs for one call are the same 400 in disguise: a
+    retried run re-persists the tool output, the API pairs the first
+    output with the call and then rejects the second as "No tool call
+    found for function call output" (observed in production resident
+    sessions, dozens of duplicates each). Only the first output per
+    call_id survives.
     """
     call_ids: set = set()
     output_ids: set = set()
@@ -381,12 +388,17 @@ def _repair_orphaned_call_pairs(items: list[dict]) -> list[dict]:
             call_ids.add(item.get("call_id"))
 
     repaired: list[dict] = []
+    emitted_outputs: set = set()
     for item in items:
         t = item.get("type")
         t = t if isinstance(t, str) else ""
         if t.endswith("_call_output"):
-            if item.get("call_id") not in call_ids:
+            cid = item.get("call_id")
+            if cid not in call_ids:
                 continue  # orphaned output — its call is gone from history
+            if cid in emitted_outputs:
+                continue  # duplicate output — the call is already answered
+            emitted_outputs.add(cid)
             repaired.append(item)
             continue
         if t.endswith("_call") and item.get("call_id") not in output_ids:
