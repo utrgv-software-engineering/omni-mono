@@ -350,7 +350,59 @@ def filter_history_for_api(history: list[dict]) -> list[dict]:
             reordered.append(item)
             i += 1
 
-    return _synthesize_unanchored_calls(reordered)
+    return _repair_orphaned_call_pairs(_synthesize_unanchored_calls(reordered))
+
+
+def _repair_orphaned_call_pairs(items: list[dict]) -> list[dict]:
+    """Make every call/output pairing in the final sequence two-sided.
+
+    Persisted history can lose one side of a pair for good — a run killed
+    between writing the call and its output, or pruning that took one but
+    not the other. Either orphan 400s the ENTIRE replayed input, bricking
+    the session on every subsequent turn:
+      * output without call — "No tool call found for function call output"
+      * call without output — "No tool output found for function call"
+    The reorder pass above deliberately carries unmatched outputs through
+    (an output whose call sits elsewhere in history must survive the
+    reshuffle); this final pass sees the whole sequence at once, so an
+    output STILL unmatched here is truly orphaned. Drop those; give
+    orphaned ``function_call``s a placeholder output (other ``*_call``
+    types have bespoke output schemas — drop the call instead of guessing).
+    """
+    call_ids: set = set()
+    output_ids: set = set()
+    for item in items:
+        t = item.get("type")
+        if not isinstance(t, str):
+            continue
+        if t.endswith("_call_output"):
+            output_ids.add(item.get("call_id"))
+        elif t.endswith("_call"):
+            call_ids.add(item.get("call_id"))
+
+    repaired: list[dict] = []
+    for item in items:
+        t = item.get("type")
+        t = t if isinstance(t, str) else ""
+        if t.endswith("_call_output"):
+            if item.get("call_id") not in call_ids:
+                continue  # orphaned output — its call is gone from history
+            repaired.append(item)
+            continue
+        if t.endswith("_call") and item.get("call_id") not in output_ids:
+            if t != "function_call":
+                continue  # non-function call types: no legal placeholder
+            repaired.append(item)
+            repaired.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": item.get("call_id"),
+                    "output": "[tool output lost — the run was interrupted before it was recorded]",
+                }
+            )
+            continue
+        repaired.append(item)
+    return repaired
 
 
 def _synthesize_unanchored_calls(items: list[dict]) -> list[dict]:

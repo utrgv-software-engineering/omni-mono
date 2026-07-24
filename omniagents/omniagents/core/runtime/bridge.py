@@ -896,12 +896,17 @@ async def stream_agent(
         # ``params["is_context_length_exceeded"]``, perform compaction, and
         # return ``{"retry": True}`` to re-enter the run with the (now
         # smaller) session history.
-        if (
-            not context_error_retry
-            and service is not None
-            and session is not None
-            and include_user_message
-        ):
+        # The hook runs for prompt-bearing runs of BOTH shapes: fresh user
+        # turns (include_user_message=True) and resume-from-history runs
+        # (assistant-role notification/wakeup batches, whose prompt was
+        # appended to session history by ``start_run`` before the run began).
+        # Resident wakeups are exclusively the second shape — gating on
+        # include_user_message used to skip them, so a day session that
+        # outgrew the context window while the agent was parked could never
+        # reach the compaction hook and bricked on every wakeup at turn 0.
+        # Loop protection is ``context_error_retry`` alone: the hook-driven
+        # retry re-enters with it set, so one recovery attempt per run.
+        if not context_error_retry and service is not None and session is not None:
             try:
                 invoke = getattr(service, "invoke_runtime_hooks", None)
                 if invoke is not None:

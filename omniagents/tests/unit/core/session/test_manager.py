@@ -307,7 +307,10 @@ def test_filter_history_for_api_preserves_non_reasoning_items():
 
     result = filter_history_for_api(history)
 
-    assert result == history
+    # Plain messages pass through untouched; the output whose call exists
+    # nowhere in history is dropped by the repair pass (the API rejects the
+    # whole input over an orphaned output, bricking the session).
+    assert result == history[:2]
 
 
 def test_filter_history_for_api_handles_multiple_reasoning_groups():
@@ -638,13 +641,79 @@ def test_filter_history_for_api_interleaved_stale_output_not_consumed():
     out_call_ids = [r["call_id"] for r in out_items]
     assert "call_1" in out_call_ids
     assert "call_2" in out_call_ids
-    assert "call_stale" in out_call_ids
+    # The stale output must not be CONSUMED by the group — and since its
+    # call exists nowhere in history, the final repair pass drops it: the
+    # API rejects the whole input over an orphaned output ("No tool call
+    # found for function call output"), which bricks the session.
+    assert "call_stale" not in out_call_ids
 
     msg_idx = next(i for i, r in enumerate(result) if r.get("type") == "message")
     last_fc_idx = max(
         i for i, r in enumerate(result) if r.get("type") == "function_call"
     )
     assert msg_idx > last_fc_idx  # message trails its group's calls
+
+
+def test_filter_history_for_api_drops_output_whose_call_is_gone():
+    """The 2026-07-24 resident brick: history persisted a function_call_output
+    whose function_call never made it to the DB (run killed between the two
+    writes). Replaying it 400s the ENTIRE input on every wakeup — the repair
+    pass must drop the orphan while leaving intact pairs alone."""
+    history = [
+        {"type": "message", "id": "msg_0", "role": "user", "content": "hi"},
+        {
+            "type": "function_call_output",
+            "call_id": "call_orphan",
+            "output": "output with no surviving call",
+        },
+        {"type": "reasoning", "id": "rs_1", "summary": []},
+        {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "ls"},
+        {
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "done"}],
+        },
+        {"type": "function_call_output", "call_id": "call_1", "output": "files"},
+    ]
+
+    result = filter_history_for_api(history)
+
+    out_call_ids = [
+        r["call_id"] for r in result if r.get("type") == "function_call_output"
+    ]
+    assert "call_orphan" not in out_call_ids
+    assert "call_1" in out_call_ids
+    # The intact pair and both messages survive untouched.
+    assert any(r.get("id") == "fc_1" for r in result)
+    assert sum(1 for r in result if r.get("type") == "message") == 2
+
+
+def test_filter_history_for_api_placeholder_for_call_without_output():
+    """The mirror orphan — a call whose output was never persisted — also
+     400s the input ("No tool output found for function call"). The repair
+    pass closes the pair with a placeholder output instead of dropping
+    real context."""
+    history = [
+        {"type": "reasoning", "id": "rs_1", "summary": []},
+        {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "ls"},
+        {
+            "type": "message",
+            "id": "msg_1",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "working on it"}],
+        },
+    ]
+
+    result = filter_history_for_api(history)
+
+    outs = [r for r in result if r.get("type") == "function_call_output"]
+    assert len(outs) == 1
+    assert outs[0]["call_id"] == "call_1"
+    assert "lost" in outs[0]["output"]
+    # Placeholder lands directly after its call.
+    fc_idx = next(i for i, r in enumerate(result) if r.get("id") == "fc_1")
+    assert result[fc_idx + 1]["type"] == "function_call_output"
 
 
 def test_filter_history_for_api_trailing_reasoning_without_message():

@@ -241,6 +241,46 @@ class TestRetryLogic:
             pytest.skip("OpenAI SDK not available for testing")
 
 
+class TestIsRetryableError:
+    """Direct tests of the module-level retry classifier."""
+
+    def test_agents_exceptions_never_retry(self):
+        from omniagents.core.agents.service import _is_retryable_error
+
+        for exc in (
+            MaxTurnsExceeded("Max turns reached"),
+            ModelBehaviorError("Model error"),
+            UserError("User error"),
+        ):
+            assert _is_retryable_error(exc) is False
+
+    def test_httpx_transport_errors_retry(self):
+        """A dropped SSE stream surfaces as httpx.RemoteProtocolError ("peer
+        closed connection without sending complete message body") — transient
+        network failure, must retry rather than kill the resident's turn."""
+        import httpx
+
+        from omniagents.core.agents.service import _is_retryable_error
+
+        transport_errors = [
+            httpx.RemoteProtocolError(
+                "peer closed connection without sending complete message body "
+                "(incomplete chunked read)"
+            ),
+            httpx.ConnectError("connect failed"),
+            httpx.ReadError("read failed"),
+            httpx.WriteError("write failed"),
+            httpx.ReadTimeout("read timeout"),
+        ]
+        for exc in transport_errors:
+            assert _is_retryable_error(exc) is True, exc
+
+    def test_plain_value_error_does_not_retry(self):
+        from omniagents.core.agents.service import _is_retryable_error
+
+        assert _is_retryable_error(ValueError("badly formed input")) is False
+
+
 # TODO: Add integration tests for end-to-end exception handling in AgentService.start_run
 # These would test:
 # - MaxTurnsExceeded results in end_reason='max_turns', not 'error'

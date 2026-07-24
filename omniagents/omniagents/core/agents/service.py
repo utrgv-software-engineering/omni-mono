@@ -115,6 +115,100 @@ def _safe_slug(value: str | None, fallback: str) -> str:
     return slug or fallback
 
 
+def _is_retryable_error(ex: Exception) -> bool:
+    """Check if an exception is transient and worth retrying.
+
+    Uses exception types first (reliable), falls back to string matching
+    for unknown errors.
+    """
+    # Never retry AgentsException types - these are permanent failures
+    if isinstance(ex, AgentsException):
+        return False
+
+    # Check OpenAI SDK exception types (most reliable)
+    if RateLimitError is not None and isinstance(ex, RateLimitError):
+        return True
+    if APIConnectionError is not None and isinstance(
+        ex, APIConnectionError
+    ):
+        return True
+    if APITimeoutError is not None and isinstance(ex, APITimeoutError):
+        return True
+    if APIStatusError is not None and isinstance(ex, APIStatusError):
+        if hasattr(ex, "status_code") and ex.status_code in (
+            408,
+            429,
+            500,
+            502,
+            503,
+            504,
+        ):
+            return True
+    if APIError is not None and isinstance(ex, APIError):
+        # Check HTTP status code if available
+        if hasattr(ex, "status_code") and ex.status_code in (
+            408,
+            429,
+            500,
+            502,
+            503,
+            504,
+        ):
+            return True
+
+    # Check standard Python timeout/connection errors
+    if isinstance(
+        ex, (asyncio.TimeoutError, TimeoutError, ConnectionError)
+    ):
+        return True
+
+    # httpx transport failures (stream died mid-response, connect
+    # refused, socket write failed) subclass neither the OpenAI
+    # SDK types nor builtin ConnectionError — but they're exactly
+    # the transient network class: a dropped SSE stream surfaced
+    # as httpx.RemoteProtocolError ("peer closed connection")
+    # must retry, not kill the turn.
+    try:
+        import httpx
+
+        if isinstance(
+            ex,
+            (
+                httpx.ConnectError,
+                httpx.ReadError,
+                httpx.RemoteProtocolError,
+                httpx.TimeoutException,
+                httpx.WriteError,
+            ),
+        ):
+            return True
+    except ImportError:
+        pass
+
+    # Fall back to string matching for unknown transient errors
+    # (kept minimal to avoid false positives)
+    msg = str(ex).lower()
+    retry_keywords = (
+        "rate limit",
+        "429",
+        "500",
+        "502",
+        "503",
+        "504",
+        "service unavailable",
+        "internal server error",
+        "bad gateway",
+        "gateway timeout",
+        "request timeout",
+        "overloaded",
+        "connection reset",
+        "connection refused",
+        "timed out",
+        "timeout while",
+    )
+    return any(k in msg for k in retry_keywords)
+
+
 def _build_agent_error_info(exc: AgentsException) -> dict:
     """Build error information from an AgentsException with run_data preservation."""
     error_info = {
@@ -2583,76 +2677,6 @@ class AgentService(RpcMethodsBase):
             max_retries = int(os.getenv("OMNIAGENTS_RETRY_MAX", "3"))
             base_delay = float(os.getenv("OMNIAGENTS_RETRY_BASE", "1.5"))
 
-            def _is_retryable(ex: Exception) -> bool:
-                """Check if an exception is transient and worth retrying.
-
-                Uses exception types first (reliable), falls back to string matching
-                for unknown errors.
-                """
-                # Never retry AgentsException types - these are permanent failures
-                if isinstance(ex, AgentsException):
-                    return False
-
-                # Check OpenAI SDK exception types (most reliable)
-                if RateLimitError is not None and isinstance(ex, RateLimitError):
-                    return True
-                if APIConnectionError is not None and isinstance(
-                    ex, APIConnectionError
-                ):
-                    return True
-                if APITimeoutError is not None and isinstance(ex, APITimeoutError):
-                    return True
-                if APIStatusError is not None and isinstance(ex, APIStatusError):
-                    if hasattr(ex, "status_code") and ex.status_code in (
-                        408,
-                        429,
-                        500,
-                        502,
-                        503,
-                        504,
-                    ):
-                        return True
-                if APIError is not None and isinstance(ex, APIError):
-                    # Check HTTP status code if available
-                    if hasattr(ex, "status_code") and ex.status_code in (
-                        408,
-                        429,
-                        500,
-                        502,
-                        503,
-                        504,
-                    ):
-                        return True
-
-                # Check standard Python timeout/connection errors
-                if isinstance(
-                    ex, (asyncio.TimeoutError, TimeoutError, ConnectionError)
-                ):
-                    return True
-
-                # Fall back to string matching for unknown transient errors
-                # (kept minimal to avoid false positives)
-                msg = str(ex).lower()
-                retry_keywords = (
-                    "rate limit",
-                    "429",
-                    "500",
-                    "502",
-                    "503",
-                    "504",
-                    "service unavailable",
-                    "internal server error",
-                    "bad gateway",
-                    "gateway timeout",
-                    "request timeout",
-                    "overloaded",
-                    "connection reset",
-                    "connection refused",
-                    "timed out",
-                    "timeout while",
-                )
-                return any(k in msg for k in retry_keywords)
-
             attempt = 0
             include_user_message = not _resume_from_history
             try:
@@ -2870,7 +2894,7 @@ class AgentService(RpcMethodsBase):
                     except Exception as e:
                         # Transient errors (network, rate limit, etc.) - may retry
                         attempt += 1
-                        if attempt <= max_retries and _is_retryable(e):
+                        if attempt <= max_retries and _is_retryable_error(e):
                             # Exponential backoff with jitter
                             delay = base_delay * (2 ** (attempt - 1))
                             logger.warning(

@@ -451,6 +451,84 @@ async def test_stream_agent_without_user_message(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_stream_agent_context_error_hook_fires_for_resume_from_history(monkeypatch):
+    """The resident-wakeup shape: assistant-role runs resume from history
+    (``include_user_message=False``). A context-length error on such a run
+    must reach the runtime "error" hook (compaction + retry) — the old gate
+    skipped it, so a day session that outgrew the window while the agent
+    was parked bricked on every wakeup at turn 0."""
+    monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
+
+    class FakeRunConfig:
+        def __init__(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
+    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
+
+    attempts = []
+
+    class FailingRunResult:
+        async def stream_events(self):
+            raise Exception(
+                "Your input exceeds the context window of this model. "
+                "Please adjust your input and try again."
+            )
+            yield None  # pragma: no cover — makes this an async generator
+
+    class OkRunResult:
+        async def stream_events(self):
+            if False:
+                yield None
+
+    class FakeRunner:
+        @classmethod
+        def run_streamed(cls, agent_arg, agent_input, **kwargs):
+            attempts.append(agent_input)
+            return FailingRunResult() if len(attempts) == 1 else OkRunResult()
+
+    monkeypatch.setattr("agents.Runner", FakeRunner)
+
+    hook_calls = []
+
+    class FakeService:
+        async def invoke_runtime_hooks(self, name, *, session, run_id, params):
+            hook_calls.append((name, params))
+            # The real hook compacts the session here, then asks for a retry.
+            return {"retry": True}
+
+    session = DummySession(
+        channels=[],
+        history=[{"role": "assistant", "content": "wakeup ping", "type": "message"}],
+        session_id="resident1",
+    )
+
+    class DummyAgent:
+        def __init__(self):
+            self.name = "Agent"
+            self.instructions = "inst"
+            self.tools = []
+            self.model = "model-y"
+            self.model_settings = types.SimpleNamespace(max_tokens=None, truncation=None)
+
+    result = await bridge.stream_agent(
+        DummyAgent(),
+        "wakeup ping",
+        session,
+        rpc_channel=None,
+        service=FakeService(),
+        include_user_message=False,
+    )
+
+    assert len(hook_calls) == 1
+    assert hook_calls[0][0] == "error"
+    assert hook_calls[0][1]["is_context_length_exceeded"] is True
+    # The hook-driven retry re-entered the run and it completed.
+    assert len(attempts) == 2
+    assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
 async def test_stream_agent_reraises_cancelled_error(monkeypatch):
     monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
 
