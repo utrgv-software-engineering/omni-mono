@@ -116,6 +116,20 @@ def test_resume_tier_fresh_when_container_and_tar_both_gone(tmp_path):
     assert tier == "fresh"
 
 
+def test_resume_accepts_non_uuid_session_id(tmp_path):
+    """Caller session ids are stable strings, not necessarily UUIDs — the
+    launcher's resident agents pass slugs like ``resident-<id>``. Resume maps
+    them through uuid5 (deterministic across restarts) instead of crashing on
+    ``uuid.UUID(slug)``; real UUIDs keep round-tripping unchanged."""
+    client = FakeDockerClient(container_survives=True)
+    args = _docker_args(tmp_path, with_tar=True)
+    args["session_id"] = "resident-product-engineer"
+    session, tier = asyncio.run(_create_or_resume_session(client=client, **args))
+    assert tier == "reused"
+    expected = uuid.uuid5(uuid.NAMESPACE_URL, "omni-serve:resident-product-engineer")
+    assert client.resumed_state.session_id == expected
+
+
 def test_resume_falls_through_to_create_without_prior_container(tmp_path):
     client = FakeDockerClient(container_survives=True)
     args = _docker_args(tmp_path, with_tar=True)

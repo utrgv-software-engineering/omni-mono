@@ -330,8 +330,17 @@ async def _create_or_resume_session(
         # ``NoopSnapshot`` so ``DockerSandboxSessionState`` validates. The
         # snapshot id is the session_id, matching ``client.create``'s wiring.
         snapshot_instance = resolve_snapshot(snapshot, session_id)
+        # ``--session-id`` is any stable caller string (the launcher's
+        # residents use readable slugs like ``resident-<id>``); the SDK's
+        # state model types it as UUID. Non-UUID ids map through uuid5 so the
+        # same string resumes to the same UUID every time, while real UUIDs
+        # round-trip unchanged. The snapshot keeps the raw string id above.
+        try:
+            state_session_uuid = _uuid.UUID(session_id)
+        except ValueError:
+            state_session_uuid = _uuid.uuid5(_uuid.NAMESPACE_URL, f"omni-serve:{session_id}")
         state = DockerSandboxSessionState(
-            session_id=_uuid.UUID(session_id),
+            session_id=state_session_uuid,
             manifest=manifest,
             image=options.image,
             snapshot=snapshot_instance,
