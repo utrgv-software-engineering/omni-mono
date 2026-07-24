@@ -424,10 +424,15 @@ async def summarize_with_window_shrink(
     """Run ``summarize(build_prompt(window))``, shrinking on context errors.
 
     When the summarization call itself exceeds the model's context window,
-    drop the oldest window item and retry — the standard recovery loop for
+    drop the oldest HALF of the window and retry — the recovery loop for
     checkpoint compaction, session summarization, and similar
-    transcript-sized prompts. Non-context errors propagate; an empty
-    window propagates the last error too.
+    transcript-sized prompts. Halving (not one-at-a-time) matters: a
+    transcript far over budget — a resident day session ~1900 items past
+    the window — needed ~1900 doomed API calls under linear shrinking and
+    its process was killed long before converging; halving converges in
+    O(log n) attempts, and the newest tail is the context worth keeping
+    anyway. Non-context errors propagate; an empty window propagates the
+    last error too.
     """
     working = list(window)
     while True:
@@ -436,7 +441,7 @@ async def summarize_with_window_shrink(
             return await summarize(prompt)
         except Exception as err:
             if is_context_length_exceeded(err) and working:
-                working.pop(0)
+                working = working[max(1, len(working) // 2) :]
                 continue
             raise
 

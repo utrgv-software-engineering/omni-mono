@@ -956,8 +956,13 @@ async def stream_agent(
                             sdk_session=sdk_session,
                             sandbox_run_config=sandbox_run_config,
                         )
-            except Exception:
-                pass
+            except Exception as hook_err:
+                # Best-effort: the original error path below still runs. But
+                # never swallow silently — an invisible hook failure here
+                # cost a day of bricked wakeups before it was found.
+                logger.error(
+                    f"context-recovery error hook failed: {hook_err}", exc_info=True
+                )
 
         # Any other exception - the finally block will handle pending tool calls
         Debug.log(f"[srv] ✗ Error during run: {e}")

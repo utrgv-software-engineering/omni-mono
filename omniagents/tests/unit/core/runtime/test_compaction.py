@@ -172,6 +172,32 @@ def test_summarize_with_window_shrink_drops_oldest_on_context_error():
     assert len(window) == 3
 
 
+def test_summarize_with_window_shrink_converges_logarithmically():
+    """A transcript far over the window must converge in O(log n) attempts,
+    not O(n): the resident day-session incident needed ~1900 one-at-a-time
+    shrink calls and was killed before finishing. Halving fits 2000 items
+    into a 100-item budget within ~5 attempts, keeping the newest tail."""
+    window = [{"role": "user", "content": f"item-{i}"} for i in range(2000)]
+    attempts = {"n": 0}
+
+    async def summarize(prompt):
+        attempts["n"] += 1
+        if prompt.count("|") + 1 > 100:  # "fits" only under 100 items
+            raise ContextWindowExceededError("too big")
+        return "ok"
+
+    result = asyncio.run(
+        summarize_with_window_shrink(
+            window,
+            build_prompt=lambda w: "|".join(i["content"] for i in w),
+            summarize=summarize,
+        )
+    )
+    assert result == "ok"
+    assert attempts["n"] <= 6
+    assert len(window) == 2000  # caller's window untouched
+
+
 def test_summarize_with_window_shrink_propagates_other_errors():
     async def summarize(prompt):
         raise RuntimeError("boom")
