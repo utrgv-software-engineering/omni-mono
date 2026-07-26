@@ -348,11 +348,56 @@ def _model_entry(m: Dict[str, Any]) -> Dict[str, Any]:
     return entry
 
 
+def _models_disk_cache_path() -> Path:
+    return _config_dir() / "codex_models_cache.json"
+
+
+def _load_disk_models(account: str) -> Optional[Dict[str, Dict[str, Any]]]:
+    try:
+        data = json.loads(_models_disk_cache_path().read_text())
+        models = data.get(account) if isinstance(data, dict) else None
+        return models if isinstance(models, dict) and models else None
+    except Exception:
+        return None
+
+
+def _save_disk_models(account: str, models: Dict[str, Dict[str, Any]]) -> None:
+    try:
+        path = _models_disk_cache_path()
+        data: Dict[str, Any] = {}
+        try:
+            loaded = json.loads(path.read_text())
+            if isinstance(loaded, dict):
+                data = loaded
+        except Exception:
+            pass
+        data[account] = models
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def _stale_models(account: str) -> Optional[Dict[str, Dict[str, Any]]]:
+    """Last-known-good models for *account*: expired in-memory cache first,
+    then the on-disk copy (covers a fresh process booting mid-outage)."""
+    cached = _models_cache.get(account)
+    if cached and cached.get("models"):
+        return cached["models"]
+    return _load_disk_models(account)
+
+
 def list_codex_models(force: bool = False) -> Optional[Dict[str, Dict[str, Any]]]:
     """Fetch the account's available Codex models, keyed by slug.
 
-    Returns ``None`` when not signed in or the fetch fails — callers should
-    fall back to any static seed. Cached per-account for ``_MODELS_TTL_SECONDS``.
+    Returns ``None`` when not signed in or the fetch fails with no prior
+    successful fetch to fall back on — callers should then fall back to any
+    static seed. Cached per-account for ``_MODELS_TTL_SECONDS`` in memory
+    and persisted to disk; a FAILED refresh serves the last-known-good set
+    instead of ``None``. Losing live discovery must degrade to yesterday's
+    model list, not to "the selected model doesn't exist" — an unresolvable
+    default model strips worker sessions of their provider metadata (and
+    with it the codex prompt-cache gate and context-window numbers).
     Hidden models (``visibility != "list"``) are dropped (e.g. the internal
     auto-review model).
     """
@@ -370,7 +415,7 @@ def list_codex_models(force: bool = False) -> Optional[Dict[str, Dict[str, Any]]
     try:
         fresh = _ensure_fresh_sync()
         if not fresh:
-            return None
+            return _stale_models(account)
         headers = {
             "Authorization": f"Bearer {fresh['access']}",
             "originator": ORIGINATOR,
@@ -384,7 +429,7 @@ def list_codex_models(force: bool = False) -> Optional[Dict[str, Dict[str, Any]]
                 headers=headers,
             )
         if resp.status_code != 200:
-            return None
+            return _stale_models(account)
         items = resp.json().get("models") or []
         models = {
             m["slug"]: _model_entry(m)
@@ -392,12 +437,18 @@ def list_codex_models(force: bool = False) -> Optional[Dict[str, Dict[str, Any]]
             if m.get("slug") and m.get("visibility") == "list"
         }
     except Exception:
-        return None
+        return _stale_models(account)
+
+    if not models:
+        # An empty listing from a "successful" call is indistinguishable
+        # from a broken one for our purposes — don't overwrite good state.
+        return _stale_models(account)
 
     _models_cache[account] = {
         "models": models,
         "expires_at": time.time() + _MODELS_TTL_SECONDS,
     }
+    _save_disk_models(account, models)
     return models
 
 
@@ -506,6 +557,39 @@ class _CodexTokenManager:
             return self._tokens["access"]
 
 
+# Request-body keys the Codex backend rejects with 400 "Unsupported
+# parameter". The agent builder already avoids setting them when it can see
+# the resolved provider — but requests assembled WITHOUT a session model
+# config (e.g. workers whose model resolution fell through to the ambient
+# default client) still carry them. The transport is the one place every
+# codex-bound request passes, so the guarantee lives here.
+_CODEX_UNSUPPORTED_PARAMS = ("prompt_cache_retention",)
+
+
+async def scrub_codex_unsupported_params(request: Any) -> None:
+    """httpx request hook: drop body params the Codex backend 400s on."""
+    import json as _json
+
+    import httpx
+
+    content = getattr(request, "content", None) or b""
+    if not any(p.encode() in content for p in _CODEX_UNSUPPORTED_PARAMS):
+        return
+    try:
+        body = _json.loads(content.decode("utf-8"))
+    except Exception:
+        return
+    if not isinstance(body, dict):
+        return
+    dropped = [p for p in _CODEX_UNSUPPORTED_PARAMS if body.pop(p, None) is not None]
+    if not dropped:
+        return
+    new_content = _json.dumps(body).encode("utf-8")
+    request.stream = httpx.ByteStream(new_content)
+    request._content = new_content  # keep .content consistent with the stream
+    request.headers["Content-Length"] = str(len(new_content))
+
+
 def build_codex_openai_client(tokens: Optional[Dict[str, Any]] = None) -> Any:
     """Build an ``AsyncOpenAI`` that talks to the Codex backend.
 
@@ -533,7 +617,7 @@ def build_codex_openai_client(tokens: Optional[Dict[str, Any]] = None) -> Any:
 
     http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(600.0, connect=30.0),
-        event_hooks={"request": [_inject_auth]},
+        event_hooks={"request": [_inject_auth, scrub_codex_unsupported_params]},
     )
 
     # api_key is required to be non-empty but is overwritten per-request by the

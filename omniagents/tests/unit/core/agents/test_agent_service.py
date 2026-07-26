@@ -31,6 +31,28 @@ async def test_archive_session_triggers_terminal_cleanup(temp_history_db):
     assert calls == [session.id]
 
 
+@pytest.mark.asyncio
+async def test_get_run_state_reports_active_run(temp_history_db):
+    """The light presence probe: a supervising client (the launcher's
+    resident watcher) asks this at connect instead of assuming idle when
+    a run was already in flight before it attached."""
+    spec = AgentSpec(
+        name="name",
+        welcome_text="welcome",
+        get_agent_instructions=lambda: "",
+        build_agent=None,
+    )
+    service = AgentService(spec, default_workspace_root="/tmp")
+    session = service._session_manager.get_or_create("sess_probe")
+
+    state = await service.get_run_state("sess_probe")
+    assert state["active_run_id"] is None
+
+    session.active_run_id = "run_42"
+    state = await service.get_run_state("sess_probe")
+    assert state == {"session_id": "sess_probe", "active_run_id": "run_42"}
+
+
 @pytest.mark.parametrize(
     "value,fallback,expected",
     [

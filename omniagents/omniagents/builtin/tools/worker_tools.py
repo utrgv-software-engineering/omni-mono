@@ -127,9 +127,21 @@ def _builtin_namer(existing: set) -> str:
     return f"{name}-{n}"
 
 
+# Every name ever issued this process. The manager registers a spawned
+# handle only at the END of spawn — several awaits later — so concurrent
+# spawns (parallel_tool_calls batches) would otherwise pick against the
+# same snapshot and collide, with the second handle silently overwriting
+# the first. Reserving here is atomic (no await between choose and add),
+# and ids are never re-issued: a failed spawn's name staying burned is
+# cheaper than its meta/worktree leftovers being adopted by a stranger.
+_ISSUED_WORKER_IDS: set = set()
+
+
 def _generate_worker_name() -> str:
     namer = worker_defaults().namer or _builtin_namer
-    return namer(set(_workers().keys()))
+    name = namer(set(_workers().keys()) | _ISSUED_WORKER_IDS)
+    _ISSUED_WORKER_IDS.add(name)
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -477,12 +489,26 @@ async def spawn_worker(
     # for parity with how Job.session_id is captured.
     parent_sid = session_id_from_ctx(ctx)
 
-    await manager().spawn(
-        worker_id=worker_id,
-        task_description=task,
-        context={"workspace_root": worker_workspace, "task_scope": worker_id},
-        parent_session_id=parent_sid,
-    )
+    try:
+        await manager().spawn(
+            worker_id=worker_id,
+            task_description=task,
+            context={"workspace_root": worker_workspace, "task_scope": worker_id},
+            parent_session_id=parent_sid,
+        )
+    except Exception as e:
+        # The worktree was prepared above; a failed spawn must not leak it —
+        # leftovers ride into the workspace snapshot tar and inflate every
+        # rehydrate from then on.
+        try:
+            await strategy.cleanup(worker_id, worker_workspace_obj)
+        except Exception:
+            pass
+        _WORKER_WORKSPACES.pop(worker_id, None)
+        _WORKER_ISOLATION.pop(worker_id, None)
+        return _error_output(
+            worker_id, str(e), f"Failed to spawn worker {worker_id}", str(e)[:200]
+        )
 
     # Record display metadata + broadcast to the workers panel so the row
     # appears immediately in every connected client rather than waiting

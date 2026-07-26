@@ -93,11 +93,21 @@ class LocalAgent(RemoteAgent):
                     settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec
                 )
 
-            # Otherwise use the default builder.
+            # Otherwise use the default builder — WITH the session the
+            # service put on the stub app. Dropping it here cost workers
+            # every session-scoped setting: the model override and,
+            # critically, the provider-aware gates (a codex-bound worker
+            # kept `prompt_cache_retention` and 400ed on every run).
             from omniagents.core.agents.builder import _default_build_agent
 
             mcp_to_use = mcp_servers if mcp_servers else mcp_server
-            return await _default_build_agent(settings, mcp_to_use, self.spec, None)
+            return await _default_build_agent(
+                settings,
+                mcp_to_use,
+                self.spec,
+                None,
+                session=getattr(stub_app, "session", None),
+            )
 
         # Set the custom builder on the spec
         self.spec.build_agent = custom_build_agent
@@ -113,6 +123,20 @@ class LocalAgent(RemoteAgent):
         # Create agent service with custom spec and set channel immediately
         self._agent_service = AgentService(self.spec)
         self._agent_service.channel = channel
+
+        # The server app runs these registrars for the orchestrator's
+        # service at boot; a nested LocalAgent service (workers) never
+        # passed through that path, so workers ran with NO server
+        # functions and NO runtime hooks — meaning no /compact command
+        # and no reactive context-overflow recovery. Mirror the app's
+        # best-effort semantics here.
+        for registrar_name in ("register_server_functions", "register_runtime_hooks"):
+            registrar = getattr(self.spec, registrar_name, None)
+            if callable(registrar):
+                try:
+                    registrar(self._agent_service)
+                except Exception as e:
+                    print(f"Warning: {registrar_name} failed for local agent: {e}")
 
         # Create and start server endpoint
         from omniagents.rpc import JsonRpcEndpoint

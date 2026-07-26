@@ -146,11 +146,12 @@ async def test_stop_run_without_active_run():
 async def test_custom_builder_uses_default_when_missing(monkeypatch):
     captured = {}
 
-    async def fake_default(settings, mcp_to_use, spec, approval_callback):
+    async def fake_default(settings, mcp_to_use, spec, approval_callback, session=None):
         captured["settings"] = settings
         captured["mcp"] = mcp_to_use
         captured["spec"] = spec
         captured["approval"] = approval_callback
+        captured["session"] = session
         return SimpleNamespace(
             name="fallback",
             tools=[],
@@ -176,11 +177,35 @@ async def test_custom_builder_uses_default_when_missing(monkeypatch):
     )
 
     await agent.initialize()
-    built = await spec.build_agent({}, "ignored", None)
+    # The service puts the session on the stub app; the builder must
+    # thread it through — session-scoped settings (model override, the
+    # codex prompt-cache gate) are lost otherwise.
+    stub_app = SimpleNamespace(session="sess-obj")
+    built = await spec.build_agent({}, "ignored", stub_app)
     assert built.name == "fallback"
     assert captured["settings"] == {"alpha": 5}
     assert captured["mcp"] == ["server-a"]
-    assert captured["approval"] == "cb"
+    # Tool approval is wired per-session by AgentService, not the builder.
+    assert captured["approval"] is None
+    assert captured["session"] == "sess-obj"
+
+    await agent.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_initialize_registers_spec_registrars():
+    """The nested service must get the spec's server functions and runtime
+    hooks — the server app does this for the orchestrator at boot, and
+    workers previously got NEITHER (no /compact, no context recovery)."""
+    calls = []
+    spec = make_agent_spec(build_agent=None)
+    spec.register_server_functions = lambda svc: calls.append(("fns", svc))
+    spec.register_runtime_hooks = lambda svc: calls.append(("hooks", svc))
+    agent = LocalAgent(spec)
+
+    await agent.initialize()
+    assert [kind for kind, _ in calls] == ["fns", "hooks"]
+    assert all(svc is agent._agent_service for _, svc in calls)
 
     await agent.cleanup()
 

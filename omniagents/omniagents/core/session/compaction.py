@@ -182,6 +182,44 @@ def _build_should_trigger_compaction(
     return should_trigger
 
 
+_guarded_session_cls_cache: Dict[type, type] = {}
+
+
+def _guarded_compaction_session_cls(base: type) -> type:
+    """Subclass *base* so ``run_compaction`` itself refuses to compact over
+    an unresolved ``function_call``.
+
+    The ``should_trigger_compaction`` hook already declines that state, but
+    the SDK's deferred-compaction bookkeeping re-invokes
+    ``run_compaction(force=True)`` from interruption finalization
+    (``_finalize_streamed_interruption`` → ``save_result_to_session``), and
+    ``force`` bypasses the hook entirely — observed in production as a 400
+    ("No tool output found for function call ...") when a run was
+    interrupted mid-tool-call. Deferring again is always safe: compaction
+    re-arms on the next save, once the call/output pair is complete.
+    """
+    cached = _guarded_session_cls_cache.get(base)
+    if cached is not None:
+        return cached
+
+    class _InterruptionSafeCompactionSession(base):  # type: ignore[misc, valid-type]
+        async def run_compaction(self, args: Any = None) -> None:
+            try:
+                _, session_items = await self._ensure_compaction_candidates()
+            except Exception:
+                session_items = None
+            if session_items and _has_unresolved_function_call(session_items):
+                logger.debug(
+                    "Skipping compaction (forced path): pending function_call "
+                    "without output would 400 on responses.compact."
+                )
+                return None
+            return await super().run_compaction(args)
+
+    _guarded_session_cls_cache[base] = _InterruptionSafeCompactionSession
+    return _InterruptionSafeCompactionSession
+
+
 def wrap_with_compaction(
     session: Any,
     config: Optional[Dict[str, Any]],
@@ -362,8 +400,15 @@ def wrap_with_compaction(
         logger.warning("Session has no session_id/id; compaction wrapping skipped.")
         return session
 
+    # ``interruption_safe`` must guard the ACTUAL compact call, not just the
+    # trigger hook — the SDK's deferred path invokes run_compaction with
+    # force=True, which skips the hook (see _guarded_compaction_session_cls).
+    session_cls: Any = OpenAIResponsesCompactionSession
+    if bool(config.get("interruption_safe", True)):
+        session_cls = _guarded_compaction_session_cls(OpenAIResponsesCompactionSession)
+
     try:
-        return OpenAIResponsesCompactionSession(
+        return session_cls(
             session_id=session_id,
             underlying_session=session,
             **kwargs,

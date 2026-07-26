@@ -988,6 +988,10 @@ class AgentService(RpcMethodsBase):
         stub_app = SimpleNamespace(
             spec=self.spec,
             _request_tool_approval=approval_callback,
+            # Custom builders that want session-scoped settings (model
+            # override, provider gates) read it from here — the positional
+            # build_agent contract (settings, server, app) predates sessions.
+            session=session,
         )
 
         settings = dict(self._default_settings)
@@ -3068,6 +3072,26 @@ class AgentService(RpcMethodsBase):
         msg = {"role": "user", "content": content}
         sess.append_message(msg)
         # No immediate return value; next assistant chunk will arrive via stream.
+
+    async def get_run_state(self, session_id: str) -> dict:
+        """Light run-in-flight probe for *session_id*.
+
+        The full reconnect path (``get_session_history``) replays the live
+        payloads too, but drags the entire transcript along with them. A
+        supervising client that only derives presence — the launcher's
+        resident watcher — asks this at connect time instead of assuming
+        idle, closing the "run already in flight when the watcher attached"
+        gap. Registers the calling channel for live events, same as the
+        history path, so the eventual ``run_end`` reaches the caller.
+        """
+        _debug_rpc("get_run_state", {"session_id": session_id})
+        sess: Session = self._session_manager.get_or_create(session_id)
+        if self.channel is not None and self.channel not in sess.channels:
+            sess.channels.append(self.channel)
+        return {
+            "session_id": session_id,
+            "active_run_id": getattr(sess, "active_run_id", None),
+        }
 
     # ------------------------------------------------------------------
     #  NEW: expose conversation history to clients ---------------------
