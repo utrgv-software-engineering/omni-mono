@@ -484,25 +484,46 @@ class _SandboxProcessHandle(ProcessHandle):
             self._buffer.extend(update.output)
         self._exit_code = update.exit_code
 
-    async def wait(self, timeout: Optional[float] = None) -> ExecResult:
-        # Sandbox PTY doesn't have a clean "wait until done" — poll via
-        # zero-stdin reads which return when output is available or process
-        # exits. For now: do a single best-effort read; callers that need
-        # strict wait semantics should poll.
-        update = await self._session.pty_write_stdin(
-            session_id=self._session_id,
-            chars="",
-            yield_time_s=timeout or 0.0,
-        )
-        if getattr(update, "output", None):
-            self._buffer.extend(update.output)
-        self._exit_code = update.exit_code
+    def _result(self) -> ExecResult:
         return ExecResult(
             stdout=self._buffer.decode("utf-8", errors="replace"),
             stderr="",
             exit_code=self._exit_code if self._exit_code is not None else -1,
             wall_time_seconds=time.perf_counter() - self._start,
         )
+
+    @staticmethod
+    def _is_terminal_session_error(error: Exception) -> bool:
+        if not isinstance(error, (KeyError, ValueError)):
+            return False
+        message = str(error).lower()
+        return any(
+            marker in message
+            for marker in ("unknown pty", "not found", "no such process")
+        )
+
+    async def wait(self, timeout: Optional[float] = None) -> ExecResult:
+        # Sandbox PTY doesn't have a clean "wait until done" — poll via
+        # zero-stdin reads which return when output is available or process
+        # exits. For now: do a single best-effort read; callers that need
+        # strict wait semantics should poll.
+        if self._exit_code is not None:
+            return self._result()
+        try:
+            update = await self._session.pty_write_stdin(
+                session_id=self._session_id,
+                chars="",
+                yield_time_s=timeout or 0.0,
+            )
+        except Exception as error:
+            if not self._is_terminal_session_error(error):
+                raise
+            self._exit_code = 1
+            return self._result()
+        if getattr(update, "output", None):
+            self._buffer.extend(update.output)
+        self._exit_code = update.exit_code
+        return self._result()
 
     async def terminate(self, *, force_after: float = 5.0) -> None:
         # Send Ctrl-C, then ask the session to terminate the PTY entry.

@@ -420,6 +420,92 @@ async def test_sandbox_workspace_spawn_with_pty():
 
 
 @pytest.mark.asyncio
+async def test_sandbox_process_handle_wait_short_circuits_terminal_spawn_update():
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    class _FakeUpdate:
+        process_id = 42
+        output = b"shell failed\n"
+        exit_code = 2
+
+    class _FakeSession:
+        def supports_pty(self):
+            return True
+
+        async def pty_exec_start(self, *args, **kwargs):
+            return _FakeUpdate()
+
+        async def pty_write_stdin(self, **kwargs):
+            raise AssertionError("terminal processes must not be polled")
+
+    workspace = SandboxWorkspace(session=_FakeSession())
+    handle = await workspace.spawn("exit 2", pty=False)
+
+    result = await handle.wait(timeout=1.0)
+
+    assert result.exit_code == 2
+    assert result.stdout == "shell failed\n"
+    assert await handle.status() == "failed"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_process_handle_finalizes_when_pty_entry_vanishes():
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    class _FakeUpdate:
+        process_id = 42
+        output = b"sh: illegal option\n"
+        exit_code = None
+
+    class _FakeSession:
+        def supports_pty(self):
+            return True
+
+        async def pty_exec_start(self, *args, **kwargs):
+            return _FakeUpdate()
+
+        async def pty_write_stdin(self, **kwargs):
+            raise ValueError("unknown pty process_id 42")
+
+    workspace = SandboxWorkspace(session=_FakeSession())
+    handle = await workspace.spawn("set -o pipefail", pty=False)
+
+    result = await handle.wait(timeout=1.0)
+
+    assert result.exit_code == 1
+    assert result.stdout == "sh: illegal option\n"
+    assert await handle.status() == "failed"
+
+
+@pytest.mark.asyncio
+async def test_sandbox_process_handle_preserves_transient_poll_errors():
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    class _FakeUpdate:
+        process_id = 42
+        output = b""
+        exit_code = None
+
+    class _FakeSession:
+        def supports_pty(self):
+            return True
+
+        async def pty_exec_start(self, *args, **kwargs):
+            return _FakeUpdate()
+
+        async def pty_write_stdin(self, **kwargs):
+            raise RuntimeError("transport temporarily unavailable")
+
+    workspace = SandboxWorkspace(session=_FakeSession())
+    handle = await workspace.spawn("sleep 10", pty=False)
+
+    with pytest.raises(RuntimeError, match="temporarily unavailable"):
+        await handle.wait(timeout=1.0)
+
+    assert await handle.status() == "running"
+
+
+@pytest.mark.asyncio
 async def test_sandbox_workspace_spawn_raises_when_no_pty_support():
     """If the underlying session can't track long-running processes,
     spawn() raises a feature-unavailable error — the workspace

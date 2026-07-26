@@ -15,7 +15,9 @@ import types
 import pytest
 
 import omniagents.builtin.tools.bash_tool as bash_tool
-from omniagents.builtin.tools._bash_jobs import get_registry
+from omniagents.builtin.tools import _bash_jobs
+from omniagents.builtin.tools._bash_jobs import Job, get_registry
+from omniagents.workspace.sandbox import SandboxWorkspace
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -64,6 +66,50 @@ def _wait_until(predicate, timeout=5.0, interval=0.05):
 
 
 class TestBackgroundExecuteBash:
+    @pytest.mark.asyncio
+    async def test_vanished_sandbox_pty_completes_and_notifies_once(
+        self, monkeypatch, tmp_path
+    ):
+        class _FakeUpdate:
+            process_id = 42
+            output = b"sh: illegal option\n"
+            exit_code = None
+
+        class _FakeSession:
+            def supports_pty(self):
+                return True
+
+            async def pty_exec_start(self, *args, **kwargs):
+                return _FakeUpdate()
+
+            async def pty_write_stdin(self, **kwargs):
+                raise ValueError("unknown pty process_id 42")
+
+        workspace = SandboxWorkspace(session=_FakeSession())
+        handle = await workspace.spawn("set -o pipefail", pty=False)
+        notifications = []
+
+        async def _capture_notification(job):
+            notifications.append(job.exit_code)
+
+        monkeypatch.setattr(_bash_jobs, "_notify_job_exit", _capture_notification)
+        job = Job(
+            job_id="bash-vanished",
+            command="set -o pipefail",
+            cwd=str(tmp_path),
+            log_path=str(tmp_path / "bash-vanished.log"),
+            started_at_wall=time.time(),
+            started_at_monotonic=time.monotonic(),
+            handle=handle,
+            session_id="session-1",
+        )
+
+        await _bash_jobs._watch_job(job)
+
+        assert job.exit_code == 1
+        assert job.finished_at_monotonic is not None
+        assert notifications == [1]
+
     def test_snapshot_attached_to_spawn_result(self, invoke_tool, tmp_path):
         result = invoke_tool(
             bash_tool.execute_bash,
