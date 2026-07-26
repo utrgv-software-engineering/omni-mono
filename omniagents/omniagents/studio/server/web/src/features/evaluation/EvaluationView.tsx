@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Edit3, Trash2, Loader2, X, Upload, FileText, Clock, ArrowLeft, Play, Sparkles, Database, RefreshCw, ExternalLink, ChevronRight, ChevronDown, SplitSquareVertical, Gavel, BarChart3, Tag, Activity } from 'lucide-react'
 import { api } from '../../lib/api'
 import { cn } from '../../lib/utils'
+import { isJsonObject } from '../../types'
 import type {
   EvaluationDimension,
   EvaluationDimensionValue,
@@ -42,6 +43,7 @@ import type {
   EvaluationResultsListResponse,
   EvaluationResultsDetailResponse,
   AgentSummary,
+  JsonValue,
 } from '../../types'
 import { useTraceStore } from '../traces/store/traceStore'
 import { useToastStore } from '../../stores/toastStore'
@@ -82,7 +84,7 @@ Output Schema (Do Not Change)
 Decision Policy
 - Positive (label Fail): [FILL: WHAT COUNTS AS A VIOLATION]
 - Negative (label Pass): [FILL: WHAT COUNTS AS ACCEPTABLE BEHAVIOR]
-- Use only the provided input and any structured fields (e.g., history_json). Do not infer outside context.
+- Use only the provided input and JsonValue structured fields (e.g., history_json). Do not infer outside context.
 
 Rules
 1) Core decision rules:
@@ -265,7 +267,7 @@ function DatasetsPanel({
   )
   const formatCount = (value: number, noun: string) => `${value} ${noun}${value === 1 ? '' : 's'}`
   const closeSplit = () => setActiveSplit(null)
-  const formatDimensionsList = (dimensions?: Record<string, any> | null) => {
+  const formatDimensionsList = (dimensions?: Record<string, JsonValue> | null) => {
     if (!dimensions || Object.keys(dimensions).length === 0) {
       return '—'
     }
@@ -756,7 +758,7 @@ function getScenarioFailureCategories(scenario: ScenarioItem): string[] {
   }
   const metadataSource = scenario.metadata
   if (metadataSource && typeof metadataSource === 'object') {
-    const metadata = metadataSource as Record<string, any>
+    const metadata = metadataSource as Record<string, JsonValue>
     const metadataCategories = metadata.failure_categories
     if (Array.isArray(metadataCategories)) {
       metadataCategories.forEach((item) => {
@@ -810,7 +812,7 @@ function formatTimestamp(value?: string | null): string {
   return date.toLocaleString()
 }
 
-function extractWorkflowFromMetadata(metadata?: Record<string, any> | null): string | null {
+function extractWorkflowFromMetadata(metadata?: Record<string, JsonValue> | null): string | null {
   if (!metadata || typeof metadata !== 'object') {
     return null
   }
@@ -819,7 +821,7 @@ function extractWorkflowFromMetadata(metadata?: Record<string, any> | null): str
     return direct.trim()
   }
   const manifest = metadata.manifest
-  if (manifest && typeof manifest === 'object') {
+  if (manifest && typeof manifest === 'object' && !Array.isArray(manifest)) {
     const manifestRun = manifest.workflow_run || manifest.workflow || manifest.workflow_name || manifest.workflowName
     if (typeof manifestRun === 'string' && manifestRun.trim()) {
       return manifestRun.trim()
@@ -947,7 +949,7 @@ function ScenarioSetDetail({
   const analyzedCount = useMemo(
     () =>
       set.scenarios.filter((scenario) => {
-        const analysis = scenario.analysis || (scenario.metadata?.analysis as Record<string, any> | undefined)
+        const analysis = scenario.analysis || (scenario.metadata?.analysis as Record<string, JsonValue> | undefined)
         if (!analysis) {
           return false
         }
@@ -1020,7 +1022,7 @@ function ScenarioSetDetail({
     const key = scenarioKey(set, scenario)
     const selectFilter = scenario.id ? `id:${scenario.id}` : scenario.name
 
-    // Close any existing single-run socket
+    // Close JsonValue existing single-run socket
     if (singleRunSocketRef.current) {
       try {
         singleRunSocketRef.current.close()
@@ -1355,15 +1357,15 @@ function ScenarioSetDetail({
       return
     }
 
-    let dimensions: Record<string, unknown> | null = null
+    let dimensions: Record<string, JsonValue> | null = null
     if (formState.dimensionsText.trim().length > 0) {
       try {
-        const parsed = JSON.parse(formState.dimensionsText)
-        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        const parsed: unknown = JSON.parse(formState.dimensionsText)
+        if (!isJsonObject(parsed)) {
           setFormError('Dimensions must be a JSON object')
           return
         }
-        dimensions = parsed as Record<string, unknown>
+        dimensions = parsed
       } catch {
         setFormError('Dimensions must be valid JSON')
         return
@@ -1472,8 +1474,7 @@ function ScenarioSetDetail({
       if (socket) {
         try {
           socket.close()
-        } catch {
-        }
+        } catch (error) { void error }
       }
     }
   }, [activeRun?.jobId])
@@ -1675,19 +1676,19 @@ function ScenarioSetDetail({
               const isDuplicate = (scenario.id && goldenIds.has(scenario.id)) || (!scenario.id && goldenNames.has(scenario.name))
               const isPromotePending = isPromoting && pendingKey === key
               const isDeletingCurrent = deleteScenario.isPending && deletingKey === key
-              const metadata = (scenario.metadata ?? null) as Record<string, any> | null
+              const metadata = (scenario.metadata ?? null) as Record<string, JsonValue> | null
               const failureCategories = getScenarioFailureCategories(scenario)
               const analysisBlock = (() => {
                 if (scenario.analysis && typeof scenario.analysis === 'object') {
-                  return scenario.analysis as Record<string, any>
+                  return scenario.analysis as Record<string, JsonValue>
                 }
                 if (metadata?.analysis && typeof metadata.analysis === 'object') {
-                  return metadata.analysis as Record<string, any>
+                  return metadata.analysis as Record<string, JsonValue>
                 }
                 return null
               })()
               const measures = (() => {
-                let source: any[] = []
+                let source: JsonValue[] = []
                 if (Array.isArray(scenario.measures)) {
                   source = scenario.measures
                 } else if (Array.isArray(metadata?.measures)) {
@@ -2527,7 +2528,7 @@ function DimensionsPanel({ projectName }: { projectName?: string | null }) {
   }, [isFormOpen])
 
   const getLastEdited = (dimension: EvaluationDimension): string => {
-    const raw = (dimension as any).updated_at
+    const raw = dimension.updated_at
     if (typeof raw === 'string' && raw.trim().length > 0) {
       const date = new Date(raw)
       if (!Number.isNaN(date.getTime())) {
@@ -3034,18 +3035,18 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
             optimizationCompletionRef.current = true
             try {
               socket?.close()
-            } catch {}
+            } catch (error) { void error }
           }
         } catch {
           try {
             socket?.close()
-          } catch {}
+          } catch (error) { void error }
         }
       }
       socket.onerror = () => {
         try {
           socket?.close()
-        } catch {}
+        } catch (error) { void error }
       }
       socket.onclose = () => {
         if (optimizationSocketRef.current === socket) {
@@ -3098,7 +3099,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
       if (socket) {
         try {
           socket.close()
-        } catch {}
+        } catch (error) { void error }
       }
     }
   }, [activeOptimization?.jobId, queryClient])
@@ -3334,7 +3335,7 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
     if (optimizationSocketRef.current) {
       try {
         optimizationSocketRef.current.close()
-      } catch {}
+      } catch (error) { void error }
       optimizationSocketRef.current = null
     }
     setActiveOptimization(null)
@@ -5086,18 +5087,18 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
             generationCompletionRef.current = true
             try {
               socket?.close()
-            } catch {}
+            } catch (error) { void error }
           }
         } catch {
           try {
             socket?.close()
-          } catch {}
+          } catch (error) { void error }
         }
       }
       socket.onerror = () => {
         try {
           socket?.close()
-        } catch {}
+        } catch (error) { void error }
       }
       socket.onclose = () => {
         if (generationSocketRef.current === socket) {
@@ -5154,7 +5155,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
       if (socket) {
         try {
           socket.close()
-        } catch {}
+        } catch (error) { void error }
       }
     }
   }, [activeGeneration?.jobId, queryClient])
@@ -5165,7 +5166,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
       if (suiteSocketRef.current) {
         try {
           suiteSocketRef.current.close()
-        } catch {}
+        } catch (error) { void error }
         suiteSocketRef.current = null
       }
       return
@@ -5194,7 +5195,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
               })
               try {
                 socket?.close()
-              } catch {}
+              } catch (error) { void error }
             } else if (state === 'failed') {
               suiteCompletionRef.current = true
               pushToast({
@@ -5204,24 +5205,24 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
               })
               try {
                 socket?.close()
-              } catch {}
+              } catch (error) { void error }
             } else if (state === 'cancelled') {
               suiteCompletionRef.current = true
               try {
                 socket?.close()
-              } catch {}
+              } catch (error) { void error }
             }
           }
         } catch {
           try {
             socket?.close()
-          } catch {}
+          } catch (error) { void error }
         }
       }
       socket.onerror = () => {
         try {
           socket?.close()
-        } catch {}
+        } catch (error) { void error }
       }
       socket.onclose = () => {
         if (suiteSocketRef.current === socket) {
@@ -5267,7 +5268,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
       if (socket) {
         try {
           socket.close()
-        } catch {}
+        } catch (error) { void error }
       }
     }
   }, [activeSuiteRun?.jobId])
@@ -5402,7 +5403,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
     const label = set.label || formatScenarioPath(set.path)
     const prompt =
       set.kind === 'generated'
-        ? `Delete scenario set "${label}"? This removes the generated folder, including any annotated scenarios and run artifacts within it.`
+        ? `Delete scenario set "${label}"? This removes the generated folder, including JsonValue annotated scenarios and run artifacts within it.`
         : `Delete scenario set "${label}"? This will remove the annotated scenarios from disk.`
     if (!window.confirm(prompt)) {
       return
@@ -5658,7 +5659,7 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
                     const hasScenarioAnnotations = analysisFromMetadata !== null
                       ? analysisFromMetadata > 0
                       : set.scenarios.some((scenario) => {
-                          const analysis = scenario.analysis || (scenario.metadata?.analysis as Record<string, any> | undefined)
+                          const analysis = scenario.analysis || (scenario.metadata?.analysis as Record<string, JsonValue> | undefined)
                           if (!analysis) {
                             return false
                           }

@@ -7,7 +7,7 @@ export default mergeConfig(
     test: {
       globals: true,
       environment: 'jsdom',
-      passWithNoTests: true,
+      passWithNoTests: false,
       coverage: {
         reporter: ['text', 'lcov'],
         reportsDirectory: '../../../../coverage/web',

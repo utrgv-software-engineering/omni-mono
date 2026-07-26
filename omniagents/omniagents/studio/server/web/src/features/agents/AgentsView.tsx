@@ -127,7 +127,7 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
     if (optimizationSocketRef.current) {
       try {
         optimizationSocketRef.current.close()
-      } catch {}
+      } catch (error) { void error }
       optimizationSocketRef.current = null
     }
     setActiveOptimization(null)
@@ -164,18 +164,18 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
             optimizationCompletionRef.current = true
             try {
               socket?.close()
-            } catch {}
+            } catch (error) { void error }
           }
         } catch {
           try {
             socket?.close()
-          } catch {}
+          } catch (error) { void error }
         }
       }
       socket.onerror = () => {
         try {
           socket?.close()
-        } catch {}
+        } catch (error) { void error }
       }
       socket.onclose = () => {
         if (optimizationSocketRef.current === socket) {
@@ -227,7 +227,7 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
       if (socket) {
         try {
           socket.close()
-        } catch {}
+        } catch (error) { void error }
       }
     }
   }, [activeOptimization?.jobId, queryClient])
@@ -326,7 +326,7 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
     if (optimizationSocketRef.current) {
       try {
         optimizationSocketRef.current.close()
-      } catch {}
+      } catch (error) { void error }
       optimizationSocketRef.current = null
     }
     setActiveOptimization(null)

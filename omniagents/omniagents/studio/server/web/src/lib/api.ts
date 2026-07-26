@@ -52,6 +52,7 @@ import type {
   EvaluationMeasureDeleteResponse,
   EvaluationResultsListResponse,
   EvaluationResultsDetailResponse,
+  JsonValue,
 } from '../types'
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
@@ -69,7 +70,7 @@ export interface PlaygroundSessionPayload {
   }
   output_type?: string
   output_type_strict?: boolean
-  output_schema?: Record<string, any>
+  output_schema?: Record<string, JsonValue>
   session_id?: string
 }
 

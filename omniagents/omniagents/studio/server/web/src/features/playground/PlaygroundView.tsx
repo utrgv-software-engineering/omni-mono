@@ -11,6 +11,7 @@ import type {
   PlaygroundSessionResponse,
   PlaygroundSafeAgentOptions,
   AgentUpdatePayload,
+  JsonObject,
 } from '../../types'
 import {
   usePlaygroundSession,
@@ -90,7 +91,7 @@ const mapJsonTypeToFieldType = (value: unknown): OutputFieldType => {
   return 'string'
 }
 
-const schemaToFields = (schema: Record<string, unknown> | null | undefined): OutputField[] => {
+const schemaToFields = (schema: JsonObject | null | undefined): OutputField[] => {
   if (!schema || typeof schema !== 'object') {
     return []
   }
@@ -116,10 +117,10 @@ const schemaToFields = (schema: Record<string, unknown> | null | undefined): Out
     if (typeof name !== 'string') {
       continue
     }
-    if (!definition || typeof definition !== 'object') {
+    if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
       continue
     }
-    const fieldType = mapJsonTypeToFieldType((definition as Record<string, unknown>)['type'])
+    const fieldType = mapJsonTypeToFieldType(definition['type'])
     fields.push({
       id: generateFieldId(),
       name,
@@ -149,15 +150,15 @@ const jsonTypeForField = (fieldType: OutputFieldType): string => {
   return 'string'
 }
 
-const fieldsToSchema = (fields: OutputField[]): Record<string, unknown> | null => {
-  const properties: Record<string, unknown> = {}
+const fieldsToSchema = (fields: OutputField[]): JsonObject | null => {
+  const properties: JsonObject = {}
   const required: string[] = []
   for (const field of fields) {
     const name = field.name.trim()
     if (!name) {
       continue
     }
-    const entry: Record<string, unknown> = {
+    const entry: JsonObject = {
       type: jsonTypeForField(field.type),
     }
     if (field.type === 'array') {
@@ -172,7 +173,7 @@ const fieldsToSchema = (fields: OutputField[]): Record<string, unknown> | null =
   if (keys.length === 0) {
     return null
   }
-  const schema: Record<string, unknown> = {
+  const schema: JsonObject = {
     type: 'object',
     properties,
     additionalProperties: false,
@@ -1070,7 +1071,7 @@ export function AgentWorkbench({
     if (shouldConfigure) {
       setFormError('')
       try {
-        let schemaPayload: Record<string, unknown> | null = null
+        let schemaPayload: JsonObject | null = null
         if (outputConfigDirty && outputTypeSelection === 'dict') {
           schemaPayload = validateStructuredOutput()
         } else {

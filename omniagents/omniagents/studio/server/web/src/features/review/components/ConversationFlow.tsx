@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
-import type { Span } from '../../../types'
+import { isJsonValue } from '../../../types'
+import type { JsonValue, Span, SpanRecord, SpanValue } from '../../../types'
 import { cn } from '../../../lib/utils'
 import {
   User,
@@ -27,7 +28,7 @@ interface ParsedMessage {
   content: string
   timestamp: string
   spanId: string
-  error?: any
+  error?: JsonValue
   tokens?: {
     input?: number
     output?: number
@@ -36,11 +37,11 @@ interface ParsedMessage {
 
 interface ParsedFunction {
   name: string
-  input: any
-  output: any
+  input: SpanValue
+  output: SpanValue
   timestamp: string
   spanId: string
-  error?: any
+  error?: JsonValue
   isVerbose?: boolean
   callId?: string
 }
@@ -75,7 +76,7 @@ type ParsedItem =
   | { type: 'agent'; data: { name: string; timestamp: string; spanId: string } }
 
 // Safe JSON parsing helper that returns the original value if parsing fails
-function safeJsonParse(value: any): any {
+function safeJsonParse(value: SpanValue): SpanValue {
   if (typeof value !== 'string') {
     return value
   }
@@ -86,11 +87,16 @@ function safeJsonParse(value: any): any {
   }
   
   try {
-    return JSON.parse(value)
+    const parsed: unknown = JSON.parse(value)
+    return isJsonValue(parsed) ? parsed : value
   } catch {
     // If parsing fails, return the original string
     return value
   }
+}
+
+function isSpanRecordArray(value: unknown): value is SpanRecord[] {
+  return Array.isArray(value) && value.every(item => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
 }
 
 export function ConversationFlow({ spans }: ConversationFlowProps) {
@@ -106,26 +112,24 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
 
   const syntheticBadges = useMemo(() => {
     const md = traceData?.trace?.metadata
-    let meta: any = null
+    let meta = traceData?.trace?.metadata ?? null
     if (md) {
       if (typeof md === 'string') {
         try { meta = JSON.parse(md) } catch { meta = null }
-      } else {
-        meta = md
       }
     }
     const oa = meta?.omniagents
     if (!oa || oa.run_type !== 'synthetic_generation') return [] as Array<{ label: string; value: string; dimDesc: string; valDesc: string; examples: string[] }>
     const synthetic = oa.synthetic
     const catalog = synthetic?.catalog
-    const dims: any[] = catalog?.dimensions || []
+    const dims = catalog?.dimensions || []
     const mapping = synthetic?.selection?.mapping || {}
     const displayName = (s: string) => s.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase())
     const results: Array<{ label: string; value: string; dimDesc: string; valDesc: string; examples: string[] }> = []
     for (const [dimKey, valKey] of Object.entries(mapping)) {
       const dim = dims.find(d => d?.name === dimKey)
       const dimLabel = (dim?.label as string) || displayName(dimKey)
-      const valueDef = (dim?.values || []).find((v: any) => v?.name === valKey)
+      const valueDef = (dim?.values || []).find(v => v.name === valKey)
       const valueLabel = (valueDef?.label as string) || displayName(String(valKey))
       const dimDesc = dim?.description || ''
       const valDesc = valueDef?.description || ''
@@ -139,14 +143,12 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
   // declared in its `expect:` block) attached to the trace metadata under
   // metadata.omniagents.expected. Surface every field generically so the
   // panel works for any dataset's reference shape, not just `doctor_answer`.
-  const referenceEntries = useMemo<Array<[string, any]>>(() => {
+  const referenceEntries = useMemo<Array<[string, JsonValue]>>(() => {
     const md = traceData?.trace?.metadata
-    let meta: any = null
+    let meta = traceData?.trace?.metadata ?? null
     if (md) {
       if (typeof md === 'string') {
         try { meta = JSON.parse(md) } catch { meta = null }
-      } else {
-        meta = md
       }
     }
     const expected = meta?.omniagents?.expected
@@ -209,7 +211,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
         instructionContent = instructions
       } else if (Array.isArray(instructions)) {
         // Extract text from instruction items
-        instructions.forEach((item: any) => {
+        instructions.forEach((item: SpanRecord) => {
           if (typeof item === 'string') {
             instructionContent += item
           } else if (item.content) {
@@ -237,8 +239,8 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
     }
     
     // Parse ALL input messages from conversation history
-    if (spanData.input && Array.isArray(spanData.input)) {
-      spanData.input.forEach((msg: any) => {
+    if (isSpanRecordArray(spanData.input)) {
+      spanData.input.forEach((msg: SpanRecord) => {
         // Process user messages
         if (msg.role === 'user') {
           const messageKey = `user-${msg.content}`
@@ -261,7 +263,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
           // Extract text content from the Responses API format
           let content = ''
           if (Array.isArray(msg.content)) {
-            msg.content.forEach((contentItem: any) => {
+            msg.content.forEach((contentItem: SpanRecord) => {
               if (contentItem.type === 'output_text' || contentItem.type === 'text') {
                 content += contentItem.text || ''
               }
@@ -330,12 +332,12 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
     }
     
     // Parse response output
-    if (spanData.response?.output && Array.isArray(spanData.response.output)) {
-      spanData.response.output.forEach((output: any) => {
+    if (isSpanRecordArray(spanData.response?.output)) {
+      spanData.response.output.forEach((output: SpanRecord) => {
         if (output.type === 'message' && output.role === 'assistant') {
           let content = ''
           if (output.content && Array.isArray(output.content)) {
-            output.content.forEach((contentItem: any) => {
+            output.content.forEach((contentItem: SpanRecord) => {
               if (contentItem.type === 'output_text' || contentItem.type === 'text') {
                 content += contentItem.text || ''
               }
@@ -403,8 +405,8 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
     const timestamp = span.started_at || span.created_at
     
     // Parse input messages - process ALL messages in the conversation history
-    if (spanData.input && Array.isArray(spanData.input)) {
-      spanData.input.forEach((msg: any) => {
+    if (isSpanRecordArray(spanData.input)) {
+      spanData.input.forEach((msg: SpanRecord) => {
         // Process system messages
         if (msg.role === 'system' && showSystemMessages) {
           const messageKey = `system-${msg.content}`
@@ -444,20 +446,22 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
           // Check if this is a tool call or a text response
           if (msg.tool_calls && msg.tool_calls.length > 0) {
             // Create function items for tool calls in history
-            msg.tool_calls.forEach((toolCall: any) => {
+            msg.tool_calls.forEach((toolCall: SpanRecord) => {
+              const functionCall = toolCall.function
+              if (!functionCall?.name) return
               const callId = toolCall.id
-              const funcKey = callId || `func-${toolCall.function.name}-${toolCall.function.arguments}`
+              const funcKey = callId || `func-${functionCall.name}-${functionCall.arguments}`
               if (!seenToolCalls.has(funcKey)) {
                 seenToolCalls.add(funcKey)
                 // Create a function item for display
                 items.push({
                   type: 'function',
                   data: {
-                    name: toolCall.function.name,
-                    input: toolCall.function.arguments ? 
-                      (typeof toolCall.function.arguments === 'string' ? 
-                        safeJsonParse(toolCall.function.arguments) : 
-                        toolCall.function.arguments) : null,
+                    name: functionCall.name,
+                    input: functionCall.arguments ?
+                      (typeof functionCall.arguments === 'string' ?
+                        safeJsonParse(functionCall.arguments) :
+                        functionCall.arguments) : null,
                     output: null, // Will be populated if we find the tool response
                     timestamp,
                     spanId: span.span_id,
@@ -505,12 +509,12 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
     }
     
     // Parse output (handle nested structure)
-    if (spanData.output && Array.isArray(spanData.output)) {
+    if (isSpanRecordArray(spanData.output)) {
       const output = spanData.output[0] // Usually just one output object
       if (output?.output) {
         // Process output items
-        if (Array.isArray(output.output)) {
-          output.output.forEach((item: any) => {
+        if (isSpanRecordArray(output.output)) {
+          output.output.forEach((item: SpanRecord) => {
             if (item.type === 'function_call' && item.name) {
               // Don't duplicate if we already have this function call from history
               const callId = item.call_id || item.id
@@ -538,7 +542,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
               // Assistant message response
               let content = ''
               if (Array.isArray(item.content)) {
-                item.content.forEach((contentItem: any) => {
+                item.content.forEach((contentItem: SpanRecord) => {
                   if (contentItem.type === 'output_text' || contentItem.type === 'text') {
                     content += contentItem.text || ''
                   }
@@ -582,240 +586,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
         parseResponseSpan(span, items, seenMessages, seenToolCalls)
       } else if (span.span_type === 'generation' && span.data?.span_data) {
         parseGenerationSpan(span, items, seenMessages, seenToolCalls)
-      } else if (span.span_type === 'generation' && span.data?.span_data) {
-        // Fallback for old parsing logic (will be removed)
-        const spanData = span.data.span_data
-        
-        // Process input messages
-        if (spanData.input && Array.isArray(spanData.input)) {
-          spanData.input.forEach((msg: any) => {
-            // Skip tool messages and assistant messages in input (they're part of history)
-            if (msg.role === 'tool' || msg.role === 'assistant') {
-              return
-            }
-            
-            if (msg.role === 'user') {
-              const messageKey = msg.id || `user-${msg.content}`
-              if (!seenMessages.has(messageKey)) {
-                seenMessages.add(messageKey)
-                items.push({
-                  type: 'message',
-                  data: {
-                    role: 'user',
-                    content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-                    timestamp,
-                    spanId: span.span_id,
-                    error: span.error
-                  }
-                })
-              }
-            } else if (msg.role === 'system' && showSystemMessages) {
-              const messageKey = msg.id || `system-${msg.content}`
-              if (!seenMessages.has(messageKey)) {
-                seenMessages.add(messageKey)
-                items.push({
-                  type: 'message',
-                  data: {
-                    role: 'system',
-                    content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-                    timestamp,
-                    spanId: span.span_id,
-                    error: span.error
-                  }
-                })
-              }
-            }
-          })
-        }
-        
-        // Parse output messages (assistant responses) - these are always new
-        if (spanData.output && Array.isArray(spanData.output)) {
-          spanData.output.forEach((msg: any) => {
-            if (msg.role === 'assistant') {
-              // Check if this is a tool call or a text response
-              if (msg.tool_calls && msg.tool_calls.length > 0) {
-                // This is a tool call, we'll show it via function spans
-                msg.tool_calls.forEach((toolCall: any) => {
-                  if (toolCall.id && !seenToolCalls.has(toolCall.id)) {
-                    seenToolCalls.add(toolCall.id)
-                  }
-                })
-              } else if (msg.content) {
-                // This is a text response
-                let content = ''
-                
-                // Handle content array structure
-                if (Array.isArray(msg.content)) {
-                  msg.content.forEach((contentItem: any) => {
-                    if (contentItem.type === 'text') {
-                      content += contentItem.text
-                    }
-                  })
-                } else if (typeof msg.content === 'string') {
-                  content = msg.content
-                }
-                
-                if (content) {
-                  items.push({
-                    type: 'message',
-                    data: {
-                      role: 'assistant',
-                      content,
-                      timestamp,
-                      spanId: span.span_id,
-                      error: span.error,
-                      tokens: spanData.usage
-                    }
-                  })
-                }
-              }
-            }
-          })
-        }
-      }
-      
-      // Handle response spans (from OpenAI Responses API)
-      else if (span.span_type === 'response' && span.data?.span_data) {
-        const spanData = span.data.span_data
-        
-        // Process input messages from response spans - these show the full conversation history
-        if (spanData.input && Array.isArray(spanData.input)) {
-          spanData.input.forEach((msg: any) => {
-            // For response spans, we want to show the entire conversation history
-            // but deduplicate based on content and position
-            
-            if (msg.role === 'user') {
-              const messageKey = msg.id || `user-${msg.content}`
-              if (!seenMessages.has(messageKey)) {
-                seenMessages.add(messageKey)
-                items.push({
-                  type: 'message',
-                  data: {
-                    role: 'user',
-                    content: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-                    timestamp,
-                    spanId: span.span_id,
-                    error: span.error
-                  }
-                })
-              }
-            }
-            // Show assistant messages from history
-            else if (msg.role === 'assistant' && msg.content) {
-              // Extract text content
-              let content = ''
-              if (Array.isArray(msg.content)) {
-                msg.content.forEach((contentItem: any) => {
-                  if (contentItem.type === 'output_text' || contentItem.type === 'text') {
-                    content += contentItem.text || ''
-                  }
-                })
-              } else if (typeof msg.content === 'string') {
-                content = msg.content
-              }
-              
-              if (content) {
-                // Use message ID for deduplication if available
-                const messageKey = msg.id || `assistant-${span.span_id}-${content}`
-                if (!seenMessages.has(messageKey)) {
-                  seenMessages.add(messageKey)
-                  items.push({
-                    type: 'message',
-                    data: {
-                      role: 'assistant',
-                      content,
-                      timestamp,
-                      spanId: span.span_id,
-                      error: span.error
-                    }
-                  })
-                }
-              }
-            }
-            // Show function calls from history
-            else if (msg.type === 'function_call' && msg.name) {
-              const funcKey = msg.call_id || msg.id || `func-${msg.name}-${msg.arguments}`
-              if (!seenToolCalls.has(funcKey)) {
-                seenToolCalls.add(funcKey)
-                items.push({
-                  type: 'function',
-                  data: {
-                    name: msg.name,
-                    input: msg.arguments ? safeJsonParse(msg.arguments) : null,
-                    output: null, // Will be shown in next item if available
-                    timestamp,
-                    spanId: span.span_id,
-                    error: span.error,
-                    isVerbose: expandedFunctions.has(span.span_id)
-                  }
-                })
-              }
-            }
-            // Show function outputs
-            else if (msg.type === 'function_call_output' && msg.call_id) {
-              // Find the corresponding function call and update its output
-              // Use reverse() to find the last matching item
-              const reversedItems = [...items].reverse()
-              const funcItem = reversedItems.find((item: ParsedItem) => 
-                item.type === 'function' && 
-                item.data.spanId === span.span_id
-              )
-              if (funcItem && funcItem.type === 'function') {
-                funcItem.data.output = msg.output ? safeJsonParse(msg.output) : null
-              }
-            }
-          })
-        }
-        
-        // Process response output
-        if (spanData.response && spanData.response.output && Array.isArray(spanData.response.output)) {
-          spanData.response.output.forEach((output: any) => {
-            // Handle function calls - track them so function spans don't duplicate
-            if (output.type === 'function_call' && output.name) {
-              const callId = output.call_id || output.id
-              if (callId && !seenToolCalls.has(callId)) {
-                seenToolCalls.add(callId)
-              }
-            }
-            // Handle message responses
-            else if (output.type === 'message' && output.role === 'assistant') {
-              let content = ''
-              
-              // Handle content array structure
-              if (output.content && Array.isArray(output.content)) {
-                output.content.forEach((contentItem: any) => {
-                  if (contentItem.type === 'output_text' || contentItem.type === 'text') {
-                    content += contentItem.text || ''
-                  }
-                })
-              } else if (typeof output.content === 'string') {
-                content = output.content
-              }
-              
-              if (content) {
-                // Use message ID for deduplication if available, otherwise use content
-                const messageKey = output.id || `assistant-${span.span_id}-${content}`
-                if (!seenMessages.has(messageKey)) {
-                  seenMessages.add(messageKey)
-                  items.push({
-                    type: 'message',
-                    data: {
-                      role: 'assistant',
-                      content,
-                      timestamp,
-                      spanId: span.span_id,
-                      error: span.error,
-                      tokens: spanData.response?.usage
-                    }
-                  })
-                }
-              }
-            }
-          })
-        }
-      }
-      
-      else if (span.span_type === 'function' && span.data?.span_data) {
+      } else if (span.span_type === 'function' && span.data?.span_data) {
         const spanData = span.data.span_data
         // Check if we've already seen this function call in the conversation history
         // Create a normalized key based on function name and input for matching
@@ -900,7 +671,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
       
       else if (span.span_type === 'transcription' && span.data?.span_data) {
         const spanData = span.data.span_data
-        if (spanData.output) {
+        if (typeof spanData.output === 'string') {
           items.push({
             type: 'voice',
             data: {
@@ -915,7 +686,7 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
       
       else if (span.span_type === 'speech' && span.data?.span_data) {
         const spanData = span.data.span_data
-        if (spanData.input) {
+        if (typeof spanData.input === 'string') {
           items.push({
             type: 'voice',
             data: {
@@ -1296,18 +1067,17 @@ export function ConversationFlow({ spans }: ConversationFlowProps) {
   )
 }
 
-function TraceMetadataBlock({ metadata }: { metadata: any }) {
-  let parsed: any = null
-  if (metadata) {
-    if (typeof metadata === 'string') {
-      try {
-        parsed = JSON.parse(metadata)
-      } catch {
-        parsed = metadata
-      }
-    } else {
+function TraceMetadataBlock({ metadata }: { metadata?: unknown }) {
+  let parsed: JsonValue = null
+  if (typeof metadata === 'string') {
+    try {
+      const candidate: unknown = JSON.parse(metadata)
+      parsed = isJsonValue(candidate) ? candidate : metadata
+    } catch {
       parsed = metadata
     }
+  } else if (isJsonValue(metadata)) {
+    parsed = metadata
   }
   const hasContent = parsed && (typeof parsed === 'object' ? Object.keys(parsed).length > 0 : true)
   if (!hasContent) return null

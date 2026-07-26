@@ -1,10 +1,115 @@
+export type JsonPrimitive = string | number | boolean | null
+export type JsonObject = { [key: string]: JsonValue }
+export type JsonValue = JsonPrimitive | JsonObject | JsonValue[]
+
+export function isJsonObject(value: unknown): value is JsonObject {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+  return Object.values(value).every(isJsonValue)
+}
+
+export function isJsonValue(value: unknown): value is JsonValue {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return true
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value)
+  }
+  if (Array.isArray(value)) {
+    return value.every(isJsonValue)
+  }
+  return isJsonObject(value)
+}
+
+export interface SpanUsage {
+  input?: number
+  output?: number
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+}
+
+export type SpanValue = JsonValue | SpanRecord[]
+
+export interface SpanRecord {
+  arguments?: JsonValue
+  call_id?: string
+  content?: string | SpanRecord[]
+  description?: string
+  from_agent?: string
+  function?: SpanRecord
+  handoffs?: string[]
+  id?: string
+  input?: SpanValue
+  instructions?: string | SpanRecord[]
+  name?: string
+  output?: SpanValue
+  output_type?: string
+  response?: SpanRecord
+  role?: string
+  text?: string
+  to_agent?: string
+  tool_call_id?: string
+  tool_calls?: SpanRecord[]
+  tools?: string[]
+  triggered?: boolean
+  type?: string
+  usage?: SpanUsage
+}
+
+export interface SpanPayload {
+  span_data?: SpanRecord
+}
+
+export interface SyntheticDimensionValue {
+  name?: string
+  label?: string
+  description?: string
+  examples?: string[]
+}
+
+export interface SyntheticDimension {
+  name?: string
+  label?: string
+  description?: string
+  values?: SyntheticDimensionValue[]
+}
+
+export interface SyntheticMetadata {
+  catalog?: { dimensions?: SyntheticDimension[] }
+  selection?: { mapping?: Record<string, string> }
+}
+
+export interface OmniagentsTraceMetadata {
+  run_type?: string
+  synthetic?: SyntheticMetadata
+  expected?: JsonObject
+}
+
+export interface TraceMetadata {
+  input?: JsonValue
+  user_input?: JsonValue
+  prompt?: JsonValue
+  message?: JsonValue
+  query?: JsonValue
+  output?: JsonValue
+  response?: JsonValue
+  result?: JsonValue
+  completion?: JsonValue
+  answer?: JsonValue
+  omniagents?: OmniagentsTraceMetadata
+}
+
 export interface Trace {
   trace_id: string
   workflow_name: string | null
   group_id: string | null
   project: string
-  metadata: Record<string, any>
+  metadata: TraceMetadata
   created_at: string
+  duration?: number
+  has_errors?: boolean
 }
 
 export interface Span {
@@ -13,10 +118,10 @@ export interface Span {
   parent_id: string | null
   span_type: SpanType
   span_name: string | null
-  data: Record<string, any>
+  data: SpanPayload
   started_at: string | null
   ended_at: string | null
-  error: Record<string, any> | null
+  error: Record<string, JsonValue> | null
   sequence_number: number
   created_at: string
   // Computed fields
@@ -74,7 +179,7 @@ export interface Conversation {
   has_errors: boolean
   created_at: string
   workflow_name: string | null
-  metadata: Record<string, any>
+  metadata: TraceMetadata
   first_input: string | null
   session?: ConversationSession
 }
@@ -98,7 +203,7 @@ export interface AnalysisData {
 export interface PlaygroundToolDefinition {
   name: string
   description: string
-  schema?: Record<string, any> | null
+  schema?: Record<string, JsonValue> | null
   strict?: boolean | null
 }
 
@@ -135,7 +240,7 @@ export interface PlaygroundStructuredOutputMetadata {
   default_type: string
   default_label: string
   default_strict: boolean
-  default_schema?: Record<string, any> | null
+  default_schema?: Record<string, JsonValue> | null
   options: PlaygroundStructuredOutputOption[]
 }
 
@@ -164,7 +269,7 @@ export interface PlaygroundMetadata {
   requires_model_input?: boolean
   playground_ws_url?: string
   model_settings_schema?: ModelSettingDefinition[]
-  default_model_settings?: Record<string, any>
+  default_model_settings?: Record<string, number | string | boolean>
   guardrails?: PlaygroundGuardrailMetadata
   safe_defaults?: PlaygroundSafeDefaults
   structured_output?: PlaygroundStructuredOutputMetadata
@@ -187,7 +292,7 @@ export interface AgentUpdatePayload {
   }
   output_type?: string | null
   output_type_strict?: boolean
-  output_schema?: Record<string, any> | null
+  output_schema?: Record<string, JsonValue> | null
 }
 
 export interface AgentCreatePayload {
@@ -225,6 +330,7 @@ export interface EvaluationDimension {
   label?: string
   description?: string
   values: EvaluationDimensionValue[]
+  updated_at?: string | null
 }
 
 export interface EvaluationDimensionsResponse {
@@ -247,18 +353,18 @@ export interface EvaluationScenarioEntry {
   prompts?: string[] | null // Multiple prompts for scripted multi-turn
   goal?: string | null // Goal for synthetic scenarios
   fixture?: string | null // Fixture reference
-  persona?: Record<string, any> | null // Simulated user persona
+  persona?: Record<string, JsonValue> | null // Simulated user persona
   initial_message?: string | null // First message for synthetic
   agent_description?: string | null // Agent description for synthetic
   max_exchanges?: number | null // Max conversation turns
-  dimensions?: Record<string, any> | null
-  measures?: any[] | null
+  dimensions?: Record<string, JsonValue> | null
+  measures?: JsonValue[] | null
   failure_categories?: string[] | null
   tags?: string[] | null
   label?: boolean | null
-  metadata?: Record<string, any> | null
+  metadata?: Record<string, JsonValue> | null
   analysis?: EvaluationScenarioAnalysis | null
-  expect?: Record<string, any> | null // Reference data (e.g. doctor_answer, source)
+  expect?: Record<string, JsonValue> | null // Reference data (e.g. doctor_answer, source)
 }
 
 export interface EvaluationScenarioAnalysis {
@@ -277,7 +383,7 @@ export interface EvaluationScenarioSet {
   path: string
   scenario_count: number
   updated_at?: string | null
-  metadata?: Record<string, any> | null
+  metadata?: Record<string, JsonValue> | null
   scenarios: EvaluationScenarioEntry[]
 }
 
@@ -306,7 +412,7 @@ export interface EvaluationScenarioInput {
   id?: string | null
   name: string
   prompt: string
-  dimensions?: Record<string, any> | null
+  dimensions?: Record<string, JsonValue> | null
 }
 
 export interface EvaluationScenarioCreatePayload {

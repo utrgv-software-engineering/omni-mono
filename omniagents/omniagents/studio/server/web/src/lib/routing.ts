@@ -50,7 +50,14 @@ export const buildRoutePath = (
   options: BuildRoutePathOptions = {}
 ): string => {
   const { pathParams, query, baseSearch } = options
-  const pathname = pathParams ? generatePath(ROUTES[route], pathParams as any) : ROUTES[route]
+  const routeParams = pathParams
+    ? Object.fromEntries(
+        Object.entries(pathParams).map(([key, value]) => [key, String(value)])
+      )
+    : undefined
+  const pathname = pathParams
+    ? generatePath(ROUTES[route] as string, routeParams)
+    : ROUTES[route]
   const search = createSearchString(baseSearch ?? null, query)
   return `${pathname}${search}`
 }

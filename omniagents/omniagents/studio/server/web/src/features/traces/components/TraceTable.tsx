@@ -30,8 +30,8 @@ function extractInputOutput(trace: Trace): { input: string; output: string } {
                ''
   
   // Convert to string if needed
-  if (typeof input === 'object') input = JSON.stringify(input)
-  if (typeof output === 'object') output = JSON.stringify(output)
+  if (typeof input !== 'string') input = input === null ? '' : JSON.stringify(input)
+  if (typeof output !== 'string') output = output === null ? '' : JSON.stringify(output)
   
   // Truncate if too long
   const maxLength = 100
@@ -77,8 +77,8 @@ export function TraceTable({ traces, onTraceSelect, selectedTraceId }: TraceTabl
             {traces.map((trace) => {
               const isSelected = selectedTraceId === trace.trace_id
               const timeAgo = formatDistanceToNow(new Date(trace.created_at), { addSuffix: true })
-              const duration = (trace as any).duration || 0
-              const hasErrors = (trace as any).has_errors || false
+              const duration = trace.duration || 0
+              const hasErrors = trace.has_errors || false
               const { input, output } = extractInputOutput(trace)
               
               return (
