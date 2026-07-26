@@ -24,6 +24,7 @@ capabilities:
   - markdown
   - tasks
   - skills
+  - compact # /compact checkpoint compaction — the reactive/proactive hooks in runtime_hooks/ call it on context pressure
 
 model_settings:
   reasoning:
