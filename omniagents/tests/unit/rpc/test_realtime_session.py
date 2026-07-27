@@ -195,16 +195,46 @@ async def test_agents_sdk_realtime_agent_includes_mcp_tools_in_get_all_tools():
 
 
 @pytest.mark.asyncio
-async def test_start_session_requires_api_key(realtime_spec):
-    """Test that starting session without API key raises error."""
+async def test_start_session_requires_a_credential(realtime_spec):
+    """No API key AND no ChatGPT sign-in raises.
+
+    An API key is no longer the only credential — a ChatGPT sign-in also
+    authenticates realtime — so the sign-in must be absent too for this to be
+    the no-credential case.
+    """
     with (
         patch("agents.realtime.RealtimeAgent", create=True),
         patch("agents.realtime.RealtimeRunner", create=True),
+        patch(
+            "omniagents.core.providers.codex.realtime_signin_state",
+            return_value="missing",
+        ),
     ):
         session = RealtimeSession(realtime_spec, settings={})
 
-        with pytest.raises(ValueError, match="API key"):
+        with pytest.raises(ValueError, match="No realtime credential"):
             await session.start()
+
+
+@pytest.mark.asyncio
+async def test_start_session_accepts_chatgpt_signin_without_api_key(realtime_spec):
+    """A ChatGPT sign-in alone is a valid realtime credential."""
+    from omniagents.rpc.realtime_session import resolve_realtime_credential
+
+    with (
+        patch(
+            "omniagents.core.providers.codex.realtime_signin_state",
+            return_value="ok",
+        ),
+        patch(
+            "omniagents.core.providers.codex.realtime_access_token",
+            AsyncMock(return_value="eyJ-oauth-token"),
+        ),
+    ):
+        token, detail = await resolve_realtime_credential({})
+
+    assert token == "eyJ-oauth-token"
+    assert "ChatGPT OAuth" in detail
 
 
 @pytest.mark.asyncio

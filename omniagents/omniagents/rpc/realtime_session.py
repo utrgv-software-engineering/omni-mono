@@ -11,7 +11,7 @@ import base64
 import logging
 import os
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from typing import Optional, Dict, Any, AsyncIterator, Callable
+from typing import Optional, Dict, Any, AsyncIterator, Callable, Tuple
 from contextlib import asynccontextmanager
 from contextlib import AsyncExitStack
 
@@ -36,6 +36,97 @@ def _mask_secret(value: Optional[str]) -> str:
     if len(value) <= 8:
         return "*" * len(value)
     return f"{value[:4]}...{value[-4:]}"
+
+
+def _realtime_targets_openai(settings: Dict[str, Any]) -> bool:
+    """True when the realtime socket will land on OpenAI's own API.
+
+    A ChatGPT OAuth bearer is only meaningful against ``api.openai.com``;
+    Azure and self-hosted proxies must supply their own key. The first
+    configured override wins, mirroring ``_resolve_realtime_url``'s
+    precedence; with no override the SDK defaults to OpenAI.
+    """
+    for setting_key, env_key in (
+        ("openai_realtime_url", "OPENAI_REALTIME_URL"),
+        ("openai_realtime_base_url", "OPENAI_REALTIME_BASE_URL"),
+        ("openai_base_url", "OPENAI_BASE_URL"),
+    ):
+        value = settings.get(setting_key)
+        if not (isinstance(value, str) and value.strip()):
+            value = os.getenv(env_key)
+        if isinstance(value, str) and value.strip():
+            candidate = value if "://" in value else f"https://{value}"
+            host = urlparse(candidate).netloc.lower().split("@")[-1].split(":")[0]
+            return host == "api.openai.com"
+    return True
+
+
+def realtime_credential_status(settings: Dict[str, Any]) -> Tuple[bool, str]:
+    """Is a realtime credential configured? Offline and side-effect free.
+
+    The gate for availability probes. Deliberately does NOT mint or refresh
+    anything: ``capabilities()`` runs on every client boot, and refreshing
+    there would spend a refresh token — and, on rejection, stamp the store as
+    broken — merely because someone asked whether voice exists.
+
+    Returns ``(available, detail)``; ``detail`` names the credential source
+    when available and the reason when not, and never contains a secret.
+    """
+    if settings.get("openai_api_key") or settings.get("api_key"):
+        return True, "settings api key"
+
+    if not _realtime_targets_openai(settings):
+        return False, (
+            "a non-OpenAI realtime endpoint is configured, so ChatGPT OAuth "
+            "cannot be used for it; set an OpenAI API key in settings"
+        )
+
+    from omniagents.core.providers.codex import realtime_signin_state
+
+    state = realtime_signin_state()
+    if state == "ok":
+        return True, "ChatGPT OAuth (codex.json)"
+    if state == "broken":
+        return False, (
+            "ChatGPT sign-in was rejected — sign in again "
+            "(`omniagents auth codex login`)"
+        )
+    return False, (
+        "no OpenAI API key in settings and not signed in with ChatGPT "
+        "(`omniagents auth codex login`)"
+    )
+
+
+async def resolve_realtime_credential(
+    settings: Dict[str, Any],
+) -> Tuple[Optional[str], str]:
+    """Produce the realtime bearer, or explain why there isn't one.
+
+    Gated by :func:`realtime_credential_status` so the mic button's
+    availability and the session's actual auth resolve through one rule and
+    cannot drift. Unlike that check, this one may refresh — which is correct
+    here, because a session is actually being opened.
+
+    Returns ``(token, source)`` or ``(None, reason)``.
+    """
+    available, detail = realtime_credential_status(settings)
+    if not available:
+        return None, detail
+
+    explicit = settings.get("openai_api_key") or settings.get("api_key")
+    if explicit:
+        return explicit, detail
+
+    from omniagents.core.providers.codex import realtime_access_token
+
+    try:
+        token = await realtime_access_token()
+    except Exception as exc:  # refresh rejected, network down, unreadable store
+        return None, f"ChatGPT sign-in could not be refreshed: {exc}"
+
+    if token:
+        return token, detail
+    return None, "ChatGPT sign-in became unavailable while opening the session"
 
 
 def _collect_headers(settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -392,15 +483,16 @@ class RealtimeSession:
                 "Install with: pip install openai-agents"
             )
 
-        # Get API key
-        api_key = self.settings.get("openai_api_key") or self.settings.get("api_key")
+        # Get the bearer: an explicit key, else the ChatGPT OAuth token.
+        api_key, credential_source = await resolve_realtime_credential(self.settings)
         if not api_key:
-            raise ValueError("OpenAI API key not provided in settings")
+            raise ValueError(f"No realtime credential available: {credential_source}")
 
         masked_key = _mask_secret(api_key)
         logger.info(
-            "RealtimeSession %s using API key %s",
+            "RealtimeSession %s authenticating via %s (%s)",
             self.session_id,
+            credential_source,
             masked_key,
         )
 

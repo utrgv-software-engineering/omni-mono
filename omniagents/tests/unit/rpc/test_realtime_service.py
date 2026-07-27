@@ -528,3 +528,120 @@ async def test_cleanup(realtime_spec, settings_with_key):
 
         assert len(service._sessions) == 0
         assert len(service._event_tasks) == 0
+
+
+class TestCapabilities:
+    """`capabilities()` must reflect a real credential.
+
+    Clients gate the mic button on `enabled`, so a hardcoded True renders a
+    control that fails on click.
+    """
+
+    @pytest.mark.asyncio
+    async def test_enabled_with_explicit_api_key(self, realtime_spec, settings_with_key):
+        caps = await RealtimeService(realtime_spec, settings_with_key).capabilities()
+        assert caps["enabled"] is True
+        assert caps["detail"] == "settings api key"
+        assert caps["kind"] == "realtime"
+
+    @pytest.mark.asyncio
+    async def test_enabled_via_chatgpt_oauth(self, realtime_spec):
+        with patch(
+            "omniagents.core.providers.codex.realtime_signin_state",
+            return_value="ok",
+        ):
+            caps = await RealtimeService(realtime_spec, {}).capabilities()
+        assert caps["enabled"] is True
+        assert "ChatGPT OAuth" in caps["detail"]
+
+    @pytest.mark.asyncio
+    async def test_disabled_when_signed_out_and_no_key(self, realtime_spec):
+        with patch(
+            "omniagents.core.providers.codex.realtime_signin_state",
+            return_value="missing",
+        ):
+            caps = await RealtimeService(realtime_spec, {}).capabilities()
+        assert caps["enabled"] is False
+        assert "not signed in" in caps["detail"]
+
+    @pytest.mark.asyncio
+    async def test_disabled_when_signin_is_broken(self, realtime_spec):
+        """A stamped auth_error means re-auth, not a silently dead mic."""
+        with patch(
+            "omniagents.core.providers.codex.realtime_signin_state",
+            return_value="broken",
+        ):
+            caps = await RealtimeService(realtime_spec, {}).capabilities()
+        assert caps["enabled"] is False
+        assert "rejected" in caps["detail"]
+
+    @pytest.mark.asyncio
+    async def test_probe_never_refreshes_a_token(self, realtime_spec):
+        """The probe runs on every client boot; refreshing there would spend a
+        refresh token and stamp the store broken on rejection."""
+        refresh = AsyncMock(return_value="eyJ-token")
+        with (
+            patch("omniagents.core.providers.codex.realtime_access_token", refresh),
+            patch(
+                "omniagents.core.providers.codex.realtime_signin_state",
+                return_value="ok",
+            ),
+        ):
+            caps = await RealtimeService(realtime_spec, {}).capabilities()
+        assert caps["enabled"] is True
+        refresh.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_disabled_for_non_openai_endpoint_without_key(self, realtime_spec):
+        """An Azure target must not fall back to a ChatGPT bearer."""
+        signin = MagicMock(return_value="ok")
+        with patch("omniagents.core.providers.codex.realtime_signin_state", signin):
+            caps = await RealtimeService(
+                realtime_spec, {"openai_base_url": "https://myco.openai.azure.com/"}
+            ).capabilities()
+        assert caps["enabled"] is False
+        assert "non-OpenAI realtime endpoint" in caps["detail"]
+        signin.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_refresh_failure_reports_instead_of_raising(self, realtime_spec):
+        """Refresh happens when opening a session, not when probing — so this
+        is asserted against the resolver, which is the thing that refreshes."""
+        from omniagents.rpc.realtime_session import resolve_realtime_credential
+
+        with (
+            patch(
+                "omniagents.core.providers.codex.realtime_signin_state",
+                return_value="ok",
+            ),
+            patch(
+                "omniagents.core.providers.codex.realtime_access_token",
+                AsyncMock(side_effect=RuntimeError("refresh rejected: 401")),
+            ),
+        ):
+            token, detail = await resolve_realtime_credential({})
+        assert token is None
+        assert "could not be refreshed" in detail
+
+    @pytest.mark.asyncio
+    async def test_uses_settings_resolver_when_present(self, realtime_spec):
+        """The probe must see the same settings a session would."""
+        service = RealtimeService(
+            realtime_spec,
+            settings={},
+            settings_resolver=lambda: {"openai_api_key": "sk-resolved"},
+        )
+        caps = await service.capabilities()
+        assert caps["enabled"] is True
+        assert caps["detail"] == "settings api key"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_when_resolver_raises(self, realtime_spec, settings_with_key):
+        def boom():
+            raise RuntimeError("resolver down")
+
+        service = RealtimeService(
+            realtime_spec, settings=settings_with_key, settings_resolver=boom
+        )
+        caps = await service.capabilities()
+        assert caps["enabled"] is True

@@ -629,6 +629,60 @@ def build_codex_openai_client(tokens: Optional[Dict[str, Any]] = None) -> Any:
     )
 
 
+def realtime_signin_state() -> str:
+    """``"ok"`` | ``"broken"`` | ``"missing"`` — cheap, offline, side-effect free.
+
+    For availability probes (e.g. "should the mic button render?"). Reads the
+    store only: it never refreshes, so it cannot spend a refresh token or
+    stamp :func:`_stamp_auth_error` as a side effect of someone asking a
+    question. ``"broken"`` reflects a stamp an earlier real refresh left
+    behind.
+    """
+    tokens = load_tokens()
+    if not tokens or not tokens.get("refresh"):
+        return "missing"
+    if tokens.get("auth_error"):
+        return "broken"
+    return "ok"
+
+
+def realtime_access_token_sync() -> Optional[str]:
+    """Synchronous :func:`realtime_access_token`, for sync construction paths.
+
+    Prefer the async form; this exists because the voice pipeline builds its
+    model provider synchronously. Returns ``None`` when not signed in or the
+    refresh fails — callers surface that as "no credential", not a crash.
+    """
+    try:
+        tokens = _ensure_fresh_sync()
+    except Exception:
+        return None
+    return (tokens or {}).get("access")
+
+
+async def realtime_access_token() -> Optional[str]:
+    """Return a fresh ChatGPT access token for the OpenAI realtime API.
+
+    Realtime does NOT go through the Codex backend. Unlike the Responses path
+    (:func:`build_codex_openai_client`, which targets ``CODEX_BASE_URL``), the
+    realtime API is dialled directly at ``wss://api.openai.com/v1/realtime``
+    with this bearer — the ChatGPT subscription entitles it. Verified against
+    ``gpt-realtime``, ``gpt-realtime-1.5`` and ``gpt-realtime-mini``.
+
+    Note the entitlement is scoped, not blanket: the frameless ``/v1/live``
+    endpoint (``gpt-live-*``) answers "Voice session access denied" for the
+    same token, and ``GET /v1/models`` 403s. Only ``/v1/realtime`` is open.
+
+    Refreshes through the same single-flight manager the Responses client
+    uses, so a refresh here is persisted and visible to other processes.
+    Returns ``None`` when not signed in.
+    """
+    tokens = load_tokens()
+    if not tokens or not tokens.get("refresh"):
+        return None
+    return await _CodexTokenManager(tokens).access_token()
+
+
 def register_codex_provider() -> None:
     """Register the ``openai-oauth`` model-provider builder with run_options.
 

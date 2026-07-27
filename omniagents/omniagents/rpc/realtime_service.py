@@ -9,7 +9,10 @@ import uuid
 from typing import Optional, Dict, Any
 
 from omniagents.rpc import RpcMethodsBase
-from omniagents.rpc.realtime_session import RealtimeSession
+from omniagents.rpc.realtime_session import (
+    RealtimeSession,
+    realtime_credential_status,
+)
 from omniagents.core.agents.specs import AgentSpec
 
 
@@ -52,12 +55,36 @@ class RealtimeService(RpcMethodsBase):
         # Event streaming tasks: session_id -> asyncio.Task
         self._event_tasks: Dict[str, asyncio.Task] = {}
 
+    def _effective_settings(self) -> Dict[str, Any]:
+        """Settings for a probe or session — the resolver's view when it works."""
+        if callable(self.settings_resolver):
+            try:
+                resolved = self.settings_resolver()
+            except Exception:
+                resolved = None
+            if resolved is not None:
+                return resolved
+        return self.settings
+
     async def capabilities(self) -> Dict[str, Any]:
-        """Probe voice availability without opening a session (and thus without creating a trace)."""
+        """Probe voice availability without opening a session (and thus without creating a trace).
+
+        ``enabled`` reflects whether a credential is configured. Clients gate
+        the mic button on it, so reporting True unconditionally puts up a
+        control that fails the moment it is clicked. ``detail`` names the
+        credential source when enabled, and the reason when not; it never
+        contains the credential.
+
+        This is an offline check by design — it never refreshes a token. A
+        probe that ran on every client boot would otherwise spend refresh
+        tokens, and stamp the store as broken on rejection, just for asking.
+        """
+        available, detail = realtime_credential_status(self._effective_settings())
         return {
-            "enabled": True,
+            "enabled": available,
             "kind": "realtime",
             "agent_name": getattr(self.spec, "name", None),
+            "detail": detail,
         }
 
     async def start_session(self, session_id: Optional[str] = None) -> Dict[str, Any]:
@@ -78,21 +105,10 @@ class RealtimeService(RpcMethodsBase):
         if session_id in self._sessions:
             raise RuntimeError(f"Session {session_id} already exists")
 
-        resolved_settings = None
-        if callable(self.settings_resolver):
-            try:
-                resolved_settings = self.settings_resolver()
-            except Exception:
-                resolved_settings = None
-
-        effective_settings = (
-            resolved_settings if resolved_settings is not None else self.settings
-        )
-
         # Create session
         session = RealtimeSession(
             spec=self.spec,
-            settings=effective_settings,
+            settings=self._effective_settings(),
             session_id=session_id,
         )
 

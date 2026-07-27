@@ -268,6 +268,16 @@ class VoicePipelineSession:
             voice_api_key = self.settings.get("openai_api_key") or self.settings.get(
                 "api_key"
             )
+        if not voice_api_key:
+            # No explicit key: fall back to the ChatGPT sign-in, gated by the
+            # same rule capabilities() reports, so the mic never promises what
+            # this cannot authenticate.
+            from omniagents.core.providers.codex import realtime_access_token_sync
+            from omniagents.rpc.realtime_session import realtime_credential_status
+
+            available, _ = realtime_credential_status(self.settings)
+            if available:
+                voice_api_key = realtime_access_token_sync()
         if not voice_base_url:
             voice_base_url = self.settings.get("openai_base_url")
 
@@ -363,21 +373,24 @@ class VoicePipelineService(RpcMethodsBase):
                     "reason": f"Voice settings unavailable: {exc}",
                 }
 
-        api_key = (effective_settings or {}).get("openai_api_key") or (
-            effective_settings or {}
-        ).get("api_key")
-        if not api_key:
+        # Same gate the realtime backend uses: a ChatGPT sign-in is a valid
+        # credential here too, so this must not insist on a plain API key.
+        from omniagents.rpc.realtime_session import realtime_credential_status
+
+        available, detail = realtime_credential_status(effective_settings or {})
+        if not available:
             return {
                 "enabled": False,
                 "kind": "pipeline",
                 "agent_name": getattr(self.spec, "name", None),
-                "reason": "No voice API key configured",
+                "reason": detail,
             }
 
         return {
             "enabled": True,
             "kind": "pipeline",
             "agent_name": getattr(self.spec, "name", None),
+            "detail": detail,
         }
 
     async def start_session(self, session_id: Optional[str] = None) -> Dict[str, Any]:
