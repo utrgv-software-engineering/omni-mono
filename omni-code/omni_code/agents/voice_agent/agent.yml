@@ -3,7 +3,14 @@ label: Omni Code Voice
 description: "Voice-optimized coding agent"
 instructions_file: instructions.md
 realtime_mode: true
-voice_backend: pipeline
+# `realtime` (speech-to-speech via /v1/realtime) rather than `pipeline`
+# (STT -> LLM -> TTS). Chooses which service backs /ws/realtime in
+# omniagents' server app: RealtimeService vs VoicePipelineService.
+#
+# Realtime is what a ChatGPT subscription can actually authenticate — the
+# pipeline backend requires a plain `openai_api_key` and reports
+# `enabled: false` without one, so voice was unreachable for OAuth users.
+voice_backend: realtime
 welcome_text: |
   Welcome to Omni Code Voice! I'm ready to help with your coding needs.
 
