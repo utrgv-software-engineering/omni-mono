@@ -9,6 +9,7 @@ from pydantic import ValidationError
 import pytest
 
 from omniagents.rpc.protocol_catalog import OPERATIONS
+from omniagents.rpc.server import GUI_RPC_METHODS
 from scripts.protocol.generate_gui_protocol import (
     ROOT,
     render,
@@ -186,6 +187,7 @@ def test_catalog_requests_exist_on_real_agent_service():
         ROOT / "omniagents/core/agents/service.py"
     )
     assert catalog_requests <= service_methods
+    assert GUI_RPC_METHODS == catalog_requests
 
 
 def test_maintained_client_rpc_calls_are_cataloged():

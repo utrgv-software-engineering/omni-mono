@@ -10,6 +10,7 @@ mkdir -p "$PY_DIR" "$WEB_DIR" "$INK_DIR"
 
 cd "$ROOT_DIR"
 rm -f "$PY_DIR/coverage.xml" "$ROOT_DIR/coverage.xml"
+npm ci --prefix omniagents/backends/web/ui
 pytest
 if [ -f "$ROOT_DIR/coverage.xml" ]; then
   mv "$ROOT_DIR/coverage.xml" "$PY_DIR/coverage.xml"

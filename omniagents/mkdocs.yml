@@ -83,6 +83,7 @@ nav:
   - Development:
     - Contributing: development/contributing.md
     - Testing: development/testing.md
+    - GUI Protocol Governance: development/gui-protocol-governance.md
 
 extra:
   social:

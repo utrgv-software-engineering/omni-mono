@@ -296,6 +296,11 @@ Standard JSON-RPC 2.0 errors:
 For complete protocol details, see the full specification at:
 `omniagents/rpc/protocol.md`
 
+The generated GUI OpenRPC contract and its maintainer policies are described in
+[GUI Protocol Governance](../development/gui-protocol-governance.md). Protocol
+changes must follow its compatibility, regeneration, Desktop sync, and review
+requirements.
+
 ## Examples
 
 Complete examples available in `examples/remote_agent/`.
@@ -305,3 +310,4 @@ Complete examples available in `examples/remote_agent/`.
 - [Server Backend](../backends/server.md) - Set up a server
 - [Core API](core.md) - Agent creation
 - [Examples](../examples.md) - Remote agent examples
+- [GUI Protocol Governance](../development/gui-protocol-governance.md) - Maintain the versioned GUI contract

@@ -104,3 +104,5 @@ Before releasing:
 - [ ] CHANGELOG.md is updated
 - [ ] Version number follows SemVer
 - [ ] Breaking changes are clearly documented
+- [ ] If the GUI protocol changed, generation and v1 compatibility checks pass as documented in [GUI Protocol Governance](../docs/development/gui-protocol-governance.md)
+- [ ] If the GUI protocol changed, Omni Desktop sync provenance identifies the reviewed OmniAgents commit and the active Desktop reviewer approved the release-train impact
