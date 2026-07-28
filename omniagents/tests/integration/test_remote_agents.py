@@ -29,7 +29,12 @@ async def fake_stream_agent(
     print(f"DEBUG fake_stream_agent: Sending message_output")
     await channel.async_call(
         "message_output",
-        {"run_id": run_id, "content": "pong", "is_final": False},
+        {
+            "run_id": run_id,
+            "session_id": sess.id,
+            "content": "pong",
+            "is_final": False,
+        },
     )
     assistant_msg = {"role": "assistant", "content": "pong"}
     sess.history.append(assistant_msg)
@@ -51,9 +56,16 @@ async def fake_stream_agent(
     await asyncio.sleep(0.01)
 
     print(f"DEBUG fake_stream_agent: Sending tool_called")
+    call_id = "call-1"
     await channel.async_call(
         "tool_called",
-        {"run_id": run_id, "tool": "echo", "input": "{}"},
+        {
+            "run_id": run_id,
+            "session_id": sess.id,
+            "tool": "echo",
+            "input": "{}",
+            "call_id": call_id,
+        },
     )
     call_item = {
         "role": "assistant",
@@ -67,7 +79,13 @@ async def fake_stream_agent(
     print(f"DEBUG fake_stream_agent: Sending tool_result")
     await channel.async_call(
         "tool_result",
-        {"run_id": run_id, "tool": "echo", "output": "ok"},
+        {
+            "run_id": run_id,
+            "session_id": sess.id,
+            "tool": "echo",
+            "output": "ok",
+            "call_id": call_id,
+        },
     )
 
     print(f"DEBUG fake_stream_agent: Finished")

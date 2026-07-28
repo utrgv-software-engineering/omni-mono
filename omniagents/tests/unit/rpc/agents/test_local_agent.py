@@ -6,6 +6,7 @@ import pytest
 
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.rpc.agents.local import LocalAgent
+from omniagents.rpc.server import JsonRpcEndpoint
 from omniagents.rpc.transport import TransportClosedError
 
 
@@ -304,12 +305,26 @@ async def test_run_server_processes_requests():
         async def send_result(self, call_id, result):
             results.append((call_id, result))
 
+        async def send_error(self, call_id, code, message, data=None):
+            errors.append(
+                {
+                    "jsonrpc": "2.0",
+                    "id": call_id,
+                    "error": {"code": code, "message": message, "data": data},
+                }
+            )
+
     class DummyTransport:
         def __init__(self):
             self.messages = [
-                {"id": 1, "method": "echo", "params": {"value": 1}},
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "echo",
+                    "params": {"value": 1},
+                },
                 "skip",
-                {"id": 2, "method": "fail", "params": {}},
+                {"jsonrpc": "2.0", "id": 2, "method": "fail", "params": {}},
             ]
             self.index = 0
             self._connected = True
@@ -339,7 +354,7 @@ async def test_run_server_processes_requests():
         async def fail(self):
             raise ValueError("explode")
 
-    endpoint = SimpleNamespace(methods=Methods())
+    endpoint = JsonRpcEndpoint(Methods(), allowed_methods={"echo", "fail"})
 
     await agent._run_server(endpoint, DummyChannel())
 

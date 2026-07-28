@@ -140,8 +140,12 @@ class LocalAgent(RemoteAgent):
 
         # Create and start server endpoint
         from omniagents.rpc import JsonRpcEndpoint
+        from omniagents.rpc.server import GUI_RPC_METHODS
 
-        endpoint = JsonRpcEndpoint(self._agent_service)
+        endpoint = JsonRpcEndpoint(
+            self._agent_service,
+            allowed_methods=GUI_RPC_METHODS,
+        )
 
         # Start server task
         self._server_task = asyncio.create_task(self._run_server(endpoint, channel))
@@ -175,32 +179,7 @@ class LocalAgent(RemoteAgent):
                 except Exception:
                     continue
 
-                # Process RPC call
-                call_id = data.get("id")
-                method = data.get("method")
-                params = data.get("params") or data.get("args") or {}
-
-                if method:
-                    try:
-                        func = getattr(endpoint.methods, method)
-                        result = await func(**params)
-                        if call_id is not None:
-                            await channel.send_result(call_id, result)
-                    except Exception as e:
-                        if call_id is not None:
-                            error_response = {
-                                "jsonrpc": "2.0",
-                                "id": call_id,
-                                "error": {
-                                    "code": -32603,
-                                    "message": str(e),
-                                    "data": {
-                                        "type": e.__class__.__name__,
-                                        "method": method,
-                                    },
-                                },
-                            }
-                            await self._server_transport.send_json(error_response)
+                await endpoint._process_message(channel, data)
         except Exception:
             # Server loop ended
             pass

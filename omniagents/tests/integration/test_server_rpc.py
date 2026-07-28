@@ -113,6 +113,44 @@ def _wait_for_result(ws, target_id):
             return resp
 
 
+def test_rpc_registry_rejects_helpers_and_keeps_connection_usable():
+    spec = AgentSpec(
+        name="Registry",
+        welcome_text="hi",
+        get_agent_instructions=lambda: "instr",
+        build_agent=dummy_build_agent,
+    )
+    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json(
+            {
+                "jsonrpc": "2.0",
+                "method": "future_notification",
+                "params": {"enabled": True},
+            }
+        )
+        ws.send_json(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "request_client_function",
+                "params": {},
+            }
+        )
+        rejected = _wait_for_result(ws, 1)
+        assert rejected["error"] == {
+            "code": -32601,
+            "message": "Method not found",
+            "data": {"method": "request_client_function"},
+        }
+
+        ws.send_json({"jsonrpc": "2.0", "id": 2, "method": "list_sessions"})
+        listed = _wait_for_result(ws, 2)
+        assert listed["result"] == []
+
+
 def test_concurrent_websocket_connections(monkeypatch):
     spec = AgentSpec(
         name="B",

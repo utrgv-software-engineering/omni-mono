@@ -19,10 +19,10 @@ export interface JSONRPCResponse {
   jsonrpc: "2.0";
   id: string | number;
   result?: unknown;
-  error?: JSONRPCError;
+  error?: JSONRPCErrorObject;
 }
 
-export interface JSONRPCError {
+export interface JSONRPCErrorObject {
   code: number;
   message: string;
   data?: unknown;
@@ -169,7 +169,6 @@ export interface RunStatusEvent {
 
 export interface ClientRequest {
   jsonrpc: "2.0";
-  id: string | number;
   method: "client_request";
   params: {
     request_id: string;

@@ -8,9 +8,36 @@ import type {
   JSONRPCRequest,
   JSONRPCResponse,
   JSONRPCNotification,
+  JSONRPCErrorObject,
   ServerEvent,
   WebSocketMessage,
 } from "../types/protocol.js";
+import type {
+  RpcMethodMap as GeneratedRpcMethodMap,
+  RpcNotificationMap as GeneratedRpcNotificationMap,
+} from "../protocol/generated/gui-v1.js";
+
+type InkNotificationMap = {
+  [Event in ServerEvent as Event["method"]]: Event["params"];
+};
+type RpcNotificationMap = {
+  [Method in keyof GeneratedRpcNotificationMap]: Method extends keyof InkNotificationMap
+    ? InkNotificationMap[Method]
+    : GeneratedRpcNotificationMap[Method];
+};
+type RpcMethodMap = GeneratedRpcMethodMap;
+
+export class JSONRPCError extends Error {
+  readonly code: number;
+  readonly data?: unknown;
+
+  constructor(error: JSONRPCErrorObject) {
+    super(error.message);
+    this.name = "JSONRPCError";
+    this.code = error.code;
+    this.data = error.data;
+  }
+}
 
 export interface RPCClientOptions {
   url: string;
@@ -48,6 +75,24 @@ export class RPCClient extends EventEmitter {
     this.url = options.url;
     this.token = options.token;
     this.debug = options.debug || false;
+  }
+
+  override on<Event extends keyof RpcNotificationMap>(
+    event: Event,
+    listener: (payload: RpcNotificationMap[Event]) => void,
+  ): this;
+  override on(
+    event:
+      | "connected"
+      | "rpc_ready"
+      | "disconnected"
+      | "error"
+      | "reconnecting"
+      | "reconnect_failed",
+    listener: (...args: any[]) => void,
+  ): this;
+  override on(event: string, listener: (...args: any[]) => void): this {
+    return super.on(event, listener);
   }
 
   /**
@@ -153,9 +198,9 @@ export class RPCClient extends EventEmitter {
     if (variables) {
       params.variables = variables;
     }
-    return this.call<{ run_id: string; session_id: string }>(
+    return this.call(
       "start_run",
-      params,
+      params as unknown as RpcMethodMap["start_run"]["params"],
     );
   }
 
@@ -163,7 +208,7 @@ export class RPCClient extends EventEmitter {
    * Stop an active run
    */
   async stopRun(runId: string): Promise<void> {
-    await this.call<void>("stop_run", { run_id: runId });
+    await this.call("stop_run", { run_id: runId });
   }
 
   /**
@@ -172,9 +217,9 @@ export class RPCClient extends EventEmitter {
   async getSessionHistory(
     sessionId: string,
   ): Promise<Array<{ role: string; content: unknown; timestamp: string }>> {
-    return this.call<
+    return this.call("get_session_history", { session_id: sessionId }) as Promise<
       Array<{ role: string; content: unknown; timestamp: string }>
-    >("get_session_history", { session_id: sessionId });
+    >;
   }
 
   /**
@@ -186,12 +231,12 @@ export class RPCClient extends EventEmitter {
   ): Promise<
     Array<{ content: string; session_id?: string; timestamp?: string }>
   > {
-    return this.call<
-      Array<{ content: string; session_id?: string; timestamp?: string }>
-    >("get_user_history", {
+    return this.call("get_user_history", {
       limit,
       include_archived: includeArchived,
-    });
+    }) as Promise<
+      Array<{ content: string; session_id?: string; timestamp?: string }>
+    >;
   }
 
   /**
@@ -207,7 +252,7 @@ export class RPCClient extends EventEmitter {
       last_message?: unknown;
     }>
   > {
-    return this.call<
+    return this.call("list_sessions") as Promise<
       Array<{
         id: string;
         created_at: string;
@@ -216,14 +261,14 @@ export class RPCClient extends EventEmitter {
         first_message?: unknown;
         last_message?: unknown;
       }>
-    >("list_sessions", {});
+    >;
   }
 
   /**
    * Archive a session
    */
   async archiveSession(sessionId: string): Promise<void> {
-    await this.call<void>("archive_session", { session_id: sessionId });
+    await this.call("archive_session", { session_id: sessionId });
   }
 
   /**
@@ -233,7 +278,7 @@ export class RPCClient extends EventEmitter {
     version: number,
     functions: Array<{ name: string; description?: string }>,
   ): Promise<void> {
-    await this.call<void>("client_functions", { version, functions });
+    await this.call("client_functions", { version, functions });
   }
 
   /**
@@ -252,7 +297,10 @@ export class RPCClient extends EventEmitter {
     if (error) {
       params.error = error;
     }
-    await this.call<void>("client_response", params);
+    await this.call(
+      "client_response",
+      params as unknown as RpcMethodMap["client_response"]["params"],
+    );
   }
 
   /**
@@ -274,7 +322,10 @@ export class RPCClient extends EventEmitter {
     if (rejectionMessage) {
       params.rejection_message = rejectionMessage;
     }
-    return this.call<boolean>("tool_approval_response", params);
+    return this.call(
+      "tool_approval_response",
+      params as unknown as RpcMethodMap["tool_approval_response"]["params"],
+    );
   }
 
   /**
@@ -296,7 +347,10 @@ export class RPCClient extends EventEmitter {
     if (rejectionMessage) {
       params.rejection_message = rejectionMessage;
     }
-    return this.call<boolean>("mcp_approval_response", params);
+    return this.call(
+      "mcp_approval_response",
+      params as unknown as RpcMethodMap["mcp_approval_response"]["params"],
+    );
   }
 
   /**
@@ -310,14 +364,14 @@ export class RPCClient extends EventEmitter {
       result_schema?: Record<string, unknown>;
     }>
   > {
-    return this.call<
+    return this.call("list_server_functions") as Promise<
       Array<{
         name: string;
         description?: string;
         params_schema?: Record<string, unknown>;
         result_schema?: Record<string, unknown>;
       }>
-    >("list_server_functions", {});
+    >;
   }
 
   /**
@@ -335,7 +389,10 @@ export class RPCClient extends EventEmitter {
     if (sessionId) {
       params.session_id = sessionId;
     }
-    return this.call<Record<string, unknown>>("server_call", params);
+    return this.call(
+      "server_call",
+      params as unknown as RpcMethodMap["server_call"]["params"],
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -368,7 +425,17 @@ export class RPCClient extends EventEmitter {
     if (opts?.safeToolOverrides)
       params.safe_tool_overrides = opts.safeToolOverrides;
     if (opts?.source) params.source = opts.source;
-    return this.call("enqueue_message", params);
+    return this.call(
+      "enqueue_message",
+      params as unknown as RpcMethodMap["enqueue_message"]["params"],
+    ) as Promise<{
+      ok: boolean;
+      id?: string;
+      depth?: number;
+      reason?: string;
+      session_id?: string;
+      enqueued_at?: number;
+    }>;
   }
 
   async listQueue(sessionId: string): Promise<{
@@ -385,7 +452,20 @@ export class RPCClient extends EventEmitter {
       enqueued_at: number;
     }>;
   }> {
-    return this.call("list_queue", { session_id: sessionId });
+    return this.call("list_queue", { session_id: sessionId }) as Promise<{
+      session_id: string;
+      depth: number;
+      items: Array<{
+        id: string;
+        content: string;
+        role: string;
+        trigger_run: boolean;
+        variables: Record<string, unknown> | null;
+        safe_tool_overrides: Record<string, unknown> | null;
+        source: string | null;
+        enqueued_at: number;
+      }>;
+    }>;
   }
 
   async cancelQueuedMessage(
@@ -395,13 +475,18 @@ export class RPCClient extends EventEmitter {
     return this.call("cancel_queued_message", {
       session_id: sessionId,
       item_id: itemId,
-    });
+    }) as Promise<{ ok: boolean; id?: string; depth?: number; reason?: string }>;
   }
 
   /**
    * Make a generic RPC call
    */
-  private async call<T>(method: string, params: unknown): Promise<T> {
+  private async call<Method extends keyof RpcMethodMap>(
+    method: Method,
+    ...args: {} extends RpcMethodMap[Method]["params"]
+      ? [params?: RpcMethodMap[Method]["params"]]
+      : [params: RpcMethodMap[Method]["params"]]
+  ): Promise<RpcMethodMap[Method]["result"]> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket not connected");
     }
@@ -411,8 +496,8 @@ export class RPCClient extends EventEmitter {
       jsonrpc: "2.0",
       id,
       method,
-      params,
     };
+    if (args[0] !== undefined) request.params = args[0];
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, {
@@ -426,7 +511,7 @@ export class RPCClient extends EventEmitter {
           reject(error);
         }
       });
-    }) as Promise<T>;
+    }) as Promise<RpcMethodMap[Method]["result"]>;
   }
 
   /**
@@ -466,7 +551,7 @@ export class RPCClient extends EventEmitter {
     this.pendingRequests.delete(response.id);
 
     if (response.error) {
-      pending.reject(new Error(response.error.message));
+      pending.reject(new JSONRPCError(response.error));
     } else {
       pending.resolve(response.result);
     }

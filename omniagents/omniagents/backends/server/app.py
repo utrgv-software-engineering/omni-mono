@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, Callable
 from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
 from fastapi import WebSocketDisconnect
 from omniagents.rpc import JsonRpcEndpoint
+from omniagents.rpc.server import GUI_RPC_METHODS
 
 from omniagents.core.config.loader import load_agent_spec_from_yaml
 from omniagents.core.agents.specs import AgentSpec
@@ -266,7 +267,7 @@ def build_app(
             registrar(service)
     except Exception as e:
         print(f"Warning: register_runtime_hooks failed: {e}")
-    endpoint = JsonRpcEndpoint(service)
+    endpoint = JsonRpcEndpoint(service, allowed_methods=GUI_RPC_METHODS)
 
     # Resolve auth dependency: provider-based or legacy token
     _auth_deps = None

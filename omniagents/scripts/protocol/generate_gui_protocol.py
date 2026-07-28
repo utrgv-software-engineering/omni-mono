@@ -15,6 +15,9 @@ PYTHON_PATH = ROOT / "omniagents/rpc/generated/gui_v1/models.py"
 PYTHON_SCHEMA_PATH = ROOT / "omniagents/rpc/generated/gui_v1/schema_models.py"
 PYTHON_INIT_PATH = ROOT / "omniagents/rpc/generated/gui_v1/__init__.py"
 TYPESCRIPT_PATH = ROOT / "omniagents/backends/web/ui/src/protocol/generated/gui-v1.ts"
+INK_TYPESCRIPT_PATH = (
+    ROOT / "omniagents/backends/ink/tui/src/protocol/generated/gui-v1.ts"
+)
 TYPESCRIPT_SCHEMA_PATH = (
     ROOT / "omniagents/backends/web/ui/src/protocol/generated/schema-types.ts"
 )
@@ -616,12 +619,13 @@ def render() -> dict[Path, bytes]:
             str(PYTHON_PATH.relative_to(ROOT)),
             str(PYTHON_SCHEMA_PATH.relative_to(ROOT)),
             str(TYPESCRIPT_PATH.relative_to(ROOT)),
+            str(INK_TYPESCRIPT_PATH.relative_to(ROOT)),
             str(TYPESCRIPT_SCHEMA_PATH.relative_to(ROOT)),
         ],
     }
     inventory = {
         "source": "omniagents.rpc.protocol_catalog.OPERATIONS",
-        "router_mode": "reflective_getattr_pending_split_b_allowlist",
+        "router_mode": "generated_request_allowlist",
         "requests": {
             "stable": [
                 operation.name
@@ -655,6 +659,7 @@ def render() -> dict[Path, bytes]:
         PYTHON_SCHEMA_PATH: generated_python_schema,
         PYTHON_INIT_PATH: b"from .models import *\n",
         TYPESCRIPT_PATH: build_typescript(),
+        INK_TYPESCRIPT_PATH: build_typescript(),
         TYPESCRIPT_SCHEMA_PATH: generated_typescript_schema,
         MANIFEST_PATH: _json_bytes(manifest),
         INVENTORY_PATH: _json_bytes(inventory),

@@ -59,6 +59,6 @@
       "cancel_queued_message"
     ]
   },
-  "router_mode": "reflective_getattr_pending_split_b_allowlist",
+  "router_mode": "generated_request_allowlist",
   "source": "omniagents.rpc.protocol_catalog.OPERATIONS"
 }

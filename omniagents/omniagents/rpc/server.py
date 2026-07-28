@@ -4,6 +4,7 @@ Adds debug logging for all calls and notifications when OMNIAGENTS_SERVER_DEBUG
 is set or omniagents.core.debug.Debug is enabled.
 """
 
+from collections.abc import Collection
 from typing import Any, Dict, Optional
 import inspect
 import json
@@ -11,11 +12,18 @@ import os
 import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from pydantic import ValidationError
 
 from .base import RpcMethodsBase
+from .generated.gui_v1.models import (
+    CLIENT_REQUEST_MODELS,
+    CLIENT_RESULT_MODELS,
+    SERVER_NOTIFICATION_MODELS,
+)
 from omniagents.core.debug import Debug
 
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
+GUI_RPC_METHODS = frozenset(CLIENT_REQUEST_MODELS)
 
 
 class JsonRpcChannel:
@@ -27,6 +35,14 @@ class JsonRpcChannel:
     async def async_call(
         self, method: str, args: Optional[Dict[str, Any]] = None
     ) -> None:
+        model = SERVER_NOTIFICATION_MODELS.get(method)
+        if model is not None:
+            known_args = {
+                key: value
+                for key, value in (args or {}).items()
+                if key in model.model_fields
+            }
+            model.model_validate(known_args, strict=True)
         payload = {"jsonrpc": "2.0", "method": method, "params": args or {}}
         Debug.log(f"[srv]   → {method} payload={args or {}}")
         await self.transport.send_json(payload)
@@ -71,8 +87,15 @@ class JsonRpcChannel:
 class JsonRpcEndpoint:
     """Minimal JSON-RPC 2.0 WebSocket endpoint."""
 
-    def __init__(self, methods: RpcMethodsBase) -> None:
+    def __init__(
+        self,
+        methods: RpcMethodsBase,
+        allowed_methods: Optional[Collection[str]] = None,
+    ) -> None:
         self.methods = methods
+        self.allowed_methods = (
+            frozenset(allowed_methods) if allowed_methods is not None else None
+        )
 
     def register_route(self, app: FastAPI, path: str, dependencies=None) -> None:
         dependencies = dependencies or []
@@ -200,7 +223,10 @@ class JsonRpcEndpoint:
                 )
             return
 
-        func = getattr(self.methods, method, None)
+        if self.allowed_methods is not None and method not in self.allowed_methods:
+            func = None
+        else:
+            func = getattr(self.methods, method, None)
         if not callable(func):
             if call_id is not None:
                 await channel.send_error(
@@ -210,6 +236,35 @@ class JsonRpcEndpoint:
                     {"method": method},
                 )
             return
+
+        request_model = CLIENT_REQUEST_MODELS.get(method)
+        if request_model is not None:
+            known_params = {
+                key: value
+                for key, value in params.items()
+                if key in request_model.model_fields
+            }
+            try:
+                params = request_model.model_validate(
+                    known_params, strict=True
+                ).model_dump(exclude_unset=True)
+            except ValidationError as exc:
+                if call_id is not None:
+                    await channel.send_error(
+                        call_id,
+                        -32602,
+                        "Invalid params",
+                        {
+                            "message": str(exc),
+                            "method": method,
+                            "errors": exc.errors(
+                                include_url=False,
+                                include_context=False,
+                                include_input=False,
+                            ),
+                        },
+                    )
+                return
 
         try:
             signature = inspect.signature(func)
@@ -254,4 +309,11 @@ class JsonRpcEndpoint:
         )
 
         if call_id is not None:
+            result_model = CLIENT_RESULT_MODELS.get(method)
+            if result_model is not None:
+                try:
+                    result_model.model_validate(result, strict=True)
+                except ValidationError as exc:
+                    await self._handle_internal_error(channel, call_id, exc, method)
+                    return
             await channel.send_result(call_id, result)

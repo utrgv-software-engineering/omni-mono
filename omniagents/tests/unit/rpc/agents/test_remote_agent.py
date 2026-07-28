@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 
 from omniagents.rpc.agents.remote import RemoteAgent, _ClientEventMethods
+from omniagents.rpc.generated.gui_v1 import SERVER_NOTIFICATION_MODELS
 
 
 @pytest.mark.asyncio
@@ -115,6 +117,19 @@ async def test_list_and_archive_sessions():
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_passes_pagination_params():
+    agent = RemoteAgent("ws://host")
+    list_sessions = AsyncMock(return_value=SimpleNamespace(result=[{"id": "s2"}]))
+    agent._client = SimpleNamespace(other=SimpleNamespace(list_sessions=list_sessions))
+    agent._ensure_client = AsyncMock()
+
+    sessions = await agent.list_sessions(limit=20, offset=40)
+
+    assert sessions == [{"id": "s2"}]
+    list_sessions.assert_awaited_once_with(limit=20, offset=40)
+
+
+@pytest.mark.asyncio
 async def test_ensure_client_initializes_rpc(monkeypatch):
     agent = RemoteAgent("ws://host")
 
@@ -188,7 +203,27 @@ async def test_run_streamed_with_variables(monkeypatch):
 
     assert start_run_params["variables"] == {"x": 1}
     assert start_run_params["context"] == {"y": 2}
+    assert start_run_params == {
+        "prompt": "hi",
+        "session_id": None,
+        "variables": {"x": 1},
+        "context": {"y": 2},
+    }
     assert agent._session_id == "abc"
+
+
+@pytest.mark.asyncio
+async def test_run_streamed_rejects_invalid_generated_start_run_params():
+    agent = RemoteAgent("ws://host")
+    start_run = AsyncMock()
+    agent._client = SimpleNamespace(other=SimpleNamespace(start_run=start_run))
+    agent._ensure_client = AsyncMock()
+    events = agent.run_streamed([{"role": "user", "content": 123}]).stream_events()
+
+    with pytest.raises(ValidationError):
+        await anext(events)
+
+    start_run.assert_not_awaited()
 
 
 async def consume(gen):
@@ -222,3 +257,43 @@ async def test_client_event_methods_queue():
         "run_started",
         "client_request",
     ]
+
+
+@pytest.mark.asyncio
+async def test_client_event_methods_validate_generated_notifications(monkeypatch):
+    queue = asyncio.Queue()
+    methods = _ClientEventMethods(queue)
+    generated_model = SERVER_NOTIFICATION_MODELS["message_output"]
+    received = []
+
+    class RecordingModel:
+        @classmethod
+        def model_validate(cls, params):
+            received.append(params)
+            return generated_model.model_validate(params)
+
+    monkeypatch.setitem(SERVER_NOTIFICATION_MODELS, "message_output", RecordingModel)
+    payload = {"run_id": "run-1", "session_id": "session-1", "content": "hi"}
+
+    await methods.message_output(**payload)
+
+    assert received == [payload]
+    assert await queue.get() == {"method": "message_output", "params": payload}
+
+
+@pytest.mark.asyncio
+async def test_client_event_methods_preserve_legacy_and_unknown_notifications():
+    queue = asyncio.Queue()
+    methods = _ClientEventMethods(queue)
+
+    await methods.tool_called(tool="echo", input="{}")
+    await methods.future_notification(value=1)
+
+    assert await queue.get() == {
+        "method": "tool_called",
+        "params": {"tool": "echo", "input": "{}"},
+    }
+    assert await queue.get() == {
+        "method": "future_notification",
+        "params": {"value": 1},
+    }

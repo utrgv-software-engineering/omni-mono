@@ -1,10 +1,12 @@
+import type { RpcMethodMap, RpcNotificationMap } from '../protocol/generated/gui-v1'
+
 type JSONRPCId = number | string
 
 type JSONRPCRequest = {
   jsonrpc: '2.0'
   id: JSONRPCId
   method: string
-  params?: Record<string, unknown>
+  params?: unknown
 }
 
 type JSONRPCResponse = {
@@ -23,6 +25,18 @@ type JSONRPCNotification = {
 export type ServerEvent = JSONRPCNotification
 
 type Listener = (payload: any) => void
+
+export class JSONRPCError extends Error {
+  readonly code: number
+  readonly data?: unknown
+
+  constructor(code: number, message: string, data?: unknown) {
+    super(message)
+    this.name = 'JSONRPCError'
+    this.code = code
+    this.data = data
+  }
+}
 
 export class RPCClient {
   private ws: WebSocket | null = null
@@ -54,7 +68,8 @@ export class RPCClient {
           if (pending) {
             this.pending.delete(msg.id)
             if ((msg as JSONRPCResponse).error) {
-              pending.reject(new Error((msg as JSONRPCResponse).error!.message))
+              const error = (msg as JSONRPCResponse).error!
+              pending.reject(new JSONRPCError(error.code ?? -32603, error.message, error.data))
             } else {
               pending.resolve((msg as JSONRPCResponse).result)
             }
@@ -76,7 +91,7 @@ export class RPCClient {
     }
   }
 
-  on(event: string, handler: Listener): () => void {
+  on<E extends keyof RpcNotificationMap>(event: E, handler: (payload: RpcNotificationMap[E]) => void): () => void {
     if (!this.listeners.has(event)) this.listeners.set(event, new Set())
     const set = this.listeners.get(event)!
     set.add(handler)
@@ -91,11 +106,17 @@ export class RPCClient {
     }
   }
 
-  private async call<T = any>(method: string, params?: Record<string, unknown>): Promise<T> {
+  private async call<M extends keyof RpcMethodMap>(
+    method: M,
+    ...args: {} extends RpcMethodMap[M]['params']
+      ? [params?: RpcMethodMap[M]['params']]
+      : [params: RpcMethodMap[M]['params']]
+  ): Promise<RpcMethodMap[M]['result']> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected')
     const id = ++this.nextId
-    const req: JSONRPCRequest = { jsonrpc: '2.0', id, method, params }
-    const p = new Promise<T>((resolve, reject) => {
+    const req: JSONRPCRequest = { jsonrpc: '2.0', id, method }
+    if (args[0] !== undefined) req.params = args[0]
+    const p = new Promise<RpcMethodMap[M]['result']>((resolve, reject) => {
       this.pending.set(id, { resolve: resolve as any, reject })
     })
     this.ws.send(JSON.stringify(req))
@@ -108,7 +129,7 @@ export class RPCClient {
     if (sessionId) params.session_id = sessionId
     if (variables) params.variables = variables
     if (content != null) params.content = content
-    return this.call('start_run', params)
+    return this.call('start_run', params as unknown as RpcMethodMap['start_run']['params'])
   }
 
   async stopRun(runId: string): Promise<void> {
@@ -116,11 +137,11 @@ export class RPCClient {
   }
 
   async getSessionHistory(sessionId: string): Promise<Array<{ role: string; content: unknown; timestamp: string }>> {
-    return this.call('get_session_history', { session_id: sessionId })
+    return this.call('get_session_history', { session_id: sessionId }) as Promise<Array<{ role: string; content: unknown; timestamp: string }>>
   }
 
   async listSessions(): Promise<Array<{ id: string; created_at: string; archived: boolean; message_count: number; first_message?: unknown; last_message?: unknown }>> {
-    return this.call('list_sessions', {})
+    return this.call('list_sessions') as Promise<Array<{ id: string; created_at: string; archived: boolean; message_count: number; first_message?: unknown; last_message?: unknown }>>
   }
 
   async deleteSession(sessionId: string): Promise<boolean> {
@@ -131,14 +152,14 @@ export class RPCClient {
     const params: Record<string, unknown> = { request_id: requestId, ok }
     if (result) params.result = result
     if (error) params.error = error
-    await this.call('client_response', params)
+    await this.call('client_response', params as unknown as RpcMethodMap['client_response']['params'])
   }
 
   async toolApprovalResponse(callId: string, decision: 'approve' | 'reject', alwaysApprove: boolean = false, rejectionMessage?: string): Promise<boolean> {
     const params: Record<string, unknown> = { call_id: callId, decision }
     if (alwaysApprove) params.always_approve = true
     if (rejectionMessage) params.rejection_message = rejectionMessage
-    return this.call('tool_approval_response', params)
+    return this.call('tool_approval_response', params as unknown as RpcMethodMap['tool_approval_response']['params'])
   }
 
   // Hosted MCP-tool approvals use a parallel RPC method that takes a
@@ -149,18 +170,18 @@ export class RPCClient {
   async mcpApprovalResponse(requestId: string, decision: 'approve' | 'reject', rejectionMessage?: string): Promise<boolean> {
     const params: Record<string, unknown> = { request_id: requestId, decision }
     if (rejectionMessage) params.rejection_message = rejectionMessage
-    return this.call('mcp_approval_response', params)
+    return this.call('mcp_approval_response', params as unknown as RpcMethodMap['mcp_approval_response']['params'])
   }
 
   async listServerFunctions(): Promise<Array<{ name: string; description?: string; params_schema?: Record<string, unknown>; result_schema?: Record<string, unknown> }>> {
-    return this.call('list_server_functions', {})
+    return this.call('list_server_functions') as Promise<Array<{ name: string; description?: string; params_schema?: Record<string, unknown>; result_schema?: Record<string, unknown> }>>
   }
 
   async serverCall(func: string, args?: Record<string, unknown>, sessionId?: string): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = { function: func }
     if (args) params.args = args
     if (sessionId) params.session_id = sessionId
-    return this.call('server_call', params)
+    return this.call('server_call', params as unknown as RpcMethodMap['server_call']['params'])
   }
 
   async clientFunctions(version: number, functions: Array<{ name: string; description?: string }>): Promise<void> {
@@ -168,7 +189,7 @@ export class RPCClient {
   }
 
   async getAgentInfo(): Promise<{ name?: string; header_title?: string; page_title?: string; welcome_text?: string; page_title_suffix?: string; theme_color?: string }> {
-    return this.call('get_agent_info', {})
+    return this.call('get_agent_info') as Promise<{ name?: string; header_title?: string; page_title?: string; welcome_text?: string; page_title_suffix?: string; theme_color?: string }>
   }
 
   // ---------------------------------------------------------------------
@@ -193,18 +214,18 @@ export class RPCClient {
     if (opts?.variables) params.variables = opts.variables
     if (opts?.safeToolOverrides) params.safe_tool_overrides = opts.safeToolOverrides
     if (opts?.source) params.source = opts.source
-    return this.call('enqueue_message', params)
+    return this.call('enqueue_message', params as unknown as RpcMethodMap['enqueue_message']['params']) as Promise<{ ok: boolean; id?: string; depth?: number; reason?: string; session_id?: string; enqueued_at?: number }>
   }
 
   async listQueue(sessionId: string): Promise<{ session_id: string; depth: number; items: QueuedMessage[] }> {
-    return this.call('list_queue', { session_id: sessionId })
+    return this.call('list_queue', { session_id: sessionId }) as Promise<{ session_id: string; depth: number; items: QueuedMessage[] }>
   }
 
   async cancelQueuedMessage(
     sessionId: string,
     itemId: string,
   ): Promise<{ ok: boolean; id?: string; depth?: number; reason?: string }> {
-    return this.call('cancel_queued_message', { session_id: sessionId, item_id: itemId })
+    return this.call('cancel_queued_message', { session_id: sessionId, item_id: itemId }) as Promise<{ ok: boolean; id?: string; depth?: number; reason?: string }>
   }
 }
 

@@ -5,11 +5,31 @@ from typing import Any, AsyncGenerator, List, Dict, Optional
 from agents import RunConfig, StreamEvent
 import asyncio
 import os
+from pydantic import ValidationError
 
 from omniagents.rpc import RpcMethodsBase, JsonRpcClient
 from omniagents.core.interfaces.agent import UnifiedAgentBase
+from omniagents.rpc.generated.gui_v1 import (
+    CLIENT_REQUEST_MODELS,
+    SERVER_NOTIFICATION_MODELS,
+)
 from ._events import map_notification_to_event
 from omniagents.core.debug import Debug
+
+
+def _validate_request_params(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    model = CLIENT_REQUEST_MODELS[method].model_validate(params)
+    return model.model_dump(exclude_unset=True)
+
+
+def _adapt_notification_params(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    model = SERVER_NOTIFICATION_MODELS.get(method)
+    if model is None:
+        return params
+    try:
+        return model.model_validate(params).model_dump(exclude_unset=True)
+    except ValidationError:
+        return params
 
 
 class RemoteAgent(UnifiedAgentBase):
@@ -99,6 +119,7 @@ class RemoteAgent(UnifiedAgentBase):
                     start_params["group_id"] = run_config.group_id
 
             # Start run on remote server
+            start_params = _validate_request_params("start_run", start_params)
             resp = await self._client.other.start_run(**start_params)
 
             if run_config is None:
@@ -170,7 +191,10 @@ class RemoteAgent(UnifiedAgentBase):
         if limit is None:
             resp = await self._client.other.list_sessions()
         else:
-            resp = await self._client.other.list_sessions(limit=limit, offset=offset)
+            params = _validate_request_params(
+                "list_sessions", {"limit": limit, "offset": offset}
+            )
+            resp = await self._client.other.list_sessions(**params)
         return getattr(resp, "result", resp)
 
     async def archive_session(self, session_id: str) -> None:
@@ -298,8 +322,18 @@ class _ClientEventMethods(RpcMethodsBase):
 
     async def _push(self, method: str, **params):
         """Push event to queue."""
+        params = _adapt_notification_params(method, params)
         await self._queue.put({"method": method, "params": params})
         return True
+
+    def __getattr__(self, method: str):
+        if method.startswith("_"):
+            raise AttributeError(method)
+
+        async def receive_notification(**params):
+            return await self._push(method, **params)
+
+        return receive_notification
 
     # Event notification methods
     async def tool_called(self, **params):

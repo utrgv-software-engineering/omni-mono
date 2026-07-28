@@ -152,6 +152,12 @@ def test_generation_is_deterministic_and_checked_in():
         assert path.read_bytes() == content
 
 
+def test_ink_and_web_consume_identical_generated_protocol_maps():
+    web = ROOT / "omniagents/backends/web/ui/src/protocol/generated/gui-v1.ts"
+    ink = ROOT / "omniagents/backends/ink/tui/src/protocol/generated/gui-v1.ts"
+    assert ink.read_bytes() == web.read_bytes()
+
+
 def test_manifest_digest_matches_canonical_documents():
     manifest = _load(ROOT / "protocol/openrpc/manifest.json")
     openrpc = (ROOT / "protocol/openrpc/omniagents-gui-v1.json").read_bytes()
@@ -162,10 +168,10 @@ def test_manifest_digest_matches_canonical_documents():
     assert manifest["canonical_sha256"] == hashlib.sha256(openrpc + schema).hexdigest()
 
 
-def test_inventory_reports_reflective_router_without_blessing_callables():
+def test_inventory_reports_generated_request_allowlist():
     inventory = _load(ROOT / "protocol/openrpc/inventory.json")
     assert inventory["source"] == "omniagents.rpc.protocol_catalog.OPERATIONS"
-    assert inventory["router_mode"] == "reflective_getattr_pending_split_b_allowlist"
+    assert inventory["router_mode"] == "generated_request_allowlist"
     assert len(inventory["requests"]["stable"]) == 18
     assert len(inventory["requests"]["experimental"]) == 10
     assert len(inventory["notifications"]["stable"]) == 14
