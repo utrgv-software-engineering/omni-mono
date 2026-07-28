@@ -1,0 +1,64 @@
+{
+  "excluded_surfaces": [
+    "/ws/realtime",
+    "/ws/terminal"
+  ],
+  "notifications": {
+    "experimental": [
+      "session_forked",
+      "session_variables_changed"
+    ],
+    "stable": [
+      "run_started",
+      "run_status",
+      "tool_called",
+      "tool_result",
+      "message_output",
+      "token",
+      "run_end",
+      "tool_approval_requested",
+      "tool_approval_resolved",
+      "mcp_approval_requested",
+      "mcp_approval_resolved",
+      "client_request",
+      "client_request_resolved",
+      "queue_changed"
+    ]
+  },
+  "requests": {
+    "experimental": [
+      "fork_session",
+      "set_session_hold",
+      "queue_status",
+      "enqueue_notification",
+      "update_session_variables",
+      "set_client_status",
+      "disable_tool",
+      "disable_mcp_server",
+      "report_incident",
+      "export_session"
+    ],
+    "stable": [
+      "start_run",
+      "stop_run",
+      "send_user_message",
+      "get_session_history",
+      "list_sessions",
+      "archive_session",
+      "delete_session",
+      "get_user_history",
+      "get_agent_info",
+      "tool_approval_response",
+      "mcp_approval_response",
+      "client_functions",
+      "client_response",
+      "list_server_functions",
+      "server_call",
+      "enqueue_message",
+      "list_queue",
+      "cancel_queued_message"
+    ]
+  },
+  "router_mode": "reflective_getattr_pending_split_b_allowlist",
+  "source": "omniagents.rpc.protocol_catalog.OPERATIONS"
+}
