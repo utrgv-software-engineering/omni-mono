@@ -488,3 +488,62 @@ def test_playground_ws_passes_per_session_workspace_root_to_stream(
     assert "omniagents_studio_playground_" in ws2
     assert ws1 != _os.getcwd()
     assert ws2 != _os.getcwd()
+
+
+# ---------------------------------------------------------------------------
+# Studio's own WebSocket surfaces are independently authenticated
+# ---------------------------------------------------------------------------
+
+
+def test_studio_ws_auth_is_independent_of_gui_surface_auth(monkeypatch):
+    """Studio serves its own WS endpoints with its own token check.
+
+    The GUI-protocol hardening (no query tokens on ``/ws``, first-message
+    terminal attach) must not reach Studio's ``/api/**/ws`` routes: they are
+    guarded by ``_require_ws_token`` in ``omniagents/studio/server/api.py``,
+    accept a header *or* query token, and are untouched by this change. This
+    test pins that so the in-repo Studio client keeps connecting.
+    """
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from omniagents.studio.server.api import create_api_app
+
+    monkeypatch.delenv("OMNIAGENTS_LEGACY_QUERY_AUTH", raising=False)
+    app, _ = create_api_app(auth_token="studio-secret")
+    client = TestClient(app)
+
+    # Query token: still accepted (Studio's own contract).
+    with client.websocket_connect("/api/ws/traces?token=studio-secret"):
+        pass
+    # Authorization header: also accepted.
+    with client.websocket_connect(
+        "/api/ws/traces", headers={"Authorization": "Bearer studio-secret"}
+    ):
+        pass
+    # Wrong credentials are still refused.
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/ws/traces?token=nope"):
+            pass
+
+
+def test_studio_playground_service_is_not_ownership_enforced(studio_app):
+    """Studio's playground builds AgentService directly (no build_app), so it
+    keeps the permissive single-user policy: no principal, no ownership."""
+    from omniagents.core.agents.service import AgentService
+    from omniagents.core.agents.specs import AgentSpec
+
+    async def _build(settings, mcp, app):  # pragma: no cover - never run
+        raise AssertionError("agent build not expected in this test")
+
+    service = AgentService(
+        AgentSpec(
+            name="PlaygroundLike",
+            welcome_text="x",
+            get_agent_instructions=lambda: "x",
+            build_agent=_build,
+        )
+    )
+    assert service.authorization_policy.enforced is False
+    # An unowned session stays reachable for the single playground operator.
+    assert service.authorization_policy.can_access(None, None)

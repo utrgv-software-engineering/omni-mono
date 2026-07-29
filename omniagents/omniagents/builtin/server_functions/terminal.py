@@ -143,6 +143,7 @@ async def terminal_create(
             cwd=cwd,
             cols=width,
             rows=height,
+            owner_user_id=getattr(session, "user_id", None),
         )
         data["cwd"] = data.get("cwd")
     else:
@@ -158,6 +159,7 @@ async def terminal_create(
             cwd=resolved_cwd,
             cols=width,
             rows=height,
+            owner_user_id=getattr(session, "user_id", None),
         )
         data["cwd"] = resolved_cwd
 

@@ -398,7 +398,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
     const url = new URL(window.location.href)
     const token = url.searchParams.get('token') || undefined
     const client = new RealtimeRPCClient(base, token, debugEnabled)
-    if (debugEnabled) console.log('[ui] VoiceModal init', { base, token, debug: debugEnabled })
+    if (debugEnabled) console.log('[ui] VoiceModal init', { base, hasToken: !!token, debug: debugEnabled })
     clientRef.current = client
     let active = true
     const onEvent = client.on('realtime_event', (p: any) => {

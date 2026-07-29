@@ -364,6 +364,7 @@ class RealtimeSession:
         settings: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         audio_storage: Optional[AudioStorageBackend] = None,
+        owner_user_id: Optional[str] = None,
     ):
         """Initialize a realtime session.
 
@@ -372,6 +373,7 @@ class RealtimeSession:
             settings: API keys and other settings
             session_id: Optional session ID (generated if not provided)
             audio_storage: Optional AudioStorage instance (created if not provided)
+            owner_user_id: Authenticated principal that owns this session
         """
         if not spec.realtime_mode:
             raise ValueError("AgentSpec must have realtime_mode=True")
@@ -379,6 +381,7 @@ class RealtimeSession:
         self.spec = spec
         self.settings = settings or {}
         self.session_id = session_id or str(uuid.uuid4())
+        self.owner_user_id = owner_user_id
 
         # Extract project and agent slugs for database storage
         self._project_slug = getattr(spec, "project_slug", None)
@@ -593,6 +596,7 @@ class RealtimeSession:
             self.session_id,
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
+            user_id=self.owner_user_id,
         )
 
         self._active = True

@@ -5,9 +5,15 @@ import asyncio
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import Optional, Dict, Any, Callable
 
-from fastapi import FastAPI, WebSocket, Depends, HTTPException, status
+from fastapi import FastAPI, WebSocket
 from fastapi import WebSocketDisconnect
 from omniagents.rpc import JsonRpcEndpoint
+from omniagents.rpc.auth import (
+    WS_CLOSE_FORBIDDEN,
+    ConnectionAuthenticator,
+    build_ws_auth_dependency,
+    register_ticket_route,
+)
 from omniagents.rpc.server import GUI_RPC_METHODS
 
 from omniagents.core.config.loader import load_agent_spec_from_yaml
@@ -16,6 +22,10 @@ from omniagents.core.agents.service import AgentService
 from omniagents.rpc.realtime_service import RealtimeService
 
 __all__ = ["build_app"]
+
+#: Query parameters that carry connection credentials. Never forwarded to
+#: an upstream server and never expected by new-style clients.
+_CREDENTIAL_QUERY_PARAMS = ("token", "ticket")
 
 
 def _derive_remote_ws_url(remote_ws_url: str, *, suffix: str) -> str:
@@ -39,29 +49,51 @@ def _compose_remote_ws_url(
     *,
     suffix: str,
     websocket: WebSocket,
-    remote_token: str | None,
 ) -> str:
+    """Build the upstream URL, stripping every credential query param.
+
+    Upstream authentication travels in the ``Authorization`` header (see
+    :func:`_remote_auth_headers`), never in the URL.
+    """
     target = _derive_remote_ws_url(base_url, suffix=suffix)
     parsed = urlparse(target)
 
     query: dict[str, str] = {}
     for key, value in parse_qsl(parsed.query, keep_blank_values=True):
-        if key == "token" and remote_token:
+        if key in _CREDENTIAL_QUERY_PARAMS:
             continue
         query[key] = value
     for key, value in websocket.query_params.multi_items():
-        if key == "token":
+        if key in _CREDENTIAL_QUERY_PARAMS:
             continue
         query[key] = value
-    if remote_token:
-        query["token"] = remote_token
 
     return urlunparse(parsed._replace(query=urlencode(query)))
 
 
-async def _proxy_websocket(websocket: WebSocket, *, remote_url: str) -> None:
+def _remote_auth_headers(remote_token: str | None) -> Dict[str, str]:
+    if not remote_token:
+        return {}
+    return {"Authorization": f"Bearer {remote_token}"}
+
+
+async def _connect_remote(url: str, headers: Dict[str, str]):
+    """``websockets.connect`` across library versions (header kwarg renamed)."""
+    import websockets
+
     try:
-        import websockets
+        return await websockets.connect(url, additional_headers=headers or None)
+    except TypeError:
+        return await websockets.connect(url, extra_headers=headers or None)
+
+
+async def _proxy_websocket(
+    websocket: WebSocket,
+    *,
+    remote_url: str,
+    remote_headers: Dict[str, str] | None = None,
+) -> None:
+    try:
         from websockets.exceptions import ConnectionClosed
     except Exception:
         await websocket.close(code=4404)
@@ -70,7 +102,8 @@ async def _proxy_websocket(websocket: WebSocket, *, remote_url: str) -> None:
     await websocket.accept()
 
     try:
-        async with websockets.connect(remote_url) as remote:
+        remote = await _connect_remote(remote_url, remote_headers or {})
+        async with remote:
 
             async def _client_to_remote() -> None:
                 while True:
@@ -122,38 +155,6 @@ async def _proxy_websocket(websocket: WebSocket, *, remote_url: str) -> None:
             pass
 
 
-def _token_dependency(required_token: Optional[str] = None):  # noqa: D401
-    """Return a FastAPI dependency that validates the ?token param."""
-
-    async def _verify_token(websocket: WebSocket):  # noqa: D401
-        if required_token:
-            if websocket.query_params.get("token") != required_token:
-                # Close immediately with 4403 (custom) if invalid
-                await websocket.close(code=4403)
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token"
-                )
-
-    return Depends(_verify_token)
-
-
-def _auth_provider_dependency(auth_provider):  # noqa: D401
-    """Return a FastAPI dependency using a pluggable AuthProvider."""
-
-    async def _verify_auth(websocket: WebSocket):  # noqa: D401
-        result = await auth_provider.authenticate(websocket)
-        if not result.authenticated:
-            await websocket.close(code=4403)
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=result.error or "Authentication failed",
-            )
-        # Store identity on websocket state for downstream use
-        websocket.state.user_identity = result.identity
-
-    return Depends(_verify_auth)
-
-
 def build_app(
     config_path: str | None = None,
     spec: "AgentSpec" | None = None,
@@ -170,8 +171,11 @@ def build_app(
             supplied, this allows launching a remote server for programmatically created
             agents (e.g. via ``AgentApp.from_agent``) without the need for an intermediate
             YAML file.
-        auth_token: Optional bearer token that clients must pass via the ``?token=XYZ``
-            query parameter.
+        auth_token: Optional bearer token clients must present via the
+            ``Authorization: Bearer`` header or a ``/auth/ws-ticket``
+            connect ticket. The deprecated ``?token=`` query transport is
+            accepted only when ``OMNIAGENTS_LEGACY_QUERY_AUTH=1`` (or
+            ``security.legacy_query_auth: true``) is set.
         default_workspace_root: Optional fallback path passed through to
             ``AgentService(default_workspace_root=…)``. CLI-style backends
             (``ink``/``web``) pass ``os.getcwd()`` here so a missing
@@ -198,42 +202,53 @@ def build_app(
 
     app = FastAPI()
 
+    # One authenticator guards every surface — /ws, /ws/realtime and
+    # /ws/terminal all resolve the same principal through it, and
+    # /auth/ws-ticket mints browser connect tickets against it.
+    authenticator = ConnectionAuthenticator.from_spec(spec, auth_token=auth_token)
+    app.state.connection_authenticator = authenticator
+    auth_dep = build_ws_auth_dependency(authenticator)
+    register_ticket_route(app, authenticator)
+
     remote_ws_url = getattr(spec, "remote_ws_url", None)
     if remote_ws_url:
         remote_token = None
         remote_token_key = getattr(spec, "remote_auth_token_key", None)
         if remote_token_key:
             remote_token = os.getenv(remote_token_key) or None
-
-        deps = [_token_dependency(auth_token)] if auth_token else None
+        remote_headers = _remote_auth_headers(remote_token)
 
         async def _ws_proxy(websocket: WebSocket):
             url = _compose_remote_ws_url(
                 remote_ws_url,
                 suffix="",
                 websocket=websocket,
-                remote_token=remote_token,
             )
-            await _proxy_websocket(websocket, remote_url=url)
+            await _proxy_websocket(
+                websocket, remote_url=url, remote_headers=remote_headers
+            )
 
         async def _ws_realtime_proxy(websocket: WebSocket):
             url = _compose_remote_ws_url(
                 remote_ws_url,
                 suffix="/realtime",
                 websocket=websocket,
-                remote_token=remote_token,
             )
-            await _proxy_websocket(websocket, remote_url=url)
+            await _proxy_websocket(
+                websocket, remote_url=url, remote_headers=remote_headers
+            )
 
         async def _ws_terminal_proxy(websocket: WebSocket):
             url = _compose_remote_ws_url(
                 remote_ws_url,
                 suffix="/terminal",
                 websocket=websocket,
-                remote_token=remote_token,
             )
-            await _proxy_websocket(websocket, remote_url=url)
+            await _proxy_websocket(
+                websocket, remote_url=url, remote_headers=remote_headers
+            )
 
+        deps = [auth_dep]
         app.add_api_websocket_route("/ws", _ws_proxy, dependencies=deps)
         app.add_api_websocket_route(
             "/ws/realtime", _ws_realtime_proxy, dependencies=deps
@@ -252,6 +267,10 @@ def build_app(
         workspace_root_resolver=workspace_root_resolver,
     )
     app.state.agent_service = service
+    # The service authorizes every request against the mode implied by the
+    # configured provider: enforced (ownership + global-effect rules) when
+    # principals are distinguishable, permissive in single-user/no-auth mode.
+    service.authorization_policy = authenticator.authorization_policy
     # Allow examples to register custom server functions without changing core
     try:
         registrar = getattr(spec, "register_server_functions", None)
@@ -290,25 +309,7 @@ def build_app(
         },
     )
 
-    # Resolve auth dependency: provider-based or legacy token
-    _auth_deps = None
-    try:
-        sec = getattr(spec, "security_config", None) or {}
-        auth_cfg = (sec.get("providers") or {}).get("auth")
-        if auth_cfg and auth_cfg.get("type", "none") != "none":
-            from omniagents.core.providers import resolve_provider
-
-            _auth_provider = resolve_provider("auth", auth_cfg)
-            _auth_deps = [_auth_provider_dependency(_auth_provider)]
-    except Exception:
-        pass
-    if _auth_deps is None and auth_token:
-        _auth_deps = [_token_dependency(auth_token)]
-
-    if _auth_deps:
-        endpoint.register_route(app, "/ws", dependencies=_auth_deps)
-    else:
-        endpoint.register_route(app, "/ws")
+    endpoint.register_route(app, "/ws", dependencies=[auth_dep])
 
     # ------------------------------------------------------------------
     # Register realtime endpoint if realtime mode is enabled
@@ -353,50 +354,71 @@ def build_app(
                     settings_resolver if callable(settings_resolver) else None
                 ),
             )
+        realtime_service.authorization_policy = authenticator.authorization_policy
         app.state.realtime_service = realtime_service
         try:
             service.realtime_service = realtime_service
         except Exception:
             pass
         realtime_endpoint = JsonRpcEndpoint(realtime_service)
-
-        if auth_token:
-            realtime_endpoint.register_route(
-                app, "/ws/realtime", dependencies=[_token_dependency(auth_token)]
-            )
-        else:
-            realtime_endpoint.register_route(app, "/ws/realtime")
+        realtime_endpoint.register_route(app, "/ws/realtime", dependencies=[auth_dep])
     else:
         # Add a fallback route that gracefully rejects connections when realtime is disabled
         # This prevents StaticFiles from catching the WebSocket request and crashing
         async def _realtime_disabled(websocket: WebSocket):
             await websocket.close(code=4404)  # Custom code: feature not available
 
-        app.add_api_websocket_route("/ws/realtime", _realtime_disabled)
+        app.add_api_websocket_route(
+            "/ws/realtime", _realtime_disabled, dependencies=[auth_dep]
+        )
 
     async def _terminal_route(websocket: WebSocket):
         terminal_manager = getattr(service, "terminal_manager", None)
         if terminal_manager is None:
             await websocket.close(code=4404)
             return
-        if auth_token:
-            if websocket.query_params.get("token") != auth_token:
-                await websocket.close(code=4403)
+
+        # Connection auth already ran via the shared dependency; the
+        # attach credentials (session/terminal ids + one-time terminal
+        # token) arrive in the FIRST message so they never appear in the
+        # URL. The deprecated query-param form is honored only while
+        # legacy query auth is enabled.
+        principal = getattr(websocket.state, "principal", None)
+        # Attach checks run under the same policy as RPC authorization.
+        if hasattr(terminal_manager, "authorization_policy"):
+            terminal_manager.authorization_policy = authenticator.authorization_policy
+        session_id = ""
+        terminal_id = ""
+        term_token = ""
+        if authenticator.allow_query_token:
+            session_id = websocket.query_params.get("session_id") or ""
+            terminal_id = websocket.query_params.get("terminal_id") or ""
+            term_token = websocket.query_params.get("terminal_token") or ""
+
+        await websocket.accept()
+
+        if not (session_id and terminal_id and term_token):
+            try:
+                attach = await asyncio.wait_for(websocket.receive_json(), timeout=10.0)
+            except Exception:
+                await websocket.close(code=WS_CLOSE_FORBIDDEN)
                 return
-        session_id = websocket.query_params.get("session_id") or ""
-        terminal_id = websocket.query_params.get("terminal_id") or ""
-        term_token = websocket.query_params.get("terminal_token") or ""
+            if not isinstance(attach, dict) or attach.get("type") != "attach":
+                await websocket.close(code=WS_CLOSE_FORBIDDEN)
+                return
+            session_id = str(attach.get("session_id") or "")
+            terminal_id = str(attach.get("terminal_id") or "")
+            term_token = str(attach.get("terminal_token") or attach.get("token") or "")
         if not session_id or not terminal_id or not term_token:
-            await websocket.close(code=4403)
+            await websocket.close(code=WS_CLOSE_FORBIDDEN)
             return
         try:
             terminal = await terminal_manager.authorize(
-                session_id, terminal_id, term_token
+                session_id, terminal_id, term_token, principal=principal
             )
         except Exception:
-            await websocket.close(code=4403)
+            await websocket.close(code=WS_CLOSE_FORBIDDEN)
             return
-        await websocket.accept()
 
         async def _forward_output():
             try:
@@ -468,5 +490,7 @@ def build_app(
             except Exception:
                 pass
 
-    app.add_api_websocket_route("/ws/terminal", _terminal_route)
+    app.add_api_websocket_route(
+        "/ws/terminal", _terminal_route, dependencies=[auth_dep]
+    )
     return app

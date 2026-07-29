@@ -9,6 +9,7 @@ import uuid
 from typing import Optional, Dict, Any
 
 from omniagents.rpc import RpcMethodsBase
+from omniagents.rpc.auth import AuthorizationDenied, AuthorizationPolicy
 from omniagents.rpc.realtime_session import (
     RealtimeSession,
     realtime_credential_status,
@@ -54,6 +55,39 @@ class RealtimeService(RpcMethodsBase):
 
         # Event streaming tasks: session_id -> asyncio.Task
         self._event_tasks: Dict[str, asyncio.Task] = {}
+
+        # Owner user_id per active session (None = unowned/anonymous)
+        self._session_owners: Dict[str, Optional[str]] = {}
+        # Authorization mode; ``build_app`` installs the deployment's policy.
+        # Permissive by default so embedded/single-user use is unchanged.
+        self.authorization_policy = AuthorizationPolicy(enforced=False)
+
+    # ------------------------------------------------------------------
+    #  Central RPC authorization (same contract as AgentService)
+    # ------------------------------------------------------------------
+
+    def _current_owner_user_id(self) -> Optional[str]:
+        channel = self.channel
+        principal = getattr(channel, "principal", None) if channel else None
+        return principal.user_id if principal is not None else None
+
+    async def authorize_rpc(self, principal, method: str, params: dict) -> None:
+        """Deny access to realtime sessions owned by another user.
+
+        Invoked by :class:`~omniagents.rpc.server.JsonRpcEndpoint` before
+        dispatching every request on ``/ws/realtime``.
+        """
+        session_id = (params or {}).get("session_id")
+        if not isinstance(session_id, str) or session_id not in self._sessions:
+            return
+        owner = self._session_owners.get(session_id)
+        if self.authorization_policy.can_access(principal, owner):
+            return
+        raise AuthorizationDenied(
+            "Not authorized to access this realtime session",
+            resource="realtime_session",
+            resource_id=session_id,
+        )
 
     def _effective_settings(self) -> Dict[str, Any]:
         """Settings for a probe or session — the resolver's view when it works."""
@@ -105,11 +139,14 @@ class RealtimeService(RpcMethodsBase):
         if session_id in self._sessions:
             raise RuntimeError(f"Session {session_id} already exists")
 
-        # Create session
+        owner_user_id = self._current_owner_user_id()
+
+        # Create session bound to the authenticated principal
         session = RealtimeSession(
             spec=self.spec,
             settings=self._effective_settings(),
             session_id=session_id,
+            owner_user_id=owner_user_id,
         )
 
         # Start session
@@ -118,6 +155,7 @@ class RealtimeService(RpcMethodsBase):
 
         # Store session
         self._sessions[session_id] = session
+        self._session_owners[session_id] = owner_user_id
 
         # Start event streaming task
         task = asyncio.create_task(self._stream_session_events(session_id))
@@ -259,6 +297,7 @@ class RealtimeService(RpcMethodsBase):
         del self._sessions[session_id]
         if session_id in self._event_tasks:
             del self._event_tasks[session_id]
+        self._session_owners.pop(session_id, None)
 
         return True
 
@@ -285,11 +324,13 @@ class RealtimeService(RpcMethodsBase):
         }
 
     async def list_sessions(self) -> Dict[str, Any]:
-        """List all active realtime sessions.
+        """List active realtime sessions visible to the calling principal.
 
         Returns:
             Dict with session information
         """
+        channel = self.channel
+        principal = getattr(channel, "principal", None) if channel else None
         return {
             "sessions": [
                 {
@@ -298,6 +339,9 @@ class RealtimeService(RpcMethodsBase):
                     "active": session._active,
                 }
                 for sid, session in self._sessions.items()
+                if self.authorization_policy.can_access(
+                    principal, self._session_owners.get(sid)
+                )
             ]
         }
 

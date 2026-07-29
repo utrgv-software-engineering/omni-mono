@@ -263,12 +263,14 @@ def list_sessions(
     agent_slug: str | None = None,
     limit: int | None = None,
     offset: int = 0,
+    user_id: str | None = None,
 ) -> list[dict]:
     return _resolve_backend().list_sessions(
         project_slug=project_slug,
         agent_slug=agent_slug,
         limit=limit,
         offset=offset,
+        user_id=user_id,
     )
 
 
@@ -278,12 +280,14 @@ def get_user_messages(
     include_archived: bool = True,
     project_slug: str | None = None,
     agent_slug: str | None = None,
+    user_id: str | None = None,
 ) -> list[dict]:
     return _resolve_backend().get_user_messages(
         limit=limit,
         include_archived=include_archived,
         project_slug=project_slug,
         agent_slug=agent_slug,
+        user_id=user_id,
     )
 
 
@@ -301,6 +305,28 @@ def update_session_user_id(
 ) -> None:
     return _resolve_backend().update_session_user_id(
         session_id, user_id, project_slug=project_slug, agent_slug=agent_slug
+    )
+
+
+def get_session_user_id(
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> str | None:
+    return _resolve_backend().get_session_user_id(
+        session_id, project_slug=project_slug, agent_slug=agent_slug
+    )
+
+
+def session_exists(
+    session_id: str,
+    *,
+    project_slug: str | None = None,
+    agent_slug: str | None = None,
+) -> bool:
+    return _resolve_backend().session_exists(
+        session_id, project_slug=project_slug, agent_slug=agent_slug
     )
 
 

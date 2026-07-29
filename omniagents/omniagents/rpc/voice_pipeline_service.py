@@ -375,6 +375,30 @@ class VoicePipelineService(RpcMethodsBase):
 
         self._sessions: Dict[str, VoicePipelineSession] = {}
         self._event_tasks: Dict[str, asyncio.Task] = {}
+        # Owner user_id per active session (None = unowned/anonymous)
+        self._session_owners: Dict[str, Optional[str]] = {}
+        # Authorization mode; ``build_app`` installs the deployment's policy.
+        from omniagents.rpc.auth import AuthorizationPolicy
+
+        self.authorization_policy = AuthorizationPolicy(enforced=False)
+
+    async def authorize_rpc(self, principal, method: str, params: dict) -> None:
+        """Deny access to voice sessions owned by another user (see
+        :meth:`omniagents.rpc.realtime_service.RealtimeService.authorize_rpc`)."""
+        from omniagents.rpc.auth import AuthorizationDenied
+
+        session_id = (params or {}).get("session_id")
+        if not isinstance(session_id, str) or session_id not in self._sessions:
+            return
+        if self.authorization_policy.can_access(
+            principal, self._session_owners.get(session_id)
+        ):
+            return
+        raise AuthorizationDenied(
+            "Not authorized to access this realtime session",
+            resource="realtime_session",
+            resource_id=session_id,
+        )
 
     async def capabilities(self) -> Dict[str, Any]:
         """Probe voice availability without opening a session (and thus without creating a trace)."""
@@ -461,6 +485,11 @@ class VoicePipelineService(RpcMethodsBase):
 
         run_id = await session.start()
         self._sessions[session_id] = session
+        channel = self.channel
+        principal = getattr(channel, "principal", None) if channel else None
+        self._session_owners[session_id] = (
+            principal.user_id if principal is not None else None
+        )
 
         task = asyncio.create_task(self._stream_session_events(session_id))
         self._event_tasks[session_id] = task
@@ -607,5 +636,6 @@ class VoicePipelineService(RpcMethodsBase):
         finally:
             self._sessions.pop(session_id, None)
             self._event_tasks.pop(session_id, None)
+            self._session_owners.pop(session_id, None)
 
         return True

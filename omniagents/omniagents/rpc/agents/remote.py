@@ -122,12 +122,10 @@ class RemoteAgent(UnifiedAgentBase):
         """
         super().__init__()
 
-        # Add token to URL if provided
-        if url and token:
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}token={token}"
-
+        # The token is sent as an Authorization header at connect time —
+        # never appended to the URL (see omniagents.rpc.auth).
         self._url = url
+        self._token = token
         self._transport = transport
         self._policy = policy
         self._client_generation = 0
@@ -360,6 +358,7 @@ class RemoteAgent(UnifiedAgentBase):
                 self._methods,
                 client_info=client_info,
                 capabilities=REMOTE_AGENT_CAPABILITIES,
+                token=self._token,
                 policy=self._policy,
             )
         raise ValueError("Either url or transport must be provided")

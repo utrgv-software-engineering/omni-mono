@@ -185,11 +185,14 @@ class SessionStorageBackend(ABC):
         agent_slug: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        user_id: str | None = None,
     ) -> list[dict]:
         """Sessions (newest-first) with a trimmed first/last-message preview.
 
         ``limit``/``offset`` page the newest-first ordering; ``limit=None``
-        returns everything (the historical behavior).
+        returns everything (the historical behavior). ``user_id`` scopes the
+        listing to one owner **in SQL**, so ownership filtering composes
+        with pagination instead of shrinking pages after the fact.
         """
 
     @abstractmethod
@@ -200,8 +203,12 @@ class SessionStorageBackend(ABC):
         include_archived: bool = True,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict]:
-        """Recent user-role messages across all sessions, oldest-first."""
+        """Recent user-role messages across all sessions, oldest-first.
+
+        ``user_id`` scopes to one owner in SQL (see :meth:`list_sessions`).
+        """
 
     # ------------------------------------------------------------------
     # User identity (added late in the SQLite schema)
@@ -216,6 +223,30 @@ class SessionStorageBackend(ABC):
         project_slug: str | None = None,
         agent_slug: str | None = None,
     ) -> None: ...
+
+    @abstractmethod
+    def get_session_user_id(
+        self,
+        session_id: str,
+        *,
+        project_slug: str | None = None,
+        agent_slug: str | None = None,
+    ) -> str | None:
+        """Owner ``user_id`` recorded for *session_id* (``None`` = unowned)."""
+
+    @abstractmethod
+    def session_exists(
+        self,
+        session_id: str,
+        *,
+        project_slug: str | None = None,
+        agent_slug: str | None = None,
+    ) -> bool:
+        """Whether a ``sessions`` row already exists for *session_id*.
+
+        Lets callers distinguish creating a session (owner may be stamped)
+        from attaching to an existing one (owner must never be rewritten).
+        """
 
     @abstractmethod
     def list_sessions_for_user(

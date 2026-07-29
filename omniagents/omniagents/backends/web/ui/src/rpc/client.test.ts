@@ -69,9 +69,24 @@ class MockWebSocket {
 
 vi.stubGlobal('WebSocket', MockWebSocket)
 
+const ticketRequests: Array<{ url: string; authorization?: string }> = []
+
+vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
+  ticketRequests.push({
+    url: String(url),
+    authorization: (init?.headers as Record<string, string> | undefined)?.Authorization,
+  })
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ ticket: 'one-time-ticket', expires_in: 60 }),
+  } as Response
+})
+
 afterEach(() => {
   MockWebSocket.instances = []
   MockWebSocket.initializeError = null
+  ticketRequests.length = 0
   MockWebSocket.failConnects = false
   vi.useRealTimers()
 })
@@ -83,7 +98,16 @@ describe('RPCClient initialization', () => {
     await client.connect()
 
     const socket = MockWebSocket.instances[0]!
-    expect(socket.url).toBe('ws://example.test/ws?token=secret')
+    // The bearer token is exchanged for a one-time ticket over HTTP and
+    // never appears in the WebSocket URL.
+    expect(ticketRequests).toEqual([
+      {
+        url: 'http://example.test/auth/ws-ticket',
+        authorization: 'Bearer secret',
+      },
+    ])
+    expect(socket.url).toBe('ws://example.test/ws?ticket=one-time-ticket')
+    expect(socket.url).not.toContain('secret')
     expect(socket.sent.map((message) => JSON.parse(message))).toEqual([
       {
         jsonrpc: '2.0',

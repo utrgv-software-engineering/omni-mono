@@ -37,10 +37,15 @@ const HIDDEN_TOOLS = new Set(['notify', 'escalate', 'goal_complete'])
 function wsUrlFromLocation(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const host = window.location.host
-  const base = `${proto}://${host}/ws`
+  return `${proto}://${host}/ws`
+}
+
+function tokenFromLocation(): string | undefined {
+  // The launcher hands the page its access token as a query param; the
+  // client exchanges it for a one-time connect ticket instead of ever
+  // putting it in the WebSocket URL.
   const url = new URL(window.location.href)
-  const token = url.searchParams.get('token')
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base
+  return url.searchParams.get('token') || undefined
 }
 
 export function App() {
@@ -99,7 +104,10 @@ export function App() {
     return s.split(' ').map(w => w ? (w[0].toUpperCase() + w.slice(1).toLowerCase()) : '').join(' ').trim()
   }, [])
 
-  const client = useMemo(() => new RPCClient(wsUrlFromLocation()), [])
+  const client = useMemo(
+    () => new RPCClient(wsUrlFromLocation(), tokenFromLocation()),
+    []
+  )
   const [initialSent, setInitialSent] = useState(false)
   const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
   const pendingApprovalsRef = useRef(new Map<string, (MessageItem & { session_id?: string })>())

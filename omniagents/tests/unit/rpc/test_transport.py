@@ -87,10 +87,37 @@ class TestClientWebSocketTransport:
                 assert transport.is_connected()
                 mock_connect.assert_called_once_with(
                     "ws://localhost:8000",
+                    additional_headers=None,
                     open_timeout=DEFAULT_LIFECYCLE_POLICY.connect_timeout,
                     ping_interval=DEFAULT_LIFECYCLE_POLICY.ping_interval,
                     ping_timeout=DEFAULT_LIFECYCLE_POLICY.ping_timeout,
                 )
+
+    @pytest.mark.asyncio
+    async def test_connect_sends_token_as_authorization_header(self):
+        """Tokens travel as headers — never appended to the URL."""
+        async with asyncio.timeout(TIMEOUT):
+            mock_ws = AsyncMock()
+            mock_ws.closed = False
+
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_connect:
+                mock_connect.return_value = mock_ws
+
+                transport = ClientWebSocketTransport(
+                    "ws://localhost:8000", token="sekrit"
+                )
+                await transport.connect()
+
+                assert transport.is_connected()
+                mock_connect.assert_called_once_with(
+                    "ws://localhost:8000",
+                    additional_headers={"Authorization": "Bearer sekrit"},
+                    open_timeout=DEFAULT_LIFECYCLE_POLICY.connect_timeout,
+                    ping_interval=DEFAULT_LIFECYCLE_POLICY.ping_interval,
+                    ping_timeout=DEFAULT_LIFECYCLE_POLICY.ping_timeout,
+                )
+                called_url = mock_connect.call_args.args[0]
+                assert "sekrit" not in called_url
 
     @pytest.mark.asyncio
     async def test_connect_failure(self):

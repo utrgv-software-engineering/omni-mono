@@ -15,6 +15,7 @@ import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
+from .auth import RPC_ERROR_AUTHORIZATION_DENIED, AuthorizationDenied
 from .base import RpcMethodsBase
 from .generated.gui_v1.models import (
     CLIENT_REQUEST_MODELS,
@@ -82,6 +83,10 @@ class JsonRpcChannel:
         self.transport = transport
         self.notification_models = notification_models
         self.enforce_initialization = enforce_initialization
+        # Authenticated principal (UserIdentity) resolved by the shared
+        # connection auth dependency; None means anonymous/unauthenticated
+        # surfaces (in-memory transports, tests).
+        self.principal = None
         self.initialization_state = "new"
         self.disabled_notifications: frozenset[str] = frozenset()
         self.experimental_grants: frozenset[str] = frozenset()
@@ -192,6 +197,7 @@ class JsonRpcEndpoint:
                 ),
                 enforce_initialization=self.gui_handshake,
             )
+            channel.principal = getattr(websocket.state, "principal", None)
             self.methods.channel = channel
 
             try:
@@ -382,6 +388,26 @@ class JsonRpcEndpoint:
                                 include_input=False,
                             ),
                         },
+                    )
+                return
+
+        # Central authorization: method containers that expose
+        # ``authorize_rpc`` (AgentService, RealtimeService) get every
+        # request checked against the connection's principal BEFORE
+        # dispatch, so newly added methods inherit enforcement.
+        authorizer = getattr(self.methods, "authorize_rpc", None)
+        if callable(authorizer):
+            try:
+                maybe = authorizer(channel.principal, method, params)
+                if inspect.isawaitable(maybe):
+                    await maybe
+            except AuthorizationDenied as exc:
+                if call_id is not None:
+                    await channel.send_error(
+                        call_id,
+                        RPC_ERROR_AUTHORIZATION_DENIED,
+                        str(exc) or "Not authorized",
+                        {"method": method, **exc.error_data()},
                     )
                 return
 

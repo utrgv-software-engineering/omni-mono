@@ -45,6 +45,15 @@ except ImportError:
     APITimeoutError = None
 
 from omniagents.rpc import RpcMethodsBase
+from omniagents.rpc.auth import (
+    ADMIN_ROLE,
+    GLOBAL_MUTATING_METHODS,
+    OWNER_UNKNOWN,
+    AuthorizationDenied,
+    AuthorizationPolicy,
+)
+from omniagents.rpc.auth import _OwnerUnknown as _OwnerUnknownType
+from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.approval import configure_tool_approval
 from omniagents.core.session import Session, SessionManager
@@ -61,6 +70,11 @@ from omniagents.core.debug import Debug
 
 # Setup logging
 logger = logging.getLogger("omniagents.service")
+
+#: Owner value used to scope a self-scoped listing when authorization is
+#: enforced but no principal resolved: it matches no row, so the listing is
+#: empty rather than unscoped.
+_NO_PRINCIPAL_SCOPE = "\x00-no-principal"
 
 # Configure file logging if requested
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
@@ -128,9 +142,7 @@ def _is_retryable_error(ex: Exception) -> bool:
     # Check OpenAI SDK exception types (most reliable)
     if RateLimitError is not None and isinstance(ex, RateLimitError):
         return True
-    if APIConnectionError is not None and isinstance(
-        ex, APIConnectionError
-    ):
+    if APIConnectionError is not None and isinstance(ex, APIConnectionError):
         return True
     if APITimeoutError is not None and isinstance(ex, APITimeoutError):
         return True
@@ -157,9 +169,7 @@ def _is_retryable_error(ex: Exception) -> bool:
             return True
 
     # Check standard Python timeout/connection errors
-    if isinstance(
-        ex, (asyncio.TimeoutError, TimeoutError, ConnectionError)
-    ):
+    if isinstance(ex, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
         return True
 
     # httpx transport failures (stream died mid-response, connect
@@ -379,6 +389,11 @@ class AgentService(RpcMethodsBase):
         # /goal server function, scheduled hooks). Fan-out happens
         # inside _broadcast_session before client channels are touched.
         self._run_end_listeners: Dict[str, list] = {}
+        # Authorization mode. Permissive by default: an AgentService with no
+        # server in front of it (embedded/CLI/eval, in-memory transports)
+        # has one principal and no authentication. ``build_app`` replaces
+        # this with the policy implied by the configured AuthProvider.
+        self._authorization_policy = AuthorizationPolicy(enforced=False)
         self.spec = spec
         self._default_workspace_root: str | None = (
             default_workspace_root
@@ -1283,7 +1298,9 @@ class AgentService(RpcMethodsBase):
         sess: Session | None = None
         if session_id:
             try:
-                sess = self._session_manager.get_or_create(session_id)
+                sess = self._session_manager.get_or_create(
+                    session_id, user_id=self._current_user_id()
+                )
                 # Ensure the invoking channel is tracked for client notifications
                 if self.channel is not None and self.channel not in sess.channels:
                     sess.channels.append(self.channel)
@@ -1469,7 +1486,9 @@ class AgentService(RpcMethodsBase):
         if session is not None and (not requested_id or session.id == requested_id):
             target_session = session
         else:
-            target_session = self._session_manager.get_or_create(requested_id)
+            target_session = self._session_manager.get_or_create(
+                requested_id, user_id=self._current_user_id()
+            )
 
         self._apply_session_metadata(
             target_session,
@@ -2103,7 +2122,9 @@ class AgentService(RpcMethodsBase):
 
         Returns the merged variables dict.
         """
-        sess = self._session_manager.get_or_create(session_id)
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         before = dict(sess.variables) if isinstance(sess.variables, dict) else {}
         merged = sess.update_variables(updates, persist=True)
         if silent:
@@ -2484,7 +2505,9 @@ class AgentService(RpcMethodsBase):
         safe_tool_overrides: dict | None = None,
         prompt_role: str = "user",
     ) -> dict:  # noqa: D401
-        sess: Session = self._session_manager.get_or_create(session_id)
+        sess: Session = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         channel = getattr(self, "channel", None)
 
         sess.cancel_requested = False
@@ -3085,7 +3108,9 @@ class AgentService(RpcMethodsBase):
         history path, so the eventual ``run_end`` reaches the caller.
         """
         _debug_rpc("get_run_state", {"session_id": session_id})
-        sess: Session = self._session_manager.get_or_create(session_id)
+        sess: Session = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         if self.channel is not None and self.channel not in sess.channels:
             sess.channels.append(self.channel)
         return {
@@ -3099,7 +3124,9 @@ class AgentService(RpcMethodsBase):
     async def get_session_history(self, session_id: str) -> list[dict]:  # noqa: D401
         """Return JSON-serialisable history for *session_id*."""
         _debug_rpc("get_session_history", {"session_id": session_id})
-        sess: Session = self._session_manager.get_or_create(session_id)
+        sess: Session = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
 
         # Track this Rpc channel too – allows further live events while
         # a run is still streaming.
@@ -3136,7 +3163,9 @@ class AgentService(RpcMethodsBase):
             "fork_session",
             {"session_id": session_id, "new_session_id": new_session_id},
         )
-        sess: Session = self._session_manager.get_or_create(session_id)
+        sess: Session = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         new_sess = self._session_manager.fork_session(
             sess, new_session_id=new_session_id
         )
@@ -3159,12 +3188,41 @@ class AgentService(RpcMethodsBase):
         ``limit``/``offset`` page the listing; omitting them returns
         everything (the historical behavior, kept for old clients).
         """
-        result = self._session_manager.list_sessions(limit=limit, offset=offset)
+        # Ownership scoping is pushed into SQL so it composes with
+        # LIMIT/OFFSET. Filtering a page in Python after the database
+        # applied the limit silently under-delivers (a page of N can come
+        # back with fewer, or none, of the caller's own sessions).
+        rows = self._session_manager.list_sessions(
+            limit=limit, offset=offset, user_id=self._listing_scope_user_id()
+        )
+        result: list[dict] = []
+        for row in rows:
+            # ``user_id`` is authorization metadata, not part of the wire shape.
+            row.pop("user_id", None)
+            result.append(row)
         _debug_rpc(
             "list_sessions",
             {"limit": limit, "offset": offset, "count": len(result)},
         )
         return result
+
+    def _listing_scope_user_id(self) -> str | None:
+        """The ``user_id`` self-scoped listings must filter on, or ``None``.
+
+        ``None`` means "do not scope": either authorization is not enforced
+        (single-user deployment) or the caller holds the ``admin`` role.
+        """
+        policy = self.authorization_policy
+        if not policy.enforced:
+            return None
+        principal = self._current_principal()
+        if principal is None:
+            # Enforced mode with no resolved principal: scope to an identity
+            # that owns nothing rather than returning everything.
+            return _NO_PRINCIPAL_SCOPE
+        if ADMIN_ROLE in (principal.roles or []):
+            return None
+        return principal.user_id
 
     # -- Python-facing session access (not RPC; returns Session objects) --
     # Tools and host apps previously reached into ``_session_manager._by_id``
@@ -3176,7 +3234,157 @@ class AgentService(RpcMethodsBase):
 
     def get_or_create_session(self, session_id: str | None = None) -> Session:
         """Return the live session for ``session_id``, creating it if needed."""
-        return self._session_manager.get_or_create(session_id)
+        return self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
+
+    # ------------------------------------------------------------------
+    #  Principal resolution + central RPC authorization
+    # ------------------------------------------------------------------
+
+    def _current_principal(self) -> "UserIdentity | None":
+        """The authenticated identity of the channel driving this task."""
+        channel = self.channel
+        if channel is None:
+            return None
+        return getattr(channel, "principal", None)
+
+    def _current_user_id(self) -> str | None:
+        principal = self._current_principal()
+        return principal.user_id if principal is not None else None
+
+    @property
+    def authorization_policy(self) -> AuthorizationPolicy:
+        """The deployment's authorization policy.
+
+        Installed by ``build_app`` from the connection authenticator. The
+        default is permissive because an ``AgentService`` constructed
+        without a server (embedded/CLI/eval use, in-memory transports)
+        has no authentication and exactly one principal.
+        """
+        return self._authorization_policy
+
+    @authorization_policy.setter
+    def authorization_policy(self, policy: AuthorizationPolicy) -> None:
+        self._authorization_policy = policy
+
+    def _session_owner(self, session_id: str) -> "str | None | _OwnerUnknownType":
+        """Owner of *session_id*, live or persisted.
+
+        Returns ``None`` only when the session is *definitively* unowned.
+        A lookup that cannot answer returns :data:`OWNER_UNKNOWN`, which
+        denies — an ownership check must never fail open.
+        """
+        sess = self._session_manager.get(session_id)
+        if sess is not None:
+            if getattr(sess, "owner_lookup_failed", False):
+                return OWNER_UNKNOWN
+            return getattr(sess, "user_id", None)
+        try:
+            from omniagents.core.session.history_db import get_session_user_id
+
+            return get_session_user_id(
+                session_id,
+                project_slug=getattr(self._session_manager, "_project_slug", None),
+                agent_slug=getattr(self._session_manager, "_agent_slug", None),
+            )
+        except Exception:
+            logger.exception(
+                "session owner lookup failed; denying access",
+                extra={"session": session_id},
+            )
+            return OWNER_UNKNOWN
+
+    @staticmethod
+    def _resource_owner(resource: Any) -> "str | None | _OwnerUnknownType":
+        """Owner of a live session-like object, failing closed."""
+        if resource is None:
+            return OWNER_UNKNOWN
+        if getattr(resource, "owner_lookup_failed", False):
+            return OWNER_UNKNOWN
+        return getattr(resource, "user_id", None)
+
+    def _resolve_rpc_resource_owner(
+        self, method: str, params: dict
+    ) -> tuple["str | None | _OwnerUnknownType", str, str | None]:
+        """Map an incoming RPC to ``(owner, resource, resource_id)``.
+
+        Resolution is by resource-identifying parameter, so every current
+        and future method that names a session/run/approval inherits the
+        ownership check without per-handler code. A named resource that
+        cannot be resolved yields :data:`OWNER_UNKNOWN` (deny), never
+        ``None`` (unowned). ``resource == "method"`` means the request
+        named no resource at all — see :meth:`authorize_rpc`.
+        """
+        params = params or {}
+        session_id = params.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            return self._session_owner(session_id), "session", session_id
+        run_id = params.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            sess = self._session_manager.get_by_run_id(run_id)
+            return self._resource_owner(sess), "run", run_id
+        call_id = params.get("call_id")
+        if isinstance(call_id, str) and call_id:
+            entry = self._pending_tool_approvals.get(call_id)
+            owner = self._resource_owner(entry[1] if entry is not None else None)
+            return owner, "tool_approval", call_id
+        request_id = params.get("request_id")
+        if isinstance(request_id, str) and request_id:
+            entry = self._pending_mcp_approvals.get(request_id)
+            if entry is not None:
+                return self._resource_owner(entry[1]), "mcp_approval", request_id
+            sess = self._client_request_sessions.get(request_id)
+            if sess is not None:
+                return self._resource_owner(sess), "client_request", request_id
+            return OWNER_UNKNOWN, "request", request_id
+        return OWNER_UNKNOWN, "method", None
+
+    async def authorize_rpc(
+        self, principal: "UserIdentity | None", method: str, params: dict
+    ) -> None:
+        """Authorize one request before it is dispatched.
+
+        Invoked by :class:`~omniagents.rpc.server.JsonRpcEndpoint` for every
+        request. Two rules, both default-deny in enforced (multi-user) mode:
+
+        * A request naming a resource (``session_id``/``run_id``/``call_id``/
+          ``request_id``) must be made by that resource's owner.
+        * A request naming *no* resource must be explicitly classified as
+          globally safe (:data:`~omniagents.rpc.auth.GLOBAL_SAFE_METHODS`).
+          Unclassified and global-mutating methods (``disable_tool``,
+          ``disable_mcp_server`` — they mutate the spec process-wide for
+          every connected user) are refused.
+
+        Raises :class:`~omniagents.rpc.auth.AuthorizationDenied`, surfaced
+        to the client as JSON-RPC error ``-32014``.
+        """
+        policy = self.authorization_policy
+        owner, resource, resource_id = self._resolve_rpc_resource_owner(method, params)
+
+        if resource == "method":
+            if policy.can_call_resourceless(method):
+                return
+            if method in GLOBAL_MUTATING_METHODS:
+                raise AuthorizationDenied(
+                    f"{method} changes state for every user and is not "
+                    "available to individual principals",
+                    resource="global",
+                    resource_id=method,
+                )
+            raise AuthorizationDenied(
+                f"{method} is not authorized without an owned resource",
+                resource="global",
+                resource_id=method,
+            )
+
+        if policy.can_access(principal, owner):
+            return
+        raise AuthorizationDenied(
+            f"Not authorized to access this {resource}",
+            resource=resource,
+            resource_id=resource_id,
+        )
 
     def active_sessions(self) -> list[Session]:
         """Snapshot of all live sessions in this process."""
@@ -3237,7 +3445,9 @@ class AgentService(RpcMethodsBase):
                 "source": source,
             },
         )
-        sess = self._session_manager.get_or_create(session_id)
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         # Drain pending background notifications first so they keep
         # chronological order in history relative to this real message.
         # The recursive enqueue_message call from _flush_notifications
@@ -3273,7 +3483,9 @@ class AgentService(RpcMethodsBase):
 
     async def queue_status(self, session_id: str) -> dict:  # noqa: D401
         """Return the queue/run state for a session."""
-        sess = self._session_manager.get_or_create(session_id)
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         return {
             "session_id": sess.id,
             "depth": len(sess.message_queue),
@@ -3288,7 +3500,9 @@ class AgentService(RpcMethodsBase):
         Clients call this on connect / session-switch to seed local state,
         then subscribe to ``queue_changed`` notifications for updates.
         """
-        sess = self._session_manager.get_or_create(session_id)
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         return {
             "session_id": sess.id,
             "depth": len(sess.message_queue),
@@ -3304,7 +3518,9 @@ class AgentService(RpcMethodsBase):
         been popped by the drainer (running or completed) — cancelling an
         actively-running turn requires ``stop_run`` instead.
         """
-        sess = self._session_manager.get_or_create(session_id)
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         for i, item in enumerate(sess.message_queue):
             if item.id == item_id:
                 del sess.message_queue[i]
@@ -3459,7 +3675,9 @@ class AgentService(RpcMethodsBase):
             "enqueue_notification",
             {"session_id": session_id, "source": source},
         )
-        sess = self._session_manager.get_or_create(session_id)
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
         sess.pending_notifications.append(
             {
                 "content": content,
@@ -3848,7 +4066,11 @@ class AgentService(RpcMethodsBase):
             "get_user_history",
             {"limit": lim, "include_archived": inc},
         )
+        # Scoped in SQL (like list_sessions) so the caller's ``limit`` is
+        # spent on rows they can actually see.
         try:
-            return self._session_manager.get_user_messages(lim, inc)
+            return self._session_manager.get_user_messages(
+                lim, inc, user_id=self._listing_scope_user_id()
+            )
         except Exception:
             return []

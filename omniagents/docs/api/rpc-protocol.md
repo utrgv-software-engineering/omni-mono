@@ -270,11 +270,42 @@ This allows:
 
 ## Authentication
 
-Optional token-based authentication:
+Optional token-based authentication. Tokens travel in the WebSocket upgrade
+headers, never in the URL:
 
 ```
-ws://server:8000/ws?token=your-auth-token
+Authorization: Bearer your-auth-token
 ```
+
+Browser clients that cannot set upgrade headers exchange the token for a
+short-lived, single-use connect ticket first:
+
+```
+POST /auth/ws-ticket           (with Authorization: Bearer your-auth-token)
+→ {"ticket": "...", "expires_in": 60}
+
+ws://server:8000/ws?ticket=...
+```
+
+The same mechanism guards `/ws`, `/ws/realtime`, and `/ws/terminal`, and all
+three resolve the same authenticated principal. The legacy
+`ws://server:8000/ws?token=...` query form is deprecated and only accepted when
+the server sets `OMNIAGENTS_LEGACY_QUERY_AUTH=1` (or
+`security.legacy_query_auth: true`) during migration.
+
+Authentication failures close the socket with code `4401` (or `4403` for
+authorization failures); both are terminal — do not auto-reconnect without new
+credentials. Cross-user access to sessions, runs, terminals, or approvals on an
+established connection returns JSON-RPC error `-32014`
+(`data.kind = "authorization_denied"`).
+
+Authorization fails closed: an unresolvable owner denies, requests that name no
+resource must be explicitly classified as globally safe (process-wide mutators
+such as `disable_tool` are refused in multi-user mode), and pre-auth sessions
+with no owner are inaccessible until assigned with
+`python -m omniagents.core.session.backfill --user-id <principal>`. Deployments
+with no authentication provider are unaffected. See
+`omniagents/rpc/protocol.md` for the full rules.
 
 ## Error Handling
 

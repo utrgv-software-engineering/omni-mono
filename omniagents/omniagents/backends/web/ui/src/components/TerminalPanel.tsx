@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
-import { RPCClient } from '../rpc/client'
+import { RPCClient, withConnectTicket } from '../rpc/client'
 
 function base64Encode(bytes: Uint8Array): string {
   let binary = ''
@@ -253,13 +253,12 @@ export function TerminalPanel({
           prev.map((t) => (t.id === tabId ? { ...t, cwd: resolvedCwd } : t))
         )
 
-        const url = new URL(baseUrl + path)
-        url.searchParams.set('session_id', rt.state.sessionId)
-        url.searchParams.set('terminal_id', terminalId)
-        url.searchParams.set('terminal_token', token)
-        if (authToken) url.searchParams.set('token', authToken)
+        // Connection auth: bearer token → one-time ticket (never a token
+        // in the URL). Attach credentials go in the FIRST message, not
+        // query params.
+        const wsUrl = await withConnectTicket(baseUrl + path, authToken || undefined)
 
-        const ws = new WebSocket(url.toString())
+        const ws = new WebSocket(wsUrl)
         rt.socket = ws
 
         ws.onopen = () => {
@@ -270,6 +269,12 @@ export function TerminalPanel({
                 : t
             )
           )
+          sendFrame(tabId, {
+            type: 'attach',
+            session_id: rt.state ? rt.state.sessionId : sid,
+            terminal_id: terminalId,
+            terminal_token: token,
+          })
           sendFrame(tabId, {
             type: 'resize',
             cols: rt.terminal.cols,

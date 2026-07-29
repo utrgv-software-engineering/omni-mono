@@ -604,6 +604,7 @@ class PgSessionStorage(SessionStorageBackend):
         agent_slug: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        user_id: str | None = None,
     ) -> list[dict]:
         t0 = time.perf_counter()
         ps, ags = _slugs(project_slug, agent_slug)
@@ -621,6 +622,7 @@ class PgSessionStorage(SessionStorageBackend):
             SELECT s.session_id,
                    s.archived,
                    s.created_at,
+                   s.user_id,
                    COALESCE(b.message_count, 0) AS message_count,
                    fh.msg AS first_msg,
                    fh.created_at AS first_at,
@@ -631,8 +633,12 @@ class PgSessionStorage(SessionStorageBackend):
             LEFT JOIN history fh ON fh.id = b.first_id
             LEFT JOIN history lh ON lh.id = b.last_id
             WHERE s.tenant_id = %s AND s.project_slug = %s AND s.agent_slug = %s
-            ORDER BY s.created_at DESC, s.session_id DESC
         """
+        # Owner scoping happens in SQL so it composes with LIMIT/OFFSET —
+        # filtering after pagination would silently under-deliver pages.
+        if user_id is not None:
+            query += " AND s.user_id = %s"
+        query += " ORDER BY s.created_at DESC, s.session_id DESC"
         if limit is not None:
             query += " LIMIT %s OFFSET %s"
         with self._conn() as conn:
@@ -645,6 +651,8 @@ class PgSessionStorage(SessionStorageBackend):
                     ps,
                     ags,
                 )
+                if user_id is not None:
+                    params += (user_id,)
                 if limit is not None:
                     params += (limit, offset)
                 cur.execute(query, params)
@@ -655,6 +663,7 @@ class PgSessionStorage(SessionStorageBackend):
             session_id,
             archived,
             session_created,
+            user_id,
             message_count,
             first_msg,
             first_at,
@@ -665,6 +674,7 @@ class PgSessionStorage(SessionStorageBackend):
                 "id": session_id,
                 "archived": bool(archived),
                 "created_at": _iso(session_created) or datetime.now().isoformat(),
+                "user_id": user_id,
                 "message_count": message_count,
             }
             if message_count and message_count > 0:
@@ -689,11 +699,16 @@ class PgSessionStorage(SessionStorageBackend):
         include_archived: bool = True,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict]:
         ps, ags = _slugs(project_slug, agent_slug)
         # Filter on role and content type server-side — JSONB lets us push
         # the predicate down so we don't page through tool calls etc.
         archived_filter = "" if include_archived else " AND s.archived = false"
+        # Owner scoping in SQL: the caller's LIMIT must be spent on rows
+        # they can actually see.
+        owner_filter = " AND s.user_id = %s" if user_id is not None else ""
+        owner_params: tuple = (user_id,) if user_id is not None else ()
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -709,11 +724,11 @@ class PgSessionStorage(SessionStorageBackend):
                       AND h.msg ->> 'role' = 'user'
                       AND jsonb_typeof(h.msg -> 'content') = 'string'
                       AND length(trim(h.msg ->> 'content')) > 0
-                      {archived_filter}
+                      {archived_filter}{owner_filter}
                     ORDER BY h.id DESC
                     LIMIT %s
                     """,
-                    (conn.tenant_id, ps, ags, limit),
+                    (conn.tenant_id, ps, ags) + owner_params + (limit,),
                 )
                 rows = cur.fetchall()
         results: list[dict] = []
@@ -760,6 +775,50 @@ class PgSessionStorage(SessionStorageBackend):
                     (user_id, conn.tenant_id, ps, ags, session_id),
                 )
             conn.commit()
+
+    def get_session_user_id(
+        self,
+        session_id: str,
+        *,
+        project_slug: str | None = None,
+        agent_slug: str | None = None,
+    ) -> str | None:
+        ps, ags = _slugs(project_slug, agent_slug)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT user_id FROM sessions
+                    WHERE tenant_id = %s AND project_slug = %s AND agent_slug = %s
+                      AND session_id = %s
+                    """,
+                    (conn.tenant_id, ps, ags, session_id),
+                )
+                row = cur.fetchone()
+        if row is None:
+            return None
+        return row[0]
+
+    def session_exists(
+        self,
+        session_id: str,
+        *,
+        project_slug: str | None = None,
+        agent_slug: str | None = None,
+    ) -> bool:
+        ps, ags = _slugs(project_slug, agent_slug)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1 FROM sessions
+                    WHERE tenant_id = %s AND project_slug = %s AND agent_slug = %s
+                      AND session_id = %s
+                    """,
+                    (conn.tenant_id, ps, ags, session_id),
+                )
+                row = cur.fetchone()
+        return row is not None
 
     def list_sessions_for_user(
         self,

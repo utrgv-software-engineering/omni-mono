@@ -125,12 +125,17 @@ class JsonRpcClient:
         gui_handshake: bool = True,
         client_info: Optional[Dict[str, str]] = None,
         capabilities: Optional[Dict[str, Any]] = None,
+        token: Optional[str] = None,
         policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY,
     ) -> "JsonRpcClient":
-        """Create a JsonRpcClient with WebSocket transport (backward compatibility)."""
+        """Create a JsonRpcClient with WebSocket transport (backward compatibility).
+
+        *token* is sent as an ``Authorization: Bearer`` header — never as a
+        URL query parameter.
+        """
         from .transport.websocket import ClientWebSocketTransport
 
-        transport = ClientWebSocketTransport(url, policy=policy)
+        transport = ClientWebSocketTransport(url, token=token, policy=policy)
         return cls(
             transport,
             methods,

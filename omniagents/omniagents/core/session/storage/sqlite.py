@@ -462,6 +462,7 @@ class SqliteSessionStorage(SessionStorageBackend):
         agent_slug: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        user_id: str | None = None,
     ) -> list[dict]:
         t0 = time.perf_counter()
         conn, lock = self._get_store(project_slug, agent_slug)
@@ -477,6 +478,7 @@ class SqliteSessionStorage(SessionStorageBackend):
             SELECT s.session_id,
                    s.archived,
                    s.created_at,
+                   s.user_id,
                    COALESCE(b.message_count, 0) AS message_count,
                    fh.msg_json AS first_json,
                    fh.created_at AS first_at,
@@ -486,9 +488,14 @@ class SqliteSessionStorage(SessionStorageBackend):
             LEFT JOIN bounds b ON b.session_id = s.session_id
             LEFT JOIN history fh ON fh.id = b.first_id
             LEFT JOIN history lh ON lh.id = b.last_id
-            ORDER BY s.created_at DESC, s.session_id DESC
         """
         params: list = []
+        # Owner scoping happens in SQL so it composes with LIMIT/OFFSET —
+        # filtering after pagination would silently under-deliver pages.
+        if user_id is not None:
+            query += " WHERE s.user_id = ?"
+            params.append(user_id)
+        query += " ORDER BY s.created_at DESC, s.session_id DESC"
         if limit is not None:
             # created_at is second-precision here — the session_id tiebreaker
             # keeps the ordering total so pages never overlap or skip.
@@ -502,6 +509,7 @@ class SqliteSessionStorage(SessionStorageBackend):
             session_id,
             archived,
             session_created,
+            user_id,
             message_count,
             first_json,
             first_at,
@@ -512,6 +520,7 @@ class SqliteSessionStorage(SessionStorageBackend):
                 "id": session_id,
                 "archived": bool(archived),
                 "created_at": session_created or datetime.now().isoformat(),
+                "user_id": user_id,
                 "message_count": message_count,
             }
             if message_count and message_count > 0:
@@ -537,13 +546,23 @@ class SqliteSessionStorage(SessionStorageBackend):
         include_archived: bool = True,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        user_id: str | None = None,
     ) -> list[dict]:
         conn, lock = self._get_store(project_slug, agent_slug)
         results: list[dict] = []
         page_size = 1000
         offset = 0
 
-        where_archived = "" if include_archived else "WHERE s.archived = 0"
+        conditions: list[str] = []
+        if not include_archived:
+            conditions.append("s.archived = 0")
+        # Owner scoping in SQL: the caller's page budget must be spent on
+        # rows they can actually see.
+        scope_params: tuple = ()
+        if user_id is not None:
+            conditions.append("s.user_id = ?")
+            scope_params = (user_id,)
+        where_archived = ("WHERE " + " AND ".join(conditions)) if conditions else ""
 
         while len(results) < limit:
             with lock:
@@ -556,7 +575,7 @@ class SqliteSessionStorage(SessionStorageBackend):
                     ORDER BY h.id DESC
                     LIMIT ? OFFSET ?
                     """,
-                    (page_size, offset),
+                    scope_params + (page_size, offset),
                 )
                 rows = cur.fetchall()
             if not rows:
@@ -609,6 +628,38 @@ class SqliteSessionStorage(SessionStorageBackend):
                 (user_id, session_id),
             )
             conn.commit()
+
+    def get_session_user_id(
+        self,
+        session_id: str,
+        *,
+        project_slug: str | None = None,
+        agent_slug: str | None = None,
+    ) -> str | None:
+        conn, lock = self._get_store(project_slug, agent_slug)
+        with lock:
+            row = conn.execute(
+                "SELECT user_id FROM sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return row[0]
+
+    def session_exists(
+        self,
+        session_id: str,
+        *,
+        project_slug: str | None = None,
+        agent_slug: str | None = None,
+    ) -> bool:
+        conn, lock = self._get_store(project_slug, agent_slug)
+        with lock:
+            row = conn.execute(
+                "SELECT 1 FROM sessions WHERE session_id=?",
+                (session_id,),
+            ).fetchone()
+        return row is not None
 
     def list_sessions_for_user(
         self,

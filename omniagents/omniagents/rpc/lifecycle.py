@@ -87,16 +87,17 @@ RETRYABLE_RPC_ERROR_CODES = frozenset(
 )
 
 #: WebSocket close codes that must terminate the connection permanently
-#: (no reconnect). 4403 is the server's authentication/authorization
-#: rejection and 4404 its feature-not-available rejection — both are
-#: deterministic, so retrying loops forever without ever succeeding.
+#: (no reconnect). 4401/4403 are the server's authentication and
+#: authorization rejections and 4404 its feature-not-available rejection —
+#: all deterministic, so retrying loops forever without ever succeeding.
 PERMANENT_CLOSE_CODES = frozenset(
     {
         1002,  # protocol error
         1003,  # unsupported data
         1008,  # policy violation
         4400,  # bad request (reserved)
-        4403,  # authentication / authorization failed
+        4401,  # authentication required / credentials rejected
+        4403,  # authorization failed
         4404,  # feature not available on this server
     }
 )

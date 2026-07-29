@@ -16,6 +16,7 @@ sandbox (`omni serve` wires this up).
 from __future__ import annotations
 
 import asyncio
+import hmac
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -55,6 +56,7 @@ class TerminalDescriptor:
     session_id: str
     terminal_id: str
     token: str
+    owner_user_id: Optional[str]
     backend: PtyBackend
     handle: PtyHandle
     created_at: datetime
@@ -81,6 +83,7 @@ class TerminalManager:
         default_user: Optional[str] = None,
         output_max_chunks: int = 256,
         output_max_bytes: int = 4 * 1024 * 1024,
+        authorization_policy: Optional[Any] = None,
     ) -> None:
         self._backend: PtyBackend = backend if backend is not None else HostPtyBackend()
         self._default_shell = default_shell
@@ -88,6 +91,14 @@ class TerminalManager:
         self._default_user = default_user
         self._output_max_chunks = output_max_chunks
         self._output_max_bytes = output_max_bytes
+        # Authorization mode for attach checks. Permissive by default (a
+        # manager used outside an authenticated server has one principal);
+        # the /ws/terminal route installs the deployment's real policy.
+        from omniagents.rpc.auth import AuthorizationPolicy
+
+        self.authorization_policy = authorization_policy or AuthorizationPolicy(
+            enforced=False
+        )
         self._terminals: Dict[str, Dict[str, TerminalDescriptor]] = {}
         self._lock = asyncio.Lock()
         # Per-terminal coalescing for resize calls — xterm.js can fire
@@ -111,6 +122,7 @@ class TerminalManager:
         cols: Optional[int] = None,
         rows: Optional[int] = None,
         user: Optional[str] = None,
+        owner_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not session_id:
             raise TerminalError("session_id required")
@@ -137,6 +149,7 @@ class TerminalManager:
             session_id=session_id,
             terminal_id=terminal_id,
             token=token,
+            owner_user_id=owner_user_id,
             backend=self._backend,
             handle=handle,
             created_at=datetime.now(timezone.utc),
@@ -166,14 +179,34 @@ class TerminalManager:
         }
 
     async def authorize(
-        self, session_id: str, terminal_id: str, token: str
+        self,
+        session_id: str,
+        terminal_id: str,
+        token: str,
+        *,
+        principal: Optional[Any] = None,
     ) -> TerminalDescriptor:
+        """Authorize a one-time attach.
+
+        Requires the per-terminal attach token AND that *principal* (a
+        ``UserIdentity``) is the terminal's owner. A stolen attach token is
+        useless without the owner's connection credentials. Under enforced
+        authorization an *unowned* terminal is not attachable either — an
+        absent owner is never consent; single-user deployments keep the
+        historical behavior via the permissive default policy.
+        """
         async with self._lock:
             terminal = self._terminals.get(session_id, {}).get(terminal_id)
             if terminal is None:
                 raise TerminalNotFoundError("terminal not found")
-            if terminal.token != token:
+            if not hmac.compare_digest(terminal.token, token):
                 raise TerminalAuthorizationError("invalid terminal token")
+            if not self.authorization_policy.can_access(
+                principal, terminal.owner_user_id
+            ):
+                raise TerminalAuthorizationError(
+                    "not authorized to attach to this terminal"
+                )
             if terminal.closed:
                 raise TerminalNotFoundError("terminal closed")
             if terminal.consumer_attached:

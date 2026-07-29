@@ -307,9 +307,15 @@ def build_readiness_payload(
     target; *profile* is the :class:`ResolvedProfile` the session was
     built from.
     """
+    from omniagents.rpc.auth import legacy_query_auth_enabled
+
     base_url = f"http://{host}:{port}"
     ws_url = f"ws://{host}:{port}/ws"
-    if auth_token:
+    if auth_token and legacy_query_auth_enabled(None):
+        # Deprecated migration path: launchers that predate header/ticket
+        # auth still consume the token from the ws_url query string. New
+        # launchers read ``auth_token`` below and send it as an
+        # ``Authorization: Bearer`` header (or mint a /auth/ws-ticket).
         ws_url = f"{ws_url}?token={auth_token}"
     # Pull container_id from session.state when present (docker backends
     # expose it; unix_local / e2b / etc. don't). The launcher uses this
@@ -324,6 +330,10 @@ def build_readiness_payload(
         "sandbox_url": base_url,
         "ws_url": ws_url,
         "ui_url": base_url,
+        # Dedicated credential field: consumers authenticate with an
+        # ``Authorization: Bearer`` header (or POST /auth/ws-ticket for
+        # browser WebSockets) instead of a query-string token.
+        "auth_token": auth_token,
         "services": service_urls,
         "ports": {"ui": port},
         "container_id": container_id,

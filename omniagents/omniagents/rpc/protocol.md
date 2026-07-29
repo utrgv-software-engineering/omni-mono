@@ -44,9 +44,70 @@ The protocol uses JSON-RPC 2.0 over WebSocket for bidirectional communication:
 - **Client → Server**: RPC calls for agent operations
 - **Server → Client**: Notifications for streaming events
 
+### Authentication
+
+All WebSocket surfaces (`/ws`, `/ws/realtime`, `/ws/terminal`) authenticate through
+one configured `AuthProvider` and resolve the same principal. Two supported
+credential transports:
+
+1. **`Authorization: Bearer <token>` header** — native clients (Python
+   `RemoteAgent`, the Ink TUI, server-to-server proxies) attach the token as a
+   WebSocket upgrade header.
+2. **One-time connect ticket** — browsers cannot set WebSocket headers, so they
+   `POST /auth/ws-ticket` with the `Authorization` header over HTTP and receive
+   `{"ticket": "...", "expires_in": 60}`. The ticket is single-use, short-lived,
+   bound to the minting identity, and is the only credential that may appear in a
+   dial URL (`?ticket=...`). Access tokens themselves must never appear in URLs.
+
+The legacy `?token=<bearer>` query parameter is **deprecated and disabled by
+default**. During migration it can be re-enabled with
+`OMNIAGENTS_LEGACY_QUERY_AUTH=1` (or `security.legacy_query_auth: true`); the
+server logs a deprecation warning (never containing the token) when it is used.
+
+**Failure semantics** — authentication failures close the socket with code
+`4401`; authorization failures on attach-style sockets close with `4403`. Both
+codes are terminal: clients MUST NOT auto-reconnect without new credentials
+(retrying with the same credentials would loop forever). Per-request
+authorization failures on established connections surface as JSON-RPC error
+`-32014` (`data.kind = "authorization_denied"`).
+
+`-32014` is specified here rather than in the frozen v1.0.0 OpenRPC document:
+`protocol/openrpc/baseline/1.0.0/` is immutable release evidence (see
+`docs/development/gui-protocol-governance.md`), so the error metadata joins the
+generated contract with the next protocol version. Clients must treat unknown
+negative error codes as errors, which this relies on.
+
+**Ownership** — sessions, runs, artifacts, terminals, approvals, and
+session-scoped MCP operations are bound to the principal that created them, and
+authorization **fails closed**:
+
+* A request naming another user's resource is rejected with `-32014`.
+* An ownership lookup that cannot answer (e.g. a storage fault) denies for
+  everyone, including the real owner, until it succeeds — an absent owner is
+  never consent.
+* A request naming *no* resource must be explicitly classified as globally safe
+  (handshake, introspection, self-scoped listings, per-connection state, or
+  creating a new session). Anything else — including process-wide mutators like
+  `disable_tool` / `disable_mcp_server`, and any newly added unclassified
+  method — is refused.
+* Sessions created before authentication was enabled (owner `NULL`) are **not**
+  accessible and are **not** auto-claimed on access. Assign them deliberately:
+  `python -m omniagents.core.session.backfill --user-id <principal>`
+  (`--dry-run` to preview).
+* Principals with the `admin` role bypass ownership checks.
+
+All of the above applies only when the deployment identifies principals. With
+the default `NoneAuthProvider` (or a token provider with no token configured)
+every connection is the same anonymous identity, so ownership and
+global-effect rules are skipped and single-user behavior is unchanged.
+
 ### Terminal WebSocket
 
-Agents that enable interactive terminals expose an additional WebSocket endpoint at `/ws/terminal`. Clients obtain a `terminal_id` and `terminal_token` by invoking the `terminal.create` server function, then connect using the query parameters `session_id`, `terminal_id`, and `terminal_token` (plus `token` when server authentication is enabled).
+Agents that enable interactive terminals expose an additional WebSocket endpoint at `/ws/terminal`. Clients obtain a `terminal_id` and `terminal_token` by invoking the `terminal.create` server function, then connect (authenticating like any other surface) and send an attach frame as the **first message**:
+
+- `{"type": "attach", "session_id": "...", "terminal_id": "...", "terminal_token": "..."}`
+
+The attach token is single-use and the terminal is bound to the identity that created it — a leaked `terminal_token` is useless without the owner's connection credentials. The legacy query-parameter attach (`?session_id=...&terminal_id=...&terminal_token=...`) is honored only while `OMNIAGENTS_LEGACY_QUERY_AUTH` is enabled.
 
 Terminal frames are JSON objects:
 - `{"type": "output", "terminal_id": "...", "data": "<base64>"}` — PTY output encoded as base64.

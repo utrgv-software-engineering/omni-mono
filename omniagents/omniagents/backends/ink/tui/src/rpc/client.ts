@@ -26,6 +26,8 @@ import {
   ReconnectController,
   RpcAbortError,
   RpcTimeoutError,
+  WS_CLOSE_FORBIDDEN,
+  WS_CLOSE_UNAUTHENTICATED,
   type LifecyclePolicy,
 } from "./lifecycle.js";
 
@@ -169,11 +171,13 @@ export class RPCClient extends EventEmitter {
     this.handshakeRejected = false;
     return new Promise((resolve, reject) => {
       try {
-        const wsUrl = this.token
-          ? `${this.url}?token=${encodeURIComponent(this.token)}`
-          : this.url;
-
-        this.ws = new WebSocket(wsUrl);
+        // The token travels as an Authorization header (never in the
+        // URL): Node's ws client supports upgrade headers directly.
+        this.ws = this.token
+          ? new WebSocket(this.url, {
+              headers: { Authorization: `Bearer ${this.token}` },
+            })
+          : new WebSocket(this.url);
         let ready = false;
 
         const connectTimer = setTimeout(() => {
@@ -243,6 +247,15 @@ export class RPCClient extends EventEmitter {
             this.closedByUser ||
             this.handshakeRejected ||
             classifyCloseCode(code) === "permanent";
+          if (code === WS_CLOSE_UNAUTHENTICATED || code === WS_CLOSE_FORBIDDEN) {
+            // Credentials are the problem: surface it distinctly so the UI
+            // can prompt instead of reporting a generic drop. The 44xx range
+            // already classifies as permanent, so no reconnect is attempted.
+            this.emit(
+              "auth_failed",
+              new Error(reasonText || "Authentication failed"),
+            );
+          }
           // No pending promise may remain unresolved after a disconnect.
           this.rejectAllPending(
             new ConnectionClosedError(reasonText || "Connection closed", {

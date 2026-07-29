@@ -1,3 +1,5 @@
+import { isAuthCloseCode, withConnectTicket } from './client'
+
 type JSONRPCId = number | string
 
 type JSONRPCRequest = {
@@ -49,8 +51,10 @@ export class RealtimeRPCClient {
   }
 
   async connect(): Promise<void> {
-    const wsUrl = this.token ? `${this.url}?token=${encodeURIComponent(this.token)}` : this.url
-    if (this.debug) console.log('[rpc] connect', wsUrl)
+    // Token -> short-lived one-time connect ticket; the bearer token
+    // itself never appears in the URL (and never in a debug log).
+    const wsUrl = await withConnectTicket(this.url, this.token)
+    if (this.debug) console.log('[rpc] connect')
     this.closedByUser = false
     this.ws = new WebSocket(wsUrl)
     await new Promise<void>((resolve, reject) => {
@@ -63,6 +67,19 @@ export class RealtimeRPCClient {
         clearTimeout(timer)
         if (this.debug) console.log('[rpc] open')
         resolve()
+      }
+      this.ws.onclose = (ev) => {
+        if (isAuthCloseCode(ev.code)) {
+          // Credentials are the problem — terminal, never retried.
+          clearTimeout(timer)
+          reject(
+            new ConnectionClosedError(ev.reason || 'Authentication failed', {
+              permanent: true,
+              closeCode: ev.code,
+              reason: ev.reason,
+            }),
+          )
+        }
       }
       this.ws.onerror = (e) => {
         clearTimeout(timer)

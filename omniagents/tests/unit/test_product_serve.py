@@ -195,6 +195,7 @@ def test_readiness_payload_shape_byte_match():
         "sandbox_url": "http://127.0.0.1:43210",
         "ws_url": "ws://127.0.0.1:43210/ws",
         "ui_url": "http://127.0.0.1:43210",
+        "auth_token": None,
         "services": {"code_server": "http://127.0.0.1:8080/"},
         "ports": {"ui": 43210},
         "container_id": "deadbeefcafe",
@@ -213,6 +214,7 @@ def test_readiness_payload_shape_byte_match():
         "sandbox_url",
         "ws_url",
         "ui_url",
+        "auth_token",
         "services",
         "ports",
         "container_id",
@@ -227,7 +229,8 @@ def test_readiness_payload_shape_byte_match():
     assert "\n" not in line
 
 
-def test_readiness_payload_auth_token_and_host_target():
+def test_readiness_payload_auth_token_and_host_target(monkeypatch):
+    monkeypatch.delenv("OMNIAGENTS_LEGACY_QUERY_AUTH", raising=False)
     payload = build_readiness_payload(
         host="127.0.0.1",
         port=8123,
@@ -238,7 +241,10 @@ def test_readiness_payload_auth_token_and_host_target():
         service_urls={},
         resume_tier=None,
     )
-    assert payload["ws_url"] == "ws://127.0.0.1:8123/ws?token=s3cret"
+    # The token rides in the dedicated field (Authorization-header /
+    # ticket auth); it only appears in ws_url under the legacy flag.
+    assert payload["ws_url"] == "ws://127.0.0.1:8123/ws"
+    assert payload["auth_token"] == "s3cret"
     assert payload["container_id"] is None
     assert payload["resume"] is None
     assert payload["_debug"]["manifest_root"] == Path("/home/u/repo")

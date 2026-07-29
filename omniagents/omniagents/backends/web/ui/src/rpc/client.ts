@@ -54,6 +54,48 @@ export type ServerEvent = JSONRPCNotification
 
 type Listener = (payload: any) => void
 
+/** WebSocket close codes that mean "your credentials are the problem" —
+ * reconnecting with the same credentials will fail again, so callers
+ * must never retry these automatically. */
+export const WS_CLOSE_UNAUTHENTICATED = 4401
+export const WS_CLOSE_FORBIDDEN = 4403
+
+export function isAuthCloseCode(code: number): boolean {
+  return code === WS_CLOSE_UNAUTHENTICATED || code === WS_CLOSE_FORBIDDEN
+}
+
+/**
+ * Exchange a bearer token for a short-lived single-use connect ticket.
+ *
+ * Browsers cannot set headers on WebSocket upgrades, so the token goes
+ * over an authenticated HTTP POST and only the one-time ticket appears
+ * in the dial URL (the launcher's fetch-token-then-dial pattern).
+ */
+export async function fetchWsTicket(wsUrl: string, token: string): Promise<string> {
+  const httpUrl = new URL(wsUrl)
+  httpUrl.protocol = httpUrl.protocol === 'wss:' ? 'https:' : 'http:'
+  httpUrl.pathname = '/auth/ws-ticket'
+  httpUrl.search = ''
+  const res = await fetch(httpUrl.toString(), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) throw new Error(`Authentication failed (${res.status})`)
+  const body = (await res.json()) as { ticket?: string }
+  if (!body.ticket) throw new Error('Authentication failed (no ticket issued)')
+  return body.ticket
+}
+
+/** Append a freshly minted connect ticket to a WebSocket URL when a
+ * token is configured; otherwise return the URL unchanged. */
+export async function withConnectTicket(wsUrl: string, token?: string): Promise<string> {
+  if (!token) return wsUrl
+  const ticket = await fetchWsTicket(wsUrl, token)
+  const url = new URL(wsUrl)
+  url.searchParams.set('ticket', ticket)
+  return url.toString()
+}
+
 export class JSONRPCError extends Error {
   readonly code: number
   readonly data?: unknown
@@ -153,7 +195,38 @@ export class RPCClient {
   }
 
   private openSocket(): void {
-    const wsUrl = this.token ? `${this.url}?token=${encodeURIComponent(this.token)}` : this.url
+    // Credential resolution is async (bearer token -> one-time connect
+    // ticket), so dialing is fire-and-forget; every failure path below
+    // settles the connect promise itself.
+    void this.dialSocket()
+  }
+
+  /**
+   * Resolve credentials, then dial. Browsers cannot set upgrade headers, so
+   * the bearer token is exchanged for a short-lived single-use ticket over
+   * HTTP and only the ticket ever appears in the URL.
+   */
+  private async dialSocket(): Promise<void> {
+    let wsUrl: string
+    try {
+      wsUrl = await withConnectTicket(this.url, this.token)
+    } catch (e) {
+      // A failed ticket exchange is a credentials problem: deterministic,
+      // so it must never enter the reconnect loop.
+      const error = new ConnectionClosedError(
+        (e as Error).message || 'Authentication failed',
+        { permanent: true },
+      )
+      this.rejectAllPending(error)
+      this.emitConnectionState({ state: 'closed', permanent: true, reason: error.message })
+      this.settleConnect('reject', error)
+      return
+    }
+    if (this.closedByUser) return
+    this.dial(wsUrl)
+  }
+
+  private dial(wsUrl: string): void {
     const ws = new WebSocket(wsUrl)
     this.ws = ws
     let settled = false
@@ -206,8 +279,13 @@ export class RPCClient {
     }
     ws.onclose = (ev?: CloseEvent) => {
       const code = ev?.code
+      // 4401/4403 classify as permanent (44xx), so credential failures stop
+      // the reconnect loop instead of retrying forever.
       const permanent = classifyCloseCode(code) === 'permanent'
-      fail(new ConnectionClosedError(ev?.reason || 'Connection closed', { permanent, closeCode: code, reason: ev?.reason }))
+      const reason =
+        ev?.reason ||
+        (code !== undefined && isAuthCloseCode(code) ? 'Authentication failed' : 'Connection closed')
+      fail(new ConnectionClosedError(reason, { permanent, closeCode: code, reason: ev?.reason }))
     }
     ws.onopen = async () => {
       try {

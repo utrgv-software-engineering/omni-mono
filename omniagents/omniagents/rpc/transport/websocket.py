@@ -12,14 +12,27 @@ from ..lifecycle import DEFAULT_LIFECYCLE_POLICY, LifecyclePolicy
 class ClientWebSocketTransport(BaseTransport):
     """WebSocket transport for client-side connections using websockets library.
 
+    Credentials travel in headers (``Authorization: Bearer …`` via *token*
+    or explicit *headers*), never in the URL — see ``omniagents.rpc.auth``.
+
     Liveness (ping/pong cadence) and the open timeout come from the shared
     :class:`~omniagents.rpc.lifecycle.LifecyclePolicy` so every Python
     client probes the link identically.
     """
 
-    def __init__(self, url: str, *, policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY):
+    def __init__(
+        self,
+        url: str,
+        *,
+        token: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY,
+    ):
         super().__init__()
         self.url = url
+        self._headers: Dict[str, str] = dict(headers or {})
+        if token:
+            self._headers.setdefault("Authorization", f"Bearer {token}")
         self._policy = policy
         self._ws: Optional["websockets.WebSocketClientProtocol"] = None
 
@@ -31,12 +44,21 @@ class ClientWebSocketTransport(BaseTransport):
         try:
             import websockets
 
-            self._ws = await websockets.connect(
-                self.url,
-                open_timeout=self._policy.connect_timeout,
-                ping_interval=self._policy.ping_interval,
-                ping_timeout=self._policy.ping_timeout,
-            )
+            headers = self._headers or None
+            lifecycle_kwargs = {
+                "open_timeout": self._policy.connect_timeout,
+                "ping_interval": self._policy.ping_interval,
+                "ping_timeout": self._policy.ping_timeout,
+            }
+            try:
+                self._ws = await websockets.connect(
+                    self.url, additional_headers=headers, **lifecycle_kwargs
+                )
+            except TypeError:
+                # Older websockets releases use ``extra_headers``.
+                self._ws = await websockets.connect(
+                    self.url, extra_headers=headers, **lifecycle_kwargs
+                )
             self._connected = True
         except Exception as e:
             raise TransportError(f"Failed to connect to {self.url}: {e}")

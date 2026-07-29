@@ -88,8 +88,9 @@ Shape (field-for-field, built by
 
 ```json
 {"sandbox_url": "http://127.0.0.1:<port>",
- "ws_url": "ws://127.0.0.1:<port>/ws",        // "?token=<auth>" when an auth token is set
+ "ws_url": "ws://127.0.0.1:<port>/ws",
  "ui_url": "http://127.0.0.1:<port>",
+ "auth_token": "<auth>" | null,               // send as "Authorization: Bearer" (or POST /auth/ws-ticket)
  "services": {"<name>": "<url>", ...},        // resolved profile-service endpoints
  "ports": {"ui": <port>},
  "container_id": "<docker id>" | null,        // docker backends only
@@ -98,6 +99,13 @@ Shape (field-for-field, built by
             "manifest_root": "<path>",
             "profile_sources": ["<layer path>", ...]}}
 ```
+
+Consumers authenticate WebSocket connections with the `auth_token` value in an
+`Authorization: Bearer` header (or exchange it at `POST /auth/ws-ticket` for a
+one-time dial ticket). The historical `?token=` suffix on `ws_url` is emitted
+only when `OMNIAGENTS_LEGACY_QUERY_AUTH=1` is set on the serve process, and
+query-string tokens are only *accepted* under the same flag — see
+`omniagents/rpc/protocol.md` (Authentication).
 
 Optional fields a launcher must tolerate: `container_id`,
 `container_name`, `resume`, `_debug` (the default implementation emits

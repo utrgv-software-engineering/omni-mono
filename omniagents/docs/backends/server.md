@@ -130,8 +130,14 @@ See `examples/remote_agent/` for complete examples.
 
 ## Security Considerations
 
-1. **Authentication**: Implement authentication for production
-2. **Authorization**: Validate client permissions
+1. **Authentication**: Configure `security.providers.auth` (token/OIDC) — all
+   WebSocket surfaces (`/ws`, `/ws/realtime`, `/ws/terminal`) authenticate
+   through it via `Authorization: Bearer` headers or one-time
+   `POST /auth/ws-ticket` connect tickets (see
+   [RPC Protocol → Authentication](../api/rpc-protocol.md#authentication)).
+2. **Authorization**: Sessions, runs, terminals and approvals are bound to the
+   authenticated principal that created them; cross-user access is rejected
+   with JSON-RPC error `-32014`.
 3. **Rate Limiting**: Protect against abuse
 4. **Input Validation**: Sanitize all inputs
 5. **HTTPS**: Use WSS (WebSocket Secure) in production

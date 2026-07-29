@@ -43,8 +43,12 @@ class StubTerminalManager:
         self.close_calls = []
         self.cleanup_sessions = []
 
-    async def authorize(self, session_id, terminal_id, terminal_token):
+    async def authorize(
+        self, session_id, terminal_id, terminal_token, *, principal=None
+    ):
         self.authorize_calls.append((session_id, terminal_id, terminal_token))
+        self.principals = getattr(self, "principals", [])
+        self.principals.append(principal)
         if terminal_token not in self.valid_tokens:
             raise ValueError("invalid token")
         return StubTerminal()
@@ -99,9 +103,17 @@ def terminal_context(monkeypatch):
 
 def test_terminal_websocket_success_flow(terminal_context):
     context = terminal_context
-    url = "/ws/terminal?session_id=s1&terminal_id=t1&terminal_token=good-token"
     payload = base64.b64encode(b"ls\n").decode()
-    with context.client.websocket_connect(url) as ws:
+    with context.client.websocket_connect("/ws/terminal") as ws:
+        # Attach credentials travel in the FIRST message, not the URL.
+        ws.send_json(
+            {
+                "type": "attach",
+                "session_id": "s1",
+                "terminal_id": "t1",
+                "terminal_token": "good-token",
+            }
+        )
         first = ws.receive_json()
         assert first["type"] == "output"
         assert first["terminal_id"] == "t1"
@@ -119,34 +131,66 @@ def test_terminal_websocket_success_flow(terminal_context):
 
 
 @pytest.mark.parametrize(
-    "url",
+    "attach",
     [
-        "/ws/terminal?terminal_id=t1&terminal_token=good-token",
-        "/ws/terminal?session_id=s1&terminal_token=good-token",
-        "/ws/terminal?session_id=s1&terminal_id=t1",
+        {"type": "attach", "terminal_id": "t1", "terminal_token": "good-token"},
+        {"type": "attach", "session_id": "s1", "terminal_token": "good-token"},
+        {"type": "attach", "session_id": "s1", "terminal_id": "t1"},
     ],
 )
-def test_terminal_websocket_missing_params(url, terminal_context):
-    with pytest.raises(WebSocketDisconnect):
-        with terminal_context.client.websocket_connect(url):
-            pass
+def test_terminal_websocket_missing_params(attach, terminal_context):
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with terminal_context.client.websocket_connect("/ws/terminal") as ws:
+            ws.send_json(attach)
+            ws.receive_json()
+    assert excinfo.value.code == 4403
     assert terminal_context.manager.authorize_calls == []
     assert terminal_context.manager.close_calls == []
 
 
+def test_terminal_websocket_legacy_query_params_rejected_by_default(
+    terminal_context,
+):
+    """Attach credentials in the URL are ignored unless legacy mode is on."""
+    url = "/ws/terminal?session_id=s1&terminal_id=t1&terminal_token=good-token"
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with terminal_context.client.websocket_connect(url) as ws:
+            # No attach frame follows, so the server times out / rejects
+            # rather than honoring the query parameters.
+            ws.send_json({"type": "input", "data": ""})
+            ws.receive_json()
+    assert excinfo.value.code == 4403
+    assert terminal_context.manager.authorize_calls == []
+
+
 def test_terminal_websocket_authorize_failure(terminal_context):
-    url = "/ws/terminal?session_id=s1&terminal_id=t1&terminal_token=bad"
-    with pytest.raises(WebSocketDisconnect):
-        with terminal_context.client.websocket_connect(url):
-            pass
+    with pytest.raises(WebSocketDisconnect) as excinfo:
+        with terminal_context.client.websocket_connect("/ws/terminal") as ws:
+            ws.send_json(
+                {
+                    "type": "attach",
+                    "session_id": "s1",
+                    "terminal_id": "t1",
+                    "terminal_token": "bad",
+                }
+            )
+            ws.receive_json()
+    assert excinfo.value.code == 4403
     assert terminal_context.manager.authorize_calls == [("s1", "t1", "bad")]
     assert terminal_context.manager.close_calls == []
 
 
 def test_terminal_websocket_disconnect_triggers_cleanup(terminal_context):
     context = terminal_context
-    url = "/ws/terminal?session_id=s2&terminal_id=t7&terminal_token=good-token"
-    with context.client.websocket_connect(url) as ws:
+    with context.client.websocket_connect("/ws/terminal") as ws:
+        ws.send_json(
+            {
+                "type": "attach",
+                "session_id": "s2",
+                "terminal_id": "t7",
+                "terminal_token": "good-token",
+            }
+        )
         ws.receive_json()
     assert context.manager.authorize_calls[0] == ("s2", "t7", "good-token")
     assert context.manager.close_calls == [("s2", "t7")]

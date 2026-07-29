@@ -17,6 +17,8 @@ from .history_db import (
     append_message as db_append_message,
     get_user_messages,
     get_session_metadata,
+    get_session_user_id,
+    session_exists,
     update_session_metadata,
 )
 
@@ -611,7 +613,28 @@ class Session:  # noqa: D101
         self._project_slug = project_slug
         self._agent_slug = agent_slug
         self.id: str = session_id or str(uuid.uuid4())
-        self.user_id: str | None = None  # set by service after auth
+        # Owner principal. Hydrated from storage for pre-existing sessions;
+        # stamped by SessionManager.get_or_create for new ones. ``None``
+        # means the session is definitively unowned (legacy or
+        # system-created) — see omniagents.rpc.auth.principal_can_access.
+        self.user_id: str | None = None
+        # Set when hydration could NOT answer who owns this session (e.g. a
+        # transient storage fault). Authorization treats it as
+        # OWNER_UNKNOWN and denies: a failed lookup must never read as
+        # "unowned", which would widen access.
+        self.owner_lookup_failed: bool = False
+        if session_id:
+            try:
+                self.user_id = get_session_user_id(
+                    session_id, project_slug=project_slug, agent_slug=agent_slug
+                )
+            except Exception:
+                self.user_id = None
+                self.owner_lookup_failed = True
+                Debug.log(
+                    f"[session] owner lookup failed for {session_id}; "
+                    "access will be denied until it succeeds"
+                )
         self.history: list[dict] = (
             load_history(self.id, project_slug=project_slug, agent_slug=agent_slug)
             if session_id
@@ -1042,13 +1065,39 @@ class SessionManager:  # noqa: D101
     # ---------------------------------------------------------------------
     # Session lifecycle helpers
     # ---------------------------------------------------------------------
-    def get_or_create(self, session_id: str | None = None) -> Session:  # noqa: D401
+    def get_or_create(
+        self, session_id: str | None = None, *, user_id: str | None = None
+    ) -> Session:  # noqa: D401
+        """Return the live session, hydrating or creating it as needed.
+
+        *user_id* is the authenticated principal creating the session; it
+        becomes the persistent owner of a **newly created** session.
+
+        An existing session's owner is never rewritten here. Touching a
+        session must not transfer it: silently claiming a pre-existing
+        unowned (legacy) session would both expose it to whoever asked
+        first and lock out its real creator. Legacy rows stay unowned —
+        inaccessible under enforced authorization — until an operator runs
+        the documented backfill (``omniagents.core.session.backfill``).
+        """
         if session_id and session_id in self._by_id:
             return self._by_id[session_id]
+        existed = bool(session_id) and session_exists(
+            session_id,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+        )
         sess = Session(self._project_slug, self._agent_slug, session_id)
         register_session(
-            sess.id, project_slug=self._project_slug, agent_slug=self._agent_slug
+            sess.id,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+            user_id=None if existed else user_id,
         )
+        if not existed and user_id is not None and sess.user_id is None:
+            # Brand-new session: register_session stamped the owner on the
+            # row it inserted; mirror it onto the live object.
+            sess.user_id = user_id
         self._by_id[sess.id] = sess
         return sess
 
@@ -1079,13 +1128,18 @@ class SessionManager:  # noqa: D101
         context: Any | None = None,
         variables: Any | None = None,
     ) -> Session:
-        new_session = self.get_or_create(new_session_id)
+        new_session = self.get_or_create(
+            new_session_id, user_id=getattr(source_session, "user_id", None)
+        )
         new_history = list(
             history if history is not None else list(source_session.history)
         )
         new_session.history = []
         register_session(
-            new_session.id, project_slug=self._project_slug, agent_slug=self._agent_slug
+            new_session.id,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+            user_id=new_session.user_id,
         )
         for msg in new_history:
             try:
@@ -1191,14 +1245,23 @@ class SessionManager:  # noqa: D101
         return True
 
     def list_sessions(
-        self, *, limit: int | None = None, offset: int = 0
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        user_id: str | None = None,
     ) -> list[dict]:  # noqa: D401
-        """Return session metadata, newest-first; ``limit=None`` = all."""
+        """Return session metadata, newest-first; ``limit=None`` = all.
+
+        ``user_id`` scopes the listing to one owner in SQL, so pagination
+        and ownership filtering compose (see the storage backends).
+        """
         return db_list_sessions(
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
             limit=limit,
             offset=offset,
+            user_id=user_id,
         )
 
     def persist_metadata(
@@ -1216,12 +1279,15 @@ class SessionManager:  # noqa: D101
         self,
         limit: int,
         include_archived: bool,
+        *,
+        user_id: str | None = None,
     ) -> list[dict]:  # noqa: D401
         return get_user_messages(
             limit=limit,
             include_archived=include_archived,
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
+            user_id=user_id,
         )
 
 
