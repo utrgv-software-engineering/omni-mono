@@ -155,6 +155,40 @@
         },
         "message": "Protocol version mismatch"
       },
+      "ResyncRequired": {
+        "code": -32030,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "resync_required"
+            },
+            "retained_first_seq": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "retained_last_seq": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session_id": {
+              "type": "string"
+            },
+            "stream_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "session_id",
+            "stream_id",
+            "retained_first_seq",
+            "retained_last_seq"
+          ],
+          "type": "object"
+        },
+        "message": "Resync required"
+      },
       "TransportOverloaded": {
         "code": -32020,
         "data": {
@@ -1312,6 +1346,132 @@
         },
         {
           "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ResyncRequired"
+        }
+      ],
+      "name": "resume_session",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/resume_session/properties/session_id"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/resume_session/properties/stream_id"
+          }
+        },
+        {
+          "name": "after_seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/resume_session/properties/after_seq"
+          }
+        }
+      ],
+      "result": {
+        "name": "resume_session_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation resume_session",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/resume_session"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ResyncRequired"
+        }
+      ],
+      "name": "ack_events",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/ack_events/properties/session_id"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/ack_events/properties/stream_id"
+          }
+        },
+        {
+          "name": "seq",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/ack_events/properties/seq"
+          }
+        }
+      ],
+      "result": {
+        "name": "ack_events_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation ack_events",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/ack_events"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
         }
       ],
       "name": "fork_session",
@@ -1872,6 +2032,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/run_started/properties/prompt_role"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/run_started/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/run_started/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -1940,6 +2114,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/run_status/properties/next_delay"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/run_status/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/run_status/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -1993,6 +2181,20 @@
           "required": true,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_called/properties/call_id"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_called/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_called/properties/stream_id"
           }
         }
       ],
@@ -2055,6 +2257,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_result/properties/metadata"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_result/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_result/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -2094,6 +2310,20 @@
           "required": true,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/message_output/properties/content"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/message_output/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/message_output/properties/stream_id"
           }
         }
       ],
@@ -2184,6 +2414,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/token/properties/truncation"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/token/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/token/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -2266,6 +2510,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/run_end/properties/error"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/run_end/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/run_end/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -2327,6 +2585,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_approval_requested/properties/run_id"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_approval_requested/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_approval_requested/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -2359,6 +2631,27 @@
           "required": false,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_approval_resolved/properties/session_id"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_approval_resolved/properties/reason"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_approval_resolved/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/tool_approval_resolved/properties/stream_id"
           }
         }
       ],
@@ -2428,6 +2721,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_approval_requested/properties/run_id"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_approval_requested/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_approval_requested/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -2460,6 +2767,27 @@
           "required": false,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_approval_resolved/properties/session_id"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_approval_resolved/properties/reason"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_approval_resolved/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_approval_resolved/properties/stream_id"
           }
         }
       ],
@@ -2522,6 +2850,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/client_request/properties/run_id"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/client_request/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/client_request/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -2551,6 +2893,34 @@
           "required": true,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/client_request_resolved/properties/request_id"
+          }
+        },
+        {
+          "name": "session_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/client_request_resolved/properties/session_id"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/client_request_resolved/properties/reason"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/client_request_resolved/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/client_request_resolved/properties/stream_id"
           }
         }
       ],
@@ -2592,6 +2962,20 @@
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/queue_changed/properties/items"
           }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/queue_changed/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/queue_changed/properties/stream_id"
+          }
         }
       ],
       "result": {
@@ -2624,6 +3008,20 @@
           "required": true,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/session_forked/properties/new_session_id"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/session_forked/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/session_forked/properties/stream_id"
           }
         }
       ],
@@ -2664,6 +3062,20 @@
           "required": true,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/session_variables_changed/properties/variables"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/session_variables_changed/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/session_variables_changed/properties/stream_id"
           }
         }
       ],

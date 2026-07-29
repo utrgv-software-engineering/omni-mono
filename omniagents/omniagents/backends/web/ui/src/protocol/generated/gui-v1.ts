@@ -92,6 +92,16 @@ export interface CancelQueuedMessageParams {
   session_id: string;
   item_id: string;
 }
+export interface ResumeSessionParams {
+  session_id: string;
+  stream_id?: string;
+  after_seq?: number;
+}
+export interface AckEventsParams {
+  session_id: string;
+  stream_id: string;
+  seq: number;
+}
 export interface ForkSessionParams {
   session_id: string;
   new_session_id?: string;
@@ -139,6 +149,8 @@ export interface RunStartedParams {
   session_id: string;
   prompt?: string;
   prompt_role?: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface RunStatusParams {
   run_id: string;
@@ -148,6 +160,8 @@ export interface RunStatusParams {
   attempt?: number;
   total?: number;
   next_delay?: number;
+  seq?: number;
+  stream_id?: string;
 }
 export interface ToolCalledParams {
   run_id: string;
@@ -155,6 +169,8 @@ export interface ToolCalledParams {
   tool: string;
   input: string;
   call_id: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface ToolResultParams {
   run_id: string;
@@ -163,11 +179,15 @@ export interface ToolResultParams {
   output: string;
   call_id: string;
   metadata?: Record<string, unknown>;
+  seq?: number;
+  stream_id?: string;
 }
 export interface MessageOutputParams {
   run_id: string;
   session_id: string;
   content: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface TokenParams {
   run_id: string;
@@ -180,6 +200,8 @@ export interface TokenParams {
   max_input_tokens?: number;
   max_output_tokens?: number;
   truncation?: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface RunEndParams {
   run_id: string;
@@ -191,6 +213,8 @@ export interface RunEndParams {
   max_output_tokens?: number;
   truncation?: string;
   error?: Record<string, unknown>;
+  seq?: number;
+  stream_id?: string;
 }
 export interface ToolApprovalRequestedParams {
   call_id: string;
@@ -199,10 +223,15 @@ export interface ToolApprovalRequestedParams {
   metadata?: Record<string, unknown>;
   session_id?: string;
   run_id?: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface ToolApprovalResolvedParams {
   call_id: string;
   session_id?: string;
+  reason?: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface McpApprovalRequestedParams {
   kind: string;
@@ -212,10 +241,15 @@ export interface McpApprovalRequestedParams {
   arguments: string;
   session_id?: string;
   run_id?: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface McpApprovalResolvedParams {
   request_id: string;
   session_id?: string;
+  reason?: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface ClientRequestParams {
   request_id: string;
@@ -224,23 +258,35 @@ export interface ClientRequestParams {
   session_id?: string;
   idempotency_key?: string;
   run_id?: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface ClientRequestResolvedParams {
   request_id: string;
+  session_id?: string;
+  reason?: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface QueueChangedParams {
   session_id: string;
   depth: number;
   items: unknown[];
+  seq?: number;
+  stream_id?: string;
 }
 export interface SessionForkedParams {
   session_id: string;
   new_session_id: string;
+  seq?: number;
+  stream_id?: string;
 }
 export interface SessionVariablesChangedParams {
   session_id: string;
   changed: Record<string, unknown>;
   variables: Record<string, unknown>;
+  seq?: number;
+  stream_id?: string;
 }
 export interface RpcMethodMap {
   "initialize": { params: InitializeParams; result: InitializeResult };
@@ -262,6 +308,8 @@ export interface RpcMethodMap {
   "enqueue_message": { params: EnqueueMessageParams; result: Record<string, unknown> };
   "list_queue": { params: ListQueueParams; result: Record<string, unknown> };
   "cancel_queued_message": { params: CancelQueuedMessageParams; result: Record<string, unknown> };
+  "resume_session": { params: ResumeSessionParams; result: Record<string, unknown> };
+  "ack_events": { params: AckEventsParams; result: Record<string, unknown> };
   "fork_session": { params: ForkSessionParams; result: Record<string, unknown> };
   "set_session_hold": { params: SetSessionHoldParams; result: Record<string, unknown> };
   "queue_status": { params: QueueStatusParams; result: Record<string, unknown> };

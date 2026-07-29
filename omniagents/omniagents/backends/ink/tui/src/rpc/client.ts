@@ -30,6 +30,7 @@ import {
   WS_CLOSE_UNAUTHENTICATED,
   type LifecyclePolicy,
 } from "./lifecycle.js";
+import { SessionReplayCoordinator, type ResumeResult } from "./replay.js";
 
 type InkNotificationMap = {
   [Event in ServerEvent as Event["method"]]: Event["params"];
@@ -107,6 +108,15 @@ export class RPCClient extends EventEmitter {
   private closedByUser = false;
   private handshakeRejected = false;
   private negotiatedInitialization: InitializeResult | null = null;
+  private replay: SessionReplayCoordinator;
+  private ackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /**
+   * Fired when the sequenced event stream cannot be recovered by replay
+   * (stream epoch changed or the server no longer retains the cursor).
+   * Host apps must refetch authoritative state via getSessionHistory.
+   */
+  onResyncRequired: (sessionId: string) => void = () => {};
 
   constructor(options: RPCClientOptions) {
     super();
@@ -115,6 +125,19 @@ export class RPCClient extends EventEmitter {
     this.debug = options.debug || false;
     this.policy = options.policy ?? DEFAULT_LIFECYCLE_POLICY;
     this.reconnectCtrl = new ReconnectController(this.policy);
+    // Replay cursors live on the client (not the socket), so sequence
+    // dedup and gap backfill survive lifecycle reconnects.
+    this.replay = new SessionReplayCoordinator(
+      (sessionId, streamId, afterSeq) =>
+        this.resumeSession(sessionId, streamId ?? undefined, afterSeq),
+      (method, params) =>
+        this.deliverNotification({
+          jsonrpc: "2.0",
+          method,
+          params,
+        } as JSONRPCNotification),
+      (sessionId) => this.onResyncRequired(sessionId),
+    );
   }
 
   get initializeResult(): InitializeResult | null {
@@ -389,6 +412,38 @@ export class RPCClient extends EventEmitter {
    */
   async archiveSession(sessionId: string): Promise<void> {
     await this.call("archive_session", { session_id: sessionId });
+  }
+
+  /**
+   * Replay retained sequenced events after `afterSeq` from the server's
+   * durable journal. Rejects with JSONRPCError code -32030 when the
+   * cursor cannot be served (resync required).
+   */
+  async resumeSession(
+    sessionId: string,
+    streamId?: string,
+    afterSeq?: number,
+  ): Promise<ResumeResult> {
+    const params: Record<string, unknown> = { session_id: sessionId };
+    if (streamId) params.stream_id = streamId;
+    if (afterSeq != null) params.after_seq = afterSeq;
+    return (await this.call(
+      "resume_session",
+      params as unknown as RpcMethodMap["resume_session"]["params"],
+    )) as ResumeResult;
+  }
+
+  /** Acknowledge applied events so the server can compact its journal. */
+  async ackEvents(
+    sessionId: string,
+    streamId: string,
+    seq: number,
+  ): Promise<Record<string, unknown>> {
+    return (await this.call("ack_events", {
+      session_id: sessionId,
+      stream_id: streamId,
+      seq,
+    })) as Record<string, unknown>;
   }
 
   /**
@@ -703,16 +758,55 @@ export class RPCClient extends EventEmitter {
 
     // Handle server events (notifications)
     if ("method" in message && !("id" in message)) {
-      // Check if it's a client_request notification (special case)
-      if (message.method === "client_request") {
-        this.handleClientRequest(message as JSONRPCNotification);
+      const notification = message as JSONRPCNotification;
+      // Sequence-aware dedup / gap recovery: drops duplicate deliveries
+      // (a replayed client_request must not re-execute the function),
+      // backfills gaps via resume_session, and reports unrecoverable
+      // streams through onResyncRequired.
+      if (
+        this.replay.handle(
+          notification.method,
+          notification.params as Record<string, unknown> | undefined,
+        )
+      ) {
         return;
       }
-      this.handleNotification(message as JSONRPCNotification);
+      this.deliverNotification(notification);
+      this.scheduleAck(notification.params as Record<string, unknown> | undefined);
       return;
     }
 
     this.log("Unknown message type:", message);
+  }
+
+  /** Dispatch a (deduplicated) notification to its handler. */
+  private deliverNotification(notification: JSONRPCNotification): void {
+    // Check if it's a client_request notification (special case)
+    if (notification.method === "client_request") {
+      this.handleClientRequest(notification);
+      return;
+    }
+    this.handleNotification(notification);
+  }
+
+  /** Debounced ack of the latest applied sequence id per session. */
+  private scheduleAck(params?: Record<string, unknown>): void {
+    const sessionId = params?.session_id;
+    if (typeof sessionId !== "string" || typeof params?.seq !== "number") {
+      return;
+    }
+    if (this.ackTimers.has(sessionId)) return;
+    this.ackTimers.set(
+      sessionId,
+      setTimeout(() => {
+        this.ackTimers.delete(sessionId);
+        const tracker = this.replay.tracker(sessionId);
+        if (!tracker.streamId || tracker.lastSeq <= 0) return;
+        this.ackEvents(sessionId, tracker.streamId, tracker.lastSeq).catch(
+          () => {},
+        );
+      }, 500),
+    );
   }
 
   /**

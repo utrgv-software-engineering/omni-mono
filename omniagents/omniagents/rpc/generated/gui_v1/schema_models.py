@@ -8,6 +8,15 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, RootModel
 
 
+class AckEvents(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    seq: int
+    session_id: str
+    stream_id: str
+
+
 class ArchiveSession(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -55,14 +64,20 @@ class ClientRequest(BaseModel):
     idempotency_key: str | None = None
     request_id: str
     run_id: str | None = None
+    seq: int | None = None
     session_id: str | None = None
+    stream_id: str | None = None
 
 
 class ClientRequestResolved(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    reason: str | None = None
     request_id: str
+    seq: int | None = None
+    session_id: str | None = None
+    stream_id: str | None = None
 
 
 class ClientResponse(BaseModel):
@@ -208,8 +223,10 @@ class McpApprovalRequested(BaseModel):
     kind: str
     request_id: str
     run_id: str | None = None
+    seq: int | None = None
     server_label: str
     session_id: str | None = None
+    stream_id: str | None = None
     tool_name: str
 
 
@@ -217,8 +234,11 @@ class McpApprovalResolved(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    reason: str | None = None
     request_id: str
+    seq: int | None = None
     session_id: str | None = None
+    stream_id: str | None = None
 
 
 class McpApprovalResponse(BaseModel):
@@ -236,7 +256,9 @@ class MessageOutput(BaseModel):
     )
     content: str
     run_id: str
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
 
 
 class Platform(BaseModel):
@@ -253,7 +275,9 @@ class QueueChanged(BaseModel):
     )
     depth: int
     items: list[Any]
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
 
 
 class QueueStatus(BaseModel):
@@ -277,6 +301,15 @@ class Result(RootModel[Any]):
     root: Any
 
 
+class ResumeSession(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    after_seq: int | None = None
+    session_id: str
+    stream_id: str | None = None
+
+
 class RunEnd(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -287,7 +320,9 @@ class RunEnd(BaseModel):
     max_output_tokens: int | None = None
     model: str | None = None
     run_id: str
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
     truncation: str | None = None
     usage: dict[str, Any] | None = None
 
@@ -299,7 +334,9 @@ class RunStarted(BaseModel):
     prompt: str | None = None
     prompt_role: str | None = None
     run_id: str
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
 
 
 class RunStatus(BaseModel):
@@ -310,8 +347,10 @@ class RunStatus(BaseModel):
     message: str
     next_delay: int | None = None
     run_id: str
+    seq: int | None = None
     session_id: str
     status: str
+    stream_id: str | None = None
     total: int | None = None
 
 
@@ -337,7 +376,9 @@ class SessionForked(BaseModel):
         extra="forbid",
     )
     new_session_id: str
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
 
 
 class SessionVariablesChanged(BaseModel):
@@ -345,7 +386,9 @@ class SessionVariablesChanged(BaseModel):
         extra="forbid",
     )
     changed: dict[str, Any]
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
     variables: dict[str, Any]
 
 
@@ -396,7 +439,9 @@ class Token(BaseModel):
     model: str | None = None
     response_id: str | None = None
     run_id: str
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
     totals: dict[str, Any]
     truncation: str | None = None
     turn: int | None = None
@@ -410,7 +455,9 @@ class ToolApprovalRequested(BaseModel):
     call_id: str
     metadata: dict[str, Any] | None = None
     run_id: str | None = None
+    seq: int | None = None
     session_id: str | None = None
+    stream_id: str | None = None
     tool_name: str
 
 
@@ -419,7 +466,10 @@ class ToolApprovalResolved(BaseModel):
         extra="forbid",
     )
     call_id: str
+    reason: str | None = None
+    seq: int | None = None
     session_id: str | None = None
+    stream_id: str | None = None
 
 
 class ToolApprovalResponse(BaseModel):
@@ -439,7 +489,9 @@ class ToolCalled(BaseModel):
     call_id: str
     input: str
     run_id: str
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
     tool: str
 
 
@@ -451,7 +503,9 @@ class ToolResult(BaseModel):
     metadata: dict[str, Any] | None = None
     output: str
     run_id: str
+    seq: int | None = None
     session_id: str
+    stream_id: str | None = None
     tool: str
 
 
@@ -504,6 +558,8 @@ class Model(
         | EnqueueMessage
         | ListQueue
         | CancelQueuedMessage
+        | ResumeSession
+        | AckEvents
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -553,6 +609,8 @@ class Model(
         | EnqueueMessage
         | ListQueue
         | CancelQueuedMessage
+        | ResumeSession
+        | AckEvents
         | ForkSession
         | SetSessionHold
         | QueueStatus

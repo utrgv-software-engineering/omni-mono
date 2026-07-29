@@ -225,6 +225,11 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "enqueue_message",
         "list_queue",
         "cancel_queued_message",
+        # Durable replay cursors: both name a session_id, so ownership of
+        # the session gates who may read (resume) or compact (ack) its
+        # journaled events.
+        "resume_session",
+        "ack_events",
         "fork_session",
         "set_session_hold",
         "queue_status",

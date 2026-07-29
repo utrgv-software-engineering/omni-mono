@@ -295,9 +295,15 @@ class TestClientToolInvoker:
         assert result["ok"] is True
         assert result["column"] == "Done"
 
-        # Verify the payload sent to the channel
-        assert len(captured_payloads) == 1
-        payload = captured_payloads[0]
+        # Verify the payload sent to the channel (the resolution also
+        # broadcasts a client_request_resolved dismissal; filter it out).
+        requests = [
+            payload
+            for payload in captured_payloads
+            if payload.get("function") == "tool.call"
+        ]
+        assert len(requests) == 1
+        payload = requests[0]
         assert payload["function"] == "tool.call"
         assert payload["args"]["tool"] == "move_ticket"
         assert payload["args"]["arguments"] == {"column": "Done"}

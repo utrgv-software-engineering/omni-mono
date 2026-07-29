@@ -58,7 +58,9 @@
       "server_call",
       "enqueue_message",
       "list_queue",
-      "cancel_queued_message"
+      "cancel_queued_message",
+      "resume_session",
+      "ack_events"
     ]
   },
   "router_mode": "generated_request_allowlist",

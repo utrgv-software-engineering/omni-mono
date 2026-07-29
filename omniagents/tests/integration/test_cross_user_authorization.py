@@ -191,6 +191,50 @@ def test_cross_user_session_access_denied(authz_context):
         alice_cm.__exit__(None, None, None)
 
 
+def test_cross_user_replay_cursor_access_denied(authz_context):
+    """Durable replay is session-owner-gated: another principal can neither
+    read journaled events (resume_session) nor advance/compact cursors
+    (ack_events) on a session they do not own — no unowned-session event
+    leakage in enforced mode."""
+    alice_cm, alice = _connect(authz_context, ALICE)
+    bob_cm, bob = _connect(authz_context, BOB)
+    try:
+        run = alice.result("start_run", prompt="alice replayable turn")
+        session_id = run["session_id"]
+
+        bob.expect_denied("resume_session", session_id=session_id, after_seq=0)
+        bob.expect_denied(
+            "resume_session",
+            session_id=session_id,
+            stream_id="whatever",
+            after_seq=0,
+        )
+        bob.expect_denied(
+            "ack_events", session_id=session_id, stream_id="whatever", seq=1
+        )
+        # An unknown session is a deny too (fail-closed), never a
+        # freshly created journal for the caller.
+        bob.expect_denied("resume_session", session_id="no_such_session")
+
+        # The owner's replay path still works end-to-end: the journal
+        # returns her stamped events and acks advance her cursor.
+        resumed = alice.result("resume_session", session_id=session_id, after_seq=0)
+        assert resumed["session_id"] == session_id
+        assert isinstance(resumed.get("events"), list)
+        assert resumed["last_seq"] >= 1
+        stream_id = resumed["stream_id"]
+        acked = alice.result(
+            "ack_events",
+            session_id=session_id,
+            stream_id=stream_id,
+            seq=resumed["last_seq"],
+        )
+        assert acked["acknowledged_seq"] == resumed["last_seq"]
+    finally:
+        bob_cm.__exit__(None, None, None)
+        alice_cm.__exit__(None, None, None)
+
+
 def test_cross_user_run_control_denied(authz_context):
     alice_cm, alice = _connect(authz_context, ALICE)
     bob_cm, bob = _connect(authz_context, BOB)

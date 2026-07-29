@@ -34,6 +34,8 @@ STABLE_REQUESTS = (
     "enqueue_message",
     "list_queue",
     "cancel_queued_message",
+    "resume_session",
+    "ack_events",
 )
 
 EXPERIMENTAL_REQUESTS = (

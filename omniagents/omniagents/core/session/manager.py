@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Any
 
 from omniagents.core.debug import Debug
+from .event_log import MemoryEventLogStore, SessionEventLog
 from .history_db import (
     load_history,
     register_session,
@@ -653,6 +654,22 @@ class Session:  # noqa: D101
         # reconnects we replay everything that is still pending so the UI can
         # catch up (e.g. pending tool-approval requests).
         self.pending_events: list[tuple[str, dict]] = []
+        # Durable sequenced journal of replayable events. Stamps every
+        # replayable notification with (session_id, stream_id, seq) and
+        # backs the ``resume_session`` / ``ack_events`` replay protocol.
+        # Falls back to a private in-memory store if the durable backend
+        # fails so session construction never breaks on journal I/O.
+        try:
+            self.event_log = SessionEventLog(
+                self.id, project_slug=project_slug, agent_slug=agent_slug
+            )
+        except Exception:
+            self.event_log = SessionEventLog(
+                self.id,
+                project_slug=project_slug,
+                agent_slug=agent_slug,
+                store=MemoryEventLogStore(),
+            )
         # Active Rpc channels (one per concurrent client connection).  We
         # may have more than one in case the user opens multiple tabs.
         # Disconnected channels are automatically culled when a send fails.

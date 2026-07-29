@@ -12,6 +12,7 @@ from omniagents.core.agents import mcp_ui
 from omniagents.core.agents.approval import session_allows_mcp_tool, session_allows_tool
 from omniagents.core.agents.mcp_identity import lookup_identity
 from omniagents.core.debug import Debug
+from omniagents.core.session.event_log import stamp_session_event
 from omniagents.core.tools.artifacts import (
     reset_artifact_callback,
     set_artifact_callback,
@@ -59,6 +60,11 @@ async def _safe_notify(channel, method: str, payload: dict) -> bool:  # noqa: D4
 
 
 async def _broadcast(session, method: str, payload: dict) -> bool:  # noqa: D401
+    # Stamp + journal replayable events BEFORE the connectivity check so
+    # events emitted while every client is disconnected are still
+    # sequenced and resumable via ``resume_session``.
+    payload = stamp_session_event(session, method, payload)
+
     if not session.channels:
         return False
 
@@ -76,12 +82,18 @@ async def _broadcast(session, method: str, payload: dict) -> bool:  # noqa: D401
         else:
             dead_channels.append(ch)
 
-    # Remove channels that are no longer alive
+    # Remove channels that are no longer alive. Dropping the channel's
+    # replay cursor as well keeps a dead consumer from pinning the
+    # minimum-cursor floor and permanently stalling ack-driven journal
+    # compaction (mirrors the cull in AgentService._broadcast_session).
     for ch in dead_channels:
         try:
             session.channels.remove(ch)
         except ValueError:
             pass
+        event_log = getattr(session, "event_log", None)
+        if event_log is not None:
+            event_log.drop_consumer(ch)
 
     return delivered_any
 

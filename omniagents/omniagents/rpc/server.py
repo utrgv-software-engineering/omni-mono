@@ -250,6 +250,11 @@ class JsonRpcEndpoint:
     ) -> None:
         if call_id is None:
             return
+        from omniagents.core.session.event_log import ResyncRequiredError
+
+        if isinstance(exc, ResyncRequiredError):
+            await channel.send_error(call_id, exc.code, str(exc), exc.data)
+            return
         data: Dict[str, Any] = {"type": exc.__class__.__name__, "message": str(exc)}
         if method is not None:
             data["method"] = method

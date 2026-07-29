@@ -821,6 +821,130 @@ Run lifecycle notifications:
 
 - `run_started`: Emitted immediately after a run is scheduled; includes `{ run_id, session_id }`. This allows clients to correlate subsequent `run_status`, `token`, and `run_end` messages even if they arrive before the JSON-RPC response to `start_run` is processed.
 
+## Durable Sequenced Event Replay (`replay` capability)
+
+GUI clients can disconnect and reconnect without losing, duplicating, or
+misordering run activity. The server stamps every *replayable*
+server→client notification with a replay envelope and journals it
+durably; clients resume from their last applied cursor.
+
+### Replay envelope
+
+Every replayable notification carries three additional fields:
+
+- `session_id` — the session the event belongs to
+- `stream_id` — the event-stream *epoch*. Stable across reconnects and
+  (with the default durable journal) across server restarts; it changes
+  only when the journal is missing or destroyed.
+- `seq` — per-session monotonically increasing integer, never reused
+
+Replayable methods: `run_started`, `run_status`, `message_output`,
+`tool_called`, `tool_result`, `run_end`, `tool_approval_requested`,
+`tool_approval_resolved`, `mcp_approval_requested`,
+`mcp_approval_resolved`, `client_request`, `client_request_resolved`,
+`queue_changed`, `session_forked`, `session_variables_changed`.
+
+`token` is deliberately **not** sequenced or journaled: usage deltas are
+transient, totals are cumulative, and `message_output`/`run_end`
+supersede them. Clients must ignore events without an integer `seq` in
+their dedup/gap logic.
+
+### Client cursor protocol
+
+- **Dedup**: track `(stream_id, last applied seq)` per session. An event
+  with `seq <= last_seq` is a duplicate delivery (e.g. the legacy
+  pending-event replay after reconnect) and MUST be dropped so no
+  duplicate UI items appear.
+- **Gap detection**: `seq > last_seq + 1` means events were missed
+  (disconnect window, transport shedding under backpressure). Hold the
+  event and backfill:
+
+```json
+{"method": "resume_session", "params": {"session_id": "…", "stream_id": "…", "after_seq": 41}}
+```
+
+Result:
+
+```json
+{
+  "session_id": "…",
+  "stream_id": "…",
+  "first_seq": 40,
+  "last_seq": 45,
+  "active_run_id": "task-…",
+  "events": [{"method": "tool_result", "params": {"seq": 42, "…": "…"}}, …]
+}
+```
+
+Apply `events` in order (skipping any `seq` already applied), then adopt
+`last_seq` as the new cursor — the replay window is allowed to be
+non-contiguous because the journal compacts superseded snapshots (see
+below). `resume_session` also registers the calling channel for live
+events, so a bare reconnect flow is: connect → `initialize` →
+`resume_session` → process live notifications.
+
+- **Acknowledgement**: periodically acknowledge applied events so the
+  server can compact its journal:
+
+```json
+{"method": "ack_events", "params": {"session_id": "…", "stream_id": "…", "seq": 45}}
+```
+
+Acks are per-connection; the journal only compacts below the *minimum*
+cursor across live consumers, so multi-tab clients each receive every
+event and converge on the same authoritative state.
+
+### Resync required (error `-32030`)
+
+When a cursor cannot be served — the stream epoch changed, the cursor is
+ahead of the stream, or it fell below the compaction floor —
+`resume_session`/`ack_events` fail with a structured error:
+
+```json
+{
+  "code": -32030,
+  "message": "Resync required",
+  "data": {
+    "kind": "resync_required",
+    "session_id": "…",
+    "stream_id": "…",
+    "retained_first_seq": 120,
+    "retained_last_seq": 158
+  }
+}
+```
+
+The client MUST refetch authoritative state (`get_session_history`, which
+also replays live pending prompts) and restart its cursor from the
+advertised stream.
+
+### Retention and compaction
+
+- **Bounded retention**: at most `OMNIAGENTS_EVENT_LOG_MAX_EVENTS`
+  (default 1024) events are retained per session. Trimming raises the
+  compaction floor; cursors below the floor get `-32030`.
+- **Snapshot coalescing**: `queue_changed` is a full-replace snapshot, so
+  a newer one supersedes retained older ones. This never raises the
+  compaction floor (nothing is lost), which is why replay windows may be
+  non-contiguous.
+- **Ack-driven compaction**: events acknowledged by every live consumer
+  are dropped from the journal.
+
+### Server restart recovery
+
+The journal is durable by default (`OMNIAGENTS_EVENT_LOG_BACKEND=sqlite`,
+stored next to the session-history shard; `memory` keeps it
+process-local). After a restart the stream epoch and sequence numbering
+continue, so clients resume normally. Runs and approval/`client_request`
+prompts interrupted by the restart are closed out with synthetic events
+appended when the session reloads: `run_end` with
+`end_reason: "server_restart"` and the matching `*_resolved` events with
+`reason: "server_restart"`. Reconnecting clients therefore converge on a
+terminated-run state instead of waiting on prompts that no live future
+backs. Deployments using the `memory` backend lose the journal on
+restart: clients then observe a new `stream_id` (or `-32030`) and perform
+a full resync.
+
 ## Connection Lifecycle
 
 All maintained clients (Python `JsonRpcClient`/`RemoteAgent`, the web UI,
@@ -895,7 +1019,8 @@ Failures are classified as **retryable**, **permanent**, or
 5. **Resume is out of scope for the transport.** After a reconnect,
    clients re-run the `initialize` handshake and resume sessions by
    `session_id`. Fine-grained event replay (cursor-based resume) is a
-   separate, pluggable concern layered on the disconnect/reconnect hooks.
+   separate, pluggable concern layered on the disconnect/reconnect hooks
+   (see "Durable Sequenced Event Replay" above).
 
 ### Idempotency guidance for retries
 
@@ -933,6 +1058,8 @@ Only auto-retry requests whose repetition cannot duplicate side effects:
 3. Manage session state appropriately
 4. Provide user-friendly interfaces for tool approvals, and surface
    retryable versus terminal connection failures distinctly
+5. Deduplicate notifications by `seq` and backfill gaps via
+   `resume_session` (see "Durable Sequenced Event Replay")
 
 ## Example Server Implementation
 

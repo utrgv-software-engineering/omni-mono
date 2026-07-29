@@ -243,6 +243,28 @@ class CancelQueuedMessageResult(RootModel[dict[str, Any]]):
     pass
 
 
+class ResumeSessionParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    stream_id: str | None = None
+    after_seq: int | None = None
+
+
+class ResumeSessionResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AckEventsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    stream_id: str
+    seq: int
+
+
+class AckEventsResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class ForkSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -354,6 +376,8 @@ class RunStartedParams(BaseModel):
     session_id: str
     prompt: str | None = None
     prompt_role: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class RunStatusParams(BaseModel):
@@ -365,6 +389,8 @@ class RunStatusParams(BaseModel):
     attempt: int | None = None
     total: int | None = None
     next_delay: int | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class ToolCalledParams(BaseModel):
@@ -374,6 +400,8 @@ class ToolCalledParams(BaseModel):
     tool: str
     input: str
     call_id: str
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class ToolResultParams(BaseModel):
@@ -384,6 +412,8 @@ class ToolResultParams(BaseModel):
     output: str
     call_id: str
     metadata: dict[str, Any] | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class MessageOutputParams(BaseModel):
@@ -391,6 +421,8 @@ class MessageOutputParams(BaseModel):
     run_id: str
     session_id: str
     content: str
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class TokenParams(BaseModel):
@@ -405,6 +437,8 @@ class TokenParams(BaseModel):
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     truncation: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class RunEndParams(BaseModel):
@@ -418,6 +452,8 @@ class RunEndParams(BaseModel):
     max_output_tokens: int | None = None
     truncation: str | None = None
     error: dict[str, Any] | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class ToolApprovalRequestedParams(BaseModel):
@@ -428,12 +464,17 @@ class ToolApprovalRequestedParams(BaseModel):
     metadata: dict[str, Any] | None = None
     session_id: str | None = None
     run_id: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class ToolApprovalResolvedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     call_id: str
     session_id: str | None = None
+    reason: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class McpApprovalRequestedParams(BaseModel):
@@ -445,12 +486,17 @@ class McpApprovalRequestedParams(BaseModel):
     arguments: str
     session_id: str | None = None
     run_id: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class McpApprovalResolvedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str
     session_id: str | None = None
+    reason: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class ClientRequestParams(BaseModel):
@@ -461,11 +507,17 @@ class ClientRequestParams(BaseModel):
     session_id: str | None = None
     idempotency_key: str | None = None
     run_id: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class ClientRequestResolvedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str
+    session_id: str | None = None
+    reason: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class QueueChangedParams(BaseModel):
@@ -473,12 +525,16 @@ class QueueChangedParams(BaseModel):
     session_id: str
     depth: int
     items: list[Any]
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class SessionForkedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
     new_session_id: str
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 class SessionVariablesChangedParams(BaseModel):
@@ -486,6 +542,8 @@ class SessionVariablesChangedParams(BaseModel):
     session_id: str
     changed: dict[str, Any]
     variables: dict[str, Any]
+    seq: int | None = None
+    stream_id: str | None = None
 
 
 CLIENT_REQUEST_MODELS = {
@@ -508,6 +566,8 @@ CLIENT_REQUEST_MODELS = {
     "enqueue_message": EnqueueMessageParams,
     "list_queue": ListQueueParams,
     "cancel_queued_message": CancelQueuedMessageParams,
+    "resume_session": ResumeSessionParams,
+    "ack_events": AckEventsParams,
     "fork_session": ForkSessionParams,
     "set_session_hold": SetSessionHoldParams,
     "queue_status": QueueStatusParams,
@@ -539,6 +599,8 @@ CLIENT_RESULT_MODELS = {
     "enqueue_message": EnqueueMessageResult,
     "list_queue": ListQueueResult,
     "cancel_queued_message": CancelQueuedMessageResult,
+    "resume_session": ResumeSessionResult,
+    "ack_events": AckEventsResult,
     "fork_session": ForkSessionResult,
     "set_session_hold": SetSessionHoldResult,
     "queue_status": QueueStatusResult,
@@ -590,6 +652,8 @@ STABLE_REQUESTS = frozenset(
         "enqueue_message",
         "list_queue",
         "cancel_queued_message",
+        "resume_session",
+        "ack_events",
     ]
 )
 EXPERIMENTAL_REQUESTS = frozenset(

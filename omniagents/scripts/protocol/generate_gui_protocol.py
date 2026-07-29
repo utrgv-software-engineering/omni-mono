@@ -47,6 +47,8 @@ REQUIRED_FIELDS = {
     "set_session_hold": ("session_id", "hold"),
     "queue_status": ("session_id",),
     "enqueue_notification": ("session_id", "content"),
+    "resume_session": ("session_id",),
+    "ack_events": ("session_id", "stream_id", "seq"),
     "update_session_variables": ("session_id", "updates"),
     "set_client_status": ("text",),
     "disable_tool": ("tool_name",),
@@ -76,6 +78,14 @@ REQUIRED_FIELDS = {
     "session_forked": ("session_id", "new_session_id"),
     "session_variables_changed": ("session_id", "changed", "variables"),
 }
+
+# Optional replay envelope stamped onto durable (replayable) server
+# notifications: ``seq`` is the per-session monotonic sequence id and
+# ``stream_id`` identifies the event-stream epoch. ``token`` is the one
+# transient notification that never carries ``seq`` (usage totals are
+# cumulative and ``run_end`` supersedes them), but it shares the schema
+# fields for uniformity.
+REPLAY_ENVELOPE_FIELDS = ("seq", "stream_id")
 
 OPTIONAL_FIELDS = {
     "start_run": (
@@ -126,11 +136,20 @@ OPTIONAL_FIELDS = {
         "error",
     ),
     "tool_approval_requested": ("metadata", "session_id", "run_id"),
-    "tool_approval_resolved": ("session_id",),
+    "tool_approval_resolved": ("session_id", "reason"),
     "mcp_approval_requested": ("session_id", "run_id"),
-    "mcp_approval_resolved": ("session_id",),
+    "mcp_approval_resolved": ("session_id", "reason"),
     "client_request": ("session_id", "idempotency_key", "run_id"),
+    "client_request_resolved": ("session_id", "reason"),
+    "resume_session": ("stream_id", "after_seq"),
 }
+
+# Every server→client notification carries the optional replay envelope.
+for _operation in OPERATIONS:
+    if _operation.direction == "server_to_client":
+        OPTIONAL_FIELDS[_operation.name] = (
+            tuple(OPTIONAL_FIELDS.get(_operation.name, ())) + REPLAY_ENVELOPE_FIELDS
+        )
 
 ARRAY_FIELDS = {"disable_mcp_servers", "disable_tools", "functions", "items"}
 BOOLEAN_FIELDS = {
@@ -142,6 +161,7 @@ BOOLEAN_FIELDS = {
     "trigger_run",
 }
 INTEGER_FIELDS = {
+    "after_seq",
     "attempt",
     "depth",
     "limit",
@@ -149,6 +169,7 @@ INTEGER_FIELDS = {
     "max_output_tokens",
     "next_delay",
     "offset",
+    "seq",
     "total",
     "turn",
     "version",
@@ -188,6 +209,8 @@ RESULT_TYPES = {
     "enqueue_message": ("dict[str, Any]", "Record<string, unknown>"),
     "list_queue": ("dict[str, Any]", "Record<string, unknown>"),
     "cancel_queued_message": ("dict[str, Any]", "Record<string, unknown>"),
+    "resume_session": ("dict[str, Any]", "Record<string, unknown>"),
+    "ack_events": ("dict[str, Any]", "Record<string, unknown>"),
     "fork_session": ("dict[str, Any]", "Record<string, unknown>"),
     "set_session_hold": ("dict[str, Any]", "Record<string, unknown>"),
     "queue_status": ("dict[str, Any]", "Record<string, unknown>"),
@@ -346,6 +369,28 @@ PROTOCOL_ERRORS = {
             ],
         },
     },
+    "ResyncRequired": {
+        "code": -32030,
+        "message": "Resync required",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "kind",
+                "session_id",
+                "stream_id",
+                "retained_first_seq",
+                "retained_last_seq",
+            ],
+            "properties": {
+                "kind": {"const": "resync_required"},
+                "session_id": {"type": "string"},
+                "stream_id": {"type": "string"},
+                "retained_first_seq": {"type": "integer", "minimum": 0},
+                "retained_last_seq": {"type": "integer", "minimum": 0},
+            },
+        },
+    },
     "TransportOverloaded": {
         "code": -32020,
         "message": "Transport overloaded",
@@ -449,6 +494,8 @@ def build_openrpc() -> dict:
                 entry["errors"].append(
                     {"$ref": "#/components/errors/InitializationRequired"}
                 )
+            if operation.name in ("resume_session", "ack_events"):
+                entry["errors"].append({"$ref": "#/components/errors/ResyncRequired"})
         if operation.kind == "correlated_notification":
             entry["x-omni-correlation"] = {
                 "requestField": "request_id",

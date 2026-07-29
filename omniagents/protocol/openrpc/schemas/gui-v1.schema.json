@@ -1,5 +1,26 @@
 {
   "$defs": {
+    "ack_events": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "stream_id",
+        "seq"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "archive_session": {
       "additionalProperties": false,
       "properties": {
@@ -117,7 +138,13 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         }
       },
@@ -132,7 +159,19 @@
     "client_request_resolved": {
       "additionalProperties": false,
       "properties": {
+        "reason": {
+          "type": "string"
+        },
         "request_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         }
       },
@@ -458,10 +497,16 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "server_label": {
           "type": "string"
         },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         },
         "tool_name": {
@@ -481,10 +526,19 @@
     "mcp_approval_resolved": {
       "additionalProperties": false,
       "properties": {
+        "reason": {
+          "type": "string"
+        },
         "request_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         }
       },
@@ -523,7 +577,13 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         }
       },
@@ -561,7 +621,13 @@
           "items": {},
           "type": "array"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         }
       },
@@ -612,6 +678,25 @@
       "x-omni-stability": "experimental"
     },
     "result": {},
+    "resume_session": {
+      "additionalProperties": false,
+      "properties": {
+        "after_seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "run_end": {
       "additionalProperties": false,
       "properties": {
@@ -633,7 +718,13 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         },
         "truncation": {
@@ -663,7 +754,13 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         }
       },
@@ -689,10 +786,16 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
           "type": "string"
         },
         "status": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         },
         "total": {
@@ -750,7 +853,13 @@
         "new_session_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         }
       },
@@ -767,7 +876,13 @@
         "changed": {
           "type": "object"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         },
         "variables": {
@@ -883,7 +998,13 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         },
         "totals": {
@@ -920,7 +1041,13 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         },
         "tool_name": {
@@ -941,7 +1068,16 @@
         "call_id": {
           "type": "string"
         },
+        "reason": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         }
       },
@@ -986,7 +1122,13 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         },
         "tool": {
@@ -1018,7 +1160,13 @@
         "run_id": {
           "type": "string"
         },
+        "seq": {
+          "type": "integer"
+        },
         "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
           "type": "string"
         },
         "tool": {
@@ -1112,6 +1260,12 @@
     },
     {
       "$ref": "#/$defs/cancel_queued_message"
+    },
+    {
+      "$ref": "#/$defs/resume_session"
+    },
+    {
+      "$ref": "#/$defs/ack_events"
     },
     {
       "$ref": "#/$defs/fork_session"

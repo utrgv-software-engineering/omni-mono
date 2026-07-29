@@ -15,6 +15,7 @@ import {
   type ConnectionState,
   type LifecyclePolicy,
 } from './lifecycle'
+import { SessionReplayCoordinator, type ResumeResult } from './replay'
 
 type JSONRPCId = number | string
 
@@ -137,12 +138,28 @@ export class RPCClient {
   private closedByUser = false
   private lastConnectionState: ConnectionState = { state: 'connecting' }
   private connectSettlers: { resolve: () => void; reject: (e: Error) => void } | null = null
+  private replay: SessionReplayCoordinator
+  private ackTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  /**
+   * Fired when the sequenced event stream cannot be recovered by replay
+   * (stream epoch changed or the server no longer retains the cursor).
+   * Host apps must refetch authoritative state via getSessionHistory.
+   */
+  onResyncRequired: (sessionId: string) => void = () => {}
 
   constructor(url: string, token?: string, policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY) {
     this.url = url
     this.token = token
     this.policy = policy
     this.reconnectCtrl = new ReconnectController(policy)
+    // Replay cursors live on the client (not the socket), so sequence
+    // dedup and gap backfill survive lifecycle reconnects.
+    this.replay = new SessionReplayCoordinator(
+      (sessionId, streamId, afterSeq) => this.resumeSession(sessionId, streamId ?? undefined, afterSeq),
+      (method, params) => this.emit(method, params),
+      (sessionId) => this.onResyncRequired(sessionId),
+    )
   }
 
   get initializeResult(): InitializeResult | null {
@@ -335,11 +352,35 @@ export class RPCClient {
           }
         }
       } else {
+        // Sequence-aware dedup / gap recovery: the coordinator drops
+        // duplicate deliveries (so replays never create duplicate UI
+        // items), backfills gaps via resume_session, and reports
+        // unrecoverable streams through onResyncRequired.
+        if (this.replay.handle(msg.method, msg.params)) {
+          return
+        }
         this.emit(msg.method, msg.params)
+        this.scheduleAck(msg.params)
       }
     } catch (e) {
       console.error('RPC parse error', e)
     }
+  }
+
+  /** Debounced ack of the latest applied sequence id per session. */
+  private scheduleAck(params?: Record<string, unknown>): void {
+    const sessionId = params?.session_id
+    if (typeof sessionId !== 'string' || typeof params?.seq !== 'number') return
+    if (this.ackTimers.has(sessionId)) return
+    this.ackTimers.set(
+      sessionId,
+      setTimeout(() => {
+        this.ackTimers.delete(sessionId)
+        const tracker = this.replay.tracker(sessionId)
+        if (!tracker.streamId || tracker.lastSeq <= 0) return
+        this.ackEvents(sessionId, tracker.streamId, tracker.lastSeq).catch(() => {})
+      }, 500),
+    )
   }
 
   private sendNotification(method: string, params: Record<string, unknown>): void {
@@ -445,6 +486,23 @@ export class RPCClient {
 
   async stopRun(runId: string): Promise<void> {
     await this.call('stop_run', { run_id: runId })
+  }
+
+  /**
+   * Replay retained sequenced events after `afterSeq` from the server's
+   * durable journal. Rejects with JSONRPCError code -32030 when the
+   * cursor cannot be served (resync required).
+   */
+  async resumeSession(sessionId: string, streamId?: string, afterSeq?: number): Promise<ResumeResult> {
+    const params: Record<string, unknown> = { session_id: sessionId }
+    if (streamId) params.stream_id = streamId
+    if (afterSeq != null) params.after_seq = afterSeq
+    return this.call('resume_session', params as unknown as RpcMethodMap['resume_session']['params']) as Promise<ResumeResult>
+  }
+
+  /** Acknowledge applied events so the server can compact its journal. */
+  async ackEvents(sessionId: string, streamId: string, seq: number): Promise<Record<string, unknown>> {
+    return this.call('ack_events', { session_id: sessionId, stream_id: streamId, seq }) as Promise<Record<string, unknown>>
   }
 
   async getSessionHistory(sessionId: string): Promise<Array<{ role: string; content: unknown; timestamp: string }>> {

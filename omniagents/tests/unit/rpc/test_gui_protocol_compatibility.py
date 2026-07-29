@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -382,13 +383,46 @@ def test_changed_unsupported_keyword_fails_closed():
 
 
 def test_released_baseline_matches_manifest_digest():
+    """The frozen 1.0.0 baseline is self-consistent release evidence.
+
+    Its manifest digest must match the byte content of the released
+    artifacts. The baseline is immutable — this test failing means the
+    baseline directory was touched, which the governance doc forbids.
+    It deliberately does NOT require the current candidate to be
+    byte-identical to the baseline: v1 evolves additively, and requiring
+    byte-equality here forces exactly the baseline rewrites the doc bans
+    (compatibility is enforced by ``test_candidate_protocol_is_backward_
+    compatible_with_released_baseline`` below).
+    """
     baseline_root = ROOT / "protocol/openrpc/baseline/1.0.0"
     baseline_manifest = json.loads((baseline_root / "manifest.json").read_text())
-    current_manifest = json.loads((ROOT / "protocol/openrpc/manifest.json").read_text())
-    assert baseline_manifest == current_manifest
-    assert (baseline_root / "omniagents-gui-v1.json").read_bytes() == (
-        ROOT / "protocol/openrpc/omniagents-gui-v1.json"
-    ).read_bytes()
-    assert (baseline_root / "schemas/gui-v1.schema.json").read_bytes() == (
-        ROOT / "protocol/openrpc/schemas/gui-v1.schema.json"
-    ).read_bytes()
+    digest = hashlib.sha256(
+        (baseline_root / "omniagents-gui-v1.json").read_bytes()
+        + (baseline_root / "schemas/gui-v1.schema.json").read_bytes()
+    ).hexdigest()
+    assert baseline_manifest["canonical_sha256"] == digest
+    assert baseline_manifest["protocol_version"] == "1.0.0"
+
+
+def test_candidate_protocol_is_backward_compatible_with_released_baseline():
+    """The additive-only v1 promise, enforced against the frozen baseline.
+
+    The current candidate under ``protocol/openrpc/`` must classify as
+    ``identical`` or ``additive`` against the immutable 1.0.0 release
+    snapshot — never ``breaking``. This is the documented compatibility
+    gate (docs/development/gui-protocol-governance.md): the baseline
+    stays frozen and the candidate may only grow.
+    """
+    baseline_root = ROOT / "protocol/openrpc/baseline/1.0.0"
+    baseline_document = json.loads(
+        (baseline_root / "omniagents-gui-v1.json").read_text()
+    )
+    baseline_schema = json.loads(
+        (baseline_root / "schemas/gui-v1.schema.json").read_text()
+    )
+    candidate_document, candidate_schema = _documents()
+    report = compare_protocols(
+        baseline_document, baseline_schema, candidate_document, candidate_schema
+    )
+    assert report.classification in ("identical", "additive"), report.violations
+    assert report.violations == ()

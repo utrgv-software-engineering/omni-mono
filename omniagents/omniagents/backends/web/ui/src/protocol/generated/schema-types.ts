@@ -18,6 +18,8 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | EnqueueMessage
   | ListQueue
   | CancelQueuedMessage
+  | ResumeSession
+  | AckEvents
   | ForkSession
   | SetSessionHold
   | QueueStatus
@@ -166,6 +168,16 @@ export interface CancelQueuedMessage {
   item_id: string;
   session_id: string;
 }
+export interface ResumeSession {
+  after_seq?: number;
+  session_id: string;
+  stream_id?: string;
+}
+export interface AckEvents {
+  seq: number;
+  session_id: string;
+  stream_id: string;
+}
 export interface ForkSession {
   new_session_id?: string;
   session_id: string;
@@ -215,22 +227,28 @@ export interface RunStarted {
   prompt?: string;
   prompt_role?: string;
   run_id: string;
+  seq?: number;
   session_id: string;
+  stream_id?: string;
 }
 export interface RunStatus {
   attempt?: number;
   message: string;
   next_delay?: number;
   run_id: string;
+  seq?: number;
   session_id: string;
   status: string;
+  stream_id?: string;
   total?: number;
 }
 export interface ToolCalled {
   call_id: string;
   input: string;
   run_id: string;
+  seq?: number;
   session_id: string;
+  stream_id?: string;
   tool: string;
 }
 export interface ToolResult {
@@ -240,13 +258,17 @@ export interface ToolResult {
   };
   output: string;
   run_id: string;
+  seq?: number;
   session_id: string;
+  stream_id?: string;
   tool: string;
 }
 export interface MessageOutput {
   content: string;
   run_id: string;
+  seq?: number;
   session_id: string;
+  stream_id?: string;
 }
 export interface Token {
   delta: {
@@ -257,7 +279,9 @@ export interface Token {
   model?: string;
   response_id?: string;
   run_id: string;
+  seq?: number;
   session_id: string;
+  stream_id?: string;
   totals: {
     [k: string]: unknown;
   };
@@ -273,7 +297,9 @@ export interface RunEnd {
   max_output_tokens?: number;
   model?: string;
   run_id: string;
+  seq?: number;
   session_id: string;
+  stream_id?: string;
   truncation?: string;
   usage?: {
     [k: string]: unknown;
@@ -286,25 +312,35 @@ export interface ToolApprovalRequested {
     [k: string]: unknown;
   };
   run_id?: string;
+  seq?: number;
   session_id?: string;
+  stream_id?: string;
   tool_name: string;
 }
 export interface ToolApprovalResolved {
   call_id: string;
+  reason?: string;
+  seq?: number;
   session_id?: string;
+  stream_id?: string;
 }
 export interface McpApprovalRequested {
   arguments: string;
   kind: string;
   request_id: string;
   run_id?: string;
+  seq?: number;
   server_label: string;
   session_id?: string;
+  stream_id?: string;
   tool_name: string;
 }
 export interface McpApprovalResolved {
+  reason?: string;
   request_id: string;
+  seq?: number;
   session_id?: string;
+  stream_id?: string;
 }
 export interface ClientRequest {
   args: {
@@ -314,25 +350,37 @@ export interface ClientRequest {
   idempotency_key?: string;
   request_id: string;
   run_id?: string;
+  seq?: number;
   session_id?: string;
+  stream_id?: string;
 }
 export interface ClientRequestResolved {
+  reason?: string;
   request_id: string;
+  seq?: number;
+  session_id?: string;
+  stream_id?: string;
 }
 export interface QueueChanged {
   depth: number;
   items: unknown[];
+  seq?: number;
   session_id: string;
+  stream_id?: string;
 }
 export interface SessionForked {
   new_session_id: string;
+  seq?: number;
   session_id: string;
+  stream_id?: string;
 }
 export interface SessionVariablesChanged {
   changed: {
     [k: string]: unknown;
   };
+  seq?: number;
   session_id: string;
+  stream_id?: string;
   variables: {
     [k: string]: unknown;
   };

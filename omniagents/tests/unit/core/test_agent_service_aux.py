@@ -213,12 +213,18 @@ async def test_request_client_function_waits_for_response():
     )
 
     assert result == {"ok": True, "result": {"value": 42}, "error": None}
-    assert len(channel.calls) == 1
-    method, payload = channel.calls[0]
+    requests = [call for call in channel.calls if call[0] == "client_request"]
+    assert len(requests) == 1
+    method, payload = requests[0]
     assert method == "client_request"
     assert payload["function"] == "demo"
     assert payload["args"] == {"x": 1}
     assert payload["session_id"] == "sess-1"
+    # Resolving the request broadcasts a dismissal so other tabs showing
+    # the same prompt can close it.
+    resolved = [call for call in channel.calls if call[0] == "client_request_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0][1]["request_id"] == payload["request_id"]
 
 
 @pytest.mark.asyncio

@@ -57,6 +57,7 @@ from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.approval import configure_tool_approval
 from omniagents.core.session import Session, SessionManager
+from omniagents.core.session.event_log import stamp_session_event
 from omniagents.core.session.manager import QueuedItem
 from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
@@ -1805,8 +1806,9 @@ class AgentService(RpcMethodsBase):
 
     def _forget_pending_request(self, request_id: str) -> None:
         sess = self._client_request_sessions.pop(request_id, None)
-        if sess is not None:
-            sess.pending_client_requests.pop(request_id, None)
+        pending = getattr(sess, "pending_client_requests", None) if sess else None
+        if pending is not None:
+            pending.pop(request_id, None)
 
     # ------------------------------------------------------------------
     #  Helper: best-effort async_call that tolerates disconnected sockets.
@@ -1858,6 +1860,10 @@ class AgentService(RpcMethodsBase):
         queue_if_unseen: bool = False,
         track_live: bool = False,
     ) -> bool:
+        # Stamp the replay envelope (session_id, stream_id, seq) and append
+        # to the durable journal BEFORE any delivery attempt so events that
+        # fire while no client is connected are still replayable.
+        payload = stamp_session_event(session, method, payload)
         if track_live:
             self._record_live_event(session, method, payload)
         # Fire in-process listeners BEFORE the channel fan-out so the
@@ -1891,6 +1897,9 @@ class AgentService(RpcMethodsBase):
                 session.channels.remove(ch)
             except ValueError:
                 pass
+            event_log = getattr(session, "event_log", None)
+            if event_log is not None:
+                event_log.drop_consumer(ch)
 
         if queue_if_unseen and not delivered_any and hasattr(session, "pending_events"):
             session.pending_events.append((method, payload))
@@ -2061,6 +2070,9 @@ class AgentService(RpcMethodsBase):
 
         _debug_rpc("client_request", payload)
 
+        if session is not None:
+            payload = stamp_session_event(session, "client_request", payload)
+
         if session is not None and function == "ui.set_status":
             session.active_run_set_status_payload = dict(payload)
         if session is not None and function == "ui.set_session_state":
@@ -2088,6 +2100,14 @@ class AgentService(RpcMethodsBase):
         # Await response with optional timeout
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_client_requests[req_id] = fut
+        # Track the pending request on the session so reconnecting clients
+        # replay it (``_replay_live_state`` / ``resume_session``) and so
+        # ``client_response`` can broadcast ``client_request_resolved``.
+        if session is not None:
+            self._client_request_sessions[req_id] = session
+            pending_requests = getattr(session, "pending_client_requests", None)
+            if pending_requests is not None:
+                pending_requests[req_id] = dict(payload)
         try:
             if timeout_ms is not None and timeout_ms > 0:
                 res = await asyncio.wait_for(fut, timeout=timeout_ms / 1000.0)
@@ -2097,6 +2117,23 @@ class AgentService(RpcMethodsBase):
         except asyncio.TimeoutError:
             # Clean up and return None on timeout
             self._pending_client_requests.pop(req_id, None)
+            self._forget_pending_request(req_id)
+            # Journal (and broadcast) the resolution so a client resuming
+            # within the retention window never replays a dangling
+            # ``client_request`` that no live future backs any more.
+            if session is not None:
+                try:
+                    await self._broadcast_session(
+                        session,
+                        "client_request_resolved",
+                        {
+                            "request_id": req_id,
+                            "session_id": session.id,
+                            "reason": "timeout",
+                        },
+                    )
+                except Exception:
+                    pass
             return None
 
     # ------------------------------------------------------------------
@@ -2255,16 +2292,18 @@ class AgentService(RpcMethodsBase):
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_tool_approvals[call_id] = (fut, session)
 
-        # Track for replay on reconnect.
-        if hasattr(session, "pending_tool_approvals"):
-            session.pending_tool_approvals[call_id] = dict(payload)
-
         await self._broadcast_session(
             session,
             "tool_approval_requested",
             payload,
             queue_if_unseen=True,
         )
+
+        # Track for replay on reconnect. Stored AFTER the broadcast so the
+        # copy carries the replay envelope (seq/stream_id) stamped there —
+        # re-delivery then dedupes cleanly on sequence-aware clients.
+        if hasattr(session, "pending_tool_approvals"):
+            session.pending_tool_approvals[call_id] = dict(payload)
 
         try:
             response = await fut
@@ -2376,8 +2415,17 @@ class AgentService(RpcMethodsBase):
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._pending_mcp_approvals[request_id] = (fut, session)
 
+        await self._broadcast_session(
+            session,
+            "mcp_approval_requested",
+            payload,
+            queue_if_unseen=True,
+        )
+
         # Track for replay on reconnect (sessions may not have the attr if
-        # they predate this feature; we only register if present).
+        # they predate this feature; we only register if present). Stored
+        # AFTER the broadcast so the copy carries the replay envelope
+        # stamped there.
         pending_attr = getattr(session, "pending_mcp_approvals", None)
         if pending_attr is None and hasattr(session, "pending_tool_approvals"):
             try:
@@ -2387,13 +2435,6 @@ class AgentService(RpcMethodsBase):
                 pending_attr = None
         if pending_attr is not None:
             pending_attr[request_id] = dict(payload)
-
-        await self._broadcast_session(
-            session,
-            "mcp_approval_requested",
-            payload,
-            queue_if_unseen=True,
-        )
 
         try:
             response = await fut
@@ -3116,6 +3157,108 @@ class AgentService(RpcMethodsBase):
         return {
             "session_id": session_id,
             "active_run_id": getattr(sess, "active_run_id", None),
+        }
+
+    # ------------------------------------------------------------------
+    #  Durable sequenced replay (``replay`` capability).
+    #
+    #  Clients track (stream_id, seq) from the replay envelope stamped on
+    #  every replayable notification. On reconnect they call
+    #  ``resume_session`` with their last applied cursor and receive the
+    #  retained events they missed, in order; ``ack_events`` advances the
+    #  server-side cursor so fully-acknowledged events can be compacted.
+    #  A cursor that cannot be served (stream epoch changed, cursor below
+    #  the compaction floor, or ahead of the stream) raises
+    #  ``ResyncRequiredError`` → JSON-RPC error -32030 with kind
+    #  "resync_required"; the client must refetch authoritative state via
+    #  ``get_session_history`` and adopt the advertised ``last_seq``.
+    # ------------------------------------------------------------------
+
+    async def resume_session(
+        self,
+        session_id: str,
+        stream_id: str | None = None,
+        after_seq: int | None = None,
+    ) -> dict:  # noqa: D401
+        """Replay retained events after ``after_seq`` for *session_id*.
+
+        Registers the calling channel for live events (same as
+        ``get_session_history``) and registers its replay cursor so
+        acknowledgement-driven compaction never outruns this consumer.
+        Returns the retained events *in the result* (not as notifications)
+        so ordering relative to subsequent live events is explicit:
+        clients apply ``events`` first, adopt ``last_seq``, then process
+        live notifications with sequence-based dedup.
+        """
+        _debug_rpc(
+            "resume_session",
+            {
+                "session_id": session_id,
+                "stream_id": stream_id,
+                "after_seq": after_seq,
+            },
+        )
+        sess: Session = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
+        if self.channel is not None and self.channel not in sess.channels:
+            sess.channels.append(self.channel)
+        log = sess.event_log
+        cursor = int(after_seq or 0)
+        events = log.events_after(cursor, stream_id=stream_id)
+        # Every live channel is a consumer: registering the others at
+        # cursor 0 (no-op for already-known cursors) keeps acknowledgement
+        # -driven compaction from outrunning a lagging tab. The caller's
+        # ``after_seq`` is an implicit ack of everything at or below it.
+        self._register_replay_consumers(sess)
+        if self.channel is not None:
+            log.acknowledge(self.channel, cursor)
+        return {
+            "session_id": sess.id,
+            "stream_id": log.stream_id,
+            "first_seq": log.first_retained_seq,
+            "last_seq": log.last_seq,
+            "active_run_id": getattr(sess, "active_run_id", None),
+            "events": [
+                {"method": method, "params": payload} for method, payload in events
+            ],
+        }
+
+    def _register_replay_consumers(self, sess: Session) -> None:
+        """Register every live channel as a replay consumer (cursor 0 for
+        channels that have not resumed/acked yet) so compaction never runs
+        ahead of a lagging tab. Existing cursors are never regressed."""
+        log = sess.event_log
+        for ch in sess.channels:
+            log.register_consumer(ch, acked_seq=0)
+
+    async def ack_events(
+        self, session_id: str, stream_id: str, seq: int
+    ) -> dict:  # noqa: D401
+        """Acknowledge delivery of all events up to ``seq``.
+
+        Advances the calling channel's cursor; events acknowledged by every
+        live consumer become eligible for compaction. Raises
+        ``ResyncRequiredError`` when ``stream_id`` does not match the
+        session's current stream epoch.
+        """
+        _debug_rpc(
+            "ack_events",
+            {"session_id": session_id, "stream_id": stream_id, "seq": seq},
+        )
+        sess: Session = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
+        log = sess.event_log
+        self._register_replay_consumers(sess)
+        consumer = self.channel if self.channel is not None else "__ackless__"
+        effective = log.acknowledge(consumer, seq, stream_id=stream_id)
+        return {
+            "session_id": sess.id,
+            "stream_id": log.stream_id,
+            "acknowledged_seq": effective,
+            "first_seq": log.first_retained_seq,
+            "last_seq": log.last_seq,
         }
 
     # ------------------------------------------------------------------
@@ -3930,6 +4073,11 @@ class AgentService(RpcMethodsBase):
         deleted = history_db.delete_session(
             session_id, project_slug=project_slug, agent_slug=agent_slug
         )
+
+        # Delete the durable replay journal alongside the history.
+        event_log = getattr(sess, "event_log", None) if sess is not None else None
+        if event_log is not None:
+            event_log.destroy()
 
         # Remove from in-memory session manager
         if sess is not None:

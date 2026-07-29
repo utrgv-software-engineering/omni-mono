@@ -24,6 +24,7 @@ from omniagents.rpc.lifecycle import (
 )
 from omniagents.rpc.transport import TransportError
 from ._events import map_notification_to_event
+from omniagents.rpc.replay import ReplayCoordinator, ReplayCursor
 from omniagents.core.debug import Debug
 
 #: Internal queue marker pushed when the RPC connection drops so that
@@ -130,6 +131,7 @@ class RemoteAgent(UnifiedAgentBase):
         self._policy = policy
         self._client_generation = 0
         self._client: JsonRpcClient | None = None
+        self._methods: _ClientEventMethods | None = None
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
         self._session_id: str | None = None
@@ -270,6 +272,68 @@ class RemoteAgent(UnifiedAgentBase):
         resp = await self._client.other.archive_session(session_id=session_id)
         return getattr(resp, "result", resp)
 
+    async def resume_events(self, session_id: str | None = None) -> Dict[str, Any]:
+        """Backfill missed sequenced events from the server's durable journal.
+
+        Sends ``resume_session`` with this client's replay cursor, feeds
+        the returned events through the normal notification queue (the
+        cursor dedupes anything already applied), and returns the raw
+        result. Raises ``omniagents.rpc.client.RpcError`` with code
+        ``-32030`` when the server no longer retains the cursor — callers
+        must then refetch state via ``get_session_history`` and adopt the
+        stream advertised in the error data.
+        """
+        await self._ensure_client()
+        sid = session_id or self._session_id
+        if not sid:
+            raise ValueError("resume_events requires a session_id")
+        cursor = self._methods.cursor_for(sid)
+        params: Dict[str, Any] = {"session_id": sid, "after_seq": cursor.last_seq}
+        if cursor.stream_id is not None:
+            params["stream_id"] = cursor.stream_id
+        params = _validate_request_params("resume_session", params)
+        resp = await self._client.other.resume_session(**params)
+        result = getattr(resp, "result", resp) or {}
+        for method, payload in cursor.apply_resume(result):
+            self._queue_replayed(method, payload)
+        return result
+
+    def _queue_replayed(self, method: str, payload: Dict[str, Any]) -> None:
+        self._event_queue.put_nowait({"method": method, "params": payload})
+
+    async def _resume_for_coordinator(
+        self, session_id: str, stream_id: str | None, after_seq: int
+    ) -> Dict[str, Any]:
+        """Raw ``resume_session`` call used by the replay coordinator's
+        gap-triggered backfill (cursor bookkeeping stays in the
+        coordinator, which applies the result)."""
+        params: Dict[str, Any] = {"session_id": session_id, "after_seq": after_seq}
+        if stream_id is not None:
+            params["stream_id"] = stream_id
+        params = _validate_request_params("resume_session", params)
+        resp = await self._client.other.resume_session(**params)
+        return getattr(resp, "result", resp) or {}
+
+    async def ack_events(self, session_id: str | None = None) -> Dict[str, Any]:
+        """Acknowledge every event applied so far for *session_id*."""
+        await self._ensure_client()
+        sid = session_id or self._session_id
+        if not sid:
+            raise ValueError("ack_events requires a session_id")
+        cursor = self._methods.cursor_for(sid)
+        if cursor.stream_id is None or cursor.last_seq <= 0:
+            return {"acknowledged_seq": 0}
+        params = _validate_request_params(
+            "ack_events",
+            {
+                "session_id": sid,
+                "stream_id": cursor.stream_id,
+                "seq": cursor.last_seq,
+            },
+        )
+        resp = await self._client.other.ack_events(**params)
+        return getattr(resp, "result", resp) or {}
+
     async def stop_run(self) -> bool:
         """
         Stop the currently running agent execution.
@@ -297,16 +361,23 @@ class RemoteAgent(UnifiedAgentBase):
 
         Transient connect failures back off exponentially; permanent
         failures (auth rejection, protocol/capability mismatch) and an
-        exhausted retry budget re-raise immediately. Event replay after a
-        reconnect is a separate concern — sessions resume server-side via
-        ``session_id``, and finer-grained resume hooks belong to the
-        durable-replay work.
+        exhausted retry budget re-raise immediately. On a *re*connect the
+        replay coordinator backfills each tracked session's missed events
+        from its cursor via ``resume_session`` (layered on the
+        disconnect/reconnect hooks, not on the transport itself).
         """
         if self._client is not None:
             return
 
-        # Build methods object that forwards events into queue
-        self._methods = _ClientEventMethods(self._event_queue)
+        # Build methods object that forwards events into queue. It is
+        # created once and reused across reconnects so the per-session
+        # replay cursors survive — sequence dedup and gap backfill would
+        # be useless if a reconnect reset them. The resume callable lets
+        # the coordinator backfill missed windows via resume_session.
+        if self._methods is None:
+            self._methods = _ClientEventMethods(
+                self._event_queue, resume=self._resume_for_coordinator
+            )
         controller = ReconnectController(self._policy)
 
         while True:
@@ -337,6 +408,11 @@ class RemoteAgent(UnifiedAgentBase):
         self._client.on_disconnect(
             lambda error: self._on_client_disconnect(generation, error)
         )
+        # Reconnect (not first connect): backfill events that fired while
+        # we were away for every session with an established cursor.
+        if generation > 1:
+            for session_id in list(self._methods.coordinator.cursors):
+                self._methods.coordinator.request_backfill(session_id)
 
     def _build_client(self) -> JsonRpcClient:
         """Construct an unconnected JsonRpcClient for the configured target."""
@@ -454,15 +530,46 @@ class RemoteAgent(UnifiedAgentBase):
 
 
 class _ClientEventMethods(RpcMethodsBase):
-    """RPC methods for receiving events from the server."""
+    """RPC methods for receiving events from the server.
 
-    def __init__(self, queue: asyncio.Queue):
+    Sequence-aware: notifications carrying the replay envelope are run
+    through a per-session :class:`ReplayCoordinator` (the Python mirror
+    of the TS ``SessionReplayCoordinator``): duplicate deliveries (legacy
+    pending-event replay, at-least-once redelivery after a reconnect) are
+    dropped before they reach the event queue, and a sequence gap buffers
+    the triggering event while ``resume_session`` backfills the missed
+    window — the cursor never advances past events the server can still
+    replay. Without a wired *resume* callable (standalone construction)
+    gaps degrade to deliver-anyway, the historical behavior.
+    """
+
+    def __init__(self, queue: asyncio.Queue, resume: Any | None = None):
         super().__init__()
         self._queue = queue
+        self.coordinator = ReplayCoordinator(
+            resume=resume,
+            deliver=self._deliver,
+            on_resync_required=self._on_resync_required,
+        )
+
+    @property
+    def cursors(self) -> Dict[str, ReplayCursor]:
+        return self.coordinator.cursors
+
+    def cursor_for(self, session_id: str) -> ReplayCursor:
+        return self.coordinator.cursor_for(session_id)
+
+    def _deliver(self, method: str, params: Dict[str, Any]) -> None:
+        self._queue.put_nowait({"method": method, "params": params})
+
+    def _on_resync_required(self, session_id: str) -> None:
+        Debug.log(f"[cli] ⚠ replay resync required session={session_id[:8]}")
 
     async def _push(self, method: str, **params):
-        """Push event to queue."""
+        """Push event to queue (after replay dedup / gap recovery)."""
         params = _adapt_notification_params(method, params)
+        if self.coordinator.handle(method, params):
+            return True
         await self._queue.put({"method": method, "params": params})
         return True
 
