@@ -1,9 +1,17 @@
 """In-memory transport implementation."""
 
 import asyncio
+import json
 from typing import Dict, Any, Optional
 
-from . import BaseTransport, TransportError, TransportClosedError
+from . import (
+    BaseTransport,
+    BoundedTransportQueue,
+    QueueClosedError,
+    TransportClosedError,
+    TransportError,
+    TransportOverloadedError,
+)
 
 
 class InMemoryTransport(BaseTransport):
@@ -15,16 +23,28 @@ class InMemoryTransport(BaseTransport):
     created by the create_pair() class method.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        max_messages: int = 256,
+        max_bytes: int = 4 * 1024 * 1024,
+    ):
         super().__init__()
-        # Each transport has its own receive queue
-        self._receive_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
-        # Reference to paired transport's receive queue (set by create_pair)
-        self._send_queue: Optional[asyncio.Queue[Dict[str, Any]]] = None
+        self._receive_queue = BoundedTransportQueue[Dict[str, Any]](
+            resource="inmemory_transport",
+            max_messages=max_messages,
+            max_bytes=max_bytes,
+        )
+        self._send_queue: Optional[BoundedTransportQueue[Dict[str, Any]]] = None
         self._pair: Optional["InMemoryTransport"] = None
 
     @classmethod
-    def create_pair(cls) -> tuple["InMemoryTransport", "InMemoryTransport"]:
+    def create_pair(
+        cls,
+        *,
+        max_messages: int = 256,
+        max_bytes: int = 4 * 1024 * 1024,
+    ) -> tuple["InMemoryTransport", "InMemoryTransport"]:
         """
         Create a connected pair of in-memory transports.
 
@@ -32,8 +52,8 @@ class InMemoryTransport(BaseTransport):
             Tuple of (client_transport, server_transport) that are connected
             to each other.
         """
-        client = cls()
-        server = cls()
+        client = cls(max_messages=max_messages, max_bytes=max_bytes)
+        server = cls(max_messages=max_messages, max_bytes=max_bytes)
 
         # Cross-wire the transports
         client._send_queue = server._receive_queue
@@ -52,12 +72,10 @@ class InMemoryTransport(BaseTransport):
     async def disconnect(self) -> None:
         """Mark transport as disconnected and notify pair."""
         self._connected = False
-        # Put a sentinel value to unblock any waiting receive on the PAIRED transport
         if self._send_queue:
-            try:
-                await self._send_queue.put({"__disconnect__": True})
-            except Exception:
-                pass
+            await self._send_queue.close(
+                TransportClosedError("Paired transport disconnected")
+            )
 
     async def send_json(self, data: Dict[str, Any]) -> None:
         """Send JSON data to paired transport."""
@@ -66,8 +84,17 @@ class InMemoryTransport(BaseTransport):
             raise TransportError("No send queue configured")
 
         try:
-            await self._send_queue.put(data)
+            encoded_size = len(
+                json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode(
+                    "utf-8"
+                )
+            )
+            await self._send_queue.put(data, size=encoded_size)
         except Exception as e:
+            if isinstance(
+                e, (TransportError, QueueClosedError, TransportOverloadedError)
+            ):
+                raise
             raise TransportError(f"Failed to send data: {e}")
 
     async def receive_json(self) -> Dict[str, Any]:
@@ -75,15 +102,11 @@ class InMemoryTransport(BaseTransport):
         self._ensure_connected()
 
         try:
-            data = await self._receive_queue.get()
-            # Check for disconnect sentinel
-            if isinstance(data, dict) and data.get("__disconnect__"):
-                self._connected = False
-                raise TransportClosedError("Paired transport disconnected")
-            return data
+            return await self._receive_queue.get()
         except asyncio.CancelledError:
             raise
         except TransportClosedError:
+            self._connected = False
             raise
         except Exception as e:
             raise TransportError(f"Failed to receive data: {e}")
