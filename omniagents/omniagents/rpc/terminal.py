@@ -16,7 +16,6 @@ sandbox (`omni serve` wires this up).
 from __future__ import annotations
 
 import asyncio
-from asyncio import Queue
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -30,6 +29,12 @@ from omniagents.rpc.terminal_backends import (
     encode_output,
     new_terminal_id,
     new_terminal_token,
+)
+from omniagents.rpc.transport import (
+    BoundedTransportQueue,
+    QueueClosedError,
+    QueuePolicy,
+    TransportOverloadedError,
 )
 
 
@@ -57,7 +62,7 @@ class TerminalDescriptor:
     rows: int
     shell: str
     cwd: Optional[str]
-    output_queue: "Queue[Optional[bytes]]"
+    output_queue: BoundedTransportQueue[bytes]
     reader_task: Optional[asyncio.Task]
     exit_code: Optional[int] = None
     consumer_attached: bool = False
@@ -74,11 +79,15 @@ class TerminalManager:
         default_shell: Optional[str] = None,
         default_cwd: Optional[str] = None,
         default_user: Optional[str] = None,
+        output_max_chunks: int = 256,
+        output_max_bytes: int = 4 * 1024 * 1024,
     ) -> None:
         self._backend: PtyBackend = backend if backend is not None else HostPtyBackend()
         self._default_shell = default_shell
         self._default_cwd = default_cwd
         self._default_user = default_user
+        self._output_max_chunks = output_max_chunks
+        self._output_max_bytes = output_max_bytes
         self._terminals: Dict[str, Dict[str, TerminalDescriptor]] = {}
         self._lock = asyncio.Lock()
         # Per-terminal coalescing for resize calls — xterm.js can fire
@@ -135,7 +144,11 @@ class TerminalManager:
             rows=height,
             shell=resolved_shell,
             cwd=resolved_cwd,
-            output_queue=Queue(),
+            output_queue=BoundedTransportQueue(
+                resource="terminal_output",
+                max_messages=self._output_max_chunks,
+                max_bytes=self._output_max_bytes,
+            ),
             reader_task=None,
         )
         descriptor.reader_task = asyncio.create_task(self._reader_loop(descriptor))
@@ -228,7 +241,10 @@ class TerminalManager:
             self._resize_tasks.pop(key, None)
 
     async def read_output(self, terminal: TerminalDescriptor) -> Optional[bytes]:
-        return await terminal.output_queue.get()
+        try:
+            return await terminal.output_queue.get()
+        except QueueClosedError:
+            return None
 
     async def _pop_terminal(
         self, session_id: str, terminal_id: str
@@ -263,16 +279,31 @@ class TerminalManager:
             terminal.exit_code = await terminal.backend.exit_code(terminal.handle)
         except Exception:
             pass
-        await terminal.output_queue.put(None)
+        await terminal.output_queue.close()
 
     async def _reader_loop(self, terminal: TerminalDescriptor) -> None:
+        output_error: BaseException | None = None
         try:
             async for chunk in terminal.backend.stream(terminal.handle):
                 if not chunk:
                     continue
-                await terminal.output_queue.put(chunk)
+                await terminal.output_queue.put(
+                    chunk,
+                    size=len(chunk),
+                    policy=QueuePolicy.COALESCE_APPEND,
+                    key=terminal.terminal_id,
+                    event_class="terminal_output",
+                    merge=lambda previous, current: previous + current,
+                    merged_size=len,
+                )
         except asyncio.CancelledError:
             pass
+        except TransportOverloadedError as exc:
+            output_error = exc
+            try:
+                await terminal.backend.close(terminal.handle)
+            except Exception:
+                pass
         except Exception:
             pass
         finally:
@@ -281,7 +312,7 @@ class TerminalManager:
             except Exception:
                 pass
             terminal.closed = True
-            await terminal.output_queue.put(None)
+            await terminal.output_queue.close(output_error)
             await self._discard_terminal(terminal)
 
     async def _discard_terminal(self, terminal: TerminalDescriptor) -> None:

@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import logging
 import os
@@ -7,6 +6,11 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 from omniagents.rpc import RpcMethodsBase
 from omniagents.rpc.base import _current_channel
+from omniagents.rpc.transport import (
+    BoundedTransportQueue,
+    QueueClosedError,
+    QueuePolicy,
+)
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.debug import Debug
 
@@ -34,17 +38,32 @@ class _VoiceBridgeChannel:
     turns so it only appears once in ``session.channels``.
     """
 
-    def __init__(self, voice_channel: Any = None) -> None:
-        self._text_queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+    def __init__(
+        self,
+        voice_channel: Any = None,
+        *,
+        max_text_chunks: int = 128,
+        max_text_bytes: int = 1024 * 1024,
+    ) -> None:
+        self._max_text_chunks = max_text_chunks
+        self._max_text_bytes = max_text_bytes
+        self._text_queue = self._new_text_queue()
         self._voice_channel = voice_channel
 
-    def drain(self) -> None:
-        """Discard any leftover items from a previous turn."""
-        while not self._text_queue.empty():
-            try:
-                self._text_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+    def _new_text_queue(self) -> BoundedTransportQueue[str]:
+        return BoundedTransportQueue(
+            resource="voice_text",
+            max_messages=self._max_text_chunks,
+            max_bytes=self._max_text_bytes,
+        )
+
+    async def start_turn(self) -> None:
+        previous_queue = self._text_queue
+        self._text_queue = self._new_text_queue()
+        await previous_queue.close()
+
+    async def finish_turn(self) -> None:
+        await self._text_queue.close()
 
     async def async_call(
         self, method: str, args: Optional[Dict[str, Any]] = None
@@ -52,9 +71,17 @@ class _VoiceBridgeChannel:
         if method == "message_output":
             text = (args or {}).get("content")
             if text:
-                await self._text_queue.put(text)
+                await self._text_queue.put(
+                    text,
+                    size=len(text.encode("utf-8")),
+                    policy=QueuePolicy.COALESCE_APPEND,
+                    key="active_turn",
+                    event_class="voice_text",
+                    merge=lambda previous, current: previous + current,
+                    merged_size=lambda value: len(value.encode("utf-8")),
+                )
         elif method == "run_end":
-            await self._text_queue.put(None)  # sentinel
+            await self.finish_turn()
         elif method in _FORWARDED_AGENT_EVENTS and self._voice_channel:
             try:
                 await self._voice_channel.async_call(
@@ -70,11 +97,12 @@ class _VoiceBridgeChannel:
 
     async def text_chunks(self) -> AsyncIterator[str]:
         """Yield text chunks until the run ends."""
+        text_queue = self._text_queue
         while True:
-            chunk = await self._text_queue.get()
-            if chunk is None:
-                break
-            yield chunk
+            try:
+                yield await text_queue.get()
+            except QueueClosedError:
+                return
 
 
 class _OmniSingleAgentVoiceWorkflow:
@@ -108,7 +136,7 @@ class _OmniSingleAgentVoiceWorkflow:
             except Exception:
                 pass
 
-        self._bridge.drain()
+        await self._bridge.start_turn()
         token = _current_channel.set(self._bridge)
         try:
             result = await self._agent_service.start_run(
@@ -139,6 +167,7 @@ class _OmniSingleAgentVoiceWorkflow:
                 except Exception:
                     pass
         finally:
+            await self._bridge.finish_turn()
             _current_channel.reset(token)
 
 

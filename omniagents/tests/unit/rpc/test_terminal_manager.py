@@ -13,6 +13,7 @@ from omniagents.rpc.terminal import (
     TerminalNotFoundError,
 )
 from omniagents.rpc.terminal_backends import PtyBackend
+from omniagents.rpc.transport import QueuePolicy, TransportOverloadedError
 
 TIMEOUT = 5.0
 
@@ -302,7 +303,15 @@ async def test_read_output_queue(terminal_env):
         descriptor = _get_descriptor(
             terminal_env.manager, "session-7", record["terminal_id"]
         )
-        await descriptor.output_queue.put(b"hello")
+        await descriptor.output_queue.put(
+            b"hello",
+            size=5,
+            policy=QueuePolicy.COALESCE_APPEND,
+            key=descriptor.terminal_id,
+            event_class="terminal_output",
+            merge=lambda previous, current: previous + current,
+            merged_size=len,
+        )
         piece = await terminal_env.manager.read_output(descriptor)
         assert piece == b"hello"
         await terminal_env.manager.close_terminal("session-7", record["terminal_id"])
@@ -344,5 +353,72 @@ async def test_cleanup_session_cancels_reader_and_signals(terminal_env):
             terminal_env.manager, "session-10", record["terminal_id"]
         )
         await terminal_env.manager.cleanup_session("session-10")
-        sentinel = await descriptor.output_queue.get()
-        assert sentinel is None
+        assert await terminal_env.manager.read_output(descriptor) is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_coalesces_bytes_in_order():
+    backend = FakePtyBackend()
+    manager = TerminalManager(backend=backend, output_max_chunks=2, output_max_bytes=8)
+    async with asyncio.timeout(TIMEOUT):
+        record = await manager.create_terminal("session-bounded")
+        descriptor = _get_descriptor(manager, "session-bounded", record["terminal_id"])
+        await descriptor.output_queue.put(
+            b"ab",
+            size=2,
+            policy=QueuePolicy.COALESCE_APPEND,
+            key=descriptor.terminal_id,
+            event_class="terminal_output",
+            merge=lambda previous, current: previous + current,
+            merged_size=len,
+        )
+        await descriptor.output_queue.put(
+            b"cd",
+            size=2,
+            policy=QueuePolicy.COALESCE_APPEND,
+            key=descriptor.terminal_id,
+            event_class="terminal_output",
+            merge=lambda previous, current: previous + current,
+            merged_size=len,
+        )
+        assert descriptor.output_queue.byte_size == 4
+        assert await manager.read_output(descriptor) == b"abcd"
+        await manager.close_terminal("session-bounded", record["terminal_id"])
+
+
+@pytest.mark.asyncio
+async def test_terminal_shutdown_closes_full_queue_without_sentinel_slot():
+    backend = FakePtyBackend()
+    manager = TerminalManager(backend=backend, output_max_chunks=1, output_max_bytes=4)
+    async with asyncio.timeout(TIMEOUT):
+        record = await manager.create_terminal("session-full")
+        descriptor = _get_descriptor(manager, "session-full", record["terminal_id"])
+        await descriptor.output_queue.put(b"full", size=4)
+
+        await manager.cleanup_session("session-full")
+
+        assert await manager.read_output(descriptor) == b"full"
+        assert await manager.read_output(descriptor) is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_reader_reports_oversized_output_and_closes_backend():
+    class OutputBackend(FakePtyBackend):
+        async def _stream(self, handle: FakeHandle) -> AsyncIterator[bytes]:
+            yield b"oversized"
+
+    backend = OutputBackend()
+    manager = TerminalManager(backend=backend, output_max_chunks=1, output_max_bytes=4)
+    async with asyncio.timeout(TIMEOUT):
+        record = await manager.create_terminal("session-overloaded")
+        descriptor = _get_descriptor(
+            manager, "session-overloaded", record["terminal_id"]
+        )
+        await descriptor.reader_task
+
+        with pytest.raises(TransportOverloadedError) as exc_info:
+            await manager.read_output(descriptor)
+        assert exc_info.value.resource == "terminal_output"
+        assert exc_info.value.retryable is False
+        assert descriptor.closed is True
+        assert descriptor.handle.closed is True

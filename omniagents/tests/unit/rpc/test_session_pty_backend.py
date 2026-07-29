@@ -97,22 +97,21 @@ async def test_session_pty_backend_cleanup_closes_streams():
             descriptor = manager._terminals["session-2"][record["terminal_id"]]
 
             await manager.cleanup_session("session-2")
-            # The output_queue eventually receives the None sentinel.
-            sentinel = await asyncio.wait_for(
-                descriptor.output_queue.get(), timeout=2.0
-            )
-            # The reader loop may have emitted real chunks before the sentinel
-            # (e.g. shell prompt). Drain until we find None.
+            # The output_queue is eventually closed; read_output reports the
+            # closure as None once buffered output is drained.
+            chunk = await asyncio.wait_for(manager.read_output(descriptor), timeout=2.0)
+            # The reader loop may have emitted real chunks before closure
+            # (e.g. shell prompt). Drain until we observe the closure.
             tries = 50
-            while sentinel is not None and tries > 0:
+            while chunk is not None and tries > 0:
                 tries -= 1
                 try:
-                    sentinel = await asyncio.wait_for(
-                        descriptor.output_queue.get(), timeout=0.5
+                    chunk = await asyncio.wait_for(
+                        manager.read_output(descriptor), timeout=0.5
                     )
                 except asyncio.TimeoutError:
                     break
-            assert sentinel is None
+            assert chunk is None
             assert descriptor.closed is True
         finally:
             try:
