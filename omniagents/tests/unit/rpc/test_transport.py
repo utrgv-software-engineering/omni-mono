@@ -8,6 +8,7 @@ import pytest
 from unittest.mock import Mock, AsyncMock, patch
 from fastapi import WebSocket
 
+from omniagents.rpc.lifecycle import DEFAULT_LIFECYCLE_POLICY
 from omniagents.rpc.transport import (
     Transport,
     BaseTransport,
@@ -84,7 +85,12 @@ class TestClientWebSocketTransport:
                 await transport.connect()
 
                 assert transport.is_connected()
-                mock_connect.assert_called_once_with("ws://localhost:8000")
+                mock_connect.assert_called_once_with(
+                    "ws://localhost:8000",
+                    open_timeout=DEFAULT_LIFECYCLE_POLICY.connect_timeout,
+                    ping_interval=DEFAULT_LIFECYCLE_POLICY.ping_interval,
+                    ping_timeout=DEFAULT_LIFECYCLE_POLICY.ping_timeout,
+                )
 
     @pytest.mark.asyncio
     async def test_connect_failure(self):

@@ -11,6 +11,7 @@ from fastapi import WebSocketDisconnect
 
 from omniagents.rpc import RpcMethodsBase, JsonRpcEndpoint, JsonRpcClient
 from omniagents.rpc.client import RpcError
+from omniagents.rpc.lifecycle import RpcConnectionClosedError
 from omniagents.rpc.server import JsonRpcChannel
 from omniagents.rpc.transport import TransportClosedError
 from omniagents.rpc.transport.inmemory import InMemoryTransport
@@ -178,7 +179,7 @@ class TestJsonRpcClient:
         transport.is_connected = Mock(return_value=False)
         client = JsonRpcClient(transport, None)
 
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RpcConnectionClosedError):
             await asyncio.wait_for(client.call("missing"), timeout=TIMEOUT)
 
         transport.send_json.assert_not_called()

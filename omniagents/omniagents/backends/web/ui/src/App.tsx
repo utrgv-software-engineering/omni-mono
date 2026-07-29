@@ -46,6 +46,11 @@ function wsUrlFromLocation(): string {
 export function App() {
   const [ui, setUI] = useState<UIState>('connecting')
   const [connected, setConnected] = useState(false)
+  // Retryable outages ("reconnecting…") versus terminal failures are
+  // surfaced distinctly: transient states show a banner over the live UI,
+  // permanent closes explain that no further retries will happen.
+  const [connectionIssue, setConnectionIssue] = useState<string | null>(null)
+  const [connectionTerminal, setConnectionTerminal] = useState(false)
   const [voiceEnabled, setVoiceEnabled] = useState(false)
   const [items, setItems] = useState<MessageItem[]>([])
   const [artifacts, setArtifacts] = useState<ArtifactItem[]>([])
@@ -182,6 +187,23 @@ export function App() {
   }, [client])
 
   useEffect(() => {
+    const offConnectionState = client.onConnectionState((state) => {
+      setConnected(state.state === 'connected')
+      if (state.state === 'connected') {
+        setConnectionIssue(null)
+        setConnectionTerminal(false)
+      } else if (state.state === 'reconnecting') {
+        setConnectionIssue(`Connection lost — reconnecting (attempt ${state.attempt})…`)
+        setConnectionTerminal(false)
+      } else if (state.state === 'closed') {
+        setConnectionIssue(
+          state.permanent
+            ? `Connection closed${state.reason ? ` (${state.reason})` : ''} — not retrying. Reload to try again.`
+            : 'Connection closed.',
+        )
+        setConnectionTerminal(state.permanent)
+      }
+    })
       client.connect()
         .then(async () => {
           setConnected(true)
@@ -684,6 +706,7 @@ export function App() {
 
     return () => {
       offQueueChanged(); offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToolApprovalRequested(); offToolApprovalResolved(); offMcpApprovalRequested(); offMcpApprovalResolved(); offToken(); offToolCalled(); offToolResult()
+      offConnectionState()
       client.disconnect()
     }
   }, [client, normalizeAgentName, refreshSessions])
@@ -1227,7 +1250,14 @@ export function App() {
     return <div className="app flex-col"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-textSubtle">Connecting…</div></div>
   }
   if (ui === 'error') {
-    return <div className="app flex-col"><Header agentName={agentName} connected={false} /><div className="container-chat px-3 py-3 text-sm text-errorRed">Failed to connect.</div></div>
+    return (
+      <div className="app flex-col">
+        <Header agentName={agentName} connected={false} />
+        <div className="container-chat px-3 py-3 text-sm text-errorRed">
+          {connectionTerminal ? connectionIssue ?? 'Failed to connect — not retrying.' : 'Failed to connect.'}
+        </div>
+      </div>
+    )
   }
   if (ui === 'resume') {
     return (
@@ -1265,6 +1295,14 @@ export function App() {
             showArtifactsButton={hasArtifacts}
             showTerminalButton
           />
+        )}
+        {connectionIssue && (
+          <div
+            className={`px-3 py-1.5 text-xs ${connectionTerminal ? 'bg-errorRed/10 text-errorRed' : 'bg-warningOrange/10 text-textSubtle'}`}
+            role="status"
+          >
+            {connectionIssue}
+          </div>
         )}
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">

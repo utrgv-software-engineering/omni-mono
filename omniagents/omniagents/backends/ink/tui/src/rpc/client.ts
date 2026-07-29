@@ -19,6 +19,15 @@ import type {
   RpcMethodMap as GeneratedRpcMethodMap,
   RpcNotificationMap as GeneratedRpcNotificationMap,
 } from "../protocol/generated/gui-v1.js";
+import {
+  classifyCloseCode,
+  ConnectionClosedError,
+  DEFAULT_LIFECYCLE_POLICY,
+  ReconnectController,
+  RpcAbortError,
+  RpcTimeoutError,
+  type LifecyclePolicy,
+} from "./lifecycle.js";
 
 type InkNotificationMap = {
   [Event in ServerEvent as Event["method"]]: Event["params"];
@@ -58,7 +67,15 @@ export interface RPCClientOptions {
   url: string;
   token?: string;
   debug?: boolean;
+  policy?: LifecyclePolicy;
 }
+
+export type RequestOptions = {
+  /** Per-call deadline in ms. Omit for the policy default; null disables the deadline. */
+  timeoutMs?: number | null;
+  /** Abort long-running calls; rejects the promise with RpcAbortError. */
+  signal?: AbortSignal;
+};
 
 export type ClientFunction = (
   args: Record<string, unknown>,
@@ -72,18 +89,21 @@ export class RPCClient extends EventEmitter {
   private url: string;
   private token?: string;
   private debug: boolean;
+  private policy: LifecyclePolicy;
   private requestId = 0;
   private pendingRequests = new Map<
     string | number,
     {
+      method: string;
       resolve: (value: unknown) => void;
       reject: (error: Error) => void;
+      cleanup: () => void;
     }
   >();
   private registeredClientFunctions = new Map<string, ClientFunction>();
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 5;
-  private reconnectDelay = 1000;
+  private reconnectCtrl: ReconnectController;
+  private closedByUser = false;
+  private handshakeRejected = false;
   private negotiatedInitialization: InitializeResult | null = null;
 
   constructor(options: RPCClientOptions) {
@@ -91,6 +111,8 @@ export class RPCClient extends EventEmitter {
     this.url = options.url;
     this.token = options.token;
     this.debug = options.debug || false;
+    this.policy = options.policy ?? DEFAULT_LIFECYCLE_POLICY;
+    this.reconnectCtrl = new ReconnectController(this.policy);
   }
 
   get initializeResult(): InitializeResult | null {
@@ -143,6 +165,8 @@ export class RPCClient extends EventEmitter {
    * Connect to the WebSocket server
    */
   async connect(): Promise<void> {
+    this.closedByUser = false;
+    this.handshakeRejected = false;
     return new Promise((resolve, reject) => {
       try {
         const wsUrl = this.token
@@ -150,6 +174,18 @@ export class RPCClient extends EventEmitter {
           : this.url;
 
         this.ws = new WebSocket(wsUrl);
+        let ready = false;
+
+        const connectTimer = setTimeout(() => {
+          if (ready) return;
+          this.log("Connect timed out");
+          try {
+            this.ws?.close();
+          } catch {
+            /* ignore */
+          }
+          reject(new RpcTimeoutError("connect", this.policy.connectTimeoutMs));
+        }, this.policy.connectTimeoutMs);
 
         this.ws.on("message", (data: WebSocket.Data) => {
           try {
@@ -162,7 +198,6 @@ export class RPCClient extends EventEmitter {
 
         this.ws.on("open", async () => {
           this.log("Connected to server");
-          this.reconnectAttempts = 0;
           this.emit("connected");
 
           try {
@@ -172,21 +207,51 @@ export class RPCClient extends EventEmitter {
               platform: { os: process.platform, arch: process.arch },
               capabilities: CLIENT_CAPABILITIES,
             };
+            // The connect timer bounds the whole attempt.
             this.negotiatedInitialization =
-              await this.sendRequest<InitializeResult>("initialize", initialize);
+              await this.sendRequest<InitializeResult>("initialize", initialize, {
+                timeoutMs: null,
+              });
             this.sendNotification("initialized", {});
+            ready = true;
+            clearTimeout(connectTimer);
+            this.reconnectCtrl.recordSuccess();
             this.emit("rpc_ready");
             this.log("RPC ready");
             resolve();
           } catch (error) {
+            // A structured handshake rejection is deterministic; do not
+            // loop on it. Closing the socket routes the close handler
+            // into the permanent-failure path.
+            clearTimeout(connectTimer);
+            this.handshakeRejected = true;
+            try {
+              this.ws?.close();
+            } catch {
+              /* ignore */
+            }
             reject(error);
           }
         });
 
-        this.ws.on("close", () => {
+        this.ws.on("close", (code?: number, reason?: Buffer) => {
+          clearTimeout(connectTimer);
           this.log("Disconnected from server");
           this.emit("disconnected");
-          this.attemptReconnect();
+          const reasonText = reason?.toString() || undefined;
+          const permanent =
+            this.closedByUser ||
+            this.handshakeRejected ||
+            classifyCloseCode(code) === "permanent";
+          // No pending promise may remain unresolved after a disconnect.
+          this.rejectAllPending(
+            new ConnectionClosedError(reasonText || "Connection closed", {
+              permanent,
+              closeCode: code,
+              reason: reasonText,
+            }),
+          );
+          this.attemptReconnect(permanent);
         });
 
         this.ws.on("error", (error) => {
@@ -204,9 +269,24 @@ export class RPCClient extends EventEmitter {
    * Disconnect from the server
    */
   disconnect(): void {
+    this.closedByUser = true;
+    this.rejectAllPending(
+      new ConnectionClosedError("Connection closed by client", {
+        permanent: true,
+      }),
+    );
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+    }
+  }
+
+  private rejectAllPending(error: ConnectionClosedError): void {
+    const entries = [...this.pendingRequests.values()];
+    this.pendingRequests.clear();
+    for (const entry of entries) {
+      entry.cleanup();
+      entry.reject(error);
     }
   }
 
@@ -408,6 +488,7 @@ export class RPCClient extends EventEmitter {
     func: string,
     args?: Record<string, unknown>,
     sessionId?: string,
+    opts?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = { function: func };
     if (args) {
@@ -416,10 +497,7 @@ export class RPCClient extends EventEmitter {
     if (sessionId) {
       params.session_id = sessionId;
     }
-    return this.call(
-      "server_call",
-      params as unknown as RpcMethodMap["server_call"]["params"],
-    );
+    return this.sendRequest<Record<string, unknown>>("server_call", params, opts);
   }
 
   // ---------------------------------------------------------------------
@@ -528,9 +606,30 @@ export class RPCClient extends EventEmitter {
     this.ws.send(JSON.stringify({ jsonrpc: "2.0", method, params }));
   }
 
-  private sendRequest<Result>(method: string, params?: unknown): Promise<Result> {
+  /**
+   * Make a raw JSON-RPC request with lifecycle options (deadline, abort).
+   * Prefer the typed wrappers for known methods.
+   */
+  request<Result = unknown>(
+    method: string,
+    params?: unknown,
+    opts?: RequestOptions,
+  ): Promise<Result> {
+    return this.sendRequest<Result>(method, params, opts);
+  }
+
+  private sendRequest<Result>(
+    method: string,
+    params?: unknown,
+    opts: RequestOptions = {},
+  ): Promise<Result> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("WebSocket not connected");
+      throw new ConnectionClosedError("WebSocket not connected", {
+        permanent: this.closedByUser,
+      });
+    }
+    if (opts.signal?.aborted) {
+      throw new RpcAbortError(method);
     }
 
     const id = ++this.requestId;
@@ -540,16 +639,39 @@ export class RPCClient extends EventEmitter {
       method,
     };
     if (params !== undefined) request.params = params;
+    const timeoutMs =
+      opts.timeoutMs === undefined ? this.policy.rpcTimeoutMs : opts.timeoutMs;
 
     return new Promise<Result>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const onAbort = (): void => {
+        this.pendingRequests.delete(id);
+        cleanup();
+        reject(new RpcAbortError(method));
+      };
+      const cleanup = (): void => {
+        if (timer !== null) clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", onAbort);
+      };
+      if (timeoutMs !== null) {
+        timer = setTimeout(() => {
+          this.pendingRequests.delete(id);
+          cleanup();
+          reject(new RpcTimeoutError(method, timeoutMs));
+        }, timeoutMs);
+      }
+      opts.signal?.addEventListener("abort", onAbort);
       this.pendingRequests.set(id, {
+        method,
         resolve: resolve as (value: unknown) => void,
         reject,
+        cleanup,
       });
 
       this.ws!.send(JSON.stringify(request), (error) => {
         if (error) {
           this.pendingRequests.delete(id);
+          cleanup();
           reject(error);
         }
       });
@@ -702,22 +824,29 @@ export class RPCClient extends EventEmitter {
   }
 
   /**
-   * Attempt to reconnect to the server
+   * Attempt to reconnect to the server. Retryable failures back off on the
+   * shared exponential schedule; permanent failures (auth rejection,
+   * handshake rejection, user-initiated close, exhausted budget) stop for
+   * good and surface a terminal `reconnect_failed` event.
    */
-  private attemptReconnect(): void {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.emit("reconnect_failed");
+  private attemptReconnect(permanent: boolean): void {
+    if (this.closedByUser) return;
+    const decision = this.reconnectCtrl.recordFailure({ permanent });
+    if (!decision.retry) {
+      this.emit("reconnect_failed", {
+        permanent: true,
+        attempts: decision.attempt,
+      });
       return;
     }
 
-    this.reconnectAttempts++;
-    this.emit("reconnecting", this.reconnectAttempts);
+    this.emit("reconnecting", decision.attempt);
 
     setTimeout(() => {
       this.connect().catch(() => {
         // Connection failed, will retry via close event
       });
-    }, this.reconnectDelay * this.reconnectAttempts);
+    }, decision.delayMs);
   }
 
   /**

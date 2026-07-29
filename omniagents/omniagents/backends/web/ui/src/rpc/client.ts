@@ -5,6 +5,16 @@ import type {
   RpcMethodMap,
   RpcNotificationMap,
 } from '../protocol/generated/gui-v1'
+import {
+  classifyCloseCode,
+  ConnectionClosedError,
+  DEFAULT_LIFECYCLE_POLICY,
+  ReconnectController,
+  RpcAbortError,
+  RpcTimeoutError,
+  type ConnectionState,
+  type LifecyclePolicy,
+} from './lifecycle'
 
 type JSONRPCId = number | string
 
@@ -56,43 +66,181 @@ export class JSONRPCError extends Error {
   }
 }
 
+export type RequestOptions = {
+  /** Per-call deadline in ms. Omit for the policy default; null disables the deadline. */
+  timeoutMs?: number | null
+  /** Abort long-running calls; rejects the promise with RpcAbortError. */
+  signal?: AbortSignal
+}
+
+type PendingEntry = {
+  method: string
+  resolve: (v: any) => void
+  reject: (e: Error) => void
+  cleanup: () => void
+}
+
 export class RPCClient {
   private ws: WebSocket | null = null
   private url: string
   private token?: string
+  private policy: LifecyclePolicy
   private nextId = 0
-  private pending = new Map<JSONRPCId, { resolve: (v: any) => void; reject: (e: Error) => void }>()
+  private pending = new Map<JSONRPCId, PendingEntry>()
   private listeners = new Map<string, Set<Listener>>()
+  private connectionListeners = new Set<(state: ConnectionState) => void>()
   private negotiatedInitialization: InitializeResult | null = null
+  private reconnectCtrl: ReconnectController
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private closedByUser = false
+  private lastConnectionState: ConnectionState = { state: 'connecting' }
+  private connectSettlers: { resolve: () => void; reject: (e: Error) => void } | null = null
 
-  constructor(url: string, token?: string) {
+  constructor(url: string, token?: string, policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY) {
     this.url = url
     this.token = token
+    this.policy = policy
+    this.reconnectCtrl = new ReconnectController(policy)
   }
 
   get initializeResult(): InitializeResult | null {
     return this.negotiatedInitialization
   }
 
-  async connect(): Promise<void> {
-    const wsUrl = this.token ? `${this.url}?token=${encodeURIComponent(this.token)}` : this.url
-    this.ws = new WebSocket(wsUrl)
-    await new Promise<void>((resolve, reject) => {
-      if (!this.ws) return reject(new Error('WebSocket init failed'))
-      this.ws.onopen = () => resolve()
-      this.ws.onerror = () => reject(new Error('WebSocket error'))
-      this.ws.onmessage = (ev) => {
-        this.handleMessage(JSON.parse(ev.data as string) as JSONRPCResponse | JSONRPCNotification)
-      }
-    })
-    const initialize: InitializeParams = {
-      protocol_version: '1.0.0',
-      identity: { name: 'omniagents-web-ui', version: '0.0.0' },
-      platform: { os: 'browser', arch: 'unknown' },
-      capabilities: CLIENT_CAPABILITIES,
+  get connectionState(): ConnectionState {
+    return this.lastConnectionState
+  }
+
+  /**
+   * Subscribe to connection-state changes so the UI can distinguish
+   * retryable outages (`reconnecting`) from terminal failures
+   * (`closed` with `permanent: true`). Returns an unsubscribe function.
+   */
+  onConnectionState(handler: (state: ConnectionState) => void): () => void {
+    this.connectionListeners.add(handler)
+    return () => this.connectionListeners.delete(handler)
+  }
+
+  private emitConnectionState(state: ConnectionState): void {
+    this.lastConnectionState = state
+    for (const fn of this.connectionListeners) {
+      try { fn(state) } catch {}
     }
-    this.negotiatedInitialization = await this.sendRequest<InitializeResult>('initialize', initialize)
-    this.sendNotification('initialized', {})
+  }
+
+  /**
+   * Connect and keep the connection alive: retryable failures reconnect on
+   * the policy backoff schedule; permanent failures (auth rejection,
+   * handshake rejection, exhausted budget) stop for good. The returned
+   * promise settles on the first successful handshake or the first
+   * permanent failure.
+   */
+  async connect(): Promise<void> {
+    this.closedByUser = false
+    return new Promise<void>((resolve, reject) => {
+      this.connectSettlers = { resolve, reject }
+      this.emitConnectionState({ state: 'connecting' })
+      this.openSocket()
+    })
+  }
+
+  private settleConnect(outcome: 'resolve' | 'reject', error?: Error): void {
+    const settlers = this.connectSettlers
+    if (!settlers) return
+    this.connectSettlers = null
+    if (outcome === 'resolve') settlers.resolve()
+    else settlers.reject(error ?? new ConnectionClosedError('Connection failed', { permanent: true }))
+  }
+
+  private openSocket(): void {
+    const wsUrl = this.token ? `${this.url}?token=${encodeURIComponent(this.token)}` : this.url
+    const ws = new WebSocket(wsUrl)
+    this.ws = ws
+    let settled = false
+    let ready = false
+
+    const fail = (closeError: ConnectionClosedError, connectError?: Error): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(connectTimer)
+      ws.onopen = null
+      ws.onerror = null
+      ws.onmessage = null
+      ws.onclose = null
+      try { ws.close() } catch {}
+      if (this.ws === ws) this.ws = null
+      this.rejectAllPending(closeError)
+      if (this.closedByUser) return
+      const decision = this.reconnectCtrl.recordFailure({ permanent: closeError.permanent })
+      if (!decision.retry) {
+        const terminal = new ConnectionClosedError(closeError.message, {
+          permanent: true,
+          closeCode: closeError.closeCode,
+          reason: closeError.reason,
+        })
+        this.emitConnectionState({
+          state: 'closed',
+          permanent: true,
+          closeCode: closeError.closeCode,
+          reason: closeError.reason ?? closeError.message,
+        })
+        this.settleConnect('reject', connectError ?? terminal)
+        return
+      }
+      this.emitConnectionState({ state: 'reconnecting', attempt: decision.attempt, delayMs: decision.delayMs })
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null
+        this.openSocket()
+      }, decision.delayMs)
+    }
+
+    const connectTimer = setTimeout(() => {
+      fail(new ConnectionClosedError(`Connect timed out after ${this.policy.connectTimeoutMs}ms`))
+    }, this.policy.connectTimeoutMs)
+
+    ws.onmessage = (ev) => {
+      this.handleMessage(JSON.parse(ev.data as string) as JSONRPCResponse | JSONRPCNotification)
+    }
+    ws.onerror = () => {
+      if (!ready) fail(new ConnectionClosedError('WebSocket error'))
+    }
+    ws.onclose = (ev?: CloseEvent) => {
+      const code = ev?.code
+      const permanent = classifyCloseCode(code) === 'permanent'
+      fail(new ConnectionClosedError(ev?.reason || 'Connection closed', { permanent, closeCode: code, reason: ev?.reason }))
+    }
+    ws.onopen = async () => {
+      try {
+        const initialize: InitializeParams = {
+          protocol_version: '1.0.0',
+          identity: { name: 'omniagents-web-ui', version: '0.0.0' },
+          platform: { os: 'browser', arch: 'unknown' },
+          capabilities: CLIENT_CAPABILITIES,
+        }
+        // The connect timer bounds the whole attempt; no per-call deadline.
+        const result = await this.sendRequest<InitializeResult>('initialize', initialize, { timeoutMs: null })
+        this.negotiatedInitialization = result
+        this.sendNotification('initialized', {})
+        ready = true
+        clearTimeout(connectTimer)
+        this.reconnectCtrl.recordSuccess()
+        this.emitConnectionState({ state: 'connected' })
+        this.settleConnect('resolve')
+      } catch (e) {
+        // A structured handshake rejection is deterministic — do not retry
+        // it on a loop. Preserve the original error for the caller.
+        fail(new ConnectionClosedError((e as Error).message, { permanent: true }), e as Error)
+      }
+    }
+  }
+
+  private rejectAllPending(error: ConnectionClosedError): void {
+    const entries = [...this.pending.values()]
+    this.pending.clear()
+    for (const entry of entries) {
+      entry.cleanup()
+      entry.reject(error)
+    }
   }
 
   private handleMessage(msg: JSONRPCResponse | JSONRPCNotification): void {
@@ -101,6 +249,7 @@ export class RPCClient {
         const pending = this.pending.get(msg.id)
         if (pending) {
           this.pending.delete(msg.id)
+          pending.cleanup()
           if (msg.error) {
             pending.reject(new JSONRPCError(msg.error.code ?? -32603, msg.error.message, msg.error.data))
           } else {
@@ -116,27 +265,71 @@ export class RPCClient {
   }
 
   private sendNotification(method: string, params: Record<string, unknown>): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected')
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new ConnectionClosedError('WebSocket not connected', { permanent: this.closedByUser })
+    }
     this.ws.send(JSON.stringify({ jsonrpc: '2.0', method, params }))
   }
 
-  private sendRequest<Result>(method: string, params?: unknown): Promise<Result> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected')
+  /**
+   * Issue a raw JSON-RPC request with lifecycle options (deadline, abort).
+   * Prefer the typed wrappers for known methods.
+   */
+  request<Result = unknown>(method: string, params?: unknown, opts?: RequestOptions): Promise<Result> {
+    return this.sendRequest<Result>(method, params, opts)
+  }
+
+  private sendRequest<Result>(method: string, params?: unknown, opts: RequestOptions = {}): Promise<Result> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new ConnectionClosedError('WebSocket not connected', { permanent: this.closedByUser })
+    }
+    if (opts.signal?.aborted) throw new RpcAbortError(method)
     const id = ++this.nextId
     const req: JSONRPCRequest = { jsonrpc: '2.0', id, method }
     if (params !== undefined) req.params = params
+    const timeoutMs = opts.timeoutMs === undefined ? this.policy.rpcTimeoutMs : opts.timeoutMs
     const response = new Promise<Result>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const onAbort = (): void => {
+        this.pending.delete(id)
+        cleanup()
+        reject(new RpcAbortError(method))
+      }
+      const cleanup = (): void => {
+        if (timer !== null) clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', onAbort)
+      }
+      if (timeoutMs !== null) {
+        timer = setTimeout(() => {
+          this.pending.delete(id)
+          cleanup()
+          reject(new RpcTimeoutError(method, timeoutMs))
+        }, timeoutMs)
+      }
+      opts.signal?.addEventListener('abort', onAbort)
+      this.pending.set(id, { method, resolve, reject, cleanup })
     })
     this.ws.send(JSON.stringify(req))
     return response
   }
 
   disconnect(): void {
-    if (this.ws) {
-      this.ws.close()
-      this.ws = null
+    this.closedByUser = true
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
     }
+    const error = new ConnectionClosedError('Connection closed by client', { permanent: true })
+    this.rejectAllPending(error)
+    if (this.ws) {
+      const ws = this.ws
+      this.ws = null
+      ws.onclose = null
+      ws.onerror = null
+      try { ws.close() } catch {}
+    }
+    this.emitConnectionState({ state: 'closed', permanent: true, reason: 'closed by client' })
+    this.settleConnect('reject', error)
   }
 
   on<E extends keyof RpcNotificationMap>(event: E, handler: (payload: RpcNotificationMap[E]) => void): () => void {
@@ -217,11 +410,11 @@ export class RPCClient {
     return this.call('list_server_functions') as Promise<Array<{ name: string; description?: string; params_schema?: Record<string, unknown>; result_schema?: Record<string, unknown> }>>
   }
 
-  async serverCall(func: string, args?: Record<string, unknown>, sessionId?: string): Promise<Record<string, unknown>> {
+  async serverCall(func: string, args?: Record<string, unknown>, sessionId?: string, opts?: RequestOptions): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = { function: func }
     if (args) params.args = args
     if (sessionId) params.session_id = sessionId
-    return this.call('server_call', params as unknown as RpcMethodMap['server_call']['params'])
+    return this.sendRequest<Record<string, unknown>>('server_call', params, opts)
   }
 
   async clientFunctions(version: number, functions: Array<{ name: string; description?: string }>): Promise<void> {

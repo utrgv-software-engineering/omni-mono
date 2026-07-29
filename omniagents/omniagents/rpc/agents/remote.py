@@ -8,14 +8,28 @@ import os
 from importlib.metadata import version
 from pydantic import ValidationError
 
-from omniagents.rpc import RpcMethodsBase, JsonRpcClient
+from omniagents.rpc import RpcMethodsBase, JsonRpcClient, RpcError
 from omniagents.core.interfaces.agent import UnifiedAgentBase
 from omniagents.rpc.generated.gui_v1 import (
     CLIENT_REQUEST_MODELS,
     SERVER_NOTIFICATION_MODELS,
 )
+from omniagents.rpc.lifecycle import (
+    DEFAULT_LIFECYCLE_POLICY,
+    LifecyclePolicy,
+    ReconnectController,
+    RpcConnectionClosedError,
+    RpcTimeoutError,
+    classify_rpc_error_code,
+)
+from omniagents.rpc.transport import TransportError
 from ._events import map_notification_to_event
 from omniagents.core.debug import Debug
+
+#: Internal queue marker pushed when the RPC connection drops so that
+#: ``run_streamed`` consumers fail fast instead of waiting forever for a
+#: ``run_end`` that can no longer arrive.
+_DISCONNECT_SENTINEL = "__connection_closed__"
 
 REMOTE_AGENT_CAPABILITIES: Dict[str, Any] = {
     "realtime": False,
@@ -28,6 +42,33 @@ REMOTE_AGENT_CAPABILITIES: Dict[str, Any] = {
     "experimental_operations": [],
     "disabled_notifications": [],
 }
+
+
+def _is_permanent_connect_error(exc: Exception) -> bool:
+    """Classify a connect/handshake failure as permanent (non-retryable).
+
+    Permanent failures: typed handshake rejections (protocol/capability
+    mismatch, invalid request), a permanent connection close (auth), or an
+    HTTP-level auth/not-found rejection during the WebSocket upgrade.
+    """
+    if isinstance(exc, RpcError):
+        return classify_rpc_error_code(exc.code) == "permanent"
+    if isinstance(exc, RpcConnectionClosedError):
+        return exc.permanent
+    # Walk the cause chain looking for an HTTP status from the WS upgrade
+    # (websockets raises InvalidStatus/InvalidStatusCode on e.g. 401/403).
+    seen: set[int] = set()
+    cause: BaseException | None = exc
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        status = getattr(cause, "status_code", None)
+        if status is None:
+            response = getattr(cause, "response", None)
+            status = getattr(response, "status_code", None)
+        if isinstance(status, int) and status in (401, 403, 404):
+            return True
+        cause = cause.__cause__ or cause.__context__
+    return False
 
 
 def _validate_request_params(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -66,6 +107,7 @@ class RemoteAgent(UnifiedAgentBase):
         variables: Dict[str, Any] | None = None,
         context: Any | None = None,
         transport: Any | None = None,
+        policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY,
     ) -> None:
         """
         Initialize remote agent.
@@ -76,6 +118,7 @@ class RemoteAgent(UnifiedAgentBase):
             variables: Optional variables dictionary for server-side context construction
             context: Optional pre-built context to use as-is
             transport: Optional custom transport to use instead of WebSocket
+            policy: Lifecycle policy (timeouts, backoff, retry limits)
         """
         super().__init__()
 
@@ -86,6 +129,8 @@ class RemoteAgent(UnifiedAgentBase):
 
         self._url = url
         self._transport = transport
+        self._policy = policy
+        self._client_generation = 0
         self._client: JsonRpcClient | None = None
         self._run_lock: asyncio.Lock = asyncio.Lock()
         self._event_queue: asyncio.Queue = asyncio.Queue()
@@ -158,6 +203,17 @@ class RemoteAgent(UnifiedAgentBase):
             # Stream events until run_end
             while True:
                 msg = await self._event_queue.get()
+                if msg["method"] == _DISCONNECT_SENTINEL:
+                    params = msg.get("params") or {}
+                    # Ignore markers from a previous connection generation:
+                    # a fresh client is already serving this run.
+                    if params.get("generation") != self._client_generation:
+                        continue
+                    self._current_run_id = None
+                    raise RpcConnectionClosedError(
+                        params.get("message") or "Connection lost during run",
+                        permanent=bool(params.get("permanent")),
+                    )
                 if msg["method"] == "run_end" and (
                     run_id is None or msg["params"].get("run_id") == run_id
                 ):
@@ -239,35 +295,95 @@ class RemoteAgent(UnifiedAgentBase):
             return False
 
     async def _ensure_client(self):
-        """Ensure RPC client is connected."""
-        if self._client is None:
-            # Build methods object that forwards events into queue
-            self._methods = _ClientEventMethods(self._event_queue)
+        """Ensure RPC client is connected, retrying per the lifecycle policy.
 
-            if self._transport:
-                # Use provided transport
-                self._client = await JsonRpcClient(
-                    self._transport,
-                    self._methods,
-                    client_info={
-                        "name": "omniagents-python",
-                        "version": version("omniagents"),
+        Transient connect failures back off exponentially; permanent
+        failures (auth rejection, protocol/capability mismatch) and an
+        exhausted retry budget re-raise immediately. Event replay after a
+        reconnect is a separate concern — sessions resume server-side via
+        ``session_id``, and finer-grained resume hooks belong to the
+        durable-replay work.
+        """
+        if self._client is not None:
+            return
+
+        # Build methods object that forwards events into queue
+        self._methods = _ClientEventMethods(self._event_queue)
+        controller = ReconnectController(self._policy)
+
+        while True:
+            try:
+                self._client = await self._build_client().__aenter__()
+                controller.record_success()
+                break
+            except (
+                TransportError,
+                RpcTimeoutError,
+                RpcConnectionClosedError,
+                RpcError,
+            ) as exc:
+                self._client = None
+                decision = controller.record_failure(
+                    permanent=_is_permanent_connect_error(exc)
+                )
+                if not decision.retry:
+                    raise
+                Debug.log(
+                    f"[cli] ↻ connect attempt {decision.attempt} failed ({exc}); "
+                    f"retrying in {decision.delay:.2f}s"
+                )
+                await asyncio.sleep(decision.delay)
+
+        self._client_generation += 1
+        generation = self._client_generation
+        self._client.on_disconnect(
+            lambda error: self._on_client_disconnect(generation, error)
+        )
+
+    def _build_client(self) -> JsonRpcClient:
+        """Construct an unconnected JsonRpcClient for the configured target."""
+        client_info = {
+            "name": "omniagents-python",
+            "version": version("omniagents"),
+        }
+        if self._transport:
+            return JsonRpcClient(
+                self._transport,
+                self._methods,
+                client_info=client_info,
+                capabilities=REMOTE_AGENT_CAPABILITIES,
+                policy=self._policy,
+            )
+        if self._url:
+            return JsonRpcClient.from_url(
+                self._url,
+                self._methods,
+                client_info=client_info,
+                capabilities=REMOTE_AGENT_CAPABILITIES,
+                policy=self._policy,
+            )
+        raise ValueError("Either url or transport must be provided")
+
+    def _on_client_disconnect(
+        self, generation: int, error: RpcConnectionClosedError
+    ) -> None:
+        """Wake any streaming consumer when the connection drops."""
+        if generation != self._client_generation:
+            return
+        self._client = None
+        try:
+            self._event_queue.put_nowait(
+                {
+                    "method": _DISCONNECT_SENTINEL,
+                    "params": {
+                        "generation": generation,
+                        "message": str(error),
+                        "permanent": error.permanent,
                     },
-                    capabilities=REMOTE_AGENT_CAPABILITIES,
-                ).__aenter__()
-            elif self._url:
-                # Create WebSocket transport from URL
-                self._client = await JsonRpcClient.from_url(
-                    self._url,
-                    self._methods,
-                    client_info={
-                        "name": "omniagents-python",
-                        "version": version("omniagents"),
-                    },
-                    capabilities=REMOTE_AGENT_CAPABILITIES,
-                ).__aenter__()
-            else:
-                raise ValueError("Either url or transport must be provided")
+                }
+            )
+        except asyncio.QueueFull:  # pragma: no cover - unbounded by default
+            pass
 
     def _extract_run_id(self, resp) -> Optional[str]:
         """Extract run_id from various response formats."""

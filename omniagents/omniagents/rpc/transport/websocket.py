@@ -6,14 +6,21 @@ from typing import Dict, Any, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 
 from . import BaseTransport, TransportError, TransportClosedError, TransportDecodeError
+from ..lifecycle import DEFAULT_LIFECYCLE_POLICY, LifecyclePolicy
 
 
 class ClientWebSocketTransport(BaseTransport):
-    """WebSocket transport for client-side connections using websockets library."""
+    """WebSocket transport for client-side connections using websockets library.
 
-    def __init__(self, url: str):
+    Liveness (ping/pong cadence) and the open timeout come from the shared
+    :class:`~omniagents.rpc.lifecycle.LifecyclePolicy` so every Python
+    client probes the link identically.
+    """
+
+    def __init__(self, url: str, *, policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY):
         super().__init__()
         self.url = url
+        self._policy = policy
         self._ws: Optional["websockets.WebSocketClientProtocol"] = None
 
     async def connect(self) -> None:
@@ -24,7 +31,12 @@ class ClientWebSocketTransport(BaseTransport):
         try:
             import websockets
 
-            self._ws = await websockets.connect(self.url)
+            self._ws = await websockets.connect(
+                self.url,
+                open_timeout=self._policy.connect_timeout,
+                ping_interval=self._policy.ping_interval,
+                ping_timeout=self._policy.ping_timeout,
+            )
             self._connected = True
         except Exception as e:
             raise TransportError(f"Failed to connect to {self.url}: {e}")

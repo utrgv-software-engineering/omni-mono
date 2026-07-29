@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { JSONRPCError, RPCClient } from './client'
+import {
+  ConnectionClosedError,
+  RpcAbortError,
+  RpcTimeoutError,
+  type ConnectionState,
+} from './lifecycle'
 
 const initializeResult = {
   protocol_version: '1.0.0',
@@ -22,16 +28,22 @@ class MockWebSocket {
   static readonly OPEN = 1
   static instances: MockWebSocket[] = []
   static initializeError: { code: number; message: string; data?: unknown } | null = null
+  static failConnects = false
 
   readonly sent: string[] = []
   readonly readyState = MockWebSocket.OPEN
   onopen: (() => void) | null = null
   onerror: (() => void) | null = null
   onmessage: ((event: { data: string }) => void) | null = null
+  onclose: ((event: { code?: number; reason?: string }) => void) | null = null
 
   constructor(readonly url: string) {
     MockWebSocket.instances.push(this)
-    queueMicrotask(() => this.onopen?.())
+    if (MockWebSocket.failConnects) {
+      queueMicrotask(() => this.onerror?.())
+    } else {
+      queueMicrotask(() => this.onopen?.())
+    }
   }
 
   send(data: string): void {
@@ -45,6 +57,14 @@ class MockWebSocket {
   }
 
   close(): void {}
+
+  triggerClose(code?: number, reason?: string): void {
+    this.onclose?.({ code, reason })
+  }
+
+  respond(id: number, result: unknown): void {
+    this.onmessage?.({ data: JSON.stringify({ jsonrpc: '2.0', id, result }) })
+  }
 }
 
 vi.stubGlobal('WebSocket', MockWebSocket)
@@ -52,6 +72,8 @@ vi.stubGlobal('WebSocket', MockWebSocket)
 afterEach(() => {
   MockWebSocket.instances = []
   MockWebSocket.initializeError = null
+  MockWebSocket.failConnects = false
+  vi.useRealTimers()
 })
 
 describe('RPCClient initialization', () => {
@@ -105,5 +127,176 @@ describe('RPCClient initialization', () => {
     } satisfies Partial<JSONRPCError>)
     expect(MockWebSocket.instances[0]!.sent).toHaveLength(1)
     expect(client.initializeResult).toBeNull()
+  })
+})
+
+describe('RPCClient lifecycle', () => {
+  async function connectedClient(): Promise<{ client: RPCClient; socket: MockWebSocket }> {
+    const client = new RPCClient('ws://example.test/ws')
+    await client.connect()
+    return { client, socket: MockWebSocket.instances[MockWebSocket.instances.length - 1]! }
+  }
+
+  it('rejects every pending call when the connection closes', async () => {
+    const { client, socket } = await connectedClient()
+
+    const first = client.request('server_call', { function: 'slow' })
+    const second = client.request('list_sessions')
+    socket.triggerClose(4403, 'auth required')
+
+    await expect(first).rejects.toMatchObject({
+      name: 'ConnectionClosedError',
+      permanent: true,
+      closeCode: 4403,
+    })
+    await expect(second).rejects.toBeInstanceOf(ConnectionClosedError)
+  })
+
+  it('does not reconnect after a permanent close code', async () => {
+    vi.useFakeTimers()
+    const client = new RPCClient('ws://example.test/ws')
+    const connected = client.connect()
+    await vi.runAllTicks()
+    await connected
+
+    const states: ConnectionState[] = []
+    client.onConnectionState((state) => states.push(state))
+
+    MockWebSocket.instances[0]!.triggerClose(4403, 'invalid token')
+    await vi.advanceTimersByTimeAsync(60000)
+
+    expect(MockWebSocket.instances).toHaveLength(1)
+    expect(states).toEqual([
+      { state: 'closed', permanent: true, closeCode: 4403, reason: 'invalid token' },
+    ])
+  })
+
+  it('reconnects with backoff after a retryable close and re-handshakes', async () => {
+    vi.useFakeTimers()
+    const client = new RPCClient('ws://example.test/ws')
+    const connected = client.connect()
+    await vi.runAllTicks()
+    await connected
+
+    const states: ConnectionState[] = []
+    client.onConnectionState((state) => states.push(state))
+
+    MockWebSocket.instances[0]!.triggerClose(1006)
+    expect(states[0]).toMatchObject({ state: 'reconnecting', attempt: 1 })
+
+    await vi.advanceTimersByTimeAsync(600)
+    await vi.runAllTicks()
+
+    expect(MockWebSocket.instances).toHaveLength(2)
+    const replaySocket = MockWebSocket.instances[1]!
+    expect(JSON.parse(replaySocket.sent[0]!)).toMatchObject({ method: 'initialize' })
+    expect(JSON.parse(replaySocket.sent[1]!)).toMatchObject({ method: 'initialized' })
+    expect(states[states.length - 1]).toEqual({ state: 'connected' })
+  })
+
+  it('stops retrying and reports a terminal state when the budget is exhausted', async () => {
+    vi.useFakeTimers()
+    const client = new RPCClient('ws://example.test/ws', undefined, {
+      connectTimeoutMs: 10000,
+      rpcTimeoutMs: 60000,
+      pingIntervalMs: 20000,
+      pingTimeoutMs: 10000,
+      reconnectInitialDelayMs: 10,
+      reconnectMultiplier: 2.0,
+      reconnectMaxDelayMs: 50,
+      reconnectJitter: 0,
+      reconnectMaxAttempts: 2,
+    })
+    const connected = client.connect()
+    await vi.runAllTicks()
+    await connected
+
+    const states: ConnectionState[] = []
+    client.onConnectionState((state) => states.push(state))
+
+    // Every reconnect attempt fails before the handshake, so the failure
+    // counter is never reset and the budget (2 attempts) runs out.
+    MockWebSocket.failConnects = true
+    MockWebSocket.instances[0]!.triggerClose(1006)
+    await vi.advanceTimersByTimeAsync(60000)
+
+    expect(MockWebSocket.instances).toHaveLength(2)
+    expect(states[0]).toMatchObject({ state: 'reconnecting', attempt: 1 })
+    expect(states[states.length - 1]).toMatchObject({ state: 'closed', permanent: true })
+  })
+
+  it('times out calls using the policy deadline', async () => {
+    vi.useFakeTimers()
+    const client = new RPCClient('ws://example.test/ws')
+    const connected = client.connect()
+    await vi.runAllTicks()
+    await connected
+
+    const call = client.request('server_call', { function: 'slow' })
+    call.catch(() => {})
+    await vi.advanceTimersByTimeAsync(60000)
+
+    await expect(call).rejects.toMatchObject({
+      name: 'RpcTimeoutError',
+      method: 'server_call',
+      timeoutMs: 60000,
+    } satisfies Partial<RpcTimeoutError>)
+  })
+
+  it('honors per-call timeout overrides', async () => {
+    vi.useFakeTimers()
+    const client = new RPCClient('ws://example.test/ws')
+    const connected = client.connect()
+    await vi.runAllTicks()
+    await connected
+
+    const call = client.request('server_call', { function: 'slow' }, { timeoutMs: 100 })
+    call.catch(() => {})
+    await vi.advanceTimersByTimeAsync(100)
+
+    await expect(call).rejects.toBeInstanceOf(RpcTimeoutError)
+  })
+
+  it('aborts long calls via AbortSignal', async () => {
+    const { client, socket } = await connectedClient()
+    const controller = new AbortController()
+
+    const call = client.request('server_call', { function: 'slow' }, { signal: controller.signal })
+    controller.abort()
+
+    await expect(call).rejects.toBeInstanceOf(RpcAbortError)
+    // A late response for the aborted call must be ignored quietly.
+    const request = JSON.parse(socket.sent[socket.sent.length - 1]!) as { id: number }
+    expect(() => socket.respond(request.id, { ok: true })).not.toThrow()
+  })
+
+  it('preserves structured errors on regular calls', async () => {
+    const { client, socket } = await connectedClient()
+
+    const call = client.request('server_call', { function: 'x' })
+    const request = JSON.parse(socket.sent[socket.sent.length - 1]!) as { id: number }
+    socket.onmessage?.({
+      data: JSON.stringify({
+        jsonrpc: '2.0',
+        id: request.id,
+        error: { code: -32020, message: 'Overloaded', data: { retry_after_ms: 250 } },
+      }),
+    })
+
+    await expect(call).rejects.toMatchObject({
+      name: 'JSONRPCError',
+      code: -32020,
+      data: { retry_after_ms: 250 },
+    } satisfies Partial<JSONRPCError>)
+  })
+
+  it('rejects pending calls on deliberate disconnect', async () => {
+    const { client } = await connectedClient()
+
+    const call = client.request('server_call', { function: 'slow' })
+    client.disconnect()
+
+    await expect(call).rejects.toMatchObject({ name: 'ConnectionClosedError', permanent: true })
+    expect(client.connectionState).toMatchObject({ state: 'closed', permanent: true })
   })
 })

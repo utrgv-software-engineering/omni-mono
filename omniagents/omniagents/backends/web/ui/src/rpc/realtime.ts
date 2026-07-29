@@ -22,14 +22,25 @@ type JSONRPCNotification = {
 
 type Listener = (payload: any) => void
 
+import { JSONRPCError } from './client'
+import {
+  classifyCloseCode,
+  ConnectionClosedError,
+  DEFAULT_LIFECYCLE_POLICY,
+  RpcTimeoutError,
+  type LifecyclePolicy,
+} from './lifecycle'
+
 export class RealtimeRPCClient {
   private ws: WebSocket | null = null
   private url: string
   private token?: string
   private debug: boolean = false
+  private policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY
   private nextId = 0
   private pending = new Map<JSONRPCId, { resolve: (v: any) => void; reject: (e: Error) => void }>()
   private listeners = new Map<string, Set<Listener>>()
+  private closedByUser = false
 
   constructor(url: string, token?: string, debug?: boolean) {
     this.url = url
@@ -40,19 +51,26 @@ export class RealtimeRPCClient {
   async connect(): Promise<void> {
     const wsUrl = this.token ? `${this.url}?token=${encodeURIComponent(this.token)}` : this.url
     if (this.debug) console.log('[rpc] connect', wsUrl)
+    this.closedByUser = false
     this.ws = new WebSocket(wsUrl)
     await new Promise<void>((resolve, reject) => {
-      if (!this.ws) return reject(new Error('WebSocket init failed'))
+      if (!this.ws) return reject(new ConnectionClosedError('WebSocket init failed', { permanent: true }))
+      const timer = setTimeout(() => {
+        try { this.ws?.close() } catch {}
+        reject(new RpcTimeoutError('connect', this.policy.connectTimeoutMs))
+      }, this.policy.connectTimeoutMs)
       this.ws.onopen = () => {
+        clearTimeout(timer)
         if (this.debug) console.log('[rpc] open')
         resolve()
       }
       this.ws.onerror = (e) => {
+        clearTimeout(timer)
         if (this.debug) console.error('[rpc] error', e)
-        reject(new Error('WebSocket error'))
+        reject(new ConnectionClosedError('WebSocket error'))
       }
     })
-    if (!this.ws) throw new Error('WebSocket disconnected')
+    if (!this.ws) throw new ConnectionClosedError('WebSocket disconnected')
     this.ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data as string) as JSONRPCResponse | JSONRPCNotification
@@ -61,7 +79,10 @@ export class RealtimeRPCClient {
           const pending = this.pending.get(msg.id)
           if (pending) {
             this.pending.delete(msg.id)
-            if ((msg as JSONRPCResponse).error) pending.reject(new Error((msg as JSONRPCResponse).error!.message))
+            const error = (msg as JSONRPCResponse).error
+            // Preserve the structured JSON-RPC error (code + data), not
+            // just the message string.
+            if (error) pending.reject(new JSONRPCError(error.code ?? -32603, error.message, error.data))
             else pending.resolve((msg as JSONRPCResponse).result)
           }
         } else {
@@ -74,10 +95,26 @@ export class RealtimeRPCClient {
     }
     this.ws.onclose = (e) => {
       if (this.debug) console.log('[rpc] close', e?.code, e?.reason)
+      // No pending promise may remain unresolved after the link drops.
+      this.rejectAllPending(
+        new ConnectionClosedError(e?.reason || 'Connection closed', {
+          permanent: this.closedByUser || classifyCloseCode(e?.code) === 'permanent',
+          closeCode: e?.code,
+          reason: e?.reason,
+        }),
+      )
     }
   }
 
+  private rejectAllPending(error: ConnectionClosedError): void {
+    const entries = [...this.pending.values()]
+    this.pending.clear()
+    for (const entry of entries) entry.reject(error)
+  }
+
   disconnect(): void {
+    this.closedByUser = true
+    this.rejectAllPending(new ConnectionClosedError('Connection closed by client', { permanent: true }))
     if (this.ws) {
       this.ws.close()
       this.ws = null

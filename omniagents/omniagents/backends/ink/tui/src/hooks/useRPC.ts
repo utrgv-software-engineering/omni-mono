@@ -69,10 +69,21 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
       setConnecting(true);
     });
 
-    rpcClient.on("reconnect_failed", () => {
-      setError(new Error("Failed to reconnect to server"));
-      setConnecting(false);
-    });
+    rpcClient.on(
+      "reconnect_failed",
+      (info?: { permanent?: boolean; attempts?: number }) => {
+        // Terminal failure: either a permanent rejection (auth, handshake)
+        // or the retry budget ran out. Distinct from transient
+        // "reconnecting" states, which keep `connecting` true.
+        const attempts = info?.attempts ?? 0;
+        const message =
+          attempts > 1
+            ? `Failed to reconnect to server (gave up after ${attempts} attempts)`
+            : "Connection rejected by server (not retryable)";
+        setError(new Error(message));
+        setConnecting(false);
+      },
+    );
 
     // Connect
     rpcClient.connect().catch((err) => {

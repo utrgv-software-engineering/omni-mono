@@ -151,6 +151,10 @@ async def test_ensure_client_initializes_rpc(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             self.entered = False
 
+        def on_disconnect(self, callback):
+            self.disconnect_callback = callback
+            return lambda: None
+
     def fake_from_url(url, methods, **kwargs):
         client = FakeClient(url, methods, **kwargs)
         created.append((url, methods))

@@ -291,6 +291,17 @@ Standard JSON-RPC 2.0 errors:
 }
 ```
 
+## Connection Lifecycle
+
+All maintained clients share one lifecycle policy — connect/RPC timeouts,
+ping/pong cadence, exponential reconnect backoff with jitter and a retry
+budget, permanent-versus-retryable failure classification, and guaranteed
+rejection of pending calls on disconnect. The policy is defined as data in
+`omniagents/rpc/lifecycle.py` (Python) and `src/rpc/lifecycle.ts` (web UI
+and Ink TUI, byte-identical). See the "Connection Lifecycle" section of
+`omniagents/rpc/protocol.md` for the normative rules and the idempotency
+guidance describing which methods are safe to auto-retry.
+
 ## Full Protocol Specification
 
 For complete protocol details, see the full specification at:

@@ -760,6 +760,99 @@ Run lifecycle notifications:
 
 - `run_started`: Emitted immediately after a run is scheduled; includes `{ run_id, session_id }`. This allows clients to correlate subsequent `run_status`, `token`, and `run_end` messages even if they arrive before the JSON-RPC response to `start_run` is processed.
 
+## Connection Lifecycle
+
+All maintained clients (Python `JsonRpcClient`/`RemoteAgent`, the web UI,
+the Ink TUI, and downstream application transports such as Omni Desktop)
+follow one lifecycle policy, defined as data in:
+
+- `omniagents/rpc/lifecycle.py` (Python)
+- `omniagents/backends/web/ui/src/rpc/lifecycle.ts` and
+  `omniagents/backends/ink/tui/src/rpc/lifecycle.ts` (byte-identical
+  TypeScript twins)
+
+Cross-language consistency is enforced by
+`tests/unit/rpc/test_lifecycle.py`.
+
+### Standard policy defaults
+
+| Parameter | Default | Meaning |
+| --- | --- | --- |
+| connect timeout | 10 s | transport connect **plus** `initialize` handshake |
+| RPC timeout | 60 s | per-call deadline (overridable per call; disable for known-long calls) |
+| ping interval | 20 s | WebSocket ping cadence |
+| ping timeout | 10 s | missing pong ⇒ the link is dead |
+| reconnect initial delay | 0.5 s | first backoff step |
+| reconnect multiplier | 2× | exponential growth per attempt |
+| reconnect max delay | 30 s | backoff ceiling |
+| reconnect jitter | ±10% | symmetric jitter on every delay |
+| reconnect max attempts | 10 | consecutive failures before giving up |
+
+A successful handshake resets the failure counter; the budget applies to
+*consecutive* failed attempts.
+
+### Failure classification
+
+Failures are classified as **retryable**, **permanent**, or
+**indeterminate**:
+
+- **Permanent JSON-RPC error codes** (never retried — resending the same
+  request fails identically): `-32700`, `-32600`, `-32601`, `-32602`, and
+  the typed handshake errors `-32010` (InitializationRequired), `-32011`
+  (AlreadyInitialized), `-32012` (ProtocolVersionMismatch), `-32013`
+  (CapabilityMismatch). A structured `initialize` rejection is permanent:
+  clients must not loop on the handshake.
+- **Retryable JSON-RPC error codes**: `-32020` (TransportOverloaded).
+  Honor `data.retry_after_ms` when present, and only auto-retry idempotent
+  methods (see below).
+- **Indeterminate codes** (e.g. `-32603` InternalError, application
+  codes): surface to the caller; never auto-retry.
+- **Permanent WebSocket close codes** (no reconnect): `1002`, `1003`,
+  `1008`, and the whole `44xx` application range — notably `4403`
+  (authentication/authorization rejected) and `4404` (feature not
+  available). These are deterministic server rejections; retrying loops
+  forever. Everything else (`1000`, `1001`, `1006`, `1011`–`1013`, or no
+  code) is retryable.
+
+### Required client behavior
+
+1. **No unresolved promise after disconnect.** When the connection closes
+   — gracefully, abnormally, or deliberately — every pending call must be
+   rejected with a connection-closed error carrying the close code/reason
+   and a `permanent` flag.
+2. **Deadlines on every call.** Calls use the policy RPC timeout by
+   default; long-running RPCs may opt out explicitly and must then be
+   cancellable (`AbortSignal` in TypeScript, task cancellation in Python).
+   Cancellation must remove the pending entry.
+3. **Structured errors are preserved.** JSON-RPC `code`, `message`, and
+   `data` travel intact to the caller (`RpcError` in Python,
+   `JSONRPCError` in TypeScript).
+4. **Reconnects follow the shared backoff schedule** and stop immediately
+   on permanent failures or when the budget is exhausted. UIs must
+   distinguish the transient "reconnecting" state from the terminal
+   "closed permanently" state.
+5. **Resume is out of scope for the transport.** After a reconnect,
+   clients re-run the `initialize` handshake and resume sessions by
+   `session_id`. Fine-grained event replay (cursor-based resume) is a
+   separate, pluggable concern layered on the disconnect/reconnect hooks.
+
+### Idempotency guidance for retries
+
+Only auto-retry requests whose repetition cannot duplicate side effects:
+
+- **Safe to auto-retry** (read-only or naturally idempotent):
+  `initialize`, `list_sessions`, `get_session_history`,
+  `get_user_history`, `list_server_functions`, `list_queue`,
+  `get_agent_info`, `stop_run`, `archive_session`, `delete_session`.
+- **Safe to retry by key** (server dedupes on the identifier):
+  `tool_approval_response` / `mcp_approval_response` (keyed by
+  `call_id`/`request_id`; the server resolves each approval once) and
+  `client_response` (keyed by `request_id`).
+- **Never auto-retry**: `start_run`, `enqueue_message`, `send_audio`, and
+  `server_call` (server functions may have arbitrary side effects). If
+  the response was lost, the request may still have executed — surface
+  the failure and let the user (or a state refresh) decide.
+
 ## Implementation Guidelines
 
 ### For Servers
@@ -767,12 +860,18 @@ Run lifecycle notifications:
 2. Send appropriate event notifications during runs
 3. Handle WebSocket connection lifecycle properly
 4. Support session persistence across connections
+5. Reject unauthenticated/unauthorized connections with close code `4403`
+   and unavailable features with `4404` so clients classify them as
+   permanent
 
 ### For Clients
 1. Handle all event notification types
-2. Implement proper reconnection logic
+2. Follow the standard connection lifecycle policy (see above): shared
+   timeouts, ping/pong, exponential backoff with jitter, permanent-error
+   classification, and pending-call rejection on disconnect
 3. Manage session state appropriately
-4. Provide user-friendly interfaces for tool approvals
+4. Provide user-friendly interfaces for tool approvals, and surface
+   retryable versus terminal connection failures distinctly
 
 ## Example Server Implementation
 

@@ -1,13 +1,20 @@
 import WebSocket from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { JSONRPCError, RPCClient } from "./client.js";
+import {
+  ConnectionClosedError,
+  DEFAULT_LIFECYCLE_POLICY,
+  RpcAbortError,
+  RpcTimeoutError,
+} from "./lifecycle.js";
 import type { ClientRequest } from "../types/protocol.js";
 
-const { mockSockets } = vi.hoisted(() => ({
+const { mockSockets, mockSocketConfig } = vi.hoisted(() => ({
   mockSockets: [] as Array<{
     sent: string[];
-    emit: (event: string, value?: unknown) => void;
+    emit: (event: string, ...values: unknown[]) => void;
   }>,
+  mockSocketConfig: { failConnects: false },
 }));
 
 vi.mock("ws", () => {
@@ -15,21 +22,26 @@ vi.mock("ws", () => {
     static readonly OPEN = 1;
     readonly readyState = MockWebSocket.OPEN;
     readonly sent: string[] = [];
-    private listeners = new Map<string, Array<(value?: unknown) => void>>();
+    private listeners = new Map<string, Array<(...values: unknown[]) => void>>();
 
     constructor(readonly url: string) {
       mockSockets.push(this);
-      queueMicrotask(() => this.emit("open"));
+      if (mockSocketConfig.failConnects) {
+        queueMicrotask(() => this.emit("close", 1006));
+      } else {
+        queueMicrotask(() => this.emit("open"));
+      }
     }
 
-    on(event: string, listener: (value?: unknown) => void): void {
+    on(event: string, listener: (...values: unknown[]) => void): void {
       const listeners = this.listeners.get(event) ?? [];
       listeners.push(listener);
       this.listeners.set(event, listeners);
     }
 
-    emit(event: string, value?: unknown): void {
-      for (const listener of this.listeners.get(event) ?? []) listener(value);
+    emit(event: string, ...values: unknown[]): void {
+      for (const listener of this.listeners.get(event) ?? [])
+        listener(...values);
     }
 
     send(data: string, callback?: (error?: Error) => void): void {
@@ -99,6 +111,7 @@ function connectedClient(sent: string[]): TestClient {
 describe("RPCClient", () => {
   afterEach(() => {
     mockSockets.length = 0;
+    mockSocketConfig.failConnects = false;
     vi.useRealTimers();
   });
 
@@ -235,5 +248,112 @@ describe("RPCClient", () => {
         result: { value: "ok" },
       },
     });
+  });
+
+  it("rejects every pending call when the connection closes permanently", async () => {
+    vi.useFakeTimers();
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const failed = vi.fn();
+    client.on("reconnect_failed", failed);
+    const connected = client.connect();
+    await vi.runAllTicks();
+    await connected;
+
+    const call = client.request("server_call", { function: "slow" });
+    const rejection = expect(call).rejects.toMatchObject({
+      name: "ConnectionClosedError",
+      permanent: true,
+      closeCode: 4403,
+    });
+    mockSockets[0]!.emit("close", 4403, Buffer.from("auth required"));
+    await rejection;
+
+    // Permanent close: no reconnect, terminal event emitted.
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(mockSockets).toHaveLength(1);
+    expect(failed).toHaveBeenCalledWith({ permanent: true, attempts: 1 });
+  });
+
+  it("stops reconnecting when the retry budget is exhausted", async () => {
+    vi.useFakeTimers();
+    const client = new RPCClient({
+      url: "ws://example.test/ws",
+      policy: {
+        ...DEFAULT_LIFECYCLE_POLICY,
+        reconnectInitialDelayMs: 10,
+        reconnectMaxDelayMs: 50,
+        reconnectJitter: 0,
+        reconnectMaxAttempts: 2,
+      },
+    });
+    const reconnecting = vi.fn();
+    const failed = vi.fn();
+    client.on("reconnecting", reconnecting);
+    client.on("reconnect_failed", failed);
+    const connected = client.connect();
+    await vi.runAllTicks();
+    await connected;
+
+    // Every reconnect attempt dies before the handshake, so the failure
+    // counter never resets and the budget (2) runs out.
+    mockSocketConfig.failConnects = true;
+    mockSockets[0]!.emit("close", 1006);
+    await vi.advanceTimersByTimeAsync(60000);
+
+    expect(mockSockets).toHaveLength(2);
+    expect(reconnecting).toHaveBeenCalledTimes(1);
+    expect(reconnecting).toHaveBeenCalledWith(1);
+    expect(failed).toHaveBeenCalledWith({ permanent: true, attempts: 2 });
+  });
+
+  it("times out unanswered calls using the policy deadline", async () => {
+    vi.useFakeTimers();
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const connected = client.connect();
+    await vi.runAllTicks();
+    await connected;
+
+    const call = client.request("server_call", { function: "slow" });
+    call.catch(() => {});
+    await vi.advanceTimersByTimeAsync(DEFAULT_LIFECYCLE_POLICY.rpcTimeoutMs);
+
+    await expect(call).rejects.toMatchObject({
+      name: "RpcTimeoutError",
+      method: "server_call",
+      timeoutMs: DEFAULT_LIFECYCLE_POLICY.rpcTimeoutMs,
+    } satisfies Partial<RpcTimeoutError>);
+  });
+
+  it("aborts long calls via AbortSignal", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const connected = client.connect();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await connected;
+
+    const controller = new AbortController();
+    const call = client.request(
+      "server_call",
+      { function: "slow" },
+      { signal: controller.signal },
+    );
+    controller.abort();
+
+    await expect(call).rejects.toBeInstanceOf(RpcAbortError);
+  });
+
+  it("rejects pending calls on deliberate disconnect", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const connected = client.connect();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await connected;
+
+    const call = client.request("server_call", { function: "slow" });
+    client.disconnect();
+
+    await expect(call).rejects.toBeInstanceOf(ConnectionClosedError);
+    await expect(call).rejects.toMatchObject({ permanent: true });
+    // Deliberate close never triggers a reconnect loop.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockSockets).toHaveLength(1);
   });
 });

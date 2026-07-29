@@ -244,6 +244,10 @@ async def test_ensure_client_initializes_rpc(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             self.entered = False
 
+        def on_disconnect(self, callback):
+            self.disconnect_callback = callback
+            return lambda: None
+
     monkeypatch.setattr("omniagents.rpc.agents.remote.JsonRpcClient", FakeClient)
 
     await agent._ensure_client()
