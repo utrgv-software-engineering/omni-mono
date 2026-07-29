@@ -30,6 +30,58 @@
       "type": "object",
       "x-omni-stability": "stable"
     },
+    "capabilities": {
+      "additionalProperties": false,
+      "properties": {
+        "approvals": {
+          "type": "boolean"
+        },
+        "artifacts": {
+          "type": "boolean"
+        },
+        "client_functions": {
+          "type": "boolean"
+        },
+        "disabled_notifications": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "experimental_operations": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "mcp_apps": {
+          "type": "boolean"
+        },
+        "realtime": {
+          "type": "boolean"
+        },
+        "replay": {
+          "type": "boolean"
+        },
+        "terminal": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "realtime",
+        "mcp_apps",
+        "client_functions",
+        "approvals",
+        "artifacts",
+        "replay",
+        "terminal",
+        "experimental_operations",
+        "disabled_notifications"
+      ],
+      "type": "object"
+    },
     "client_functions": {
       "additionalProperties": false,
       "properties": {
@@ -271,6 +323,77 @@
       "type": "object",
       "x-omni-stability": "stable"
     },
+    "identity": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "type": "object"
+    },
+    "initialize": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/capabilities"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "platform": {
+          "$ref": "#/$defs/platform"
+        },
+        "protocol_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "identity",
+        "platform",
+        "capabilities"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "initializeResult": {
+      "additionalProperties": false,
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/capabilities"
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "platform": {
+          "$ref": "#/$defs/platform"
+        },
+        "protocol_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "identity",
+        "platform",
+        "capabilities"
+      ],
+      "type": "object"
+    },
+    "initialized": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "jsonRpcError": {
       "additionalProperties": false,
       "properties": {
@@ -411,6 +534,22 @@
       ],
       "type": "object",
       "x-omni-stability": "stable"
+    },
+    "platform": {
+      "additionalProperties": false,
+      "properties": {
+        "arch": {
+          "type": "string"
+        },
+        "os": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "os",
+        "arch"
+      ],
+      "type": "object"
     },
     "queue_changed": {
       "additionalProperties": false,
@@ -918,6 +1057,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "oneOf": [
     {
+      "$ref": "#/$defs/initialize"
+    },
+    {
       "$ref": "#/$defs/start_run"
     },
     {
@@ -1000,6 +1142,9 @@
     },
     {
       "$ref": "#/$defs/export_session"
+    },
+    {
+      "$ref": "#/$defs/initialized"
     },
     {
       "$ref": "#/$defs/run_started"

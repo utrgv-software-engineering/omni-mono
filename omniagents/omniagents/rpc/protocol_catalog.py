@@ -15,6 +15,7 @@ class ProtocolOperation:
 
 
 STABLE_REQUESTS = (
+    "initialize",
     "start_run",
     "stop_run",
     "send_user_message",
@@ -65,6 +66,8 @@ STABLE_NOTIFICATIONS = (
     "queue_changed",
 )
 
+STABLE_CLIENT_NOTIFICATIONS = ("initialized",)
+
 EXPERIMENTAL_NOTIFICATIONS = (
     "session_forked",
     "session_variables_changed",
@@ -78,6 +81,10 @@ OPERATIONS = tuple(
     + [
         ProtocolOperation(name, "client_to_server", "request", "experimental")
         for name in EXPERIMENTAL_REQUESTS
+    ]
+    + [
+        ProtocolOperation(name, "client_to_server", "notification", "stable")
+        for name in STABLE_CLIENT_NOTIFICATIONS
     ]
     + [
         ProtocolOperation(

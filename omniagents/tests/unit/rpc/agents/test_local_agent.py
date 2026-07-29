@@ -230,9 +230,10 @@ async def test_ensure_client_initializes_rpc(monkeypatch):
     agent.initialize = AsyncMock(side_effect=fake_initialize)
 
     class FakeClient:
-        def __init__(self, transport, methods):
+        def __init__(self, transport, methods, **kwargs):
             self.transport = transport
             self.methods = methods
+            self.kwargs = kwargs
             self.entered = False
             self.other = SimpleNamespace()
 
@@ -249,9 +250,35 @@ async def test_ensure_client_initializes_rpc(monkeypatch):
     assert isinstance(agent._client, FakeClient)
     assert agent._client.entered is True
     assert agent._client_transport.calls == 1
+    assert agent._client.kwargs["client_info"]["name"] == "omniagents-python"
+    assert agent._client.kwargs["capabilities"]["client_functions"] is True
 
     await agent._ensure_client()
     assert agent._client_transport.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_client_completes_gui_handshake_end_to_end():
+    """Regression: LocalAgent's in-memory endpoint must speak the GUI
+    initialize/initialized handshake that RemoteAgent's JsonRpcClient runs
+    by default — without gui_handshake=True on the endpoint every local
+    run died on connect with 'Method not found'."""
+    spec = make_agent_spec()
+    agent = LocalAgent(spec)
+    try:
+        async with asyncio.timeout(5):
+            await agent._ensure_client()
+        result = agent._client.initialize_result
+        assert result is not None
+        assert result.protocol_version == "1.0.0"
+        assert result.identity.name == "omniagents"
+        # Intersection of REMOTE_AGENT_CAPABILITIES with the endpoint grants.
+        assert result.capabilities.client_functions is True
+        assert result.capabilities.approvals is True
+        assert result.capabilities.replay is True
+        assert result.capabilities.realtime is False
+    finally:
+        await agent.cleanup()
 
 
 @pytest.mark.asyncio

@@ -1,12 +1,54 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, RootModel
 
 
 class JsonRpcError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     code: int
     message: str
     data: Any | None = None
+
+
+class Identity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    version: str
+
+
+class Platform(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    os: str
+    arch: str
+
+
+class Capabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    realtime: bool
+    mcp_apps: bool
+    client_functions: bool
+    approvals: bool
+    artifacts: bool
+    replay: bool
+    terminal: bool
+    experimental_operations: list[str]
+    disabled_notifications: list[str]
+
+
+class InitializeParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    protocol_version: str
+    identity: Identity
+    platform: Platform
+    capabilities: Capabilities
+
+
+class InitializeResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    protocol_version: str
+    identity: Identity
+    platform: Platform
+    capabilities: Capabilities
 
 
 class StartRunParams(BaseModel):
@@ -301,6 +343,11 @@ class ExportSessionResult(RootModel[dict[str, Any]]):
     pass
 
 
+class InitializedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pass
+
+
 class RunStartedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     run_id: str
@@ -442,6 +489,7 @@ class SessionVariablesChangedParams(BaseModel):
 
 
 CLIENT_REQUEST_MODELS = {
+    "initialize": InitializeParams,
     "start_run": StartRunParams,
     "stop_run": StopRunParams,
     "send_user_message": SendUserMessageParams,
@@ -472,6 +520,7 @@ CLIENT_REQUEST_MODELS = {
     "export_session": ExportSessionParams,
 }
 CLIENT_RESULT_MODELS = {
+    "initialize": InitializeResult,
     "start_run": StartRunResult,
     "stop_run": StopRunResult,
     "send_user_message": SendUserMessageResult,
@@ -501,6 +550,7 @@ CLIENT_RESULT_MODELS = {
     "report_incident": ReportIncidentResult,
     "export_session": ExportSessionResult,
 }
+CLIENT_NOTIFICATION_MODELS = {"initialized": InitializedParams}
 SERVER_NOTIFICATION_MODELS = {
     "run_started": RunStartedParams,
     "run_status": RunStatusParams,
@@ -521,6 +571,7 @@ SERVER_NOTIFICATION_MODELS = {
 }
 STABLE_REQUESTS = frozenset(
     [
+        "initialize",
         "start_run",
         "stop_run",
         "send_user_message",
@@ -557,6 +608,7 @@ EXPERIMENTAL_REQUESTS = frozenset(
 )
 STABLE_NOTIFICATIONS = frozenset(
     [
+        "initialized",
         "run_started",
         "run_status",
         "tool_called",

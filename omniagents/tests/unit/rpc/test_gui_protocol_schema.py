@@ -118,6 +118,90 @@ def test_every_nonempty_payload_declares_required_fields():
         "function",
         "args",
     ]
+    assert schema["$defs"]["initialize"]["required"] == [
+        "protocol_version",
+        "identity",
+        "platform",
+        "capabilities",
+    ]
+
+
+def test_initialize_handshake_has_strict_negotiated_models():
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    params = {
+        "protocol_version": "1.0.0",
+        "identity": {"name": "omni-desktop", "version": "1.2.3"},
+        "platform": {"os": "linux", "arch": "x86_64"},
+        "capabilities": {
+            "realtime": True,
+            "mcp_apps": True,
+            "client_functions": True,
+            "approvals": True,
+            "artifacts": True,
+            "replay": True,
+            "terminal": False,
+            "experimental_operations": [],
+            "disabled_notifications": ["token"],
+        },
+    }
+    assert generated.CLIENT_REQUEST_MODELS["initialize"].model_validate(params)
+    assert generated.CLIENT_RESULT_MODELS["initialize"].model_validate(params)
+    with pytest.raises(ValidationError):
+        generated.CLIENT_REQUEST_MODELS["initialize"].model_validate(
+            {**params, "identity": {**params["identity"], "extra": True}}
+        )
+    assert generated.CLIENT_REQUEST_MODELS["initialize"].model_validate(
+        {**params, "protocol_version": "0.9.0"}
+    )
+
+
+def test_initialized_is_stable_client_notification():
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    operation = next(item for item in OPERATIONS if item.name == "initialized")
+    assert operation.direction == "client_to_server"
+    assert operation.kind == "notification"
+    assert operation.stability == "stable"
+    assert generated.CLIENT_NOTIFICATION_MODELS["initialized"].model_validate({})
+    with pytest.raises(ValidationError):
+        generated.CLIENT_NOTIFICATION_MODELS["initialized"].model_validate(
+            {"unexpected": True}
+        )
+
+
+def test_protocol_errors_have_reserved_codes_and_exact_overload_shape():
+    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    errors = document["components"]["errors"]
+    assert {
+        errors[name]["code"]
+        for name in (
+            "InitializationRequired",
+            "AlreadyInitialized",
+            "ProtocolVersionMismatch",
+            "CapabilityMismatch",
+        )
+    } == {-32010, -32011, -32012, -32013}
+    assert errors["TransportOverloaded"] == {
+        "code": -32020,
+        "message": "Transport overloaded",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "resource",
+                "unit",
+                "limit",
+                "retryable",
+                "retry_after_ms",
+            ],
+            "properties": {
+                "resource": {"type": "string"},
+                "unit": {"type": "string", "enum": ["messages", "bytes"]},
+                "limit": {"type": "integer", "minimum": 1},
+                "retryable": {"type": "boolean"},
+                "retry_after_ms": {"type": ["integer", "null"], "minimum": 0},
+            },
+        },
+    }
 
 
 def test_client_request_is_correlated_notification_without_wire_id():
@@ -173,9 +257,9 @@ def test_inventory_reports_generated_request_allowlist():
     inventory = _load(ROOT / "protocol/openrpc/inventory.json")
     assert inventory["source"] == "omniagents.rpc.protocol_catalog.OPERATIONS"
     assert inventory["router_mode"] == "generated_request_allowlist"
-    assert len(inventory["requests"]["stable"]) == 18
+    assert len(inventory["requests"]["stable"]) == 19
     assert len(inventory["requests"]["experimental"]) == 10
-    assert len(inventory["notifications"]["stable"]) == 14
+    assert len(inventory["notifications"]["stable"]) == 15
     assert len(inventory["notifications"]["experimental"]) == 2
 
 
@@ -186,7 +270,7 @@ def test_catalog_requests_exist_on_real_agent_service():
     service_methods = discover_agent_service_methods(
         ROOT / "omniagents/core/agents/service.py"
     )
-    assert catalog_requests <= service_methods
+    assert catalog_requests - {"initialize"} <= service_methods
     assert GUI_RPC_METHODS == catalog_requests
 
 
@@ -239,6 +323,7 @@ def test_generated_python_imports():
     generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
     assert generated.CLIENT_REQUEST_MODELS["start_run"]
     assert "client_request" in generated.STABLE_NOTIFICATIONS
+    assert generated.CLIENT_NOTIFICATION_MODELS["initialized"]
 
 
 def test_generated_models_reject_missing_required_fields():

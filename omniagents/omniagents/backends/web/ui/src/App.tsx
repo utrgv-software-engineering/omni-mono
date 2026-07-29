@@ -185,6 +185,7 @@ export function App() {
       client.connect()
         .then(async () => {
           setConnected(true)
+          setVoiceEnabled(client.initializeResult?.capabilities.realtime === true)
         try { await client.clientFunctions(1, [{ name: 'ui.set_status' }, { name: 'ui.add_artifact' }]) } catch {}
         try {
           const info = await client.getAgentInfo()
@@ -208,21 +209,6 @@ export function App() {
             } catch {}
           }
         } catch {}
-        try {
-          // Probe via capabilities() not startSession(): the latter creates an empty trace per boot.
-          const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-          const host = window.location.host
-          const base = `${proto}://${host}/ws/realtime`
-          const url = new URL(window.location.href)
-          const token = url.searchParams.get('token') || undefined
-          const { RealtimeRPCClient } = await import('./rpc/realtime')
-          const rtc = new RealtimeRPCClient(base, token)
-          await rtc.connect()
-          try {
-            const caps = await rtc.capabilities()
-            setVoiceEnabled(!!caps?.enabled)
-          } finally { rtc.disconnect() }
-        } catch { setVoiceEnabled(false) }
         const url = new URL(window.location.href)
         const resume = url.searchParams.get('resume') === 'true'
         const sid = url.searchParams.get('session') || undefined

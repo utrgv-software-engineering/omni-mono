@@ -2,6 +2,8 @@
 
 import contextlib
 import asyncio
+from importlib.metadata import version
+import platform
 from typing import Any, Dict, Optional, Callable, TYPE_CHECKING
 
 from .base import RpcMethodsBase
@@ -24,7 +26,21 @@ class RpcError(Exception):
 
 
 if TYPE_CHECKING:
+    from .generated.gui_v1 import InitializeResult
     from .transport import Transport
+
+
+DEFAULT_CLIENT_CAPABILITIES: Dict[str, Any] = {
+    "realtime": False,
+    "mcp_apps": False,
+    "client_functions": False,
+    "approvals": False,
+    "artifacts": False,
+    "replay": False,
+    "terminal": False,
+    "experimental_operations": [],
+    "disabled_notifications": [],
+}
 
 
 class _ClientProxy:
@@ -42,28 +58,71 @@ class JsonRpcClient:
     """Lightweight JSON-RPC 2.0 client with pluggable transport."""
 
     def __init__(
-        self, transport: "Transport", methods: Optional[RpcMethodsBase] = None
+        self,
+        transport: "Transport",
+        methods: Optional[RpcMethodsBase] = None,
+        *,
+        gui_handshake: bool = True,
+        client_info: Optional[Dict[str, str]] = None,
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> None:
         self._transport = transport
         self._methods = methods
+        self._gui_handshake = gui_handshake
+        self._client_info = client_info or {
+            "name": "omniagents-python",
+            "version": version("omniagents"),
+        }
+        self._capabilities = capabilities or dict(DEFAULT_CLIENT_CAPABILITIES)
         self._recv_task: Optional[asyncio.Task] = None
         self._pending: Dict[str, asyncio.Future] = {}
         self._id = 0
+        self.initialize_result: Optional["InitializeResult"] = None
         self.other = _ClientProxy(self)
 
     @classmethod
     def from_url(
-        cls, url: str, methods: Optional[RpcMethodsBase] = None
+        cls,
+        url: str,
+        methods: Optional[RpcMethodsBase] = None,
+        *,
+        gui_handshake: bool = True,
+        client_info: Optional[Dict[str, str]] = None,
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> "JsonRpcClient":
         """Create a JsonRpcClient with WebSocket transport (backward compatibility)."""
         from .transport.websocket import ClientWebSocketTransport
 
         transport = ClientWebSocketTransport(url)
-        return cls(transport, methods)
+        return cls(
+            transport,
+            methods,
+            gui_handshake=gui_handshake,
+            client_info=client_info,
+            capabilities=capabilities,
+        )
 
     async def __aenter__(self) -> "JsonRpcClient":
         await self._transport.connect()
         self._recv_task = asyncio.create_task(self._recv_loop())
+        if self._gui_handshake:
+            from .generated.gui_v1 import InitializeParams, InitializeResult
+
+            initialize = InitializeParams.model_validate(
+                {
+                    "protocol_version": "1.0.0",
+                    "identity": self._client_info,
+                    "platform": {
+                        "os": platform.system().lower(),
+                        "arch": platform.machine().lower(),
+                    },
+                    "capabilities": self._capabilities,
+                },
+                strict=True,
+            )
+            result = await self.call("initialize", **initialize.model_dump())
+            self.initialize_result = InitializeResult.model_validate(result)
+            await self.notify("initialized")
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

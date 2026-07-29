@@ -116,9 +116,14 @@ class LocalAgent(RemoteAgent):
         await self._server_transport.connect()
 
         # Create the channel first
+        from omniagents.rpc.generated.gui_v1 import SERVER_NOTIFICATION_MODELS
         from omniagents.rpc.server import JsonRpcChannel
 
-        channel = JsonRpcChannel(self._server_transport)
+        channel = JsonRpcChannel(
+            self._server_transport,
+            notification_models=SERVER_NOTIFICATION_MODELS,
+            enforce_initialization=True,
+        )
 
         # Create agent service with custom spec and set channel immediately
         self._agent_service = AgentService(self.spec)
@@ -142,9 +147,23 @@ class LocalAgent(RemoteAgent):
         from omniagents.rpc import JsonRpcEndpoint
         from omniagents.rpc.server import GUI_RPC_METHODS
 
+        # The in-process client is RemoteAgent's JsonRpcClient, which runs
+        # the GUI initialize/initialized handshake by default — the endpoint
+        # must speak it too, mirroring the server app's wiring.
         endpoint = JsonRpcEndpoint(
             self._agent_service,
             allowed_methods=GUI_RPC_METHODS,
+            gui_handshake=True,
+            server_capabilities={
+                "realtime": False,
+                "mcp_apps": True,
+                "client_functions": True,
+                "approvals": True,
+                "artifacts": True,
+                "replay": True,
+                "terminal": getattr(self._agent_service, "terminal_manager", None)
+                is not None,
+            },
         )
 
         # Start server task

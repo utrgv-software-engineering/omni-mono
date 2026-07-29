@@ -23,6 +23,21 @@ class CancelQueuedMessage(BaseModel):
     session_id: str
 
 
+class Capabilities(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    approvals: bool
+    artifacts: bool
+    client_functions: bool
+    disabled_notifications: list[str]
+    experimental_operations: list[str]
+    mcp_apps: bool
+    realtime: bool
+    replay: bool
+    terminal: bool
+
+
 class ClientFunctions(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -141,6 +156,20 @@ class GetUserHistory(BaseModel):
     limit: int | None = None
 
 
+class Identity(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: str
+    version: str
+
+
+class Initialized(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class JsonRpcError(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -208,6 +237,14 @@ class MessageOutput(BaseModel):
     content: str
     run_id: str
     session_id: str
+
+
+class Platform(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    arch: str
+    os: str
 
 
 class QueueChanged(BaseModel):
@@ -426,9 +463,30 @@ class UpdateSessionVariables(BaseModel):
     updates: dict[str, Any]
 
 
+class Initialize(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    capabilities: Capabilities
+    identity: Identity
+    platform: Platform
+    protocol_version: str
+
+
+class InitializeResult(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    capabilities: Capabilities
+    identity: Identity
+    platform: Platform
+    protocol_version: str
+
+
 class Model(
     RootModel[
-        StartRun
+        Initialize
+        | StartRun
         | StopRun
         | SendUserMessage
         | GetSessionHistory
@@ -456,6 +514,7 @@ class Model(
         | DisableMcpServer
         | ReportIncident
         | ExportSession
+        | Initialized
         | RunStarted
         | RunStatus
         | ToolCalled
@@ -475,7 +534,8 @@ class Model(
     ]
 ):
     root: (
-        StartRun
+        Initialize
+        | StartRun
         | StopRun
         | SendUserMessage
         | GetSessionHistory
@@ -503,6 +563,7 @@ class Model(
         | DisableMcpServer
         | ReportIncident
         | ExportSession
+        | Initialized
         | RunStarted
         | RunStatus
         | ToolCalled

@@ -1,7 +1,75 @@
 import WebSocket from "ws";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { JSONRPCError, RPCClient } from "./client.js";
 import type { ClientRequest } from "../types/protocol.js";
+
+const { mockSockets } = vi.hoisted(() => ({
+  mockSockets: [] as Array<{
+    sent: string[];
+    emit: (event: string, value?: unknown) => void;
+  }>,
+}));
+
+vi.mock("ws", () => {
+  class MockWebSocket {
+    static readonly OPEN = 1;
+    readonly readyState = MockWebSocket.OPEN;
+    readonly sent: string[] = [];
+    private listeners = new Map<string, Array<(value?: unknown) => void>>();
+
+    constructor(readonly url: string) {
+      mockSockets.push(this);
+      queueMicrotask(() => this.emit("open"));
+    }
+
+    on(event: string, listener: (value?: unknown) => void): void {
+      const listeners = this.listeners.get(event) ?? [];
+      listeners.push(listener);
+      this.listeners.set(event, listeners);
+    }
+
+    emit(event: string, value?: unknown): void {
+      for (const listener of this.listeners.get(event) ?? []) listener(value);
+    }
+
+    send(data: string, callback?: (error?: Error) => void): void {
+      this.sent.push(data);
+      callback?.();
+      const request = JSON.parse(data) as { id?: number; method: string };
+      if (request.method === "initialize") {
+        queueMicrotask(() =>
+          this.emit(
+            "message",
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: request.id,
+              result: {
+                protocol_version: "1.0.0",
+                identity: { name: "omniagents", version: "1.2.3" },
+                platform: { os: "linux", arch: "x86_64" },
+                capabilities: {
+                  realtime: false,
+                  mcp_apps: false,
+                  client_functions: true,
+                  approvals: true,
+                  artifacts: false,
+                  replay: true,
+                  terminal: true,
+                  experimental_operations: [],
+                  disabled_notifications: [],
+                },
+              },
+            }),
+          ),
+        );
+      }
+    }
+
+    close(): void {}
+  }
+
+  return { default: MockWebSocket };
+});
 
 type TestClient = {
   ws: {
@@ -29,6 +97,65 @@ function connectedClient(sent: string[]): TestClient {
 }
 
 describe("RPCClient", () => {
+  afterEach(() => {
+    mockSockets.length = 0;
+    vi.useRealTimers();
+  });
+
+  it("handshakes before ready and handshakes again after reconnect", async () => {
+    vi.useFakeTimers();
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const ready = vi.fn();
+    client.on("rpc_ready", ready);
+
+    const connected = client.connect();
+    await vi.runAllTicks();
+    await connected;
+
+    expect(mockSockets[0]!.sent.map((message) => JSON.parse(message))).toEqual([
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocol_version: "1.0.0",
+          identity: { name: "omniagents-ink", version: "0.1.0" },
+          platform: { os: process.platform, arch: process.arch },
+          capabilities: {
+            realtime: false,
+            mcp_apps: false,
+            client_functions: true,
+            approvals: true,
+            artifacts: false,
+            replay: true,
+            terminal: true,
+            experimental_operations: [],
+            disabled_notifications: [],
+          },
+        },
+      },
+      { jsonrpc: "2.0", method: "initialized", params: {} },
+    ]);
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(client.initializeResult?.protocol_version).toBe("1.0.0");
+
+    mockSockets[0]!.emit("close");
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.runAllTicks();
+
+    expect(mockSockets).toHaveLength(2);
+    expect(JSON.parse(mockSockets[1]!.sent[0]!)).toMatchObject({
+      id: 2,
+      method: "initialize",
+    });
+    expect(JSON.parse(mockSockets[1]!.sent[1]!)).toEqual({
+      jsonrpc: "2.0",
+      method: "initialized",
+      params: {},
+    });
+    expect(ready).toHaveBeenCalledTimes(2);
+  });
+
   it("omits params when listing sessions", async () => {
     const sent: string[] = [];
     const client = connectedClient(sent);

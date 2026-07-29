@@ -144,7 +144,7 @@ async def test_session_lifecycle(test_server):
 
         # Connect client
         async with JsonRpcClient.from_url(
-            f"ws://127.0.0.1:{port}/ws/realtime"
+            f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
         ) as client:
             # Start session
             result = await client.call("start_session")
@@ -197,7 +197,7 @@ async def test_multiple_sessions(test_server):
         mock_runner.run = AsyncMock(return_value=mock_session)
 
         async with JsonRpcClient.from_url(
-            f"ws://127.0.0.1:{port}/ws/realtime"
+            f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
         ) as client:
             # Start multiple sessions
             session_ids = []
@@ -249,7 +249,7 @@ async def test_event_streaming(test_server):
         mock_runner.run = AsyncMock(return_value=mock_session)
 
         async with JsonRpcClient.from_url(
-            f"ws://127.0.0.1:{port}/ws/realtime"
+            f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
         ) as client:
             # Start session (triggers event streaming task)
             result = await client.call("start_session")
@@ -300,7 +300,7 @@ async def test_send_audio(test_server):
         mock_runner.run = AsyncMock(return_value=mock_session)
 
         async with JsonRpcClient.from_url(
-            f"ws://127.0.0.1:{port}/ws/realtime"
+            f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
         ) as client:
             # Start session
             result = await client.call("start_session")
@@ -350,7 +350,7 @@ async def test_send_text(test_server):
         mock_runner.run = AsyncMock(return_value=mock_session)
 
         async with JsonRpcClient.from_url(
-            f"ws://127.0.0.1:{port}/ws/realtime"
+            f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
         ) as client:
             # Start session
             result = await client.call("start_session")
@@ -397,7 +397,7 @@ async def test_interrupt(test_server):
         mock_runner.run = AsyncMock(return_value=mock_session)
 
         async with JsonRpcClient.from_url(
-            f"ws://127.0.0.1:{port}/ws/realtime"
+            f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
         ) as client:
             # Start session
             result = await client.call("start_session")
@@ -423,7 +423,9 @@ async def test_session_not_found(test_server):
     """Test error when operating on non-existent session."""
     port, service = test_server
 
-    async with JsonRpcClient.from_url(f"ws://127.0.0.1:{port}/ws/realtime") as client:
+    async with JsonRpcClient.from_url(
+        f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
+    ) as client:
         # Try to get info for non-existent session
         with pytest.raises(Exception) as exc_info:
             await client.call("get_session_info", session_id="nonexistent")
@@ -457,7 +459,7 @@ async def test_duplicate_session(test_server):
         mock_runner.run = AsyncMock(return_value=mock_session)
 
         async with JsonRpcClient.from_url(
-            f"ws://127.0.0.1:{port}/ws/realtime"
+            f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
         ) as client:
             # Start first session with specific ID
             await client.call("start_session", session_id="test-session")
@@ -501,7 +503,7 @@ async def test_service_cleanup(test_server):
         mock_runner.run = AsyncMock(return_value=mock_session)
 
         async with JsonRpcClient.from_url(
-            f"ws://127.0.0.1:{port}/ws/realtime"
+            f"ws://127.0.0.1:{port}/ws/realtime", gui_handshake=False
         ) as client:
             # Start multiple sessions
             session_ids = []

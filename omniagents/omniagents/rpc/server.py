@@ -5,10 +5,11 @@ is set or omniagents.core.debug.Debug is enabled.
 """
 
 from collections.abc import Collection
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional
 import inspect
 import json
 import os
+import platform
 import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -20,22 +21,90 @@ from .generated.gui_v1.models import (
     CLIENT_RESULT_MODELS,
     SERVER_NOTIFICATION_MODELS,
 )
+from .protocol_catalog import EXPERIMENTAL_NOTIFICATIONS, EXPERIMENTAL_REQUESTS
+from omniagents import __version__
 from omniagents.core.debug import Debug
 
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
 GUI_RPC_METHODS = frozenset(CLIENT_REQUEST_MODELS)
+GUI_PROTOCOL_VERSION = "1.0.0"
+GUI_EXPERIMENTAL_REQUESTS = frozenset(EXPERIMENTAL_REQUESTS)
+GUI_EXPERIMENTAL_NOTIFICATIONS = frozenset(EXPERIMENTAL_NOTIFICATIONS)
+GUI_OPTIONAL_NOTIFICATIONS = frozenset(
+    {
+        "token",
+        "run_status",
+        "tool_called",
+        "tool_result",
+        "queue_changed",
+        "client_request_resolved",
+        "tool_approval_resolved",
+        "mcp_approval_resolved",
+        "session_forked",
+        "session_variables_changed",
+    }
+)
+GUI_CAPABILITY_NAMES = frozenset(
+    {
+        "realtime",
+        "mcp_apps",
+        "client_functions",
+        "approvals",
+        "artifacts",
+        "replay",
+        "terminal",
+    }
+)
+InitializeParams = CLIENT_REQUEST_MODELS["initialize"]
+InitializeResult = CLIENT_RESULT_MODELS["initialize"]
+
+
+def _parse_semver(value: Any) -> Optional[tuple[int, int, int]]:
+    if not isinstance(value, str):
+        return None
+    core = value.split("+", 1)[0].split("-", 1)[0]
+    parts = core.split(".")
+    if len(parts) != 3 or any(not part.isdigit() for part in parts):
+        return None
+    return tuple(int(part) for part in parts)  # type: ignore[return-value]
 
 
 class JsonRpcChannel:
     """Simple helper used by the server to send notifications."""
 
-    def __init__(self, transport: "Transport") -> None:
+    def __init__(
+        self,
+        transport: "Transport",
+        *,
+        notification_models: Optional[Mapping[str, Any]] = None,
+        enforce_initialization: bool = False,
+    ) -> None:
         self.transport = transport
+        self.notification_models = notification_models
+        self.enforce_initialization = enforce_initialization
+        self.initialization_state = "new"
+        self.disabled_notifications: frozenset[str] = frozenset()
+        self.experimental_grants: frozenset[str] = frozenset()
+        self.client_info: Optional[Dict[str, str]] = None
 
     async def async_call(
         self, method: str, args: Optional[Dict[str, Any]] = None
     ) -> None:
-        model = SERVER_NOTIFICATION_MODELS.get(method)
+        if self.enforce_initialization:
+            if self.initialization_state != "ready":
+                return
+            if method in self.disabled_notifications:
+                return
+            if (
+                method in GUI_EXPERIMENTAL_NOTIFICATIONS
+                and method not in self.experimental_grants
+            ):
+                return
+        model = (
+            self.notification_models.get(method)
+            if self.notification_models is not None
+            else None
+        )
         if model is not None:
             known_args = {
                 key: value
@@ -91,11 +160,16 @@ class JsonRpcEndpoint:
         self,
         methods: RpcMethodsBase,
         allowed_methods: Optional[Collection[str]] = None,
+        *,
+        gui_handshake: bool = False,
+        server_capabilities: Optional[Mapping[str, Any]] = None,
     ) -> None:
         self.methods = methods
         self.allowed_methods = (
             frozenset(allowed_methods) if allowed_methods is not None else None
         )
+        self.gui_handshake = gui_handshake
+        self.server_capabilities = dict(server_capabilities or {})
 
     def register_route(self, app: FastAPI, path: str, dependencies=None) -> None:
         dependencies = dependencies or []
@@ -111,7 +185,13 @@ class JsonRpcEndpoint:
             transport = ServerWebSocketTransport(websocket)
             await transport.connect()
 
-            channel = JsonRpcChannel(transport)
+            channel = JsonRpcChannel(
+                transport,
+                notification_models=(
+                    SERVER_NOTIFICATION_MODELS if self.gui_handshake else None
+                ),
+                enforce_initialization=self.gui_handshake,
+            )
             self.methods.channel = channel
 
             try:
@@ -223,6 +303,41 @@ class JsonRpcEndpoint:
                 )
             return
 
+        if self.gui_handshake:
+            if method == "initialize":
+                await self._initialize(channel, call_id, params)
+                return
+            if method == "initialized":
+                await self._mark_initialized(channel, call_id, params)
+                return
+            if channel.initialization_state != "ready":
+                if call_id is not None:
+                    await channel.send_error(
+                        call_id,
+                        -32010,
+                        "Connection is not initialized",
+                        {
+                            "kind": "initialization_required",
+                            "state": channel.initialization_state,
+                        },
+                    )
+                return
+            if (
+                method in GUI_EXPERIMENTAL_REQUESTS
+                and method not in channel.experimental_grants
+            ):
+                if call_id is not None:
+                    await channel.send_error(
+                        call_id,
+                        -32013,
+                        "Experimental capability was not granted",
+                        {
+                            "kind": "capability_not_negotiated",
+                            "capability": method,
+                        },
+                    )
+                return
+
         if self.allowed_methods is not None and method not in self.allowed_methods:
             func = None
         else:
@@ -237,7 +352,11 @@ class JsonRpcEndpoint:
                 )
             return
 
-        request_model = CLIENT_REQUEST_MODELS.get(method)
+        request_model = (
+            CLIENT_REQUEST_MODELS.get(method)
+            if self.gui_handshake or self.allowed_methods is not None
+            else None
+        )
         if request_model is not None:
             known_params = {
                 key: value
@@ -309,7 +428,11 @@ class JsonRpcEndpoint:
         )
 
         if call_id is not None:
-            result_model = CLIENT_RESULT_MODELS.get(method)
+            result_model = (
+                CLIENT_RESULT_MODELS.get(method)
+                if self.gui_handshake or self.allowed_methods is not None
+                else None
+            )
             if result_model is not None:
                 try:
                     result_model.model_validate(result, strict=True)
@@ -317,3 +440,154 @@ class JsonRpcEndpoint:
                     await self._handle_internal_error(channel, call_id, exc, method)
                     return
             await channel.send_result(call_id, result)
+
+    async def _initialize(
+        self, channel: JsonRpcChannel, call_id: Any, params: Dict[str, Any]
+    ) -> None:
+        if call_id is None:
+            return
+        if channel.initialization_state != "new":
+            await channel.send_error(
+                call_id,
+                -32011,
+                "Connection initialization is already in progress or complete",
+                {
+                    "kind": "invalid_initialization_state",
+                    "state": channel.initialization_state,
+                },
+            )
+            return
+
+        try:
+            initialize = InitializeParams.model_validate(params, strict=True)
+        except ValidationError as exc:
+            await channel.send_error(
+                call_id,
+                -32602,
+                "Invalid params",
+                {
+                    "method": "initialize",
+                    "errors": exc.errors(
+                        include_url=False,
+                        include_context=False,
+                        include_input=False,
+                    ),
+                },
+            )
+            return
+
+        client_version = initialize.protocol_version
+        parsed_client_version = _parse_semver(client_version)
+        parsed_server_version = _parse_semver(GUI_PROTOCOL_VERSION)
+        if (
+            parsed_client_version is None
+            or parsed_server_version is None
+            or parsed_client_version[0] != parsed_server_version[0]
+            or parsed_client_version > parsed_server_version
+        ):
+            await channel.send_error(
+                call_id,
+                -32012,
+                "Unsupported protocol version",
+                {
+                    "kind": "protocol_version_mismatch",
+                    "client_version": client_version,
+                    "server_version": GUI_PROTOCOL_VERSION,
+                },
+            )
+            return
+
+        requested = initialize.capabilities
+        disabled = requested.disabled_notifications
+        invalid_disabled = sorted(
+            name for name in disabled if name not in GUI_OPTIONAL_NOTIFICATIONS
+        )
+        if invalid_disabled:
+            await channel.send_error(
+                call_id,
+                -32013,
+                "A mandatory notification cannot be disabled",
+                {
+                    "kind": "mandatory_capability_disabled",
+                    "disabled": invalid_disabled,
+                },
+            )
+            return
+
+        requested_experimental = requested.experimental_operations
+        supported_experimental = (
+            GUI_EXPERIMENTAL_REQUESTS | GUI_EXPERIMENTAL_NOTIFICATIONS
+        )
+        unsupported_experimental = sorted(
+            name
+            for name in requested_experimental
+            if name not in supported_experimental
+        )
+        if unsupported_experimental:
+            await channel.send_error(
+                call_id,
+                -32013,
+                "Unsupported experimental capabilities",
+                {
+                    "kind": "capability_not_negotiated",
+                    "unsupported_capabilities": unsupported_experimental,
+                },
+            )
+            return
+
+        negotiated: Dict[str, Any] = {
+            name: bool(getattr(requested, name))
+            and bool(self.server_capabilities.get(name, False))
+            for name in GUI_CAPABILITY_NAMES
+        }
+        negotiated["experimental_operations"] = sorted(requested_experimental)
+        negotiated["disabled_notifications"] = sorted(disabled)
+
+        channel.client_info = {
+            "name": initialize.identity.name,
+            "version": initialize.identity.version,
+        }
+        channel.disabled_notifications = frozenset(disabled)
+        channel.experimental_grants = frozenset(requested_experimental)
+        channel.initialization_state = "initialize_accepted"
+        result = InitializeResult.model_validate(
+            {
+                "protocol_version": GUI_PROTOCOL_VERSION,
+                "identity": {"name": "omniagents", "version": __version__},
+                "platform": {
+                    "os": platform.system().lower(),
+                    "arch": platform.machine().lower(),
+                },
+                "capabilities": negotiated,
+            },
+            strict=True,
+        )
+        await channel.send_result(call_id, result.model_dump())
+
+    async def _mark_initialized(
+        self, channel: JsonRpcChannel, call_id: Any, params: Dict[str, Any]
+    ) -> None:
+        if channel.initialization_state != "initialize_accepted":
+            if call_id is not None:
+                await channel.send_error(
+                    call_id,
+                    -32011,
+                    "Initialize must be accepted before initialized",
+                    {
+                        "kind": "invalid_initialization_state",
+                        "state": channel.initialization_state,
+                    },
+                )
+            return
+        if params:
+            if call_id is not None:
+                await channel.send_error(
+                    call_id,
+                    -32013,
+                    "initialized does not accept parameters",
+                    {"kind": "invalid_capabilities"},
+                )
+            return
+        channel.initialization_state = "ready"
+        if call_id is not None:
+            await channel.send_result(call_id, None)

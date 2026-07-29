@@ -1,4 +1,10 @@
-import type { RpcMethodMap, RpcNotificationMap } from '../protocol/generated/gui-v1'
+import type {
+  Capabilities,
+  InitializeParams,
+  InitializeResult,
+  RpcMethodMap,
+  RpcNotificationMap,
+} from '../protocol/generated/gui-v1'
 
 type JSONRPCId = number | string
 
@@ -20,6 +26,18 @@ type JSONRPCNotification = {
   jsonrpc: '2.0'
   method: string
   params?: Record<string, unknown>
+}
+
+const CLIENT_CAPABILITIES: Capabilities = {
+  realtime: true,
+  mcp_apps: true,
+  client_functions: true,
+  approvals: true,
+  artifacts: true,
+  replay: true,
+  terminal: false,
+  experimental_operations: [],
+  disabled_notifications: [],
 }
 
 export type ServerEvent = JSONRPCNotification
@@ -45,10 +63,15 @@ export class RPCClient {
   private nextId = 0
   private pending = new Map<JSONRPCId, { resolve: (v: any) => void; reject: (e: Error) => void }>()
   private listeners = new Map<string, Set<Listener>>()
+  private negotiatedInitialization: InitializeResult | null = null
 
   constructor(url: string, token?: string) {
     this.url = url
     this.token = token
+  }
+
+  get initializeResult(): InitializeResult | null {
+    return this.negotiatedInitialization
   }
 
   async connect(): Promise<void> {
@@ -57,31 +80,56 @@ export class RPCClient {
     await new Promise<void>((resolve, reject) => {
       if (!this.ws) return reject(new Error('WebSocket init failed'))
       this.ws.onopen = () => resolve()
-      this.ws.onerror = (ev) => reject(new Error('WebSocket error'))
-    })
-    if (!this.ws) throw new Error('WebSocket disconnected')
-    this.ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data as string) as JSONRPCResponse | JSONRPCNotification
-        if ('id' in msg) {
-          const pending = this.pending.get(msg.id)
-          if (pending) {
-            this.pending.delete(msg.id)
-            if ((msg as JSONRPCResponse).error) {
-              const error = (msg as JSONRPCResponse).error!
-              pending.reject(new JSONRPCError(error.code ?? -32603, error.message, error.data))
-            } else {
-              pending.resolve((msg as JSONRPCResponse).result)
-            }
-          }
-        } else {
-          const evt = msg as JSONRPCNotification
-          this.emit(evt.method, evt.params)
-        }
-      } catch (e) {
-        console.error('RPC parse error', e)
+      this.ws.onerror = () => reject(new Error('WebSocket error'))
+      this.ws.onmessage = (ev) => {
+        this.handleMessage(JSON.parse(ev.data as string) as JSONRPCResponse | JSONRPCNotification)
       }
+    })
+    const initialize: InitializeParams = {
+      protocol_version: '1.0.0',
+      identity: { name: 'omniagents-web-ui', version: '0.0.0' },
+      platform: { os: 'browser', arch: 'unknown' },
+      capabilities: CLIENT_CAPABILITIES,
     }
+    this.negotiatedInitialization = await this.sendRequest<InitializeResult>('initialize', initialize)
+    this.sendNotification('initialized', {})
+  }
+
+  private handleMessage(msg: JSONRPCResponse | JSONRPCNotification): void {
+    try {
+      if ('id' in msg) {
+        const pending = this.pending.get(msg.id)
+        if (pending) {
+          this.pending.delete(msg.id)
+          if (msg.error) {
+            pending.reject(new JSONRPCError(msg.error.code ?? -32603, msg.error.message, msg.error.data))
+          } else {
+            pending.resolve(msg.result)
+          }
+        }
+      } else {
+        this.emit(msg.method, msg.params)
+      }
+    } catch (e) {
+      console.error('RPC parse error', e)
+    }
+  }
+
+  private sendNotification(method: string, params: Record<string, unknown>): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected')
+    this.ws.send(JSON.stringify({ jsonrpc: '2.0', method, params }))
+  }
+
+  private sendRequest<Result>(method: string, params?: unknown): Promise<Result> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected')
+    const id = ++this.nextId
+    const req: JSONRPCRequest = { jsonrpc: '2.0', id, method }
+    if (params !== undefined) req.params = params
+    const response = new Promise<Result>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject })
+    })
+    this.ws.send(JSON.stringify(req))
+    return response
   }
 
   disconnect(): void {
@@ -112,15 +160,7 @@ export class RPCClient {
       ? [params?: RpcMethodMap[M]['params']]
       : [params: RpcMethodMap[M]['params']]
   ): Promise<RpcMethodMap[M]['result']> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected')
-    const id = ++this.nextId
-    const req: JSONRPCRequest = { jsonrpc: '2.0', id, method }
-    if (args[0] !== undefined) req.params = args[0]
-    const p = new Promise<RpcMethodMap[M]['result']>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as any, reject })
-    })
-    this.ws.send(JSON.stringify(req))
-    return p
+    return this.sendRequest<RpcMethodMap[M]['result']>(method, args[0])
   }
 
   // RPC methods

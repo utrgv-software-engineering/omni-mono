@@ -4,7 +4,10 @@ import pytest
 from unittest.mock import AsyncMock
 
 from omniagents.rpc.base import RpcMethodsBase
-from omniagents.rpc.generated.gui_v1.models import CLIENT_REQUEST_MODELS
+from omniagents.rpc.generated.gui_v1.models import (
+    CLIENT_REQUEST_MODELS,
+    SERVER_NOTIFICATION_MODELS,
+)
 from omniagents.rpc.server import GUI_RPC_METHODS, JsonRpcChannel, JsonRpcEndpoint
 from omniagents.rpc.transport import TransportError, TransportDecodeError
 
@@ -34,6 +37,10 @@ class DummyMethods(RpcMethodsBase):
         self.calls.append(("start_run", prompt))
         return {"run_id": "run-1", "session_id": "session-1"}
 
+    async def fork_session(self, session_id, new_session_id=None):
+        self.calls.append(("fork_session", session_id, new_session_id))
+        return {"session_id": session_id, "new_session_id": new_session_id or "new"}
+
     async def _private(self):
         return "hidden"
 
@@ -45,6 +52,7 @@ DUMMY_RPC_METHODS = {
     "boom",
     "no_params",
     "start_run",
+    "fork_session",
 }
 
 
@@ -55,6 +63,40 @@ def dummy_endpoint(methods=None):
 class TransportStub:
     def __init__(self):
         self.send_json = AsyncMock()
+
+
+def gui_endpoint(methods=None, **capabilities):
+    return JsonRpcEndpoint(
+        methods or DummyMethods(),
+        allowed_methods=DUMMY_RPC_METHODS,
+        gui_handshake=True,
+        server_capabilities=capabilities,
+    )
+
+
+def gui_channel(transport=None):
+    return JsonRpcChannel(transport or TransportStub(), enforce_initialization=True)
+
+
+def initialize_message(call_id=1, **overrides):
+    params = {
+        "protocol_version": "1.0.0",
+        "identity": {"name": "test-client", "version": "2.0.0"},
+        "platform": {"os": "linux", "arch": "x86_64"},
+        "capabilities": {
+            "realtime": True,
+            "mcp_apps": True,
+            "client_functions": True,
+            "approvals": True,
+            "artifacts": True,
+            "replay": True,
+            "terminal": True,
+            "experimental_operations": [],
+            "disabled_notifications": [],
+        },
+    }
+    params.update(overrides)
+    return {"jsonrpc": "2.0", "id": call_id, "method": "initialize", "params": params}
 
 
 def test_gui_rpc_registry_matches_generated_request_models():
@@ -97,7 +139,7 @@ async def test_channel_async_call_payload():
 @pytest.mark.asyncio
 async def test_channel_validates_known_notification_payloads():
     transport = TransportStub()
-    channel = JsonRpcChannel(transport)
+    channel = JsonRpcChannel(transport, notification_models=SERVER_NOTIFICATION_MODELS)
     with pytest.raises(ValueError):
         await channel.async_call("run_started", {"run_id": 1})
     transport.send_json.assert_not_awaited()
@@ -321,6 +363,213 @@ async def test_endpoint_ignores_unknown_fields_for_stable_requests():
     payload = transport.send_json.await_args.args[0]
     assert payload["result"] == {"run_id": "run-1", "session_id": "session-1"}
     assert methods.calls == [("start_run", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_gui_endpoint_requires_initialize_then_initialized():
+    transport = TransportStub()
+    channel = gui_channel(transport)
+    endpoint = gui_endpoint()
+
+    await endpoint._process_message(
+        channel,
+        {"jsonrpc": "2.0", "id": 1, "method": "echo", "params": {"value": 1}},
+    )
+    assert transport.send_json.await_args.args[0]["error"] == {
+        "code": -32010,
+        "message": "Connection is not initialized",
+        "data": {"kind": "initialization_required", "state": "new"},
+    }
+
+    transport.send_json.reset_mock()
+    await endpoint._process_message(channel, initialize_message())
+    assert channel.initialization_state == "initialize_accepted"
+    await endpoint._process_message(
+        channel,
+        {"jsonrpc": "2.0", "id": 2, "method": "echo", "params": {"value": 2}},
+    )
+    assert transport.send_json.await_args.args[0]["error"]["code"] == -32010
+
+    await endpoint._process_message(
+        channel, {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+    )
+    assert channel.initialization_state == "ready"
+    await endpoint._process_message(
+        channel,
+        {"jsonrpc": "2.0", "id": 3, "method": "echo", "params": {"value": 3}},
+    )
+    assert transport.send_json.await_args.args[0]["result"] == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", ["2.0.0", "1.0.1", "invalid"])
+async def test_initialize_rejects_incompatible_protocol_versions(version):
+    transport = TransportStub()
+    endpoint = gui_endpoint()
+    await endpoint._process_message(
+        gui_channel(transport), initialize_message(protocol_version=version)
+    )
+    error = transport.send_json.await_args.args[0]["error"]
+    assert error["code"] == -32012
+    assert error["data"] == {
+        "kind": "protocol_version_mismatch",
+        "client_version": version,
+        "server_version": "1.0.0",
+    }
+
+
+@pytest.mark.asyncio
+async def test_initialize_returns_identity_and_capability_intersection():
+    transport = TransportStub()
+    channel = gui_channel(transport)
+    endpoint = gui_endpoint(realtime=True, replay=True, terminal=False)
+    await endpoint._process_message(channel, initialize_message())
+    result = transport.send_json.await_args.args[0]["result"]
+    assert result["protocol_version"] == "1.0.0"
+    assert result["identity"]["name"] == "omniagents"
+    assert result["identity"]["version"]
+    assert result["platform"]["os"]
+    assert result["platform"]["arch"]
+    assert result["capabilities"] == {
+        "realtime": True,
+        "mcp_apps": False,
+        "client_functions": False,
+        "approvals": False,
+        "artifacts": False,
+        "replay": True,
+        "terminal": False,
+        "experimental_operations": [],
+        "disabled_notifications": [],
+    }
+    assert channel.client_info == {"name": "test-client", "version": "2.0.0"}
+
+
+@pytest.mark.asyncio
+async def test_initialize_rejects_missing_identity_and_mandatory_opt_out():
+    endpoint = gui_endpoint()
+    identity_transport = TransportStub()
+    await endpoint._process_message(
+        gui_channel(identity_transport), initialize_message(identity={})
+    )
+    assert identity_transport.send_json.await_args.args[0]["error"]["code"] == -32602
+
+    opt_out_transport = TransportStub()
+    capabilities = initialize_message()["params"]["capabilities"]
+    capabilities["disabled_notifications"] = ["run_started"]
+    await endpoint._process_message(
+        gui_channel(opt_out_transport), initialize_message(capabilities=capabilities)
+    )
+    assert opt_out_transport.send_json.await_args.args[0]["error"]["code"] == -32013
+    assert (
+        opt_out_transport.send_json.await_args.args[0]["error"]["data"]["kind"]
+        == "mandatory_capability_disabled"
+    )
+
+
+@pytest.mark.asyncio
+async def test_experimental_requests_require_exact_grant():
+    transport = TransportStub()
+    channel = gui_channel(transport)
+    endpoint = gui_endpoint()
+    await endpoint._process_message(channel, initialize_message())
+    await endpoint._process_message(
+        channel, {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+    )
+    await endpoint._process_message(
+        channel,
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "fork_session",
+            "params": {"session_id": "old"},
+        },
+    )
+    assert transport.send_json.await_args.args[0]["error"] == {
+        "code": -32013,
+        "message": "Experimental capability was not granted",
+        "data": {"kind": "capability_not_negotiated", "capability": "fork_session"},
+    }
+
+    granted_transport = TransportStub()
+    granted_channel = gui_channel(granted_transport)
+    capabilities = initialize_message()["params"]["capabilities"]
+    capabilities["experimental_operations"] = ["fork_session", "future_method"]
+    await endpoint._process_message(
+        granted_channel, initialize_message(capabilities=capabilities)
+    )
+    assert granted_transport.send_json.await_args.args[0]["error"] == {
+        "code": -32013,
+        "message": "Unsupported experimental capabilities",
+        "data": {
+            "kind": "capability_not_negotiated",
+            "unsupported_capabilities": ["future_method"],
+        },
+    }
+
+    granted_transport = TransportStub()
+    granted_channel = gui_channel(granted_transport)
+    capabilities["experimental_operations"] = ["fork_session"]
+    await endpoint._process_message(
+        granted_channel, initialize_message(capabilities=capabilities)
+    )
+    result = granted_transport.send_json.await_args.args[0]["result"]
+    assert result["capabilities"]["experimental_operations"] == ["fork_session"]
+    await endpoint._process_message(
+        granted_channel,
+        {"jsonrpc": "2.0", "method": "initialized", "params": {}},
+    )
+    await endpoint._process_message(
+        granted_channel,
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "fork_session",
+            "params": {"session_id": "old"},
+        },
+    )
+    assert (
+        granted_transport.send_json.await_args.args[0]["result"]["session_id"] == "old"
+    )
+
+
+@pytest.mark.asyncio
+async def test_outbound_notifications_honor_state_opt_outs_and_experimental_grants():
+    transport = TransportStub()
+    channel = gui_channel(transport)
+    await channel.async_call("run_started", {"run_id": "run", "session_id": "session"})
+    transport.send_json.assert_not_awaited()
+
+    channel.initialization_state = "ready"
+    channel.disabled_notifications = frozenset({"token"})
+    await channel.async_call("token", {})
+    await channel.async_call("session_forked", {})
+    transport.send_json.assert_not_awaited()
+
+    channel.experimental_grants = frozenset({"session_forked"})
+    await channel.async_call(
+        "session_forked", {"session_id": "old", "new_session_id": "new"}
+    )
+    transport.send_json.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_generic_endpoint_skips_gui_handshake_and_models():
+    class GenericMethods(RpcMethodsBase):
+        async def list_sessions(self):
+            return {"sessions": []}
+
+    transport = TransportStub()
+    endpoint = JsonRpcEndpoint(GenericMethods())
+    await endpoint._process_message(
+        JsonRpcChannel(transport),
+        {"jsonrpc": "2.0", "id": 1, "method": "list_sessions", "params": {}},
+    )
+    assert transport.send_json.await_args.args[0]["result"] == {"sessions": []}
+
+    transport.send_json.reset_mock()
+    channel = JsonRpcChannel(transport)
+    await channel.async_call("run_started", {"run_id": 1})
+    transport.send_json.assert_awaited_once()
 
 
 class ChannelContextMethods(RpcMethodsBase):

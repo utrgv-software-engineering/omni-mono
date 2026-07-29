@@ -13,6 +13,9 @@ import type {
   WebSocketMessage,
 } from "../types/protocol.js";
 import type {
+  Capabilities,
+  InitializeParams,
+  InitializeResult,
   RpcMethodMap as GeneratedRpcMethodMap,
   RpcNotificationMap as GeneratedRpcNotificationMap,
 } from "../protocol/generated/gui-v1.js";
@@ -26,6 +29,18 @@ type RpcNotificationMap = {
     : GeneratedRpcNotificationMap[Method];
 };
 type RpcMethodMap = GeneratedRpcMethodMap;
+
+const CLIENT_CAPABILITIES: Capabilities = {
+  realtime: false,
+  mcp_apps: false,
+  client_functions: true,
+  approvals: true,
+  artifacts: false,
+  replay: true,
+  terminal: true,
+  experimental_operations: [],
+  disabled_notifications: [],
+};
 
 export class JSONRPCError extends Error {
   readonly code: number;
@@ -69,12 +84,17 @@ export class RPCClient extends EventEmitter {
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectDelay = 1000;
+  private negotiatedInitialization: InitializeResult | null = null;
 
   constructor(options: RPCClientOptions) {
     super();
     this.url = options.url;
     this.token = options.token;
     this.debug = options.debug || false;
+  }
+
+  get initializeResult(): InitializeResult | null {
+    return this.negotiatedInitialization;
   }
 
   override on<Event extends keyof RpcNotificationMap>(
@@ -131,28 +151,35 @@ export class RPCClient extends EventEmitter {
 
         this.ws = new WebSocket(wsUrl);
 
-        this.ws.on("open", () => {
-          this.log("Connected to server");
-          this.reconnectAttempts = 0;
-          this.emit("connected");
-
-          // Wait a brief moment to ensure server-side RPC handlers are ready
-          // This matches the bubbletea backend's approach which delays before
-          // signaling RPC readiness to avoid race conditions
-          setTimeout(() => {
-            this.emit("rpc_ready");
-            this.log("RPC ready");
-          }, 50);
-
-          resolve();
-        });
-
         this.ws.on("message", (data: WebSocket.Data) => {
           try {
             const message = JSON.parse(data.toString()) as WebSocketMessage;
             this.handleMessage(message);
           } catch (error) {
             this.log("Failed to parse message:", error);
+          }
+        });
+
+        this.ws.on("open", async () => {
+          this.log("Connected to server");
+          this.reconnectAttempts = 0;
+          this.emit("connected");
+
+          try {
+            const initialize: InitializeParams = {
+              protocol_version: "1.0.0",
+              identity: { name: "omniagents-ink", version: "0.1.0" },
+              platform: { os: process.platform, arch: process.arch },
+              capabilities: CLIENT_CAPABILITIES,
+            };
+            this.negotiatedInitialization =
+              await this.sendRequest<InitializeResult>("initialize", initialize);
+            this.sendNotification("initialized", {});
+            this.emit("rpc_ready");
+            this.log("RPC ready");
+            resolve();
+          } catch (error) {
+            reject(error);
           }
         });
 
@@ -483,10 +510,25 @@ export class RPCClient extends EventEmitter {
    */
   private async call<Method extends keyof RpcMethodMap>(
     method: Method,
-    ...args: {} extends RpcMethodMap[Method]["params"]
+    ...args: Record<string, never> extends RpcMethodMap[Method]["params"]
       ? [params?: RpcMethodMap[Method]["params"]]
       : [params: RpcMethodMap[Method]["params"]]
   ): Promise<RpcMethodMap[Method]["result"]> {
+    return this.sendRequest<RpcMethodMap[Method]["result"]>(method, args[0]);
+  }
+
+  private sendNotification(
+    method: string,
+    params: Record<string, unknown>,
+  ): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error("WebSocket not connected");
+    }
+
+    this.ws.send(JSON.stringify({ jsonrpc: "2.0", method, params }));
+  }
+
+  private sendRequest<Result>(method: string, params?: unknown): Promise<Result> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       throw new Error("WebSocket not connected");
     }
@@ -497,9 +539,9 @@ export class RPCClient extends EventEmitter {
       id,
       method,
     };
-    if (args[0] !== undefined) request.params = args[0];
+    if (params !== undefined) request.params = params;
 
-    return new Promise((resolve, reject) => {
+    return new Promise<Result>((resolve, reject) => {
       this.pendingRequests.set(id, {
         resolve: resolve as (value: unknown) => void,
         reject,
@@ -511,7 +553,7 @@ export class RPCClient extends EventEmitter {
           reject(error);
         }
       });
-    }) as Promise<RpcMethodMap[Method]["result"]>;
+    });
   }
 
   /**

@@ -116,7 +116,8 @@ def _resolve_api_key() -> str:
 
 async def _rpc_repro(url: str) -> None:
     print(f"Connecting to RPC server at {url}")
-    client = JsonRpcClient.from_url(url)
+    # The realtime endpoint is not a GUI endpoint — skip the GUI handshake.
+    client = JsonRpcClient.from_url(url, gui_handshake=False)
     async with client:
         result = await client.call("start_session")
         print("start_session result:", result)

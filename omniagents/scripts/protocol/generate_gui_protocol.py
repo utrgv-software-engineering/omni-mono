@@ -3,12 +3,12 @@ import black
 import hashlib
 import json
 from pathlib import Path
+from runpy import run_path
 import subprocess
 import tempfile
 
-from omniagents.rpc.protocol_catalog import OPERATIONS
-
 ROOT = Path(__file__).resolve().parents[2]
+OPERATIONS = run_path(str(ROOT / "omniagents/rpc/protocol_catalog.py"))["OPERATIONS"]
 OPENRPC_PATH = ROOT / "protocol/openrpc/omniagents-gui-v1.json"
 SCHEMA_PATH = ROOT / "protocol/openrpc/schemas/gui-v1.schema.json"
 PYTHON_PATH = ROOT / "omniagents/rpc/generated/gui_v1/models.py"
@@ -28,6 +28,7 @@ PYTHON_GENERATOR_VERSION = "0.71.0"
 TYPESCRIPT_GENERATOR_VERSION = "15.0.4"
 
 REQUIRED_FIELDS = {
+    "initialize": ("protocol_version", "identity", "platform", "capabilities"),
     "start_run": ("prompt",),
     "stop_run": ("run_id",),
     "send_user_message": ("run_id", "content"),
@@ -168,6 +169,7 @@ OBJECT_FIELDS = {
 }
 
 RESULT_TYPES = {
+    "initialize": ("InitializeResult", "InitializeResult"),
     "start_run": ("dict", "{ run_id: string; session_id: string }"),
     "stop_run": ("bool", "boolean"),
     "send_user_message": ("None", "null"),
@@ -196,6 +198,170 @@ RESULT_TYPES = {
     "disable_mcp_server": ("None", "null"),
     "report_incident": ("None", "null"),
     "export_session": ("dict[str, Any]", "Record<string, unknown>"),
+}
+
+IDENTITY_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["name", "version"],
+    "properties": {"name": {"type": "string"}, "version": {"type": "string"}},
+}
+PLATFORM_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["os", "arch"],
+    "properties": {"os": {"type": "string"}, "arch": {"type": "string"}},
+}
+CAPABILITIES_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "realtime",
+        "mcp_apps",
+        "client_functions",
+        "approvals",
+        "artifacts",
+        "replay",
+        "terminal",
+        "experimental_operations",
+        "disabled_notifications",
+    ],
+    "properties": {
+        "realtime": {"type": "boolean"},
+        "mcp_apps": {"type": "boolean"},
+        "client_functions": {"type": "boolean"},
+        "approvals": {"type": "boolean"},
+        "artifacts": {"type": "boolean"},
+        "replay": {"type": "boolean"},
+        "terminal": {"type": "boolean"},
+        "experimental_operations": {
+            "type": "array",
+            "items": {"type": "string"},
+            "uniqueItems": True,
+        },
+        "disabled_notifications": {
+            "type": "array",
+            "items": {"type": "string"},
+            "uniqueItems": True,
+        },
+    },
+}
+INITIALIZE_RESULT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["protocol_version", "identity", "platform", "capabilities"],
+    "properties": {
+        "protocol_version": {"type": "string"},
+        "identity": {"$ref": "#/$defs/identity"},
+        "platform": {"$ref": "#/$defs/platform"},
+        "capabilities": {"$ref": "#/$defs/capabilities"},
+    },
+}
+
+PROTOCOL_ERRORS = {
+    "InitializationRequired": {
+        "code": -32010,
+        "message": "Initialization required",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "state"],
+            "properties": {
+                "kind": {"const": "initialization_required"},
+                "state": {"type": "string"},
+            },
+        },
+    },
+    "AlreadyInitialized": {
+        "code": -32011,
+        "message": "Already initialized",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "state"],
+            "properties": {
+                "kind": {"const": "invalid_initialization_state"},
+                "state": {"type": "string"},
+            },
+        },
+    },
+    "ProtocolVersionMismatch": {
+        "code": -32012,
+        "message": "Protocol version mismatch",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "client_version", "server_version"],
+            "properties": {
+                "kind": {"const": "protocol_version_mismatch"},
+                "client_version": {"type": "string"},
+                "server_version": {"type": "string"},
+            },
+        },
+    },
+    "CapabilityMismatch": {
+        "code": -32013,
+        "message": "Capability mismatch",
+        "data": {
+            "oneOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["kind", "disabled"],
+                    "properties": {
+                        "kind": {"const": "mandatory_capability_disabled"},
+                        "disabled": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["kind", "unsupported_capabilities"],
+                    "properties": {
+                        "kind": {"const": "capability_not_negotiated"},
+                        "unsupported_capabilities": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                    },
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["kind", "capability"],
+                    "properties": {
+                        "kind": {"const": "capability_not_negotiated"},
+                        "capability": {"type": "string"},
+                    },
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["kind"],
+                    "properties": {"kind": {"const": "invalid_capabilities"}},
+                },
+            ],
+        },
+    },
+    "TransportOverloaded": {
+        "code": -32020,
+        "message": "Transport overloaded",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["resource", "unit", "limit", "retryable", "retry_after_ms"],
+            "properties": {
+                "resource": {"type": "string"},
+                "unit": {"type": "string", "enum": ["messages", "bytes"]},
+                "limit": {"type": "integer", "minimum": 1},
+                "retryable": {"type": "boolean"},
+                "retry_after_ms": {"type": ["integer", "null"], "minimum": 0},
+            },
+        },
+    },
 }
 
 
@@ -247,7 +413,13 @@ def build_openrpc() -> dict:
             "result": {
                 "name": f"{operation.name}_result",
                 "schema": (
-                    {"$ref": "./schemas/gui-v1.schema.json#/$defs/result"}
+                    {
+                        "$ref": (
+                            "./schemas/gui-v1.schema.json#/$defs/initializeResult"
+                            if operation.name == "initialize"
+                            else "./schemas/gui-v1.schema.json#/$defs/result"
+                        )
+                    }
                     if operation.kind == "request"
                     else {"type": "null"}
                 ),
@@ -263,7 +435,20 @@ def build_openrpc() -> dict:
                 {"$ref": "#/components/errors/MethodNotFound"},
                 {"$ref": "#/components/errors/InvalidParams"},
                 {"$ref": "#/components/errors/InternalError"},
+                {"$ref": "#/components/errors/TransportOverloaded"},
             ]
+            if operation.name == "initialize":
+                entry["errors"].extend(
+                    [
+                        {"$ref": "#/components/errors/AlreadyInitialized"},
+                        {"$ref": "#/components/errors/ProtocolVersionMismatch"},
+                        {"$ref": "#/components/errors/CapabilityMismatch"},
+                    ]
+                )
+            else:
+                entry["errors"].append(
+                    {"$ref": "#/components/errors/InitializationRequired"}
+                )
         if operation.kind == "correlated_notification":
             entry["x-omni-correlation"] = {
                 "requestField": "request_id",
@@ -285,6 +470,7 @@ def build_openrpc() -> dict:
                 "MethodNotFound": {"code": -32601, "message": "Method not found"},
                 "InvalidParams": {"code": -32602, "message": "Invalid params"},
                 "InternalError": {"code": -32603, "message": "Internal error"},
+                **PROTOCOL_ERRORS,
             }
         },
         "x-omni-jsonrpc-version": "2.0",
@@ -295,6 +481,10 @@ def build_openrpc() -> dict:
 def build_schema() -> dict:
     definitions = {
         "result": {},
+        "identity": IDENTITY_SCHEMA,
+        "platform": PLATFORM_SCHEMA,
+        "capabilities": CAPABILITIES_SCHEMA,
+        "initializeResult": INITIALIZE_RESULT_SCHEMA,
         "jsonRpcError": {
             "type": "object",
             "required": ["code", "message"],
@@ -311,7 +501,15 @@ def build_schema() -> dict:
         optional = list(OPTIONAL_FIELDS.get(operation.name, ()))
         properties = {}
         for field in required + optional:
-            if field in ARRAY_FIELDS:
+            if operation.name == "initialize" and field == "protocol_version":
+                properties[field] = {"type": "string"}
+            elif operation.name == "initialize" and field in {
+                "identity",
+                "platform",
+                "capabilities",
+            }:
+                properties[field] = {"$ref": f"#/$defs/{field}"}
+            elif field in ARRAY_FIELDS:
                 properties[field] = {"type": "array", "items": {}}
             elif field in BOOLEAN_FIELDS:
                 properties[field] = {"type": "boolean"}
@@ -392,20 +590,44 @@ def build_python() -> bytes:
         if op.kind != "request" and op.stability == "experimental"
     ]
     lines = [
-        "from typing import Any",
+        "from typing import Any, Literal",
         "",
         "from pydantic import BaseModel, ConfigDict, RootModel",
         "",
         "",
         "class JsonRpcError(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid")',
         "    code: int",
         "    message: str",
         "    data: Any | None = None",
         "",
+        "class Identity(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid")',
+        "    name: str",
+        "    version: str",
+        "",
+        "class Platform(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid")',
+        "    os: str",
+        "    arch: str",
+        "",
+        "class Capabilities(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid")',
+        "    realtime: bool",
+        "    mcp_apps: bool",
+        "    client_functions: bool",
+        "    approvals: bool",
+        "    artifacts: bool",
+        "    replay: bool",
+        "    terminal: bool",
+        "    experimental_operations: list[str]",
+        "    disabled_notifications: list[str]",
+        "",
     ]
     request_models = {}
     result_models = {}
-    notification_models = {}
+    server_notification_models = {}
+    client_notification_models = {}
     for operation in OPERATIONS:
         class_name = _class_name(operation.name)
         params_name = f"{class_name}Params"
@@ -417,7 +639,16 @@ def build_python() -> bytes:
         )
         fields = REQUIRED_FIELDS.get(operation.name, ())
         optional_fields = OPTIONAL_FIELDS.get(operation.name, ())
-        if fields:
+        if operation.name == "initialize":
+            lines.extend(
+                [
+                    "    protocol_version: str",
+                    "    identity: Identity",
+                    "    platform: Platform",
+                    "    capabilities: Capabilities",
+                ]
+            )
+        elif fields:
             lines.extend(
                 f"    {field}: {_python_field_type(field)}" for field in fields
             )
@@ -431,7 +662,19 @@ def build_python() -> bytes:
         if operation.kind == "request":
             result_name = f"{class_name}Result"
             python_result, _ = RESULT_TYPES[operation.name]
-            if operation.name == "start_run":
+            if operation.name == "initialize":
+                lines.extend(
+                    [
+                        f"class {result_name}(BaseModel):",
+                        '    model_config = ConfigDict(extra="forbid")',
+                        "    protocol_version: str",
+                        "    identity: Identity",
+                        "    platform: Platform",
+                        "    capabilities: Capabilities",
+                        "",
+                    ]
+                )
+            elif operation.name == "start_run":
                 lines.extend(
                     [
                         f"class {result_name}(BaseModel):",
@@ -451,12 +694,18 @@ def build_python() -> bytes:
             request_models[operation.name] = params_name
             result_models[operation.name] = result_name
         else:
-            notification_models[operation.name] = params_name
+            target = (
+                client_notification_models
+                if operation.direction == "client_to_server"
+                else server_notification_models
+            )
+            target[operation.name] = params_name
     lines.extend(
         [
             f"CLIENT_REQUEST_MODELS = {_python_model_map(request_models)}",
             f"CLIENT_RESULT_MODELS = {_python_model_map(result_models)}",
-            f"SERVER_NOTIFICATION_MODELS = {_python_model_map(notification_models)}",
+            f"CLIENT_NOTIFICATION_MODELS = {_python_model_map(client_notification_models)}",
+            f"SERVER_NOTIFICATION_MODELS = {_python_model_map(server_notification_models)}",
             f"STABLE_REQUESTS = frozenset({stable_requests!r})",
             f"EXPERIMENTAL_REQUESTS = frozenset({experimental_requests!r})",
             f"STABLE_NOTIFICATIONS = frozenset({stable_notifications!r})",
@@ -469,24 +718,50 @@ def build_python() -> bytes:
 
 def build_typescript() -> bytes:
     requests = [op.name for op in OPERATIONS if op.kind == "request"]
-    notifications = [op.name for op in OPERATIONS if op.kind != "request"]
+    server_notifications = [
+        op.name
+        for op in OPERATIONS
+        if op.kind != "request" and op.direction == "server_to_client"
+    ]
+    client_notifications = [
+        op.name
+        for op in OPERATIONS
+        if op.kind != "request" and op.direction == "client_to_server"
+    ]
     lines = [
         "export type JsonRpcId = string | number;",
         "export type JsonRpcError = { code: number; message: string; data?: unknown };",
+        "export interface Identity { name: string; version: string }",
+        "export interface Platform { os: string; arch: string }",
+        "export interface Capabilities { realtime: boolean; mcp_apps: boolean; client_functions: boolean; approvals: boolean; artifacts: boolean; replay: boolean; terminal: boolean; experimental_operations: string[]; disabled_notifications: string[] }",
     ]
     for operation in OPERATIONS:
         class_name = _class_name(operation.name)
         lines.append(f"export interface {class_name}Params {{")
-        lines.extend(
-            f"  {field}: {_typescript_field_type(field)};"
-            for field in REQUIRED_FIELDS.get(operation.name, ())
-        )
+        if operation.name == "initialize":
+            lines.extend(
+                [
+                    "  protocol_version: string;",
+                    "  identity: Identity;",
+                    "  platform: Platform;",
+                    "  capabilities: Capabilities;",
+                ]
+            )
+        else:
+            lines.extend(
+                f"  {field}: {_typescript_field_type(field)};"
+                for field in REQUIRED_FIELDS.get(operation.name, ())
+            )
         lines.extend(
             f"  {field}?: {_typescript_field_type(field)};"
             for field in OPTIONAL_FIELDS.get(operation.name, ())
         )
         lines.append("}")
-        if operation.name == "start_run":
+        if operation.name == "initialize":
+            lines.append(
+                "export interface InitializeResult { protocol_version: string; identity: Identity; platform: Platform; capabilities: Capabilities }"
+            )
+        elif operation.name == "start_run":
             lines.append(
                 "export interface StartRunResult { run_id: string; session_id: string }"
             )
@@ -501,7 +776,18 @@ def build_typescript() -> bytes:
         )
     lines.extend(["}", "export interface RpcNotificationMap {"])
     lines.extend(
-        f"  {json.dumps(name)}: {_class_name(name)}Params;" for name in notifications
+        f"  {json.dumps(name)}: {_class_name(name)}Params;"
+        for name in server_notifications
+    )
+    lines.extend(
+        [
+            "}",
+            "export interface RpcClientNotificationMap {",
+        ]
+    )
+    lines.extend(
+        f"  {json.dumps(name)}: {_class_name(name)}Params;"
+        for name in client_notifications
     )
     lines.extend(
         [
@@ -511,6 +797,9 @@ def build_typescript() -> bytes:
             "}[M];",
             "export type RpcNotification<E extends keyof RpcNotificationMap = keyof RpcNotificationMap> = {",
             "  [K in E]: { jsonrpc: '2.0'; method: K; params: RpcNotificationMap[K] }",
+            "}[E];",
+            "export type RpcClientNotification<E extends keyof RpcClientNotificationMap = keyof RpcClientNotificationMap> = {",
+            "  [K in E]: { jsonrpc: '2.0'; method: K; params: RpcClientNotificationMap[K] }",
             "}[E];",
             "",
         ]

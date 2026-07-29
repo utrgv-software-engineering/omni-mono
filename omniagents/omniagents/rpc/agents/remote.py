@@ -5,6 +5,7 @@ from typing import Any, AsyncGenerator, List, Dict, Optional
 from agents import RunConfig, StreamEvent
 import asyncio
 import os
+from importlib.metadata import version
 from pydantic import ValidationError
 
 from omniagents.rpc import RpcMethodsBase, JsonRpcClient
@@ -15,6 +16,18 @@ from omniagents.rpc.generated.gui_v1 import (
 )
 from ._events import map_notification_to_event
 from omniagents.core.debug import Debug
+
+REMOTE_AGENT_CAPABILITIES: Dict[str, Any] = {
+    "realtime": False,
+    "mcp_apps": False,
+    "client_functions": True,
+    "approvals": True,
+    "artifacts": False,
+    "replay": True,
+    "terminal": False,
+    "experimental_operations": [],
+    "disabled_notifications": [],
+}
 
 
 def _validate_request_params(method: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -234,12 +247,24 @@ class RemoteAgent(UnifiedAgentBase):
             if self._transport:
                 # Use provided transport
                 self._client = await JsonRpcClient(
-                    self._transport, self._methods
+                    self._transport,
+                    self._methods,
+                    client_info={
+                        "name": "omniagents-python",
+                        "version": version("omniagents"),
+                    },
+                    capabilities=REMOTE_AGENT_CAPABILITIES,
                 ).__aenter__()
             elif self._url:
                 # Create WebSocket transport from URL
                 self._client = await JsonRpcClient.from_url(
-                    self._url, self._methods
+                    self._url,
+                    self._methods,
+                    client_info={
+                        "name": "omniagents-python",
+                        "version": version("omniagents"),
+                    },
+                    capabilities=REMOTE_AGENT_CAPABILITIES,
                 ).__aenter__()
             else:
                 raise ValueError("Either url or transport must be provided")

@@ -267,7 +267,28 @@ def build_app(
             registrar(service)
     except Exception as e:
         print(f"Warning: register_runtime_hooks failed: {e}")
-    endpoint = JsonRpcEndpoint(service, allowed_methods=GUI_RPC_METHODS)
+
+    realtime_spec = getattr(spec, "voice_spec", None)
+    spec_voice_backend = getattr(spec, "voice_backend", "realtime")
+    if realtime_spec is None and (
+        spec.realtime_mode or spec_voice_backend == "pipeline"
+    ):
+        realtime_spec = spec
+
+    endpoint = JsonRpcEndpoint(
+        service,
+        allowed_methods=GUI_RPC_METHODS,
+        gui_handshake=True,
+        server_capabilities={
+            "realtime": realtime_spec is not None,
+            "mcp_apps": True,
+            "client_functions": True,
+            "approvals": True,
+            "artifacts": True,
+            "replay": True,
+            "terminal": getattr(service, "terminal_manager", None) is not None,
+        },
+    )
 
     # Resolve auth dependency: provider-based or legacy token
     _auth_deps = None
@@ -303,13 +324,6 @@ def build_app(
                 value = getattr(field, "default", None)
             settings[key] = value
         return settings
-
-    realtime_spec = getattr(spec, "voice_spec", None)
-    spec_voice_backend = getattr(spec, "voice_backend", "realtime")
-    if realtime_spec is None and (
-        spec.realtime_mode or spec_voice_backend == "pipeline"
-    ):
-        realtime_spec = spec
 
     if realtime_spec:
         realtime_settings = _collect_settings(realtime_spec)

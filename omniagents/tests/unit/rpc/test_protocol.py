@@ -341,7 +341,7 @@ class TestJsonRpcClientInMemory:
     async def test_notifications_dispatch(self):
         methods = RecorderMethods()
         client_transport, server_transport = InMemoryTransport.create_pair()
-        client = JsonRpcClient(client_transport, methods)
+        client = JsonRpcClient(client_transport, methods, gui_handshake=False)
         await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
 
         async with asyncio.timeout(TIMEOUT):
@@ -376,7 +376,7 @@ class TestJsonRpcClientInMemory:
     async def test_success_and_error_responses(self):
         methods = RecorderMethods()
         client_transport, server_transport = InMemoryTransport.create_pair()
-        client = JsonRpcClient(client_transport, methods)
+        client = JsonRpcClient(client_transport, methods, gui_handshake=False)
         await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
 
         async with asyncio.timeout(TIMEOUT):
@@ -426,7 +426,7 @@ class TestJsonRpcClientInMemory:
     async def test_ignores_mismatched_responses(self):
         methods = RecorderMethods()
         client_transport, server_transport = InMemoryTransport.create_pair()
-        client = JsonRpcClient(client_transport, methods)
+        client = JsonRpcClient(client_transport, methods, gui_handshake=False)
         await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
 
         async with asyncio.timeout(TIMEOUT):
@@ -457,7 +457,7 @@ class TestJsonRpcClientInMemory:
     async def test_handles_non_dict_payload(self):
         methods = RecorderMethods()
         client_transport, server_transport = InMemoryTransport.create_pair()
-        client = JsonRpcClient(client_transport, methods)
+        client = JsonRpcClient(client_transport, methods, gui_handshake=False)
         await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
 
         async with asyncio.timeout(TIMEOUT):
@@ -485,7 +485,7 @@ class TestJsonRpcClientInMemory:
     async def test_recv_loop_stops_on_transport_closed(self):
         methods = RecorderMethods()
         client_transport, server_transport = InMemoryTransport.create_pair()
-        client = JsonRpcClient(client_transport, methods)
+        client = JsonRpcClient(client_transport, methods, gui_handshake=False)
         await asyncio.wait_for(server_transport.connect(), timeout=TIMEOUT)
 
         async with asyncio.timeout(TIMEOUT):

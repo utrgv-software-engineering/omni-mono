@@ -1,4 +1,5 @@
 import asyncio
+from importlib.metadata import version
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -136,9 +137,10 @@ async def test_ensure_client_initializes_rpc(monkeypatch):
     created = []
 
     class FakeClient:
-        def __init__(self, url, methods):
+        def __init__(self, url, methods, **kwargs):
             self.url = url
             self.methods = methods
+            self.kwargs = kwargs
             self.entered = False
             self.other = SimpleNamespace()
 
@@ -149,8 +151,8 @@ async def test_ensure_client_initializes_rpc(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             self.entered = False
 
-    def fake_from_url(url, methods):
-        client = FakeClient(url, methods)
+    def fake_from_url(url, methods, **kwargs):
+        client = FakeClient(url, methods, **kwargs)
         created.append((url, methods))
         return client
 
@@ -163,6 +165,21 @@ async def test_ensure_client_initializes_rpc(monkeypatch):
     assert agent._client.entered is True
     assert created[0][0] == "ws://host"
     assert created[0][1] is agent._methods
+    assert agent._client.kwargs["client_info"] == {
+        "name": "omniagents-python",
+        "version": version("omniagents"),
+    }
+    assert agent._client.kwargs["capabilities"] == {
+        "realtime": False,
+        "mcp_apps": False,
+        "client_functions": True,
+        "approvals": True,
+        "artifacts": False,
+        "replay": True,
+        "terminal": False,
+        "experimental_operations": [],
+        "disabled_notifications": [],
+    }
 
     await agent._ensure_client()
     assert len(created) == 1

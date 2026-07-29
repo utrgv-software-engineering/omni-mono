@@ -1,5 +1,15 @@
 export type JsonRpcId = string | number;
 export type JsonRpcError = { code: number; message: string; data?: unknown };
+export interface Identity { name: string; version: string }
+export interface Platform { os: string; arch: string }
+export interface Capabilities { realtime: boolean; mcp_apps: boolean; client_functions: boolean; approvals: boolean; artifacts: boolean; replay: boolean; terminal: boolean; experimental_operations: string[]; disabled_notifications: string[] }
+export interface InitializeParams {
+  protocol_version: string;
+  identity: Identity;
+  platform: Platform;
+  capabilities: Capabilities;
+}
+export interface InitializeResult { protocol_version: string; identity: Identity; platform: Platform; capabilities: Capabilities }
 export interface StartRunParams {
   prompt: string;
   session_id?: string;
@@ -122,6 +132,8 @@ export interface ExportSessionParams {
   session_id: string;
   redact?: boolean;
 }
+export interface InitializedParams {
+}
 export interface RunStartedParams {
   run_id: string;
   session_id: string;
@@ -231,6 +243,7 @@ export interface SessionVariablesChangedParams {
   variables: Record<string, unknown>;
 }
 export interface RpcMethodMap {
+  "initialize": { params: InitializeParams; result: InitializeResult };
   "start_run": { params: StartRunParams; result: StartRunResult };
   "stop_run": { params: StopRunParams; result: boolean };
   "send_user_message": { params: SendUserMessageParams; result: null };
@@ -278,9 +291,15 @@ export interface RpcNotificationMap {
   "session_forked": SessionForkedParams;
   "session_variables_changed": SessionVariablesChangedParams;
 }
+export interface RpcClientNotificationMap {
+  "initialized": InitializedParams;
+}
 export type RpcRequest<M extends keyof RpcMethodMap = keyof RpcMethodMap> = {
   [K in M]: { jsonrpc: '2.0'; id: JsonRpcId; method: K; params: RpcMethodMap[K]['params'] }
 }[M];
 export type RpcNotification<E extends keyof RpcNotificationMap = keyof RpcNotificationMap> = {
   [K in E]: { jsonrpc: '2.0'; method: K; params: RpcNotificationMap[K] }
+}[E];
+export type RpcClientNotification<E extends keyof RpcClientNotificationMap = keyof RpcClientNotificationMap> = {
+  [K in E]: { jsonrpc: '2.0'; method: K; params: RpcClientNotificationMap[K] }
 }[E];

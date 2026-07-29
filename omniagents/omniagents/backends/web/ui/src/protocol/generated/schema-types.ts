@@ -1,4 +1,5 @@
 export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
+  | Initialize
   | StartRun
   | StopRun
   | SendUserMessage
@@ -27,6 +28,7 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | DisableMcpServer
   | ReportIncident
   | ExportSession
+  | Initialized
   | RunStarted
   | RunStatus
   | ToolCalled
@@ -44,6 +46,31 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | SessionForked
   | SessionVariablesChanged;
 
+export interface Initialize {
+  capabilities: Capabilities;
+  identity: Identity;
+  platform: Platform;
+  protocol_version: string;
+}
+export interface Capabilities {
+  approvals: boolean;
+  artifacts: boolean;
+  client_functions: boolean;
+  disabled_notifications: string[];
+  experimental_operations: string[];
+  mcp_apps: boolean;
+  realtime: boolean;
+  replay: boolean;
+  terminal: boolean;
+}
+export interface Identity {
+  name: string;
+  version: string;
+}
+export interface Platform {
+  arch: string;
+  os: string;
+}
 export interface StartRun {
   content?: string;
   context?: {
@@ -183,6 +210,7 @@ export interface ExportSession {
   redact?: boolean;
   session_id: string;
 }
+export interface Initialized {}
 export interface RunStarted {
   prompt?: string;
   prompt_role?: string;

@@ -9,6 +9,7 @@
       "session_variables_changed"
     ],
     "stable": [
+      "initialized",
       "run_started",
       "run_status",
       "tool_called",
@@ -39,6 +40,7 @@
       "export_session"
     ],
     "stable": [
+      "initialize",
       "start_run",
       "stop_run",
       "send_user_message",
