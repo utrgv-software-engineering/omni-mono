@@ -19,10 +19,18 @@ semantics as ``HostWorkspace``, so the builtin filesystem tools
 (``read_file``, ``write_file``, ``edit_file``, ``glob_files``,
 ``grep_files``) behave identically in a browser.
 
-What doesn't: ``exec`` and ``spawn``. There is no shell in a browser tab,
-so both raise :class:`WorkspaceFeatureUnavailable` and
-:attr:`supports_shell` is ``False`` — which is the documented signal that
-lets ``execute_bash`` degrade with a clear message instead of hanging.
+What doesn't: ``exec`` and ``spawn``. Both raise
+:class:`WorkspaceFeatureUnavailable` and :attr:`supports_shell` is
+``False`` — the documented signal that lets ``execute_bash`` degrade with a
+clear message instead of hanging.
+
+That limit is a property of *this* backend, not of browsers: it holds
+because the Emscripten FS has no shell attached to it. If the agent needs
+to run commands, use :class:`~omniagents.workspace.bashkit.BashkitWorkspace`
+instead, which backs both the files and the shell with a bash interpreter
+compiled to wasm. Prefer this one only when the workspace must be the
+Pyodide filesystem itself — files that Python's ``pathlib``/``open()`` see,
+such as a page's editable source files.
 
 Files live in the Pyodide FS, which is memory: they vanish when the page
 reloads unless the host has mounted something persistent (IDBFS/NODEFS).

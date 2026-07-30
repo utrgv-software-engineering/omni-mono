@@ -52,6 +52,7 @@ from ._runtime import (
 )
 from .base import CommandLike, ProcessHandle, Workspace
 from .host import HostWorkspace
+from .bashkit import BashkitWorkspace
 from .in_pyodide import InPyodideWorkspace
 from .sandbox import SandboxWorkspace
 from .types import (
@@ -79,6 +80,7 @@ except Exception:  # pragma: no cover - defensive; module has no hard deps
     _HAS_PYODIDE_WORKSPACE = False
 
 __all__ = [
+    "BashkitWorkspace",
     "InPyodideWorkspace",
     # Public API surface
     "read_text",
