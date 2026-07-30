@@ -50,7 +50,7 @@ def _start_run(
         method = message.get("method")
         if method == "run_started":
             continue
-        if method == "client_request":
+        if method == "tool_approval_requested":
             if not expect_request:
                 pytest.fail("unexpected tool approval request")
             request_payload = message["params"]
@@ -58,12 +58,10 @@ def _start_run(
                 {
                     "jsonrpc": "2.0",
                     "id": request_id + 500,
-                    "method": "client_response",
+                    "method": "tool_approval_response",
                     "params": {
-                        "request_id": request_payload["request_id"],
-                        "ok": True,
-                        "result": response_payload,
-                        "error": None,
+                        "call_id": request_payload["call_id"],
+                        **response_payload,
                     },
                 }
             )
@@ -129,15 +127,22 @@ def test_tool_approval_routing_is_session_scoped(monkeypatch, studio_api_env):
     approvals = defaultdict(list)
     decisions = defaultdict(list)
 
+    call_counter = iter(range(1, 100))
+
     async def fake_stream(agent, prompt, session, rpc_channel, **kwargs):
+        # Approvals ride the SDK 0.16 interruption flow: the bridge asks the
+        # service, which emits tool_approval_requested and awaits the
+        # tool_approval_response RPC (always-allow lives on the session).
+        service = kwargs["service"]
         allowed = getattr(session, "always_allow_tools", set())
         if "greet_tool" not in allowed:
             approvals[session.id].append("requested")
             decisions[session.id].append(
-                await session.approval_callback(
-                    "greet_tool",
-                    '{"input": "value"}',
-                    metadata={"prompt": prompt},
+                await service.request_tool_approval(
+                    session=session,
+                    call_id=f"call-{next(call_counter)}",
+                    tool_name="greet_tool",
+                    arguments='{"input": "value"}',
                 )
             )
         else:
@@ -148,7 +153,8 @@ def test_tool_approval_routing_is_session_scoped(monkeypatch, studio_api_env):
     monkeypatch.setattr("omniagents.core.agents.service.stream_agent", fake_stream)
 
     with client.websocket_connect(
-        f"/api/playground/ws?session_id={session_a}&token=secret"
+        f"/api/playground/ws?session_id={session_a}",
+        headers=_auth_header(),
     ) as ws_a:
         request_a, result_a = _start_run(
             ws_a,
@@ -156,14 +162,19 @@ def test_tool_approval_routing_is_session_scoped(monkeypatch, studio_api_env):
             "first run",
             expect_request=True,
             response_payload={
-                "approved": True,
+                "decision": "approve",
                 "always_approve": True,
-                "error_message": None,
             },
         )
         rpc_session_a = result_a["session_id"]
         assert request_a["session_id"] == rpc_session_a
-        assert decisions[rpc_session_a] == [(True, True, None)]
+        assert decisions[rpc_session_a] == [
+            {
+                "decision": "approve",
+                "always_approve": True,
+                "rejection_message": None,
+            }
+        ]
         second_request, second_result = _start_run(
             ws_a,
             3,
@@ -177,7 +188,8 @@ def test_tool_approval_routing_is_session_scoped(monkeypatch, studio_api_env):
     assert approvals[rpc_session_a] == ["requested", "auto"]
 
     with client.websocket_connect(
-        f"/api/playground/ws?session_id={session_b}&token=secret"
+        f"/api/playground/ws?session_id={session_b}",
+        headers=_auth_header(),
     ) as ws_b:
         request_b, result_b = _start_run(
             ws_b,
@@ -185,16 +197,33 @@ def test_tool_approval_routing_is_session_scoped(monkeypatch, studio_api_env):
             "third run",
             expect_request=True,
             response_payload={
-                "approved": True,
+                "decision": "approve",
                 "always_approve": False,
-                "error_message": None,
             },
         )
         rpc_session_b = result_b["session_id"]
         assert request_b["session_id"] == rpc_session_b
         assert rpc_session_b != rpc_session_a
-        assert decisions[rpc_session_b] == [(True, False, None)]
+        assert decisions[rpc_session_b] == [
+            {
+                "decision": "approve",
+                "always_approve": False,
+                "rejection_message": None,
+            }
+        ]
 
     assert approvals[rpc_session_b] == ["requested"]
-    assert decisions[rpc_session_a] == [(True, True, None)]
-    assert decisions[rpc_session_b] == [(True, False, None)]
+    assert decisions[rpc_session_a] == [
+        {
+            "decision": "approve",
+            "always_approve": True,
+            "rejection_message": None,
+        }
+    ]
+    assert decisions[rpc_session_b] == [
+        {
+            "decision": "approve",
+            "always_approve": False,
+            "rejection_message": None,
+        }
+    ]

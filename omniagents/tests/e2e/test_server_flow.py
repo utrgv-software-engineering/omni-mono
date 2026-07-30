@@ -84,6 +84,7 @@ class TestServerUnifiedAgent:
         spec.variables = None
         spec.context = None
         spec.build_context = None
+        spec.resolve_default_model_config = None
         return spec
 
     @pytest.fixture
@@ -108,7 +109,7 @@ class TestServerUnifiedAgent:
         self, mock_spec, mock_channel, mock_session
     ):
         """Service should invoke spec.build_agent with expected arguments."""
-        service = AgentService(mock_spec)
+        service = AgentService(mock_spec, default_workspace_root="/tmp")
         service.channel = mock_channel
 
         mock_session_manager = Mock()
@@ -140,7 +141,7 @@ class TestServerUnifiedAgent:
         needs_approval predicates via configure_tool_approval."""
         mock_spec.use_safe_agent = True
 
-        service = AgentService(mock_spec)
+        service = AgentService(mock_spec, default_workspace_root="/tmp")
         service.channel = mock_channel
 
         service._session_manager = Mock()
@@ -184,6 +185,8 @@ class TestServerUnifiedAgent:
         mock_agent.input_guardrails = []
         mock_agent.output_guardrails = []
         mock_stream_result = Mock()
+        # The bridge inspects SDK 0.16+ tool-approval interruptions.
+        mock_stream_result.interruptions = []
 
         # Create mock events
         mock_event1 = Mock()
@@ -235,7 +238,7 @@ class TestServerUnifiedAgent:
         self, mock_spec, mock_channel, mock_session
     ):
         """Service should build a fresh agent for each run."""
-        service = AgentService(mock_spec)
+        service = AgentService(mock_spec, default_workspace_root="/tmp")
         service.channel = mock_channel
 
         service._session_manager = Mock()

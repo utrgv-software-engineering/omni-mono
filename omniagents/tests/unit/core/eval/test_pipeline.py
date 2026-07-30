@@ -333,6 +333,10 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
             available_tools=["t"],
             project_slug="proj",
             agent_slug="agent",
+            # run_scenario anchors workspace_root onto spec.context under
+            # strict mode; real AgentSpec defaults this to None.
+            context=None,
+            variables=None,
         )
         spec_holder["spec"] = spec
         return spec

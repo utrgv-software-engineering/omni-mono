@@ -119,7 +119,12 @@ mcp_servers:
     spec = load_agent_spec_from_yaml(str(yaml_path))
     servers = build_mcp_servers(spec, {})
     assert len(servers) == 1
-    assert servers[0].__class__.__name__ == "MCPServerStdio"
+    # Stdio servers are built as QuietMCPServerStdio (an MCPServerStdio
+    # subclass that silences subprocess stderr so it can't corrupt TUIs).
+    from agents.mcp import MCPServerStdio
+
+    assert isinstance(servers[0], MCPServerStdio)
+    assert servers[0].__class__.__name__ == "QuietMCPServerStdio"
 
 
 def test_build_mcp_servers_sse_placeholder_resolution(tmp_path):

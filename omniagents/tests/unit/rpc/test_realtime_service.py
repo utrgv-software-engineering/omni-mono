@@ -538,7 +538,9 @@ class TestCapabilities:
     """
 
     @pytest.mark.asyncio
-    async def test_enabled_with_explicit_api_key(self, realtime_spec, settings_with_key):
+    async def test_enabled_with_explicit_api_key(
+        self, realtime_spec, settings_with_key
+    ):
         caps = await RealtimeService(realtime_spec, settings_with_key).capabilities()
         assert caps["enabled"] is True
         assert caps["detail"] == "settings api key"
@@ -636,7 +638,9 @@ class TestCapabilities:
         assert caps["detail"] == "settings api key"
 
     @pytest.mark.asyncio
-    async def test_falls_back_when_resolver_raises(self, realtime_spec, settings_with_key):
+    async def test_falls_back_when_resolver_raises(
+        self, realtime_spec, settings_with_key
+    ):
         def boom():
             raise RuntimeError("resolver down")
 

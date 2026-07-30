@@ -94,7 +94,7 @@ def test_discover_server_functions_in_dir_warns_on_duplicates(tmp_path, capsys):
     assert set(discovered) == {"duplicate"}
     assert discovered["duplicate"]["func"].__name__ in {"one", "two"}
     captured = capsys.readouterr()
-    assert "Duplicate server function name" in captured.out
+    assert "Duplicate server function name" in captured.err
 
 
 def test_discover_server_functions_in_dir_missing_directory(tmp_path, capsys):
@@ -106,7 +106,7 @@ def test_discover_server_functions_in_dir_missing_directory(tmp_path, capsys):
         Debug.set_enabled(previous)
     assert discovered == {}
     captured = capsys.readouterr()
-    assert "Server function directory" in captured.out
+    assert "Server function directory" in captured.err
 
 
 def test_discover_server_functions_in_dir_skips_import_errors(tmp_path, capsys):

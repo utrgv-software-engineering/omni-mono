@@ -123,7 +123,8 @@ def test_evaluate_full_workflow_scores(monkeypatch, tmp_path):
 
     class Runner:
         @staticmethod
-        async def run(agent, prompt, max_turns):
+        async def run(agent, prompt, max_turns, context=None):
+            # The judge path anchors workspace_root via the context kwarg.
             prompts.append(prompt)
             value = next(payloads)
             return types.SimpleNamespace(final_output=value)

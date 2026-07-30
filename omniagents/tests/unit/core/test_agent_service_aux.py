@@ -396,7 +396,10 @@ async def test_register_server_function_metadata_and_invocation():
     assert calls[1] == ("handler", session.id, {"x": 2})
 
     metadata = await service.list_server_functions()
-    assert metadata[0] == {
+    # Built-in server functions (session.ensure, mcp.*) register ahead of
+    # ours, so look entries up by name instead of assuming positions.
+    by_name = {entry["name"]: entry for entry in metadata}
+    assert by_name["session.ensure"] == {
         "name": "session.ensure",
         "description": "Ensure a session exists and persist workspace metadata.",
         "params_schema": {
@@ -421,14 +424,14 @@ async def test_register_server_function_metadata_and_invocation():
         },
         "strict": False,
     }
-    assert metadata[1] == {
+    assert by_name["with_on_invoke"] == {
         "name": "with_on_invoke",
         "description": "desc",
         "params_schema": {"type": "object"},
         "result_schema": {"type": "string"},
         "strict": True,
     }
-    assert metadata[2] == {
+    assert by_name["direct_handler"] == {
         "name": "direct_handler",
         "description": None,
         "params_schema": None,

@@ -109,7 +109,7 @@ async def test_worker_manager_auto_approves_client_request():
     )
     await asyncio.sleep(0)
 
-    assert handle.agent._client.other.approvals == [("req-1", True, {"approved": True})]
+    assert handle.agent._client.other.approvals == [("req-1", True, {"ack": True})]
 
 
 @pytest.mark.asyncio

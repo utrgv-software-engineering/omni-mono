@@ -172,14 +172,19 @@ def test_build_group_private_ip_when_subnet():
     assert [s.id for s in grp.subnet_ids] == [sid]
 
 
-def test_build_group_subnet_without_ports_joins_vnet_no_ip():
-    # A no-service sandbox still joins the subnet (private IP) so it can reach
-    # private endpoints, but exposes no ports.
+def test_build_group_subnet_without_ports_gets_private_placeholder_port():
+    # A VNet-integrated group REQUIRES a Private ip_address with >=1 port to
+    # be schedulable (otherwise Azure never assigns a NIC and the deployment
+    # hangs in ContainerGroupDeploymentNotReady), so a no-service sandbox in
+    # a subnet gets placeholder port 80 on both the container and the group.
     sid = "/subscriptions/s/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/v/subnets/aci"
     grp = _manager()._build_group(
         AciContainerSpec(name="g", image="img", subnet_id=sid)
     )
-    assert grp.ip_address is None
+    assert grp.ip_address is not None
+    assert grp.ip_address.type == "Private"
+    assert [p.port for p in grp.ip_address.ports] == [80]
+    assert [p.port for p in grp.containers[0].ports] == [80]
     assert [s.id for s in grp.subnet_ids] == [sid]
 
 

@@ -2584,8 +2584,14 @@ class AgentService(RpcMethodsBase):
         # itself (e.g. defaulting a sandbox cwd to the manifest root), so it
         # satisfies the requirement on its own — _apply_session_metadata
         # applies it below.
-        workspace_root: str | None = None
-        if (
+        # A workspace_root passed explicitly on THIS call wins over whatever
+        # the session already carries (dict.update semantics) — otherwise the
+        # stale value mirrored onto session.context by an earlier
+        # session.ensure would silently clobber the caller's update.
+        workspace_root: str | None = self._ws_root_from(context) or self._ws_root_from(
+            variables
+        )
+        if workspace_root is None and (
             self._workspace_root_resolver is None
             and self._ws_root_from(merged_context) is None
             and self._ws_root_from(merged_variables) is None

@@ -182,8 +182,10 @@ async def test_agents_sdk_realtime_agent_includes_mcp_tools_in_get_all_tools():
     ctx = RunContextWrapper(context=None)
 
     async def _fake_get_all_function_tools(
-        servers, convert_schemas_to_strict, run_context, agent
+        servers, convert_schemas_to_strict, run_context, agent, **kwargs
     ):
+        # The SDK also forwards failure_error_function /
+        # include_server_in_tool_names / reserved_tool_names keywords.
         assert servers == [fake_server]
         return [mcp_tool]
 

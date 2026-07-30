@@ -141,7 +141,8 @@ def test_run_generation_parses_outputs_correctly(monkeypatch):
         call_count = 0
 
         @staticmethod
-        async def run(agent, prompt, max_turns):
+        async def run(agent, prompt, max_turns, context=None):
+            # _run_generation anchors workspace_root via the context kwarg.
             data = outputs[Runner.call_count]
             Runner.call_count += 1
             return types.SimpleNamespace(final_output=data)

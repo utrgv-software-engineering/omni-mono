@@ -74,7 +74,7 @@ def test_evaluate_collects_scores_and_trajectories(monkeypatch, tmp_path):
         },
     }
 
-    async def fake_run_once(self, instructions, prompt):
+    async def fake_run_once(self, instructions, prompt, scenario=None):
         payload = scenarios[prompt]
         calls.append((instructions, prompt))
         return {
@@ -139,7 +139,7 @@ def test_make_reflective_dataset_prioritizes_violations(monkeypatch, tmp_path):
         },
     }
 
-    async def fake_run_once(self, instructions, prompt):
+    async def fake_run_once(self, instructions, prompt, scenario=None):
         payload = scenarios[prompt]
         return {
             "history": [{"role": "assistant", "content": payload["text"]}],
@@ -181,7 +181,7 @@ def test_evaluate_handles_missing_prompts_and_runtime_errors(monkeypatch, tmp_pa
     """Evaluation should mark missing prompts and execution failures as violations with zero score."""
     adapter = _build_adapter(tmp_path, score_mode="fraction")
 
-    async def failing_run_once(self, instructions, prompt):
+    async def failing_run_once(self, instructions, prompt, scenario=None):
         if prompt == "Compute 1/0":
             raise RuntimeError("division by zero")
         return {

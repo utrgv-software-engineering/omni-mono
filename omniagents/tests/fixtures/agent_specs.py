@@ -42,13 +42,15 @@ def create_server_rpc_agent_spec() -> AgentSpec:
 
     def register(service):
         async def get_variables(service_instance, session, args):
+            # The generated GUI protocol requires server_call results to be
+            # dicts (ServerCallResult is RootModel[dict]).
             if session is None:
-                return None
-            return getattr(session, "variables", None)
+                return {}
+            return getattr(session, "variables", None) or {}
 
         async def trigger_status(service_instance, session, args):
             if session is None:
-                return False
+                return {"ok": False}
             text = args.get("text", "") if isinstance(args, dict) else ""
             run_id = args.get("run_id") if isinstance(args, dict) else None
             show_spinner = (
@@ -60,7 +62,7 @@ def create_server_rpc_agent_spec() -> AgentSpec:
                 run_id=run_id,
                 show_spinner=show_spinner,
             )
-            return True
+            return {"ok": True}
 
         service.register_server_function("session.get_variables", get_variables)
         service.register_server_function("test.trigger_status", trigger_status)

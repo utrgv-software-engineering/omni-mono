@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from omniagents.core.eval import optimize
-from omniagents.core.eval.loader import EvalConfig
+from omniagents.core.eval.loader import EvalConfig, filter_scenarios
 
 
 def _make_fake_eval_config(compiled_path, **overrides):
@@ -121,6 +121,12 @@ def configure_optimize_env(monkeypatch):
         core_pkg = types.ModuleType("gepa.core")
         core_pkg.__path__ = []
         monkeypatch.setitem(sys.modules, "gepa.core", core_pkg)
+
+        data_loader_mod = types.ModuleType("gepa.core.data_loader")
+        # Identity: tests hand plain lists around and assert on them.
+        data_loader_mod.ensure_loader = lambda dataset: dataset
+        monkeypatch.setitem(sys.modules, "gepa.core.data_loader", data_loader_mod)
+        core_pkg.data_loader = data_loader_mod
 
         class DummyEngine:
             def __init__(self, **kwargs):
@@ -358,6 +364,7 @@ def setup_optimize_stubs(
     loader_module = types.ModuleType("omniagents.core.eval.loader")
     loader_module.load_eval_config = fake_load_eval_config
     loader_module.EvalConfig = EvalConfig
+    loader_module.filter_scenarios = filter_scenarios
     loader_module.__package__ = "omniagents.core.eval"
     monkeypatch.setitem(
         sys.modules,
@@ -385,6 +392,11 @@ def setup_optimize_stubs(
     core_pkg = types.ModuleType("gepa.core")
     core_pkg.__path__ = []
     monkeypatch.setitem(sys.modules, "gepa.core", core_pkg)
+
+    data_loader_mod = types.ModuleType("gepa.core.data_loader")
+    data_loader_mod.ensure_loader = lambda dataset: dataset
+    monkeypatch.setitem(sys.modules, "gepa.core.data_loader", data_loader_mod)
+    core_pkg.data_loader = data_loader_mod
 
     class DummyEngine:
         def __init__(self, **kwargs):
@@ -615,6 +627,7 @@ evaluation:
     loader_module = types.ModuleType("omniagents.core.eval.loader")
     loader_module.load_eval_config = fake_load_eval_config
     loader_module.EvalConfig = EvalConfig
+    loader_module.filter_scenarios = filter_scenarios
     loader_module.__package__ = "omniagents.core.eval"
     monkeypatch.setitem(
         sys.modules,
@@ -984,10 +997,10 @@ def test_optimize_agent_auto_resolution_resume_apply(
         if len(msg.split(":")) == 3
     )
     env.engine_kwargs["logger"].log("extra-log")
-    env.engine_kwargs["evaluator"](
-        [{"label": True}],
-        {"instructions": "candidate"},
-    )
+    # The agent engine takes the adapter directly now (no evaluator kwarg);
+    # dev/test scoring goes through adapter.evaluate, asserted above via
+    # env.adapter_evaluations.
+    assert env.engine_kwargs["adapter"] is env.adapter_instances[0]
 
 
 def test_optimize_agent_auto_resolve_resume_and_progress_logging(monkeypatch, tmp_path):

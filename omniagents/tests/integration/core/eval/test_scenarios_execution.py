@@ -103,6 +103,8 @@ def _configure_execution(monkeypatch, responses):
             max_turns=2,
             use_safe_agent=True,
             available_tools=[],
+            context=None,
+            variables=None,
         )
 
     @contextlib.contextmanager

@@ -72,6 +72,8 @@ async def test_agent_with_runner():
 
     # Mock Runner.run_streamed
     mock_result = Mock()
+    # The bridge inspects SDK 0.16+ tool-approval interruptions.
+    mock_result.interruptions = []
 
     # Mock stream_events to return empty generator
     async def mock_stream_events():

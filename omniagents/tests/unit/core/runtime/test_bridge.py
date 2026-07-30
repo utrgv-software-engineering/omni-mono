@@ -451,7 +451,9 @@ async def test_stream_agent_without_user_message(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_context_error_hook_fires_for_resume_from_history(monkeypatch):
+async def test_stream_agent_context_error_hook_fires_for_resume_from_history(
+    monkeypatch,
+):
     """The resident-wakeup shape: assistant-role runs resume from history
     (``include_user_message=False``). A context-length error on such a run
     must reach the runtime "error" hook (compaction + retry) — the old gate
@@ -509,7 +511,9 @@ async def test_stream_agent_context_error_hook_fires_for_resume_from_history(mon
             self.instructions = "inst"
             self.tools = []
             self.model = "model-y"
-            self.model_settings = types.SimpleNamespace(max_tokens=None, truncation=None)
+            self.model_settings = types.SimpleNamespace(
+                max_tokens=None, truncation=None
+            )
 
     result = await bridge.stream_agent(
         DummyAgent(),

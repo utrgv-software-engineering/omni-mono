@@ -75,7 +75,7 @@ def test_discover_guardrails_in_dir_missing_directory_emits_warning(tmp_path, ca
     assert input_guardrails == {}
     assert output_guardrails == {}
     captured = capsys.readouterr()
-    assert "Guardrail discovery directory" in captured.out
+    assert "Guardrail discovery directory" in captured.err
 
 
 def test_discover_guardrails_in_dir_restores_sys_path(tmp_path):

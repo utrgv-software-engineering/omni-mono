@@ -238,6 +238,10 @@ def test_playground_ws_tool_approval_flow(monkeypatch, studio_client):
     allow_flags = []
 
     async def fake_stream(agent, prompt, session, rpc_channel, **kwargs):
+        # Approvals ride the SDK 0.16 interruption flow now: the bridge asks
+        # the service, which emits tool_approval_requested and awaits the
+        # tool_approval_response RPC. Drive that surface directly.
+        service = kwargs["service"]
         run_id = asyncio.current_task().get_name()
         session_runs[session.id] += 1
         index = session_runs[session.id]
@@ -250,10 +254,12 @@ def test_playground_ws_tool_approval_flow(monkeypatch, studio_client):
             },
         )
         if index == 1:
-            result = await session.approval_callback(
-                "greet_tool",
-                '{"input": "value"}',
-                metadata={"label": "Greet"},
+            result = await service.request_tool_approval(
+                session=session,
+                call_id=f"call-{index}",
+                tool_name="greet_tool",
+                arguments='{"input": "value"}',
+                run_id=run_id,
             )
             approval_results.append(result)
         else:
@@ -291,22 +297,17 @@ def test_playground_ws_tool_approval_flow(monkeypatch, studio_client):
                 first_result = message
                 continue
             method = message.get("method")
-            if method == "client_request":
+            if method == "tool_approval_requested":
                 approval_request = message["params"]
                 ws.send_json(
                     {
                         "jsonrpc": "2.0",
                         "id": 2,
-                        "method": "client_response",
+                        "method": "tool_approval_response",
                         "params": {
-                            "request_id": approval_request["request_id"],
-                            "ok": True,
-                            "result": {
-                                "approved": True,
-                                "always_approve": True,
-                                "error_message": None,
-                            },
-                            "error": None,
+                            "call_id": approval_request["call_id"],
+                            "decision": "approve",
+                            "always_approve": True,
                         },
                     }
                 )
@@ -315,7 +316,14 @@ def test_playground_ws_tool_approval_flow(monkeypatch, studio_client):
 
         assert first_run_end is not None
         assert approval_request is not None, (first_run_end, approval_results)
-        assert approval_results == [(True, True, None)]
+        assert approval_request["tool_name"] == "greet_tool"
+        assert approval_results == [
+            {
+                "decision": "approve",
+                "always_approve": True,
+                "rejection_message": None,
+            }
+        ]
         rpc_session_id = first_result["result"]["session_id"]
 
         ws.send_json(
@@ -335,22 +343,17 @@ def test_playground_ws_tool_approval_flow(monkeypatch, studio_client):
                 second_result = message
                 continue
             method = message.get("method")
-            if method == "client_request":
+            if method == "tool_approval_requested":
                 second_requests += 1
                 ws.send_json(
                     {
                         "jsonrpc": "2.0",
                         "id": 4,
-                        "method": "client_response",
+                        "method": "tool_approval_response",
                         "params": {
-                            "request_id": message["params"]["request_id"],
-                            "ok": True,
-                            "result": {
-                                "approved": True,
-                                "always_approve": True,
-                                "error_message": None,
-                            },
-                            "error": None,
+                            "call_id": message["params"]["call_id"],
+                            "decision": "approve",
+                            "always_approve": True,
                         },
                     }
                 )

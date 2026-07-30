@@ -169,6 +169,11 @@ def test_discover_functions_in_dir_isolates_same_named_dirs(tmp_path):
 
     # Pre-bind `tools` in sys.modules pointing at the first package, the
     # way a host app would after a real `from tools.host_only import ...`.
+    # Drop any 'tools' package another test left behind first — the premise
+    # is that THIS test controls what sys.modules['tools'] points at.
+    for mod in list(sys.modules):
+        if mod == "tools" or mod.startswith("tools."):
+            sys.modules.pop(mod, None)
     sys.path.insert(0, str(tmp_path / "host"))
     try:
         host_pkg = importlib.import_module("tools")
@@ -343,10 +348,10 @@ def test_discover_functions_in_dir_debug_logging(tmp_path, capsys):
             for mod in list(sys.modules):
                 if mod.startswith(pkg_name):
                     sys.modules.pop(mod, None)
-        out = capsys.readouterr().out
-        assert "Starting tool discovery" in out
-        assert "Discovered marked tool: sample" in out
-        assert "Completed tool discovery" in out
+        err = capsys.readouterr().err
+        assert "Starting tool discovery" in err
+        assert "Discovered marked tool: sample" in err
+        assert "Completed tool discovery" in err
     finally:
         Debug.set_enabled(prev)
 
@@ -394,9 +399,9 @@ def test_approval_metadata_debug_logging(capsys):
             return {"ok": True}
 
         assert discovery.get_approval_metadata("debug_tool", {}) == {"ok": True}
-        out = capsys.readouterr().out
-        assert "Registered approval metadata for tool 'debug_tool'" in out
-        assert "Generated approval metadata for tool 'debug_tool'" in out
+        err = capsys.readouterr().err
+        assert "Registered approval metadata for tool 'debug_tool'" in err
+        assert "Generated approval metadata for tool 'debug_tool'" in err
     finally:
         Debug.set_enabled(prev)
 
@@ -418,7 +423,7 @@ def test_get_approval_metadata_debug_error(capsys):
         captured = capsys.readouterr()
         assert (
             "Error generating approval metadata for tool 'debug_error_tool'"
-            in captured.out
+            in captured.err
         )
         assert "RuntimeError: fail" in captured.err
     finally:
@@ -437,7 +442,7 @@ def test_stream_event_payload_rich_tool_output_includes_metadata():
             return {"call_id": "call-1"}
 
     item = DummyItem(RichToolOutput("summary", {"rows": 3}))
-    method, payload = _stream_event_payload(item, "run-1")
+    method, payload = _stream_event_payload(item, "run-1", session_id="sess-1")
     assert method == "tool_result"
     assert payload["metadata"] == {"rows": 3}
     assert payload["output"] == "summary"
@@ -456,7 +461,7 @@ def test_stream_event_payload_plain_output_omits_metadata():
             return {"call_id": "call-2"}
 
     item = DummyItem("plain")
-    method, payload = _stream_event_payload(item, "run-2")
+    method, payload = _stream_event_payload(item, "run-2", session_id="sess-2")
     assert method == "tool_result"
     assert "metadata" not in payload
     assert payload["output"] == "plain"

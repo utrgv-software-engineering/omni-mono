@@ -7,14 +7,15 @@ from omniagents.rpc.agents.remote import RemoteAgent
 
 
 class DummyClient:
-    def __init__(self, transport, methods):
+    def __init__(self, transport, methods, **kwargs):
         self.other = self
         self._transport = transport
         self._methods = methods
 
     @classmethod
-    def from_url(cls, url, methods):
-        # Mimic the factory method
+    def from_url(cls, url, methods, **kwargs):
+        # Mimic the factory method (real signature also takes client_info,
+        # capabilities, token, and policy keyword arguments).
         transport = SimpleNamespace(url=url)
         return cls(transport, methods)
 
@@ -23,6 +24,10 @@ class DummyClient:
 
     async def __aexit__(self, exc_type, exc, tb):
         pass
+
+    def on_disconnect(self, callback):
+        # RemoteAgent registers a disconnect hook right after connecting.
+        self._disconnect_callback = callback
 
     async def list_sessions(self):
         return SimpleNamespace(

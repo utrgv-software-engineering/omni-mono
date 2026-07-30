@@ -32,7 +32,10 @@ async def test_create_unified_agent_remote(monkeypatch):
     agent = await create_unified_agent(spec)
     assert is_remote_agent(agent) is True
     assert agent.model == "gpt-x"
-    assert "token=abc123" in agent._url
+    # The auth token is carried as an Authorization header at connect time,
+    # never appended to the URL (see omniagents.rpc.auth).
+    assert agent._url == "ws://example"
+    assert agent._token == "abc123"
 
 
 @pytest.mark.asyncio

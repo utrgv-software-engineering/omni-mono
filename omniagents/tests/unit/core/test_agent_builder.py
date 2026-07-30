@@ -205,6 +205,8 @@ async def test_build_handoffs_from_configs_builds_agents(monkeypatch, tmp_path):
         tool_registry=None,
         guardrails_registry=None,
         server_functions_registry=None,
+        agents_map=None,
+        capability_registry=None,
     ):
         return child_spec
 

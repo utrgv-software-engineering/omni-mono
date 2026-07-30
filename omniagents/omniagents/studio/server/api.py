@@ -6763,9 +6763,7 @@ def create_api_app(
             # With dim filter we need to inspect per-trace metadata, so we materialize
             # the filtered groups in Python and paginate there.
             if not dim_map:
-                page_sql = (
-                    base_sql
-                    + f"""
+                page_sql = base_sql + f"""
                     SELECT group_id, trace_count,
                            datetime(created_at_raw) || 'Z' AS created_at,
                            workflow_name, metadata, first_trace_id, has_errors,
@@ -6775,13 +6773,10 @@ def create_api_app(
                     ORDER BY created_at_raw DESC
                     LIMIT ? OFFSET ?
                     """
-                )
                 rows = list(storage.conn.execute(page_sql, [*params, limit, offset]))
                 total = rows[0]["total_rows"] if rows else 0
             else:
-                all_sql = (
-                    base_sql
-                    + f"""
+                all_sql = base_sql + f"""
                     SELECT group_id, trace_count,
                            datetime(created_at_raw) || 'Z' AS created_at,
                            workflow_name, metadata, first_trace_id, has_errors
@@ -6789,7 +6784,6 @@ def create_api_app(
                     {where_sql}
                     ORDER BY created_at_raw DESC
                     """
-                )
                 all_rows = list(storage.conn.execute(all_sql, params))
                 matching_ids = _filter_groups_by_dim(
                     storage.conn, [r["group_id"] for r in all_rows], dim_map

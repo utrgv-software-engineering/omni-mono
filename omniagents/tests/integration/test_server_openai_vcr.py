@@ -59,6 +59,12 @@ class RecordingMethods(RpcMethodsBase):
     async def client_request(self, **payload) -> None:
         await self._record("client_request", payload)
 
+    async def tool_approval_requested(self, **payload) -> None:
+        await self._record("tool_approval_requested", payload)
+
+    async def tool_approval_resolved(self, **payload) -> None:
+        await self._record("tool_approval_resolved", payload)
+
     def set_client(self, client: JsonRpcClient) -> None:
         self._client = client
 
@@ -285,7 +291,10 @@ async def test_server_mode_client_status_and_variables(
                 function="session.get_variables",
                 session_id=session_id,
             )
-            assert variables == {"favorite_number": 42}
+            # The framework injects workspace_root into session variables
+            # (strict workspace-root contract), so assert on our key.
+            assert variables["favorite_number"] == 42
+            assert "workspace_root" in variables
 
             sessions = await client.call("list_sessions")
             assert any(entry["id"] == session_id for entry in sessions)
@@ -347,14 +356,17 @@ async def test_server_mode_tool_approval_flow(
             assert tool_called["run_id"] == run_id
             assert tool_called["tool"] == "add_integers_tool"
 
-            approval_request = await methods.wait_for("client_request")
-            assert approval_request["function"] == "ui.request_tool_approval"
-            request_id = approval_request["request_id"]
+            # Approvals ride the SDK 0.16 interruption flow: the service
+            # emits tool_approval_requested and the client resolves it via
+            # the tool_approval_response RPC.
+            approval_request = await methods.wait_for("tool_approval_requested")
+            assert approval_request["tool_name"] == "add_integers_tool"
+            assert approval_request["session_id"] == session_id
             await client.call(
-                "client_response",
-                request_id=request_id,
-                ok=True,
-                result={"approved": True, "always_approve": False},
+                "tool_approval_response",
+                call_id=approval_request["call_id"],
+                decision="approve",
+                always_approve=False,
             )
 
             tool_result = await methods.wait_for("tool_result")

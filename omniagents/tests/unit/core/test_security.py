@@ -397,25 +397,24 @@ class TestMCPAllowlist:
 class TestSessionRetention:
     def _make_db(self, tmp_path):
         """Create a fresh SQLite DB with the sessions schema."""
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage import sqlite as sqlite_storage
 
         db_path = tmp_path / f"retention_test_{uuid.uuid4().hex[:8]}.db"
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        hdb._ensure_schema(conn)
+        sqlite_storage._ensure_schema(conn)
         return conn, Lock()
 
     def _patch_store(self, monkeypatch, conn_lock, project, agent):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage.sqlite import SqliteSessionStorage
 
-        key = f"{project}/{agent}"
-        original = hdb._get_store
+        original = SqliteSessionStorage._get_store
 
-        def patched(p, a):
+        def patched(backend, p, a):
             if p == project and a == agent:
                 return conn_lock
-            return original(p, a)
+            return original(backend, p, a)
 
-        monkeypatch.setattr(hdb, "_get_store", patched)
+        monkeypatch.setattr(SqliteSessionStorage, "_get_store", patched)
 
     def test_purge_removes_old_sessions(self, tmp_path, monkeypatch):
         from omniagents.core.session.history_db import purge_old_sessions
@@ -502,7 +501,7 @@ class TestFileAuditBackend:
         log_path = tmp_path / "audit.jsonl"
         backend = FileAuditBackend(path=str(log_path))
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             backend.handle_event(
                 event_type="run_started",
                 session_id="s1",
@@ -510,7 +509,7 @@ class TestFileAuditBackend:
                 details={},
             )
         )
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             backend.handle_event(
                 event_type="tool_called",
                 session_id="s1",
@@ -626,9 +625,7 @@ class TestToolTimeouts:
             on_invoke_tool=slow_invoke,
         )
         wrapped = _apply_tool_timeouts([tool], {"default": 0.05})[0]
-        result = asyncio.get_event_loop().run_until_complete(
-            wrapped.on_invoke_tool(None, "{}")
-        )
+        result = asyncio.run(wrapped.on_invoke_tool(None, "{}"))
         parsed = json.loads(result)
         assert parsed["error"] == "TOOL_TIMEOUT"
         assert parsed["tool"] == "slow_tool"
@@ -756,9 +753,7 @@ class TestRegexScanner:
         from omniagents.core.providers.content_scanner.regex import RegexScanner
 
         scanner = RegexScanner()
-        result = asyncio.get_event_loop().run_until_complete(
-            scanner.scan("SSN: 123-45-6789")
-        )
+        result = asyncio.run(scanner.scan("SSN: 123-45-6789"))
         assert len(result.findings) == 1
         assert result.findings[0].pattern_name == "ssn"
         assert "[SSN]" in result.redacted_content
@@ -768,9 +763,7 @@ class TestRegexScanner:
         from omniagents.core.providers.content_scanner.regex import RegexScanner
 
         scanner = RegexScanner()
-        result = asyncio.get_event_loop().run_until_complete(
-            scanner.scan("Contact: user@hospital.org")
-        )
+        result = asyncio.run(scanner.scan("Contact: user@hospital.org"))
         assert any(f.pattern_name == "email" for f in result.findings)
 
     def test_no_findings_is_clean(self):
@@ -778,9 +771,7 @@ class TestRegexScanner:
         from omniagents.core.providers.content_scanner.regex import RegexScanner
 
         scanner = RegexScanner()
-        result = asyncio.get_event_loop().run_until_complete(
-            scanner.scan("Hello world, nothing sensitive.")
-        )
+        result = asyncio.run(scanner.scan("Hello world, nothing sensitive."))
         assert result.allowed
         assert result.findings == []
         assert result.redacted_content is None
@@ -790,9 +781,7 @@ class TestRegexScanner:
         from omniagents.core.providers.content_scanner.regex import RegexScanner
 
         scanner = RegexScanner({"block": True})
-        result = asyncio.get_event_loop().run_until_complete(
-            scanner.scan("SSN: 123-45-6789")
-        )
+        result = asyncio.run(scanner.scan("SSN: 123-45-6789"))
         assert not result.allowed
 
     def test_custom_patterns(self):
@@ -802,9 +791,7 @@ class TestRegexScanner:
         scanner = RegexScanner(
             {"extra_patterns": [{"name": "patient_id", "pattern": r"PT-\d{6}"}]}
         )
-        result = asyncio.get_event_loop().run_until_complete(
-            scanner.scan("Patient PT-123456 admitted")
-        )
+        result = asyncio.run(scanner.scan("Patient PT-123456 admitted"))
         assert any(f.pattern_name == "patient_id" for f in result.findings)
 
 
@@ -814,7 +801,7 @@ class TestTokenAuthProvider:
         from omniagents.core.providers.auth.token import TokenAuthProvider
 
         p = TokenAuthProvider({"token": "secret"})
-        result = asyncio.get_event_loop().run_until_complete(p.authenticate("secret"))
+        result = asyncio.run(p.authenticate("secret"))
         assert result.authenticated
 
     def test_invalid_token(self):
@@ -822,7 +809,7 @@ class TestTokenAuthProvider:
         from omniagents.core.providers.auth.token import TokenAuthProvider
 
         p = TokenAuthProvider({"token": "secret"})
-        result = asyncio.get_event_loop().run_until_complete(p.authenticate("wrong"))
+        result = asyncio.run(p.authenticate("wrong"))
         assert not result.authenticated
 
     def test_no_token_configured_refuses_construction(self):
@@ -856,8 +843,9 @@ class TestProviderWiring:
     def test_session_encryption_set_provider(self):
         """set_encryption_provider installs custom connection factory."""
         import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage import sqlite as sqlite_storage
 
-        original = hdb._encryption_provider
+        original = sqlite_storage._encryption_provider
         try:
 
             class FakeProvider:
@@ -868,10 +856,12 @@ class TestProviderWiring:
                     conn.execute("PRAGMA journal_mode=WAL")
                     return conn
 
+            # The façade delegates to the sqlite storage module, which is
+            # where _get_store consults the provider.
             hdb.set_encryption_provider(FakeProvider())
-            assert hdb._encryption_provider is not None
+            assert sqlite_storage._encryption_provider is not None
         finally:
-            hdb._encryption_provider = original
+            sqlite_storage._encryption_provider = original
 
     def test_content_scanner_guardrail_adapter(self):
         """RegexScanner produces guardrails that detect SSN."""
@@ -981,24 +971,24 @@ class TestAuditConfigMaxDetailChars:
 
 class TestLegalHold:
     def _make_db(self, tmp_path):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage import sqlite as sqlite_storage
 
         db_path = tmp_path / f"hold_test_{uuid.uuid4().hex[:8]}.db"
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        hdb._ensure_schema(conn)
+        sqlite_storage._ensure_schema(conn)
         return conn, Lock()
 
     def _patch_store(self, monkeypatch, conn_lock, project, agent):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage.sqlite import SqliteSessionStorage
 
-        original = hdb._get_store
+        original = SqliteSessionStorage._get_store
 
-        def patched(p, a):
+        def patched(backend, p, a):
             if p == project and a == agent:
                 return conn_lock
-            return original(p, a)
+            return original(backend, p, a)
 
-        monkeypatch.setattr(hdb, "_get_store", patched)
+        monkeypatch.setattr(SqliteSessionStorage, "_get_store", patched)
 
     def test_purge_skips_held_sessions(self, tmp_path, monkeypatch):
         from omniagents.core.session.history_db import (
@@ -1083,11 +1073,11 @@ class TestLegalHold:
         assert get_session_hold("s1", project_slug="proj", agent_slug="agt") is False
 
     def test_hold_column_in_schema(self, tmp_path):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage import sqlite as sqlite_storage
 
         db_path = tmp_path / "schema_test.db"
         conn = sqlite3.connect(str(db_path))
-        hdb._ensure_schema(conn)
+        sqlite_storage._ensure_schema(conn)
         columns = [
             col[1] for col in conn.execute("PRAGMA table_info(sessions)").fetchall()
         ]
@@ -1125,7 +1115,7 @@ class TestHMACChainIntegrity:
         backend = FileAuditBackend(path=str(log_path), signing_key="test_key")
 
         for i in range(3):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 backend.handle_event(
                     event_type="test",
                     timestamp=f"2026-01-0{i+1}T00:00:00",
@@ -1148,7 +1138,7 @@ class TestHMACChainIntegrity:
         backend = FileAuditBackend(path=str(log_path), signing_key="test_key")
 
         for i in range(3):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 backend.handle_event(
                     event_type="test",
                     timestamp=f"2026-01-0{i+1}T00:00:00",
@@ -1176,7 +1166,7 @@ class TestHMACChainIntegrity:
         log_path = tmp_path / "unsigned.jsonl"
         backend = FileAuditBackend(path=str(log_path))  # no signing_key
 
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             backend.handle_event(event_type="test", timestamp="2026-01-01T00:00:00")
         )
 
@@ -1195,7 +1185,7 @@ class TestHMACChainIntegrity:
         # Write 2 entries with first backend instance
         backend1 = FileAuditBackend(path=str(log_path), signing_key="test_key")
         for i in range(2):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 backend1.handle_event(
                     event_type="test",
                     timestamp=f"2026-01-0{i+1}T00:00:00",
@@ -1205,7 +1195,7 @@ class TestHMACChainIntegrity:
 
         # Create new backend instance (simulates restart) — should recover chain
         backend2 = FileAuditBackend(path=str(log_path), signing_key="test_key")
-        asyncio.get_event_loop().run_until_complete(
+        asyncio.run(
             backend2.handle_event(
                 event_type="test",
                 timestamp="2026-01-03T00:00:00",
@@ -1238,9 +1228,7 @@ class TestHMACChainIntegrity:
             secrets_provider=FakeSecrets(),
         )
 
-        asyncio.get_event_loop().run_until_complete(
-            hook(event_type="test", timestamp="2026-01-01T00:00:00")
-        )
+        asyncio.run(hook(event_type="test", timestamp="2026-01-01T00:00:00"))
 
         line = log_path.read_text().strip()
         obj = json.loads(line)
@@ -1258,9 +1246,7 @@ class TestHMACChainIntegrity:
             project_slug="test",
         )
 
-        asyncio.get_event_loop().run_until_complete(
-            hook(event_type="test", timestamp="2026-01-01T00:00:00")
-        )
+        asyncio.run(hook(event_type="test", timestamp="2026-01-01T00:00:00"))
 
         line = log_path.read_text().strip()
         obj = json.loads(line)
@@ -1468,31 +1454,31 @@ class TestPlatformAuthProviderFailsClosed:
 
 class TestUserIdentityThreading:
     def _make_db(self, tmp_path):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage import sqlite as sqlite_storage
 
         db_path = tmp_path / f"identity_test_{uuid.uuid4().hex[:8]}.db"
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        hdb._ensure_schema(conn)
+        sqlite_storage._ensure_schema(conn)
         return conn, Lock()
 
     def _patch_store(self, monkeypatch, conn_lock, project, agent):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage.sqlite import SqliteSessionStorage
 
-        original = hdb._get_store
+        original = SqliteSessionStorage._get_store
 
-        def patched(p, a):
+        def patched(backend, p, a):
             if p == project and a == agent:
                 return conn_lock
-            return original(p, a)
+            return original(backend, p, a)
 
-        monkeypatch.setattr(hdb, "_get_store", patched)
+        monkeypatch.setattr(SqliteSessionStorage, "_get_store", patched)
 
     def test_user_id_column_exists(self, tmp_path):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage import sqlite as sqlite_storage
 
         db_path = tmp_path / "schema.db"
         conn = sqlite3.connect(str(db_path))
-        hdb._ensure_schema(conn)
+        sqlite_storage._ensure_schema(conn)
         columns = [
             col[1] for col in conn.execute("PRAGMA table_info(sessions)").fetchall()
         ]
@@ -1808,24 +1794,24 @@ class TestReviewerIdentity:
 
 class TestSessionExport:
     def _make_db(self, tmp_path):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage import sqlite as sqlite_storage
 
         db_path = tmp_path / f"export_test_{uuid.uuid4().hex[:8]}.db"
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        hdb._ensure_schema(conn)
+        sqlite_storage._ensure_schema(conn)
         return conn, Lock()
 
     def _patch_store(self, monkeypatch, conn_lock, project, agent):
-        import omniagents.core.session.history_db as hdb
+        from omniagents.core.session.storage.sqlite import SqliteSessionStorage
 
-        original = hdb._get_store
+        original = SqliteSessionStorage._get_store
 
-        def patched(p, a):
+        def patched(backend, p, a):
             if p == project and a == agent:
                 return conn_lock
-            return original(p, a)
+            return original(backend, p, a)
 
-        monkeypatch.setattr(hdb, "_get_store", patched)
+        monkeypatch.setattr(SqliteSessionStorage, "_get_store", patched)
 
     @pytest.mark.asyncio
     async def test_export_session_basic(self, tmp_path, monkeypatch):

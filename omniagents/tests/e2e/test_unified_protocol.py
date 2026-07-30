@@ -79,6 +79,7 @@ class TestLocalAgent:
         spec.variables = None
         spec.context = None
         spec.build_context = None
+        spec.resolve_default_model_config = None
         return spec
 
     def test_init(self, mock_spec):
@@ -210,6 +211,7 @@ class TestAgentFactory:
         spec.variables = None
         spec.context = None
         spec.build_context = None
+        spec.resolve_default_model_config = None
         return spec
 
     @pytest.mark.asyncio

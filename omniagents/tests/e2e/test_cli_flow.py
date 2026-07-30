@@ -37,6 +37,9 @@ class TestCLIUnifiedIntegration:
         spec.variables = None
         spec.context = None
         spec.build_context = None
+        # Real specs default to no model-config resolver; an auto-Mock here
+        # would be treated as a resolved config and subscripted.
+        spec.resolve_default_model_config = None
         return spec
 
     @pytest.mark.asyncio
@@ -123,9 +126,13 @@ class TestCLIUnifiedIntegration:
             # Call it
             await custom_builder({}, None, Mock())
 
-            # Verify approval callback was passed
+            # Tool approval is no longer wired into the built agent —
+            # the service-side configure_tool_approval pass handles it once
+            # a session exists, and LocalAgent approval callbacks ride the
+            # JSON-RPC wire (tool_approval_requested/-response). The builder
+            # is invoked with approval_callback=None.
             call_args = mock_build.call_args
-            assert call_args[0][3] == approval_cb  # Fourth arg is approval callback
+            assert call_args[0][3] is None
 
         await adapter.cleanup()
 

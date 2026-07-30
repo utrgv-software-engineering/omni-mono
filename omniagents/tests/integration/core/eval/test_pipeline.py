@@ -15,6 +15,10 @@ def _configure_pipeline(monkeypatch, history_text="final"):
             available_tools=[],
             project_slug="proj",
             agent_slug="agent",
+            # run_scenario anchors workspace_root onto spec.context under
+            # strict mode; real AgentSpec defaults these to None.
+            context=None,
+            variables=None,
         )
 
     monkeypatch.setattr(pipeline, "load_agent_spec_from_yaml", fake_load_spec)
@@ -83,7 +87,7 @@ def test_pipeline_executes_multiple_judges_per_scenario(tmp_path, monkeypatch):
 
     class Runner:
         @staticmethod
-        async def run(agent, prompt, max_turns):
+        async def run(agent, prompt, max_turns, context=None):
             key = agent.agent_slug.replace("judge_", "")
             judge_calls.append(key)
             return types.SimpleNamespace(
@@ -174,7 +178,7 @@ def test_pipeline_judge_selection_modes(tmp_path, monkeypatch):
 
     class Runner:
         @staticmethod
-        async def run(agent, prompt, max_turns):
+        async def run(agent, prompt, max_turns, context=None):
             key = agent.agent_slug.replace("judge_", "")
             judge_calls.append(key)
             return types.SimpleNamespace(

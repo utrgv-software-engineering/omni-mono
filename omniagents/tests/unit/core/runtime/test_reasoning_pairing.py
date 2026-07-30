@@ -472,11 +472,16 @@ class TestReasoningToolCallPairing:
 
 
 class TestOrphanedReasoningHandling:
-    """Test that orphaned reasoning items are properly discarded."""
+    """Orphaned reasoning items are persisted verbatim.
+
+    Write-time discarding is gone: history keeps every reasoning item
+    (encrypted_content must survive) and replay-time sanitization in
+    session/manager.py repairs or strips orphaned pairings instead.
+    """
 
     @pytest.mark.asyncio
-    async def test_reasoning_followed_by_output_discards_reasoning(self, monkeypatch):
-        """Reasoning followed by tool output (not call) should discard reasoning."""
+    async def test_reasoning_followed_by_output_persists_both(self, monkeypatch):
+        """Reasoning followed by tool output persists both items."""
         monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
         monkeypatch.setattr(
             bridge,
@@ -541,16 +546,16 @@ class TestOrphanedReasoningHandling:
 
         await bridge.stream_agent(agent, "prompt", session, rpc_channel=None)
 
-        # Should have: user message, output (reasoning discarded)
-        assert len(session.history) == 2
+        # user message, reasoning, output — all persisted in stream order
+        assert len(session.history) == 3
         assert session.history[0]["role"] == "user"
-        assert session.history[1]["type"] == "function_call_output"
-        # Reasoning should NOT be in history
-        assert not any(item.get("type") == "reasoning" for item in session.history)
+        assert session.history[1]["type"] == "reasoning"
+        assert session.history[1]["id"] == "rs_orphan"
+        assert session.history[2]["type"] == "function_call_output"
 
     @pytest.mark.asyncio
-    async def test_reasoning_at_end_of_cancelled_run_not_persisted(self, monkeypatch):
-        """Reasoning item at end of cancelled run should be discarded."""
+    async def test_reasoning_at_end_of_cancelled_run_persisted(self, monkeypatch):
+        """Reasoning at the end of a cancelled run stays in history."""
         monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
         monkeypatch.setattr(
             bridge,
@@ -608,10 +613,11 @@ class TestOrphanedReasoningHandling:
         with pytest.raises(asyncio.CancelledError):
             await bridge.stream_agent(agent, "prompt", session, rpc_channel=None)
 
-        # Should have only user message (reasoning not persisted due to cancellation)
-        assert len(session.history) == 1
+        # user message + the reasoning item that streamed before the cancel
+        assert len(session.history) == 2
         assert session.history[0]["role"] == "user"
-        assert not any(item.get("type") == "reasoning" for item in session.history)
+        assert session.history[1]["type"] == "reasoning"
+        assert session.history[1]["id"] == "rs_cancel"
 
 
 class TestMultipleReasoningItems:

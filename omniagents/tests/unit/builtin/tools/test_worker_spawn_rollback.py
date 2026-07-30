@@ -89,6 +89,7 @@ def test_parallel_spawns_get_unique_names(monkeypatch):
     registers handles only at the END of spawn, so name issuance must be
     reserved synchronously or two spawns pick the same id and the second
     handle silently overwrites the first."""
+
     def deterministic_namer(existing):
         # Mirrors _builtin_namer's dedupe contract with a fixed base name.
         if "pip" not in existing:

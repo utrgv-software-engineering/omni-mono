@@ -108,6 +108,9 @@ sandbox-aci = [
     "azure-identity>=1.15",
     "azure-mgmt-containerinstance>=10.1",
     "azure-storage-file-share>=12.0",
+    # azure-core's async pipeline (used by the aio management client the
+    # ACI engine constructs) imports aiohttp at client build time.
+    "aiohttp>=3.9",
     "websockets>=12",
 ]
 presidio = [
@@ -148,7 +151,7 @@ dev = [
     "pytest-asyncio",
     "pytest-timeout",
     "bump2version",
-    "black",
+    "black==26.5.1",
     "coverage[toml]",
     "pytest-cov",
     "hypothesis>=6.142.4",
@@ -215,7 +218,7 @@ build-backend = "setuptools.build_meta"
 [dependency-groups]
 dev = [
     "datamodel-code-generator==0.71.0",
-    "black",
+    "black==26.5.1",
     "bump2version",
     "coverage[toml]",
     "fastapi[all]>=0.115.12",

@@ -14,6 +14,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
+        # black is version-pinned in pyproject's dev extras (and uv.lock), so
+        # CI and local dev run the identical formatter — a locally-clean
+        # `black --check` always means a green Format job.
         run: pip install .[dev]
       - name: Check formatting
         run: black --check . --exclude 'omniagents/core/project/templates'
