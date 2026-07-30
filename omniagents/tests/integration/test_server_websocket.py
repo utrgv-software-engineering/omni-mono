@@ -11,6 +11,8 @@ from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
 from agents import Agent
 
+from tests.fixtures.gui_ws import perform_gui_handshake
+
 
 # Mock agent for testing
 async def mock_build_agent(settings, mcp, app):
@@ -112,6 +114,7 @@ class TestServerIntegration:
     def test_basic_rpc_flow(self, client):
         """Test basic RPC flow: start_run, get_history, list_sessions, archive."""
         with client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             # 1. Start a run
             ws.send_json(
                 {
@@ -139,7 +142,7 @@ class TestServerIntegration:
                 }
             )
 
-            hist_resp = ws.receive_json()
+            hist_resp = _wait_for_result(ws, 2)
             history = hist_resp["result"]
             assert len(history) >= 1
             assert history[0]["role"] == "user"
@@ -150,7 +153,7 @@ class TestServerIntegration:
                 {"jsonrpc": "2.0", "id": 3, "method": "list_sessions", "params": {}}
             )
 
-            list_resp = ws.receive_json()
+            list_resp = _wait_for_result(ws, 3)
             sessions = list_resp["result"]
 
             # Find our session
@@ -173,7 +176,7 @@ class TestServerIntegration:
                 }
             )
 
-            archive_resp = ws.receive_json()
+            archive_resp = _wait_for_result(ws, 4)
             assert archive_resp["result"] is True
 
             # 5. Verify it's archived
@@ -181,7 +184,7 @@ class TestServerIntegration:
                 {"jsonrpc": "2.0", "id": 5, "method": "list_sessions", "params": {}}
             )
 
-            list_resp2 = ws.receive_json()
+            list_resp2 = _wait_for_result(ws, 5)
             sessions2 = list_resp2["result"]
 
             for s in sessions2:
@@ -192,6 +195,7 @@ class TestServerIntegration:
     def test_multiple_runs_same_session(self, client):
         """Test multiple runs in the same session."""
         with client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             # First run
             ws.send_json(
                 {
@@ -233,7 +237,7 @@ class TestServerIntegration:
                 }
             )
 
-            hist_resp = ws.receive_json()
+            hist_resp = _wait_for_result(ws, 3)
             history = hist_resp["result"]
             assert len(history) >= 2
             assert any(msg["content"] == "First" for msg in history)
@@ -254,6 +258,7 @@ class TestServerIntegration:
         )
 
         with client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             ws.send_json(
                 {
                     "jsonrpc": "2.0",
@@ -298,6 +303,7 @@ class TestServerIntegration:
         )
 
         with client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             ws.send_json(
                 {
                     "jsonrpc": "2.0",
@@ -338,6 +344,7 @@ class TestServerIntegration:
     def test_client_functions_records_capabilities(self, client):
         """client_functions handshake should persist declared capabilities."""
         with client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             ws.send_json(
                 {
                     "jsonrpc": "2.0",
@@ -361,6 +368,7 @@ class TestServerIntegration:
     def test_get_agent_info_and_server_functions(self, client):
         """Expose agent metadata and registered server functions over RPC."""
         with client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             ws.send_json(
                 {
                     "jsonrpc": "2.0",
@@ -387,6 +395,7 @@ class TestServerIntegration:
     def test_get_user_history_returns_recent_messages(self, client):
         """get_user_history should surface latest user messages across sessions."""
         with client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             for idx, prompt in enumerate(["First", "Second"], start=1):
                 ws.send_json(
                     {
@@ -412,6 +421,7 @@ class TestServerIntegration:
     def test_invalid_session_id(self, client):
         """Test handling of invalid session ID."""
         with client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             # Get history for non-existent session
             ws.send_json(
                 {
@@ -422,7 +432,7 @@ class TestServerIntegration:
                 }
             )
 
-            resp = ws.receive_json()
+            resp = _wait_for_result(ws, 1)
             # Should return empty history
             assert resp["result"] == []
 
@@ -490,6 +500,7 @@ class TestStrictWorkspaceRootServerMode:
         """No default + no client-supplied value → JSON-RPC error, not a
         silent run anchored to the server process cwd."""
         with strict_client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             ws.send_json(
                 {
                     "jsonrpc": "2.0",
@@ -511,6 +522,7 @@ class TestStrictWorkspaceRootServerMode:
         every tool's RunContextWrapper)."""
         target = str(tmp_path / "workspace")
         with strict_client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             ws.send_json(
                 {
                     "jsonrpc": "2.0",
@@ -555,6 +567,7 @@ class TestStrictWorkspaceRootServerMode:
         the value."""
         target = str(tmp_path / "via_variables")
         with strict_client.websocket_connect("/ws") as ws:
+            perform_gui_handshake(ws)
             ws.send_json(
                 {
                     "jsonrpc": "2.0",

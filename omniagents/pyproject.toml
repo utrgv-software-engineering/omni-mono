@@ -146,6 +146,7 @@ dev = [
     "datamodel-code-generator==0.71.0",
     "pytest",
     "pytest-asyncio",
+    "pytest-timeout",
     "bump2version",
     "black",
     "coverage[toml]",
@@ -159,6 +160,10 @@ dev = [
 [tool.pytest.ini_options]
 addopts = "-ra"
 testpaths = ["tests"]
+# Fail loudly instead of hanging forever when a test blocks on I/O that
+# never arrives (e.g. a websocket receive waiting on a reply the server
+# will never send). No single test should legitimately take this long.
+timeout = 120
 
 [tool.coverage.run]
 branch = true
@@ -219,6 +224,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
+    "pytest-timeout",
     "vcrpy>=5.1.0",
 ]
 

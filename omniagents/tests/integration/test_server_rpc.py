@@ -1,4 +1,3 @@
-import asyncio
 import importlib
 from contextlib import ExitStack
 from fastapi.testclient import TestClient
@@ -6,6 +5,8 @@ from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
 from agents import Agent
 from omniagents.core.runtime import bridge as runner_bridge
+
+from tests.fixtures.gui_ws import perform_gui_handshake
 
 
 async def dummy_build_agent(settings, mcp, app):
@@ -18,7 +19,21 @@ async def fake_stream_agent(agent, prompt, sess, channel, max_turns=20):
     from omniagents.core.session import append_message
 
     append_message(sess.id, user_msg)
-    await channel.async_call("run_end", {"run_id": asyncio.current_task().get_name()})
+    # The service broadcasts run_end itself once the stream returns.
+
+
+def _wait_for_result(ws, target_id):
+    while True:
+        resp = ws.receive_json()
+        if resp.get("id") == target_id and ("result" in resp or "error" in resp):
+            return resp
+
+
+def _wait_for_method(ws, method_name):
+    while True:
+        message = ws.receive_json()
+        if message.get("method") == method_name:
+            return message
 
 
 def test_rpc_methods(monkeypatch):
@@ -34,6 +49,7 @@ def test_rpc_methods(monkeypatch):
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
+        perform_gui_handshake(ws)
         ws.send_json(
             {
                 "jsonrpc": "2.0",
@@ -42,15 +58,9 @@ def test_rpc_methods(monkeypatch):
                 "params": {"prompt": "hello"},
             }
         )
-        while True:
-            resp = ws.receive_json()
-            # Skip notifications (no id) such as run_started
-            if "id" not in resp:
-                continue
-            if resp.get("id") == 1 and "result" in resp:
-                break
+        resp = _wait_for_result(ws, 1)
         session_id = resp["result"]["session_id"]
-        ws.receive_json()  # run_end
+        _wait_for_method(ws, "run_end")
 
         ws.send_json(
             {
@@ -60,14 +70,14 @@ def test_rpc_methods(monkeypatch):
                 "params": {"session_id": session_id},
             }
         )
-        hist_resp = ws.receive_json()
+        hist_resp = _wait_for_result(ws, 2)
         hist = hist_resp["result"]
         assert hist[0]["content"] == "hello"
 
         ws.send_json(
             {"jsonrpc": "2.0", "id": 3, "method": "list_sessions", "params": {}}
         )
-        list_resp = ws.receive_json()
+        list_resp = _wait_for_result(ws, 3)
         sess_meta = list_resp["result"][0]
         assert sess_meta["id"] == session_id
         assert sess_meta["archived"] is False
@@ -80,13 +90,13 @@ def test_rpc_methods(monkeypatch):
                 "params": {"session_id": session_id},
             }
         )
-        arch_resp = ws.receive_json()
+        arch_resp = _wait_for_result(ws, 4)
         assert arch_resp["result"] is True
 
         ws.send_json(
             {"jsonrpc": "2.0", "id": 5, "method": "list_sessions", "params": {}}
         )
-        list_resp2 = ws.receive_json()
+        list_resp2 = _wait_for_result(ws, 5)
         sess_meta2 = list_resp2["result"][0]
         assert sess_meta2["archived"] is True
 
@@ -98,19 +108,13 @@ def test_rpc_methods(monkeypatch):
     app2 = server_app.build_app(spec=spec, default_workspace_root="/tmp")
     client2 = TestClient(app2)
     with client2.websocket_connect("/ws") as ws2:
+        perform_gui_handshake(ws2)
         ws2.send_json(
             {"jsonrpc": "2.0", "id": 6, "method": "list_sessions", "params": {}}
         )
-        list_resp3 = ws2.receive_json()
+        list_resp3 = _wait_for_result(ws2, 6)
         sess_meta3 = list_resp3["result"][0]
         assert sess_meta3["archived"] is True
-
-
-def _wait_for_result(ws, target_id):
-    while True:
-        resp = ws.receive_json()
-        if resp.get("id") == target_id and ("result" in resp or "error" in resp):
-            return resp
 
 
 def test_rpc_registry_rejects_helpers_and_keeps_connection_usable():
@@ -124,6 +128,7 @@ def test_rpc_registry_rejects_helpers_and_keeps_connection_usable():
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
+        perform_gui_handshake(ws)
         ws.send_json(
             {
                 "jsonrpc": "2.0",
@@ -166,6 +171,8 @@ def test_concurrent_websocket_connections(monkeypatch):
     with ExitStack() as stack:
         ws1 = stack.enter_context(client.websocket_connect("/ws"))
         ws2 = stack.enter_context(client.websocket_connect("/ws"))
+        perform_gui_handshake(ws1)
+        perform_gui_handshake(ws2)
 
         ws1.send_json(
             {
@@ -226,6 +233,7 @@ def test_connection_cleanup_resets_channel(monkeypatch):
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
+        perform_gui_handshake(ws)
         ws.send_json(
             {
                 "jsonrpc": "2.0",
