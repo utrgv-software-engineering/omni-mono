@@ -8,17 +8,22 @@ process_id cleared) while keeping running ones live.
 
 from __future__ import annotations
 
-import asyncio
+import pytest
 
-from agents.sandbox.manifest import Manifest
-from agents.sandbox.snapshot import resolve_snapshot
+pytest.importorskip("azure.identity")
+pytest.importorskip("azure.mgmt.containerinstance")
 
-from omniagents.core.sandbox.aci import (
+import asyncio  # noqa: E402
+
+from agents.sandbox.manifest import Manifest  # noqa: E402
+from agents.sandbox.snapshot import resolve_snapshot  # noqa: E402
+
+from omniagents.core.sandbox.aci import (  # noqa: E402
     AciSandboxSession,
     AciSandboxSessionState,
     _AciPtyEntry,
 )
-from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
+from omniagents.core.sandbox.pty_stream import coerce_pty_streaming  # noqa: E402
 
 
 class FakePtyChan:

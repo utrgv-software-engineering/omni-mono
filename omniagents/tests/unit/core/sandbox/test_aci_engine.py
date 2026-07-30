@@ -9,11 +9,16 @@ hitting a real subscription.
 
 from __future__ import annotations
 
-import asyncio
-import base64
-import re
+import pytest
 
-from omniagents.core.sandbox.aci_engine import (
+pytest.importorskip("azure.identity")
+pytest.importorskip("azure.mgmt.containerinstance")
+
+import asyncio  # noqa: E402
+import base64  # noqa: E402
+import re  # noqa: E402
+
+from omniagents.core.sandbox.aci_engine import (  # noqa: E402
     AciConfig,
     AciContainerSpec,
     AciExecChannel,

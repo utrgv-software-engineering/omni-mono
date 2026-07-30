@@ -10,17 +10,19 @@ production path (the SDK calls it from ``create``).
 
 from __future__ import annotations
 
-import asyncio
-import uuid
-from typing import Any
-from unittest.mock import MagicMock
-
 import pytest
 
-from agents.sandbox.manifest import Manifest
-from agents.sandbox.sandboxes.docker import DockerSandboxSessionState
-from agents.sandbox.snapshot import resolve_snapshot
-from omniagents.core.sandbox.docker_extended import (
+pytest.importorskip("docker")
+
+import asyncio  # noqa: E402
+import uuid  # noqa: E402
+from typing import Any  # noqa: E402
+from unittest.mock import MagicMock  # noqa: E402
+
+from agents.sandbox.manifest import Manifest  # noqa: E402
+from agents.sandbox.sandboxes.docker import DockerSandboxSessionState  # noqa: E402
+from agents.sandbox.snapshot import resolve_snapshot  # noqa: E402
+from omniagents.core.sandbox.docker_extended import (  # noqa: E402
     BindSpec,
     ExtendedDockerSandboxClient,
 )

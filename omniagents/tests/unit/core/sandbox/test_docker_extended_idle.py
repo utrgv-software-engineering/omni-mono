@@ -21,13 +21,17 @@ exercise only the wrappers we added.
 
 from __future__ import annotations
 
-import asyncio
-import time
-
 import pytest
 
-from agents.sandbox.sandboxes.docker import DockerSandboxSession
-from omniagents.core.sandbox.docker_extended import ExtendedDockerSandboxSession
+pytest.importorskip("docker")
+
+import asyncio  # noqa: E402
+import time  # noqa: E402
+
+from agents.sandbox.sandboxes.docker import DockerSandboxSession  # noqa: E402
+from omniagents.core.sandbox.docker_extended import (  # noqa: E402
+    ExtendedDockerSandboxSession,
+)
 
 
 def _make_session() -> ExtendedDockerSandboxSession:
