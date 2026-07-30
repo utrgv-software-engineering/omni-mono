@@ -23,6 +23,7 @@ import {
   useApproval,
   useMcpApproval,
   useEscalation,
+  useElicitation,
   useNotifications,
   useUsage,
   useSessionModel,
@@ -32,7 +33,11 @@ import {
   useBashJobs,
   useActions,
 } from "../store/appStore.js";
-import type { ApprovalInfo, McpApprovalInfo } from "../store/appStore.js";
+import type {
+  ApprovalInfo,
+  ElicitationInfo,
+  McpApprovalInfo,
+} from "../store/appStore.js";
 import { Header } from "./Header.js";
 import { Logo } from "./Logo.js";
 import { MessageListOptimized } from "./MessageListOptimized.js";
@@ -53,6 +58,11 @@ import { Wakeup } from "./Wakeup.js";
 import { Loop } from "./Loop.js";
 import { Recap } from "./Recap.js";
 import { EscalationBanner } from "./EscalationBanner.js";
+import { ElicitationBanner } from "./ElicitationBanner.js";
+import {
+  ElicitationDialog,
+  type ElicitationAnswer,
+} from "./ElicitationDialog.js";
 import { Notifications } from "./Notifications.js";
 import { resolveEscalation } from "../hooks/escalationBridge.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
@@ -119,6 +129,32 @@ const McpApprovalDialogWrapper = React.memo<{
 );
 
 /**
+ * Wrapper for the elicitation dialog. Question-kind prompts render as
+ * the ElicitationBanner (next user submit answers them) instead, so
+ * this wrapper only mounts for confirm/select/url/unsupported kinds.
+ */
+const ElicitationDialogWrapper = React.memo<{
+  elicitation: ElicitationInfo | null;
+  onRespond: (answer: ElicitationAnswer) => void;
+}>(
+  ({ elicitation, onRespond }) => {
+    if (!elicitation || elicitation.kind === "question") {
+      return null;
+    }
+    return (
+      <ElicitationDialog elicitation={elicitation} onRespond={onRespond} />
+    );
+  },
+  (prev, next) => {
+    if (prev.elicitation === next.elicitation) return true;
+    if (!prev.elicitation || !next.elicitation) return false;
+    return (
+      prev.elicitation.elicitation_id === next.elicitation.elicitation_id
+    );
+  },
+);
+
+/**
  * Inline "⠋ Thinking…" / status indicator rendered at the bottom of the
  * message transcript (above the dock panels). Reads its own subscriptions
  * so the parent doesn't have to re-render when thinking/status flips, and
@@ -158,11 +194,13 @@ const ScrollableMessageList: React.FC<{
   availableHeight: number;
   onApprove: (value: "yes" | "always" | "no") => void;
   onMcpApprove: (value: "yes" | "no") => void;
+  onElicit: (answer: ElicitationAnswer) => void;
   children?: React.ReactNode;
-}> = ({ availableHeight, onApprove, onMcpApprove, children }) => {
+}> = ({ availableHeight, onApprove, onMcpApprove, onElicit, children }) => {
   const messages = useMessages();
   const approval = useApproval();
   const mcpApproval = useMcpApproval();
+  const elicitation = useElicitation();
   const preamble = usePreamble();
   const contentVersion = messages.length;
   return (
@@ -197,6 +235,13 @@ const ScrollableMessageList: React.FC<{
           <McpApprovalDialogWrapper
             approval={mcpApproval}
             onApprove={onMcpApprove}
+          />
+        )}
+
+        {elicitation && elicitation.kind !== "question" && (
+          <ElicitationDialogWrapper
+            elicitation={elicitation}
+            onRespond={onElicit}
           />
         )}
       </Box>
@@ -306,6 +351,7 @@ export const App: React.FC<AppProps> = ({
   const approval = useApproval();
   const mcpApproval = useMcpApproval();
   const escalation = useEscalation();
+  const elicitation = useElicitation();
   const notifications = useNotifications();
   const usage = useUsage();
   const sessionModel = useSessionModel();
@@ -471,7 +517,7 @@ export const App: React.FC<AppProps> = ({
   const [waitingForSecondCtrlC, setWaitingForSecondCtrlC] = useState(false);
 
   // Setup message handlers with batching
-  const { approveToolCall, approveMcpToolCall, cancelRun } =
+  const { approveToolCall, approveMcpToolCall, respondElicitation, cancelRun } =
     useMessagesOptimized({
       client,
       sessionId: sessionId ?? initialSessionId,
@@ -643,6 +689,16 @@ export const App: React.FC<AppProps> = ({
     [approveMcpToolCall],
   );
 
+  // Structured user elicitation — dialog answers (confirm/select/url and
+  // typed declines for unsupported kinds) route straight through; the
+  // question kind is answered by the submit interceptor below.
+  const handleElicitation = useCallback(
+    (answer: ElicitationAnswer) => {
+      respondElicitation(answer);
+    },
+    [respondElicitation],
+  );
+
   // Handle slash commands
   const handleSlashCommand = useCallback(
     async (cmd: string): Promise<{ sendToLLM: boolean; result?: string }> => {
@@ -780,6 +836,28 @@ export const App: React.FC<AppProps> = ({
         return;
       }
 
+      // Elicitation interception (question kind): the banner told the
+      // user their next message is the answer — send it back as
+      // ``elicitation_response(accept, {text})`` instead of starting a
+      // new run. Slash commands still pass through, mirroring the
+      // escalation opt-out above.
+      if (
+        elicitation &&
+        elicitation.kind === "question" &&
+        !message.startsWith("/")
+      ) {
+        actions.addMessage({
+          role: "user",
+          content: message,
+          timestamp: new Date(),
+        });
+        await respondElicitation({
+          action: "accept",
+          value: { text: message },
+        });
+        return;
+      }
+
       // Check for slash command
       if (message.startsWith("/")) {
         const { sendToLLM, result } = await handleSlashCommand(message);
@@ -863,6 +941,8 @@ export const App: React.FC<AppProps> = ({
       thinking,
       queuedMessages.length,
       escalation,
+      elicitation,
+      respondElicitation,
       actions,
     ],
   );
@@ -1104,6 +1184,7 @@ export const App: React.FC<AppProps> = ({
               availableHeight={availableTerminalHeight}
               onApprove={handleApproval}
               onMcpApprove={handleMcpApproval}
+              onElicit={handleElicitation}
             >
               <Goal />
               <Wakeup />
@@ -1139,6 +1220,7 @@ export const App: React.FC<AppProps> = ({
                 }}
               />
               <EscalationBanner />
+              <ElicitationBanner />
             </ScrollableMessageList>
           </Box>
 

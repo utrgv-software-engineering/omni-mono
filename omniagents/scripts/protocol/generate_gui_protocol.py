@@ -8,7 +8,9 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-OPERATIONS = run_path(str(ROOT / "omniagents/rpc/protocol_catalog.py"))["OPERATIONS"]
+_CATALOG = run_path(str(ROOT / "omniagents/rpc/protocol_catalog.py"))
+OPERATIONS = _CATALOG["OPERATIONS"]
+CORRELATED_NOTIFICATIONS = _CATALOG["CORRELATED_NOTIFICATIONS"]
 OPENRPC_PATH = ROOT / "protocol/openrpc/omniagents-gui-v1.json"
 SCHEMA_PATH = ROOT / "protocol/openrpc/schemas/gui-v1.schema.json"
 PYTHON_PATH = ROOT / "omniagents/rpc/generated/gui_v1/models.py"
@@ -87,6 +89,9 @@ REQUIRED_FIELDS = {
     "mcp_approval_resolved": ("request_id",),
     "client_request": ("request_id", "function", "args"),
     "client_request_resolved": ("request_id",),
+    "elicitation_response": ("elicitation_id", "action"),
+    "elicitation_requested": ("elicitation_id", "kind", "message"),
+    "elicitation_resolved": ("elicitation_id", "status"),
     "queue_changed": ("session_id", "depth", "items"),
     "session_forked": ("session_id", "new_session_id"),
     "session_variables_changed": ("session_id", "changed", "variables"),
@@ -156,6 +161,21 @@ OPTIONAL_FIELDS = {
     "mcp_approval_resolved": ("session_id", "reason"),
     "client_request": ("session_id", "idempotency_key", "run_id"),
     "client_request_resolved": ("session_id", "reason"),
+    "elicitation_response": ("value", "reason"),
+    "elicitation_requested": (
+        "title",
+        "input_schema",
+        "options",
+        "url",
+        "session_id",
+        "run_id",
+        "item_id",
+        "source",
+        "timeout_ms",
+        "expires_at",
+        "persist_response",
+    ),
+    "elicitation_resolved": ("session_id", "run_id", "action", "value", "reason"),
     "resume_session": ("stream_id", "after_seq"),
     "list_models": ("include_hidden", "modality", "session_id"),
     "account_login_start": ("api_key", "redirect_uri"),
@@ -171,13 +191,20 @@ for _operation in OPERATIONS:
             tuple(OPTIONAL_FIELDS.get(_operation.name, ())) + REPLAY_ENVELOPE_FIELDS
         )
 
-ARRAY_FIELDS = {"disable_mcp_servers", "disable_tools", "functions", "items"}
+ARRAY_FIELDS = {
+    "disable_mcp_servers",
+    "disable_tools",
+    "functions",
+    "items",
+    "options",
+}
 BOOLEAN_FIELDS = {
     "always_approve",
     "hold",
     "include_archived",
     "include_hidden",
     "ok",
+    "persist_response",
     "redact",
     "trigger_run",
 }
@@ -191,6 +218,7 @@ INTEGER_FIELDS = {
     "next_delay",
     "offset",
     "seq",
+    "timeout_ms",
     "total",
     "turn",
     "version",
@@ -202,12 +230,14 @@ OBJECT_FIELDS = {
     "context",
     "delta",
     "error",
+    "input_schema",
     "metadata",
     "result",
     "safe_tool_overrides",
     "totals",
     "updates",
     "usage",
+    "value",
     "variables",
 }
 
@@ -260,6 +290,7 @@ RESULT_TYPES = {
     "account_refresh": ("dict[str, Any]", "Record<string, unknown>"),
     "account_usage": ("dict[str, Any]", "Record<string, unknown>"),
     "account_select": ("dict[str, Any]", "Record<string, unknown>"),
+    "elicitation_response": ("dict[str, Any]", "Record<string, unknown>"),
 }
 
 IDENTITY_SCHEMA = {
@@ -473,6 +504,47 @@ PROTOCOL_ERRORS = {
             },
         },
     },
+    "ElicitationNotFound": {
+        "code": -32050,
+        "message": "Elicitation not found",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "elicitation_id"],
+            "properties": {
+                "kind": {"const": "elicitation_not_found"},
+                "elicitation_id": {"type": "string"},
+            },
+        },
+    },
+    "ElicitationAlreadyResolved": {
+        "code": -32051,
+        "message": "Elicitation already resolved",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "elicitation_id", "status"],
+            "properties": {
+                "kind": {"const": "elicitation_already_resolved"},
+                "elicitation_id": {"type": "string"},
+                "status": {"type": "string"},
+            },
+        },
+    },
+    "ElicitationInvalidResponse": {
+        "code": -32052,
+        "message": "Elicitation response invalid",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "elicitation_id", "errors"],
+            "properties": {
+                "kind": {"const": "elicitation_invalid_response"},
+                "elicitation_id": {"type": "string"},
+                "errors": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
     "TransportOverloaded": {
         "code": -32020,
         "message": "Transport overloaded",
@@ -578,6 +650,14 @@ def build_openrpc() -> dict:
                 )
             if operation.name in ("resume_session", "ack_events"):
                 entry["errors"].append({"$ref": "#/components/errors/ResyncRequired"})
+            if operation.name == "elicitation_response":
+                entry["errors"].extend(
+                    [
+                        {"$ref": "#/components/errors/ElicitationNotFound"},
+                        {"$ref": "#/components/errors/ElicitationAlreadyResolved"},
+                        {"$ref": "#/components/errors/ElicitationInvalidResponse"},
+                    ]
+                )
             if operation.name.startswith("account_"):
                 entry["errors"].extend(
                     [
@@ -587,10 +667,7 @@ def build_openrpc() -> dict:
                     ]
                 )
         if operation.kind == "correlated_notification":
-            entry["x-omni-correlation"] = {
-                "requestField": "request_id",
-                "responseMethod": "client_response",
-            }
+            entry["x-omni-correlation"] = dict(CORRELATED_NOTIFICATIONS[operation.name])
         methods.append(entry)
     return {
         "openrpc": "1.3.2",

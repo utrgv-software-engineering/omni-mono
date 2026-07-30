@@ -551,6 +551,16 @@ export class RPCClient {
     return this.call('mcp_approval_response', params as unknown as RpcMethodMap['mcp_approval_response']['params'])
   }
 
+  // Structured user elicitation (protocol.md § "User Elicitation Flow").
+  // First response across tabs wins; the server answers duplicates with
+  // the typed -32051 elicitation_already_resolved error.
+  async elicitationResponse(elicitationId: string, action: 'accept' | 'decline' | 'cancel', value?: Record<string, unknown>, reason?: string): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { elicitation_id: elicitationId, action }
+    if (value !== undefined) params.value = value
+    if (reason) params.reason = reason
+    return this.call('elicitation_response', params as unknown as RpcMethodMap['elicitation_response']['params']) as Promise<Record<string, unknown>>
+  }
+
   async listServerFunctions(): Promise<Array<{ name: string; description?: string; params_schema?: Record<string, unknown>; result_schema?: Record<string, unknown> }>> {
     return this.call('list_server_functions') as Promise<Array<{ name: string; description?: string; params_schema?: Record<string, unknown>; result_schema?: Record<string, unknown> }>>
   }

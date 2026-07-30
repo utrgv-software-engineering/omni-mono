@@ -24,7 +24,9 @@
       "client_request",
       "client_request_resolved",
       "queue_changed",
-      "account_changed"
+      "account_changed",
+      "elicitation_requested",
+      "elicitation_resolved"
     ]
   },
   "requests": {
@@ -78,7 +80,8 @@
       "account_logout",
       "account_refresh",
       "account_usage",
-      "account_select"
+      "account_select",
+      "elicitation_response"
     ]
   },
   "router_mode": "generated_request_allowlist",

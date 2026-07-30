@@ -2,6 +2,7 @@ from .artifacts import display_artifact
 from .bash_tool import bash_kill, bash_logs, bash_status, execute_bash
 from .convert_to_markdown import convert_to_markdown
 from .download_file import download_file
+from .elicit import ask_user
 from .file_tools import (
     glob_files,
     grep_files,
@@ -58,6 +59,7 @@ __all__ = [
     "cancel_wakeup",
     "notify",
     "escalate",
+    "ask_user",
     "read_image",
     "scholar_search",
     "load_skill",

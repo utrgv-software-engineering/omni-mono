@@ -376,6 +376,128 @@
       "type": "object",
       "x-omni-stability": "experimental"
     },
+    "elicitation_requested": {
+      "additionalProperties": false,
+      "properties": {
+        "elicitation_id": {
+          "type": "string"
+        },
+        "expires_at": {
+          "type": "string"
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "options": {
+          "items": {},
+          "type": "array"
+        },
+        "persist_response": {
+          "type": "boolean"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        },
+        "timeout_ms": {
+          "type": "integer"
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "elicitation_id",
+        "kind",
+        "message"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "elicitation_resolved": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "elicitation_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        },
+        "value": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "elicitation_id",
+        "status"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "elicitation_response": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "elicitation_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "value": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "elicitation_id",
+        "action"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "enqueue_message": {
       "additionalProperties": false,
       "properties": {
@@ -1563,6 +1685,9 @@
       "$ref": "#/$defs/account_select"
     },
     {
+      "$ref": "#/$defs/elicitation_response"
+    },
+    {
       "$ref": "#/$defs/fork_session"
     },
     {
@@ -1648,6 +1773,12 @@
     },
     {
       "$ref": "#/$defs/account_changed"
+    },
+    {
+      "$ref": "#/$defs/elicitation_requested"
+    },
+    {
+      "$ref": "#/$defs/elicitation_resolved"
     },
     {
       "$ref": "#/$defs/session_forked"

@@ -487,6 +487,34 @@ export class RPCClient extends EventEmitter {
   }
 
   /**
+   * Respond to an elicitation_requested event (structured user
+   * elicitation — protocol.md § "User Elicitation Flow"). First response
+   * across connected clients wins; duplicates reject with the typed
+   * -32051 elicitation_already_resolved error.
+   */
+  async elicitationResponse(
+    elicitationId: string,
+    action: "accept" | "decline" | "cancel",
+    value?: Record<string, unknown>,
+    reason?: string,
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {
+      elicitation_id: elicitationId,
+      action,
+    };
+    if (value !== undefined) {
+      params.value = value;
+    }
+    if (reason) {
+      params.reason = reason;
+    }
+    return (await this.call(
+      "elicitation_response",
+      params as unknown as RpcMethodMap["elicitation_response"]["params"],
+    )) as Record<string, unknown>;
+  }
+
+  /**
    * Respond to a tool_approval_requested event (SDK 0.16 interruption flow).
    */
   async toolApprovalResponse(
@@ -1005,6 +1033,12 @@ export class RPCClient extends EventEmitter {
         break;
       case "mcp_approval_resolved":
         this.emit("mcp_approval_resolved", event.params);
+        break;
+      case "elicitation_requested":
+        this.emit("elicitation_requested", event.params);
+        break;
+      case "elicitation_resolved":
+        this.emit("elicitation_resolved", event.params);
         break;
       case "queue_changed":
         this.emit("queue_changed", event.params);

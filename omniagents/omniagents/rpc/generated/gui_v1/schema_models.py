@@ -181,6 +181,53 @@ class DisableTool(BaseModel):
     tool_name: str
 
 
+class ElicitationRequested(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    elicitation_id: str
+    expires_at: str | None = None
+    input_schema: dict[str, Any] | None = None
+    item_id: str | None = None
+    kind: str
+    message: str
+    options: list[Any] | None = None
+    persist_response: bool | None = None
+    run_id: str | None = None
+    seq: int | None = None
+    session_id: str | None = None
+    source: str | None = None
+    stream_id: str | None = None
+    timeout_ms: int | None = None
+    title: str | None = None
+    url: str | None = None
+
+
+class ElicitationResolved(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    action: str | None = None
+    elicitation_id: str
+    reason: str | None = None
+    run_id: str | None = None
+    seq: int | None = None
+    session_id: str | None = None
+    status: str
+    stream_id: str | None = None
+    value: dict[str, Any] | None = None
+
+
+class ElicitationResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    action: str
+    elicitation_id: str
+    reason: str | None = None
+    value: dict[str, Any] | None = None
+
+
 class EnqueueMessage(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -711,6 +758,7 @@ class Model(
         | AccountRefresh
         | AccountUsage
         | AccountSelect
+        | ElicitationResponse
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -740,6 +788,8 @@ class Model(
         | ClientRequestResolved
         | QueueChanged
         | AccountChanged
+        | ElicitationRequested
+        | ElicitationResolved
         | SessionForked
         | SessionVariablesChanged
     ]
@@ -780,6 +830,7 @@ class Model(
         | AccountRefresh
         | AccountUsage
         | AccountSelect
+        | ElicitationResponse
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -809,6 +860,8 @@ class Model(
         | ClientRequestResolved
         | QueueChanged
         | AccountChanged
+        | ElicitationRequested
+        | ElicitationResolved
         | SessionForked
         | SessionVariablesChanged
     )

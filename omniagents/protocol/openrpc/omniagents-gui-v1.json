@@ -174,6 +174,77 @@
         },
         "message": "Capability mismatch"
       },
+      "ElicitationAlreadyResolved": {
+        "code": -32051,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "elicitation_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "elicitation_already_resolved"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "elicitation_id",
+            "status"
+          ],
+          "type": "object"
+        },
+        "message": "Elicitation already resolved"
+      },
+      "ElicitationInvalidResponse": {
+        "code": -32052,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "elicitation_id": {
+              "type": "string"
+            },
+            "errors": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "elicitation_invalid_response"
+            }
+          },
+          "required": [
+            "kind",
+            "elicitation_id",
+            "errors"
+          ],
+          "type": "object"
+        },
+        "message": "Elicitation response invalid"
+      },
+      "ElicitationNotFound": {
+        "code": -32050,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "elicitation_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "elicitation_not_found"
+            }
+          },
+          "required": [
+            "kind",
+            "elicitation_id"
+          ],
+          "type": "object"
+        },
+        "message": "Elicitation not found"
+      },
       "InitializationRequired": {
         "code": -32010,
         "data": {
@@ -2307,6 +2378,82 @@
         },
         {
           "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ElicitationNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ElicitationAlreadyResolved"
+        },
+        {
+          "$ref": "#/components/errors/ElicitationInvalidResponse"
+        }
+      ],
+      "name": "elicitation_response",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "elicitation_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_response/properties/elicitation_id"
+          }
+        },
+        {
+          "name": "action",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_response/properties/action"
+          }
+        },
+        {
+          "name": "value",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_response/properties/value"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_response/properties/reason"
+          }
+        }
+      ],
+      "result": {
+        "name": "elicitation_response_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation elicitation_response",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_response"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
         }
       ],
       "name": "fork_session",
@@ -4022,6 +4169,223 @@
       "x-omni-kind": "notification",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/account_changed"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "name": "elicitation_requested",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "elicitation_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/elicitation_id"
+          }
+        },
+        {
+          "name": "kind",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/kind"
+          }
+        },
+        {
+          "name": "message",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/message"
+          }
+        },
+        {
+          "name": "title",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/title"
+          }
+        },
+        {
+          "name": "input_schema",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/input_schema"
+          }
+        },
+        {
+          "name": "options",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/options"
+          }
+        },
+        {
+          "name": "url",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/url"
+          }
+        },
+        {
+          "name": "session_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/session_id"
+          }
+        },
+        {
+          "name": "run_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/run_id"
+          }
+        },
+        {
+          "name": "item_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/item_id"
+          }
+        },
+        {
+          "name": "source",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/source"
+          }
+        },
+        {
+          "name": "timeout_ms",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/timeout_ms"
+          }
+        },
+        {
+          "name": "expires_at",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/expires_at"
+          }
+        },
+        {
+          "name": "persist_response",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/persist_response"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "elicitation_requested_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation elicitation_requested",
+      "x-omni-correlation": {
+        "requestField": "elicitation_id",
+        "responseMethod": "elicitation_response"
+      },
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "correlated_notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_requested"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "name": "elicitation_resolved",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "elicitation_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/elicitation_id"
+          }
+        },
+        {
+          "name": "status",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/status"
+          }
+        },
+        {
+          "name": "session_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/session_id"
+          }
+        },
+        {
+          "name": "run_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/run_id"
+          }
+        },
+        {
+          "name": "action",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/action"
+          }
+        },
+        {
+          "name": "value",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/value"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/reason"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "elicitation_resolved_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation elicitation_resolved",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved"
       },
       "x-omni-stability": "stable"
     },

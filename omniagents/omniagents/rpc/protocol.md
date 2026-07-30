@@ -571,6 +571,124 @@ The server returns `true` if the approval was matched to a pending request and `
 
 Broadcast to every connected channel for the session as soon as an `mcp_approval_response` is accepted, mirroring `tool_approval_resolved` for function tools. Clients should dismiss any visible MCP approval dialog for the matching `request_id`.
 
+## User Elicitation Flow
+
+Structured user elicitation is the general, non-security input lane: agents, tools, and server-side integrations request a decision or piece of information from the user through a consistent GUI contract. It is deliberately parallel to — never a substitute for — the approval flows above: approvals gate execution and feed the audit trail; elicitations gather ordinary input. Nothing answered through an elicitation can approve a tool call, and approvals are never rerouted through this lane. The lanes share plumbing where honest: correlation ids, the durable replay journal, first-response-wins across tabs, and run-scoped clearing.
+
+Server-side callers use `AgentService.request_elicitation(session=..., kind=..., message=..., ...)`; agents get the `ask_user` builtin tool (question / confirm / select). Consumers that need structured forms or URL actions (e.g. MCP-server management) call `request_elicitation` with `kind="form"` / `kind="url"`.
+
+### elicitation_requested (server → client, correlated notification)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "elicitation_requested",
+  "params": {
+    "elicitation_id": "elc_abc123",
+    "kind": "form",
+    "title": "Database connection",
+    "message": "Enter the connection details for the staging database.",
+    "input_schema": {
+      "type": "object",
+      "required": ["host"],
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer" }
+      }
+    },
+    "session_id": "sess_123",
+    "run_id": "run_456",
+    "item_id": "call_789",
+    "source": "tool",
+    "timeout_ms": 300000,
+    "expires_at": "2026-07-30T21:00:00Z",
+    "persist_response": false,
+    "seq": 17,
+    "stream_id": "d41d8cd9"
+  }
+}
+```
+
+Fields:
+- `elicitation_id` (string, required): correlation id, echoed in `elicitation_response` and `elicitation_resolved`.
+- `kind` (string, required): one of `question` (free text), `confirm` (yes/no), `select` (choose among `options`), `form` (structured fields described by `input_schema`), `url` (complete an action at an external URL).
+- `message` (string, required): the human-readable prompt. `title` (string, optional) is a short heading.
+- `input_schema` (object, optional): JSON Schema (draft 2020-12) the accepted value must satisfy. Primarily used by `form`; clients validate before submitting and the server re-validates.
+- `options` (array, optional): the choices for `select`. Entries are open records, conventionally `{ "value": ..., "label": "...", "description": "..." }`; bare strings are also accepted. Values submitted back must come from the offered `value`s.
+- `url` (string, optional): the action URL for `kind: "url"`.
+- `session_id` / `run_id` / `item_id` (optional): correlation to the session, the run that asked, and the originating conversation item (e.g. the tool `call_id`).
+- `source` (string, optional): who is asking — `"agent"`, `"tool"`, or an integration-defined label.
+- `timeout_ms` / `expires_at` (optional): expiry. When the deadline passes unanswered the server resolves the prompt itself with `status: "expired"`.
+- `persist_response` (bool, optional, default false): whether the accepted value may enter durable, replayable history (see `elicitation_resolved`).
+- `seq` / `stream_id`: the standard replay envelope. Elicitation prompts and resolutions are journaled like every replayable event: a client that reconnects mid-prompt receives the pending `elicitation_requested` via `resume_session` (or the live-state replay in `get_session_history`), and a prompt whose backing process died is closed out with a synthetic `elicitation_resolved` (`status: "server_restart"`).
+
+Value conventions for `accept` responses, by kind:
+
+| kind | accepted `value` |
+| --- | --- |
+| `question` | `{ "text": "..." }` (non-empty) |
+| `confirm` | `{ "confirmed": true \| false }` |
+| `select` | `{ "selected": [<option value>, ...] }` |
+| `form` | object satisfying `input_schema` |
+| `url` | optional acknowledgement object (e.g. `{ "completed": true }`) |
+
+Clients that cannot render a kind or schema MUST decline (`action: "decline"`, ideally with a `reason` like `"unsupported_by_client"`) rather than crash or ignore the prompt.
+
+### elicitation_response (client → server)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "elicitation_response",
+  "params": {
+    "elicitation_id": "elc_abc123",
+    "action": "accept",
+    "value": { "host": "db.staging.internal", "port": 5432 }
+  }
+}
+```
+
+Fields:
+- `elicitation_id` (string, required): from the matching `elicitation_requested`.
+- `action` (string, required): `"accept"` (with `value`), `"decline"` (user or client refused), or `"cancel"` (dismissed without answering).
+- `value` (object, optional): the submitted content, per the kind conventions above.
+- `reason` (string, optional): free-text context for declines/cancels (`"unsupported_by_client"`, `"not now"`, ...).
+
+Result: `{ "elicitation_id": "...", "status": "accepted" | "declined" | "cancelled" }`.
+
+The first response from any connected tab wins. Errors are typed:
+- `-32050` `elicitation_not_found` — unknown id (never issued, or evicted long after resolution).
+- `-32051` `elicitation_already_resolved` — duplicate response; `data.status` carries the winning status. Late answers after expiry or cancellation land here too.
+- `-32052` `elicitation_invalid_response` — the response violates the request contract (`data.errors` lists the problems, including `input_schema` validation failures). The prompt stays pending and answerable.
+- `-32014` `authorization_denied` — in multi-user deployments, answering another user's elicitation (or probing unknown ids) is denied by session ownership, exactly like `tool_approval_response`.
+
+### elicitation_resolved (server → client)
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "elicitation_resolved",
+  "params": {
+    "elicitation_id": "elc_abc123",
+    "session_id": "sess_123",
+    "run_id": "run_456",
+    "status": "accepted",
+    "action": "accept",
+    "value": { "host": "db.staging.internal", "port": 5432 },
+    "seq": 18,
+    "stream_id": "d41d8cd9"
+  }
+}
+```
+
+Broadcast (and journaled) for every terminal transition so all tabs converge:
+- `status` (required): `accepted`, `declined`, `cancelled` (run ended / dismissed), `expired` (deadline passed), or `server_restart` (synthetic closure after process death).
+- `action` / `reason` (optional): the responder's action and context, when there was one.
+- `value` (optional): present **only when the request set `persist_response: true`**. Sensitive answers (flagged `false`, the default) are returned to the in-process requester but never appear in the journal, in replayed history, or in this broadcast.
+
+Pending elicitations always clear on run cancellation/termination: the run-end path terminal-resolves every open prompt for the session with `status: "cancelled"` before clearing live state, so replaying clients see a resolution rather than a dangling prompt.
+
 ## Client Functions (optional)
 
 Client Functions enable server-initiated calls to client-provided capabilities. This allows richer UIs and local integrations (e.g., rendering artifacts, file pickers, status updates) while keeping the server stateless.

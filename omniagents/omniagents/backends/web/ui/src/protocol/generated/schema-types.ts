@@ -34,6 +34,7 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | AccountRefresh
   | AccountUsage
   | AccountSelect
+  | ElicitationResponse
   | ForkSession
   | SetSessionHold
   | QueueStatus
@@ -63,6 +64,8 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ClientRequestResolved
   | QueueChanged
   | AccountChanged
+  | ElicitationRequested
+  | ElicitationResolved
   | SessionForked
   | SessionVariablesChanged;
 
@@ -241,6 +244,14 @@ export interface AccountUsage {
 }
 export interface AccountSelect {
   provider: string;
+}
+export interface ElicitationResponse {
+  action: string;
+  elicitation_id: string;
+  reason?: string;
+  value?: {
+    [k: string]: unknown;
+  };
 }
 export interface ForkSession {
   new_session_id?: string;
@@ -453,6 +464,39 @@ export interface AccountChanged {
   reason: string;
   seq?: number;
   stream_id?: string;
+}
+export interface ElicitationRequested {
+  elicitation_id: string;
+  expires_at?: string;
+  input_schema?: {
+    [k: string]: unknown;
+  };
+  item_id?: string;
+  kind: string;
+  message: string;
+  options?: unknown[];
+  persist_response?: boolean;
+  run_id?: string;
+  seq?: number;
+  session_id?: string;
+  source?: string;
+  stream_id?: string;
+  timeout_ms?: number;
+  title?: string;
+  url?: string;
+}
+export interface ElicitationResolved {
+  action?: string;
+  elicitation_id: string;
+  reason?: string;
+  run_id?: string;
+  seq?: number;
+  session_id?: string;
+  status: string;
+  stream_id?: string;
+  value?: {
+    [k: string]: unknown;
+  };
 }
 export interface SessionForked {
   new_session_id: string;

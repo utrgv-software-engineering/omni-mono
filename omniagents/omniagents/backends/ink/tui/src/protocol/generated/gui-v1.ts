@@ -150,6 +150,12 @@ export interface AccountUsageParams {
 export interface AccountSelectParams {
   provider: string;
 }
+export interface ElicitationResponseParams {
+  elicitation_id: string;
+  action: string;
+  value?: Record<string, unknown>;
+  reason?: string;
+}
 export interface ForkSessionParams {
   session_id: string;
   new_session_id?: string;
@@ -340,6 +346,35 @@ export interface AccountChangedParams {
   seq?: number;
   stream_id?: string;
 }
+export interface ElicitationRequestedParams {
+  elicitation_id: string;
+  kind: string;
+  message: string;
+  title?: string;
+  input_schema?: Record<string, unknown>;
+  options?: unknown[];
+  url?: string;
+  session_id?: string;
+  run_id?: string;
+  item_id?: string;
+  source?: string;
+  timeout_ms?: number;
+  expires_at?: string;
+  persist_response?: boolean;
+  seq?: number;
+  stream_id?: string;
+}
+export interface ElicitationResolvedParams {
+  elicitation_id: string;
+  status: string;
+  session_id?: string;
+  run_id?: string;
+  action?: string;
+  value?: Record<string, unknown>;
+  reason?: string;
+  seq?: number;
+  stream_id?: string;
+}
 export interface SessionForkedParams {
   session_id: string;
   new_session_id: string;
@@ -389,6 +424,7 @@ export interface RpcMethodMap {
   "account_refresh": { params: AccountRefreshParams; result: Record<string, unknown> };
   "account_usage": { params: AccountUsageParams; result: Record<string, unknown> };
   "account_select": { params: AccountSelectParams; result: Record<string, unknown> };
+  "elicitation_response": { params: ElicitationResponseParams; result: Record<string, unknown> };
   "fork_session": { params: ForkSessionParams; result: Record<string, unknown> };
   "set_session_hold": { params: SetSessionHoldParams; result: Record<string, unknown> };
   "queue_status": { params: QueueStatusParams; result: Record<string, unknown> };
@@ -419,6 +455,8 @@ export interface RpcNotificationMap {
   "client_request_resolved": ClientRequestResolvedParams;
   "queue_changed": QueueChangedParams;
   "account_changed": AccountChangedParams;
+  "elicitation_requested": ElicitationRequestedParams;
+  "elicitation_resolved": ElicitationResolvedParams;
   "session_forked": SessionForkedParams;
   "session_variables_changed": SessionVariablesChangedParams;
 }

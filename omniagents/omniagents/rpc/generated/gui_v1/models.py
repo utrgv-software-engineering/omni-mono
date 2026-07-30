@@ -399,6 +399,18 @@ class AccountSelectResult(RootModel[dict[str, Any]]):
     pass
 
 
+class ElicitationResponseParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    elicitation_id: str
+    action: str
+    value: dict[str, Any] | None = None
+    reason: str | None = None
+
+
+class ElicitationResponseResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class ForkSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -701,6 +713,39 @@ class AccountChangedParams(BaseModel):
     stream_id: str | None = None
 
 
+class ElicitationRequestedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    elicitation_id: str
+    kind: str
+    message: str
+    title: str | None = None
+    input_schema: dict[str, Any] | None = None
+    options: list[Any] | None = None
+    url: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    item_id: str | None = None
+    source: str | None = None
+    timeout_ms: int | None = None
+    expires_at: str | None = None
+    persist_response: bool | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
+class ElicitationResolvedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    elicitation_id: str
+    status: str
+    session_id: str | None = None
+    run_id: str | None = None
+    action: str | None = None
+    value: dict[str, Any] | None = None
+    reason: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
 class SessionForkedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -754,6 +799,7 @@ CLIENT_REQUEST_MODELS = {
     "account_refresh": AccountRefreshParams,
     "account_usage": AccountUsageParams,
     "account_select": AccountSelectParams,
+    "elicitation_response": ElicitationResponseParams,
     "fork_session": ForkSessionParams,
     "set_session_hold": SetSessionHoldParams,
     "queue_status": QueueStatusParams,
@@ -804,6 +850,7 @@ CLIENT_RESULT_MODELS = {
     "account_refresh": AccountRefreshResult,
     "account_usage": AccountUsageResult,
     "account_select": AccountSelectResult,
+    "elicitation_response": ElicitationResponseResult,
     "fork_session": ForkSessionResult,
     "set_session_hold": SetSessionHoldResult,
     "queue_status": QueueStatusResult,
@@ -835,6 +882,8 @@ SERVER_NOTIFICATION_MODELS = {
     "client_request_resolved": ClientRequestResolvedParams,
     "queue_changed": QueueChangedParams,
     "account_changed": AccountChangedParams,
+    "elicitation_requested": ElicitationRequestedParams,
+    "elicitation_resolved": ElicitationResolvedParams,
     "session_forked": SessionForkedParams,
     "session_variables_changed": SessionVariablesChangedParams,
 }
@@ -875,6 +924,7 @@ STABLE_REQUESTS = frozenset(
         "account_refresh",
         "account_usage",
         "account_select",
+        "elicitation_response",
     ]
 )
 EXPERIMENTAL_REQUESTS = frozenset(
@@ -912,6 +962,8 @@ STABLE_NOTIFICATIONS = frozenset(
         "client_request_resolved",
         "queue_changed",
         "account_changed",
+        "elicitation_requested",
+        "elicitation_resolved",
     ]
 )
 EXPERIMENTAL_NOTIFICATIONS = frozenset(["session_forked", "session_variables_changed"])

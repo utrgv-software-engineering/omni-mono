@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Header } from './components/Header'
 import { ModelPicker } from './components/ModelPicker'
-import { MessageList, type ApprovalItem, type ChatMessage, type McpApprovalItem, type MessageItem } from './components/MessageList'
+import { MessageList, type ApprovalItem, type ChatMessage, type ElicitationItem, type McpApprovalItem, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
 import { Tasks, type TaskSummary } from './components/Tasks'
 import { Notifications, type NotificationInfo } from './components/Notifications'
@@ -116,6 +116,7 @@ export function App() {
   const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
   const pendingApprovalsRef = useRef(new Map<string, ApprovalItem>())
   const pendingMcpApprovalsRef = useRef(new Map<string, McpApprovalItem>())
+  const pendingElicitationsRef = useRef(new Map<string, ElicitationItem>())
   const urlSessionHandledRef = useRef(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [artifactsPanelOpen, setArtifactsPanelOpen] = useState(false)
@@ -186,6 +187,12 @@ export function App() {
       const itemSession = item.session_id
       if (itemSession && itemSession !== targetSession) continue
       const exists = base.some(existing => existing.type === 'mcp_approval' && existing.request_id === item.request_id)
+      if (!exists) additions.push(item)
+    }
+    for (const item of pendingElicitationsRef.current.values()) {
+      const itemSession = item.session_id
+      if (itemSession && itemSession !== targetSession) continue
+      const exists = base.some(existing => existing.type === 'elicitation' && existing.elicitation_id === item.elicitation_id)
       if (!exists) additions.push(item)
     }
     return additions.length ? [...base, ...additions] : base
@@ -718,8 +725,49 @@ export function App() {
       }
     })
 
+    // Structured user elicitation — the non-security input lane
+    // (protocol.md § "User Elicitation Flow"). Prompts render as real
+    // input cards in the transcript; the first response across tabs wins
+    // and elicitation_resolved dismisses the card everywhere.
+    const offElicitationRequested = client.on('elicitation_requested', (p) => {
+      const elicitation_id = String(p?.elicitation_id ?? '')
+      if (!elicitation_id) return
+      setThinking(false)
+      const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
+      const item: ElicitationItem = {
+        type: 'elicitation',
+        elicitation_id,
+        kind: String(p?.kind ?? ''),
+        message: String(p?.message ?? ''),
+        title: typeof p?.title === 'string' ? p.title : undefined,
+        input_schema: p?.input_schema && typeof p.input_schema === 'object' ? p.input_schema as Record<string, unknown> : undefined,
+        options: Array.isArray(p?.options) ? p.options : undefined,
+        url: typeof p?.url === 'string' ? p.url : undefined,
+        session_id: eventSessionId,
+        run_id: typeof p?.run_id === 'string' ? p.run_id : undefined,
+        expires_at: typeof p?.expires_at === 'string' ? p.expires_at : undefined,
+        persist_response: typeof p?.persist_response === 'boolean' ? p.persist_response : undefined,
+      }
+      pendingElicitationsRef.current.set(elicitation_id, item)
+      const shouldDisplay = !eventSessionId || !sessionIdRef.current || sessionIdRef.current === eventSessionId
+      if (shouldDisplay) {
+        setItems(prev => {
+          const filtered = prev.filter(it => !(it.type === 'elicitation' && it.elicitation_id === elicitation_id))
+          return [...filtered, item]
+        })
+      }
+    })
+
+    const offElicitationResolved = client.on('elicitation_resolved', (p) => {
+      const elicitation_id = String(p?.elicitation_id ?? '')
+      if (elicitation_id) {
+        pendingElicitationsRef.current.delete(elicitation_id)
+        setItems(prev => prev.filter(it => !(it.type === 'elicitation' && it.elicitation_id === elicitation_id)))
+      }
+    })
+
     return () => {
-      offQueueChanged(); offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToolApprovalRequested(); offToolApprovalResolved(); offMcpApprovalRequested(); offMcpApprovalResolved(); offToken(); offToolCalled(); offToolResult()
+      offQueueChanged(); offMessageOutput(); offRunStarted(); offRunEnd(); offRunStatus(); offClientRequest(); offClientRequestResolved(); offToolApprovalRequested(); offToolApprovalResolved(); offMcpApprovalRequested(); offMcpApprovalResolved(); offElicitationRequested(); offElicitationResolved(); offToken(); offToolCalled(); offToolResult()
       offConnectionState()
       client.disconnect()
     }
@@ -1006,6 +1054,27 @@ export function App() {
       await client.mcpApprovalResponse(request_id, 'reject', String((e as Error)?.message || 'failed'))
       removeApproval()
       setThinking(true)
+    }
+  }, [client])
+
+  const handleElicitationRespond = useCallback(async (elicitation_id: string, action: 'accept' | 'decline' | 'cancel', value?: Record<string, unknown>, reason?: string) => {
+    const removeElicitation = () => {
+      pendingElicitationsRef.current.delete(elicitation_id)
+      setItems(prev => prev.filter(it => !(it.type === 'elicitation' && it.elicitation_id === elicitation_id)))
+    }
+    try {
+      await client.elicitationResponse(elicitation_id, action, value, reason)
+      removeElicitation()
+      setThinking(true)
+    } catch (e) {
+      // Typed servers-side rejections: another tab already answered
+      // (-32051) or the prompt no longer exists (-32050) — dismiss the
+      // stale card. Validation errors (-32052) keep the card so the user
+      // can fix the input.
+      const code = (e as { code?: number })?.code
+      if (code === -32050 || code === -32051) {
+        removeElicitation()
+      }
     }
   }, [client])
 
@@ -1321,7 +1390,7 @@ export function App() {
         )}
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} onMcpApprovalDecision={handleMcpApprovalDecision} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
+            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} onMcpApprovalDecision={handleMcpApprovalDecision} onElicitationRespond={handleElicitationRespond} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
             <Tasks tasks={(() => {
               const live = tasks.filter(t => !(t.status === 'completed' && dismissedTaskIds.has(t.id)))
               return thinking ? live : live.filter(t => t.status !== 'completed')

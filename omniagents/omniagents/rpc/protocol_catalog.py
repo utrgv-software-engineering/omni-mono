@@ -52,6 +52,8 @@ STABLE_REQUESTS = (
     "account_refresh",
     "account_usage",
     "account_select",
+    # Structured user elicitation (tkt_F9tu2m9PjdpY)
+    "elicitation_response",
 )
 
 EXPERIMENTAL_REQUESTS = (
@@ -86,9 +88,26 @@ STABLE_NOTIFICATIONS = (
     "client_request_resolved",
     "queue_changed",
     "account_changed",
+    # Structured user elicitation (tkt_F9tu2m9PjdpY)
+    "elicitation_requested",
+    "elicitation_resolved",
 )
 
 STABLE_CLIENT_NOTIFICATIONS = ("initialized",)
+
+#: Server→client notifications that expect a correlated client→server
+#: request in response. The mapping drives the ``x-omni-correlation``
+#: metadata in the generated OpenRPC document.
+CORRELATED_NOTIFICATIONS = {
+    "client_request": {
+        "requestField": "request_id",
+        "responseMethod": "client_response",
+    },
+    "elicitation_requested": {
+        "requestField": "elicitation_id",
+        "responseMethod": "elicitation_response",
+    },
+}
 
 EXPERIMENTAL_NOTIFICATIONS = (
     "session_forked",
@@ -112,7 +131,11 @@ OPERATIONS = tuple(
         ProtocolOperation(
             name,
             "server_to_client",
-            "correlated_notification" if name == "client_request" else "notification",
+            (
+                "correlated_notification"
+                if name in CORRELATED_NOTIFICATIONS
+                else "notification"
+            ),
             "stable",
         )
         for name in STABLE_NOTIFICATIONS

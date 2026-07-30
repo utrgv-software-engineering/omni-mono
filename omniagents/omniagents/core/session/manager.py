@@ -700,6 +700,14 @@ class Session:  # noqa: D101
         # Keyed by ``McpApprovalRequest.id``; replayed on reconnect like
         # ``pending_tool_approvals``.
         self.pending_mcp_approvals: Dict[str, dict] = {}
+        # Structured user-elicitation prompts awaiting the first response
+        # (tkt_F9tu2m9PjdpY). Keyed by elicitation_id; replayed on
+        # reconnect like ``pending_tool_approvals``.
+        self.pending_elicitations: Dict[str, dict] = {}
+        # Recently resolved elicitations, id -> {"status", "action"}.
+        # Backs the typed already-resolved rejection for late duplicate
+        # responses (bounded FIFO — see AgentService._record_resolved_elicitation).
+        self.resolved_elicitations: Dict[str, dict] = {}
         # Background-injected messages awaiting serialized processing.
         # Drained by AgentService._drain_queue, which serializes against
         # ``current_task`` so queued runs never collide with user-initiated ones.

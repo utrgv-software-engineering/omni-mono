@@ -10,10 +10,12 @@ import { EventBatcher } from "../utils/eventBatcher.js";
 import { debugLog } from "../utils/debugLog.js";
 import type {
   ApprovalInfo,
+  ElicitationInfo,
   McpApprovalInfo,
   Message,
 } from "../store/appStore.js";
 import { registerEscalationResolver } from "./escalationBridge.js";
+import type { ElicitationAnswer } from "../components/ElicitationDialog.js";
 
 export interface UseMessagesOptions {
   client: RPCClient | null;
@@ -32,6 +34,12 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
   // own queue so we don't conflate request_id and call_id.
   const mcpApprovalQueueRef = useRef<McpApprovalInfo[]>([]);
   const currentMcpApprovalRequestIdRef = useRef<string | null>(null);
+  // Structured user-elicitation prompts — single-slot display with a
+  // queue behind it, mirroring the approval surfaces. Keyed by
+  // elicitation_id; first responder across clients wins so the resolved
+  // handler advances the queue when another tab answers.
+  const elicitationQueueRef = useRef<ElicitationInfo[]>([]);
+  const currentElicitationIdRef = useRef<string | null>(null);
 
   // Buffer for messages with superseded tracking
   const messageBufferRef = useRef<
@@ -571,6 +579,51 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       }
     };
 
+    // USER ELICITATION — structured input prompts (protocol.md § "User
+    // Elicitation Flow"). Same single-slot + queue shape as approvals.
+    const handleElicitationRequested = (params: Record<string, unknown>) => {
+      const info: ElicitationInfo = {
+        elicitation_id: (params.elicitation_id as string) || "",
+        kind: (params.kind as string) || "",
+        message: (params.message as string) || "",
+        title: params.title as string | undefined,
+        input_schema: params.input_schema as
+          | Record<string, unknown>
+          | undefined,
+        options: params.options as unknown[] | undefined,
+        url: params.url as string | undefined,
+        session_id: params.session_id as string | undefined,
+        run_id: params.run_id as string | undefined,
+        expires_at: params.expires_at as string | undefined,
+      };
+      if (!info.elicitation_id) return;
+
+      elicitationQueueRef.current.push(info);
+
+      if (!currentElicitationIdRef.current) {
+        const next = elicitationQueueRef.current.shift();
+        if (next) {
+          currentElicitationIdRef.current = next.elicitation_id;
+          actions.setElicitation(next);
+        }
+      }
+    };
+
+    const handleElicitationResolved = (params: Record<string, unknown>) => {
+      const elicitationId = (params.elicitation_id as string) || "";
+      if (!elicitationId) return;
+      // Drop any queued prompt for this id (resolved by another client,
+      // expired, or cleared by run end).
+      elicitationQueueRef.current = elicitationQueueRef.current.filter(
+        (e) => e.elicitation_id !== elicitationId,
+      );
+      if (currentElicitationIdRef.current === elicitationId) {
+        const next = elicitationQueueRef.current.shift() || null;
+        currentElicitationIdRef.current = next ? next.elicitation_id : null;
+        actions.setElicitation(next);
+      }
+    };
+
     // CUSTOM STATUS - NOT batched (needs immediate UI update)
     const handleSetStatus = async (args: Record<string, unknown>) => {
       const text = args.text as string;
@@ -723,6 +776,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.on("tool_approval_resolved", handleToolApprovalResolved);
     client.on("mcp_approval_requested", handleMcpApprovalRequested);
     client.on("mcp_approval_resolved", handleMcpApprovalResolved);
+    client.on("elicitation_requested", handleElicitationRequested);
+    client.on("elicitation_resolved", handleElicitationResolved);
     client.on("queue_changed", handleQueueChanged);
 
     // Register client functions
@@ -753,6 +808,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.off("tool_approval_resolved", handleToolApprovalResolved);
       client.off("mcp_approval_requested", handleMcpApprovalRequested);
       client.off("mcp_approval_resolved", handleMcpApprovalResolved);
+      client.off("elicitation_requested", handleElicitationRequested);
+      client.off("elicitation_resolved", handleElicitationResolved);
       client.off("queue_changed", handleQueueChanged);
 
       // Cleanup registered client functions
@@ -848,6 +905,36 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     }
   };
 
+  // Elicitation responder — sends the answer for the currently displayed
+  // prompt and advances to the next queued one. A typed rejection
+  // (-32050 not-found / -32051 already-resolved: another client won the
+  // race) is expected and non-fatal; the resolved broadcast has already
+  // dismissed or will dismiss the prompt.
+  const respondElicitation = async (answer: ElicitationAnswer) => {
+    const currentId = currentElicitationIdRef.current;
+    if (!currentId || !client) return;
+
+    const next = elicitationQueueRef.current.shift() || null;
+    currentElicitationIdRef.current = next ? next.elicitation_id : null;
+
+    batcher.add(() => {
+      actions.setElicitation(next);
+      actions.setThinking(!next);
+    });
+
+    try {
+      await client.elicitationResponse(
+        currentId,
+        answer.action,
+        answer.value,
+        answer.reason,
+      );
+    } catch (err) {
+      // Best-effort: duplicates/expiry reject with typed errors and the
+      // server's elicitation_resolved broadcast keeps state converged.
+    }
+  };
+
   const cancelRun = async (runId: string) => {
     if (!client || !runId) return;
 
@@ -866,6 +953,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
   return {
     approveToolCall,
     approveMcpToolCall,
+    respondElicitation,
     cancelRun,
   };
 }

@@ -5,6 +5,8 @@ import { ChatContainerContent, ChatContainerRoot, ChatContainerScrollAnchor } fr
 import { formatArgsPreview, groupItems } from './activityGroup'
 import type { ActivityGroupData } from './activityGroup'
 import { ActivityGroup as ActivityGroupComponent } from './ActivityGroup'
+import { ElicitationCard, type ElicitationRespond } from './ElicitationCard'
+import type { ElicitationItem } from './elicitation'
 
 // Tool ui_metadata is an open, tool-defined JSON envelope; views probe the
 // fields they understand at runtime instead of pretending a schema exists.
@@ -65,10 +67,11 @@ export type McpApprovalItem = {
   session_id?: string
 }
 
-export type MessageItem = ChatMessage | ToolItem | ApprovalItem | McpApprovalItem
+export type MessageItem = ChatMessage | ToolItem | ApprovalItem | McpApprovalItem | ElicitationItem
+export type { ElicitationItem }
 
-export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, onMcpApprovalDecision, statusItalic, onReaction, currentRunId, toolStatusText }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (call_id: string, value: 'yes' | 'always' | 'no') => void; onMcpApprovalDecision?: (request_id: string, value: 'yes' | 'no') => void; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
+export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, onMcpApprovalDecision, onElicitationRespond, statusItalic, onReaction, currentRunId, toolStatusText }:
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (call_id: string, value: 'yes' | 'always' | 'no') => void; onMcpApprovalDecision?: (request_id: string, value: 'yes' | 'no') => void; onElicitationRespond?: ElicitationRespond; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
   const [reactions, setReactions] = useState<Record<number, 'like' | 'dislike' | undefined>>({})
   const [feedbackIndex, setFeedbackIndex] = useState<number | undefined>(undefined)
   const handleReaction = React.useCallback((index: number, type: 'like' | 'dislike') => {
@@ -127,6 +130,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
             if (m.type === 'tool') return <ToolCard key={(m as ToolItem).call_id || i} item={m as ToolItem} />
             if (m.type === 'approval') return <ApprovalCard key={(m as ApprovalItem).call_id} item={m as ApprovalItem} onDecision={onApprovalDecision} />
             if (m.type === 'mcp_approval') return <McpApprovalCard key={(m as McpApprovalItem).request_id} item={m as McpApprovalItem} onDecision={onMcpApprovalDecision} />
+            if (m.type === 'elicitation') return <ElicitationCard key={(m as ElicitationItem).elicitation_id} item={m as ElicitationItem} onRespond={onElicitationRespond} />
             return null
           })
         )}

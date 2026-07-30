@@ -50,6 +50,8 @@ export type ServerEvent =
   | ToolApprovalResolvedEvent
   | McpApprovalRequestedEvent
   | McpApprovalResolvedEvent
+  | ElicitationRequestedEvent
+  | ElicitationResolvedEvent
   | QueueChangedEvent;
 
 export interface ToolCalledEvent {
@@ -246,6 +248,47 @@ export interface McpApprovalResolvedEvent {
   params: {
     request_id: string;
     session_id?: string;
+  };
+}
+
+// Structured user elicitation — the non-security input lane
+// (protocol.md § "User Elicitation Flow"). The server asks the user for
+// a decision or information (question / confirm / select / form / url);
+// the first elicitation_response from any connected client wins and
+// elicitation_resolved dismisses the prompt everywhere.
+
+export interface ElicitationRequestedEvent {
+  jsonrpc: "2.0";
+  method: "elicitation_requested";
+  params: {
+    elicitation_id: string;
+    kind: string;
+    message: string;
+    title?: string;
+    input_schema?: Record<string, unknown>;
+    options?: unknown[];
+    url?: string;
+    session_id?: string;
+    run_id?: string;
+    item_id?: string;
+    source?: string;
+    timeout_ms?: number;
+    expires_at?: string;
+    persist_response?: boolean;
+  };
+}
+
+export interface ElicitationResolvedEvent {
+  jsonrpc: "2.0";
+  method: "elicitation_resolved";
+  params: {
+    elicitation_id: string;
+    status: string;
+    session_id?: string;
+    run_id?: string;
+    action?: string;
+    value?: Record<string, unknown>;
+    reason?: string;
   };
 }
 

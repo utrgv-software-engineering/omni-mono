@@ -116,6 +116,37 @@ def _debug_rpc(method: str, payload: dict | None = None) -> None:
             logger.debug(f"★ {method}")
 
 
+def _set_future_result(fut: "asyncio.Future", result: Any) -> None:
+    """Resolve *fut* on the loop that owns it.
+
+    asyncio futures must be completed from their own event loop. The
+    resolver usually shares the requester's loop, but embedded hosts (and
+    the TestClient harness) can dispatch the response RPC on a different
+    loop — schedule through ``call_soon_threadsafe`` in that case so the
+    waiter always wakes.
+    """
+    try:
+        owner = fut.get_loop()
+    except Exception:
+        owner = None
+    try:
+        running = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+
+    def _resolve() -> None:
+        if not fut.done():
+            fut.set_result(result)
+
+    if owner is not None and owner is not running:
+        try:
+            owner.call_soon_threadsafe(_resolve)
+            return
+        except Exception:
+            pass
+    _resolve()
+
+
 def _safe_slug(value: str | None, fallback: str) -> str:
     token = value or ""
     token = token.strip().lower()
@@ -484,6 +515,10 @@ class AgentService(RpcMethodsBase):
         # SDK 0.16 ``HostedMCPTool``). Tracked separately from function-tool
         # approvals so the wire format stays clean.
         self._pending_mcp_approvals: dict[str, tuple[asyncio.Future, Session]] = {}
+        # Structured user-elicitation futures keyed by elicitation_id
+        # (tkt_F9tu2m9PjdpY). Parallel non-security input lane — see
+        # omniagents.core.agents.elicitation.
+        self._pending_elicitations: dict[str, tuple[asyncio.Future, Session]] = {}
         # Server functions registry (client→server dynamic functions)
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
@@ -1786,6 +1821,12 @@ class AgentService(RpcMethodsBase):
         pending_mcp = getattr(session, "pending_mcp_approvals", None)
         if pending_mcp is not None:
             pending_mcp.clear()
+        # Elicitations are terminal-resolved (journal + broadcast) by
+        # ``_resolve_session_elicitations`` on the run-end path before this
+        # runs; the sweep here only drops stragglers' bookkeeping.
+        for elicitation_id in list(session.pending_elicitations.keys()):
+            self._pending_elicitations.pop(elicitation_id, None)
+        session.pending_elicitations.clear()
 
     async def _replay_live_state(self, session: Session, channel) -> None:
         if session is None or channel is None:
@@ -1808,6 +1849,8 @@ class AgentService(RpcMethodsBase):
         if pending_mcp:
             for payload in pending_mcp.values():
                 events.append(("mcp_approval_requested", payload))
+        for payload in session.pending_elicitations.values():
+            events.append(("elicitation_requested", payload))
         for method, payl in events:
             await self._safe_notify(channel, method, payl)
 
@@ -2543,6 +2586,317 @@ class AgentService(RpcMethodsBase):
 
         return True
 
+    # ------------------------------------------------------------------
+    #  Structured user elicitation (tkt_F9tu2m9PjdpY).
+    #
+    #  The non-security input lane: agents/tools/server code ask the user
+    #  for a decision or information (question, confirm, select, form,
+    #  url) via ``request_elicitation``; the first ``elicitation_response``
+    #  from any connected tab wins. Shares the approval/client_request
+    #  plumbing — journaled replay, pending-map reconnect replay,
+    #  run-scoped clearing — but never routes through the approval RPCs.
+    # ------------------------------------------------------------------
+
+    async def request_elicitation(
+        self,
+        *,
+        session: Session,
+        kind: str,
+        message: str,
+        title: str | None = None,
+        input_schema: dict | None = None,
+        options: list | None = None,
+        url: str | None = None,
+        run_id: str | None = None,
+        item_id: str | None = None,
+        source: str | None = None,
+        timeout_ms: int | None = None,
+        persist_response: bool = False,
+    ) -> dict:
+        """Emit an ``elicitation_requested`` event and await the response.
+
+        Returns ``{"action", "value", "reason", "status"}`` where
+        ``action`` is ``"accept"`` / ``"decline"`` / ``"cancel"`` /
+        ``"expire"``. The submitted ``value`` is always returned to this
+        in-process caller; it enters the journaled ``elicitation_resolved``
+        event (and thus durable, replayable history) only when
+        ``persist_response=True`` — flag sensitive prompts ``False`` and
+        keep the answer out of model-visible context.
+        """
+        from omniagents.core.agents.elicitation import validate_elicitation_request
+
+        if session is None:
+            raise RuntimeError("Elicitations require an explicit session context")
+        validate_elicitation_request(kind, options=options, url=url)
+
+        import time as _time
+        import uuid as _uuid
+
+        elicitation_id = f"elc_{_uuid.uuid4().hex}"
+        payload: dict[str, Any] = {
+            "elicitation_id": elicitation_id,
+            "kind": kind,
+            "message": message,
+            "session_id": session.id,
+            "persist_response": bool(persist_response),
+        }
+        if title is not None:
+            payload["title"] = title
+        if input_schema is not None:
+            payload["input_schema"] = input_schema
+        if options is not None:
+            payload["options"] = list(options)
+        if url is not None:
+            payload["url"] = url
+        if run_id is not None:
+            payload["run_id"] = run_id
+        if item_id is not None:
+            payload["item_id"] = item_id
+        if source is not None:
+            payload["source"] = source
+        if timeout_ms is not None and timeout_ms > 0:
+            payload["timeout_ms"] = int(timeout_ms)
+            payload["expires_at"] = _time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                _time.gmtime(_time.time() + timeout_ms / 1000.0),
+            )
+
+        _debug_rpc("elicitation_requested", payload)
+
+        fut: asyncio.Future = asyncio.get_event_loop().create_future()
+        self._pending_elicitations[elicitation_id] = (fut, session)
+
+        await self._broadcast_session(
+            session,
+            "elicitation_requested",
+            payload,
+            queue_if_unseen=True,
+        )
+
+        # Track for replay on reconnect. Stored AFTER the broadcast so the
+        # copy carries the replay envelope (seq/stream_id) stamped there —
+        # re-delivery then dedupes cleanly on sequence-aware clients.
+        session.pending_elicitations[elicitation_id] = dict(payload)
+
+        try:
+            if timeout_ms is not None and timeout_ms > 0:
+                response = await asyncio.wait_for(fut, timeout=timeout_ms / 1000.0)
+            else:
+                response = await fut
+        except asyncio.TimeoutError:
+            await self._resolve_elicitation(
+                elicitation_id, session, status="expired", action="expire"
+            )
+            return {
+                "action": "expire",
+                "value": None,
+                "reason": "no response within timeout",
+                "status": "expired",
+            }
+        except asyncio.CancelledError:
+            # The requesting run/task was cancelled while the prompt was
+            # open. Journal + broadcast the terminal resolution so no
+            # client is left holding a prompt nothing backs, then let the
+            # cancellation propagate.
+            try:
+                await self._resolve_elicitation(
+                    elicitation_id, session, status="cancelled", action="cancel"
+                )
+            except Exception:
+                pass
+            raise
+        finally:
+            self._pending_elicitations.pop(elicitation_id, None)
+            session.pending_elicitations.pop(elicitation_id, None)
+
+        if not isinstance(response, dict):
+            return {
+                "action": "decline",
+                "value": None,
+                "reason": "invalid elicitation response",
+                "status": "declined",
+            }
+        return response
+
+    async def elicitation_response(
+        self,
+        elicitation_id: str,
+        action: str,
+        value: dict | None = None,
+        reason: str | None = None,
+    ) -> dict:  # noqa: D401
+        """Resolve a pending elicitation. First response wins.
+
+        Raises typed errors (surfaced as structured JSON-RPC errors):
+        ``ElicitationNotFound`` (-32050) for unknown ids,
+        ``ElicitationAlreadyResolved`` (-32051) for duplicate responses,
+        ``ElicitationInvalidResponse`` (-32052) when the response violates
+        the request's contract or validation schema.
+        """
+        from omniagents.core.agents.elicitation import (
+            ElicitationAlreadyResolved,
+            ElicitationInvalidResponse,
+            ElicitationNotFound,
+            validate_response_value,
+        )
+
+        _debug_rpc(
+            "elicitation_response",
+            {
+                "elicitation_id": elicitation_id,
+                "action": action,
+                "reason": reason,
+            },
+        )
+        entry = self._pending_elicitations.get(elicitation_id)
+        if entry is None:
+            resolved = self._find_resolved_elicitation(elicitation_id)
+            if resolved is not None:
+                raise ElicitationAlreadyResolved(
+                    elicitation_id, status=str(resolved.get("status", "resolved"))
+                )
+            raise ElicitationNotFound(elicitation_id)
+        fut, sess = entry
+        request_payload = sess.pending_elicitations.get(elicitation_id, {})
+
+        problems = validate_response_value(request_payload, action, value)
+        if problems:
+            raise ElicitationInvalidResponse(elicitation_id, problems)
+
+        status = {
+            "accept": "accepted",
+            "decline": "declined",
+            "cancel": "cancelled",
+        }[action]
+        result = {
+            "action": action,
+            "value": value,
+            "reason": reason,
+            "status": status,
+        }
+        # Resolve BEFORE waking the waiter. ``_set_future_result`` may
+        # schedule cross-loop (``call_soon_threadsafe``); once the waiter
+        # resumes, its ``finally`` block pops the pending maps — if that
+        # wins the race against ``_resolve_elicitation``'s own pops, the
+        # resolution is never journaled, broadcast, or registered (no
+        # ``elicitation_resolved`` for any tab, ``-32050`` instead of
+        # ``-32051`` for late duplicates, and a ``persist_response`` value
+        # silently dropped). Journal + broadcast first; only then unblock
+        # the in-process caller.
+        await self._resolve_elicitation(
+            elicitation_id,
+            sess,
+            status=status,
+            action=action,
+            value=value,
+            reason=reason,
+        )
+        _set_future_result(fut, dict(result))
+        return {"elicitation_id": elicitation_id, "status": status}
+
+    async def _resolve_elicitation(
+        self,
+        elicitation_id: str,
+        session: Session,
+        *,
+        status: str,
+        action: str | None = None,
+        value: dict | None = None,
+        reason: str | None = None,
+    ) -> bool:
+        """Single terminal chokepoint for one elicitation.
+
+        Pops the pending maps, records the bounded resolved entry (for
+        the typed already-resolved rejection), and journals + broadcasts
+        ``elicitation_resolved`` — with the submitted ``value`` included
+        only when the request opted into ``persist_response``. Returns
+        False (no-op) when the elicitation is already resolved.
+        """
+        request_payload = session.pending_elicitations.get(elicitation_id)
+        entry = self._pending_elicitations.pop(elicitation_id, None)
+        if entry is None and request_payload is None:
+            return False
+        session.pending_elicitations.pop(elicitation_id, None)
+        self._record_resolved_elicitation(
+            session, elicitation_id, status=status, action=action
+        )
+
+        resolved: dict[str, Any] = {
+            "elicitation_id": elicitation_id,
+            "session_id": session.id,
+            "status": status,
+        }
+        if action is not None:
+            resolved["action"] = action
+        if reason is not None:
+            resolved["reason"] = reason
+        run_id = (request_payload or {}).get("run_id")
+        if isinstance(run_id, str):
+            resolved["run_id"] = run_id
+        if value is not None and bool((request_payload or {}).get("persist_response")):
+            resolved["value"] = value
+        try:
+            await self._broadcast_session(session, "elicitation_resolved", resolved)
+        except Exception:
+            pass
+        return True
+
+    @staticmethod
+    def _record_resolved_elicitation(
+        session: Session,
+        elicitation_id: str,
+        *,
+        status: str,
+        action: str | None,
+    ) -> None:
+        """Remember a resolution for duplicate-response rejection.
+
+        Bounded FIFO (256 per session) so late duplicates get a typed
+        already-resolved error without unbounded growth. Values are never
+        retained here regardless of the persistence flag.
+        """
+        registry = session.resolved_elicitations
+        registry[elicitation_id] = {"status": status, "action": action}
+        while len(registry) > 256:
+            registry.pop(next(iter(registry)))
+
+    def _find_resolved_elicitation(self, elicitation_id: str) -> dict | None:
+        for sess in self._session_manager.iter_active():
+            resolved = getattr(sess, "resolved_elicitations", {}).get(elicitation_id)
+            if resolved is not None:
+                return resolved
+        return None
+
+    async def _resolve_session_elicitations(
+        self, session: Session, *, status: str
+    ) -> None:
+        """Terminal-resolve every pending elicitation for *session*.
+
+        Run-end chokepoint: prompts must never outlive the run context
+        that asked for them (acceptance: pending requests clear on run
+        cancellation/termination). Waiting callers are unblocked with a
+        ``cancel`` result; clients receive journaled ``elicitation_resolved``
+        events so replays never resurrect the prompt.
+        """
+        for elicitation_id in list(session.pending_elicitations.keys()):
+            entry = self._pending_elicitations.get(elicitation_id)
+            # Same ordering invariant as ``elicitation_response``: journal
+            # + broadcast the terminal resolution before waking the waiter,
+            # so the waiter's ``finally`` cleanup can never swallow it.
+            await self._resolve_elicitation(
+                elicitation_id, session, status=status, action="cancel"
+            )
+            if entry is not None:
+                _set_future_result(
+                    entry[0],
+                    {
+                        "action": "cancel",
+                        "value": None,
+                        "reason": "run ended",
+                        "status": status,
+                    },
+                )
+
     async def start_run(
         self,
         prompt: str,
@@ -3059,6 +3413,14 @@ class AgentService(RpcMethodsBase):
                     sess.current_task = None
                 if sess.current_stream_result is not None:
                     sess.current_stream_result = None
+                # Terminal-resolve pending elicitations BEFORE clearing
+                # live state: the prompts must not outlive the run, and
+                # clients need journaled ``elicitation_resolved`` events
+                # (not a silent wipe) so replays converge.
+                try:
+                    await self._resolve_session_elicitations(sess, status="cancelled")
+                except Exception:
+                    pass
                 self._clear_live_state(sess)
 
                 # Debug log the payload for visibility when debugging (single source)
@@ -3500,6 +3862,15 @@ class AgentService(RpcMethodsBase):
             if sess is not None:
                 return self._resource_owner(sess), "client_request", request_id
             return OWNER_UNKNOWN, "request", request_id
+        elicitation_id = params.get("elicitation_id")
+        if isinstance(elicitation_id, str) and elicitation_id:
+            entry = self._pending_elicitations.get(elicitation_id)
+            if entry is not None:
+                return self._resource_owner(entry[1]), "elicitation", elicitation_id
+            for sess in self._session_manager.iter_active():
+                if elicitation_id in getattr(sess, "resolved_elicitations", {}):
+                    return self._resource_owner(sess), "elicitation", elicitation_id
+            return OWNER_UNKNOWN, "elicitation", elicitation_id
         return OWNER_UNKNOWN, "method", None
 
     async def authorize_rpc(

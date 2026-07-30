@@ -64,7 +64,8 @@ Server-restart recovery
 
 On construction the journal reloads its durable state. If the retained
 events describe an interrupted epoch — a ``run_started`` without a
-matching ``run_end``, or unresolved approval / client_request prompts —
+matching ``run_end``, or unresolved approval / client_request /
+elicitation prompts —
 synthetic terminal events are appended (``run_end`` with
 ``end_reason="server_restart"`` and the matching ``*_resolved`` events
 with ``reason="server_restart"``) so reconnecting clients converge on a
@@ -110,6 +111,8 @@ REPLAYABLE_METHODS = frozenset(
         "mcp_approval_resolved",
         "client_request",
         "client_request_resolved",
+        "elicitation_requested",
+        "elicitation_resolved",
         "queue_changed",
         "session_forked",
         "session_variables_changed",
@@ -739,6 +742,7 @@ class SessionEventLog:
         open_tool_approvals: Dict[str, Dict[str, Any]] = {}
         open_mcp_approvals: Dict[str, Dict[str, Any]] = {}
         open_client_requests: Dict[str, Dict[str, Any]] = {}
+        open_elicitations: Dict[str, Dict[str, Any]] = {}
         for _, method, payload in self._events:
             if method == "run_started":
                 run_id = payload.get("run_id")
@@ -764,6 +768,12 @@ class SessionEventLog:
                     open_client_requests[request_id] = payload
             elif method == "client_request_resolved":
                 open_client_requests.pop(str(payload.get("request_id")), None)
+            elif method == "elicitation_requested":
+                elicitation_id = payload.get("elicitation_id")
+                if isinstance(elicitation_id, str):
+                    open_elicitations[elicitation_id] = payload
+            elif method == "elicitation_resolved":
+                open_elicitations.pop(str(payload.get("elicitation_id")), None)
         for call_id in open_tool_approvals:
             self.record(
                 "tool_approval_resolved",
@@ -789,6 +799,15 @@ class SessionEventLog:
                     "request_id": request_id,
                     "session_id": self.session_id,
                     "reason": "server_restart",
+                },
+            )
+        for elicitation_id in open_elicitations:
+            self.record(
+                "elicitation_resolved",
+                {
+                    "elicitation_id": elicitation_id,
+                    "session_id": self.session_id,
+                    "status": "server_restart",
                 },
             )
         for run_id in open_runs:

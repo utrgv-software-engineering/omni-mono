@@ -57,6 +57,26 @@ export interface EscalationInfo {
   run_id?: string;
 }
 
+// Structured user-elicitation prompts (elicitation_requested — the
+// non-security input lane, protocol.md § "User Elicitation Flow").
+// One prompt is shown at a time; ``question`` renders as a banner whose
+// next user submit becomes the answer (the escalation idiom), while
+// confirm/select/url render as interactive dialogs. Kinds the TUI cannot
+// render surface a typed-decline dialog. Dismissed everywhere by
+// elicitation_resolved (first responder wins across clients).
+export interface ElicitationInfo {
+  elicitation_id: string;
+  kind: string;
+  message: string;
+  title?: string;
+  input_schema?: Record<string, unknown>;
+  options?: unknown[];
+  url?: string;
+  session_id?: string;
+  run_id?: string;
+  expires_at?: string;
+}
+
 // Notifications accumulate in a docked panel between user submissions.
 // The agent's ``notify`` calls during a run pile up here so a user
 // returning to a long-running session can see every heads-up they
@@ -221,6 +241,7 @@ interface AppState {
   approval: ApprovalInfo | null;
   mcpApproval: McpApprovalInfo | null;
   escalation: EscalationInfo | null;
+  elicitation: ElicitationInfo | null;
   notifications: NotificationInfo[];
   currentRunId: string | null;
   preamble: string | null;
@@ -260,6 +281,7 @@ interface AppState {
     setApproval: (approval: ApprovalInfo | null) => void;
     setMcpApproval: (approval: McpApprovalInfo | null) => void;
     setEscalation: (escalation: EscalationInfo | null) => void;
+    setElicitation: (elicitation: ElicitationInfo | null) => void;
     addNotification: (message: string) => void;
     removeNotification: (id: string) => void;
     clearNotifications: () => void;
@@ -318,6 +340,7 @@ export const useAppStore = create<AppState>()(
     approval: null,
     mcpApproval: null,
     escalation: null,
+    elicitation: null,
     notifications: [],
     currentRunId: null,
     preamble: null,
@@ -436,6 +459,20 @@ export const useAppStore = create<AppState>()(
           // spinner is misleading — turn it off and let the banner speak
           // for itself.
           if (escalation) {
+            state.thinking = false;
+            state.status = null;
+            state.statusType = null;
+            state.statusSpinner = false;
+          }
+        }),
+
+      setElicitation: (elicitation) =>
+        set((state) => {
+          state.elicitation = elicitation;
+          // The agent is blocked on the prompt awaiting our
+          // elicitation_response — same posture as approvals: stop the
+          // thinking spinner and let the prompt surface speak.
+          if (elicitation) {
             state.thinking = false;
             state.status = null;
             state.statusType = null;
@@ -572,6 +609,7 @@ export const useAppStore = create<AppState>()(
           state.statusSpinner = false;
           state.approval = null;
           state.mcpApproval = null;
+          state.elicitation = null;
           state.preamble = null;
           state.tasks = [];
           state.bashJobs = [];
@@ -659,6 +697,7 @@ export const useStatus = () =>
 export const useApproval = () => useAppStore((s) => s.approval);
 export const useMcpApproval = () => useAppStore((s) => s.mcpApproval);
 export const useEscalation = () => useAppStore((s) => s.escalation);
+export const useElicitation = () => useAppStore((s) => s.elicitation);
 export const useNotifications = () => useAppStore((s) => s.notifications);
 export const useUsage = () => useAppStore((s) => s.usage);
 export const useSessionModel = () => useAppStore((s) => s.sessionModel);

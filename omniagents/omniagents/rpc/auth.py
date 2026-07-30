@@ -260,6 +260,10 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "tool_approval_response",
         "mcp_approval_response",
         "client_response",
+        # Elicitation answers name an ``elicitation_id`` minted for one
+        # session; ownership of that session gates who may answer (same
+        # posture as tool_approval_response).
+        "elicitation_response",
         "enqueue_message",
         "list_queue",
         "cancel_queued_message",

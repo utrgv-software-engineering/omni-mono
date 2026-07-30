@@ -46,6 +46,7 @@ GUI_OPTIONAL_NOTIFICATIONS = frozenset(
         "client_request_resolved",
         "tool_approval_resolved",
         "mcp_approval_resolved",
+        "elicitation_resolved",
         "session_forked",
         "session_variables_changed",
         "account_changed",
@@ -287,10 +288,11 @@ class JsonRpcEndpoint:
     ) -> None:
         if call_id is None:
             return
+        from omniagents.core.agents.elicitation import ElicitationError
         from omniagents.core.providers.accounts import AccountRpcError
         from omniagents.core.session.event_log import ResyncRequiredError
 
-        if isinstance(exc, (ResyncRequiredError, AccountRpcError)):
+        if isinstance(exc, (ResyncRequiredError, AccountRpcError, ElicitationError)):
             await channel.send_error(call_id, exc.code, str(exc), exc.data)
             return
         data: Dict[str, Any] = {"type": exc.__class__.__name__, "message": str(exc)}
