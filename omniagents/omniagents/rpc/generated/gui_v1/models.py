@@ -365,6 +365,33 @@ class ExportSessionResult(RootModel[dict[str, Any]]):
     pass
 
 
+class GetConfigParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pass
+
+
+class GetConfigResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class ValidateConfigParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    updates: dict[str, Any]
+
+
+class ValidateConfigResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class WriteConfigParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    updates: dict[str, Any]
+
+
+class WriteConfigResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class InitializedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pass
@@ -578,6 +605,9 @@ CLIENT_REQUEST_MODELS = {
     "disable_mcp_server": DisableMcpServerParams,
     "report_incident": ReportIncidentParams,
     "export_session": ExportSessionParams,
+    "get_config": GetConfigParams,
+    "validate_config": ValidateConfigParams,
+    "write_config": WriteConfigParams,
 }
 CLIENT_RESULT_MODELS = {
     "initialize": InitializeResult,
@@ -611,6 +641,9 @@ CLIENT_RESULT_MODELS = {
     "disable_mcp_server": DisableMcpServerResult,
     "report_incident": ReportIncidentResult,
     "export_session": ExportSessionResult,
+    "get_config": GetConfigResult,
+    "validate_config": ValidateConfigResult,
+    "write_config": WriteConfigResult,
 }
 CLIENT_NOTIFICATION_MODELS = {"initialized": InitializedParams}
 SERVER_NOTIFICATION_MODELS = {
@@ -668,6 +701,9 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "disable_mcp_server",
         "report_incident",
         "export_session",
+        "get_config",
+        "validate_config",
+        "write_config",
     ]
 )
 STABLE_NOTIFICATIONS = frozenset(

@@ -336,6 +336,12 @@
       "type": "object",
       "x-omni-stability": "stable"
     },
+    "get_config": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "get_session_history": {
       "additionalProperties": false,
       "properties": {
@@ -1199,6 +1205,32 @@
       ],
       "type": "object",
       "x-omni-stability": "experimental"
+    },
+    "validate_config": {
+      "additionalProperties": false,
+      "properties": {
+        "updates": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "updates"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "write_config": {
+      "additionalProperties": false,
+      "properties": {
+        "updates": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "updates"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
     }
   },
   "$id": "https://omniagents.dev/protocol/gui/v1/schema.json",
@@ -1296,6 +1328,15 @@
     },
     {
       "$ref": "#/$defs/export_session"
+    },
+    {
+      "$ref": "#/$defs/get_config"
+    },
+    {
+      "$ref": "#/$defs/validate_config"
+    },
+    {
+      "$ref": "#/$defs/write_config"
     },
     {
       "$ref": "#/$defs/initialized"

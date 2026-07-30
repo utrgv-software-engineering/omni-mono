@@ -37,7 +37,10 @@
       "disable_tool",
       "disable_mcp_server",
       "report_incident",
-      "export_session"
+      "export_session",
+      "get_config",
+      "validate_config",
+      "write_config"
     ],
     "stable": [
       "initialize",

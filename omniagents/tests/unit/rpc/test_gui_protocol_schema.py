@@ -258,7 +258,7 @@ def test_inventory_reports_generated_request_allowlist():
     assert inventory["source"] == "omniagents.rpc.protocol_catalog.OPERATIONS"
     assert inventory["router_mode"] == "generated_request_allowlist"
     assert len(inventory["requests"]["stable"]) == 21
-    assert len(inventory["requests"]["experimental"]) == 10
+    assert len(inventory["requests"]["experimental"]) == 13
     assert len(inventory["notifications"]["stable"]) == 15
     assert len(inventory["notifications"]["experimental"]) == 2
 

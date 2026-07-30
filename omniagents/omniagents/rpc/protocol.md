@@ -697,6 +697,83 @@ Notes:
 - Functions are registered server-side and may accept optional session context.
 - Most use cases should leverage these generic methods rather than inventing many ad-hoc RPC names.
 
+## Layered Configuration (experimental)
+
+Three experimental requests let GUI settings surfaces inspect and modify the
+server's layered project configuration through one transactional API:
+`get_config`, `validate_config`, and `write_config`. Clients opt in via
+`capabilities.experimental_operations` at `initialize`, like every other
+experimental request.
+
+**Layer model** — the provenance layers mirror exactly what the project loader
+applies, lowest to highest precedence (dicts merge recursively, lists and
+scalars replace):
+
+1. `defaults` — framework built-in defaults.
+2. `project` — the base `project.yml` manifest (read-only through this API;
+   packaged read-only for installed products).
+3. `user` — `<product-config>/project.d/*.yml` overlays in lexical order. The
+   **only writable layer**: writes go to the API-owned
+   `project.d/90-gui.yml`, never to hand-written files. Desktop clients
+   persist their settings through this layer.
+4. `managed` — overlays named by `OMNIAGENTS_PROJECT_OVERLAYS`
+   (operator/enterprise policy). A managed value makes the field read-only.
+5. `environment` — environment variables that override config keys at read
+   time (e.g. `OMNIAGENTS_LEGACY_QUERY_AUTH`). Read-only.
+
+Only registered fields are exposed — never the raw merged manifest.
+
+### get_config()
+
+Returns `{layers, fields}`. Each layer descriptor carries its `sources`
+(resolved file paths), `writable`, and the user layer's `write_target`. Each
+field descriptor carries:
+
+- `key`, `type`, `label`, `description`
+- `value` + `is_set` + `effective_layer` — the effective value and where it
+  came from (`value` is omitted entirely for secret fields)
+- `layers` — every layer that sets the field, in precedence order, with its
+  source path, so clients can explain *why* a value is what it is and what
+  is being overridden
+- `read_only` + `read_only_reason` (`structural` | `managed_policy` |
+  `environment`) — why a write would be refused
+- constraints: `allowed_values`, `minimum`, `maximum`
+- `reload` — `hot` (applies immediately), `session` (applies on the next
+  agent build in loaded sessions), or `restart` (read once at process boot;
+  requires a server restart)
+- `secret` — write-only field; **no response ever includes its value**, only
+  `is_set` flags per layer
+
+### validate_config(updates: object)
+
+Dry-run validation of a batch. Returns `{valid, errors, reload}` without
+writing anything. Errors are structured per field:
+`{key, code, message, ...}` with `code` one of `unknown_key`, `read_only`
+(plus `reason`), `invalid_type` (plus `expected_type`), `invalid_value` (plus
+`allowed_values`), `out_of_range` (plus `minimum`/`maximum`). Error payloads
+never echo submitted values, so a mistyped secret cannot leak back.
+
+### write_config(updates: object)
+
+Atomic batch write to the user layer (a single-value write is a batch of
+one). All-or-nothing: any validation error aborts the whole batch before
+anything is written, and the overlay file is replaced atomically, so a failed
+write never leaves partial state. A `null` value clears the key from the user
+layer, reverting to the lower layers.
+
+Returns `{ok, errors, written, cleared, reload, restart_required, fields}` —
+`reload` groups the touched keys by classification, and `fields` carries the
+post-write descriptors (secrets redacted). Keys classified `session` are also
+applied to the live spec (the `disable_tool` precedent), so loaded sessions
+pick them up on their next run without a restart.
+
+**Authorization** — `get_config` and `validate_config` are globally safe:
+read-only, secret-redacted, and side-effect free. `write_config` mutates
+server-level configuration for every connected user and is classified
+global-mutating: allowed in single-user deployments, refused with `-32014`
+for individual principals when the deployment identifies distinct users —
+the same posture as `disable_tool`.
+
 ## MCP Resources
 
 MCP servers configured under the agent's YAML `mcp_servers:` (and exposed as `Agent.mcp_servers` to the SDK) can also surface *resources* in addition to tools. Resources are read-only blobs (files, prompts, structured data) addressed by URI. OmniAgents exposes the SDK's `MCPServer.list_resources()` / `MCPServer.read_resource()` over RPC as the following server functions, dispatched through `server_call`.

@@ -142,6 +142,14 @@ export interface ExportSessionParams {
   session_id: string;
   redact?: boolean;
 }
+export interface GetConfigParams {
+}
+export interface ValidateConfigParams {
+  updates: Record<string, unknown>;
+}
+export interface WriteConfigParams {
+  updates: Record<string, unknown>;
+}
 export interface InitializedParams {
 }
 export interface RunStartedParams {
@@ -320,6 +328,9 @@ export interface RpcMethodMap {
   "disable_mcp_server": { params: DisableMcpServerParams; result: null };
   "report_incident": { params: ReportIncidentParams; result: null };
   "export_session": { params: ExportSessionParams; result: Record<string, unknown> };
+  "get_config": { params: GetConfigParams; result: Record<string, unknown> };
+  "validate_config": { params: ValidateConfigParams; result: Record<string, unknown> };
+  "write_config": { params: WriteConfigParams; result: Record<string, unknown> };
 }
 export interface RpcNotificationMap {
   "run_started": RunStartedParams;

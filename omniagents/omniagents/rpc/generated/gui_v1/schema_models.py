@@ -156,6 +156,12 @@ class GetAgentInfo(BaseModel):
     )
 
 
+class GetConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
 class GetSessionHistory(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -517,6 +523,20 @@ class UpdateSessionVariables(BaseModel):
     updates: dict[str, Any]
 
 
+class ValidateConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    updates: dict[str, Any]
+
+
+class WriteConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    updates: dict[str, Any]
+
+
 class Initialize(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -570,6 +590,9 @@ class Model(
         | DisableMcpServer
         | ReportIncident
         | ExportSession
+        | GetConfig
+        | ValidateConfig
+        | WriteConfig
         | Initialized
         | RunStarted
         | RunStatus
@@ -621,6 +644,9 @@ class Model(
         | DisableMcpServer
         | ReportIncident
         | ExportSession
+        | GetConfig
+        | ValidateConfig
+        | WriteConfig
         | Initialized
         | RunStarted
         | RunStatus

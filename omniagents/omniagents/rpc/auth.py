@@ -192,6 +192,12 @@ GLOBAL_SAFE_METHODS = frozenset(
         # carries a ``session_id``; otherwise the invoked function owns its
         # own authorization (products register these).
         "server_call",
+        # Layered configuration reads: read-only, and secret fields are
+        # never returned (only is_set flags), so any authenticated
+        # principal may inspect the effective configuration. Dry-run
+        # validation mutates nothing and echoes no submitted values.
+        "get_config",
+        "validate_config",
     }
 )
 
@@ -203,6 +209,11 @@ GLOBAL_MUTATING_METHODS = frozenset(
     {
         "disable_tool",
         "disable_mcp_server",
+        # Writes server-level configuration (the user overlay layer) for
+        # every connected principal — same posture as disable_tool:
+        # allowed in single-user mode, refused for individual principals
+        # when the deployment identifies distinct users.
+        "write_config",
     }
 )
 

@@ -402,6 +402,11 @@ class AgentSpec:
     project_slug: Optional[str] = None
     agent_slug: Optional[str] = None
 
+    # Base project.yml this spec was built from (project mode only).
+    # The layered-config RPCs resolve their project/user/managed layers
+    # from it; None for bare agent.yml or Python-built specs.
+    manifest_path: Optional[str] = None
+
     # --- Hidden fields for passing registries to handoff agents ---
     # These are populated when loading from project mode and used to pass
     # the same tool/guardrails/server_functions registries to handoff agents

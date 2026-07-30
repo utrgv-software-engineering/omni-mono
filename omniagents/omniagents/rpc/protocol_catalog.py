@@ -49,6 +49,9 @@ EXPERIMENTAL_REQUESTS = (
     "disable_mcp_server",
     "report_incident",
     "export_session",
+    "get_config",
+    "validate_config",
+    "write_config",
 )
 
 STABLE_NOTIFICATIONS = (

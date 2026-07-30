@@ -4203,6 +4203,103 @@ class AgentService(RpcMethodsBase):
             redactor=scanner,
         )
 
+    # ------------------------------------------------------------------
+    #  Layered configuration (get_config / validate_config / write_config)
+    # ------------------------------------------------------------------
+
+    def _layered_config_store(self):
+        """The layered-config store for this process's project manifest.
+
+        Resolves the base project.yml from the spec (project mode), then
+        from the installed product identity; a missing manifest leaves
+        the project layer absent while user overlays still resolve.
+        Built per call so reads always reflect the files on disk.
+        """
+        from pathlib import Path as _Path
+
+        from omniagents.core.config.layered import LayeredConfigStore
+
+        manifest = getattr(self.spec, "manifest_path", None)
+        if not manifest:
+            from omniagents.core.product import product_info
+
+            manifest = product_info().manifest_path
+        return LayeredConfigStore(manifest_path=_Path(manifest) if manifest else None)
+
+    async def get_config(self) -> dict:  # noqa: D401
+        """Return the effective layered configuration with provenance.
+
+        Every registered field carries its effective value, the layer it
+        came from, every layer that sets it, constraints, reload
+        classification, and read-only reasons. Secret fields never
+        include values — only ``is_set`` flags.
+        """
+        result = self._layered_config_store().describe()
+        _debug_rpc("get_config", {"fields": len(result.get("fields", []))})
+        return result
+
+    async def validate_config(self, updates: dict) -> dict:  # noqa: D401
+        """Dry-run validation of a batch of configuration updates.
+
+        Returns structured field errors (unknown key, read-only,
+        type/value/range violations) and the reload classification the
+        batch would have, without writing anything.
+        """
+        _debug_rpc("validate_config", {"keys": sorted(updates)})
+        return self._layered_config_store().validate(updates)
+
+    async def write_config(self, updates: dict) -> dict:  # noqa: D401
+        """Atomically apply configuration updates to the user layer.
+
+        All-or-nothing: any validation error aborts the whole batch and
+        nothing is written. A ``null`` value clears the key from the
+        user layer (reverting to lower layers). Fields classified
+        ``session`` are additionally applied to the live spec so the
+        next agent build picks them up without a restart.
+        """
+        _debug_rpc("write_config", {"keys": sorted(updates)})
+        store = self._layered_config_store()
+        result = store.write(updates)
+        if result.get("ok"):
+            self._hot_apply_config(store, result)
+        return result
+
+    def _hot_apply_config(self, store, result: dict) -> None:
+        """Apply session-reloadable written keys to the live spec.
+
+        Mirrors the ``disable_tool`` precedent of mutating
+        ``spec.security_config`` in place: ``security.safety_mode`` is
+        consulted on every agent build, so updating the dict makes the
+        write effective for the next run without a restart.
+        """
+        from omniagents.core.config.layered import (
+            CONFIG_FIELDS_BY_KEY,
+            RELOAD_SESSION,
+        )
+
+        session_keys = result.get("reload", {}).get(RELOAD_SESSION, [])
+        for key in session_keys:
+            field = CONFIG_FIELDS_BY_KEY[key]
+            if field.secret or not key.startswith("security."):
+                continue
+            sec = getattr(self.spec, "security_config", None)
+            if not isinstance(sec, dict):
+                continue
+            is_set, value = store.effective_value(key)
+            subpath = key.removeprefix("security.")
+            node = sec
+            parts = subpath.split(".")
+            for part in parts[:-1]:
+                child = node.get(part)
+                if not isinstance(child, dict):
+                    child = {}
+                    node[part] = child
+                node = child
+            if is_set:
+                node[parts[-1]] = value
+            else:
+                node.pop(parts[-1], None)
+
     # (Removed) get_model_info: model metadata is now sent inline with usage events
 
     async def get_user_history(

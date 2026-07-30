@@ -30,6 +30,9 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | DisableMcpServer
   | ReportIncident
   | ExportSession
+  | GetConfig
+  | ValidateConfig
+  | WriteConfig
   | Initialized
   | RunStarted
   | RunStatus
@@ -221,6 +224,17 @@ export interface ReportIncident {
 export interface ExportSession {
   redact?: boolean;
   session_id: string;
+}
+export interface GetConfig {}
+export interface ValidateConfig {
+  updates: {
+    [k: string]: unknown;
+  };
+}
+export interface WriteConfig {
+  updates: {
+    [k: string]: unknown;
+  };
 }
 export interface Initialized {}
 export interface RunStarted {

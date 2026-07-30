@@ -124,22 +124,14 @@ def _manifest_product(proj: Dict[str, Any], base_dir: Path) -> ProductInfo:
         return DEFAULT_PRODUCT_INFO
 
 
-def _project_overlay_paths(config_dir_name: Any) -> List[Path]:
-    """Overlay files layered over the base project.yml, in merge order.
+def user_overlay_paths(config_dir_name: Any) -> List[Path]:
+    """Config-dir overlay files: ``<product-config>/project.d/*.yml``.
 
-    Two sources, mirroring the sandbox-profile chain:
-
-    1. Config-dir convention: ``<product-config>/project.d/*.yml``
-       (lexical order) — the user/operator layer for an installed
-       product whose packaged base project.yml is read-only. The dir is
-       the base manifest's product ``config_dir`` (derived from the
-       product name when not declared).
-    2. ``OMNIAGENTS_PROJECT_OVERLAYS`` — ``os.pathsep``-separated
-       explicit paths (e.g. a container image selecting its enterprise
-       security overlay); applied last, so explicit wins.
+    Lexical order — the user/operator layer for an installed product
+    whose packaged base project.yml is read-only. The dir is the base
+    manifest's product ``config_dir`` (derived from the product name
+    when not declared).
     """
-    import os
-
     out: List[Path] = []
     if isinstance(config_dir_name, str) and config_dir_name.strip():
         try:
@@ -150,13 +142,36 @@ def _project_overlay_paths(config_dir_name: Any) -> List[Path]:
                 out.extend(sorted(overlay_dir.glob("*.yml")))
         except Exception:
             pass
+    return out
 
+
+def managed_overlay_paths() -> List[Path]:
+    """``OMNIAGENTS_PROJECT_OVERLAYS`` overlay files, in declared order.
+
+    ``os.pathsep``-separated explicit paths (e.g. a container image
+    selecting its enterprise security overlay); applied after the
+    config-dir overlays, so explicit wins.
+    """
+    import os
+
+    out: List[Path] = []
     env_overlays = os.environ.get("OMNIAGENTS_PROJECT_OVERLAYS", "")
     for chunk in env_overlays.split(os.pathsep):
         chunk = chunk.strip()
         if chunk:
             out.append(Path(chunk).expanduser())
     return out
+
+
+def _project_overlay_paths(config_dir_name: Any) -> List[Path]:
+    """Overlay files layered over the base project.yml, in merge order.
+
+    Two sources, mirroring the sandbox-profile chain:
+    :func:`user_overlay_paths` then :func:`managed_overlay_paths` —
+    the same split the layered-config RPCs report as the ``user`` and
+    ``managed`` provenance layers.
+    """
+    return user_overlay_paths(config_dir_name) + managed_overlay_paths()
 
 
 def _apply_project_overlays(
@@ -660,6 +675,7 @@ def build_spec_from_project(
     )
     spec.project_slug = project.product.slug
     spec.agent_slug = _slugify(key, key)
+    spec.manifest_path = str(project.root / "project.yml")
 
     voice_spec = None
     voice_key = configured_voice_key

@@ -55,6 +55,8 @@ REQUIRED_FIELDS = {
     "disable_mcp_server": ("server_name",),
     "report_incident": ("session_id", "description"),
     "export_session": ("session_id",),
+    "validate_config": ("updates",),
+    "write_config": ("updates",),
     "run_started": ("run_id", "session_id"),
     "run_status": ("run_id", "session_id", "status", "message"),
     "tool_called": ("run_id", "session_id", "tool", "input", "call_id"),
@@ -221,6 +223,9 @@ RESULT_TYPES = {
     "disable_mcp_server": ("None", "null"),
     "report_incident": ("None", "null"),
     "export_session": ("dict[str, Any]", "Record<string, unknown>"),
+    "get_config": ("dict[str, Any]", "Record<string, unknown>"),
+    "validate_config": ("dict[str, Any]", "Record<string, unknown>"),
+    "write_config": ("dict[str, Any]", "Record<string, unknown>"),
 }
 
 IDENTITY_SCHEMA = {
