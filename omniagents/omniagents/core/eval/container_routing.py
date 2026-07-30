@@ -104,8 +104,10 @@ class ContainerRoutingMixin:
     #: "." → root) and the agent's shell/fs tools are anchored here.
     CONTAINER_WORKSPACE_ROOT: ClassVar[str] = "/workspace"
 
-    profile_resolver: ClassVar[Optional[Callable[..., Any]]] = None
-    default_profile_path: ClassVar[Optional[Path]] = None
+    # Not ClassVar: subclasses may set these per-class OR per-instance
+    # (ConfiguredWorkspaceEnvironment wires them in __init__).
+    profile_resolver: Optional[Callable[..., Any]] = None
+    default_profile_path: Optional[Path] = None
 
     # Live sessions keyed by session_id. Kept off EnvironmentContext.data
     # because the runner merges context.data into spec.context (tool

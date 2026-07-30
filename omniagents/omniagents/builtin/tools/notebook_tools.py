@@ -1,7 +1,7 @@
 import difflib
 import json
 import os
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from agents.run_context import RunContextWrapper
 from omniagents.core.tools import rich_function_tool, RichToolOutput
@@ -291,7 +291,7 @@ async def edit_notebook(
                     },
                 )
 
-            new_cell = {
+            new_cell: Dict[str, Any] = {
                 "cell_type": cell_type,
                 "source": new_source.splitlines(True),
                 "metadata": {},

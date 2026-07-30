@@ -76,6 +76,7 @@ def _load_entry_points(domain: str, type_name: str) -> None:
         eps = entry_points()
         # Python 3.12+ returns a SelectableGroups; 3.9-3.11 returns a dict
         group = "omniagents.providers"
+        candidates: Any
         if isinstance(eps, dict):
             candidates = eps.get(group, [])
         else:

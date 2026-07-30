@@ -99,7 +99,7 @@ class RemoteAgent(UnifiedAgentBase):
     handoffs: List[Any] = []
     model = "remote"
     model_settings: Dict[str, Any] = {}
-    mcp_servers = None
+    mcp_servers: Optional[List[Any]] = None
 
     def __init__(
         self,

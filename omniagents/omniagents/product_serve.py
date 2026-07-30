@@ -439,7 +439,7 @@ async def _serve(args: argparse.Namespace) -> int:
         resume_tier = None
         started_services = []
         service_urls: Dict[str, Any] = {}
-        client_type = "host"
+        client_type: Optional[str] = "host"
         bring_up_host_target(
             workspace=args.workspace,
             profile_raw=profile.raw,

@@ -32,7 +32,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -254,12 +254,12 @@ def build_audio_storage(
     """Resolve the audio backend from env. Defaults to ``LocalAudioStorage``
     rooted at ``get_audio_storage_path(project, agent)`` for parity with
     the pre-refactor constructor."""
-    env = env if env is not None else os.environ
-    backend = (env.get("OMNIAGENTS_AUDIO_BACKEND") or "fs").strip().lower()
+    env_map: Mapping[str, str] = env if env is not None else os.environ
+    backend = (env_map.get("OMNIAGENTS_AUDIO_BACKEND") or "fs").strip().lower()
     if backend == "blob":
-        account = env.get("AZURE_STORAGE_ACCOUNT_NAME")
-        key = env.get("AZURE_STORAGE_ACCOUNT_KEY")
-        container = env.get("OMNI_AZURE_AUDIO_CONTAINER")
+        account = env_map.get("AZURE_STORAGE_ACCOUNT_NAME")
+        key = env_map.get("AZURE_STORAGE_ACCOUNT_KEY")
+        container = env_map.get("OMNI_AZURE_AUDIO_CONTAINER")
         if not (account and key and container):
             raise RuntimeError(
                 "OMNIAGENTS_AUDIO_BACKEND=blob requires AZURE_STORAGE_ACCOUNT_NAME, "

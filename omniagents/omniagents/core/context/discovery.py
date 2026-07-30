@@ -27,7 +27,7 @@ def model_config_resolver(func: Callable) -> Callable:
                 "max_output_tokens": 16384,
             }
     """
-    func._is_model_config_resolver = True
+    func._is_model_config_resolver = True  # type: ignore[attr-defined]
     return func
 
 
@@ -42,7 +42,7 @@ def realtime_settings_resolver(func: Callable) -> Callable:
     fallback to environment-based settings.
     """
 
-    func._is_realtime_settings_resolver = True
+    func._is_realtime_settings_resolver = True  # type: ignore[attr-defined]
     return func
 
 

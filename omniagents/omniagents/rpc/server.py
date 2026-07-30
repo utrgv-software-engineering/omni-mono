@@ -5,7 +5,10 @@ is set or omniagents.core.debug.Debug is enabled.
 """
 
 from collections.abc import Collection
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from omniagents.rpc.transport import Transport
 import inspect
 import json
 import os
@@ -13,7 +16,7 @@ import platform
 import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from .auth import RPC_ERROR_AUTHORIZATION_DENIED, AuthorizationDenied
 from .base import RpcMethodsBase
@@ -21,6 +24,8 @@ from .generated.gui_v1.models import (
     CLIENT_REQUEST_MODELS,
     CLIENT_RESULT_MODELS,
     SERVER_NOTIFICATION_MODELS,
+    InitializeParams,
+    InitializeResult,
 )
 from .protocol_catalog import EXPERIMENTAL_NOTIFICATIONS, EXPERIMENTAL_REQUESTS
 from omniagents import __version__
@@ -56,8 +61,10 @@ GUI_CAPABILITY_NAMES = frozenset(
         "terminal",
     }
 )
-InitializeParams = CLIENT_REQUEST_MODELS["initialize"]
-InitializeResult = CLIENT_RESULT_MODELS["initialize"]
+# The generated model maps collapse to an untyped join under mypy; pin the
+# value type so class-level pydantic API (model_validate/model_fields) checks.
+_REQUEST_MODELS = cast("Mapping[str, type[BaseModel]]", CLIENT_REQUEST_MODELS)
+_RESULT_MODELS = cast("Mapping[str, type[BaseModel]]", CLIENT_RESULT_MODELS)
 
 
 def _parse_semver(value: Any) -> Optional[tuple[int, int, int]]:
@@ -364,7 +371,7 @@ class JsonRpcEndpoint:
             return
 
         request_model = (
-            CLIENT_REQUEST_MODELS.get(method)
+            _REQUEST_MODELS.get(method)
             if self.gui_handshake or self.allowed_methods is not None
             else None
         )
@@ -460,7 +467,7 @@ class JsonRpcEndpoint:
 
         if call_id is not None:
             result_model = (
-                CLIENT_RESULT_MODELS.get(method)
+                _RESULT_MODELS.get(method)
                 if self.gui_handshake or self.allowed_methods is not None
                 else None
             )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, TypeGuard, cast
 
 from .local import LocalAgent
 
@@ -209,6 +209,8 @@ class WorkerManager:
         agent = self._agent_factory(spec)
         await agent.initialize()
         await agent._ensure_client()
+        client = agent._client
+        assert client is not None  # _ensure_client() guarantees a live client
 
         start_kwargs: dict[str, Any] = {
             "prompt": task_description,
@@ -217,7 +219,7 @@ class WorkerManager:
         if context is not None:
             start_kwargs["context"] = context
 
-        resp = await agent._client.other.start_run(**start_kwargs)
+        resp = await client.other.start_run(**start_kwargs)
         raw = getattr(resp, "result", resp)
         if isinstance(raw, dict):
             run_id = raw.get("run_id", "")
@@ -336,7 +338,11 @@ class WorkerManager:
         history_items: list[dict] = []
         if tail > 0 and history_loader is not None:
             loaded = history_loader(handle, tail)
-            history_items = await loaded if inspect_is_awaitable(loaded) else loaded
+            if inspect_is_awaitable(loaded):
+                history_items = await loaded
+            else:
+                # TypeGuard doesn't narrow the negative branch.
+                history_items = cast("list[dict]", loaded)
         if history_items:
             result["history"] = history_items
         return result
@@ -396,5 +402,5 @@ class WorkerManager:
         return new_handle
 
 
-def inspect_is_awaitable(value: Any) -> bool:
+def inspect_is_awaitable(value: Any) -> TypeGuard[Awaitable[Any]]:
     return hasattr(value, "__await__")

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 
-def _deep_get(d: Any, path: str) -> Any:
+def _deep_get(d: Any, path: Optional[str]) -> Any:
     cur = d
     for part in str(path).split("."):
         if isinstance(cur, dict) and part in cur:
@@ -19,8 +19,11 @@ def _apply_target(
     if value is None or not target:
         return None
     op = str(target.get("op", ">=")).strip()
+    raw_target = target.get("value")
+    if raw_target is None:
+        return None
     try:
-        tgt = float(target.get("value"))
+        tgt = float(raw_target)
     except Exception:
         return None
     if op == ">=":
@@ -54,7 +57,9 @@ def compute_metrics(
         res: Dict[str, Any] = {"name": name, "label": label, "type": mtype}
 
         if mtype == "pass_rate":
-            src = mc.get("source_measure") or mc.get("source") or mc.get("measure")
+            src = str(
+                mc.get("source_measure") or mc.get("source") or mc.get("measure") or ""
+            )
             items = per_measure.get(src, [])
             total = len(items)
             passed = sum(1 for it in items if bool(it.get("passed")) is True)
@@ -74,8 +79,11 @@ def compute_metrics(
                 res["meets_target"] = bool(meets) if meets is not None else False
 
         elif mtype == "rate":
-            src = (
-                mc.get("from_measure") or mc.get("source_measure") or mc.get("measure")
+            src = str(
+                mc.get("from_measure")
+                or mc.get("source_measure")
+                or mc.get("measure")
+                or ""
             )
             num_path = mc.get("numerator")
             den_path = mc.get("denominator")

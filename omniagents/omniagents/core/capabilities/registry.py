@@ -63,7 +63,8 @@ def _load_entry_points_once() -> None:
         eps = entry_points(group="omniagents.capabilities")
     except TypeError:
         # Older importlib.metadata — entry_points() returns a dict
-        eps = entry_points().get("omniagents.capabilities", [])  # type: ignore[attr-defined]
+        legacy_eps = entry_points()
+        eps = legacy_eps.get("omniagents.capabilities", [])  # type: ignore[attr-defined, arg-type]
     except Exception:
         return
     for ep in eps:

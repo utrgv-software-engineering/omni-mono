@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 import shutil
 import yaml
 from omniagents._version import __version__ as OMNIAGENTS_VERSION
@@ -411,7 +411,9 @@ def delete_agent(project_ref: str, agent_key: str) -> Tuple[List[str], str, str]
         data = yaml.safe_load(project_yml.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict):
             data = {}
-        agents_cfg = data.get("agents") if isinstance(data.get("agents"), dict) else {}
+        agents_cfg = data.get("agents")
+        if not isinstance(agents_cfg, dict):
+            agents_cfg = {}
         entry = agents_cfg.get("entrypoint")
         if entry == agent_key:
             # Prefer a non-battery agent for the new entrypoint — the
@@ -600,7 +602,7 @@ def scaffold_judge(
 
     if failure_category:
         evaluation_yml = eval_dir / "evaluation.yml"
-        base = {}
+        base: Dict[str, Any] = {}
         if evaluation_yml.exists():
             try:
                 base = yaml.safe_load(evaluation_yml.read_text(encoding="utf-8")) or {}

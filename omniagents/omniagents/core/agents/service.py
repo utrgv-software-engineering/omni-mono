@@ -2244,6 +2244,8 @@ class AgentService(RpcMethodsBase):
 
         # Compute rich metadata for the approval dialog.
         try:
+            import json as _json
+
             from omniagents.core.tools import get_approval_metadata
 
             args_dict = _json.loads(arguments) if arguments else {}

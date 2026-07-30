@@ -117,7 +117,7 @@ async def evaluate_split(
     from omniagents.core.agents.builder import _default_build_agent
 
     async def _build_judge_agent(agent_cfg: Dict[str, Any], base_dir: Path):
-        def _map_js_type(t: str):
+        def _map_js_type(t: Optional[str]):
             t = (t or "").lower()
             return {
                 "string": str,
@@ -159,7 +159,7 @@ async def evaluate_split(
         model = agent_cfg.get("model", "gpt-4.1")
         output_type = agent_cfg.get("output_type", dict)
         output_type_strict = bool(agent_cfg.get("output_type_strict", False))
-        out_type = dict
+        out_type: Any = dict
         if isinstance(output_type, type):
             out_type = output_type
         elif isinstance(output_type, str):
@@ -337,7 +337,7 @@ async def evaluate_split(
                 "final_assistant_text": (run.get("final_assistant_text") or ""),
                 "judge_output": out,
                 "split_file": str(split_path),
-                "split_line": int(scen_line_by_id.get(sid) or 0),
+                "split_line": int(scen_line_by_id.get(str(sid)) or 0),
             }
         )
         idx += 1

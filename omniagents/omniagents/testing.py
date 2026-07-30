@@ -132,6 +132,6 @@ def invoke_tool(test_event_loop):
         """Run an arbitrary coroutine on the test's shared event loop."""
         return test_event_loop.run_until_complete(coro)
 
-    _invoke.wait_for_job_exit = wait_for_job_exit
-    _invoke.run = run
+    _invoke.wait_for_job_exit = wait_for_job_exit  # type: ignore[attr-defined]
+    _invoke.run = run  # type: ignore[attr-defined]
     return _invoke

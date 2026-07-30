@@ -452,6 +452,7 @@ async def status_impl(service, session, args=None) -> dict:
             "message": "No wakeup is scheduled on this session.",
         }
     snap = wakeup_snapshot_dict(state)
+    assert snap is not None  # state is non-None here
     parts = [
         f"Watch: {state.message}",
         f"Every {state.interval_seconds:g}s ({'recurring' if state.recurring else 'one-shot'})",

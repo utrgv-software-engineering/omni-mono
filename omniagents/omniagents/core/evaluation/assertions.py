@@ -115,12 +115,10 @@ def final_assistant_text(history: List[Dict[str, Any]]) -> Optional[str]:
         if isinstance(content, list) and it.get("type") == "message":
             txt = ""
             for part in content:
-                if (
-                    isinstance(part, dict)
-                    and part.get("type") == "output_text"
-                    and isinstance(part.get("text"), str)
-                ):
-                    txt += part.get("text")
+                if isinstance(part, dict) and part.get("type") == "output_text":
+                    part_text = part.get("text")
+                    if isinstance(part_text, str):
+                        txt += part_text
             if txt:
                 return txt.strip()
     return None
@@ -247,11 +245,12 @@ def assert_tool_output_satisfies(
     links = link_outputs(calls, outs)
     target: Optional[Dict[str, Any]] = None
     if for_call and for_call.get("call_id"):
-        target = links.get(for_call.get("call_id"), {}).get("output")
+        target = links.get(str(for_call.get("call_id")), {}).get("output")
     else:
         for c in calls:
-            if c.get("name") == tool_name and c.get("call_id") in links:
-                target = links[c.get("call_id")]["output"]
+            c_call_id = c.get("call_id")
+            if c.get("name") == tool_name and c_call_id in links:
+                target = links[str(c_call_id)]["output"]
                 break
     if not target:
         return False, {"reason": "no_output"}
@@ -276,7 +275,7 @@ def assert_coords_propagated(
     src = next((c for c in calls if c.get("name") == from_call), None)
     if not src:
         return False, {"reason": "no_source_call"}
-    link = links.get(src.get("call_id"))
+    link = links.get(str(src.get("call_id")))
     if not link or not link.get("output"):
         return False, {"reason": "no_source_output"}
     try:
@@ -298,9 +297,12 @@ def assert_coords_propagated(
     if not dest:
         return False, {"reason": "no_dest_call"}
     args = dest.get("args") or {}
+    raw_lat, raw_lon = args.get("latitude"), args.get("longitude")
+    if raw_lat is None or raw_lon is None:
+        return False, {"reason": "invalid_dest_coords"}
     try:
-        wlat = float(args.get("latitude"))
-        wlon = float(args.get("longitude"))
+        wlat = float(raw_lat)
+        wlon = float(raw_lon)
     except Exception:
         return False, {"reason": "invalid_dest_coords"}
     if abs(lat - wlat) <= tol and abs(lon - wlon) <= tol:

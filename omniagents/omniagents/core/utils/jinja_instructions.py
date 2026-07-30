@@ -107,7 +107,7 @@ def context_to_dict(context: Any) -> Dict[str, Any]:
         return context.dict()
 
     # Handle dataclasses
-    if is_dataclass(context):
+    if is_dataclass(context) and not isinstance(context, type):
         return asdict(context)
 
     # Try to get __dict__ for plain objects

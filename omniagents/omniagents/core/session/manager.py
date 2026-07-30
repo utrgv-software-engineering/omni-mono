@@ -1100,7 +1100,7 @@ class SessionManager:  # noqa: D101
         if session_id and session_id in self._by_id:
             return self._by_id[session_id]
         existed = bool(session_id) and session_exists(
-            session_id,
+            str(session_id),
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
         )

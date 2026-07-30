@@ -5,7 +5,7 @@ import json
 import importlib.util
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Callable
+from typing import Any, Dict, List, Optional, Tuple, Callable, cast
 
 import yaml
 
@@ -112,7 +112,7 @@ def _load_local_measures(
         pass
 
 
-def _derive_label(raw: str) -> str:
+def _derive_label(raw: Optional[str]) -> str:
     try:
         t = str(raw or "").strip().replace("_", " ")
         if t.lower() in ("non existent", "non_existent"):
@@ -278,6 +278,7 @@ async def _run_judges(
         output_type = agent_cfg.get("output_type", "dict")
         output_type_strict = bool(agent_cfg.get("output_type_strict", False))
         expect_dict = False
+        base_out_type: Any
         if isinstance(output_type, str) and output_type.lower() == "dict":
             base_out_type = dict
             expect_dict = True
@@ -350,7 +351,7 @@ async def _run_judges(
             # they gain works under strict mode. Anchored to cwd because
             # this judge runs post-scenario without a live workspace.
             judge_res = await AgentsRunner.run(
-                judge_agent,
+                cast(Any, judge_agent),
                 judge_prompt,
                 context={"workspace_root": os.getcwd()},
                 max_turns=int(agent_cfg.get("max_turns", 1)),
@@ -412,7 +413,7 @@ async def _run_scenario(
     spec.context.setdefault("workspace_root", os.getcwd())
     try:
         if "max_turns" in defaults:
-            spec.max_turns = int(defaults.get("max_turns", spec.max_turns))
+            spec.max_turns = int(defaults["max_turns"])
     except Exception:
         pass
     agent = await create_unified_agent(spec)

@@ -91,7 +91,7 @@ class OmniAgentsAgentAdapter:
         )
 
         self._optimizer_cfg: Optional[Dict[str, Any]] = None
-        self._optimizer_agent = None
+        self._optimizer_agent: Optional[Any] = None
         if self.optimizer_key:
             try:
                 self._optimizer_cfg = (eval_cfg.get("optimizers") or {}).get(
@@ -473,7 +473,7 @@ class OmniAgentsAgentAdapter:
                         pdir.mkdir(parents=True, exist_ok=True)
                         fails = sum(1 for o in outputs if bool(o.get("violation")))
                         passes = sum(1 for o in outputs if not bool(o.get("violation")))
-                        mismatches = []
+                        mismatches: List[Any] = []
                         for idx, o in enumerate(outputs):
                             if bool(o.get("violation")) and len(mismatches) < 5:
                                 try:
@@ -612,7 +612,7 @@ class OmniAgentsAgentAdapter:
                 summary = item.get("summary")
                 if isinstance(summary, list):
                     rendered = "\n".join(
-                        s.get("text") if isinstance(s, dict) else str(s)
+                        str(s.get("text") or "") if isinstance(s, dict) else str(s)
                         for s in summary
                     )
                 else:

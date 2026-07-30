@@ -26,7 +26,9 @@ from omniagents.core.tools import client_function_tool
 
 
 @client_function_tool
-async def notify(ctx: RunContextWrapper[Any], message: str) -> dict:
+async def notify(  # type: ignore[empty-body]
+    ctx: RunContextWrapper[Any], message: str
+) -> dict:
     """Send a heads-up to the human operator without stopping the run.
 
     Use for time-sensitive but non-blocking information: long-running
@@ -41,7 +43,9 @@ async def notify(ctx: RunContextWrapper[Any], message: str) -> dict:
 
 
 @client_function_tool(expect_result=True, timeout_seconds=1800)
-async def escalate(ctx: RunContextWrapper[Any], message: str) -> dict:
+async def escalate(  # type: ignore[empty-body]
+    ctx: RunContextWrapper[Any], message: str
+) -> dict:
     """Pause and ask the human operator for input. Returns their reply.
 
     Use ONLY when truly blocked on something that requires human

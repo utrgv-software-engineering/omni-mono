@@ -66,7 +66,7 @@ try:
 
     _HAS_PYODIDE_WORKSPACE = True
 except Exception:  # pragma: no cover - defensive; module has no hard deps
-    PyodideWorkspace = None  # type: ignore[assignment]
+    PyodideWorkspace = None  # type: ignore[assignment, misc]
     pyodide_worker_available = None  # type: ignore[assignment]
     _HAS_PYODIDE_WORKSPACE = False
 

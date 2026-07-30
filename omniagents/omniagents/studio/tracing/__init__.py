@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 
 __version__ = "0.1.4"
 
-_processor = None
-_server_url = None
-_current_name = None
-_default_project = None
+_processor: Optional[Any] = None
+_server_url: Optional[str] = None
+_current_name: Optional[str] = None
+_default_project: Optional[str] = None
 
 
 def init(
@@ -42,7 +42,7 @@ def init(
     token: Optional[str] = None,
     resume: str = "never",
     replace_default: bool = True,
-) -> str:
+) -> Optional[str]:
     """Initialize OmniAgents Studio tracing."""
     global _processor, _server_url, _current_name, _default_project
 
@@ -62,7 +62,7 @@ def init(
     if server_url:
         _processor = RemoteStudioTraceProcessor(
             endpoint=f"{server_url.rstrip('/')}/api/trace",
-            project=_default_project,
+            project=project,  # non-None here (None early-returns above)
             token=token,
         )
         _server_url = server_url
@@ -494,6 +494,7 @@ __all__ = [
     "__version__",
     "get_current_project",
     "set_conversation_analysis",
+    "get_conversation_analysis",
     "append_conversation_note",
     "StudioTraceProcessor",
     "RemoteStudioTraceProcessor",
@@ -532,6 +533,17 @@ def set_conversation_analysis(
     }
     storage.upsert_analysis(target_project, group_id, payload)
     return payload
+
+
+def get_conversation_analysis(
+    group_id: str,
+    *,
+    project: Optional[str] = None,
+) -> dict:
+    target_project = project or _default_project or "default"
+    db_path = get_traces_dir() / f"{target_project}.db"
+    storage = SQLiteStorage(str(db_path))
+    return storage.get_analysis(target_project, group_id) or {}
 
 
 def append_conversation_note(

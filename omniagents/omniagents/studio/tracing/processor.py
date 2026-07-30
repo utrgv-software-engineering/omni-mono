@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 try:
     import httpx
 except ImportError:
-    httpx = None
+    httpx = None  # type: ignore[assignment]
 
 from agents.tracing import TracingProcessor
 
@@ -128,9 +128,9 @@ class RemoteStudioTraceProcessor(TracingProcessor):
         self.endpoint = endpoint
         self.project = project
         self.token = token or os.environ.get("OMNIAGENTS_STUDIO_TOKEN")
-        self.client = None
+        self.client: Optional[Any] = None
         self._client_lock = threading.Lock()
-        self._queued_events = deque(maxlen=1000)
+        self._queued_events: deque = deque(maxlen=1000)
         self._shutdown = False
         self._client_thread = threading.Thread(target=self._init_client_with_retry)
         self._client_thread.daemon = True
@@ -228,7 +228,7 @@ class RemoteStudioTraceProcessor(TracingProcessor):
                 self._send_now(event_type, data)
 
     def _send_now(self, event_type: str, data: Dict[str, Any]):
-        if self._shutdown:
+        if self._shutdown or self.client is None:
             return
 
         try:

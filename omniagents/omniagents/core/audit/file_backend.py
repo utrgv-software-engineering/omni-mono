@@ -33,6 +33,7 @@ class FileAuditBackend:
         self._ensure_dir()
         self._purge_if_needed()
         # Initialise HMAC chain state
+        self._prev_hmac: Optional[str]
         if self._signing_key:
             from omniagents.core.audit.integrity import CHAIN_SEED
 
@@ -70,6 +71,8 @@ class FileAuditBackend:
         # produces the same bytes when it strips _hmac and re-serializes.
         obj = json.loads(line)
         canonical = json.dumps(obj, sort_keys=True, default=str, ensure_ascii=False)
+        # _sign_entry is only reached when signing is enabled (see append()).
+        assert self._prev_hmac is not None and self._signing_key is not None
         h = compute_hmac(canonical, self._prev_hmac, self._signing_key)
         obj[HMAC_FIELD] = h
         self._prev_hmac = h

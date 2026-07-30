@@ -731,6 +731,7 @@ class SqliteSessionStorage(SessionStorageBackend):
             )
             row_id = cursor.lastrowid
             conn.commit()
+        assert row_id is not None  # always set after a successful INSERT
         return row_id
 
     def get_audio_metadata(

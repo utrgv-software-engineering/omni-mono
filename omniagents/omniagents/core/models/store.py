@@ -294,11 +294,8 @@ class ModelConfigStore:
                 discovered = None
             if not discovered:
                 continue
-            seed = (
-                provider_config.get("models")
-                if isinstance(provider_config.get("models"), dict)
-                else {}
-            )
+            seed_candidate = provider_config.get("models")
+            seed = seed_candidate if isinstance(seed_candidate, dict) else {}
             provider_config["models"] = {
                 slug: {**entry, **(seed.get(slug) or {})}
                 for slug, entry in discovered.items()

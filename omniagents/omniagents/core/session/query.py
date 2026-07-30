@@ -24,7 +24,7 @@ def parse_datetime_arg(value: str | None) -> str | None:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def ensure_sessions_schema(*, project: str, agent: str) -> None:
+def ensure_sessions_schema(*, project: str | None, agent: str | None) -> None:
     db_path = get_sessions_db_path(project, agent)
     if not db_path.exists():
         return
@@ -47,8 +47,8 @@ def ensure_sessions_schema(*, project: str, agent: str) -> None:
 
 def query_sessions(
     *,
-    project: str,
-    agent: str,
+    project: str | None,
+    agent: str | None,
     include_archived: bool,
     after: str | None,
     before: str | None,
@@ -133,8 +133,8 @@ def query_sessions(
 
 def count_sessions(
     *,
-    project: str,
-    agent: str,
+    project: str | None,
+    agent: str | None,
     include_archived: bool,
     after: str | None,
     before: str | None,
@@ -194,7 +194,7 @@ def _message_preview(message: Any, *, content_chars: int) -> dict[str, Any] | No
 
 
 def populate_session_stats(
-    *, project: str, agent: str, sessions: list[dict[str, Any]]
+    *, project: str | None, agent: str | None, sessions: list[dict[str, Any]]
 ) -> None:
     if not sessions:
         return
@@ -283,8 +283,8 @@ def populate_session_stats(
 
 def search_session_messages(
     *,
-    project: str,
-    agent: str,
+    project: str | None,
+    agent: str | None,
     query: str,
     role: str = "any",
     include_archived: bool = False,

@@ -536,9 +536,9 @@ async def bash_status(
         else:
             lines = ["Background jobs:"]
             for j in jobs:
-                state = "running" if j["running"] else f"exited({j['exit_code']})"
+                state_label = "running" if j["running"] else f"exited({j['exit_code']})"
                 lines.append(
-                    f"  {j['job_id']}  pid={j['pid']}  {state}  {j['wall_time_ms']}ms  {j['command']}"
+                    f"  {j['job_id']}  pid={j['pid']}  {state_label}  {j['wall_time_ms']}ms  {j['command']}"
                 )
             llm_output = "\n".join(lines)
         return RichToolOutput(

@@ -1,12 +1,12 @@
 """Shared event handling code for RPC agent implementations."""
 
-from typing import Any, Dict
+from typing import Any, Dict, cast
 from agents import ItemHelpers, RunItemStreamEvent
 
 
 def new_item_event(event_name: str, item: Any) -> RunItemStreamEvent:
     """Wrap item into an Agents RunItemStreamEvent with correct name."""
-    return RunItemStreamEvent(event_name, item)
+    return RunItemStreamEvent(cast(Any, event_name), item)
 
 
 class ToolCallItem:
@@ -91,15 +91,20 @@ class MessageOutputItem:
 
 def map_notification_to_event(method: str, payload: Dict[str, Any]):
     """Map JSON-RPC notification to StreamEvent."""
+    item: Any
     if method == "tool_called":
         item = ToolCallItem(
-            payload.get("tool"), payload.get("input", "{}"), payload.get("call_id")
+            payload.get("tool") or "",
+            payload.get("input", "{}"),
+            payload.get("call_id"),
         )
         return new_item_event("tool_called", item)
 
     elif method == "tool_result":
         item = ToolCallOutputItem(
-            payload.get("tool"), payload.get("output", ""), payload.get("call_id")
+            payload.get("tool") or "",
+            payload.get("output", ""),
+            payload.get("call_id"),
         )
         return new_item_event("tool_output", item)
 

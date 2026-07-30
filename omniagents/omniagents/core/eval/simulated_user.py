@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from contextlib import contextmanager
 
@@ -237,7 +237,9 @@ Write only the message, nothing else. Be natural and conversational."""
             # Pass the full conversation history
             result = await Runner.run(
                 self._get_agent(),
-                self._history.copy(),
+                # Message dicts ({role, content}) match EasyInputMessageParam;
+                # mypy can't prove list[dict[str, str]] against the SDK union.
+                cast("list[Any]", self._history.copy()),
                 context={"workspace_root": os.getcwd()},
                 max_turns=1,
                 run_config=self.run_config,

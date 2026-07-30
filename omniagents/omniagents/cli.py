@@ -18,7 +18,10 @@ except ImportError:
 
 # Module-level imports for testability (allows monkeypatching in tests)
 from omniagents.core.project.export import save_agent_as_py
-from omniagents.core.eval.optimize import optimize_agent_from_project
+from omniagents.core.eval.optimize import (
+    optimize_agent_from_project,
+    optimize_judge_from_project,
+)
 from omniagents.core.eval.annotate import annotate_scenarios, write_annotation_output
 from omniagents.core.eval.results import save_evaluation_run
 from omniagents.core.runtime.runner import Runner

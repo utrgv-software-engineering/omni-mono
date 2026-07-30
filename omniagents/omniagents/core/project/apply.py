@@ -4,7 +4,14 @@ import json
 from pathlib import Path
 import yaml
 
+from typing import Any
+
 from omniagents.core.project.runtime import load_project, resolve_agent
+
+
+def _nonempty_str(value: Any) -> bool:
+    """True when ``value`` is a non-blank string."""
+    return isinstance(value, str) and bool(value.strip())
 
 
 def apply_agent_instructions(
@@ -139,20 +146,14 @@ def apply_judge_updates(
             ag = tgt.get("agent") or {}
             inp = tgt.get("input") or {}
             if new_instr is not None:
-                if (
-                    isinstance(ag.get("instructions_file"), str)
-                    and ag.get("instructions_file").strip()
-                ):
+                if _nonempty_str(ag.get("instructions_file")):
                     pass
                 else:
                     ag["instructions"] = new_instr
                     tgt["agent"] = ag
                     changed = True
             if new_tmpl is not None:
-                if (
-                    isinstance((inp.get("template_file")), str)
-                    and inp.get("template_file").strip()
-                ):
+                if _nonempty_str(inp.get("template_file")):
                     pass
                 else:
                     inp["template"] = new_tmpl
@@ -230,11 +231,7 @@ def apply_judge_updates(
     if subdoc is not None and isinstance(subdoc, dict):
         ag = subdoc.get("agent") or {}
         inp = subdoc.get("input") or {}
-        if (
-            new_instructions is not None
-            and isinstance(ag.get("instructions_file"), str)
-            and ag.get("instructions_file").strip()
-        ):
+        if new_instructions is not None and _nonempty_str(ag.get("instructions_file")):
             _rel = str(ag.get("instructions_file"))
             fp = Path(_rel)
             if not fp.is_absolute():
@@ -251,11 +248,7 @@ def apply_judge_updates(
             subdoc["agent"] = ag
             _write_yaml(ref_file, judge_key, subdoc)
             print(f"Applied judge instructions inline: {ref_file}")
-        if (
-            new_template is not None
-            and isinstance(inp.get("template_file"), str)
-            and inp.get("template_file").strip()
-        ):
+        if new_template is not None and _nonempty_str(inp.get("template_file")):
             _rel = str(inp.get("template_file"))
             fp = Path(_rel)
             if not fp.is_absolute():
@@ -293,10 +286,7 @@ def apply_judge_updates(
                 ag = tgt.get("agent") or {}
                 inp = tgt.get("input") or {}
                 if new_instructions is not None:
-                    if (
-                        isinstance(ag.get("instructions_file"), str)
-                        and ag.get("instructions_file").strip()
-                    ):
+                    if _nonempty_str(ag.get("instructions_file")):
                         _rel = str(ag.get("instructions_file"))
                         fp = Path(_rel)
                         if not fp.is_absolute():
@@ -311,10 +301,7 @@ def apply_judge_updates(
                         tgt["agent"]["instructions"] = new_instructions
                         to_write = True
                 if new_template is not None:
-                    if (
-                        isinstance(inp.get("template_file"), str)
-                        and inp.get("template_file").strip()
-                    ):
+                    if _nonempty_str(inp.get("template_file")):
                         _rel = str(inp.get("template_file"))
                         fp = Path(_rel)
                         if not fp.is_absolute():

@@ -335,6 +335,7 @@ def build_app(
 
         settings_resolver = getattr(realtime_spec, "resolve_realtime_settings", None)
         voice_backend = getattr(realtime_spec, "voice_backend", "realtime")
+        realtime_service: Any
         if voice_backend == "pipeline":
             from omniagents.rpc.voice_pipeline_service import VoicePipelineService
 
@@ -357,7 +358,8 @@ def build_app(
         realtime_service.authorization_policy = authenticator.authorization_policy
         app.state.realtime_service = realtime_service
         try:
-            service.realtime_service = realtime_service
+            # Dynamic attribute — AgentService doesn't declare it.
+            service.realtime_service = realtime_service  # type: ignore[attr-defined]
         except Exception:
             pass
         realtime_endpoint = JsonRpcEndpoint(realtime_service)
@@ -467,6 +469,8 @@ def build_app(
                 elif msg_type == "resize":
                     cols = message.get("cols")
                     rows = message.get("rows")
+                    if cols is None or rows is None:
+                        continue
                     try:
                         c = int(cols)
                         r = int(rows)

@@ -152,6 +152,8 @@ dev = [
     "pytest-timeout",
     "bump2version",
     "black==26.5.1",
+    "mypy==1.19.0",
+    "types-PyYAML>=6.0",
     "coverage[toml]",
     "pytest-cov",
     "hypothesis>=6.142.4",
@@ -184,6 +186,51 @@ source = [
     "omniagents",
     "*/site-packages/omniagents",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["omniagents"]
+# Project templates are Jinja-style Python with `{placeholder}` syntax —
+# not valid Python (black CI excludes them for the same reason).
+exclude = ['^omniagents/core/project/templates/']
+check_untyped_defs = true
+# Third-party deps without stubs or py.typed (openai-agents extras, pygit2,
+# jsonref, litellm, torch/trl, azure SDKs, ...).
+ignore_missing_imports = true
+
+# typecheck-debt — these modules predate the typecheck gate and still carry
+# real errors (417 across the 25 modules below when the gate landed). They
+# are ratchet targets: fix a module, delete its line here. Do NOT add new
+# modules to this list.
+[[tool.mypy.overrides]]
+module = [
+    "omniagents.cli",                          # 52 errors
+    "omniagents.studio.server.api",            # 53 errors
+    "omniagents.core.runtime.bridge",          # 40 errors
+    "omniagents.core.agents.service",          # 31 errors
+    "omniagents.core.training.grpo",           # 30 errors
+    "omniagents.rpc.realtime_session",         # 26 errors
+    "omniagents.rpc.transport.websocket",      # 24 errors
+    "omniagents.core.runtime.runner",          # 23 errors
+    "omniagents.core.agents.builder",          # 23 errors
+    "omniagents.core.sandbox.docker_extended", # 20 errors
+    "omniagents.core.runtime.serve_harness",   # 16 errors
+    "omniagents.builtin.tools.file_tools",     # 16 errors
+    "omniagents.notebook.evaluation",          # 15 errors
+    "omniagents.core.eval.optimize",           # 15 errors
+    "omniagents.rpc.agents.remote",            # 13 errors
+    "omniagents.core.training.sft",            # 11 errors
+    "omniagents.builtin.tools.youtube_search", # 11 errors
+    "omniagents.builtin.tools.scholar_search", # 11 errors
+    "omniagents.core.tools.discovery",         # 10 errors
+    "omniagents.core.sandbox.aci_engine",      # 10 errors
+    "omniagents.core.eval.scenarios",          # 10 errors
+    "omniagents.core.eval.container_routing",  # 10 errors
+    "omniagents.core.config.loader",           # 9 errors
+    "omniagents.core.sandbox",                 # 8 errors (__init__)
+    "omniagents.core.agents.factory",          # 8 errors
+]
+ignore_errors = true
 
 [tool.black]
 line-length = 88
@@ -224,10 +271,12 @@ dev = [
     "fastapi[all]>=0.115.12",
     "hypothesis>=6.142.4",
     "mkdocs-material>=9.5.0",
+    "mypy==1.19.0",
     "pytest",
     "pytest-asyncio",
     "pytest-cov",
     "pytest-timeout",
+    "types-PyYAML>=6.0",
     "vcrpy>=5.1.0",
 ]
 

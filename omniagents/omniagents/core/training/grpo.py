@@ -59,12 +59,13 @@ QWEN25_RESPONSE_SCHEMA = {
 if TYPE_CHECKING:
     from datasets import Dataset
     from transformers import PreTrainedModel, PreTrainedTokenizer
+    from trl import GRPOConfig
     from trl import GRPOTrainer as TRLGRPOTrainer
     from omniagents.notebook.evaluation import EvalSuite
     from agents import Agent
 
 
-def _extract_hf_model_name(model: str) -> str:
+def _extract_hf_model_name(model: Any) -> str:
     """Extract HuggingFace model name from various formats.
 
     Supports:

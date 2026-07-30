@@ -1,8 +1,9 @@
+import asyncio
 import base64
 import logging
 import os
 import uuid
-from typing import Any, AsyncIterator, Dict, Optional
+from typing import Any, AsyncIterator, Dict, Optional, cast
 
 from omniagents.rpc import RpcMethodsBase
 from omniagents.rpc.base import _current_channel
@@ -137,7 +138,8 @@ class _OmniSingleAgentVoiceWorkflow:
                 pass
 
         await self._bridge.start_turn()
-        token = _current_channel.set(self._bridge)
+        # _VoiceBridgeChannel duck-types JsonRpcChannel's notify surface.
+        token = _current_channel.set(cast(Any, self._bridge))
         try:
             result = await self._agent_service.start_run(
                 transcription, self._session_id
@@ -188,8 +190,8 @@ class VoicePipelineSession:
         self._agent_service = agent_service
         self._voice_channel = voice_channel
 
-        self._input = None
-        self._result = None
+        self._input: Optional[Any] = None
+        self._result: Optional[Any] = None
 
     async def start(self) -> str:
         try:
@@ -216,7 +218,7 @@ class VoicePipelineSession:
 
         config = VoicePipelineConfig(model_provider=voice_model_provider)
         try:
-            config.tts_settings.voice = voice
+            config.tts_settings.voice = cast(Any, voice)
         except Exception:
             pass
 
@@ -262,7 +264,8 @@ class VoicePipelineSession:
         )
 
         audio_input = StreamedAudioInput()
-        pipeline = VoicePipeline(workflow=workflow, config=config)
+        # _OmniSingleAgentVoiceWorkflow duck-types VoiceWorkflowBase.
+        pipeline = VoicePipeline(workflow=cast(Any, workflow), config=config)
         result = await pipeline.run(audio_input)
 
         self._input = audio_input
@@ -273,9 +276,10 @@ class VoicePipelineSession:
     def _build_voice_model_provider(self) -> Any:
         """Build the STT/TTS model provider from spec and settings."""
         model_config: Optional[Dict[str, Any]] = None
-        if callable(getattr(self.spec, "resolve_default_model_config", None)):
+        model_config_resolver = getattr(self.spec, "resolve_default_model_config", None)
+        if callable(model_config_resolver):
             try:
-                resolved = self.spec.resolve_default_model_config()
+                resolved = model_config_resolver()
                 if isinstance(resolved, dict) and resolved:
                     model_config = resolved
             except Exception:

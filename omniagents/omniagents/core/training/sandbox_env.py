@@ -73,9 +73,10 @@ class _SandboxPool:
         self._sandbox_config = sandbox_config
         self._pool_size = pool_size
         self._max_builds = max_concurrent_builds
-        self._client, _ = build_sandbox_client(self._config_for(prewarm_image))
-        if self._client is None:
+        client, _ = build_sandbox_client(self._config_for(prewarm_image))
+        if client is None:
             raise ValueError("build_sandbox_client returned no client")
+        self._client = client
         self._ready: dict[str, deque] = defaultdict(deque)
         self._options_cache: dict[str, Any] = {}
         self._refilling: set[str] = set()
@@ -370,7 +371,7 @@ def sandbox_verifier_reward(
     # Run every rollout's verifier CONCURRENTLY on the shared pool loop (they
     # each offload the container exec to the pool's thread executor), instead of
     # one-after-another. Big win when verifiers are non-trivial (e.g. pytest).
-    futs = []
+    futs: list[Any] = []
     for env in environments:
         verifier = env._task.get("verifier")
         if env._task.get("world_model_only") or not verifier or env._session is None:

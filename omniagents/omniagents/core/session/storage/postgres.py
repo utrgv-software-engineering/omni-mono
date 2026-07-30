@@ -218,7 +218,9 @@ class PgSessionStorage(SessionStorageBackend):
             ) from e
 
         self._dsn = dsn
-        self._tenant_id = tenant_id or os.getenv("OMNIAGENTS_TENANT_ID", DEFAULT_TENANT)
+        self._tenant_id = (
+            tenant_id or os.getenv("OMNIAGENTS_TENANT_ID") or DEFAULT_TENANT
+        )
         self._pool = ConnectionPool(
             conninfo=dsn,
             min_size=min_size,

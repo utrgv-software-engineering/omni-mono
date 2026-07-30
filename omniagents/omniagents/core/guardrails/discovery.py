@@ -5,7 +5,7 @@ import importlib
 import inspect
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any
 import traceback
 
 from agents.guardrail import InputGuardrail, OutputGuardrail
@@ -14,7 +14,7 @@ from omniagents.core.debug import Debug
 
 
 def discover_guardrails_in_dir(
-    base_dir: str = "guardrails", debug: bool = None
+    base_dir: str = "guardrails", debug: Optional[bool] = None
 ) -> Tuple[
     Dict[str, InputGuardrail[Any]],
     Dict[str, OutputGuardrail[Any]],

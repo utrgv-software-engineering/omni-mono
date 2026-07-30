@@ -98,10 +98,10 @@ class ExtendedUnixLocalSandboxSession(UnixLocalSandboxSession, PtyStreamingSessi
 
         try:
             while True:
-                chunk = await q.get()
-                if chunk is None:
+                item = await q.get()
+                if item is None:
                     return
-                yield chunk
+                yield item
         finally:
             consumers_now = getattr(entry, "stream_consumers", None)
             if consumers_now is not None:

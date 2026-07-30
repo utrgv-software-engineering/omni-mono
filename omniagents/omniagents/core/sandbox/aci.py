@@ -214,7 +214,9 @@ class AciSandboxSession(BaseSandboxSession):
         max_output_tokens: int | None = None,
     ) -> PtyExecUpdate:
         await self._ensure_backend_started()
-        sanitized = self._prepare_exec_command(*command, shell=shell, user=None)
+        sanitized = self._prepare_exec_command(
+            *(str(c) for c in command), shell=shell, user=None
+        )
         joined = shlex.join(str(c) for c in sanitized)
         # Every PTY is a fresh /bin/sh; `exec` the requested command into it so
         # the WebSocket close maps to the command exiting.

@@ -1,7 +1,10 @@
 """WebSocket transport implementations."""
 
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import websockets
 
 from fastapi import WebSocket, WebSocketDisconnect
 

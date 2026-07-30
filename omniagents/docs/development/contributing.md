@@ -61,10 +61,18 @@ black path/to/file.py
 
 ### Type Checking
 
+mypy is configured in `pyproject.toml` (`[tool.mypy]`) and runs in CI
+(`.github/workflows/typecheck.yml`). It must pass before pushing:
+
 ```bash
-# Run mypy (if configured)
-mypy omniagents
+# Targets, excludes, and per-module overrides come from pyproject.toml
+mypy
 ```
+
+A small set of legacy modules is listed under a `typecheck-debt` override
+in `pyproject.toml` with `ignore_errors = true`. Those are ratchet
+targets: when you clean one up, delete its line from the list. Never add
+new modules to it.
 
 ### Coverage
 

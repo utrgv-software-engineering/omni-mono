@@ -323,7 +323,9 @@ class HostBridgeSandboxSession(BaseSandboxSession):
         yield_time_s: float | None = None,
         max_output_tokens: int | None = None,
     ) -> PtyExecUpdate:
-        sanitized = self._prepare_exec_command(*command, shell=shell, user=user)
+        sanitized = self._prepare_exec_command(
+            *(str(c) for c in command), shell=shell, user=user
+        )
         chan = await self._ensure_chan()
         res = await chan.call(
             "pty_start",

@@ -724,12 +724,12 @@ def _request(
     context_param_schemas: Dict[str, Dict[str, Any]] = {}
     if context_params:
         for op in operations:
-            for param in op.parameters:
+            for op_param in op.parameters:
                 if (
-                    param.name in context_params
-                    and param.name not in context_param_schemas
+                    op_param.name in context_params
+                    and op_param.name not in context_param_schemas
                 ):
-                    context_param_schemas[param.name] = param.schema
+                    context_param_schemas[op_param.name] = op_param.schema
 
     context_getters = ""
     if context_params:

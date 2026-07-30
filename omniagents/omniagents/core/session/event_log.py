@@ -745,25 +745,25 @@ class SessionEventLog:
                 if isinstance(run_id, str):
                     open_runs[run_id] = payload
             elif method == "run_end":
-                open_runs.pop(payload.get("run_id"), None)
+                open_runs.pop(str(payload.get("run_id")), None)
             elif method == "tool_approval_requested":
                 call_id = payload.get("call_id")
                 if isinstance(call_id, str):
                     open_tool_approvals[call_id] = payload
             elif method == "tool_approval_resolved":
-                open_tool_approvals.pop(payload.get("call_id"), None)
+                open_tool_approvals.pop(str(payload.get("call_id")), None)
             elif method == "mcp_approval_requested":
                 request_id = payload.get("request_id")
                 if isinstance(request_id, str):
                     open_mcp_approvals[request_id] = payload
             elif method == "mcp_approval_resolved":
-                open_mcp_approvals.pop(payload.get("request_id"), None)
+                open_mcp_approvals.pop(str(payload.get("request_id")), None)
             elif method == "client_request":
                 request_id = payload.get("request_id")
                 if isinstance(request_id, str):
                     open_client_requests[request_id] = payload
             elif method == "client_request_resolved":
-                open_client_requests.pop(payload.get("request_id"), None)
+                open_client_requests.pop(str(payload.get("request_id")), None)
         for call_id in open_tool_approvals:
             self.record(
                 "tool_approval_resolved",

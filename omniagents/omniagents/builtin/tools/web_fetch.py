@@ -124,7 +124,7 @@ def web_fetch(
             # Extract links
             all_links = []
             for link in soup.find_all("a", href=True):
-                href = link["href"]
+                href = str(link["href"])
                 link_text = link.get_text(strip=True)
                 if (
                     href

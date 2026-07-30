@@ -49,7 +49,7 @@ async def _loop_alias_on_invoke(service, session, args=None):
     text = str(args.get("text") or args.get("prompt") or "")
     interval_seconds, prompt, _token = split_loop_interval_and_prompt(text)
     if not prompt:
-        prompt = resolve_default_loop_prompt(workspace_root_from_session(session))
+        prompt = resolve_default_loop_prompt(workspace_root_from_session(session)) or ""
     if not prompt:
         return {
             "ok": False,

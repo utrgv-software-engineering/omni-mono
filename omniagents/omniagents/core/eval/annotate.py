@@ -164,9 +164,9 @@ def annotate_scenarios(
             cat_ids = _group_categories(conn, studio_project, gid)
             if cat_ids:
                 names = [id_name.get(c) for c in cat_ids if c in id_name]
-                names = [n for n in names if n]
-                if names:
-                    slugs = sorted(set(_slugify(n) for n in names))
+                kept = [n for n in names if n]
+                if kept:
+                    slugs = sorted(set(_slugify(n) for n in kept))
                     id_to_cats[sid] = slugs
     finally:
         try:

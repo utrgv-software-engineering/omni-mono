@@ -2063,7 +2063,8 @@ def load_agent_spec_from_yaml(
     # YAML schema:
     #   session:
     #     backend:                  # opt-in SDK-managed backend
-    # type: redis | sqlalchemy | mongodb | encrypted | openai_conversations | sqlite
+    #       type is one of: redis | sqlalchemy | mongodb | encrypted |
+    #         openai_conversations | sqlite
     #       # backend-specific kwargs (url, session_id, ttl, inner, ...)
     #     compaction:               # opt-in SDK-native context compaction
     #       enabled: true
@@ -2107,13 +2108,13 @@ def load_agent_spec_from_yaml(
     #     use_sandbox_agent: false
     #     run_as: "user"
     #     client:
-    # type: unix_local | docker | e2b | modal | runloop |
-    #             daytona | blaxel | vercel | cloudflare
+    #       type is one of: unix_local | docker | e2b | modal | runloop |
+    #         daytona | blaxel | vercel | cloudflare
     #     options: { ... }
     #     manifest:
     #       entries: { ... }
     #     snapshot:
-    # type: local | remote | noop
+    #       type is one of: local | remote | noop
     #     concurrency_limits:
     #       manifest_entries: 4
     #       local_dir_files: 8

@@ -1,7 +1,10 @@
 """Base classes for JSON-RPC method definitions."""
 
 from contextvars import ContextVar
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from omniagents.rpc.server import JsonRpcChannel
 
 _current_channel: ContextVar[Optional["JsonRpcChannel"]] = ContextVar(
     "omniagents_rpc_channel", default=None

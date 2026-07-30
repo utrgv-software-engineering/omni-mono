@@ -31,7 +31,7 @@ def server_function(
             return [_jsonify(x) for x in obj]
         if isinstance(obj, dict):
             return {str(k): _jsonify(v) for k, v in obj.items()}
-        if dataclasses.is_dataclass(obj):
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
             return _jsonify(dataclasses.asdict(obj))
         if hasattr(obj, "model_dump"):
             try:
@@ -260,6 +260,7 @@ def discover_server_functions_in_dir(
             sys.modules[synth_pkg] = pkg
         module_prefix = synth_pkg
     else:
+        assert canonical_name is not None  # use_synthetic covers the None case
         module_prefix = canonical_name
 
     parent_path = str(base_path.parent)

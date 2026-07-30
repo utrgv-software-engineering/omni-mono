@@ -26,7 +26,14 @@ pytest --cov=omniagents
 black .
 # Or format specific files:
 black path/to/file.py
+
+# Typecheck (configured in pyproject.toml [tool.mypy]; runs in CI):
+mypy
 ```
+
+mypy must exit clean before pushing. A legacy `typecheck-debt` override
+list in `pyproject.toml` exempts specific modules — fix and remove
+entries when you touch those modules; never add new ones.
 
 ### Coverage
 ```bash

@@ -94,7 +94,7 @@ def count_errors(history: List[Dict[str, Any]]) -> int:
 def scenario_timer():
     """Context manager that yields a callable returning elapsed seconds."""
     start = time.monotonic()
-    elapsed = {}
+    elapsed: Dict[str, float] = {}
 
     def get_elapsed() -> float:
         return elapsed.get("value", time.monotonic() - start)

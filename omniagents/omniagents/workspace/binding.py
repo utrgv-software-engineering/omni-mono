@@ -43,7 +43,10 @@ class WorkspaceBindingCapability(Capability):
     """Cached fallback root used if the bound session doesn't expose a
     manifest. Most sessions do."""
 
-    run_as: Optional[str] = Field(default=None, exclude=True)
+    # Intentionally narrows the SDK base field (``User | None``) to a plain
+    # username string — omniagents wires ``AgentSpec.sandbox_run_as`` (str)
+    # straight through and SandboxWorkspace consumes it as ``default_user``.
+    run_as: Optional[str] = Field(default=None, exclude=True)  # type: ignore[assignment]
     """Default user identity for tool exec/spawn/read/write calls that
     don't pass an explicit ``user=``. Wired from ``AgentSpec.sandbox_run_as``
     by the builder. When ``None``, calls run as the SDK default — which is

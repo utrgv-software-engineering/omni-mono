@@ -1,7 +1,7 @@
 import os
 import base64
 import mimetypes
-from typing import Optional, Any, List, Union
+from typing import Optional, Any, List, Literal, Union, cast
 from omniagents.core.tools import function_tool
 from agents.run_context import RunContextWrapper
 from agents.tool import ToolOutputText, ToolOutputImage
@@ -100,7 +100,10 @@ async def read_image(
         text_output = ToolOutputText(type="text", text=text_description)
 
         # Set detail level (default to "auto" if not specified)
-        detail_level = detail if detail in ["low", "high", "auto"] else "auto"
+        detail_level = cast(
+            'Literal["low", "high", "auto"]',
+            detail if detail in ["low", "high", "auto"] else "auto",
+        )
 
         image_output = ToolOutputImage(
             type="image", image_url=data_url, detail=detail_level

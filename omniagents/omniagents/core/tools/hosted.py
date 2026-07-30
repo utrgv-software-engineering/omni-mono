@@ -20,7 +20,7 @@ FunctionTool)``, so hosted tools pass through unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Mapping
+from typing import Any, Callable, Dict, Mapping, cast
 
 # ---------------------------------------------------------------------------
 # Builders for individual hosted tools
@@ -72,7 +72,7 @@ def _build_code_interpreter(spec: Mapping[str, Any]) -> Any:
     if tool_config is None:
         container = spec.get("container", {"type": "auto"})
         tool_config = {"type": "code_interpreter", "container": container}
-    return CodeInterpreterTool(tool_config=tool_config)
+    return CodeInterpreterTool(tool_config=cast(Any, tool_config))
 
 
 def _build_image_generation(spec: Mapping[str, Any]) -> Any:
@@ -97,7 +97,7 @@ def _build_image_generation(spec: Mapping[str, Any]) -> Any:
         ):
             if key in spec:
                 tool_config[key] = spec[key]
-    return ImageGenerationTool(tool_config=tool_config)
+    return ImageGenerationTool(tool_config=cast(Any, tool_config))
 
 
 def _build_computer(spec: Mapping[str, Any]) -> Any:
@@ -147,7 +147,7 @@ def _build_hosted_mcp(spec: Mapping[str, Any]) -> Any:
         ):
             if key in spec:
                 tool_config[key] = spec[key]
-    return HostedMCPTool(tool_config=tool_config)
+    return HostedMCPTool(tool_config=cast(Any, tool_config))
 
 
 def _build_apply_patch(spec: Mapping[str, Any]) -> Any:

@@ -445,7 +445,7 @@ def _drop_pending_tick_notifications(session) -> None:
 def _install_tick(session, state: GoalState) -> None:
     """Install the periodic tick that wakes the agent each interval.
     Shared between start, resume, and rehydrate."""
-    tick_kwargs = {
+    tick_kwargs: dict[str, Any] = {
         "source": "goal.tick",
     }
     if state.safe_tool_overrides is not None:
@@ -697,6 +697,7 @@ async def status_impl(service, session, args=None):
             "snapshot": None,
         }
     snap = goal_snapshot_dict(state)
+    assert snap is not None  # state is non-None here
     active = snap["status"] == "active"
     parts = [
         f"Goal: {state.goal}",

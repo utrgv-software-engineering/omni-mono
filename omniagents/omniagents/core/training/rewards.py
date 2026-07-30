@@ -185,9 +185,10 @@ class MeasureRewardAdapter:
 
     def __post_init__(self):
         if not self.measure_name:
-            self.measure_name = getattr(self.measure_fn, "_measure_name", None)
-            if not self.measure_name:
-                self.measure_name = getattr(self.measure_fn, "__name__", "unknown")
+            self.measure_name = str(
+                getattr(self.measure_fn, "_measure_name", None)
+                or getattr(self.measure_fn, "__name__", "unknown")
+            )
 
     @property
     def __name__(self) -> str:
@@ -325,8 +326,8 @@ def measure_to_reward(
         measure_name = measure
     else:
         measure_fn = measure
-        measure_name = getattr(measure, "_measure_name", None) or getattr(
-            measure, "__name__", ""
+        measure_name = str(
+            getattr(measure, "_measure_name", None) or getattr(measure, "__name__", "")
         )
 
     return MeasureRewardAdapter(
@@ -341,7 +342,7 @@ def measure_to_reward(
 def combine_rewards(
     *rewards: Union[MeasureRewardAdapter, Callable],
     weights: Optional[List[float]] = None,
-) -> Callable[[List[Union[str, List[Dict]]]], List[float]]:
+) -> Callable[[List[Union[str, List[Dict], Dict]]], List[float]]:
     """Combine multiple reward functions into one.
 
     This is useful when you want to train with multiple objectives,
@@ -371,7 +372,7 @@ def combine_rewards(
         )
 
     def combined_reward(
-        completions: List[Union[str, List[Dict]]], **kwargs
+        completions: List[Union[str, List[Dict], Dict]], **kwargs
     ) -> List[float]:
         # Compute rewards from each function
         all_rewards = []

@@ -19,7 +19,7 @@ import asyncio
 import hmac
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from omniagents.rpc.terminal_backends import (
     HostPtyBackend,
@@ -85,7 +85,12 @@ class TerminalManager:
         output_max_bytes: int = 4 * 1024 * 1024,
         authorization_policy: Optional[Any] = None,
     ) -> None:
-        self._backend: PtyBackend = backend if backend is not None else HostPtyBackend()
+        # Backends type their methods against their own concrete handle
+        # (PtyHandle is opaque per backend), so mypy can't prove structural
+        # conformance to the PtyBackend protocol.
+        self._backend: PtyBackend = (
+            backend if backend is not None else cast(PtyBackend, HostPtyBackend())
+        )
         self._default_shell = default_shell
         self._default_cwd = default_cwd
         self._default_user = default_user

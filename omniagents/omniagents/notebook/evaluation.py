@@ -10,7 +10,10 @@ from __future__ import annotations
 import asyncio
 import html
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from agents import Agent, Runner as AgentRunner
 

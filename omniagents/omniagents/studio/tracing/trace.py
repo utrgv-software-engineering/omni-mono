@@ -47,7 +47,9 @@ def trace(
             "Remote tracing in trace() is not implemented; using local storage"
         )
 
-    with sdk_trace(workflow_name, trace_id, group_id, enhanced_metadata, disabled):
+    with sdk_trace(
+        workflow_name, trace_id, group_id, enhanced_metadata, disabled=disabled
+    ):
         yield
 
 

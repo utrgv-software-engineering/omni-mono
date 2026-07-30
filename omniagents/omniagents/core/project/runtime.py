@@ -370,18 +370,20 @@ def load_project(
     # what deviates.
     from omniagents.core.utils.merge import deep_merge
 
+    tracing_block = proj.get("tracing")
+    if not isinstance(tracing_block, dict):
+        tracing_block = {}
     tracing_defaults = deep_merge(
         {
             "provider": "studio",
             "project": product.slug,
             "name": product.slug,
         },
-        proj.get("tracing") if isinstance(proj.get("tracing"), dict) else {},
+        tracing_block,
     )
-    settings_defaults = (
-        proj.get("settings") if isinstance(proj.get("settings"), list) else []
-    )
-    ui_defaults = {}
+    settings_block = proj.get("settings")
+    settings_defaults = settings_block if isinstance(settings_block, list) else []
+    ui_defaults: Dict[str, Any] = {}
 
     tool_registry: Dict[str, Any] = {}
 

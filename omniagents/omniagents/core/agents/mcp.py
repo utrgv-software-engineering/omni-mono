@@ -5,7 +5,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 from agents.mcp import (
     MCPServer,
@@ -51,7 +51,7 @@ async def _capture_ui_after_call(
         if structured is None and isinstance(result, dict):
             structured = result.get("structuredContent")
         # Some Pydantic models — coerce to JSON-safe shape for transport.
-        if hasattr(structured, "model_dump"):
+        if structured is not None and hasattr(structured, "model_dump"):
             try:
                 structured = structured.model_dump(mode="json", by_alias=True)
             except Exception:
@@ -232,19 +232,23 @@ def _instantiate_server(cfg: MCPServerConfig, params: Dict[str, Any]) -> MCPServ
             raise ValueError(
                 f"MCP server '{cfg.name}' requires a url for HTTP/SSE transport"
             )
-        return _attach_ui_capture(MCPServerSse(params, **common_kwargs))
+        return _attach_ui_capture(MCPServerSse(cast(Any, params), **common_kwargs))
     if server_type == "stdio":
         if "command" not in params or not params["command"]:
             raise ValueError(
                 f"MCP server '{cfg.name}' requires a command for stdio transport"
             )
-        return _attach_ui_capture(QuietMCPServerStdio(params, **common_kwargs))
+        return _attach_ui_capture(
+            QuietMCPServerStdio(cast(Any, params), **common_kwargs)
+        )
     if server_type == "streamable_http":
         if "url" not in params or not params["url"]:
             raise ValueError(
                 f"MCP server '{cfg.name}' requires a url for streamable_http transport"
             )
-        return _attach_ui_capture(MCPServerStreamableHttp(params, **common_kwargs))
+        return _attach_ui_capture(
+            MCPServerStreamableHttp(cast(Any, params), **common_kwargs)
+        )
     raise ValueError(
         f"Unsupported MCP server type '{cfg.type}' for server '{cfg.name}'"
     )

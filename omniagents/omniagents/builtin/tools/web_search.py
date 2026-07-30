@@ -64,7 +64,7 @@ def web_search(
         # - region="us"
         # - language="en"
         # - safe_search="active"
-        params = {
+        params: dict[str, Any] = {
             "q": query,
             "api_key": api_key,
             "num": min(num_results, 100),  # Limit to 100 max
@@ -109,7 +109,11 @@ def web_search(
         search_results = response.json()
 
         # Extract and structure the results
-        result = {"status": "success", "query": query, "organic_results": []}
+        result: dict[str, Any] = {
+            "status": "success",
+            "query": query,
+            "organic_results": [],
+        }
 
         # Add organic search results
         if "organic_results" in search_results:

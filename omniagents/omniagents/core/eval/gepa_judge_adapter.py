@@ -88,7 +88,7 @@ class OmniAgentsJudgeAdapter:
         }
 
         self._optimizer_cfg: Optional[Dict[str, Any]] = None
-        self._optimizer_agent = None
+        self._optimizer_agent: Optional[Any] = None
         if self.optimizer_key:
             try:
                 self._optimizer_cfg = (
@@ -287,7 +287,7 @@ class OmniAgentsJudgeAdapter:
             return instructions
 
         # Derive output typing similar to judges.py
-        def _map_js_type(t: str):
+        def _map_js_type(t: Optional[str]):
             t = (t or "").lower()
             return {
                 "string": str,
@@ -1154,7 +1154,13 @@ class OmniAgentsJudgeAdapter:
     ) -> Dict[str, List[Dict[str, Any]]]:
         reflective: Dict[str, List[Dict[str, Any]]] = {}
         trajs = list(eval_batch.trajectories or [])
-        kinds = {"TP": [], "TN": [], "FP": [], "FN": [], "UNK": []}
+        kinds: Dict[str, List[Any]] = {
+            "TP": [],
+            "TN": [],
+            "FP": [],
+            "FN": [],
+            "UNK": [],
+        }
         for t in trajs:
             k = t.get("kind") or "UNK"
             if k not in kinds:

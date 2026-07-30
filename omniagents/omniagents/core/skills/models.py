@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -11,7 +12,7 @@ class SkillProperties:
     metadata: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        result = {"name": self.name, "description": self.description}
+        result: dict[str, Any] = {"name": self.name, "description": self.description}
         if self.license is not None:
             result["license"] = self.license
         if self.compatibility is not None:

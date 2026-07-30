@@ -209,9 +209,12 @@ class ProcessSandboxClient(ExtendedUnixLocalSandboxClient):
         self, state: UnixLocalSandboxSessionState
     ) -> UnixLocalSandboxSession:
         session = ProcessSandboxSession.from_state(state)
-        session._omni_sandbox_binary = self._binary
-        session._omni_sandbox_ro_binds = self._ro_binds
-        session._omni_sandbox_rw_binds = self._rw_binds
-        session._omni_sandbox_allow_net = self._allow_net
-        session._omni_sandbox_protected_subpaths = self._protected_subpaths
+        # Dynamic attributes consumed by the omni-sandbox exec wrapper.
+        session._omni_sandbox_binary = self._binary  # type: ignore[attr-defined]
+        session._omni_sandbox_ro_binds = self._ro_binds  # type: ignore[attr-defined]
+        session._omni_sandbox_rw_binds = self._rw_binds  # type: ignore[attr-defined]
+        session._omni_sandbox_allow_net = self._allow_net  # type: ignore[attr-defined]
+        session._omni_sandbox_protected_subpaths = (  # type: ignore[attr-defined]
+            self._protected_subpaths
+        )
         return session

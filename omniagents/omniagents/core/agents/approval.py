@@ -68,7 +68,9 @@ def session_allows_mcp_tool(session: Any, server_name: Any, tool_name: Any) -> b
         return False
     try:
         allow_set = getattr(session, "always_allow_mcp_tools", None)
-        return bool(allow_set) and (server, tool) in allow_set
+        if not allow_set:
+            return False
+        return (server, tool) in allow_set
     except Exception:
         return False
 

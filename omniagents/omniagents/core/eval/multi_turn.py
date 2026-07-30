@@ -360,7 +360,7 @@ async def run_scenario(
         _apply_scenario_variables(spec, scenario)
 
         if "max_turns" in defaults:
-            spec.max_turns = int(defaults.get("max_turns", spec.max_turns))
+            spec.max_turns = int(defaults["max_turns"])
 
         # Anchor builtin filesystem tools to the eval invocation's cwd.
         # Without this, start_run raises WorkspaceRootRequiredError under
@@ -792,6 +792,7 @@ async def _run_scripted_multi_turn(
 
     with scenario_timer() as elapsed_fn:
         if use_trace:
+            assert studio_trace is not None  # use_trace implies studio_trace
             with studio_trace(workflow_name, group_id=run_uid, metadata=meta):
                 await _drive_loop()
         else:
@@ -955,7 +956,9 @@ async def _run_synthetic_scenario(
                 }
             }
             with studio_trace(
-                workflow_name, group_id=agent_run_config.group_id, metadata=meta
+                workflow_name,
+                group_id=agent_run_config.group_id if agent_run_config else None,
+                metadata=meta,
             ):
                 history = await _run_synthetic_conversation(
                     agent,
@@ -1002,7 +1005,7 @@ async def _run_synthetic_scenario(
     # Count exchanges from history
     exchanges = sum(1 for m in history if m.get("role") == "user")
 
-    result_metadata = {
+    result_metadata: Dict[str, Any] = {
         "environment_context": context.data if context else {},
     }
     if agent_run_uid:
@@ -1081,7 +1084,7 @@ async def _run_synthetic_conversation(
         # Get assistant's response text
         assistant_text = final_assistant_text(
             load_history(
-                getattr(agent, "_session_id", None),
+                str(getattr(agent, "_session_id", None)),
                 project_slug=getattr(spec, "project_slug", None),
                 agent_slug=getattr(spec, "agent_slug", None),
             )
@@ -1293,7 +1296,7 @@ async def run_evaluation_with_environment_async(
     synthetic_count = sum(1 for sc in scenarios if _is_synthetic_scenario(sc))
     scripted_multi_count = sum(1 for sc in scenarios if _is_scripted_multi_turn(sc))
 
-    result = {
+    result: Dict[str, Any] = {
         "agent_yaml": str(cfg_path),
         "runs": all_runs,
         "metrics": metrics,

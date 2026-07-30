@@ -370,8 +370,8 @@ def wrap_with_compaction(
                 from openai import AsyncOpenAI
 
                 is_azure = bool(base_url) and (
-                    "openai.azure.com" in base_url
-                    or "services.ai.azure.com" in base_url
+                    "openai.azure.com" in str(base_url)
+                    or "services.ai.azure.com" in str(base_url)
                 )
                 if is_azure:
                     # Azure rejects ``Authorization: Bearer`` and wants the

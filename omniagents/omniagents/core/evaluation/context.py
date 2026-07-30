@@ -337,7 +337,10 @@ def build_eval_context(
     output_dicts = parse_tool_outputs(hist_list)
     output_objs: List[ToolOutput] = []
     for o in output_dicts:
-        raw_output = o.get("raw") if isinstance(o.get("raw"), dict) else o
+        raw_output_candidate = o.get("raw")
+        raw_output = (
+            raw_output_candidate if isinstance(raw_output_candidate, dict) else o
+        )
         output_objs.append(
             ToolOutput(
                 index=int(o.get("index", -1) or -1),
@@ -350,7 +353,8 @@ def build_eval_context(
     output_by_id = {o.call_id: o for o in output_objs if o.call_id}
     call_objs: List[ToolCall] = []
     for c in call_dicts:
-        raw_call = c.get("raw") if isinstance(c.get("raw"), dict) else c
+        raw_call_candidate = c.get("raw")
+        raw_call = raw_call_candidate if isinstance(raw_call_candidate, dict) else c
         call_id = c.get("call_id")
         call_objs.append(
             ToolCall(
@@ -359,7 +363,7 @@ def build_eval_context(
                 args=c.get("args"),
                 call_id=call_id,
                 raw=raw_call,
-                output=output_by_id.get(call_id),
+                output=output_by_id.get(call_id) if call_id else None,
             )
         )
     tool_links: Dict[str, ToolLink] = {}

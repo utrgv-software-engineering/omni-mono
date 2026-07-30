@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 import subprocess
 
-from .rewards import measure_to_reward, combine_rewards
+from .rewards import MeasureRewardAdapter, measure_to_reward, combine_rewards
 from .dataset import eval_suite_to_hf_dataset
 from .grpo import (
     GRPOTrainingConfig,
@@ -194,7 +194,8 @@ class CurriculumTrainingResult:
     total_epochs: int = 0
     final_loss: Optional[float] = None
     trainer: Optional[Any] = None
-    tools: Optional[List[Dict[str, Any]]] = None
+    # ToolSchemaWrapper instances (dict-like JSON schemas) or plain dicts.
+    tools: Optional[List[Any]] = None
     instructions: Optional[str] = None
     model_path: Optional[str] = None
     _inference_ready: bool = field(default=False, repr=False)
@@ -604,6 +605,7 @@ def train_grpo_curriculum(
         else:
             weights = None
 
+        reward_fn: Union[MeasureRewardAdapter, Callable]
         if len(reward_adapters) == 1:
             reward_fn = reward_adapters[0]
         else:

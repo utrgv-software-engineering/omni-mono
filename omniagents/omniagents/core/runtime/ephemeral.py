@@ -34,7 +34,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 
 @contextmanager
@@ -155,7 +155,7 @@ async def run_agent_once(
         # through the same per-turn path via the disable_token_streaming
         # patch.
         result = Runner.run_streamed(
-            built,
+            cast(Any, built),
             prompt,
             context=run_context,
             max_turns=max_turns,

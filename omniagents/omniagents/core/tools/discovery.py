@@ -6,7 +6,7 @@ import os
 import sys
 import types
 from pathlib import Path
-from typing import Dict, Callable, Optional, Any, Tuple
+from typing import Dict, Callable, Optional, Any, Tuple, Union, overload
 import traceback
 from omniagents.core.debug import Debug
 
@@ -45,7 +45,17 @@ class RichToolOutput:
 # --- Wrapper Decorators --- #
 
 
-def function_tool(func: Callable = None, **kwargs) -> FunctionTool:
+@overload
+def function_tool(func: Callable) -> FunctionTool: ...
+
+
+@overload
+def function_tool(**kwargs: Any) -> Callable[[Callable], FunctionTool]: ...
+
+
+def function_tool(
+    func: Optional[Callable] = None, **kwargs
+) -> Union[FunctionTool, Callable[[Callable], FunctionTool]]:
     """
     A wrapper around agents.tool.function_tool that adds a marker
     attribute for easier discovery by the omniagents_core framework.
@@ -82,7 +92,17 @@ def function_tool(func: Callable = None, **kwargs) -> FunctionTool:
         return decorator(func)
 
 
-def rich_function_tool(func: Callable = None, **kwargs) -> FunctionTool:
+@overload
+def rich_function_tool(func: Callable) -> FunctionTool: ...
+
+
+@overload
+def rich_function_tool(**kwargs: Any) -> Callable[[Callable], FunctionTool]: ...
+
+
+def rich_function_tool(
+    func: Optional[Callable] = None, **kwargs
+) -> Union[FunctionTool, Callable[[Callable], FunctionTool]]:
     """
     A decorator for tools that return RichToolOutput with separate LLM and UI components.
 

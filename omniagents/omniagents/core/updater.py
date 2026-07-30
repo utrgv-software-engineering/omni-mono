@@ -106,7 +106,7 @@ class UpdaterConfig:
             from omniagents.core.product import product_info
 
             info = product_info()
-        if getattr(info, "update", None) is None:
+        if info.update is None:
             raise ValueError(
                 f"Product '{info.name}' declares no 'update:' block under "
                 "'product:' in project.yml — add product.update.index_url "

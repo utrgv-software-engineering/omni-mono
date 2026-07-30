@@ -638,8 +638,8 @@ def cmd_test(ctx, args):
             if base_url:
                 client_kwargs["base_url"] = base_url
 
-            client = OpenAI(**client_kwargs)
-            response = client.chat.completions.create(
+            openai_client = OpenAI(**client_kwargs)
+            response = openai_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": "Say 'hello' and nothing else."}],
                 max_tokens=10,

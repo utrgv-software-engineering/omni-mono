@@ -501,7 +501,8 @@ async def spawn_worker(
         # leftovers ride into the workspace snapshot tar and inflate every
         # rehydrate from then on.
         try:
-            await strategy.cleanup(worker_id, worker_workspace_obj)
+            if worker_workspace_obj is not None:
+                await strategy.cleanup(worker_id, worker_workspace_obj)
         except Exception:
             pass
         _WORKER_WORKSPACES.pop(worker_id, None)

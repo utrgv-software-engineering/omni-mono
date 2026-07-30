@@ -57,7 +57,9 @@ class LocalAgent(RemoteAgent):
         # Set agent properties from spec
         self.name = spec.name
         self.instructions = (
-            spec.get_agent_instructions() if spec.get_agent_instructions else ""
+            spec.get_agent_instructions()
+            if spec.get_agent_instructions is not None
+            else ""
         )
         self.model = spec.model_name or "gpt-4"
         self.tools: List[Any] = []
@@ -177,6 +179,7 @@ class LocalAgent(RemoteAgent):
         if self._client is None:
             # Make sure we're initialized first
             await self.initialize()
+            assert self._client_transport is not None  # set by initialize()
 
             # Connect client transport
             await self._client_transport.connect()
@@ -190,9 +193,11 @@ class LocalAgent(RemoteAgent):
     async def _run_server(self, endpoint, channel):
         """Run the server side of the RPC connection."""
         try:
-            while self._server_transport.is_connected():
+            server_transport = self._server_transport
+            assert server_transport is not None  # set by initialize()
+            while server_transport.is_connected():
                 try:
-                    data = await self._server_transport.receive_json()
+                    data = await server_transport.receive_json()
                 except TransportClosedError:
                     break
                 except Exception:

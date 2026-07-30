@@ -296,8 +296,8 @@ async def switch_voice_model(session: Session, text: str) -> dict:
         }
 
     normalized = store.normalize_model_ref(name)
-    config = store.get_model_config(normalized) if normalized else None
-    if not config or not config.get("realtime"):
+    config = (store.get_model_config(normalized) if normalized else None) or {}
+    if not normalized or not config.get("realtime"):
         names = [m["name"] for m in store.list_voice_models()]
         return {
             "error": f"Unknown voice model `{name}`",

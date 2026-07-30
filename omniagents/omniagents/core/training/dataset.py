@@ -89,7 +89,7 @@ def eval_cases_to_hf_dataset(
         )
 
     # Collect all unique expect keys across all cases
-    all_expect_keys = set()
+    all_expect_keys: set[str] = set()
     for case in cases:
         if case.expect:
             all_expect_keys.update(case.expect.keys())
@@ -159,7 +159,7 @@ def records_to_hf_dataset(
         )
 
     # First pass: collect all expect keys
-    all_expect_keys = set()
+    all_expect_keys: set[str] = set()
     if expect_fn:
         for record in records:
             expect = expect_fn(record)

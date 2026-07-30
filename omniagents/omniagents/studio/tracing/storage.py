@@ -14,10 +14,10 @@ class SQLiteStorage:
         if db_path is None:
             raise ValueError("db_path must be provided")
 
-        db_path = Path(db_path)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_path = Path(db_path)
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
 
-        self.db_path = db_path
+        self.db_path = resolved_path
         self._local = threading.local()
         self._lock = threading.Lock()  # Global lock for thread safety
         self._create_tables()

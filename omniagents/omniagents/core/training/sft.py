@@ -31,6 +31,7 @@ from typing import Callable, Dict, List, Literal, Optional, Any, Union, TYPE_CHE
 if TYPE_CHECKING:
     from datasets import Dataset
     from transformers import PreTrainedModel, PreTrainedTokenizer
+    from trl import SFTConfig
     from trl import SFTTrainer as TRLSFTTrainer
 
 try:

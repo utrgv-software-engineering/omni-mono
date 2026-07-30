@@ -76,7 +76,7 @@ def save_agent_as_py(
     lines.append(f"    welcome_text={spec.welcome_text!r},")
     lines.append("    get_agent_instructions=get_agent_instructions,")
     lines.append("    build_agent=None,  # use default internal builder\n")
-    tool_names = [t.name for t in tool_funcs]
+    tool_names = [getattr(t, "name") for t in tool_funcs]
     if not tool_names:
         try:
             raw_tools = raw_cfg.get("tools") or []
