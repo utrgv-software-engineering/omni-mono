@@ -177,6 +177,91 @@ async def test_multi_token_map_resolves_distinct_users():
 
 
 # ---------------------------------------------------------------------------
+# TokenAuthProvider fails closed on misconfiguration (tkt_8yl18MvZbENq)
+# ---------------------------------------------------------------------------
+
+
+def test_all_token_env_vars_unset_refuses_startup(monkeypatch):
+    """A tokens: map whose env vars are all unset must never run open."""
+    monkeypatch.delenv("OMNI_TEST_ALICE_TOKEN", raising=False)
+    monkeypatch.delenv("OMNI_TEST_BOB_TOKEN", raising=False)
+    with pytest.raises(ValueError) as excinfo:
+        TokenAuthProvider(
+            {
+                "tokens": {
+                    "${OMNI_TEST_ALICE_TOKEN}": "alice",
+                    "${OMNI_TEST_BOB_TOKEN}": {"user_id": "bob", "roles": ["admin"]},
+                }
+            }
+        )
+    message = str(excinfo.value)
+    # Actionable: names the exact env vars that failed to resolve.
+    assert "OMNI_TEST_ALICE_TOKEN" in message
+    assert "OMNI_TEST_BOB_TOKEN" in message
+    assert "zero usable" in message
+
+
+def test_single_token_env_var_unset_refuses_startup(monkeypatch):
+    monkeypatch.delenv("OMNI_TEST_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="OMNI_TEST_TOKEN"):
+        TokenAuthProvider({"token": "${OMNI_TEST_TOKEN}"})
+
+
+def test_from_spec_misconfigured_token_auth_refuses_startup(monkeypatch):
+    """A spec that intends auth but resolves no credentials must abort
+    app construction instead of building a permissive authenticator."""
+    monkeypatch.delenv("OMNI_TEST_TOKEN", raising=False)
+
+    class Spec:
+        security_config = {
+            "providers": {"auth": {"type": "token", "token": "${OMNI_TEST_TOKEN}"}}
+        }
+
+    with pytest.raises(ValueError, match="OMNI_TEST_TOKEN"):
+        ConnectionAuthenticator.from_spec(Spec(), auth_token=None)
+
+
+@pytest.mark.asyncio
+async def test_partially_resolved_tokens_only_resolved_work(monkeypatch, caplog):
+    monkeypatch.setenv("OMNI_TEST_ALICE_TOKEN", "alice-secret")
+    monkeypatch.delenv("OMNI_TEST_BOB_TOKEN", raising=False)
+    with caplog.at_level("WARNING", logger="omniagents.core.providers.auth.token"):
+        provider = TokenAuthProvider(
+            {
+                "tokens": {
+                    "${OMNI_TEST_ALICE_TOKEN}": "alice",
+                    "${OMNI_TEST_BOB_TOKEN}": "bob",
+                }
+            }
+        )
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("OMNI_TEST_BOB_TOKEN" in m for m in messages)
+    # Token values are secrets — they must never reach the log.
+    assert not any("alice-secret" in m for m in messages)
+
+    alice = await provider.authenticate("alice-secret")
+    assert alice.authenticated and alice.identity.user_id == "alice"
+    # The unresolved entry grants nothing — not even via the raw
+    # placeholder or an empty credential.
+    for candidate in ("", "bob-secret", "${OMNI_TEST_BOB_TOKEN}"):
+        rejected = await provider.authenticate(candidate)
+        assert not rejected.authenticated
+
+
+@pytest.mark.asyncio
+async def test_from_spec_without_auth_section_stays_anonymous():
+    """The genuinely-unconfigured single-user path stays permissive."""
+
+    class Spec:
+        security_config = {}
+
+    auth = ConnectionAuthenticator.from_spec(Spec(), auth_token=None)
+    assert isinstance(auth.provider, NoneAuthProvider)
+    identity = await auth.authenticate_ws(FakeWebSocket())
+    assert identity.user_id == "anonymous"
+
+
+# ---------------------------------------------------------------------------
 # principal_can_access — the single ownership rule
 # ---------------------------------------------------------------------------
 

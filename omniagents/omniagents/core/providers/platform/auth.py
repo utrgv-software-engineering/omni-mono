@@ -112,7 +112,14 @@ class PlatformAuthProvider(AuthProvider):
 
     @staticmethod
     def _extract_bearer_token(request: Any) -> Optional[str]:
-        """Extract bearer token from Authorization header, query params, or env."""
+        """Extract bearer token from Authorization header or query params.
+
+        Only credentials presented **by the connection** are considered.
+        The server's own ``OMNI_RUNTIME_TOKEN`` (the runtime's outbound
+        credential for calling the platform) must never stand in for a
+        missing client credential — that would authenticate every
+        credential-less connection as the runtime session's user.
+        """
         # HTTP header
         if hasattr(request, "headers"):
             auth = request.headers.get("authorization", "")
@@ -123,10 +130,6 @@ class PlatformAuthProvider(AuthProvider):
             token = request.query_params.get("token")
             if token:
                 return token
-        # Environment variable fallback (container injection)
-        env_token = os.getenv("OMNI_RUNTIME_TOKEN")
-        if env_token:
-            return env_token
         # Plain string (testing)
         if isinstance(request, str):
             return request

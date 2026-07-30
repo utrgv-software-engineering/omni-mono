@@ -7,17 +7,25 @@ wrapped as a provider so it can be swapped.
 from __future__ import annotations
 
 import hmac
-from typing import Any, Dict, Optional
+import logging
+import os
+from typing import Any, Dict, List, Optional, Tuple
 
 from omniagents.core.providers.auth.base import AuthProvider, AuthResult, UserIdentity
 
+logger = logging.getLogger(__name__)
 
-def _expand_env(raw: Any) -> str:
-    import os
 
+def _expand_env(raw: Any) -> Tuple[str, Optional[str]]:
+    """Expand a ``${VAR}`` reference.
+
+    Returns ``(value, env_var_name)`` where *env_var_name* is the name of
+    the referenced environment variable, or ``None`` for literal values.
+    """
     if isinstance(raw, str) and raw.startswith("${") and raw.endswith("}"):
-        return os.getenv(raw[2:-1], "")
-    return str(raw) if raw is not None else ""
+        name = raw[2:-1]
+        return os.getenv(name, ""), name
+    return (str(raw) if raw is not None else "", None)
 
 
 class TokenAuthProvider(AuthProvider):
@@ -41,16 +49,32 @@ class TokenAuthProvider(AuthProvider):
               tokens:
                 "${ALICE_TOKEN}": alice
                 "${BOB_TOKEN}": { user_id: bob, roles: [admin] }
+
+    Selecting this provider is an explicit request for authentication, so
+    it fails closed: if the configuration resolves to **zero** usable
+    credentials (e.g. every referenced environment variable is unset),
+    construction raises :class:`ValueError` and the server refuses to
+    start, rather than silently running open. Entries that fail to
+    resolve while others succeed are skipped with a warning — only the
+    resolved tokens authenticate.
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config or {})
-        self._token: str = _expand_env((config or {}).get("token", ""))
+        cfg = config or {}
+        unresolved: List[str] = []
+
+        token_value, env_name = _expand_env(cfg.get("token", ""))
+        self._token: str = token_value
+        if "token" in cfg and not token_value:
+            unresolved.append(env_name or "`token` (empty literal)")
+
         # token value -> UserIdentity
         self._tokens: Dict[str, UserIdentity] = {}
-        for raw_token, spec in ((config or {}).get("tokens") or {}).items():
-            token_value = _expand_env(raw_token)
+        for raw_token, spec in (cfg.get("tokens") or {}).items():
+            token_value, env_name = _expand_env(raw_token)
             if not token_value:
+                unresolved.append(env_name or "`tokens` entry (empty literal)")
                 continue
             if isinstance(spec, dict):
                 identity = UserIdentity(
@@ -61,14 +85,31 @@ class TokenAuthProvider(AuthProvider):
                 identity = UserIdentity(user_id=str(spec))
             self._tokens[token_value] = identity
 
+        if not self._token and not self._tokens:
+            detail = (
+                "unresolved entries: " + ", ".join(unresolved)
+                if unresolved
+                else "no `token` or `tokens` entries were provided"
+            )
+            raise ValueError(
+                "Token authentication is configured but resolved zero usable "
+                f"credentials ({detail}). Refusing to start with "
+                "authentication silently disabled — set the referenced "
+                "environment variables, or use `security.providers.auth.type: "
+                "none` for an explicitly unauthenticated server."
+            )
+        if unresolved:
+            logger.warning(
+                "TokenAuthProvider: %d configured token(s) did not resolve "
+                "and were skipped (%s); only the %d resolved credential(s) "
+                "will authenticate.",
+                len(unresolved),
+                ", ".join(unresolved),
+                len(self._tokens) + (1 if self._token else 0),
+            )
+
     async def authenticate(self, request: Any) -> AuthResult:
         token = self._extract_token(request)
-        if not self._token and not self._tokens:
-            # No token configured — allow all (same as NoneAuth)
-            return AuthResult(
-                authenticated=True,
-                identity=UserIdentity(user_id="anonymous"),
-            )
         if token:
             for candidate, identity in self._tokens.items():
                 if hmac.compare_digest(token, candidate):
