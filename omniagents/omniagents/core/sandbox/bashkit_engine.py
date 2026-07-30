@@ -21,9 +21,27 @@ snapshot / restore            ``snapshot()`` / ``restore_snapshot()``
 ============================  ==========================================
 
 Isolation is stronger than the process backends give you: the interpreter
-has no syscalls into a host, so there is no host to escape to. What it
-cannot do is run real binaries — no ``git``, no network — because there is
-no operating system underneath, only the utilities bashkit implements.
+has no syscalls into a host, so there is no host to escape to. The flip
+side is that only the utilities bashkit itself implements exist; there are
+no real binaries to exec.
+
+Two limits worth stating precisely, because both are narrower than they
+look:
+
+*Network.* Outbound HTTP is off by default everywhere, and opting in is a
+per-domain allowlist (``Bash(network={"allow": [...]})``), not a switch.
+In the wasm build it is unavailable at all: passing ``network=`` raises
+``RuntimeError: network configuration is not available in the WebAssembly
+(Pyodide) build``. Note the default-deny is *silent* — a blocked ``curl``
+exits 0 with empty output rather than erroring — so a lesson that expects
+a fetch to fail loudly will not get that.
+
+*git.* Absent from the published wheel (``git: command not found``, on the
+host build too), but not impossible: bashkit implements virtual git
+entirely inside the VFS behind a Rust cargo feature (``--features git``)
+covering init/add/commit/status/log/branch/checkout/diff/reset. Reaching
+it means building the wheel from source with that feature enabled, which
+nothing here does today.
 
 Because this is a real :class:`BaseSandboxSession`,
 :class:`~omniagents.workspace.sandbox.SandboxWorkspace` wraps it like any
