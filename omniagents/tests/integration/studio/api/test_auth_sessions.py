@@ -20,8 +20,10 @@ def test_http_routes_require_token(studio_api_env):
         "/api/projects", headers={"Authorization": "Bearer wrong"}
     )
     assert response.status_code == 401
+    # Query-string tokens are no longer a credential (unified auth model);
+    # OMNIAGENTS_LEGACY_QUERY_AUTH=1 is the documented migration escape.
     response = studio_api_env.client.get("/api/projects", params={"token": "secret"})
-    assert response.status_code == 200
+    assert response.status_code == 401
     response = studio_api_env.client.get("/api/projects", headers=_auth_header())
     assert response.status_code == 200
 
@@ -87,7 +89,23 @@ def test_playground_websocket_enforces_token(studio_api_env):
             f"/api/playground/ws?session_id={session_id}&token=wrong"
         ):
             pass
+    # Query-string tokens are no longer a credential — even the right one.
+    with pytest.raises(WebSocketDisconnect):
+        with studio_api_env.client.websocket_connect(
+            f"/api/playground/ws?session_id={session_id}&token=secret"
+        ):
+            pass
+    # Authorization header authenticates.
     with studio_api_env.client.websocket_connect(
-        f"/api/playground/ws?session_id={session_id}&token=secret"
+        f"/api/playground/ws?session_id={session_id}",
+        headers=_auth_header(),
+    ) as websocket:
+        websocket.close()
+    # One-time connect ticket (browser flow) authenticates.
+    ticket = studio_api_env.client.post(
+        "/api/auth/ws-ticket", headers=_auth_header()
+    ).json()["ticket"]
+    with studio_api_env.client.websocket_connect(
+        f"/api/playground/ws?session_id={session_id}&ticket={ticket}"
     ) as websocket:
         websocket.close()

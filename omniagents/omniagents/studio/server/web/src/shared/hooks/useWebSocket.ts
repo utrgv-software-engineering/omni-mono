@@ -59,27 +59,38 @@ export function useWebSocket() {
       if (!isActive) {
         return
       }
-      const ws = api.createWebSocket()
-      cleanupSocket(wsRef.current)
-      wsRef.current = ws
+      api
+        .createWebSocket()
+        .then((ws) => {
+          if (!isActive) {
+            cleanupSocket(ws)
+            return
+          }
+          cleanupSocket(wsRef.current)
+          wsRef.current = ws
 
-      ws.onopen = () => {
-        console.log('WebSocket connected')
-      }
+          ws.onopen = () => {
+            console.log('WebSocket connected')
+          }
 
-      ws.onmessage = handleMessage
+          ws.onmessage = handleMessage
 
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
-      }
+          ws.onerror = (error) => {
+            console.error('WebSocket error:', error)
+          }
 
-      ws.onclose = () => {
-        console.log('WebSocket disconnected')
-        if (wsRef.current === ws) {
-          wsRef.current = null
-        }
-        scheduleReconnect()
-      }
+          ws.onclose = () => {
+            console.log('WebSocket disconnected')
+            if (wsRef.current === ws) {
+              wsRef.current = null
+            }
+            scheduleReconnect()
+          }
+        })
+        .catch((error) => {
+          console.error('WebSocket connection failed:', error)
+          scheduleReconnect()
+        })
     }
 
     connect()

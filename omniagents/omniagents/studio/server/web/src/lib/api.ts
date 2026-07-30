@@ -57,6 +57,35 @@ import type {
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
 
+const ABSOLUTE_URL_RE = /^(https?|wss?):/i
+
+/**
+ * Split a configured API base into a credential-free base URL and the
+ * bearer token it may carry (`VITE_API_URL=...?token=<secret>` is the
+ * documented way to hand the web client a token). The token never
+ * travels in a URL again after this point: HTTP requests attach it as an
+ * `Authorization` header and WebSocket dials exchange it for a one-time
+ * connect ticket via `POST /api/auth/ws-ticket`.
+ */
+export function splitBaseAndToken(rawBase: string): { base: string; token: string | null } {
+  try {
+    const url = ABSOLUTE_URL_RE.test(rawBase)
+      ? new URL(rawBase)
+      : new URL(rawBase, window.location.origin)
+    const token = url.searchParams.get('token')
+    if (!token) {
+      return { base: rawBase, token: null }
+    }
+    url.searchParams.delete('token')
+    if (ABSOLUTE_URL_RE.test(rawBase)) {
+      return { base: url.toString().replace(/\?$/, ''), token }
+    }
+    return { base: `${url.pathname}${url.search}`, token }
+  } catch {
+    return { base: rawBase, token: null }
+  }
+}
+
 export interface PlaygroundSessionPayload {
   model: string
   instructions?: string
@@ -74,11 +103,18 @@ export interface PlaygroundSessionPayload {
   session_id?: string
 }
 
-class ApiClient {
+export class ApiClient {
   private baseUrl: string
+  private authToken: string | null
 
   constructor(baseUrl: string = API_BASE) {
-    this.baseUrl = baseUrl
+    const { base, token } = splitBaseAndToken(baseUrl)
+    this.baseUrl = base
+    this.authToken = token
+  }
+
+  private authHeaders(): Record<string, string> {
+    return this.authToken ? { Authorization: `Bearer ${this.authToken}` } : {}
   }
 
   private async fetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -86,6 +122,7 @@ class ApiClient {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        ...this.authHeaders(),
         ...options?.headers,
       },
     })
@@ -95,6 +132,67 @@ class ApiClient {
     }
 
     return response.json()
+  }
+
+  /**
+   * Resolve the configured base into an absolute URL. Relative bases
+   * (the production default `/api`) resolve against the current origin.
+   */
+  private resolveApiBase(): URL {
+    const base = this.baseUrl || '/api'
+    return ABSOLUTE_URL_RE.test(base) ? new URL(base) : new URL(base, window.location.origin)
+  }
+
+  /**
+   * Exchange the bearer token for a one-time WebSocket connect ticket.
+   * Browsers cannot set WebSocket headers, so the ticket (single-use,
+   * short-lived, bound to the minting identity) is the only credential
+   * that ever appears in a WebSocket URL. Returns null when no token is
+   * configured — unauthenticated deployments dial without credentials.
+   */
+  private async mintWsTicket(httpApiBase: string): Promise<string | null> {
+    if (!this.authToken) {
+      return null
+    }
+    const response = await fetch(`${httpApiBase}/auth/ws-ticket`, {
+      method: 'POST',
+      headers: this.authHeaders(),
+    })
+    if (!response.ok) {
+      throw new Error(`Failed to obtain WebSocket connect ticket: ${response.statusText}`)
+    }
+    const body = await response.json()
+    if (!body || typeof body.ticket !== 'string' || !body.ticket) {
+      throw new Error('WebSocket connect ticket response was malformed')
+    }
+    return body.ticket
+  }
+
+  /**
+   * Open a WebSocket to `<api base><path>`, authenticating with a
+   * one-time connect ticket when a token is configured. Never puts the
+   * bearer token itself in the URL.
+   */
+  private async openWebSocket(path: string, params?: Record<string, string>): Promise<WebSocket> {
+    const resolved = this.resolveApiBase()
+    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
+
+    const httpProtocol =
+      resolved.protocol === 'wss:' ? 'https:' : resolved.protocol === 'ws:' ? 'http:' : resolved.protocol
+    const ticket = await this.mintWsTicket(`${httpProtocol}//${resolved.host}${basePath}`)
+
+    const wsUrl = new URL(resolved.toString())
+    wsUrl.protocol =
+      resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
+    wsUrl.pathname = `${basePath}${path}`
+    wsUrl.search = ''
+    if (ticket) {
+      wsUrl.searchParams.set('ticket', ticket)
+    }
+    Object.entries(params ?? {}).forEach(([key, value]) => {
+      wsUrl.searchParams.set(key, value)
+    })
+    return new WebSocket(wsUrl.toString())
   }
 
   async getProjects(): Promise<{ projects: string[] }> {
@@ -190,7 +288,9 @@ class ApiClient {
   }
 
   async exportTrace(project: string, traceId: string, format: 'json' | 'csv' = 'json'): Promise<Blob> {
-    const response = await fetch(`${this.baseUrl}/export/${project}/${traceId}?format=${format}`)
+    const response = await fetch(`${this.baseUrl}/export/${project}/${traceId}?format=${format}`, {
+      headers: this.authHeaders(),
+    })
     if (!response.ok) {
       throw new Error(`Export failed: ${response.statusText}`)
     }
@@ -514,118 +614,51 @@ class ApiClient {
     })
   }
 
-  createWebSocket(): WebSocket {
-    const wsUrl = this.baseUrl.replace('http', 'ws').replace('/api', '/api/ws/traces')
-    return new WebSocket(wsUrl)
+  createWebSocket(): Promise<WebSocket> {
+    return this.openWebSocket('/ws/traces')
   }
 
-  createScenarioRunWebSocket(jobId: string): WebSocket {
-    const base = this.baseUrl || '/api'
-    let resolved: URL
-    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
-      resolved = new URL(base)
-    } else {
-      resolved = new URL(base, window.location.origin)
-    }
-    const wsUrl = new URL(resolved.toString())
-    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
-    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
-    wsUrl.pathname = `${basePath}/evaluation/scenarios/run/${jobId}/ws`
-    const token = resolved.searchParams.get('token')
-    wsUrl.search = ''
-    if (token) {
-      wsUrl.searchParams.set('token', token)
-    }
-    return new WebSocket(wsUrl.toString())
+  createScenarioRunWebSocket(jobId: string): Promise<WebSocket> {
+    return this.openWebSocket(`/evaluation/scenarios/run/${jobId}/ws`)
   }
 
-  createSuiteRunWebSocket(jobId: string): WebSocket {
-    const base = this.baseUrl || '/api'
-    let resolved: URL
-    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
-      resolved = new URL(base)
-    } else {
-      resolved = new URL(base, window.location.origin)
-    }
-    const wsUrl = new URL(resolved.toString())
-    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
-    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
-    wsUrl.pathname = `${basePath}/evaluation/suite/run/${jobId}/ws`
-    const token = resolved.searchParams.get('token')
-    wsUrl.search = ''
-    if (token) {
-      wsUrl.searchParams.set('token', token)
-    }
-    return new WebSocket(wsUrl.toString())
+  createSuiteRunWebSocket(jobId: string): Promise<WebSocket> {
+    return this.openWebSocket(`/evaluation/suite/run/${jobId}/ws`)
   }
 
-  createScenarioGenerationWebSocket(jobId: string): WebSocket {
-    const base = this.baseUrl || '/api'
-    let resolved: URL
-    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
-      resolved = new URL(base)
-    } else {
-      resolved = new URL(base, window.location.origin)
-    }
-    const wsUrl = new URL(resolved.toString())
-    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
-    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
-    wsUrl.pathname = `${basePath}/evaluation/scenarios/generate/${jobId}/ws`
-    const token = resolved.searchParams.get('token')
-    wsUrl.search = ''
-    if (token) {
-      wsUrl.searchParams.set('token', token)
-    }
-    return new WebSocket(wsUrl.toString())
+  createScenarioGenerationWebSocket(jobId: string): Promise<WebSocket> {
+    return this.openWebSocket(`/evaluation/scenarios/generate/${jobId}/ws`)
   }
 
-  createJudgeOptimizationWebSocket(jobId: string): WebSocket {
-    const base = this.baseUrl || '/api'
-    let resolved: URL
-    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
-      resolved = new URL(base)
-    } else {
-      resolved = new URL(base, window.location.origin)
-    }
-    const wsUrl = new URL(resolved.toString())
-    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
-    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
-    wsUrl.pathname = `${basePath}/evaluation/judges/optimize/${jobId}/ws`
-    const token = resolved.searchParams.get('token')
-    wsUrl.search = ''
-    if (token) {
-      wsUrl.searchParams.set('token', token)
-    }
-    return new WebSocket(wsUrl.toString())
+  createJudgeOptimizationWebSocket(jobId: string): Promise<WebSocket> {
+    return this.openWebSocket(`/evaluation/judges/optimize/${jobId}/ws`)
   }
 
-  createAgentOptimizationWebSocket(jobId: string): WebSocket {
-    const base = this.baseUrl || '/api'
-    let resolved: URL
-    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
-      resolved = new URL(base)
-    } else {
-      resolved = new URL(base, window.location.origin)
-    }
-    const wsUrl = new URL(resolved.toString())
-    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
-    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
-    wsUrl.pathname = `${basePath}/evaluation/agents/optimize/${jobId}/ws`
-    const token = resolved.searchParams.get('token')
-    wsUrl.search = ''
-    if (token) {
-      wsUrl.searchParams.set('token', token)
-    }
-    return new WebSocket(wsUrl.toString())
+  createAgentOptimizationWebSocket(jobId: string): Promise<WebSocket> {
+    return this.openWebSocket(`/evaluation/agents/optimize/${jobId}/ws`)
   }
 
-  createPlaygroundWebSocket(sessionId: string, explicitBase?: string, agentKey?: string): WebSocket {
+  async createPlaygroundWebSocket(sessionId: string, explicitBase?: string, agentKey?: string): Promise<WebSocket> {
+    const params: Record<string, string> = { session_id: sessionId }
+    if (agentKey) {
+      params.agent = agentKey
+    }
+
     if (explicitBase) {
+      // The server-computed playground URL (metadata.playground_ws_url).
+      // Mint the connect ticket against the same host the socket dials.
       const resolved = new URL(explicitBase)
-      resolved.searchParams.set('session_id', sessionId)
-      if (agentKey) {
-        resolved.searchParams.set('agent', agentKey)
+      const httpProtocol =
+        resolved.protocol === 'wss:' ? 'https:' : resolved.protocol === 'ws:' ? 'http:' : resolved.protocol
+      const basePath = resolved.pathname.replace(/\/playground\/ws\/?$/, '') || '/api'
+      const ticket = await this.mintWsTicket(`${httpProtocol}//${resolved.host}${basePath}`)
+      resolved.searchParams.delete('token')
+      if (ticket) {
+        resolved.searchParams.set('ticket', ticket)
       }
+      Object.entries(params).forEach(([key, value]) => {
+        resolved.searchParams.set(key, value)
+      })
       const urlStr = resolved.toString()
       if (typeof window !== 'undefined' && window.console) {
         console.debug('[playground] websocket url', urlStr)
@@ -633,34 +666,11 @@ class ApiClient {
       return new WebSocket(urlStr)
     }
 
-    const base = this.baseUrl || '/api'
-    let resolved: URL
-    if (/^https?:/i.test(base) || /^ws(s)?:/i.test(base)) {
-      resolved = new URL(base)
-    } else {
-      resolved = new URL(base, window.location.origin)
-    }
-
-    const wsUrl = new URL(resolved.toString())
-    wsUrl.protocol = resolved.protocol === 'https:' ? 'wss:' : resolved.protocol === 'http:' ? 'ws:' : resolved.protocol
-
-    const basePath = resolved.pathname.replace(/\/$/, '') || '/api'
-    wsUrl.pathname = `${basePath}/playground/ws`
-
-    const token = resolved.searchParams.get('token')
-    wsUrl.search = ''
-    if (token) {
-      wsUrl.searchParams.set('token', token)
-    }
-    wsUrl.searchParams.set('session_id', sessionId)
-    if (agentKey) {
-      wsUrl.searchParams.set('agent', agentKey)
-    }
-    const urlString = wsUrl.toString()
+    const ws = await this.openWebSocket('/playground/ws', params)
     if (typeof window !== 'undefined' && window.console) {
-      console.debug('[playground] websocket url', urlString)
+      console.debug('[playground] websocket url', ws.url)
     }
-    return new WebSocket(urlString)
+    return ws
   }
 }
 

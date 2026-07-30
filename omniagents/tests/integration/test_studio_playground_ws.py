@@ -491,18 +491,18 @@ def test_playground_ws_passes_per_session_workspace_root_to_stream(
 
 
 # ---------------------------------------------------------------------------
-# Studio's own WebSocket surfaces are independently authenticated
+# Studio's WebSocket surfaces follow the unified authentication model
 # ---------------------------------------------------------------------------
 
 
-def test_studio_ws_auth_is_independent_of_gui_surface_auth(monkeypatch):
-    """Studio serves its own WS endpoints with its own token check.
+def test_studio_ws_follows_unified_surface_auth(monkeypatch):
+    """Studio's ``/api/**/ws`` routes use the unified connection model.
 
-    The GUI-protocol hardening (no query tokens on ``/ws``, first-message
-    terminal attach) must not reach Studio's ``/api/**/ws`` routes: they are
-    guarded by ``_require_ws_token`` in ``omniagents/studio/server/api.py``,
-    accept a header *or* query token, and are untouched by this change. This
-    test pins that so the in-repo Studio client keeps connecting.
+    Same contract as ``/ws`` on the agent server (see
+    ``tests/integration/test_studio_ws_auth.py`` for the full matrix):
+    Authorization headers and one-time connect tickets authenticate,
+    the ``?token=`` query transport is rejected unless the documented
+    ``OMNIAGENTS_LEGACY_QUERY_AUTH=1`` migration flag is set.
     """
     from fastapi.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
@@ -513,23 +513,25 @@ def test_studio_ws_auth_is_independent_of_gui_surface_auth(monkeypatch):
     app, _ = create_api_app(auth_token="studio-secret")
     client = TestClient(app)
 
-    # Query token: still accepted (Studio's own contract).
-    with client.websocket_connect("/api/ws/traces?token=studio-secret"):
-        pass
-    # Authorization header: also accepted.
+    # Authorization header authenticates.
     with client.websocket_connect(
         "/api/ws/traces", headers={"Authorization": "Bearer studio-secret"}
     ):
         pass
-    # Wrong credentials are still refused.
+    # Query tokens no longer authenticate — even the correct one.
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/ws/traces?token=studio-secret"):
+            pass
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/api/ws/traces?token=nope"):
             pass
 
 
 def test_studio_playground_service_is_not_ownership_enforced(studio_app):
-    """Studio's playground builds AgentService directly (no build_app), so it
-    keeps the permissive single-user policy: no principal, no ownership."""
+    """Without a configured token, the playground keeps the permissive
+    single-user policy: no principal, no ownership. (With ``auth_token``
+    the playground adopts the authenticator's enforced policy — covered in
+    ``test_studio_ws_auth.py``.)"""
     from omniagents.core.agents.service import AgentService
     from omniagents.core.agents.specs import AgentSpec
 

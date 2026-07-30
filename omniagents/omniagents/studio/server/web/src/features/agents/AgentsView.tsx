@@ -145,10 +145,36 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
       return
     }
     let socket: WebSocket | null = null
-    try {
-      socket = api.createAgentOptimizationWebSocket(jobId)
+    let disposed = false
+    const pollStatusFallback = () => {
+      api
+        .getAgentOptimizationStatus(jobId)
+        .then((response) => {
+          if (!response || !response.status) {
+            return
+          }
+          const status = response.status as EvaluationAgentOptimizationStatus
+          setActiveOptimization({ jobId: response.job_id, status })
+          if (status.state === 'completed') {
+            queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
+            queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+          }
+          if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
+            optimizationCompletionRef.current = true
+          }
+        })
+        .catch(() => {})
+    }
+    api.createAgentOptimizationWebSocket(jobId).then((ws) => {
+      if (disposed) {
+        try {
+          ws.close()
+        } catch (error) { void error }
+        return
+      }
+      socket = ws
       optimizationSocketRef.current = socket
-      socket.onmessage = (event) => {
+      ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data)
           if (!payload || !payload.status) {
@@ -172,55 +198,26 @@ export function AgentsView({ selectedAgent, onSelectAgent, onClearAgent, onUpdat
           } catch (error) { void error }
         }
       }
-      socket.onerror = () => {
+      ws.onerror = () => {
         try {
           socket?.close()
         } catch (error) { void error }
       }
-      socket.onclose = () => {
+      ws.onclose = () => {
         if (optimizationSocketRef.current === socket) {
           optimizationSocketRef.current = null
         }
-        if (!optimizationCompletionRef.current) {
-          api
-            .getAgentOptimizationStatus(jobId)
-            .then((response) => {
-              if (!response || !response.status) {
-                return
-              }
-              const status = response.status as EvaluationAgentOptimizationStatus
-              setActiveOptimization({ jobId: response.job_id, status })
-              if (status.state === 'completed') {
-                queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
-                queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
-              }
-              if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
-                optimizationCompletionRef.current = true
-              }
-            })
-            .catch(() => {})
+        if (!disposed && !optimizationCompletionRef.current) {
+          pollStatusFallback()
         }
       }
-    } catch {
-      api
-        .getAgentOptimizationStatus(jobId)
-        .then((response) => {
-          if (!response || !response.status) {
-            return
-          }
-          const status = response.status as EvaluationAgentOptimizationStatus
-          setActiveOptimization({ jobId: response.job_id, status })
-          if (status.state === 'completed') {
-            queryClient.invalidateQueries({ queryKey: ['agents', 'list'] })
-            queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
-          }
-          if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
-            optimizationCompletionRef.current = true
-          }
-        })
-        .catch(() => {})
-    }
+    }).catch(() => {
+      if (!disposed) {
+        pollStatusFallback()
+      }
+    })
     return () => {
+      disposed = true
       if (optimizationSocketRef.current === socket) {
         optimizationSocketRef.current = null
       }

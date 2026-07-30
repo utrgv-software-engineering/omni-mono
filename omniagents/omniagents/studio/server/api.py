@@ -51,7 +51,16 @@ from omniagents.core.paths import (
 )
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
-from omniagents.rpc.server import JsonRpcChannel
+from omniagents.core.providers.auth.base import AuthProvider
+from omniagents.core.providers.auth.none import NoneAuthProvider
+from omniagents.core.providers.auth.token import TokenAuthProvider
+from omniagents.rpc.auth import (
+    WS_CLOSE_UNAUTHENTICATED,
+    AuthenticationFailed,
+    ConnectionAuthenticator,
+    legacy_query_auth_enabled,
+)
+from omniagents.rpc.server import JsonRpcChannel, JsonRpcEndpoint
 from omniagents.rpc.transport.websocket import ServerWebSocketTransport
 from omniagents.rpc.transport import TransportClosedError
 from omniagents.core.project.runtime import (
@@ -2668,6 +2677,23 @@ def create_api_app(
             return credentials.strip()
         return None
 
+    # One ConnectionAuthenticator guards every Studio WebSocket surface,
+    # mirroring the unified model on /ws, /ws/realtime and /ws/terminal
+    # (omniagents/rpc/auth.py): Authorization headers for clients that can
+    # set them, one-time /api/auth/ws-ticket connect tickets for browsers,
+    # and the deprecated ?token= transport only behind
+    # OMNIAGENTS_LEGACY_QUERY_AUTH=1.
+    auth_provider: AuthProvider
+    if expected_auth_token:
+        auth_provider = TokenAuthProvider({"token": expected_auth_token})
+    else:
+        auth_provider = NoneAuthProvider()
+    connection_authenticator = ConnectionAuthenticator(
+        auth_provider,
+        allow_query_token=legacy_query_auth_enabled(None),
+    )
+    app.state.connection_authenticator = connection_authenticator
+
     if expected_auth_token:
 
         @app.middleware("http")
@@ -2676,11 +2702,9 @@ def create_api_app(
                 return await call_next(request)
             path = request.url.path or ""
             if path.startswith("/api"):
-                header_token = _extract_bearer_token(
-                    request.headers.get("authorization")
-                )
-                query_token = request.query_params.get("token")
-                supplied = header_token or query_token
+                supplied = _extract_bearer_token(request.headers.get("authorization"))
+                if supplied is None and connection_authenticator.allow_query_token:
+                    supplied = request.query_params.get("token")
                 if supplied != expected_auth_token:
                     return JSONResponse(
                         status_code=401,
@@ -2688,15 +2712,39 @@ def create_api_app(
                     )
             return await call_next(request)
 
-    async def _require_ws_token(websocket: WebSocket) -> None:
-        if not expected_auth_token:
-            return
-        header_token = _extract_bearer_token(websocket.headers.get("authorization"))
-        query_token = websocket.query_params.get("token")
-        supplied = header_token or query_token
-        if supplied != expected_auth_token:
-            await websocket.close(code=4403)
-            raise WebSocketDisconnect(code=4403)
+    async def _require_ws_auth(websocket: WebSocket) -> None:
+        """Authenticate a Studio WebSocket upgrade.
+
+        Resolves the connection principal through the shared
+        :class:`ConnectionAuthenticator` (header, one-time ticket, or —
+        legacy-mode only — query token) and stores it on
+        ``websocket.state.principal``. Failures close with 4401, a
+        terminal code: clients must obtain new credentials, not retry.
+        """
+        try:
+            identity = await connection_authenticator.authenticate_ws(websocket)
+        except AuthenticationFailed as exc:
+            await websocket.close(code=WS_CLOSE_UNAUTHENTICATED, reason=str(exc)[:120])
+            raise WebSocketDisconnect(code=WS_CLOSE_UNAUTHENTICATED) from exc
+        websocket.state.principal = identity
+
+    @app.post("/api/auth/ws-ticket")
+    async def issue_ws_ticket(request: Request) -> Dict[str, Any]:
+        """Mint a one-time WebSocket connect ticket.
+
+        Browser clients cannot set WebSocket headers, so they authenticate
+        this HTTP call with the ``Authorization`` header and dial the
+        Studio WebSocket routes with ``?ticket=<one-time>``. Same contract
+        as ``POST /auth/ws-ticket`` on the agent server, scoped under
+        ``/api`` so the Studio web client reaches it through its normal
+        API base URL. The response never echoes the caller's token.
+        """
+        try:
+            identity = await connection_authenticator.authenticate_http(request)
+        except AuthenticationFailed as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        ticket, expires_in = connection_authenticator.ticket_broker.mint(identity)
+        return {"ticket": ticket, "expires_in": expires_in}
 
     storage_manager = StorageManager()
 
@@ -6715,7 +6763,9 @@ def create_api_app(
             # With dim filter we need to inspect per-trace metadata, so we materialize
             # the filtered groups in Python and paginate there.
             if not dim_map:
-                page_sql = base_sql + f"""
+                page_sql = (
+                    base_sql
+                    + f"""
                     SELECT group_id, trace_count,
                            datetime(created_at_raw) || 'Z' AS created_at,
                            workflow_name, metadata, first_trace_id, has_errors,
@@ -6725,10 +6775,13 @@ def create_api_app(
                     ORDER BY created_at_raw DESC
                     LIMIT ? OFFSET ?
                     """
+                )
                 rows = list(storage.conn.execute(page_sql, [*params, limit, offset]))
                 total = rows[0]["total_rows"] if rows else 0
             else:
-                all_sql = base_sql + f"""
+                all_sql = (
+                    base_sql
+                    + f"""
                     SELECT group_id, trace_count,
                            datetime(created_at_raw) || 'Z' AS created_at,
                            workflow_name, metadata, first_trace_id, has_errors
@@ -6736,6 +6789,7 @@ def create_api_app(
                     {where_sql}
                     ORDER BY created_at_raw DESC
                     """
+                )
                 all_rows = list(storage.conn.execute(all_sql, params))
                 matching_ids = _filter_groups_by_dim(
                     storage.conn, [r["group_id"] for r in all_rows], dim_map
@@ -8082,7 +8136,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/suite/run/{job_id}/ws")
     async def suite_run_ws(job_id: str, websocket: WebSocket):
-        await _require_ws_token(websocket)
+        await _require_ws_auth(websocket)
         manager: SuiteRunManager = app.state.suite_run_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -8102,7 +8156,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/scenarios/run/{job_id}/ws")
     async def scenario_run_ws(job_id: str, websocket: WebSocket):
-        await _require_ws_token(websocket)
+        await _require_ws_auth(websocket)
         manager: ScenarioRunManager = app.state.scenario_run_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -8122,7 +8176,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/scenarios/generate/{job_id}/ws")
     async def scenario_generation_ws(job_id: str, websocket: WebSocket):
-        await _require_ws_token(websocket)
+        await _require_ws_auth(websocket)
         manager: ScenarioGenerationManager = app.state.scenario_generation_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -8142,7 +8196,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/judges/optimize/{job_id}/ws")
     async def judge_optimize_ws(job_id: str, websocket: WebSocket):
-        await _require_ws_token(websocket)
+        await _require_ws_auth(websocket)
         manager: JudgeOptimizationManager = app.state.judge_optimization_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -8162,7 +8216,7 @@ def create_api_app(
 
     @app.websocket("/api/evaluation/agents/optimize/{job_id}/ws")
     async def agent_optimize_ws(job_id: str, websocket: WebSocket):
-        await _require_ws_token(websocket)
+        await _require_ws_auth(websocket)
         manager: AgentOptimizationManager = app.state.agent_optimization_manager
         accepted = await manager.add_connection(job_id, websocket)
         if not accepted:
@@ -8183,7 +8237,7 @@ def create_api_app(
     @app.websocket("/api/ws/traces")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket for real-time trace updates"""
-        await _require_ws_token(websocket)
+        await _require_ws_auth(websocket)
         await manager.connect(websocket)
         try:
             while True:
@@ -8195,9 +8249,15 @@ def create_api_app(
     @app.websocket("/api/playground/ws")
     async def playground_ws(websocket: WebSocket):
         logger.debug(
-            "[playground] incoming websocket request %s", websocket.query_params
+            "[playground] incoming websocket request %s",
+            {
+                key: value
+                for key, value in websocket.query_params.multi_items()
+                # Never log credentials (one-time tickets, legacy tokens).
+                if key not in ("token", "ticket")
+            },
         )
-        await _require_ws_token(websocket)
+        await _require_ws_auth(websocket)
         resources: Dict[str, Any] = getattr(app.state, "playground_resources", {})
         session_id = websocket.query_params.get("session_id")
         if not session_id:
@@ -8247,12 +8307,27 @@ def create_api_app(
         # first run.
         ws_root = config.get("__playground_workspace_root")
         service = AgentService(spec, default_workspace_root=ws_root)
+        # The playground authorizes under the same policy the deployment's
+        # auth provider implies: enforced (ownership + method
+        # classification) when principals are distinguishable, permissive
+        # in single-user/no-auth mode.
+        service.authorization_policy = connection_authenticator.authorization_policy
         transport = ServerWebSocketTransport(websocket)
+        # Dispatch through JsonRpcEndpoint's message processor instead of a
+        # hand-rolled getattr() loop so every request runs through
+        # ``AgentService.authorize_rpc`` (resource ownership + global-method
+        # classification) before it executes — exactly like /ws on the
+        # agent server. No ``gui_handshake``/``allowed_methods``: the
+        # playground client predates the GUI handshake, and enabling strict
+        # request/result model validation is a protocol change beyond this
+        # authorization fix.
+        endpoint = JsonRpcEndpoint(service)
 
         try:
             logger.debug("[playground] accepting websocket for session %s", session_id)
             await transport.connect()
             channel = JsonRpcChannel(transport)
+            channel.principal = getattr(websocket.state, "principal", None)
             service.channel = channel
             while transport.is_connected():
                 try:
@@ -8262,34 +8337,11 @@ def create_api_app(
                 except WebSocketDisconnect:
                     break
 
-                call_id = data.get("id")
-                method = data.get("method")
-                params = data.get("params") or data.get("args") or {}
-
-                if method:
-                    try:
-                        func = getattr(service, method)
-                        result = await func(**params)
-                        if call_id is not None:
-                            await channel.send_result(call_id, result)
-                    except Exception as exc:
-                        logger.exception(
-                            "[playground] error handling method %s", method
-                        )
-                        if call_id is not None:
-                            error_payload = {
-                                "jsonrpc": "2.0",
-                                "id": call_id,
-                                "error": {
-                                    "code": -32603,
-                                    "message": str(exc),
-                                    "data": {
-                                        "type": exc.__class__.__name__,
-                                        "method": method,
-                                    },
-                                },
-                            }
-                            await transport.send_json(error_payload)
+                try:
+                    await endpoint._process_message(channel, data)
+                except Exception:
+                    logger.exception("[playground] failed processing message")
+                    break
         finally:
             logger.debug("[playground] websocket closed for session %s", session_id)
             await transport.disconnect()

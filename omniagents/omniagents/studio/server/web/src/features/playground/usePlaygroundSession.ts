@@ -287,340 +287,359 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
 
     const currentSessionId = sessionId
     const currentAgentKey = agentKey ?? undefined
-    const ws = api.createPlaygroundWebSocket(sessionId, wsBase, currentAgentKey)
-    wsRef.current = ws
+    let disposed = false
+    let openedWs: WebSocket | null = null
 
     console.debug('[playground] connecting to websocket for session', sessionId, currentAgentKey ? `agent ${currentAgentKey}` : '')
 
-    ws.onopen = () => {
-      console.debug('[playground] websocket connected', currentAgentKey ? `agent ${currentAgentKey}` : '')
-      setConnectionState('connected')
-      setConnectionError(null)
-      const rpcId = ++requestCounter.current
-      methodStore.set(rpcId, 'client_functions')
-      const payload = {
-        jsonrpc: '2.0',
-        id: rpcId,
-        method: 'client_functions',
-        params: {
-          version: 1,
-          functions: [
-            {
-              name: 'ui.set_status',
-              description: 'Override inline status text',
-            },
-          ],
-        },
+    api.createPlaygroundWebSocket(sessionId, wsBase, currentAgentKey).then((ws) => {
+      if (disposed) {
+        try {
+          ws.close()
+        } catch (error) { void error }
+        return
       }
-      console.debug('[playground] → client_functions', payload)
-      ws.send(JSON.stringify(payload))
-    }
+      openedWs = ws
+      wsRef.current = ws
 
-    ws.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data)
-        console.debug('[playground] ← message', payload)
-        if (payload.id !== undefined) {
-          const numericId = Number(payload.id)
-          const pendingMethod = methodStore.get(numericId)
-          if (pendingMethod === 'start_run' && payload.result && typeof payload.result === 'object') {
-            const result = payload.result as { session_id?: string }
-            if (typeof result.session_id === 'string') {
-              serverSessionRef.current = result.session_id
-            }
-          }
-          methodStore.delete(numericId)
-          if (payload.error && payload.error.message) {
-            dispatch({
-              type: 'status',
-              event: {
-                id: createId(),
-                type: 'status',
-                severity: 'error',
-                content: String(payload.error.message),
+      ws.onopen = () => {
+        console.debug('[playground] websocket connected', currentAgentKey ? `agent ${currentAgentKey}` : '')
+        setConnectionState('connected')
+        setConnectionError(null)
+        const rpcId = ++requestCounter.current
+        methodStore.set(rpcId, 'client_functions')
+        const payload = {
+          jsonrpc: '2.0',
+          id: rpcId,
+          method: 'client_functions',
+          params: {
+            version: 1,
+            functions: [
+              {
+                name: 'ui.set_status',
+                description: 'Override inline status text',
               },
-            })
-          }
+            ],
+          },
         }
-        if (payload.method) {
-          const params = payload.params || {}
-          switch (payload.method) {
-            case 'message_output': {
-              const content = typeof params.content === 'string' ? params.content : ''
-              if (content) {
-                dispatch({
-                  type: 'append-assistant',
-                  runId: params.run_id,
-                  id: createId(),
-                  content,
-                })
+        console.debug('[playground] → client_functions', payload)
+        ws.send(JSON.stringify(payload))
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data)
+          console.debug('[playground] ← message', payload)
+          if (payload.id !== undefined) {
+            const numericId = Number(payload.id)
+            const pendingMethod = methodStore.get(numericId)
+            if (pendingMethod === 'start_run' && payload.result && typeof payload.result === 'object') {
+              const result = payload.result as { session_id?: string }
+              if (typeof result.session_id === 'string') {
+                serverSessionRef.current = result.session_id
               }
-              break
             }
-            case 'tool_called': {
-              dispatch({
-                type: 'tool-called',
-                callId: params.call_id || params.callId || createId(),
-                id: createId(),
-                name: params.tool || 'tool',
-                input: params.input,
-              })
-              break
-            }
-            case 'tool_result': {
-              dispatch({
-                type: 'tool-result',
-                callId: params.call_id || params.callId,
-                output: typeof params.output === 'string' ? params.output : JSON.stringify(params.output ?? ''),
-              })
-              break
-            }
-            case 'run_status': {
+            methodStore.delete(numericId)
+            if (payload.error && payload.error.message) {
               dispatch({
                 type: 'status',
                 event: {
                   id: createId(),
                   type: 'status',
-                  content: params.message || 'Status update',
-                  severity: 'info',
+                  severity: 'error',
+                  content: String(payload.error.message),
                 },
               })
-              break
             }
-            case 'run_started': {
-              const runId = params.run_id || params.runId
-              if (typeof runId === 'string') {
-                pendingRunRef.current = false
-                dispatch({ type: 'set-active-run', runId })
-              }
-              if (typeof params.session_id === 'string') {
-                serverSessionRef.current = params.session_id
-              }
-              break
-            }
-            case 'run_end': {
-              pendingRunRef.current = false
-              dispatch({ type: 'clear-active-run' })
-              if (params.error) {
-                dispatch({
-                  type: 'status',
-                  event: {
+          }
+          if (payload.method) {
+            const params = payload.params || {}
+            switch (payload.method) {
+              case 'message_output': {
+                const content = typeof params.content === 'string' ? params.content : ''
+                if (content) {
+                  dispatch({
+                    type: 'append-assistant',
+                    runId: params.run_id,
                     id: createId(),
-                    type: 'status',
-                    severity: 'error',
-                    content: params.error.message || 'Run ended with an error',
-                  },
+                    content,
+                  })
+                }
+                break
+              }
+              case 'tool_called': {
+                dispatch({
+                  type: 'tool-called',
+                  callId: params.call_id || params.callId || createId(),
+                  id: createId(),
+                  name: params.tool || 'tool',
+                  input: params.input,
                 })
-              } else {
+                break
+              }
+              case 'tool_result': {
+                dispatch({
+                  type: 'tool-result',
+                  callId: params.call_id || params.callId,
+                  output: typeof params.output === 'string' ? params.output : JSON.stringify(params.output ?? ''),
+                })
+                break
+              }
+              case 'run_status': {
                 dispatch({
                   type: 'status',
                   event: {
                     id: createId(),
                     type: 'status',
+                    content: params.message || 'Status update',
                     severity: 'info',
-                    content: 'Run completed',
                   },
                 })
+                break
               }
-              if (params.usage && typeof params.usage === 'object') {
-                const totals = params.usage
-                const normalized: PlaygroundUsageTotals = {
-                  requests: totals.requests ?? 0,
-                  input_tokens: totals.input_tokens ?? 0,
-                  output_tokens: totals.output_tokens ?? 0,
-                  total_tokens: totals.total_tokens ?? 0,
+              case 'run_started': {
+                const runId = params.run_id || params.runId
+                if (typeof runId === 'string') {
+                  pendingRunRef.current = false
+                  dispatch({ type: 'set-active-run', runId })
                 }
-                dispatch({ type: 'set-usage', totals: normalized })
-              }
-              break
-            }
-            case 'token': {
-              const totals = params.totals || params.total
-              if (totals) {
-                const normalized: PlaygroundUsageTotals = {
-                  requests: totals.requests ?? 0,
-                  input_tokens: totals.input_tokens ?? 0,
-                  output_tokens: totals.output_tokens ?? 0,
-                  total_tokens: totals.total_tokens ?? 0,
+                if (typeof params.session_id === 'string') {
+                  serverSessionRef.current = params.session_id
                 }
-                dispatch({ type: 'set-usage', totals: normalized })
+                break
               }
-              break
-            }
-            case 'tool_approval_requested': {
-              const toolName = typeof params.tool_name === 'string' && params.tool_name.trim().length > 0 ? params.tool_name : 'tool'
-              const callId = typeof params.call_id === 'string' && params.call_id.trim().length > 0 ? params.call_id : createId()
-              let argsText = ''
-              const rawArgs = params.arguments
-              if (typeof rawArgs === 'string') {
-                argsText = rawArgs
-              } else if (rawArgs !== undefined) {
-                try {
-                  argsText = JSON.stringify(rawArgs)
-                } catch {
-                  argsText = String(rawArgs)
-                }
-              }
-
-              let metadata: Record<string, unknown> | undefined
-              const rawMetadata = params.metadata as unknown
-              if (rawMetadata && typeof rawMetadata === 'object') {
-                metadata = rawMetadata as Record<string, unknown>
-              }
-
-              dispatch({
-                type: 'append-approval',
-                event: {
-                  id: createId(),
-                  type: 'approval',
-                  approvalId: callId,
-                  requestId: callId,
-                  name: toolName,
-                  arguments: argsText,
-                  metadata,
-                },
-              })
-              dispatch({
-                type: 'status',
-                event: {
-                  id: createId(),
-                  type: 'status',
-                  content: `Approval requested for ${toolName}`,
-                  severity: 'info',
-                },
-              })
-              break
-            }
-            case 'tool_approval_resolved': {
-              // Another channel responded; the playground UI relies on
-              // run_end / new tool_called events to advance state and
-              // does not need to mutate the approval list explicitly here.
-              break
-            }
-            case 'mcp_approval_requested': {
-              // Hosted-MCP approval — parallel to tool_approval but keyed
-              // by request_id and identifies the MCP server via
-              // server_label. No "always" affordance on this path.
-              const toolName = typeof params.tool_name === 'string' && params.tool_name.trim().length > 0 ? params.tool_name : 'tool'
-              const serverLabelVal = typeof params.server_label === 'string' ? params.server_label : ''
-              const requestId = typeof params.request_id === 'string' && params.request_id.trim().length > 0 ? params.request_id : createId()
-              let argsText = ''
-              const rawArgs = params.arguments
-              if (typeof rawArgs === 'string') {
-                argsText = rawArgs
-              } else if (rawArgs !== undefined) {
-                try {
-                  argsText = JSON.stringify(rawArgs)
-                } catch {
-                  argsText = String(rawArgs)
-                }
-              }
-
-              dispatch({
-                type: 'append-approval',
-                event: {
-                  id: createId(),
-                  type: 'approval',
-                  kind: 'mcp',
-                  approvalId: requestId,
-                  requestId,
-                  name: toolName,
-                  serverLabel: serverLabelVal,
-                  arguments: argsText,
-                },
-              })
-              dispatch({
-                type: 'status',
-                event: {
-                  id: createId(),
-                  type: 'status',
-                  content: `MCP approval requested for ${toolName} (${serverLabelVal || 'mcp'})`,
-                  severity: 'info',
-                },
-              })
-              break
-            }
-            case 'mcp_approval_resolved': {
-              // Multi-tab dismissal — mirror tool_approval_resolved.
-              const requestId = typeof params.request_id === 'string' ? params.request_id : ''
-              if (requestId) {
-                dispatch({ type: 'resolve-approval', approvalId: requestId })
-              }
-              break
-            }
-            case 'client_request': {
-              const functionNameRaw = params.function || params.name
-              const functionName = typeof functionNameRaw === 'string' ? functionNameRaw.toLowerCase() : ''
-              const requestId = typeof params.request_id === 'string' ? params.request_id : undefined
-
-              if (functionName === 'ui.set_status' && params.args && typeof params.args.text === 'string') {
-                dispatch({
-                  type: 'status',
-                  event: {
-                    id: createId(),
+              case 'run_end': {
+                pendingRunRef.current = false
+                dispatch({ type: 'clear-active-run' })
+                if (params.error) {
+                  dispatch({
                     type: 'status',
-                    content: params.args.text,
-                    severity: params.args.show_spinner ? 'info' : 'info',
-                  },
-                })
-              }
-              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && requestId) {
-                wsRef.current.send(
-                  JSON.stringify({
-                    jsonrpc: '2.0',
-                    method: 'client_response',
-                    params: {
-                      request_id: requestId,
-                      ok: true,
-                      result: { ack: true },
+                    event: {
+                      id: createId(),
+                      type: 'status',
+                      severity: 'error',
+                      content: params.error.message || 'Run ended with an error',
                     },
                   })
-                )
+                } else {
+                  dispatch({
+                    type: 'status',
+                    event: {
+                      id: createId(),
+                      type: 'status',
+                      severity: 'info',
+                      content: 'Run completed',
+                    },
+                  })
+                }
+                if (params.usage && typeof params.usage === 'object') {
+                  const totals = params.usage
+                  const normalized: PlaygroundUsageTotals = {
+                    requests: totals.requests ?? 0,
+                    input_tokens: totals.input_tokens ?? 0,
+                    output_tokens: totals.output_tokens ?? 0,
+                    total_tokens: totals.total_tokens ?? 0,
+                  }
+                  dispatch({ type: 'set-usage', totals: normalized })
+                }
+                break
               }
-              break
+              case 'token': {
+                const totals = params.totals || params.total
+                if (totals) {
+                  const normalized: PlaygroundUsageTotals = {
+                    requests: totals.requests ?? 0,
+                    input_tokens: totals.input_tokens ?? 0,
+                    output_tokens: totals.output_tokens ?? 0,
+                    total_tokens: totals.total_tokens ?? 0,
+                  }
+                  dispatch({ type: 'set-usage', totals: normalized })
+                }
+                break
+              }
+              case 'tool_approval_requested': {
+                const toolName = typeof params.tool_name === 'string' && params.tool_name.trim().length > 0 ? params.tool_name : 'tool'
+                const callId = typeof params.call_id === 'string' && params.call_id.trim().length > 0 ? params.call_id : createId()
+                let argsText = ''
+                const rawArgs = params.arguments
+                if (typeof rawArgs === 'string') {
+                  argsText = rawArgs
+                } else if (rawArgs !== undefined) {
+                  try {
+                    argsText = JSON.stringify(rawArgs)
+                  } catch {
+                    argsText = String(rawArgs)
+                  }
+                }
+
+                let metadata: Record<string, unknown> | undefined
+                const rawMetadata = params.metadata as unknown
+                if (rawMetadata && typeof rawMetadata === 'object') {
+                  metadata = rawMetadata as Record<string, unknown>
+                }
+
+                dispatch({
+                  type: 'append-approval',
+                  event: {
+                    id: createId(),
+                    type: 'approval',
+                    approvalId: callId,
+                    requestId: callId,
+                    name: toolName,
+                    arguments: argsText,
+                    metadata,
+                  },
+                })
+                dispatch({
+                  type: 'status',
+                  event: {
+                    id: createId(),
+                    type: 'status',
+                    content: `Approval requested for ${toolName}`,
+                    severity: 'info',
+                  },
+                })
+                break
+              }
+              case 'tool_approval_resolved': {
+                // Another channel responded; the playground UI relies on
+                // run_end / new tool_called events to advance state and
+                // does not need to mutate the approval list explicitly here.
+                break
+              }
+              case 'mcp_approval_requested': {
+                // Hosted-MCP approval — parallel to tool_approval but keyed
+                // by request_id and identifies the MCP server via
+                // server_label. No "always" affordance on this path.
+                const toolName = typeof params.tool_name === 'string' && params.tool_name.trim().length > 0 ? params.tool_name : 'tool'
+                const serverLabelVal = typeof params.server_label === 'string' ? params.server_label : ''
+                const requestId = typeof params.request_id === 'string' && params.request_id.trim().length > 0 ? params.request_id : createId()
+                let argsText = ''
+                const rawArgs = params.arguments
+                if (typeof rawArgs === 'string') {
+                  argsText = rawArgs
+                } else if (rawArgs !== undefined) {
+                  try {
+                    argsText = JSON.stringify(rawArgs)
+                  } catch {
+                    argsText = String(rawArgs)
+                  }
+                }
+
+                dispatch({
+                  type: 'append-approval',
+                  event: {
+                    id: createId(),
+                    type: 'approval',
+                    kind: 'mcp',
+                    approvalId: requestId,
+                    requestId,
+                    name: toolName,
+                    serverLabel: serverLabelVal,
+                    arguments: argsText,
+                  },
+                })
+                dispatch({
+                  type: 'status',
+                  event: {
+                    id: createId(),
+                    type: 'status',
+                    content: `MCP approval requested for ${toolName} (${serverLabelVal || 'mcp'})`,
+                    severity: 'info',
+                  },
+                })
+                break
+              }
+              case 'mcp_approval_resolved': {
+                // Multi-tab dismissal — mirror tool_approval_resolved.
+                const requestId = typeof params.request_id === 'string' ? params.request_id : ''
+                if (requestId) {
+                  dispatch({ type: 'resolve-approval', approvalId: requestId })
+                }
+                break
+              }
+              case 'client_request': {
+                const functionNameRaw = params.function || params.name
+                const functionName = typeof functionNameRaw === 'string' ? functionNameRaw.toLowerCase() : ''
+                const requestId = typeof params.request_id === 'string' ? params.request_id : undefined
+
+                if (functionName === 'ui.set_status' && params.args && typeof params.args.text === 'string') {
+                  dispatch({
+                    type: 'status',
+                    event: {
+                      id: createId(),
+                      type: 'status',
+                      content: params.args.text,
+                      severity: params.args.show_spinner ? 'info' : 'info',
+                    },
+                  })
+                }
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && requestId) {
+                  wsRef.current.send(
+                    JSON.stringify({
+                      jsonrpc: '2.0',
+                      method: 'client_response',
+                      params: {
+                        request_id: requestId,
+                        ok: true,
+                        result: { ack: true },
+                      },
+                    })
+                  )
+                }
+                break
+              }
+              default:
+                break
             }
-            default:
-              break
+          } else if (payload.id && payload.result) {
+            // Handle responses if necessary in the future
           }
-        } else if (payload.id && payload.result) {
-          // Handle responses if necessary in the future
+        } catch (err) {
+          console.error('Failed to process playground event', err)
         }
-      } catch (err) {
-        console.error('Failed to process playground event', err)
       }
-    }
 
-    ws.onerror = (event) => {
-      if (latestSessionIdRef.current !== currentSessionId || latestAgentKeyRef.current !== currentAgentKey) {
-        return
-      }
-      console.error('[playground] websocket error', event)
-      setConnectionState('error')
-      setConnectionError('WebSocket error')
-    }
-
-    ws.onclose = (event) => {
-      if (latestSessionIdRef.current !== currentSessionId || latestAgentKeyRef.current !== currentAgentKey) {
-        return
-      }
-      console.info('[playground] websocket closed', event.code, event.reason)
-      pendingRunRef.current = false
-      wsRef.current = null
-      serverSessionRef.current = null
-      methodStore.clear()
-      if (event.wasClean) {
-        setConnectionState('closed')
-      } else {
+      ws.onerror = (event) => {
+        if (latestSessionIdRef.current !== currentSessionId || latestAgentKeyRef.current !== currentAgentKey) {
+          return
+        }
+        console.error('[playground] websocket error', event)
         setConnectionState('error')
-        setConnectionError('Connection closed unexpectedly')
+        setConnectionError('WebSocket error')
       }
-    }
+
+      ws.onclose = (event) => {
+        if (latestSessionIdRef.current !== currentSessionId || latestAgentKeyRef.current !== currentAgentKey) {
+          return
+        }
+        console.info('[playground] websocket closed', event.code, event.reason)
+        pendingRunRef.current = false
+        wsRef.current = null
+        serverSessionRef.current = null
+        methodStore.clear()
+        if (event.wasClean) {
+          setConnectionState('closed')
+        } else {
+          setConnectionState('error')
+          setConnectionError('Connection closed unexpectedly')
+        }
+      }
+    }).catch((error) => {
+      if (disposed || latestSessionIdRef.current !== currentSessionId || latestAgentKeyRef.current !== currentAgentKey) {
+        return
+      }
+      console.error('[playground] failed to open websocket', error)
+      setConnectionState('error')
+      setConnectionError(error instanceof Error ? error.message : 'Failed to open connection')
+    })
 
     return () => {
+      disposed = true
       pendingRunRef.current = false
       serverSessionRef.current = null
       methodStore.clear()
-      if (wsRef.current === ws) {
+      if (openedWs && wsRef.current === openedWs) {
         wsRef.current.close()
         wsRef.current = null
       }

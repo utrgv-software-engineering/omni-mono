@@ -1042,7 +1042,7 @@ function ScenarioSetDetail({
         include_history: true,
       })
 
-      const ws = api.createScenarioRunWebSocket(response.job_id)
+      const ws = await api.createScenarioRunWebSocket(response.job_id)
       singleRunSocketRef.current = ws
 
       ws.onmessage = (event) => {
@@ -1414,10 +1414,26 @@ function ScenarioSetDetail({
     }
     const jobId = activeRun.jobId
     let socket: WebSocket | null = null
-    try {
-      socket = api.createScenarioRunWebSocket(jobId)
+    let disposed = false
+    const pollStatusFallback = () => {
+      api.getEvaluationScenarioRunStatus(jobId)
+        .then((res) => {
+          if (res && res.job_id === jobId) {
+            setActiveRun((prev) => (prev && prev.jobId === jobId ? { jobId, status: res.status ?? null } : prev))
+          }
+        })
+        .catch(() => {})
+    }
+    api.createScenarioRunWebSocket(jobId).then((ws) => {
+      if (disposed) {
+        try {
+          ws.close()
+        } catch (error) { void error }
+        return
+      }
+      socket = ws
       runSocketRef.current = socket
-      socket.onmessage = (event) => {
+      ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data)
           if (!payload || payload.job_id !== jobId) {
@@ -1429,15 +1445,13 @@ function ScenarioSetDetail({
           }
           const nextState: string | undefined = statusPayload?.state
           if (nextState === 'completed' || nextState === 'failed' || nextState === 'cancelled') {
-            if (socket) {
-              socket.close()
-            }
+            ws.close()
           }
         } catch {
           return
         }
       }
-      socket.onclose = () => {
+      ws.onclose = () => {
         if (runSocketRef.current === socket) {
           runSocketRef.current = null
         }
@@ -1449,25 +1463,16 @@ function ScenarioSetDetail({
         if (currentState === 'completed' || currentState === 'failed' || currentState === 'cancelled') {
           return
         }
-        api.getEvaluationScenarioRunStatus(jobId)
-          .then((res) => {
-            if (res && res.job_id === jobId) {
-              setActiveRun((prev) => (prev && prev.jobId === jobId ? { jobId, status: res.status ?? null } : prev))
-            }
-          })
-          .catch(() => {})
+        pollStatusFallback()
       }
-      socket.onerror = () => {}
-    } catch {
-      api.getEvaluationScenarioRunStatus(jobId)
-        .then((res) => {
-          if (res && res.job_id === jobId) {
-            setActiveRun((prev) => (prev && prev.jobId === jobId ? { jobId, status: res.status ?? null } : prev))
-          }
-        })
-        .catch(() => {})
-    }
+      ws.onerror = () => {}
+    }).catch(() => {
+      if (!disposed) {
+        pollStatusFallback()
+      }
+    })
     return () => {
+      disposed = true
       if (runSocketRef.current === socket && socket) {
         runSocketRef.current = null
       }
@@ -3016,10 +3021,36 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
       return
     }
     let socket: WebSocket | null = null
-    try {
-      socket = api.createJudgeOptimizationWebSocket(jobId)
+    let disposed = false
+    const pollStatusFallback = () => {
+      api
+        .getJudgeOptimizationStatus(jobId)
+        .then((response) => {
+          if (!response || !response.status) {
+            return
+          }
+          const status = response.status as EvaluationJudgeOptimizationStatus
+          setActiveOptimization({ jobId: response.job_id, status })
+          if (status.state === 'completed') {
+            queryClient.invalidateQueries({ queryKey: ['evaluation', 'judges'] })
+            queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
+          }
+          if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
+            optimizationCompletionRef.current = true
+          }
+        })
+        .catch(() => {})
+    }
+    api.createJudgeOptimizationWebSocket(jobId).then((ws) => {
+      if (disposed) {
+        try {
+          ws.close()
+        } catch (error) { void error }
+        return
+      }
+      socket = ws
       optimizationSocketRef.current = socket
-      socket.onmessage = (event) => {
+      ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data)
           if (!payload || !payload.status) {
@@ -3043,56 +3074,27 @@ function JudgesPanel({ projectName }: { projectName?: string | null }) {
           } catch (error) { void error }
         }
       }
-      socket.onerror = () => {
+      ws.onerror = () => {
         try {
           socket?.close()
         } catch (error) { void error }
       }
-      socket.onclose = () => {
+      ws.onclose = () => {
         if (optimizationSocketRef.current === socket) {
           optimizationSocketRef.current = null
         }
-        if (!optimizationCompletionRef.current) {
-          api
-            .getJudgeOptimizationStatus(jobId)
-            .then((response) => {
-              if (!response || !response.status) {
-                return
-              }
-              const status = response.status as EvaluationJudgeOptimizationStatus
-              setActiveOptimization({ jobId: response.job_id, status })
-              if (status.state === 'completed') {
-                queryClient.invalidateQueries({ queryKey: ['evaluation', 'judges'] })
-                queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
-              }
-              if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
-                optimizationCompletionRef.current = true
-              }
-            })
-            .catch(() => {})
+        if (!disposed && !optimizationCompletionRef.current) {
+          pollStatusFallback()
         }
       }
-    } catch {
-      api
-        .getJudgeOptimizationStatus(jobId)
-        .then((response) => {
-          if (!response || !response.status) {
-            return
-          }
-          const status = response.status as EvaluationJudgeOptimizationStatus
-          setActiveOptimization({ jobId: response.job_id, status })
-          if (status.state === 'completed') {
-            queryClient.invalidateQueries({ queryKey: ['evaluation', 'judges'] })
-            queryClient.invalidateQueries({ queryKey: ['evaluation', 'datasets'] })
-          }
-          if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
-            optimizationCompletionRef.current = true
-          }
-        })
-        .catch(() => {})
-    }
+    }).catch(() => {
+      if (!disposed) {
+        pollStatusFallback()
+      }
+    })
 
     return () => {
+      disposed = true
       if (optimizationSocketRef.current === socket) {
         optimizationSocketRef.current = null
       }
@@ -5066,10 +5068,38 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
     }
 
     let socket: WebSocket | null = null
-    try {
-      socket = api.createScenarioGenerationWebSocket(jobId)
+    let disposed = false
+    const pollStatusFallback = () => {
+      api
+        .getEvaluationScenarioGenerationStatus(jobId)
+        .then((response) => {
+          if (!response || !response.status) {
+            return
+          }
+          const status = response.status as EvaluationScenarioGenerationStatus
+          setActiveGeneration({ jobId: response.job_id, status })
+          if (status.state === 'completed') {
+            queryClient.invalidateQueries({ queryKey: ['evaluation', 'scenarios'] })
+            if (status.scenarios_path) {
+              setSelectedSetPath(status.scenarios_path)
+            }
+          }
+          if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
+            generationCompletionRef.current = true
+          }
+        })
+        .catch(() => {})
+    }
+    api.createScenarioGenerationWebSocket(jobId).then((ws) => {
+      if (disposed) {
+        try {
+          ws.close()
+        } catch (error) { void error }
+        return
+      }
+      socket = ws
       generationSocketRef.current = socket
-      socket.onmessage = (event) => {
+      ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data)
           if (!payload || !payload.status) {
@@ -5095,60 +5125,27 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
           } catch (error) { void error }
         }
       }
-      socket.onerror = () => {
+      ws.onerror = () => {
         try {
           socket?.close()
         } catch (error) { void error }
       }
-      socket.onclose = () => {
+      ws.onclose = () => {
         if (generationSocketRef.current === socket) {
           generationSocketRef.current = null
         }
-        if (!generationCompletionRef.current) {
-          api
-            .getEvaluationScenarioGenerationStatus(jobId)
-            .then((response) => {
-              if (!response || !response.status) {
-                return
-              }
-              const status = response.status as EvaluationScenarioGenerationStatus
-              setActiveGeneration({ jobId: response.job_id, status })
-              if (status.state === 'completed') {
-                queryClient.invalidateQueries({ queryKey: ['evaluation', 'scenarios'] })
-                if (status.scenarios_path) {
-                  setSelectedSetPath(status.scenarios_path)
-                }
-              }
-              if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
-                generationCompletionRef.current = true
-              }
-            })
-            .catch(() => {})
+        if (!disposed && !generationCompletionRef.current) {
+          pollStatusFallback()
         }
       }
-    } catch {
-      api
-        .getEvaluationScenarioGenerationStatus(jobId)
-        .then((response) => {
-          if (!response || !response.status) {
-            return
-          }
-          const status = response.status as EvaluationScenarioGenerationStatus
-          setActiveGeneration({ jobId: response.job_id, status })
-          if (status.state === 'completed') {
-            queryClient.invalidateQueries({ queryKey: ['evaluation', 'scenarios'] })
-            if (status.scenarios_path) {
-              setSelectedSetPath(status.scenarios_path)
-            }
-          }
-          if (status.state === 'completed' || status.state === 'failed' || status.state === 'cancelled') {
-            generationCompletionRef.current = true
-          }
-        })
-        .catch(() => {})
-    }
+    }).catch(() => {
+      if (!disposed) {
+        pollStatusFallback()
+      }
+    })
 
     return () => {
+      disposed = true
       if (generationSocketRef.current === socket) {
         generationSocketRef.current = null
       }
@@ -5172,10 +5169,33 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
       return
     }
     let socket: WebSocket | null = null
-    try {
-      socket = api.createSuiteRunWebSocket(jobId)
+    let disposed = false
+    const pollStatusFallback = () => {
+      api
+        .getEvaluationSuiteRunStatus(jobId)
+        .then((response) => {
+          if (!response || !response.status) {
+            return
+          }
+          const status = response.status as EvaluationSuiteRunStatus
+          setActiveSuiteRun({ jobId: response.job_id, status })
+          const state = status.state
+          if (state === 'completed' || state === 'failed' || state === 'cancelled') {
+            suiteCompletionRef.current = true
+          }
+        })
+        .catch(() => {})
+    }
+    api.createSuiteRunWebSocket(jobId).then((ws) => {
+      if (disposed) {
+        try {
+          ws.close()
+        } catch (error) { void error }
+        return
+      }
+      socket = ws
       suiteSocketRef.current = socket
-      socket.onmessage = (event) => {
+      ws.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data)
           if (!payload || payload.job_id !== jobId) {
@@ -5219,49 +5239,26 @@ function ScenariosPanel({ projectName, isAvailable, onNavigateToLogs, onTabChang
           } catch (error) { void error }
         }
       }
-      socket.onerror = () => {
+      ws.onerror = () => {
         try {
           socket?.close()
         } catch (error) { void error }
       }
-      socket.onclose = () => {
+      ws.onclose = () => {
         if (suiteSocketRef.current === socket) {
           suiteSocketRef.current = null
         }
-        if (!suiteCompletionRef.current) {
-          api
-            .getEvaluationSuiteRunStatus(jobId)
-            .then((response) => {
-              if (!response || !response.status) {
-                return
-              }
-              const status = response.status as EvaluationSuiteRunStatus
-              setActiveSuiteRun({ jobId: response.job_id, status })
-              const state = status.state
-              if (state === 'completed' || state === 'failed' || state === 'cancelled') {
-                suiteCompletionRef.current = true
-              }
-            })
-            .catch(() => {})
+        if (!disposed && !suiteCompletionRef.current) {
+          pollStatusFallback()
         }
       }
-    } catch {
-      api
-        .getEvaluationSuiteRunStatus(jobId)
-        .then((response) => {
-          if (!response || !response.status) {
-            return
-          }
-          const status = response.status as EvaluationSuiteRunStatus
-          setActiveSuiteRun({ jobId: response.job_id, status })
-          const state = status.state
-          if (state === 'completed' || state === 'failed' || state === 'cancelled') {
-            suiteCompletionRef.current = true
-          }
-        })
-        .catch(() => {})
-    }
+    }).catch(() => {
+      if (!disposed) {
+        pollStatusFallback()
+      }
+    })
     return () => {
+      disposed = true
       if (suiteSocketRef.current === socket) {
         suiteSocketRef.current = null
       }
