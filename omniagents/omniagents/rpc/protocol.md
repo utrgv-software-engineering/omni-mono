@@ -835,7 +835,9 @@ Every replayable notification carries three additional fields:
 - `session_id` — the session the event belongs to
 - `stream_id` — the event-stream *epoch*. Stable across reconnects and
   (with the default durable journal) across server restarts; it changes
-  only when the journal is missing or destroyed.
+  when the journal is missing or destroyed, or when the server rotates
+  the epoch after losing journal durability (see "Server restart
+  recovery" below).
 - `seq` — per-session monotonically increasing integer, never reused
 
 Replayable methods: `run_started`, `run_status`, `message_output`,
@@ -897,7 +899,8 @@ event and converge on the same authoritative state.
 ### Resync required (error `-32030`)
 
 When a cursor cannot be served — the stream epoch changed, the cursor is
-ahead of the stream, or it fell below the compaction floor —
+ahead of the stream, it fell below the compaction floor, or a nonzero
+`after_seq` was sent without a `stream_id` to verify it against —
 `resume_session`/`ack_events` fail with a structured error:
 
 ```json
@@ -917,6 +920,14 @@ ahead of the stream, or it fell below the compaction floor —
 The client MUST refetch authoritative state (`get_session_history`, which
 also replays live pending prompts) and restart its cursor from the
 advertised stream.
+
+A `resume_session` with `after_seq > 0` MUST include the `stream_id` the
+cursor was observed on: a cursor without an epoch is unverifiable (it may
+belong to a previous epoch) and is answered with `-32030` instead of
+potentially wrong-epoch events. Omitting `stream_id` with `after_seq: 0`
+remains the fresh-resume path by which clients adopt a stream. The
+reference clients always send `stream_id` once they hold a cursor, so
+conforming clients are unaffected.
 
 ### Retention and compaction
 
@@ -944,6 +955,19 @@ terminated-run state instead of waiting on prompts that no live future
 backs. Deployments using the `memory` backend lose the journal on
 restart: clients then observe a new `stream_id` (or `-32030`) and perform
 a full resync.
+
+**Durability loss.** If a durable journal append fails while the server
+keeps running, live clients continue to receive a complete, correctly
+ordered stream from the in-memory window — but the durable journal is
+now behind the live sequence, so resuming the same epoch after a restart
+would reuse sequence ids for genuinely new events (which clients would
+silently drop as duplicates). The server therefore marks the epoch
+durability-lost on the first failed append and **rotates the stream
+epoch at the next reload**: new `stream_id`, sequence reset, retained
+events discarded. Every cursor from the lost epoch then gets an explicit
+`-32030` and performs a full resync. Rotation is deferred to reload
+(rather than applied immediately) so a transient disk blip never forces
+connected clients into a resync storm.
 
 ## Connection Lifecycle
 

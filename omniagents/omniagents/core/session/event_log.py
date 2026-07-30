@@ -6,7 +6,8 @@ envelope before it leaves the process:
 * ``session_id`` — the session the event belongs to,
 * ``stream_id``  — the event-stream epoch (stable across reconnects *and*
   server restarts as long as the durable journal survives; regenerated
-  only when the journal is missing or destroyed),
+  when the journal is missing or destroyed, or when journal durability
+  was lost — see *Durability loss* below),
 * ``seq``        — a per-session monotonically increasing sequence id.
 
 The stamped events are appended to a durable store so a client that
@@ -35,6 +36,28 @@ Retention and compaction
   A consumer that vanished and returns with a pre-compaction cursor gets
   ``ResyncRequiredError`` and must refetch authoritative state
   (``get_session_history``).
+
+Durability loss
+---------------
+
+``record`` never fails the live emission path on a journal I/O error —
+live clients are served from the in-memory window, which stays complete
+and correctly ordered. But once a durable append has failed, the durable
+journal is *behind* the in-memory sequence: if the process then died and
+the journal reloaded, the same ``stream_id`` would resume from the stale
+durable ``last_seq`` and **reuse sequence ids** for genuinely new
+events, which reconnecting clients would silently drop as duplicates.
+
+To make that impossible, the first failed append marks the log
+*durability-lost*: a dirty flag is persisted to the store (retried on
+every subsequent append until it sticks) and the next reload of the
+journal **rotates the stream epoch** — new ``stream_id``, sequence reset,
+retained events discarded — so every stale cursor gets an explicit
+:class:`ResyncRequiredError` (-32030) instead of a silently gapped
+stream. Rotation happens at reload rather than immediately so a
+transient disk blip does not force every live client into a resync
+storm; the residual risk is a store so broken that even the one-row
+dirty marker never persists before the process dies.
 
 Server-restart recovery
 -----------------------
@@ -146,6 +169,7 @@ class MemoryEventLogStore:
     def __init__(self) -> None:
         self._streams: Dict[str, Tuple[str, int, int]] = {}
         self._events: Dict[str, List[Tuple[int, str, str]]] = {}
+        self._dirty: set[str] = set()
         self._lock = Lock()
 
     def load(
@@ -163,6 +187,15 @@ class MemoryEventLogStore:
         with self._lock:
             self._streams[session_id] = (stream_id, 0, 0)
             self._events[session_id] = []
+            self._dirty.discard(session_id)
+
+    def mark_dirty(self, session_id: str) -> None:
+        with self._lock:
+            self._dirty.add(session_id)
+
+    def is_dirty(self, session_id: str) -> bool:
+        with self._lock:
+            return session_id in self._dirty
 
     def append(self, session_id: str, seq: int, method: str, payload_json: str) -> None:
         with self._lock:
@@ -197,6 +230,7 @@ class MemoryEventLogStore:
         with self._lock:
             self._streams.pop(session_id, None)
             self._events.pop(session_id, None)
+            self._dirty.discard(session_id)
 
 
 class SqliteEventLogStore:
@@ -237,8 +271,18 @@ class SqliteEventLogStore:
             "session_id TEXT PRIMARY KEY,"
             "stream_id TEXT NOT NULL,"
             "last_seq INTEGER NOT NULL DEFAULT 0,"
-            "compacted_below INTEGER NOT NULL DEFAULT 0)"
+            "compacted_below INTEGER NOT NULL DEFAULT 0,"
+            "dirty INTEGER NOT NULL DEFAULT 0)"
         )
+        try:
+            # Migration for journals created before durability-loss
+            # tracking existed.
+            conn.execute(
+                "ALTER TABLE event_streams "
+                "ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0"
+            )
+        except sqlite3.OperationalError:
+            pass  # column already present
         conn.execute(
             "CREATE TABLE IF NOT EXISTS session_events ("
             "session_id TEXT NOT NULL,"
@@ -294,6 +338,30 @@ class SqliteEventLogStore:
                     "DELETE FROM session_events WHERE session_id = ?", (session_id,)
                 )
                 conn.commit()
+            finally:
+                conn.close()
+
+    def mark_dirty(self, session_id: str) -> None:
+        with self._lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "UPDATE event_streams SET dirty = 1 WHERE session_id = ?",
+                    (session_id,),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+    def is_dirty(self, session_id: str) -> bool:
+        with self._lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT dirty FROM event_streams WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                return bool(row and row[0])
             finally:
                 conn.close()
 
@@ -422,11 +490,23 @@ class SessionEventLog:
         # consumer key -> acknowledged seq (live connections only)
         self._cursors: Dict[Hashable, int] = {}
         self._events: Deque[Tuple[int, str, Dict[str, Any]]] = deque()
+        # Durability-loss tracking: set on the first failed durable append,
+        # persisted as a dirty marker so the *next* reload rotates the
+        # stream epoch instead of resuming (and reusing seqs on) an epoch
+        # whose durable tail is behind the in-memory sequence.
+        self._durability_lost = False
+        self._durability_loss_marked = False
 
         loaded = None
         try:
             loaded = self._store.load(session_id)
         except Exception:
+            loaded = None
+        if loaded is not None and self._stored_dirty():
+            # A previous epoch lost durability: its durable tail may be
+            # behind the sequence live clients already applied. Resuming it
+            # would reuse seqs on the same stream_id, so rotate — stale
+            # cursors then get an explicit ResyncRequiredError.
             loaded = None
         if loaded is None:
             self.stream_id = uuid.uuid4().hex
@@ -449,9 +529,29 @@ class SessionEventLog:
                 self._events.append((int(seq), method, payload))
             self._reconcile_interrupted_epoch()
 
+    def _stored_dirty(self) -> bool:
+        """Whether the durable store marked this session durability-lost."""
+        is_dirty = getattr(self._store, "is_dirty", None)
+        if is_dirty is None:
+            return False
+        try:
+            return bool(is_dirty(self.session_id))
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------
     # Introspection
     # ------------------------------------------------------------------
+
+    @property
+    def durability_lost(self) -> bool:
+        """True once a durable append has failed for this epoch.
+
+        The in-memory window keeps serving live clients correctly, but the
+        epoch is doomed: the next reload rotates the stream so no stale
+        cursor can ever be answered from a journal with a silent gap.
+        """
+        return self._durability_lost
 
     @property
     def first_retained_seq(self) -> int:
@@ -490,11 +590,29 @@ class SessionEventLog:
         try:
             self._store.append(self.session_id, self.last_seq, method, payload_json)
         except Exception:
-            pass
+            # The durable tail is now behind the in-memory sequence. Never
+            # let this epoch be reloaded: mark it durability-lost so the
+            # next reload rotates the stream instead of reusing seqs.
+            self._durability_lost = True
+        if self._durability_lost and not self._durability_loss_marked:
+            self._mark_durability_lost()
         if method in _SNAPSHOT_METHODS:
             self._coalesce_snapshots(method, keep_seq=self.last_seq)
         self._trim_to_retention()
         return payload
+
+    def _mark_durability_lost(self) -> None:
+        """Best-effort persist of the dirty marker; retried from ``record``
+        on every subsequent append until it sticks (a transient blip
+        usually lets the very next attempt through)."""
+        mark_dirty = getattr(self._store, "mark_dirty", None)
+        if mark_dirty is None:
+            return
+        try:
+            mark_dirty(self.session_id)
+        except Exception:
+            return
+        self._durability_loss_marked = True
 
     def _coalesce_snapshots(self, method: str, *, keep_seq: int) -> None:
         superseded = [
@@ -539,12 +657,19 @@ class SessionEventLog:
         """Retained ``(method, payload)`` pairs with ``seq > after_seq``.
 
         Raises :class:`ResyncRequiredError` when the cursor cannot be
-        served: unknown stream epoch, a cursor ahead of the stream, or a
-        cursor below the compaction floor.
+        served: unknown stream epoch, a nonzero cursor without a
+        ``stream_id`` to verify it against (the cursor may belong to a
+        previous epoch, so serving it could hand out wrong-epoch events),
+        a cursor ahead of the stream, or a cursor below the compaction
+        floor. A missing ``stream_id`` with cursor 0 is a fresh resume —
+        that is how clients adopt a stream.
         """
-        if stream_id is not None and stream_id != self.stream_id:
-            raise self._resync_error()
         after_seq = int(after_seq)
+        if stream_id is None:
+            if after_seq > 0:
+                raise self._resync_error()
+        elif stream_id != self.stream_id:
+            raise self._resync_error()
         if after_seq > self.last_seq or after_seq < self.compacted_below:
             raise self._resync_error()
         return [
