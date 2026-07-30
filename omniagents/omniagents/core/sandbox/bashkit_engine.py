@@ -28,20 +28,11 @@ no real binaries to exec.
 Two limits worth stating precisely, because both are narrower than they
 look:
 
-*Network.* Outbound HTTP is off by default everywhere, and opting in is a
-per-domain allowlist (``Bash(network={"allow": [...]})``), not a switch.
-In the wasm build it is unavailable at all: passing ``network=`` raises
-``RuntimeError: network configuration is not available in the WebAssembly
-(Pyodide) build``. Note the default-deny is *silent* — a blocked ``curl``
-exits 0 with empty output rather than erroring — so a lesson that expects
-a fetch to fail loudly will not get that.
-
-*git.* Absent from the published wheel (``git: command not found``, on the
-host build too), but not impossible: bashkit implements virtual git
-entirely inside the VFS behind a Rust cargo feature (``--features git``)
-covering init/add/commit/status/log/branch/checkout/diff/reset. Reaching
-it means building the wheel from source with that feature enabled, which
-nothing here does today.
+``git`` and ``curl`` are supplied by this package rather than by bashkit,
+via ``git=True`` / ``network={"allow": [...]}``; see
+:mod:`omniagents.core.sandbox.bashkit_builtins` for why bashkit's own
+versions are unusable here (one is a simulation, the other cannot compile
+to wasm).
 
 Because this is a real :class:`BaseSandboxSession`,
 :class:`~omniagents.workspace.sandbox.SandboxWorkspace` wraps it like any
@@ -61,7 +52,115 @@ from agents.sandbox.session import BaseSandboxSession, SandboxSessionState
 from agents.sandbox.snapshot import NoopSnapshot
 from agents.sandbox.types import ExecResult, User
 
+from .bashkit_builtins import _mirror_in, _mirror_out
+
 _DIR_TYPES = {"directory", "dir"}
+
+# Shell words that open a block. While one is open the script cannot be split.
+_BLOCK_OPENERS = {"do", "then", "case", "{"}
+_BLOCK_CLOSERS = {"done", "fi", "esac", "}"}
+
+
+def _split_top_level(script: str):
+    """Split a script into ``(separator, statement)`` pairs at safe points.
+
+    Only needed when a mirroring builtin is enabled: those builtins read the
+    workspace through a snapshot taken before the command, so a script like::
+
+        echo hello > f.txt
+        git add f.txt
+
+    would have ``git`` looking at a mirror made before ``echo`` ran. Running
+    the statements as separate calls lets the session re-sync between them.
+    bashkit keeps shell state (cwd, env, functions) across calls, so this
+    stays faithful.
+
+    Splits on newline, ``;`` and ``&&`` at depth zero only. Anything with a
+    heredoc, an open block, quotes or a subshell is returned whole — a wrong
+    split would change the program's meaning, which is far worse than a stale
+    read. Returns ``None`` when the script must not be split.
+    """
+    if "<<" in script:  # heredoc bodies are not tokenizable this way
+        return None
+
+    parts = []
+    current = ""
+    separator = ";"
+    depth = 0
+    word = ""
+    single = double = escaped = False
+    index = 0
+
+    def close_word():
+        nonlocal word, depth
+        if word in _BLOCK_OPENERS:
+            depth += 1
+        elif word in _BLOCK_CLOSERS:
+            depth -= 1
+        word = ""
+
+    while index < len(script):
+        char = script[index]
+        if escaped:
+            current += char
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            current += char
+            escaped = True
+            index += 1
+            continue
+        if single:
+            current += char
+            single = char != "'"
+            index += 1
+            continue
+        if double:
+            current += char
+            double = char != '"'
+            index += 1
+            continue
+        if char == "'":
+            single = True
+            current += char
+            index += 1
+            continue
+        if char == '"':
+            double = True
+            current += char
+            index += 1
+            continue
+        if char in "()":
+            return None  # subshells and function bodies: leave alone
+        if char.isspace() or char in ";&|":
+            close_word()
+        if char in "\n;" or script[index : index + 2] == "&&":
+            is_and = script[index : index + 2] == "&&"
+            if depth == 0:
+                statement = current.strip()
+                if statement:
+                    parts.append((separator, statement))
+                    separator = "&&" if is_and else ";"
+                current = ""
+                index += 2 if is_and else 1
+                continue
+        if script[index : index + 2] in ("||", "|&") or char == "|":
+            # Pipelines and || chains stay in one piece.
+            current += char
+            index += 1
+            continue
+        current += char
+        if not char.isspace() and char not in ";&|":
+            word += char
+        index += 1
+
+    if single or double or depth != 0:
+        return None
+    statement = current.strip()
+    if statement:
+        parts.append((separator, statement))
+    return parts or None
 
 
 class BashkitSandboxSession(BaseSandboxSession):
@@ -82,13 +181,46 @@ class BashkitSandboxSession(BaseSandboxSession):
         root: str = "/workspace",
         bash: Any = None,
         session_id: str = "bashkit",
+        git: bool = False,
+        network: Any = None,
         **bash_kwargs: Any,
     ) -> None:
+        # Where builtins that need an ordinary filesystem (git, curl -o) see
+        # the workspace. Set before they are constructed, since they capture it.
+        self._mirror = f"/tmp/omniagents-mirror/{session_id}"
+        self._mirrored = bool(git or network)
+
         if bash is None:
             from bashkit import Bash
 
+            builtins = dict(bash_kwargs.pop("custom_builtins", None) or {})
+            if git:
+                from .bashkit_builtins import make_git_builtin
+
+                builtins["git"] = make_git_builtin(root=root, mirror=self._mirror)
+            if network:
+                from .bashkit_builtins import make_http_builtins
+
+                spec = {} if network is True else dict(network)
+                builtins.update(
+                    make_http_builtins(
+                        allow=spec.get("allow"),
+                        allow_all=bool(spec.get("allow_all", network is True)),
+                        timeout=float(spec.get("timeout", 30.0)),
+                        root=root,
+                        mirror=self._mirror,
+                    )
+                )
+            if builtins:
+                bash_kwargs["custom_builtins"] = builtins
             bash_kwargs.setdefault("python", True)
             bash = Bash(**bash_kwargs)
+        elif git or network:
+            raise TypeError(
+                "git=/network= build custom builtins at construction, so they "
+                "cannot be applied to an existing Bash; pass the kwargs "
+                "instead of bash="
+            )
         elif bash_kwargs:
             raise TypeError(
                 "bash_kwargs are only used when constructing a Bash; "
@@ -155,20 +287,60 @@ class BashkitSandboxSession(BaseSandboxSession):
         # the interpreter is built. Set it there.
         _ = timeout
 
+        if not self._mirrored:
+            result = await self._run(script)
+            return ExecResult(
+                stdout=result.stdout.encode(),
+                stderr=result.stderr.encode(),
+                exit_code=result.exit_code,
+            )
+
+        # A builtin cannot touch the VFS itself (ctx.fs ops panic on wasm -
+        # no threads), so the workspace is mirrored to a real directory around
+        # each statement, here, where bash.fs() is safe. Statement-by-statement
+        # rather than once per script: otherwise `echo x > f` followed by
+        # `git add f` would have git reading a mirror taken before the echo.
+        #
+        # Split the script the caller wrote, not the `sh -lc '<script>'`
+        # wrapper the base class adds - the wrapper makes the whole program a
+        # single quoted argument, so splitting it yields one statement and the
+        # re-sync never happens.
+        parts = [str(part) for part in command]
+        inner = (
+            parts[2]
+            if len(parts) == 3
+            and parts[0] in ("sh", "bash")
+            and parts[1] in ("-c", "-lc")
+            else script
+        )
+        statements = _split_top_level(inner) or [(";", inner)]
+
+        out, err, code = "", "", 0
+        for separator, statement in statements:
+            if separator == "&&" and code != 0:
+                break
+            baseline = _mirror_in(
+                self.bash.fs(), str(self.state.manifest.root), self._mirror
+            )
+            result = await self._run(statement)
+            _mirror_out(
+                self.bash.fs(), str(self.state.manifest.root), self._mirror, baseline
+            )
+            out += result.stdout
+            err += result.stderr
+            code = result.exit_code
+
+        return ExecResult(stdout=out.encode(), stderr=err.encode(), exit_code=code)
+
+    async def _run(self, script: str):
+        """Run one script through bashkit, async where the build has it."""
         run_async = getattr(self.bash, "execute", None)
         if run_async is not None:
-            result = await run_async(script)
-        else:
-            # The wasm build ships only the sync entry point. Blocking costs
-            # nothing meaningful: bashkit is in-memory, and Pyodide has no
-            # threads for an async variant to yield to.
-            result = self.bash.execute_sync(script)
-
-        return ExecResult(
-            stdout=result.stdout.encode(),
-            stderr=result.stderr.encode(),
-            exit_code=result.exit_code,
-        )
+            return await run_async(script)
+        # The wasm build ships only the sync entry point. Blocking costs
+        # nothing meaningful: bashkit is in-memory, and Pyodide has no threads
+        # for an async variant to yield to.
+        return self.bash.execute_sync(script)
 
     # ------------------------------ file I/O ------------------------------- #
 
