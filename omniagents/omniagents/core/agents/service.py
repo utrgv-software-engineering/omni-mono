@@ -53,6 +53,7 @@ from omniagents.rpc.auth import (
     AuthorizationPolicy,
 )
 from omniagents.rpc.auth import _OwnerUnknown as _OwnerUnknownType
+from omniagents.core.providers.accounts import AccountManager
 from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.approval import configure_tool_approval
@@ -487,6 +488,12 @@ class AgentService(RpcMethodsBase):
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
         self._runtime_hooks: dict[str, list[Any]] = {}
+        # Every currently connected /ws channel (registered by
+        # JsonRpcEndpoint). Connection-wide broadcasts (``account_changed``)
+        # fan out here — unlike session events they are not journaled.
+        self._connected_channels: list[Any] = []
+        # Provider account & usage state behind the ``account_*`` RPCs.
+        self.accounts = AccountManager()
 
         # Register audit backend if enabled in security config
         try:
@@ -4447,6 +4454,102 @@ class AgentService(RpcMethodsBase):
                 node[parts[-1]] = value
             else:
                 node.pop(parts[-1], None)
+
+    # ------------------------------------------------------------------
+    #  Provider accounts & usage (``account_*`` RPCs).
+    #
+    #  Thin wrappers over ``self.accounts`` (AccountManager): the manager
+    #  owns flow state and typed errors; this layer owns broadcasting.
+    #  Authorization: reads are GLOBAL_SAFE, mutations GLOBAL_MUTATING —
+    #  see omniagents/rpc/auth.py. Snapshots and notifications are
+    #  redacted by construction (no token/key material ever enters them).
+    # ------------------------------------------------------------------
+
+    def register_channel(self, channel: Any) -> None:
+        """Track a connected channel for connection-wide broadcasts."""
+        if channel is not None and channel not in self._connected_channels:
+            self._connected_channels.append(channel)
+
+    def unregister_channel(self, channel: Any) -> None:
+        try:
+            self._connected_channels.remove(channel)
+        except ValueError:
+            pass
+
+    async def _broadcast_account_changed(
+        self, provider: str, reason: str, account: Optional[dict] = None
+    ) -> None:
+        """Notify every connected client that account state moved.
+
+        Not journaled: account state is server-global (not session
+        history), and replaying stale credential states after reconnect
+        would be wrong — clients refetch via ``account_status``.
+        """
+        payload: dict[str, Any] = {"provider": provider, "reason": reason}
+        if account is None:
+            try:
+                account = self.accounts.provider_snapshot(provider)
+            except Exception:
+                account = None
+        if account is not None:
+            payload["account"] = account
+        for ch in list(self._connected_channels):
+            try:
+                await ch.async_call("account_changed", payload)
+            except Exception:
+                logger.debug("account_changed broadcast failed", exc_info=True)
+
+    async def account_status(self) -> dict:  # noqa: D401
+        return self.accounts.status()
+
+    async def account_usage(self, provider: str | None = None) -> dict:  # noqa: D401
+        return self.accounts.usage(provider)
+
+    async def account_login_start(
+        self,
+        provider: str,
+        mode: str,
+        api_key: str | None = None,
+        redirect_uri: str | None = None,
+    ) -> dict:  # noqa: D401
+        result = await self.accounts.login_start(
+            provider, mode, api_key=api_key, redirect_uri=redirect_uri
+        )
+        if result.get("state") == "completed":
+            await self._broadcast_account_changed(
+                provider, "login", result.get("account")
+            )
+        return result
+
+    async def account_login_complete(
+        self, login_id: str, code: str | None = None
+    ) -> dict:  # noqa: D401
+        result = await self.accounts.login_complete(login_id, code=code)
+        if result.get("state") == "completed":
+            await self._broadcast_account_changed(
+                str(result.get("provider")), "login", result.get("account")
+            )
+        return result
+
+    async def account_login_cancel(self, login_id: str) -> bool:  # noqa: D401
+        return self.accounts.login_cancel(login_id)
+
+    async def account_logout(self, provider: str) -> dict:  # noqa: D401
+        result = self.accounts.logout(provider)
+        await self._broadcast_account_changed(provider, "logout", result.get("account"))
+        return result
+
+    async def account_refresh(self, provider: str) -> dict:  # noqa: D401
+        result = await self.accounts.refresh(provider)
+        await self._broadcast_account_changed(
+            provider, "refresh", result.get("account")
+        )
+        return result
+
+    async def account_select(self, provider: str) -> dict:  # noqa: D401
+        result = self.accounts.select(provider)
+        await self._broadcast_account_changed(provider, "select", result.get("account"))
+        return result
 
     # (Removed) get_model_info: model metadata is now sent inline with usage events
 

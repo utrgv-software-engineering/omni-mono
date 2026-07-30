@@ -977,6 +977,98 @@ Notes:
 - `contents` mirrors the MCP `ReadResourceResult.contents` array (`text` for textual content, `blob` for base64 binary, plus `uri` and `mimeType`).
 - Throws if the server is unknown / inactive, the URI is not addressable on that server, or the underlying MCP server does not implement `resources/read`.
 
+## Provider Accounts & Usage (`account_*` methods)
+
+Stable, provider-agnostic RPCs for managing model-provider
+authentication and account state without CLI-only flows. Providers are
+identified by stable ids (`openai-chatgpt` for the ChatGPT/Codex OAuth
+account; `openai`, `anthropic`, `google`, `azure-openai` for API-key
+credentials). Capability differences are normalized: every provider
+snapshot carries a `capabilities` object (`login_modes`, `logout`,
+`refresh`, `usage`), and calling an operation a provider does not
+support fails with a **typed** error, never a generic `-32603`.
+
+### Typed errors
+
+| Code | Name | `data.kind` | Meaning |
+|------|------|-------------|---------|
+| `-32040` | AccountCapabilityUnsupported | `account_capability_unsupported` | The provider never supports this operation (`data.operation`, `data.supported`). |
+| `-32041` | AccountStateInvalid | `account_state_invalid` | Supported operation, wrong state (`data.reason`: `not_signed_in`, `unknown_login`, `unknown_provider`, `code_required`, `state_mismatch`, `api_key_required`, `externally_managed`). |
+| `-32042` | AccountAuthFailed | `account_auth_failed` | The upstream identity provider rejected the credential (`data.status` when known). |
+
+### Methods
+
+- `account_status()` → `{ providers: [AccountSnapshot], selected_provider }` —
+  redacted state of every provider: `state`
+  (`signed_in`/`signed_out`/`error`), `source` (`oauth`/`rpc`/`env`),
+  `identity` (`account_id`, `plan`, `email` when derivable), typed
+  `capabilities`, and the last stored auth error. **Never contains
+  credential material.**
+- `account_usage(provider?)` → `{ providers: [...] }` — plan, rate-limit
+  windows (`used_percent`, `window_minutes`, `resets_at` epoch seconds),
+  capture timestamp, and workspace `notices` when available. For the
+  ChatGPT provider this reflects the latest `x-codex-*` rate-limit
+  headers captured from live model traffic, so it updates without
+  restarting the server. Requesting usage from a provider without the
+  capability → `-32040`; signed-out provider → `-32041`.
+- `account_login_start(provider, mode, api_key?, redirect_uri?)` — begins a
+  login. Modes:
+  - `device_code` (ChatGPT): returns `{ state: "pending", login_id,
+    user_code, verification_url, interval }`.
+  - `browser` (ChatGPT): returns `{ state: "pending", login_id, auth_url,
+    redirect_uri }` — the URL-handoff point. The PKCE verifier never
+    leaves the server; the client opens `auth_url` and later posts the
+    authorization code back.
+  - `api_key` (API-key providers): completes immediately —
+    `{ state: "completed", account }`. The key is installed into the
+    server process environment for the model runtime; it is not echoed
+    back and is redacted from server debug logs.
+- `account_login_complete(login_id, code?)` — advances a pending login.
+  Device-code: performs one authorization poll (`state: "pending"` until
+  the user approves; clients poll on `interval`). Browser: exchanges the
+  authorization `code` (raw code or full redirect URL). Completing an
+  unknown/expired/cancelled login → `-32041 unknown_login`.
+- `account_login_cancel(login_id)` → `true` when a pending login was
+  dropped. Cancellation is immediate; a poll already in flight cannot
+  complete afterwards.
+- `account_logout(provider)` — clears the stored OAuth tokens or an
+  RPC-installed API key. Keys injected by the host environment are
+  `externally_managed` (`-32041`) — sign out where they were configured.
+- `account_refresh(provider)` — forces an OAuth token refresh now.
+  Upstream rejection → `-32042` with the HTTP status; the failure is also
+  stamped into `account_status` (`state: "error"`).
+- `account_select(provider)` — records the preferred account provider
+  (surfaced as `selected` in snapshots and `selected_provider` in
+  status) so clients agree on the active account.
+
+### `account_changed` notification (server → client)
+
+```json
+{ "provider": "openai-chatgpt", "reason": "login", "account": { …snapshot } }
+```
+
+Broadcast to **every connected client** after login completion, logout,
+refresh, and selection (`reason` ∈ `login`/`logout`/`refresh`/`select`).
+Optional (may be disabled at `initialize`) and **not journaled**: account
+state is server-global, so reconnecting clients refetch via
+`account_status` instead of replaying stale credential states.
+
+### Authorization
+
+`account_status` and `account_usage` are read-only and globally safe.
+Every mutation (`account_login_*`, `account_logout`, `account_refresh`,
+`account_select`) rewrites process-wide provider credentials, so in
+enforced multi-user deployments they are refused for individual
+principals (the `disable_tool` precedent); they are available in
+single-user/no-auth deployments, which is where they are needed.
+
+### Secrets
+
+Tokens and API keys never appear in RPC results, notifications, server
+logs, or persisted history. Snapshots are built from an identity/quota
+allowlist; `api_key`/`code` request params are masked in server debug
+logging; account events bypass the session journal entirely.
+
 ## Authentication
 
 Optional token-based authentication via URL query parameter:

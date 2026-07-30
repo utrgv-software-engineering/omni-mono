@@ -61,6 +61,13 @@ REQUIRED_FIELDS = {
     "export_session": ("session_id",),
     "validate_config": ("updates",),
     "write_config": ("updates",),
+    "account_login_start": ("provider", "mode"),
+    "account_login_complete": ("login_id",),
+    "account_login_cancel": ("login_id",),
+    "account_logout": ("provider",),
+    "account_refresh": ("provider",),
+    "account_select": ("provider",),
+    "account_changed": ("provider", "reason"),
     "run_started": ("run_id", "session_id"),
     "run_status": ("run_id", "session_id", "status", "message"),
     "tool_called": ("run_id", "session_id", "tool", "input", "call_id"),
@@ -151,6 +158,10 @@ OPTIONAL_FIELDS = {
     "client_request_resolved": ("session_id", "reason"),
     "resume_session": ("stream_id", "after_seq"),
     "list_models": ("include_hidden", "modality", "session_id"),
+    "account_login_start": ("api_key", "redirect_uri"),
+    "account_login_complete": ("code",),
+    "account_usage": ("provider",),
+    "account_changed": ("account",),
 }
 
 # Every server→client notification carries the optional replay envelope.
@@ -185,6 +196,7 @@ INTEGER_FIELDS = {
     "version",
 }
 OBJECT_FIELDS = {
+    "account",
     "args",
     "changed",
     "context",
@@ -240,6 +252,14 @@ RESULT_TYPES = {
     "set_session_model": ("dict[str, Any]", "Record<string, unknown>"),
     "set_session_reasoning": ("dict[str, Any]", "Record<string, unknown>"),
     "set_voice_model": ("dict[str, Any]", "Record<string, unknown>"),
+    "account_status": ("dict[str, Any]", "Record<string, unknown>"),
+    "account_login_start": ("dict[str, Any]", "Record<string, unknown>"),
+    "account_login_complete": ("dict[str, Any]", "Record<string, unknown>"),
+    "account_login_cancel": ("bool", "boolean"),
+    "account_logout": ("dict[str, Any]", "Record<string, unknown>"),
+    "account_refresh": ("dict[str, Any]", "Record<string, unknown>"),
+    "account_usage": ("dict[str, Any]", "Record<string, unknown>"),
+    "account_select": ("dict[str, Any]", "Record<string, unknown>"),
 }
 
 IDENTITY_SCHEMA = {
@@ -410,6 +430,49 @@ PROTOCOL_ERRORS = {
             },
         },
     },
+    "AccountCapabilityUnsupported": {
+        "code": -32040,
+        "message": "Account capability unsupported",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "provider", "operation"],
+            "properties": {
+                "kind": {"const": "account_capability_unsupported"},
+                "provider": {"type": "string"},
+                "operation": {"type": "string"},
+                "supported": {"type": "array", "items": {"type": "string"}},
+            },
+        },
+    },
+    "AccountStateInvalid": {
+        "code": -32041,
+        "message": "Account state invalid",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "reason"],
+            "properties": {
+                "kind": {"const": "account_state_invalid"},
+                "provider": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
+    "AccountAuthFailed": {
+        "code": -32042,
+        "message": "Account authentication failed",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "provider"],
+            "properties": {
+                "kind": {"const": "account_auth_failed"},
+                "provider": {"type": "string"},
+                "status": {"type": ["integer", "null"]},
+            },
+        },
+    },
     "TransportOverloaded": {
         "code": -32020,
         "message": "Transport overloaded",
@@ -515,6 +578,14 @@ def build_openrpc() -> dict:
                 )
             if operation.name in ("resume_session", "ack_events"):
                 entry["errors"].append({"$ref": "#/components/errors/ResyncRequired"})
+            if operation.name.startswith("account_"):
+                entry["errors"].extend(
+                    [
+                        {"$ref": "#/components/errors/AccountCapabilityUnsupported"},
+                        {"$ref": "#/components/errors/AccountStateInvalid"},
+                        {"$ref": "#/components/errors/AccountAuthFailed"},
+                    ]
+                )
         if operation.kind == "correlated_notification":
             entry["x-omni-correlation"] = {
                 "requestField": "request_id",

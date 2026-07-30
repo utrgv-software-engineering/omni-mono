@@ -8,6 +8,76 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, RootModel
 
 
+class AccountChanged(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    account: dict[str, Any] | None = None
+    provider: str
+    reason: str
+    seq: int | None = None
+    stream_id: str | None = None
+
+
+class AccountLoginCancel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    login_id: str
+
+
+class AccountLoginComplete(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: str | None = None
+    login_id: str
+
+
+class AccountLoginStart(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    api_key: str | None = None
+    mode: str
+    provider: str
+    redirect_uri: str | None = None
+
+
+class AccountLogout(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    provider: str
+
+
+class AccountRefresh(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    provider: str
+
+
+class AccountSelect(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    provider: str
+
+
+class AccountStatus(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class AccountUsage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    provider: str | None = None
+
+
 class AckEvents(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -633,6 +703,14 @@ class Model(
         | SetSessionModel
         | SetSessionReasoning
         | SetVoiceModel
+        | AccountStatus
+        | AccountLoginStart
+        | AccountLoginComplete
+        | AccountLoginCancel
+        | AccountLogout
+        | AccountRefresh
+        | AccountUsage
+        | AccountSelect
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -661,6 +739,7 @@ class Model(
         | ClientRequest
         | ClientRequestResolved
         | QueueChanged
+        | AccountChanged
         | SessionForked
         | SessionVariablesChanged
     ]
@@ -693,6 +772,14 @@ class Model(
         | SetSessionModel
         | SetSessionReasoning
         | SetVoiceModel
+        | AccountStatus
+        | AccountLoginStart
+        | AccountLoginComplete
+        | AccountLoginCancel
+        | AccountLogout
+        | AccountRefresh
+        | AccountUsage
+        | AccountSelect
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -721,6 +808,7 @@ class Model(
         | ClientRequest
         | ClientRequestResolved
         | QueueChanged
+        | AccountChanged
         | SessionForked
         | SessionVariablesChanged
     )

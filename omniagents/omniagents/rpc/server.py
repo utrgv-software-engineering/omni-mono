@@ -48,8 +48,29 @@ GUI_OPTIONAL_NOTIFICATIONS = frozenset(
         "mcp_approval_resolved",
         "session_forked",
         "session_variables_changed",
+        "account_changed",
     }
 )
+# Request params that carry credential material. Redacted from every
+# debug/log line the server writes — a secret a client sends the server
+# must never be reproducible from process output.
+SENSITIVE_PARAM_KEYS = frozenset({"api_key", "code"})
+
+
+def redact_params(params: Any) -> Any:
+    """Copy of *params* with credential-bearing values masked for logging."""
+    if not isinstance(params, dict):
+        return params
+    return {
+        key: (
+            "[REDACTED]"
+            if key in SENSITIVE_PARAM_KEYS and value
+            else redact_params(value) if isinstance(value, dict) else value
+        )
+        for key, value in params.items()
+    }
+
+
 GUI_CAPABILITY_NAMES = frozenset(
     {
         "realtime",
@@ -206,6 +227,12 @@ class JsonRpcEndpoint:
             )
             channel.principal = getattr(websocket.state, "principal", None)
             self.methods.channel = channel
+            # Method containers that track their connected channels (for
+            # connection-wide broadcasts such as ``account_changed``)
+            # expose register/unregister hooks; plain containers don't.
+            register_channel = getattr(self.methods, "register_channel", None)
+            if callable(register_channel):
+                register_channel(channel)
 
             try:
                 while transport.is_connected():
@@ -229,6 +256,9 @@ class JsonRpcEndpoint:
                     except Exception:
                         break
             finally:
+                unregister_channel = getattr(self.methods, "unregister_channel", None)
+                if callable(unregister_channel):
+                    unregister_channel(channel)
                 try:
                     if getattr(self.methods, "channel", None) is channel:
                         self.methods.channel = None
@@ -257,9 +287,10 @@ class JsonRpcEndpoint:
     ) -> None:
         if call_id is None:
             return
+        from omniagents.core.providers.accounts import AccountRpcError
         from omniagents.core.session.event_log import ResyncRequiredError
 
-        if isinstance(exc, ResyncRequiredError):
+        if isinstance(exc, (ResyncRequiredError, AccountRpcError)):
             await channel.send_error(call_id, exc.code, str(exc), exc.data)
             return
         data: Dict[str, Any] = {"type": exc.__class__.__name__, "message": str(exc)}
@@ -290,8 +321,12 @@ class JsonRpcEndpoint:
         method = data.get("method")
         params = data.get("params") if "params" in data else data.get("args")
 
-        Debug.log(f"[srv] ⇐ call id={call_id} method={method} params={params}")
-        Debug.log(f"[srv] ⇐ message id={call_id} data={data}")
+        safe_params = redact_params(params)
+        Debug.log(f"[srv] ⇐ call id={call_id} method={method} params={safe_params}")
+        Debug.log(
+            f"[srv] ⇐ message id={call_id} "
+            f"data={redact_params(data) if isinstance(data, dict) else data}"
+        )
 
         if version != "2.0":
             await channel.send_error(

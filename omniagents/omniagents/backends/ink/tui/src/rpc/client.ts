@@ -712,6 +712,83 @@ export class RPCClient extends EventEmitter {
     return this.call("set_voice_model", { model }) as Promise<SetVoiceModelResult>;
   }
 
+  // ---------------------------------------------------------------------
+  // Provider accounts & usage — see protocol.md §"Provider Accounts".
+  // Snapshots are redacted server-side (identity/quota only, never
+  // credentials); listen for the `account_changed` notification to track
+  // state without polling.
+  // ---------------------------------------------------------------------
+
+  async accountStatus(): Promise<AccountStatusResult> {
+    return this.call("account_status") as Promise<AccountStatusResult>;
+  }
+
+  async accountUsage(provider?: string): Promise<AccountUsageResult> {
+    const params: Record<string, unknown> = {};
+    if (provider) params.provider = provider;
+    return this.call(
+      "account_usage",
+      params as RpcMethodMap["account_usage"]["params"],
+    ) as Promise<AccountUsageResult>;
+  }
+
+  async accountLoginStart(
+    provider: string,
+    mode: "device_code" | "browser" | "api_key",
+    opts?: { apiKey?: string; redirectUri?: string },
+  ): Promise<AccountLoginState> {
+    const params: Record<string, unknown> = { provider, mode };
+    if (opts?.apiKey) params.api_key = opts.apiKey;
+    if (opts?.redirectUri) params.redirect_uri = opts.redirectUri;
+    return this.call(
+      "account_login_start",
+      params as unknown as RpcMethodMap["account_login_start"]["params"],
+    ) as Promise<AccountLoginState>;
+  }
+
+  async accountLoginComplete(
+    loginId: string,
+    code?: string,
+  ): Promise<AccountLoginState> {
+    const params: Record<string, unknown> = { login_id: loginId };
+    if (code) params.code = code;
+    return this.call(
+      "account_login_complete",
+      params as unknown as RpcMethodMap["account_login_complete"]["params"],
+    ) as Promise<AccountLoginState>;
+  }
+
+  async accountLoginCancel(loginId: string): Promise<boolean> {
+    return this.call("account_login_cancel", { login_id: loginId });
+  }
+
+  async accountLogout(
+    provider: string,
+  ): Promise<{ ok: boolean; account?: AccountSnapshot }> {
+    return this.call("account_logout", { provider }) as Promise<{
+      ok: boolean;
+      account?: AccountSnapshot;
+    }>;
+  }
+
+  async accountRefresh(
+    provider: string,
+  ): Promise<{ ok: boolean; account?: AccountSnapshot }> {
+    return this.call("account_refresh", { provider }) as Promise<{
+      ok: boolean;
+      account?: AccountSnapshot;
+    }>;
+  }
+
+  async accountSelect(
+    provider: string,
+  ): Promise<{ selected_provider: string; account?: AccountSnapshot }> {
+    return this.call("account_select", { provider }) as Promise<{
+      selected_provider: string;
+      account?: AccountSnapshot;
+    }>;
+  }
+
   /**
    * Make a generic RPC call
    */
@@ -1026,3 +1103,64 @@ export class RPCClient extends EventEmitter {
     }
   }
 }
+
+/** Redacted provider account state — never contains credential material. */
+export type AccountSnapshot = {
+  id: string;
+  label: string;
+  kind: "oauth" | "api_key";
+  capabilities: {
+    login_modes: string[];
+    logout: boolean;
+    refresh: boolean;
+    usage: boolean;
+  };
+  state: "signed_in" | "signed_out" | "error";
+  source: "oauth" | "rpc" | "env" | null;
+  identity: { account_id?: string; plan?: string; email?: string } | null;
+  error: { status?: number | null; at?: number | null } | null;
+  selected: boolean;
+};
+
+export type AccountStatusResult = {
+  providers: AccountSnapshot[];
+  selected_provider: string | null;
+};
+
+export type AccountRateLimit = {
+  name: string;
+  used_percent?: number;
+  window_minutes?: number;
+  resets_at?: number;
+};
+
+export type AccountUsageResult = {
+  providers: Array<{
+    id: string;
+    plan: string | null;
+    rate_limits: AccountRateLimit[];
+    captured_at: number | null;
+    notices: unknown[];
+  }>;
+};
+
+/** Result of account_login_start / account_login_complete. */
+export type AccountLoginState = {
+  state: "pending" | "completed";
+  mode: "device_code" | "browser" | "api_key";
+  provider: string;
+  login_id?: string;
+  user_code?: string;
+  verification_url?: string;
+  interval?: number;
+  auth_url?: string;
+  redirect_uri?: string;
+  account?: AccountSnapshot;
+};
+
+/** Payload of the `account_changed` server notification. */
+export type AccountChangedPayload = {
+  provider: string;
+  reason: "login" | "logout" | "refresh" | "select";
+  account?: AccountSnapshot;
+};

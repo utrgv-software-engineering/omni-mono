@@ -180,6 +180,52 @@ def parse_jwt_claims(token: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def extract_email(tokens: Dict[str, Any]) -> Optional[str]:
+    """Pull the account email from token claims, when present."""
+
+    def from_claims(claims: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not claims:
+            return None
+        profile_ns = claims.get("https://api.openai.com/profile") or {}
+        if isinstance(profile_ns, dict):
+            email = profile_ns.get("email")
+            if isinstance(email, str) and email:
+                return email
+        email = claims.get("email")
+        return email if isinstance(email, str) and email else None
+
+    for key in ("id_token", "access_token", "access"):
+        token = tokens.get(key)
+        if isinstance(token, str) and token:
+            email = from_claims(parse_jwt_claims(token))
+            if email:
+                return email
+    return None
+
+
+def extract_plan_type(tokens: Dict[str, Any]) -> Optional[str]:
+    """Pull the ChatGPT plan type (``plus``/``pro``/``team``/…) from claims."""
+
+    def from_claims(claims: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not claims:
+            return None
+        auth_ns = claims.get("https://api.openai.com/auth") or {}
+        if isinstance(auth_ns, dict):
+            plan = auth_ns.get("chatgpt_plan_type")
+            if isinstance(plan, str) and plan:
+                return plan
+        plan = claims.get("chatgpt_plan_type")
+        return plan if isinstance(plan, str) and plan else None
+
+    for key in ("id_token", "access_token", "access"):
+        token = tokens.get(key)
+        if isinstance(token, str) and token:
+            plan = from_claims(parse_jwt_claims(token))
+            if plan:
+                return plan
+    return None
+
+
 def extract_account_id(tokens: Dict[str, Any]) -> Optional[str]:
     """Pull the ChatGPT account id from id/access token claims."""
 
@@ -463,6 +509,226 @@ def list_codex_models(force: bool = False) -> Optional[Dict[str, Dict[str, Any]]
     return models
 
 
+async def refresh_now_async() -> Dict[str, Any]:
+    """Force a token refresh against the stored refresh token and persist it.
+
+    Unlike the lazy request-time path, this always spends a refresh round
+    trip — the account RPC surface uses it for an explicit "refresh now".
+    Raises ``RuntimeError`` (with the upstream status stamped in the store
+    for rejected grants) when the refresh fails; returns the fresh token
+    dict on success. Callers must never surface the returned dict on any
+    client-facing path — it contains live credentials.
+    """
+    tokens = load_tokens()
+    if not tokens or not tokens.get("refresh"):
+        raise RuntimeError("Not signed in to ChatGPT (Codex)")
+    refreshed = await _refresh_async(tokens["refresh"])
+    if "account_id" not in refreshed and tokens.get("account_id"):
+        refreshed["account_id"] = tokens["account_id"]
+    try:
+        save_tokens(refreshed)
+    except OSError:
+        pass
+    await _persist_refresh_to_launcher(refreshed)
+    return refreshed
+
+
+# --------------------------------------------------------------------------
+# Non-blocking device-code + browser (PKCE) login primitives
+#
+# The CLI's ``device_login`` below blocks and prints; the account RPC
+# surface needs start / poll-once / exchange steps it can drive (and
+# cancel) from a GUI client, so each network round trip is its own
+# async function.
+# --------------------------------------------------------------------------
+
+DEVICE_VERIFICATION_URL = f"{ISSUER}/codex/device"
+DEFAULT_BROWSER_REDIRECT_URI = "http://localhost:1455/auth/callback"
+
+_DEVICE_UA_HEADERS = {
+    "User-Agent": f"omniagents/{ORIGINATOR}",
+    "Content-Type": "application/json",
+}
+
+
+async def device_auth_start() -> Dict[str, Any]:
+    """Start the device-authorization flow (one round trip, no polling).
+
+    Returns ``{"device_auth_id", "user_code", "interval",
+    "verification_url"}``.
+    """
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{ISSUER}/api/accounts/deviceauth/usercode",
+            headers=_DEVICE_UA_HEADERS,
+            json={"client_id": CLIENT_ID},
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to start device auth: {resp.status_code}")
+    info = resp.json()
+    return {
+        "device_auth_id": info["device_auth_id"],
+        "user_code": info["user_code"],
+        "interval": max(int(info.get("interval") or 5), 1),
+        "verification_url": DEVICE_VERIFICATION_URL,
+    }
+
+
+async def device_auth_poll(
+    device_auth_id: str, user_code: str
+) -> Optional[Dict[str, Any]]:
+    """One authorization poll. ``None`` while pending; token dict once done.
+
+    A completed poll exchanges the authorization code, persists the tokens
+    (``save_tokens``) and returns the stored dict. Raises ``RuntimeError``
+    on terminal upstream failures.
+    """
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{ISSUER}/api/accounts/deviceauth/token",
+            headers=_DEVICE_UA_HEADERS,
+            json={"device_auth_id": device_auth_id, "user_code": user_code},
+        )
+        if resp.status_code in (403, 404):
+            return None  # user has not authorized yet
+        if resp.status_code != 200:
+            raise RuntimeError(f"Device authorization failed: {resp.status_code}")
+        data = resp.json()
+        token_resp = await client.post(
+            f"{ISSUER}/oauth/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "authorization_code",
+                "code": data["authorization_code"],
+                "redirect_uri": f"{ISSUER}/deviceauth/callback",
+                "client_id": CLIENT_ID,
+                "code_verifier": data["code_verifier"],
+            },
+        )
+    if token_resp.status_code != 200:
+        raise RuntimeError(f"Token exchange failed: {token_resp.status_code}")
+    tokens = _normalize_token_response(token_resp.json())
+    save_tokens(tokens)
+    return tokens
+
+
+def build_authorize_url(*, redirect_uri: str, code_challenge: str, state: str) -> str:
+    """The browser-OAuth (PKCE) authorization URL for the Codex client."""
+    from urllib.parse import urlencode
+
+    query = urlencode(
+        {
+            "response_type": "code",
+            "client_id": CLIENT_ID,
+            "redirect_uri": redirect_uri,
+            "scope": "openid profile email offline_access",
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+            "originator": ORIGINATOR,
+        }
+    )
+    return f"{ISSUER}/oauth/authorize?{query}"
+
+
+async def exchange_authorization_code(
+    code: str, *, code_verifier: str, redirect_uri: str
+) -> Dict[str, Any]:
+    """Exchange a browser-OAuth authorization code; persists the tokens."""
+    import httpx
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            f"{ISSUER}/oauth/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": CLIENT_ID,
+                "code_verifier": code_verifier,
+            },
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Token exchange failed: {resp.status_code}")
+    tokens = _normalize_token_response(resp.json())
+    save_tokens(tokens)
+    return tokens
+
+
+# --------------------------------------------------------------------------
+# Account rate-limit snapshot (from Codex backend response headers)
+# --------------------------------------------------------------------------
+
+# The Codex backend stamps subscription rate-limit state onto every
+# ``/responses`` reply. Captured process-wide so ``account_usage`` reads
+# the latest truth without an extra upstream round trip (and without
+# restarting the serve process).
+_rate_limit_snapshot: Dict[str, Any] = {}
+
+_RATE_LIMIT_SCOPES = ("primary", "secondary")
+
+
+def record_rate_limit_headers(headers: Any) -> Optional[Dict[str, Any]]:
+    """Parse ``x-codex-*`` rate-limit headers into the process snapshot.
+
+    ``headers`` is any case-insensitive mapping (httpx.Headers, dict).
+    Returns the updated snapshot when at least one rate-limit header was
+    present, else ``None``. Header values are numbers and window names
+    only — no credential material ever enters the snapshot.
+    """
+
+    def _get(name: str) -> Optional[str]:
+        try:
+            value = headers.get(name)
+        except Exception:
+            return None
+        return value if isinstance(value, str) and value.strip() else None
+
+    def _num(name: str) -> Optional[float]:
+        raw = _get(name)
+        if raw is None:
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            return None
+
+    limits = []
+    now = time.time()
+    for scope in _RATE_LIMIT_SCOPES:
+        used = _num(f"x-codex-{scope}-used-percent")
+        window = _num(f"x-codex-{scope}-window-minutes")
+        reset_after = _num(f"x-codex-{scope}-reset-after-seconds")
+        if used is None and window is None and reset_after is None:
+            continue
+        entry: Dict[str, Any] = {"name": scope}
+        if used is not None:
+            entry["used_percent"] = used
+        if window is not None:
+            entry["window_minutes"] = int(window)
+        if reset_after is not None:
+            entry["resets_at"] = int(now + reset_after)
+        limits.append(entry)
+    if not limits:
+        return None
+    _rate_limit_snapshot.clear()
+    _rate_limit_snapshot.update({"rate_limits": limits, "captured_at": int(now)})
+    plan = _get("x-codex-plan-type")
+    if plan:
+        _rate_limit_snapshot["plan"] = plan
+    return dict(_rate_limit_snapshot)
+
+
+def rate_limit_snapshot() -> Optional[Dict[str, Any]]:
+    """Latest captured rate-limit state, or ``None`` before any capture."""
+    return dict(_rate_limit_snapshot) if _rate_limit_snapshot else None
+
+
 def device_login(poll: bool = True) -> Dict[str, Any]:
     """Run the ChatGPT device-authorization flow and store the tokens.
 
@@ -626,9 +892,18 @@ def build_codex_openai_client(tokens: Optional[Dict[str, Any]] = None) -> Any:
             request.headers["ChatGPT-Account-Id"] = manager.account_id
         request.headers["originator"] = ORIGINATOR
 
+    async def _capture_rate_limits(response: "httpx.Response") -> None:
+        try:
+            record_rate_limit_headers(response.headers)
+        except Exception:
+            pass  # usage capture must never break a model request
+
     http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(600.0, connect=30.0),
-        event_hooks={"request": [_inject_auth, scrub_codex_unsupported_params]},
+        event_hooks={
+            "request": [_inject_auth, scrub_codex_unsupported_params],
+            "response": [_capture_rate_limits],
+        },
     )
 
     # api_key is required to be non-empty but is overwritten per-request by the

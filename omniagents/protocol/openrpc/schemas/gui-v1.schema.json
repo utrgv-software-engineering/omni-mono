@@ -1,5 +1,138 @@
 {
   "$defs": {
+    "account_changed": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "type": "object"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "stream_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "reason"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "account_login_cancel": {
+      "additionalProperties": false,
+      "properties": {
+        "login_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "login_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "account_login_complete": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "login_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "login_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "account_login_start": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "redirect_uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider",
+        "mode"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "account_logout": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "account_refresh": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "account_select": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "account_status": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "account_usage": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "ack_events": {
       "additionalProperties": false,
       "properties": {
@@ -1406,6 +1539,30 @@
       "$ref": "#/$defs/set_voice_model"
     },
     {
+      "$ref": "#/$defs/account_status"
+    },
+    {
+      "$ref": "#/$defs/account_login_start"
+    },
+    {
+      "$ref": "#/$defs/account_login_complete"
+    },
+    {
+      "$ref": "#/$defs/account_login_cancel"
+    },
+    {
+      "$ref": "#/$defs/account_logout"
+    },
+    {
+      "$ref": "#/$defs/account_refresh"
+    },
+    {
+      "$ref": "#/$defs/account_usage"
+    },
+    {
+      "$ref": "#/$defs/account_select"
+    },
+    {
       "$ref": "#/$defs/fork_session"
     },
     {
@@ -1488,6 +1645,9 @@
     },
     {
       "$ref": "#/$defs/queue_changed"
+    },
+    {
+      "$ref": "#/$defs/account_changed"
     },
     {
       "$ref": "#/$defs/session_forked"

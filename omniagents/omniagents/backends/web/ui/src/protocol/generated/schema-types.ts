@@ -26,6 +26,14 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | SetSessionModel
   | SetSessionReasoning
   | SetVoiceModel
+  | AccountStatus
+  | AccountLoginStart
+  | AccountLoginComplete
+  | AccountLoginCancel
+  | AccountLogout
+  | AccountRefresh
+  | AccountUsage
+  | AccountSelect
   | ForkSession
   | SetSessionHold
   | QueueStatus
@@ -54,6 +62,7 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ClientRequest
   | ClientRequestResolved
   | QueueChanged
+  | AccountChanged
   | SessionForked
   | SessionVariablesChanged;
 
@@ -206,6 +215,32 @@ export interface SetSessionReasoning {
 }
 export interface SetVoiceModel {
   model: string;
+}
+export interface AccountStatus {}
+export interface AccountLoginStart {
+  api_key?: string;
+  mode: string;
+  provider: string;
+  redirect_uri?: string;
+}
+export interface AccountLoginComplete {
+  code?: string;
+  login_id: string;
+}
+export interface AccountLoginCancel {
+  login_id: string;
+}
+export interface AccountLogout {
+  provider: string;
+}
+export interface AccountRefresh {
+  provider: string;
+}
+export interface AccountUsage {
+  provider?: string;
+}
+export interface AccountSelect {
+  provider: string;
 }
 export interface ForkSession {
   new_session_id?: string;
@@ -408,6 +443,15 @@ export interface QueueChanged {
   items: unknown[];
   seq?: number;
   session_id: string;
+  stream_id?: string;
+}
+export interface AccountChanged {
+  account?: {
+    [k: string]: unknown;
+  };
+  provider: string;
+  reason: string;
+  seq?: number;
   stream_id?: string;
 }
 export interface SessionForked {

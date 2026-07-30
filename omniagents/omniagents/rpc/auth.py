@@ -206,6 +206,10 @@ GLOBAL_SAFE_METHODS = frozenset(
         "list_models",
         "get_model",
         "list_providers",
+        # Redacted provider account/usage state. Read-only: snapshots
+        # carry identity and quota data, never credential material.
+        "account_status",
+        "account_usage",
     }
 )
 
@@ -225,6 +229,18 @@ GLOBAL_MUTATING_METHODS = frozenset(
         # Sets the process-wide realtime voice default (models.json
         # ``voice_default``) — every connected principal sees the change.
         "set_voice_model",
+        # Provider account mutations rewrite credentials every session in
+        # the process runs on (the codex token store, provider API-key
+        # environment). Following the ``disable_tool`` precedent they are
+        # refused for individual principals in enforced multi-user mode
+        # and available only where there is a single (anonymous)
+        # principal — the desktop/local topology they exist for.
+        "account_login_start",
+        "account_login_complete",
+        "account_login_cancel",
+        "account_logout",
+        "account_refresh",
+        "account_select",
     }
 )
 

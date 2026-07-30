@@ -123,6 +123,33 @@ export interface SetSessionReasoningParams {
 export interface SetVoiceModelParams {
   model: string;
 }
+export interface AccountStatusParams {
+}
+export interface AccountLoginStartParams {
+  provider: string;
+  mode: string;
+  api_key?: string;
+  redirect_uri?: string;
+}
+export interface AccountLoginCompleteParams {
+  login_id: string;
+  code?: string;
+}
+export interface AccountLoginCancelParams {
+  login_id: string;
+}
+export interface AccountLogoutParams {
+  provider: string;
+}
+export interface AccountRefreshParams {
+  provider: string;
+}
+export interface AccountUsageParams {
+  provider?: string;
+}
+export interface AccountSelectParams {
+  provider: string;
+}
 export interface ForkSessionParams {
   session_id: string;
   new_session_id?: string;
@@ -306,6 +333,13 @@ export interface QueueChangedParams {
   seq?: number;
   stream_id?: string;
 }
+export interface AccountChangedParams {
+  provider: string;
+  reason: string;
+  account?: Record<string, unknown>;
+  seq?: number;
+  stream_id?: string;
+}
 export interface SessionForkedParams {
   session_id: string;
   new_session_id: string;
@@ -347,6 +381,14 @@ export interface RpcMethodMap {
   "set_session_model": { params: SetSessionModelParams; result: Record<string, unknown> };
   "set_session_reasoning": { params: SetSessionReasoningParams; result: Record<string, unknown> };
   "set_voice_model": { params: SetVoiceModelParams; result: Record<string, unknown> };
+  "account_status": { params: AccountStatusParams; result: Record<string, unknown> };
+  "account_login_start": { params: AccountLoginStartParams; result: Record<string, unknown> };
+  "account_login_complete": { params: AccountLoginCompleteParams; result: Record<string, unknown> };
+  "account_login_cancel": { params: AccountLoginCancelParams; result: boolean };
+  "account_logout": { params: AccountLogoutParams; result: Record<string, unknown> };
+  "account_refresh": { params: AccountRefreshParams; result: Record<string, unknown> };
+  "account_usage": { params: AccountUsageParams; result: Record<string, unknown> };
+  "account_select": { params: AccountSelectParams; result: Record<string, unknown> };
   "fork_session": { params: ForkSessionParams; result: Record<string, unknown> };
   "set_session_hold": { params: SetSessionHoldParams; result: Record<string, unknown> };
   "queue_status": { params: QueueStatusParams; result: Record<string, unknown> };
@@ -376,6 +418,7 @@ export interface RpcNotificationMap {
   "client_request": ClientRequestParams;
   "client_request_resolved": ClientRequestResolvedParams;
   "queue_changed": QueueChangedParams;
+  "account_changed": AccountChangedParams;
   "session_forked": SessionForkedParams;
   "session_variables_changed": SessionVariablesChangedParams;
 }

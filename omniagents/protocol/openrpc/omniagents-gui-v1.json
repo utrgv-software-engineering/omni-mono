@@ -1,6 +1,85 @@
 {
   "components": {
     "errors": {
+      "AccountAuthFailed": {
+        "code": -32042,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "account_auth_failed"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "provider"
+          ],
+          "type": "object"
+        },
+        "message": "Account authentication failed"
+      },
+      "AccountCapabilityUnsupported": {
+        "code": -32040,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "account_capability_unsupported"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "supported": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "provider",
+            "operation"
+          ],
+          "type": "object"
+        },
+        "message": "Account capability unsupported"
+      },
+      "AccountStateInvalid": {
+        "code": -32041,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "account_state_invalid"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "message": "Account state invalid"
+      },
       "AlreadyInitialized": {
         "code": -32011,
         "data": {
@@ -1768,6 +1847,466 @@
         },
         {
           "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/AccountCapabilityUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/AccountStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/AccountAuthFailed"
+        }
+      ],
+      "name": "account_status",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "account_status_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_status",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_status"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/AccountCapabilityUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/AccountStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/AccountAuthFailed"
+        }
+      ],
+      "name": "account_login_start",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "provider",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_start/properties/provider"
+          }
+        },
+        {
+          "name": "mode",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_start/properties/mode"
+          }
+        },
+        {
+          "name": "api_key",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_start/properties/api_key"
+          }
+        },
+        {
+          "name": "redirect_uri",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_start/properties/redirect_uri"
+          }
+        }
+      ],
+      "result": {
+        "name": "account_login_start_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_login_start",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_start"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/AccountCapabilityUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/AccountStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/AccountAuthFailed"
+        }
+      ],
+      "name": "account_login_complete",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "login_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_complete/properties/login_id"
+          }
+        },
+        {
+          "name": "code",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_complete/properties/code"
+          }
+        }
+      ],
+      "result": {
+        "name": "account_login_complete_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_login_complete",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_complete"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/AccountCapabilityUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/AccountStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/AccountAuthFailed"
+        }
+      ],
+      "name": "account_login_cancel",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "login_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_cancel/properties/login_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "account_login_cancel_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_login_cancel",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_login_cancel"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/AccountCapabilityUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/AccountStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/AccountAuthFailed"
+        }
+      ],
+      "name": "account_logout",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "provider",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_logout/properties/provider"
+          }
+        }
+      ],
+      "result": {
+        "name": "account_logout_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_logout",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_logout"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/AccountCapabilityUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/AccountStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/AccountAuthFailed"
+        }
+      ],
+      "name": "account_refresh",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "provider",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_refresh/properties/provider"
+          }
+        }
+      ],
+      "result": {
+        "name": "account_refresh_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_refresh",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_refresh"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/AccountCapabilityUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/AccountStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/AccountAuthFailed"
+        }
+      ],
+      "name": "account_usage",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "provider",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_usage/properties/provider"
+          }
+        }
+      ],
+      "result": {
+        "name": "account_usage_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_usage",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_usage"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/AccountCapabilityUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/AccountStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/AccountAuthFailed"
+        }
+      ],
+      "name": "account_select",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "provider",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_select/properties/provider"
+          }
+        }
+      ],
+      "result": {
+        "name": "account_select_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_select",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_select"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
         }
       ],
       "name": "fork_session",
@@ -3429,6 +3968,60 @@
       "x-omni-kind": "notification",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/queue_changed"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "name": "account_changed",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "provider",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_changed/properties/provider"
+          }
+        },
+        {
+          "name": "reason",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_changed/properties/reason"
+          }
+        },
+        {
+          "name": "account",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_changed/properties/account"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_changed/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/account_changed/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "account_changed_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation account_changed",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/account_changed"
       },
       "x-omni-stability": "stable"
     },

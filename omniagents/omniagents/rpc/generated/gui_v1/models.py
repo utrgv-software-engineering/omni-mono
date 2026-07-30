@@ -323,6 +323,82 @@ class SetVoiceModelResult(RootModel[dict[str, Any]]):
     pass
 
 
+class AccountStatusParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pass
+
+
+class AccountStatusResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AccountLoginStartParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str
+    mode: str
+    api_key: str | None = None
+    redirect_uri: str | None = None
+
+
+class AccountLoginStartResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AccountLoginCompleteParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    login_id: str
+    code: str | None = None
+
+
+class AccountLoginCompleteResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AccountLoginCancelParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    login_id: str
+
+
+class AccountLoginCancelResult(RootModel[bool]):
+    pass
+
+
+class AccountLogoutParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str
+
+
+class AccountLogoutResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AccountRefreshParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str
+
+
+class AccountRefreshResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AccountUsageParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str | None = None
+
+
+class AccountUsageResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AccountSelectParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str
+
+
+class AccountSelectResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class ForkSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -616,6 +692,15 @@ class QueueChangedParams(BaseModel):
     stream_id: str | None = None
 
 
+class AccountChangedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str
+    reason: str
+    account: dict[str, Any] | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
 class SessionForkedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -661,6 +746,14 @@ CLIENT_REQUEST_MODELS = {
     "set_session_model": SetSessionModelParams,
     "set_session_reasoning": SetSessionReasoningParams,
     "set_voice_model": SetVoiceModelParams,
+    "account_status": AccountStatusParams,
+    "account_login_start": AccountLoginStartParams,
+    "account_login_complete": AccountLoginCompleteParams,
+    "account_login_cancel": AccountLoginCancelParams,
+    "account_logout": AccountLogoutParams,
+    "account_refresh": AccountRefreshParams,
+    "account_usage": AccountUsageParams,
+    "account_select": AccountSelectParams,
     "fork_session": ForkSessionParams,
     "set_session_hold": SetSessionHoldParams,
     "queue_status": QueueStatusParams,
@@ -703,6 +796,14 @@ CLIENT_RESULT_MODELS = {
     "set_session_model": SetSessionModelResult,
     "set_session_reasoning": SetSessionReasoningResult,
     "set_voice_model": SetVoiceModelResult,
+    "account_status": AccountStatusResult,
+    "account_login_start": AccountLoginStartResult,
+    "account_login_complete": AccountLoginCompleteResult,
+    "account_login_cancel": AccountLoginCancelResult,
+    "account_logout": AccountLogoutResult,
+    "account_refresh": AccountRefreshResult,
+    "account_usage": AccountUsageResult,
+    "account_select": AccountSelectResult,
     "fork_session": ForkSessionResult,
     "set_session_hold": SetSessionHoldResult,
     "queue_status": QueueStatusResult,
@@ -733,6 +834,7 @@ SERVER_NOTIFICATION_MODELS = {
     "client_request": ClientRequestParams,
     "client_request_resolved": ClientRequestResolvedParams,
     "queue_changed": QueueChangedParams,
+    "account_changed": AccountChangedParams,
     "session_forked": SessionForkedParams,
     "session_variables_changed": SessionVariablesChangedParams,
 }
@@ -765,6 +867,14 @@ STABLE_REQUESTS = frozenset(
         "set_session_model",
         "set_session_reasoning",
         "set_voice_model",
+        "account_status",
+        "account_login_start",
+        "account_login_complete",
+        "account_login_cancel",
+        "account_logout",
+        "account_refresh",
+        "account_usage",
+        "account_select",
     ]
 )
 EXPERIMENTAL_REQUESTS = frozenset(
@@ -801,6 +911,7 @@ STABLE_NOTIFICATIONS = frozenset(
         "client_request",
         "client_request_resolved",
         "queue_changed",
+        "account_changed",
     ]
 )
 EXPERIMENTAL_NOTIFICATIONS = frozenset(["session_forked", "session_variables_changed"])

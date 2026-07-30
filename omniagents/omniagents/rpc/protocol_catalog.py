@@ -43,6 +43,15 @@ STABLE_REQUESTS = (
     "set_session_model",
     "set_session_reasoning",
     "set_voice_model",
+    # Provider account & usage surface (tkt_unKKDF-5OOgc)
+    "account_status",
+    "account_login_start",
+    "account_login_complete",
+    "account_login_cancel",
+    "account_logout",
+    "account_refresh",
+    "account_usage",
+    "account_select",
 )
 
 EXPERIMENTAL_REQUESTS = (
@@ -76,6 +85,7 @@ STABLE_NOTIFICATIONS = (
     "client_request",
     "client_request_resolved",
     "queue_changed",
+    "account_changed",
 )
 
 STABLE_CLIENT_NOTIFICATIONS = ("initialized",)
