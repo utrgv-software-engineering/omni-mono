@@ -48,7 +48,7 @@ type TerminalTabRuntime = {
 
 function makeTabId(): string {
   try {
-    const value = (globalThis as any)?.crypto?.randomUUID?.()
+    const value = globalThis.crypto?.randomUUID?.()
     if (value) return String(value)
   } catch {}
   return `term_${Date.now()}_${Math.random().toString(16).slice(2)}`
@@ -111,7 +111,7 @@ export function TerminalPanel({
   const ensureSession = useCallback(async (): Promise<string> => {
     const existing = String(sessionId || '').trim()
     if (existing) return existing
-    const res: any = await client.serverCall('session.ensure', {})
+    const res = await client.serverCall('session.ensure', {}) as { session_id?: string }
     const sid = String(res?.session_id || '').trim()
     if (!sid) throw new Error('Session unavailable')
     try {
@@ -120,7 +120,7 @@ export function TerminalPanel({
     return sid
   }, [client, onSessionId, sessionId])
 
-  const sendFrame = useCallback((tabId: string, payload: any) => {
+  const sendFrame = useCallback((tabId: string, payload: Record<string, unknown>) => {
     const rt = runtimeRef.current.get(tabId)
     if (!rt) return
     const ws = rt.socket
@@ -223,14 +223,14 @@ export function TerminalPanel({
 
         openInContainer(tabId)
 
-        const created: any = await client.serverCall(
+        const created = await client.serverCall(
           'terminal.create',
           {
             cols: rt.terminal.cols,
             rows: rt.terminal.rows,
           },
           sid
-        )
+        ) as { terminal_id?: string; terminal_token?: string; token?: string; path?: string; cwd?: string; session_id?: string }
 
         const terminalId = String(created?.terminal_id || '').trim()
         const token = String(
@@ -283,9 +283,9 @@ export function TerminalPanel({
         }
 
         ws.onmessage = (ev) => {
-          let msg: any = null
+          let msg: Record<string, unknown> | null = null
           try {
-            msg = JSON.parse(String(ev.data))
+            msg = JSON.parse(String(ev.data)) as Record<string, unknown>
           } catch {
             return
           }
@@ -363,14 +363,14 @@ export function TerminalPanel({
             rt.state = null
           }
         }
-      } catch (e: any) {
+      } catch (e) {
         rt.state = null // Allow retry on failure
         setTabs((prev) =>
           prev.map((t) =>
             t.id === tabId
               ? {
                   ...t,
-                  error: String(e?.message || e),
+                  error: String((e as Error)?.message || e),
                   connected: false,
                   connecting: false,
                 }

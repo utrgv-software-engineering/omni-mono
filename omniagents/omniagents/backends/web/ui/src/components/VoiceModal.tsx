@@ -8,6 +8,21 @@ import { VoiceNotificationCenter, type VoiceNotification } from './VoiceNotifica
  * Each state has distinct visual characteristics (scale, animation speed, turbulence)
  * to create a Pixar-like "alive" feeling
  */
+// Fields the voice UI reads off ``agent_event`` bridge payloads. The
+// bridge forwards raw agent events, so everything is optional and only
+// the fields below are consumed.
+type AgentEventData = {
+  call_id?: string
+  request_id?: string
+  server_label?: string
+  tool?: string
+  tool_name?: string
+  input?: unknown
+  output?: unknown
+  arguments?: unknown
+  metadata?: Record<string, unknown>
+}
+
 enum OrbState {
   IDLE = 'idle',           // Muted, "sleeping but aware" - subtle breathing pulse
   LISTENING = 'listening', // Unmuted, attentive - audio-reactive, larger presence
@@ -26,8 +41,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
   const smoothedAudioLevelRef = useRef<number>(0)  // For smoothing audio level changes
-  const processorRef = useRef<AudioWorkletNode | null>(null)
-  const resampleBufferRef = useRef<Float32Array | null>(null)
+  const processorRef = useRef<AudioWorkletNode | ScriptProcessorNode | null>(null)
   const bufferQueueRef = useRef<{ chunks: Float32Array[]; length: number }>({ chunks: [], length: 0 })
   const clientRef = useRef<RealtimeRPCClient | null>(null)
   const sessionIdRef = useRef<string | null>(null)
@@ -142,7 +156,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
-      } as any,
+      },
     })
       .then(async stream => {
         if (!mounted) {
@@ -151,7 +165,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
         }
 
         streamRef.current = stream
-        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+        const audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
         audioContextRef.current = audioContext
         if (debugEnabled) console.log('[ui] audio ctx', { sampleRate: audioContext.sampleRate })
 
@@ -224,11 +238,10 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
           node.port.onmessage = (ev: MessageEvent) => {
             onAudioFloats(ev.data as Float32Array)
           }
-        } catch (e) {
+        } catch {
           // Fallback to ScriptProcessorNode for browsers without AudioWorklet
           const proc = audioContext.createScriptProcessor(4096, 1, 1)
-          // @ts-ignore
-          processorRef.current = proc as any
+          processorRef.current = proc
           source.connect(proc)
           const sink = audioContext.createGain()
           sink.gain.value = 0
@@ -401,7 +414,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
     if (debugEnabled) console.log('[ui] VoiceModal init', { base, hasToken: !!token, debug: debugEnabled })
     clientRef.current = client
     let active = true
-    const onEvent = client.on('realtime_event', (p: any) => {
+    const onEvent = client.on('realtime_event', (p) => {
       const t = String(p?.type || '')
       if (debugEnabled) console.log('[ui] event', t, p)
 
@@ -435,7 +448,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
       // Agent events forwarded from the bridge channel
       if (t === 'agent_event') {
         const eventType = String(p?.event_type || '')
-        const data = p?.data || {}
+        const data = (p?.data || {}) as AgentEventData
 
         if (eventType === 'tool_called') {
           setIsUsingTool(true)
@@ -682,7 +695,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
   let noiseScale = 0.35
   let innerRadius = 0.2
   let hoverIntensity = 0
-  let rotateOnHover = true
+  const rotateOnHover = true
   let forceHoverState = false
   let animationSpeed = 1.0
   let hue = 0
@@ -710,7 +723,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
       forceHoverState = true
       break
 
-    case OrbState.THINKING:
+    case OrbState.THINKING: {
       // Processing - faster pulse, more turbulent
       const thinkingPulse = Math.sin(Date.now() / 750) * 0.1 + 1.0  // Faster 1.5s cycle
       scale = 0.85 * thinkingPulse
@@ -721,6 +734,7 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
       animationSpeed = 2.0  // Faster animation
       forceHoverState = true
       break
+    }
 
     case OrbState.SPEAKING:
       // Expressive and alive - large and dynamic

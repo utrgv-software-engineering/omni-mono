@@ -19,6 +19,30 @@ export type GroupSummary = {
   errors: number
 }
 
+export function formatArgsPreview(args: string, maxLen: number) {
+  if (!args) return ''
+  let parsed: unknown
+  try { parsed = JSON.parse(args) } catch {}
+  let text: string
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const parts: string[] = []
+    Object.entries(parsed).forEach(([k, v]) => {
+      let vs: string
+      if (typeof v === 'string') vs = `"${v}"`
+      else if (typeof v === 'number' || typeof v === 'boolean') vs = String(v)
+      else {
+        try { vs = JSON.stringify(v) } catch { vs = String(v) }
+      }
+      parts.push(`${k}: ${vs}`)
+    })
+    text = parts.join(', ')
+  } else {
+    text = args.replace(/\s+/g, ' ').trim()
+  }
+  if (text.length > maxLen) return text.slice(0, maxLen - 3) + '...'
+  return text
+}
+
 export function groupItems(
   items: MessageItem[],
   currentRunId: string | undefined,
@@ -48,7 +72,7 @@ export function groupItems(
   for (const item of items) {
     if (item.type === 'tool') {
       const tool = item as ToolItem
-      const rid = (tool as any).runId as string | undefined
+      const rid = tool.runId
       if (!rid) {
         // No runId — pass through as standalone
         flush()

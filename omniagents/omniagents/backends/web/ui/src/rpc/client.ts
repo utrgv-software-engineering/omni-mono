@@ -53,7 +53,7 @@ const CLIENT_CAPABILITIES: Capabilities = {
 
 export type ServerEvent = JSONRPCNotification
 
-type Listener = (payload: any) => void
+type Listener = (payload: unknown) => void
 
 /** WebSocket close codes that mean "your credentials are the problem" —
  * reconnecting with the same credentials will fail again, so callers
@@ -118,7 +118,7 @@ export type RequestOptions = {
 
 type PendingEntry = {
   method: string
-  resolve: (v: any) => void
+  resolve: (v: unknown) => void
   reject: (e: Error) => void
   cleanup: () => void
 }
@@ -458,7 +458,7 @@ export class RPCClient {
     return () => set.delete(handler)
   }
 
-  private emit(event: string, payload: any): void {
+  private emit(event: string, payload: unknown): void {
     const set = this.listeners.get(event)
     if (!set) return
     for (const fn of set) {
@@ -468,6 +468,7 @@ export class RPCClient {
 
   private async call<M extends keyof RpcMethodMap>(
     method: M,
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- `{} extends P` is the canonical "all params optional" probe; `object`/`unknown` would break the conditional
     ...args: {} extends RpcMethodMap[M]['params']
       ? [params?: RpcMethodMap[M]['params']]
       : [params: RpcMethodMap[M]['params']]

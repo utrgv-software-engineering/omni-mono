@@ -1,6 +1,6 @@
-import clsx from 'clsx'
+import clsx, { type ClassValue } from 'clsx'
 
-export function cn(...inputs: any[]) {
+export function cn(...inputs: ClassValue[]) {
   return clsx(inputs)
 }
 
@@ -36,7 +36,7 @@ export function formatRelativeTime(timestamp: string | Date | undefined): string
 /**
  * Generate a session title from the first user message
  */
-export function generateSessionTitle(session: { first_message?: any }): string {
+export function generateSessionTitle(session: { first_message?: { content?: unknown } }): string {
   if (!session.first_message) return 'New conversation'
 
   try {
@@ -48,7 +48,7 @@ export function generateSessionTitle(session: { first_message?: any }): string {
     }
     if (Array.isArray(content)) {
       // Handle content array (might have text and images)
-      const textPart = content.find((part: any) => part.type === 'input_text' || typeof part === 'string')
+      const textPart = content.find((part) => part.type === 'input_text' || typeof part === 'string')
       if (textPart) {
         const text = typeof textPart === 'string' ? textPart : textPart.text
         return text.length > 50 ? text.slice(0, 50) + '...' : text

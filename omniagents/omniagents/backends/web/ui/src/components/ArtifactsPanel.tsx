@@ -27,7 +27,7 @@ function HtmlPreview({ content }: { content: string }) {
     function sendHeight(){window.parent.postMessage({type:'iframe-resize',height:document.body.scrollHeight},'*')}
     window.addEventListener('load',sendHeight);
     new ResizeObserver(sendHeight).observe(document.body);
-  <\/script>`
+  </script>`
   const srcDoc = content + script
 
   useEffect(() => {

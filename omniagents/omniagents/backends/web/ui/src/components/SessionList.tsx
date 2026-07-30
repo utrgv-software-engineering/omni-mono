@@ -1,6 +1,8 @@
 import React from 'react'
 
-export type SessionItem = { id: string; created_at: string; archived: boolean; message_count: number; first_message?: any; last_message?: any }
+export type SessionMessage = { role?: string; content?: unknown; timestamp?: string }
+
+export type SessionItem = { id: string; created_at: string; archived: boolean; message_count: number; first_message?: SessionMessage; last_message?: SessionMessage }
 
 export function SessionList({ sessions, onSelect }: { sessions: SessionItem[]; onSelect: (id?: string) => void }) {
   return (

@@ -24,6 +24,12 @@ jobs:
       - name: Install ink dependencies
         working-directory: omniagents/backends/ink/tui
         run: npm ci
+      - name: Install web UI dependencies
+        working-directory: omniagents/backends/web/ui
+        run: npm ci
+      - name: Lint web UI
+        working-directory: omniagents/backends/web/ui
+        run: npm run lint
       - name: Run coverage suite
         run: ./scripts/run_coverage.sh
       - name: Upload coverage artifacts

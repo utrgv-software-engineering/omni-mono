@@ -1,5 +1,6 @@
 import React from 'react'
 import ReactMarkdown from 'react-markdown'
+import type { PluggableList } from 'unified'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
@@ -14,7 +15,7 @@ type Props = {
 }
 
 export function Markdown({ className, children, highlight = true, inheritTextColor = false }: Props) {
-  const rehypePlugins: any[] = [[rehypeKatex, { strict: false }]]
+  const rehypePlugins: PluggableList = [[rehypeKatex, { strict: false }]]
   if (highlight) rehypePlugins.push(rehypeHighlight)
   const colorClass = inheritTextColor ? '' : 'text-textPrimary'
 

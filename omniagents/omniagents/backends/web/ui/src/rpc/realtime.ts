@@ -22,7 +22,10 @@ type JSONRPCNotification = {
   params?: Record<string, unknown>
 }
 
-type Listener = (payload: any) => void
+// Realtime notifications are free-form JSON-RPC params straight off the
+// wire; handlers narrow the fields they care about.
+export type RealtimeEventPayload = Record<string, unknown> | undefined
+type Listener = (payload: RealtimeEventPayload) => void
 
 import { JSONRPCError } from './client'
 import {
@@ -40,7 +43,7 @@ export class RealtimeRPCClient {
   private debug: boolean = false
   private policy: LifecyclePolicy = DEFAULT_LIFECYCLE_POLICY
   private nextId = 0
-  private pending = new Map<JSONRPCId, { resolve: (v: any) => void; reject: (e: Error) => void }>()
+  private pending = new Map<JSONRPCId, { resolve: (v: unknown) => void; reject: (e: Error) => void }>()
   private listeners = new Map<string, Set<Listener>>()
   private closedByUser = false
 
@@ -145,7 +148,7 @@ export class RealtimeRPCClient {
     return () => set.delete(handler)
   }
 
-  private emit(event: string, payload: any): void {
+  private emit(event: string, payload: RealtimeEventPayload): void {
     const set = this.listeners.get(event)
     if (!set) return
     for (const fn of set) {
@@ -153,13 +156,13 @@ export class RealtimeRPCClient {
     }
   }
 
-  private async call<T = any>(method: string, params?: Record<string, unknown>): Promise<T> {
+  private async call<T = unknown>(method: string, params?: Record<string, unknown>): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected')
     const id = ++this.nextId
     const req: JSONRPCRequest = { jsonrpc: '2.0', id, method, params }
     if (this.debug) console.log('[rpc] call', method, params)
     const p = new Promise<T>((resolve, reject) => {
-      this.pending.set(id, { resolve: resolve as any, reject })
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
     })
     this.ws.send(JSON.stringify(req))
     return p
@@ -167,7 +170,7 @@ export class RealtimeRPCClient {
 
   private async notify(method: string, params?: Record<string, unknown>): Promise<void> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) throw new Error('WebSocket not connected')
-    const msg: any = { jsonrpc: '2.0', method }
+    const msg: JSONRPCNotification = { jsonrpc: '2.0', method }
     if (params) msg.params = params
     if (this.debug) console.log('[rpc] notify', method, params)
     this.ws.send(JSON.stringify(msg))

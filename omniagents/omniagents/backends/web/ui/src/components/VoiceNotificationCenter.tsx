@@ -12,7 +12,7 @@ export interface VoiceNotification {
   // function-tool approval flow and have no "always approve" affordance.
   request_id?: string
   server_label?: string
-  metadata?: any
+  metadata?: Record<string, unknown>
   timestamp: number
 }
 

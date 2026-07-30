@@ -1,9 +1,8 @@
 import React, { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { ActivityGroupData } from './activityGroup'
-import { computeGroupSummary, formatGroupSummary } from './activityGroup'
-import { ToolCard, formatArgsPreview } from './MessageList'
-import type { ToolItem } from './MessageList'
+import { computeGroupSummary, formatArgsPreview, formatGroupSummary } from './activityGroup'
+import { ToolCard } from './MessageList'
 
 export function ActivityGroup({ group, statusText }: { group: ActivityGroupData; statusText?: string }) {
   // Singleton without grouping — render as plain ToolCard

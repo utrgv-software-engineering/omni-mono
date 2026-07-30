@@ -36,7 +36,7 @@ export function WorkspacePicker({
         path: path || undefined,
         include_files: false,
         ignore_hidden: true,
-      }, sessionId) as any
+      }, sessionId) as { path?: string; parent?: string; entries?: Array<{ name: string; path: string; is_dir?: boolean }> }
       setCurrentPath(res.path || null)
       setParentPath(res.parent || null)
       setManualInput(res.path || '')
@@ -63,13 +63,13 @@ export function WorkspacePicker({
         try {
           // Start picker at the agent's workspace root (manifest root for
           // sandboxed clients), not omni serve's host cwd.
-          const res = await client.serverCall('fs_get_workspace_root', {}, sessionId) as any
+          const res = await client.serverCall('fs_get_workspace_root', {}, sessionId) as { path?: string }
           start = res?.path
         } catch {}
       }
       if (!start) {
         try {
-          const res = await client.serverCall('fs_get_home', {}, sessionId) as any
+          const res = await client.serverCall('fs_get_home', {}, sessionId) as { path?: string }
           start = res?.path
         } catch {}
       }
@@ -122,7 +122,7 @@ export function WorkspacePicker({
           <button
             onClick={async () => {
               try {
-                const res = await client.serverCall('fs_get_home', {}, sessionId) as any
+                const res = await client.serverCall('fs_get_home', {}, sessionId) as { path?: string }
                 if (res?.path) load(res.path)
               } catch {}
             }}

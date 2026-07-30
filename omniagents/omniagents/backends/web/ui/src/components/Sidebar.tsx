@@ -15,12 +15,12 @@ export function Sidebar({ open, sessions, selectedId, onClose, onNewChat, onSele
   const [searchQuery, setSearchQuery] = useState('')
 
   const ordered = useMemo(() => {
-    const ts = (s: any) => {
+    const ts = (s: SessionItem) => {
       const t = s?.last_message?.timestamp || s?.created_at
       const n = Date.parse(String(t || ''))
       return isNaN(n) ? 0 : n
     }
-    return sessions.slice().sort((a: any, b: any) => ts(b) - ts(a))
+    return sessions.slice().sort((a, b) => ts(b) - ts(a))
   }, [sessions])
 
   const nonEmpty = useMemo(() => ordered.filter(s => s.message_count > 0), [ordered])

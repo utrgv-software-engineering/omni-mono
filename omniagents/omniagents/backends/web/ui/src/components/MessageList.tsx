@@ -2,9 +2,18 @@ import React, { useMemo, useState } from 'react'
 import { Markdown } from './promptkit/markdown'
 import { Message, MessageContent, MessageActions, MessageAction } from './promptkit/Message'
 import { ChatContainerContent, ChatContainerRoot, ChatContainerScrollAnchor } from './ChatContainer'
-import { groupItems } from './activityGroup'
+import { formatArgsPreview, groupItems } from './activityGroup'
 import type { ActivityGroupData } from './activityGroup'
 import { ActivityGroup as ActivityGroupComponent } from './ActivityGroup'
+
+// Tool ui_metadata is an open, tool-defined JSON envelope; views probe the
+// fields they understand at runtime instead of pretending a schema exists.
+export type ToolMetadata = Record<string, unknown>
+
+/** Narrow an untrusted JSON value to a plain record for field probing. */
+function asRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+}
 
 export type ChatMessage = {
   type: 'chat'
@@ -29,7 +38,7 @@ export type ToolItem = {
   input?: string
   output?: string
   status: 'called' | 'result'
-  metadata?: any
+  metadata?: ToolMetadata
   runId?: string
 }
 
@@ -38,7 +47,7 @@ export type ApprovalItem = {
   call_id: string
   tool: string
   argumentsText?: string
-  metadata?: any
+  metadata?: ToolMetadata
   session_id?: string
 }
 
@@ -113,7 +122,7 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
           </div>
         ) : (
           displayItems.map((m, i) => {
-            if (m.type === 'activity_group') return <ActivityGroupComponent key={(m as any).runId + '-' + i} group={m as any} statusText={tickerStatus} />
+            if (m.type === 'activity_group') return <ActivityGroupComponent key={m.runId + '-' + i} group={m} statusText={tickerStatus} />
             if (m.type === 'chat') return <MessageBubble key={i} index={i} role={(m as ChatMessage).role} content={(m as ChatMessage).content} attachments={(m as ChatMessage).attachments} reactions={reactions} onReact={handleReaction} feedbackIndex={feedbackIndex} onFeedbackSubmit={handleFeedbackSubmit} onFeedbackDismiss={handleFeedbackDismiss} />
             if (m.type === 'tool') return <ToolCard key={(m as ToolItem).call_id || i} item={m as ToolItem} />
             if (m.type === 'approval') return <ApprovalCard key={(m as ApprovalItem).call_id} item={m as ApprovalItem} onDecision={onApprovalDecision} />
@@ -299,7 +308,7 @@ function PreambleRow({ text }: { text?: string }) {
   )
 }
 
-function StatusRow({ text, spinner, italic }: { text?: string; spinner?: boolean; italic?: boolean }) {
+function StatusRow({ text, spinner }: { text?: string; spinner?: boolean; italic?: boolean }) {
   if (!text) return null
   return (
     <div className="text-xs text-textSubtle">
@@ -409,37 +418,7 @@ function McpApprovalCard({ item, onDecision }: { item: McpApprovalItem; onDecisi
   )
 }
 
-function buildToolHeader(tool: string, args?: string) {
-  const preview = formatArgsPreview(args || '', 80)
-  if (!preview) return tool
-  return `${tool}(${preview})`
-}
-
-export function formatArgsPreview(args: string, maxLen: number) {
-  if (!args) return ''
-  let parsed: any
-  try { parsed = JSON.parse(args) } catch {}
-  let text: string
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const parts: string[] = []
-    Object.entries(parsed).forEach(([k, v]) => {
-      let vs: string
-      if (typeof v === 'string') vs = `"${v}"`
-      else if (typeof v === 'number' || typeof v === 'boolean') vs = String(v)
-      else {
-        try { vs = JSON.stringify(v) } catch { vs = String(v) }
-      }
-      parts.push(`${k}: ${vs}`)
-    })
-    text = parts.join(', ')
-  } else {
-    text = args.replace(/\s+/g, ' ').trim()
-  }
-  if (text.length > maxLen) return text.slice(0, maxLen - 3) + '...'
-  return text
-}
-
-function renderMetadata(meta: any, fallbackText: string): React.ReactNode | null {
+function renderMetadata(meta: ToolMetadata | undefined, fallbackText: string): React.ReactNode | null {
   if (meta && typeof meta === 'object' && meta.display_type) {
     const dt = meta.display_type as string
     if (dt === 'diff') return diffView(linesFromDiff(meta))
@@ -464,10 +443,10 @@ function renderToolBody(item: ToolItem) {
   return <div className="space-y-3">{preText(out)}</div>
 }
 
-function linesFromDiff(metadata: any): string[] {
-  const v = metadata?.value
+function linesFromDiff(metadata: ToolMetadata): string[] {
+  const v = asRecord(metadata?.value)
   const acc: string[] = []
-  if (v && typeof v === 'object' && Array.isArray(v.diff_lines)) {
+  if (Array.isArray(v.diff_lines)) {
     for (const s of v.diff_lines) if (typeof s === 'string') acc.push(s)
   }
   return acc
@@ -485,10 +464,10 @@ function diffView(lines: string[]) {
   )
 }
 
-function tableView(metadata: any) {
-  const t = metadata?.table || {}
-  const cols: string[] = Array.isArray(t.columns) ? t.columns.map((c: any) => (c && typeof c === 'object' ? c.title : '')).filter(Boolean) : []
-  const rows: string[][] = Array.isArray(t.rows) ? t.rows.map((r: any) => Array.isArray(r) ? r.map((e: any) => (e == null ? '' : String(e))) : []).filter((r: any) => r.length) : []
+function tableView(metadata: ToolMetadata) {
+  const t = asRecord(metadata?.table)
+  const cols: string[] = Array.isArray(t.columns) ? t.columns.map((c) => (c && typeof c === 'object' ? String(asRecord(c).title ?? '') : '')).filter(Boolean) : []
+  const rows: string[][] = Array.isArray(t.rows) ? t.rows.map((r) => Array.isArray(r) ? r.map((e) => (e == null ? '' : String(e))) : []).filter((r) => r.length) : []
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full text-xs">
@@ -525,8 +504,8 @@ function preText(content: string) {
   )
 }
 
-function commandView(metadata: any, plainOutput: string) {
-  const meta = metadata?.metadata || {}
+function commandView(metadata: ToolMetadata, plainOutput: string) {
+  const meta = asRecord(metadata?.metadata)
   let command = plainOutput || ''
   if (typeof meta?.command === 'string') command = meta.command
   let output = ''
@@ -561,8 +540,8 @@ function commandView(metadata: any, plainOutput: string) {
   )
 }
 
-function fileContentView(metadata: any, plainOutput: string) {
-  const meta = metadata?.metadata || {}
+function fileContentView(metadata: ToolMetadata, plainOutput: string) {
+  const meta = asRecord(metadata?.metadata)
   const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
   const stats: string[] = []
   // Tool provides: total_file_lines, lines_returned, lines_truncated_count, start_line, end_line
@@ -581,8 +560,8 @@ function fileContentView(metadata: any, plainOutput: string) {
   )
 }
 
-function directoryListingView(metadata: any, plainOutput: string) {
-  const meta = metadata?.metadata || {}
+function directoryListingView(metadata: ToolMetadata, plainOutput: string) {
+  const meta = asRecord(metadata?.metadata)
   const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
   const stats: string[] = []
   // Tool provides: total_entries, entries_returned, file_count, dir_count, symlink_count, was_truncated
@@ -617,8 +596,8 @@ function directoryListingView(metadata: any, plainOutput: string) {
   )
 }
 
-function searchResultsView(metadata: any, plainOutput: string) {
-  const meta = metadata?.metadata || {}
+function searchResultsView(metadata: ToolMetadata, plainOutput: string) {
+  const meta = asRecord(metadata?.metadata)
   const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
   const stats: string[] = []
   // Tool provides: files_with_matches, files_returned, files_searched, elapsed_ms, timed_out
@@ -648,8 +627,8 @@ function searchResultsView(metadata: any, plainOutput: string) {
   )
 }
 
-function webContentView(metadata: any, plainOutput: string) {
-  const meta = metadata?.metadata || {}
+function webContentView(metadata: ToolMetadata, plainOutput: string) {
+  const meta = asRecord(metadata?.metadata)
   const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
   const stats: string[] = []
   if (typeof meta?.title === 'string' && meta.title.trim()) stats.push(meta.title)
@@ -669,10 +648,10 @@ function webContentView(metadata: any, plainOutput: string) {
   )
 }
 
-function errorView(metadata: any, plainOutput: string) {
+function errorView(metadata: ToolMetadata, plainOutput: string) {
   const preview = typeof metadata?.preview === 'string' ? metadata.preview : plainOutput
   const summary = typeof metadata?.summary === 'string' ? metadata.summary : ''
-  const meta = metadata?.metadata || {}
+  const meta = asRecord(metadata?.metadata)
   const errorType = typeof meta?.error_type === 'string' ? meta.error_type : ''
 
   return (

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Header } from './components/Header'
-import { MessageList, type MessageItem } from './components/MessageList'
+import { MessageList, type ApprovalItem, type ChatMessage, type McpApprovalItem, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
 import { Tasks, type TaskSummary } from './components/Tasks'
 import { Notifications, type NotificationInfo } from './components/Notifications'
@@ -23,7 +23,7 @@ import { ArtifactsPanel, type ArtifactItem } from './components/ArtifactsPanel'
 import { ResizableDivider } from './components/ResizableDivider'
 import { TerminalPanel } from './components/TerminalPanel'
 import { WorkspacePicker } from './components/WorkspacePicker'
-import { RPCClient } from './rpc/client'
+import { RPCClient, type QueuedMessage } from './rpc/client'
 
 type UIState = 'connecting' | 'resume' | 'chat' | 'error'
 
@@ -81,7 +81,7 @@ export function App() {
   const [recap, setRecap] = useState<RecapInfo | null>(null)
   // Pending agent escalation — the next user submit becomes the reply.
   const [escalation, setEscalation] = useState<EscalationInfo | null>(null)
-  const [queuedMessages, setQueuedMessages] = useState<import('./rpc/client').QueuedMessage[]>([])
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([])
   const [thinking, setThinking] = useState(false)
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [statusSpinner, setStatusSpinner] = useState<boolean>(false)
@@ -91,8 +91,8 @@ export function App() {
   const [runId, setRunId] = useState<string | undefined>(undefined)
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
   const [sessions, setSessions] = useState<SessionItem[]>([])
-  const [_usageTotals, setUsageTotals] = useState<any | undefined>(undefined)
-  const [_usageDelta, setUsageDelta] = useState<any | undefined>(undefined)
+  const [_usageTotals, setUsageTotals] = useState<Record<string, unknown> | undefined>(undefined)
+  const [_usageDelta, setUsageDelta] = useState<Record<string, unknown> | undefined>(undefined)
   const [_modelInfo, setModelInfo] = useState<{ model?: string; max_input_tokens?: number; max_output_tokens?: number } | undefined>(undefined)
   const [agentName, setAgentName] = useState<string>('OmniAgent')
   const [welcomeText, setWelcomeText] = useState<string | undefined>(undefined)
@@ -110,8 +110,8 @@ export function App() {
   )
   const [initialSent, setInitialSent] = useState(false)
   const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
-  const pendingApprovalsRef = useRef(new Map<string, (MessageItem & { session_id?: string })>())
-  const pendingMcpApprovalsRef = useRef(new Map<string, (MessageItem & { session_id?: string })>())
+  const pendingApprovalsRef = useRef(new Map<string, ApprovalItem>())
+  const pendingMcpApprovalsRef = useRef(new Map<string, McpApprovalItem>())
   const urlSessionHandledRef = useRef(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [artifactsPanelOpen, setArtifactsPanelOpen] = useState(false)
@@ -173,15 +173,15 @@ export function App() {
     if (!targetSession) return base
     const additions: MessageItem[] = []
     for (const item of pendingApprovalsRef.current.values()) {
-      const itemSession = (item as any).session_id
+      const itemSession = item.session_id
       if (itemSession && itemSession !== targetSession) continue
-      const exists = base.some(existing => existing.type === 'approval' && (existing as any).call_id === (item as any).call_id)
+      const exists = base.some(existing => existing.type === 'approval' && existing.call_id === item.call_id)
       if (!exists) additions.push(item)
     }
     for (const item of pendingMcpApprovalsRef.current.values()) {
-      const itemSession = (item as any).session_id
+      const itemSession = item.session_id
       if (itemSession && itemSession !== targetSession) continue
-      const exists = base.some(existing => existing.type === 'mcp_approval' && (existing as any).request_id === (item as any).request_id)
+      const exists = base.some(existing => existing.type === 'mcp_approval' && existing.request_id === item.request_id)
       if (!exists) additions.push(item)
     }
     return additions.length ? [...base, ...additions] : base
@@ -190,7 +190,7 @@ export function App() {
   const refreshSessions = useCallback(async () => {
     try {
       const list = await client.listSessions()
-      setSessions(list)
+      setSessions(list as SessionItem[])
     } catch {}
   }, [client])
 
@@ -234,7 +234,7 @@ export function App() {
             // agents the manifest root is what the agent's tools see;
             // omni serve's host cwd may differ.
             try {
-              const res = await client.serverCall('fs_get_workspace_root') as any
+              const res = await client.serverCall('fs_get_workspace_root') as { path?: string }
               if (res?.path) setWorkspacePath(res.path)
             } catch {}
           }
@@ -245,7 +245,7 @@ export function App() {
         if (resume && !sid) {
           try {
             const list = await client.listSessions()
-            setSessions(list)
+            setSessions(list as SessionItem[])
             setUI('resume')
           } catch {
             setUI('chat')
@@ -257,7 +257,7 @@ export function App() {
       })
       .catch(() => setUI('error'))
 
-    const offMessageOutput = client.on('message_output', (p: any) => {
+    const offMessageOutput = client.on('message_output', (p) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId) {
         if (sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
@@ -270,15 +270,15 @@ export function App() {
       setStatus(undefined)
       setStatusItalic(false)
     })
-    const offQueueChanged = client.on('queue_changed', (p: any) => {
+    const offQueueChanged = client.on('queue_changed', (p) => {
       // Full-snapshot replace. Only accept events for the currently-loaded
       // session so stale broadcasts (e.g. after switching sessions) don't
       // poison the "Up next" panel.
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
-      setQueuedMessages(Array.isArray(p?.items) ? p.items : [])
+      setQueuedMessages(Array.isArray(p?.items) ? (p.items as QueuedMessage[]) : [])
     })
-    const offRunStarted = client.on('run_started', (p: any) => {
+    const offRunStarted = client.on('run_started', (p) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId) {
         if (sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
@@ -312,14 +312,14 @@ export function App() {
       if (promptFromEvent) {
         setItems(prev => {
           const lastMatching = [...prev].reverse().find(
-            it => it.type === 'chat' && (it as any).role === promptRoleFromEvent
-          ) as any
+            it => it.type === 'chat' && it.role === promptRoleFromEvent
+          ) as ChatMessage | undefined
           if (lastMatching && lastMatching.content === promptFromEvent) return prev
           return [...prev, { type: 'chat', role: promptRoleFromEvent, content: promptFromEvent } as MessageItem]
         })
       }
     })
-    const offRunEnd = client.on('run_end', (p: any) => {
+    const offRunEnd = client.on('run_end', (p) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
       setThinking(false)
@@ -347,7 +347,7 @@ export function App() {
       setStatusItalic(false)
       refreshSessions()
     })
-    const offRunStatus = client.on('run_status', (p: any) => {
+    const offRunStatus = client.on('run_status', (p) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
       const msg = [p?.status, p?.message].filter(Boolean).join(': ')
@@ -355,7 +355,7 @@ export function App() {
       setStatusSpinner(true)
       setStatusItalic(false)
     })
-    const offToken = client.on('token', (p: any) => {
+    const offToken = client.on('token', (p) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
       try {
@@ -364,7 +364,7 @@ export function App() {
         setModelInfo({ model: p?.model, max_input_tokens: p?.max_input_tokens, max_output_tokens: p?.max_output_tokens })
       } catch {}
     })
-    const offToolCalled = client.on('tool_called', (p: any) => {
+    const offToolCalled = client.on('tool_called', (p) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId) {
         if (sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
@@ -381,7 +381,7 @@ export function App() {
       preambleBufferRef.current.forEach(m => { m.superseded = true })
       setItems(prev => [...prev, { type: 'tool', tool, input, call_id, status: 'called', runId: runIdRef.current }])
     })
-    const offToolResult = client.on('tool_result', (p: any) => {
+    const offToolResult = client.on('tool_result', (p) => {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId) {
         if (sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
@@ -407,21 +407,21 @@ export function App() {
         setBashJobs(jobsSnapshot as BashJobSummary[])
       }
       setItems(prev => {
-        const idx = prev.findIndex(it => it.type === 'tool' && (it as any).call_id === call_id)
+        const idx = prev.findIndex(it => it.type === 'tool' && it.call_id === call_id)
         if (idx >= 0) {
           const next = prev.slice()
-          const it = next[idx] as any
-          next[idx] = { ...it, output, status: 'result', metadata }
+          const it = next[idx]
+          next[idx] = { ...it, output, status: 'result', metadata } as MessageItem
           return next
         }
         return [...prev, { type: 'tool', tool, output, call_id, status: 'result', metadata, runId: runIdRef.current }]
       })
     })
-    const offClientRequest = client.on('client_request', (p: any) => {
+    const offClientRequest = client.on('client_request', (p) => {
       const fn = String(p?.function ?? '')
       if (fn === 'ui.add_artifact') {
         const request_id = String(p?.request_id ?? '')
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const title = typeof args?.title === 'string' ? args.title : ''
         const content = typeof args?.content === 'string' ? args.content : ''
         const mode = typeof args?.mode === 'string' ? args.mode : 'markdown'
@@ -452,7 +452,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const snap = args?.snapshot
         if (Array.isArray(snap)) {
           setWorkers(snap as WorkerSummary[])
@@ -475,7 +475,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const snap = args?.snapshot
         if (snap === null || snap === undefined) {
           setGoalSnapshot(null)
@@ -499,7 +499,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const snap = args?.snapshot
         if (snap === null || snap === undefined) {
           setWakeupSnapshot(null)
@@ -520,7 +520,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const snap = args?.snapshot
         if (Array.isArray(snap)) {
           setLoopTasks(snap as LoopTaskSnapshot[])
@@ -539,7 +539,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const snap = args?.snapshot
         if (Array.isArray(snap)) {
           setBashJobs(snap as BashJobSummary[])
@@ -558,7 +558,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const text = typeof args?.text === 'string' ? args.text : undefined
         const showSpinner = typeof args?.show_spinner === 'boolean' ? !!args.show_spinner : true
         setStatus(text)
@@ -582,7 +582,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const message = typeof args?.message === 'string' ? args.message : ''
         if (message) {
           setNotifications(prev => [
@@ -610,7 +610,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const text = typeof args?.text === 'string' ? args.text : ''
         if (text) {
           setRecap({ text, timestamp: Date.now() })
@@ -633,7 +633,7 @@ export function App() {
           }
           return
         }
-        const args = p?.args || {}
+        const args: Record<string, unknown> = p?.args || {}
         const message = typeof args?.message === 'string' ? args.message : ''
         const runIdArg = typeof p?.run_id === 'string' ? p.run_id : undefined
         if (!request_id) {
@@ -655,7 +655,7 @@ export function App() {
       // discard. Kept subscribed for future use / generic UI requests.
     })
 
-    const offToolApprovalRequested = client.on('tool_approval_requested', (p: any) => {
+    const offToolApprovalRequested = client.on('tool_approval_requested', (p) => {
       const call_id = String(p?.call_id ?? '')
       const tool = String(p?.tool_name ?? '')
       const argumentsText = String(p?.arguments ?? '')
@@ -663,29 +663,29 @@ export function App() {
       setThinking(false)
       if (!call_id) return
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
-      const approvalItem: MessageItem & { session_id?: string } = { type: 'approval', call_id, tool, argumentsText, metadata, session_id: eventSessionId }
+      const approvalItem: ApprovalItem = { type: 'approval', call_id, tool, argumentsText, metadata, session_id: eventSessionId }
       pendingApprovalsRef.current.set(call_id, approvalItem)
       const shouldDisplay = !eventSessionId || !sessionIdRef.current || sessionIdRef.current === eventSessionId
       if (shouldDisplay) {
         setItems(prev => {
-          const filtered = prev.filter(it => !(it.type === 'approval' && (it as any).call_id === call_id))
+          const filtered = prev.filter(it => !(it.type === 'approval' && it.call_id === call_id))
           return [...filtered, approvalItem]
         })
       }
     })
 
-    const offToolApprovalResolved = client.on('tool_approval_resolved', (p: any) => {
+    const offToolApprovalResolved = client.on('tool_approval_resolved', (p) => {
       const call_id = String(p?.call_id ?? '')
       if (call_id) {
         pendingApprovalsRef.current.delete(call_id)
-        setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).call_id === call_id)))
+        setItems(prev => prev.filter(it => !(it.type === 'approval' && it.call_id === call_id)))
       }
     })
 
     // Hosted-MCP approval flow — parallel to tool_approval but keyed by
     // request_id (minted by the model on the McpApprovalRequest) rather
     // than call_id, and identifies the MCP server via server_label.
-    const offMcpApprovalRequested = client.on('mcp_approval_requested', (p: any) => {
+    const offMcpApprovalRequested = client.on('mcp_approval_requested', (p) => {
       const request_id = String(p?.request_id ?? '')
       const server_label = String(p?.server_label ?? '')
       const tool = String(p?.tool_name ?? '')
@@ -693,22 +693,22 @@ export function App() {
       setThinking(false)
       if (!request_id) return
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
-      const approvalItem: MessageItem & { session_id?: string } = { type: 'mcp_approval', request_id, server_label, tool, argumentsText, session_id: eventSessionId }
+      const approvalItem: McpApprovalItem = { type: 'mcp_approval', request_id, server_label, tool, argumentsText, session_id: eventSessionId }
       pendingMcpApprovalsRef.current.set(request_id, approvalItem)
       const shouldDisplay = !eventSessionId || !sessionIdRef.current || sessionIdRef.current === eventSessionId
       if (shouldDisplay) {
         setItems(prev => {
-          const filtered = prev.filter(it => !(it.type === 'mcp_approval' && (it as any).request_id === request_id))
+          const filtered = prev.filter(it => !(it.type === 'mcp_approval' && it.request_id === request_id))
           return [...filtered, approvalItem]
         })
       }
     })
 
-    const offMcpApprovalResolved = client.on('mcp_approval_resolved', (p: any) => {
+    const offMcpApprovalResolved = client.on('mcp_approval_resolved', (p) => {
       const request_id = String(p?.request_id ?? '')
       if (request_id) {
         pendingMcpApprovalsRef.current.delete(request_id)
-        setItems(prev => prev.filter(it => !(it.type === 'mcp_approval' && (it as any).request_id === request_id)))
+        setItems(prev => prev.filter(it => !(it.type === 'mcp_approval' && it.request_id === request_id)))
       }
     })
 
@@ -859,10 +859,10 @@ export function App() {
     }
     try {
       startingRunRef.current = true
-      let content: any | undefined = undefined
+      let content: unknown = undefined
       let attachments: Array<{ type: 'image' | 'file'; url?: string; filename?: string; mime?: string; size?: number }> = []
       if (files && files.length > 0) {
-        const parts: any[] = []
+        const parts: Array<Record<string, unknown>> = []
         if (text.trim().length > 0) parts.push({ type: 'input_text', text })
         const processed = await Promise.all(files.map(async (f) => {
           if (f.type && f.type.startsWith('image/')) {
@@ -893,7 +893,7 @@ export function App() {
               reader.onerror = () => reject(new Error('Failed to read file'))
               reader.readAsArrayBuffer(f)
             })
-            const param: any = { type: 'input_file', file_data: base64 }
+            const param: Record<string, unknown> = { type: 'input_file', file_data: base64 }
             if (f.name) param.filename = f.name
             return {
               filePart: param,
@@ -971,7 +971,7 @@ export function App() {
   const handleApprovalDecision = useCallback(async (call_id: string, value: 'yes' | 'always' | 'no') => {
     const removeApproval = () => {
       pendingApprovalsRef.current.delete(call_id)
-      setItems(prev => prev.filter(it => !(it.type === 'approval' && (it as any).call_id === call_id)))
+      setItems(prev => prev.filter(it => !(it.type === 'approval' && it.call_id === call_id)))
     }
     try {
       const decision = value === 'no' ? 'reject' : 'approve'
@@ -989,7 +989,7 @@ export function App() {
   const handleMcpApprovalDecision = useCallback(async (request_id: string, value: 'yes' | 'no') => {
     const removeApproval = () => {
       pendingMcpApprovalsRef.current.delete(request_id)
-      setItems(prev => prev.filter(it => !(it.type === 'mcp_approval' && (it as any).request_id === request_id)))
+      setItems(prev => prev.filter(it => !(it.type === 'mcp_approval' && it.request_id === request_id)))
     }
     try {
       const decision = value === 'no' ? 'reject' : 'approve'
@@ -1031,7 +1031,7 @@ export function App() {
       setWorkspaceLocked(false)
       if (workspaceSupported) {
         try {
-          const res = await client.serverCall('fs_get_workspace_root') as any
+          const res = await client.serverCall('fs_get_workspace_root') as { path?: string }
           if (res?.path) setWorkspacePath(res.path)
         } catch {}
       }
@@ -1041,7 +1041,7 @@ export function App() {
         const history = await client.getSessionHistory(id)
         const msgs: MessageItem[] = []
         const callIndex: Record<string, number> = {}
-        for (const item of history as any[]) {
+        for (const item of history as Array<Record<string, unknown>>) {
           const t = String((item && item.type) || '')
 
           if (t && t.endsWith('_call') && !t.endsWith('_call_output')) {
@@ -1064,11 +1064,11 @@ export function App() {
             let output = ''
             try { output = typeof item.output === 'string' ? item.output : JSON.stringify(item.output) }
             catch { output = String(item.output || '') }
-            const metadata = item.metadata
+            const metadata = item.metadata as Record<string, unknown> | undefined
             const existing = (call_id && callIndex[call_id] != null) ? callIndex[call_id] : -1
             if (existing >= 0) {
-              const prev = msgs[existing] as any
-              msgs[existing] = { ...prev, output, status: 'result', metadata }
+              const prev = msgs[existing]
+              msgs[existing] = { ...prev, output, status: 'result', metadata } as MessageItem
             } else {
               msgs.push({ type: 'tool', tool, output, call_id, status: 'result', metadata })
             }
@@ -1076,14 +1076,14 @@ export function App() {
           }
 
           if (item && item.role) {
-            const role = String(item.role) as any
+            const role = String(item.role) as ChatMessage['role']
             let content = ''
-            let attachments: Array<{ type: 'image' | 'file'; url?: string; filename?: string; mime?: string; size?: number }> = []
+            const attachments: Array<{ type: 'image' | 'file'; url?: string; filename?: string; mime?: string; size?: number }> = []
 
             if (typeof item.content === 'string') {
               content = item.content
             } else if (Array.isArray(item.content)) {
-              const parts = item.content as any[]
+              const parts = item.content as Array<Record<string, unknown>>
               if (role === 'assistant') {
                 const textParts = parts
                   .filter(p => p && (p.type === 'output_text' || p.type === 'text'))
@@ -1096,21 +1096,21 @@ export function App() {
                 content = textParts.join('\n')
                 for (const p of parts) {
                   if (p && p.type === 'input_image' && p.image_url) {
-                    attachments.push({ type: 'image', url: String(p.image_url), filename: p.filename })
+                    attachments.push({ type: 'image', url: String(p.image_url), filename: typeof p.filename === 'string' ? p.filename : undefined })
                   } else if (p && p.type === 'input_file') {
-                    attachments.push({ type: 'file', filename: p.filename })
+                    attachments.push({ type: 'file', filename: typeof p.filename === 'string' ? p.filename : undefined })
                   }
                 }
               }
             } else if (item.content && typeof item.content === 'object') {
-              const obj = item.content as any
+              const obj = item.content as Record<string, unknown>
               content = String(obj.text || obj.input_text || '')
               if (!content) {
                 try { content = JSON.stringify(item.content) } catch { content = String(item.content) }
               }
             }
 
-            msgs.push({ type: 'chat', role, content, timestamp: item.timestamp, attachments })
+            msgs.push({ type: 'chat', role, content, timestamp: typeof item.timestamp === 'string' ? item.timestamp : undefined, attachments })
             continue
           }
         }
@@ -1122,9 +1122,9 @@ export function App() {
         let lastJobsSnapshot: BashJobSummary[] | null = null
         for (const m of msgs) {
           if (m.type === 'tool') {
-            const snap = (m as any).metadata?.tasks_snapshot
+            const snap = m.metadata?.tasks_snapshot
             if (Array.isArray(snap)) lastSnapshot = snap as TaskSummary[]
-            const jobsSnap = (m as any).metadata?.bash_jobs_snapshot
+            const jobsSnap = m.metadata?.bash_jobs_snapshot
             if (Array.isArray(jobsSnap)) lastJobsSnapshot = jobsSnap as BashJobSummary[]
           }
         }
@@ -1133,7 +1133,7 @@ export function App() {
         // Restore workspace from session and lock it
         if (workspaceSupported) {
           try {
-            const res = await client.serverCall('fs_get_workspace_root', {}, id) as any
+            const res = await client.serverCall('fs_get_workspace_root', {}, id) as { path?: string }
             if (res?.path) setWorkspacePath(res.path)
           } catch {}
           setWorkspaceLocked(true)
