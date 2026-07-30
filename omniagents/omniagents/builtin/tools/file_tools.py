@@ -7,7 +7,14 @@ import shlex
 from typing import List, Optional, Dict, Tuple, Union, Any
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 from functools import lru_cache
-import pygit2
+try:
+    import pygit2
+except ImportError:  # pragma: no cover - runtimes without libgit2
+    # pygit2 is a native extension and is unavailable in some runtimes
+    # (notably Pyodide/WebAssembly). It is only used for gitignore
+    # awareness, which already degrades to "nothing is ignored", so the
+    # file tools stay fully usable without it.
+    pygit2 = None
 from agents.run_context import RunContextWrapper
 
 # ----------------------------
@@ -24,6 +31,8 @@ def _get_pygit2_repo(start_dir: str = "."):
     Returns None if start_dir is not inside a Git repository or if the
     repository is malformed / cannot be opened.
     """
+    if pygit2 is None:
+        return None
     abspath = os.path.abspath(start_dir)
     try:
         gitdir = pygit2.discover_repository(abspath)
