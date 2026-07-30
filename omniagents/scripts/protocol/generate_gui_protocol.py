@@ -49,6 +49,10 @@ REQUIRED_FIELDS = {
     "enqueue_notification": ("session_id", "content"),
     "resume_session": ("session_id",),
     "ack_events": ("session_id", "stream_id", "seq"),
+    "get_model": ("model",),
+    "set_session_model": ("session_id", "model"),
+    "set_session_reasoning": ("session_id", "effort"),
+    "set_voice_model": ("model",),
     "update_session_variables": ("session_id", "updates"),
     "set_client_status": ("text",),
     "disable_tool": ("tool_name",),
@@ -125,6 +129,7 @@ OPTIONAL_FIELDS = {
         "turn",
         "response_id",
         "model",
+        "model_ref",
         "max_input_tokens",
         "max_output_tokens",
         "truncation",
@@ -132,6 +137,7 @@ OPTIONAL_FIELDS = {
     "run_end": (
         "usage",
         "model",
+        "model_ref",
         "max_input_tokens",
         "max_output_tokens",
         "truncation",
@@ -144,6 +150,7 @@ OPTIONAL_FIELDS = {
     "client_request": ("session_id", "idempotency_key", "run_id"),
     "client_request_resolved": ("session_id", "reason"),
     "resume_session": ("stream_id", "after_seq"),
+    "list_models": ("include_hidden", "modality", "session_id"),
 }
 
 # Every server→client notification carries the optional replay envelope.
@@ -158,6 +165,7 @@ BOOLEAN_FIELDS = {
     "always_approve",
     "hold",
     "include_archived",
+    "include_hidden",
     "ok",
     "redact",
     "trigger_run",
@@ -226,6 +234,12 @@ RESULT_TYPES = {
     "get_config": ("dict[str, Any]", "Record<string, unknown>"),
     "validate_config": ("dict[str, Any]", "Record<string, unknown>"),
     "write_config": ("dict[str, Any]", "Record<string, unknown>"),
+    "list_models": ("dict[str, Any]", "Record<string, unknown>"),
+    "get_model": ("dict[str, Any]", "Record<string, unknown>"),
+    "list_providers": ("dict[str, Any]", "Record<string, unknown>"),
+    "set_session_model": ("dict[str, Any]", "Record<string, unknown>"),
+    "set_session_reasoning": ("dict[str, Any]", "Record<string, unknown>"),
+    "set_voice_model": ("dict[str, Any]", "Record<string, unknown>"),
 }
 
 IDENTITY_SCHEMA = {

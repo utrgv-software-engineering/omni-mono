@@ -198,6 +198,14 @@ GLOBAL_SAFE_METHODS = frozenset(
         # validation mutates nothing and echoes no submitted values.
         "get_config",
         "validate_config",
+        # Model & capability catalog reads — read-only views over the
+        # process model registry; results never include resolved secrets.
+        # ``list_models`` becomes session-scoped automatically when the
+        # optional ``session_id`` is supplied (resource resolution is by
+        # parameter, like ``server_call``).
+        "list_models",
+        "get_model",
+        "list_providers",
     }
 )
 
@@ -214,6 +222,9 @@ GLOBAL_MUTATING_METHODS = frozenset(
         # allowed in single-user mode, refused for individual principals
         # when the deployment identifies distinct users.
         "write_config",
+        # Sets the process-wide realtime voice default (models.json
+        # ``voice_default``) — every connected principal sees the change.
+        "set_voice_model",
     }
 )
 
@@ -248,6 +259,10 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "update_session_variables",
         "report_incident",
         "export_session",
+        # Catalog application to one session: ownership of the named
+        # session gates who may change its model / reasoning effort.
+        "set_session_model",
+        "set_session_reasoning",
     }
 )
 

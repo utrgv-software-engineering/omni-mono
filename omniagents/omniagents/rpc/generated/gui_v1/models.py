@@ -265,6 +265,64 @@ class AckEventsResult(RootModel[dict[str, Any]]):
     pass
 
 
+class ListModelsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    include_hidden: bool | None = None
+    modality: str | None = None
+    session_id: str | None = None
+
+
+class ListModelsResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GetModelParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str
+
+
+class GetModelResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class ListProvidersParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pass
+
+
+class ListProvidersResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class SetSessionModelParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    model: str
+
+
+class SetSessionModelResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class SetSessionReasoningParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    effort: str
+
+
+class SetSessionReasoningResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class SetVoiceModelParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    model: str
+
+
+class SetVoiceModelResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class ForkSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -461,6 +519,7 @@ class TokenParams(BaseModel):
     turn: int | None = None
     response_id: str | None = None
     model: str | None = None
+    model_ref: str | None = None
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     truncation: str | None = None
@@ -475,6 +534,7 @@ class RunEndParams(BaseModel):
     end_reason: str
     usage: dict[str, Any] | None = None
     model: str | None = None
+    model_ref: str | None = None
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     truncation: str | None = None
@@ -595,6 +655,12 @@ CLIENT_REQUEST_MODELS = {
     "cancel_queued_message": CancelQueuedMessageParams,
     "resume_session": ResumeSessionParams,
     "ack_events": AckEventsParams,
+    "list_models": ListModelsParams,
+    "get_model": GetModelParams,
+    "list_providers": ListProvidersParams,
+    "set_session_model": SetSessionModelParams,
+    "set_session_reasoning": SetSessionReasoningParams,
+    "set_voice_model": SetVoiceModelParams,
     "fork_session": ForkSessionParams,
     "set_session_hold": SetSessionHoldParams,
     "queue_status": QueueStatusParams,
@@ -631,6 +697,12 @@ CLIENT_RESULT_MODELS = {
     "cancel_queued_message": CancelQueuedMessageResult,
     "resume_session": ResumeSessionResult,
     "ack_events": AckEventsResult,
+    "list_models": ListModelsResult,
+    "get_model": GetModelResult,
+    "list_providers": ListProvidersResult,
+    "set_session_model": SetSessionModelResult,
+    "set_session_reasoning": SetSessionReasoningResult,
+    "set_voice_model": SetVoiceModelResult,
     "fork_session": ForkSessionResult,
     "set_session_hold": SetSessionHoldResult,
     "queue_status": QueueStatusResult,
@@ -687,6 +759,12 @@ STABLE_REQUESTS = frozenset(
         "cancel_queued_message",
         "resume_session",
         "ack_events",
+        "list_models",
+        "get_model",
+        "list_providers",
+        "set_session_model",
+        "set_session_reasoning",
+        "set_voice_model",
     ]
 )
 EXPERIMENTAL_REQUESTS = frozenset(

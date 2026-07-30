@@ -30,6 +30,14 @@ import {
   WS_CLOSE_UNAUTHENTICATED,
   type LifecyclePolicy,
 } from "./lifecycle.js";
+import type {
+  GetModelResult,
+  ListModelsResult,
+  ListProvidersResult,
+  SetSessionModelResult,
+  SetSessionReasoningResult,
+  SetVoiceModelResult,
+} from "../protocol/catalog.js";
 import { SessionReplayCoordinator, type ResumeResult } from "./replay.js";
 
 type InkNotificationMap = {
@@ -649,6 +657,59 @@ export class RPCClient extends EventEmitter {
       session_id: sessionId,
       item_id: itemId,
     }) as Promise<{ ok: boolean; id?: string; depth?: number; reason?: string }>;
+  }
+
+  // ---------------------------------------------------------------------
+  // Model & capability catalog — the provider-neutral catalog behind all
+  // GUI model pickers. See protocol.md § "Model & Capability Catalog"
+  // and ../protocol/catalog.ts for the typed contract.
+  // ---------------------------------------------------------------------
+
+  async listModels(opts?: {
+    includeHidden?: boolean;
+    modality?: string;
+    sessionId?: string;
+  }): Promise<ListModelsResult> {
+    const params: Record<string, unknown> = {};
+    if (opts?.includeHidden) params.include_hidden = true;
+    if (opts?.modality) params.modality = opts.modality;
+    if (opts?.sessionId) params.session_id = opts.sessionId;
+    return this.call(
+      "list_models",
+      params as unknown as RpcMethodMap["list_models"]["params"],
+    ) as Promise<ListModelsResult>;
+  }
+
+  async getModel(model: string): Promise<GetModelResult> {
+    return this.call("get_model", { model }) as Promise<GetModelResult>;
+  }
+
+  async listProviders(): Promise<ListProvidersResult> {
+    return this.call("list_providers") as Promise<ListProvidersResult>;
+  }
+
+  async setSessionModel(
+    sessionId: string,
+    model: string,
+  ): Promise<SetSessionModelResult> {
+    return this.call("set_session_model", {
+      session_id: sessionId,
+      model,
+    }) as Promise<SetSessionModelResult>;
+  }
+
+  async setSessionReasoning(
+    sessionId: string,
+    effort: string,
+  ): Promise<SetSessionReasoningResult> {
+    return this.call("set_session_reasoning", {
+      session_id: sessionId,
+      effort,
+    }) as Promise<SetSessionReasoningResult>;
+  }
+
+  async setVoiceModel(model: string): Promise<SetVoiceModelResult> {
+    return this.call("set_voice_model", { model }) as Promise<SetVoiceModelResult>;
   }
 
   /**

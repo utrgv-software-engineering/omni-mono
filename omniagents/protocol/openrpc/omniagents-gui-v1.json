@@ -1474,6 +1474,302 @@
           "$ref": "#/components/errors/InitializationRequired"
         }
       ],
+      "name": "list_models",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "include_hidden",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_models/properties/include_hidden"
+          }
+        },
+        {
+          "name": "modality",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_models/properties/modality"
+          }
+        },
+        {
+          "name": "session_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_models/properties/session_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "list_models_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation list_models",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/list_models"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        }
+      ],
+      "name": "get_model",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "model",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/get_model/properties/model"
+          }
+        }
+      ],
+      "result": {
+        "name": "get_model_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation get_model",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/get_model"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        }
+      ],
+      "name": "list_providers",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "list_providers_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation list_providers",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/list_providers"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        }
+      ],
+      "name": "set_session_model",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/set_session_model/properties/session_id"
+          }
+        },
+        {
+          "name": "model",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/set_session_model/properties/model"
+          }
+        }
+      ],
+      "result": {
+        "name": "set_session_model_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation set_session_model",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/set_session_model"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        }
+      ],
+      "name": "set_session_reasoning",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/set_session_reasoning/properties/session_id"
+          }
+        },
+        {
+          "name": "effort",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/set_session_reasoning/properties/effort"
+          }
+        }
+      ],
+      "result": {
+        "name": "set_session_reasoning_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation set_session_reasoning",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/set_session_reasoning"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        }
+      ],
+      "name": "set_voice_model",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "model",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/set_voice_model/properties/model"
+          }
+        }
+      ],
+      "result": {
+        "name": "set_voice_model_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation set_voice_model",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/set_voice_model"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        }
+      ],
       "name": "fork_session",
       "paramStructure": "by-name",
       "params": [
@@ -2525,6 +2821,13 @@
           }
         },
         {
+          "name": "model_ref",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/token/properties/model_ref"
+          }
+        },
+        {
           "name": "max_input_tokens",
           "required": false,
           "schema": {
@@ -2611,6 +2914,13 @@
           "required": false,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/run_end/properties/model"
+          }
+        },
+        {
+          "name": "model_ref",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/run_end/properties/model_ref"
           }
         },
         {

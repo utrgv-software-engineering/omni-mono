@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Header } from './components/Header'
+import { ModelPicker } from './components/ModelPicker'
 import { MessageList, type ApprovalItem, type ChatMessage, type McpApprovalItem, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
 import { Tasks, type TaskSummary } from './components/Tasks'
@@ -94,6 +95,9 @@ export function App() {
   const [_usageTotals, setUsageTotals] = useState<Record<string, unknown> | undefined>(undefined)
   const [_usageDelta, setUsageDelta] = useState<Record<string, unknown> | undefined>(undefined)
   const [_modelInfo, setModelInfo] = useState<{ model?: string; max_input_tokens?: number; max_output_tokens?: number } | undefined>(undefined)
+  // Catalog identity of the serving model (usage events' `model_ref`) —
+  // keeps the header picker in sync with mid-session model changes.
+  const [activeModelRef, setActiveModelRef] = useState<string | undefined>(undefined)
   const [agentName, setAgentName] = useState<string>('OmniAgent')
   const [welcomeText, setWelcomeText] = useState<string | undefined>(undefined)
   const normalizeAgentName = useCallback((name: string) => {
@@ -341,6 +345,7 @@ export function App() {
           max_output_tokens: p?.max_output_tokens,
         }
         setModelInfo(info)
+        if (typeof p?.model_ref === 'string') setActiveModelRef(p.model_ref)
         setUsageTotals(usage)
       } catch {}
       setStatusSpinner(false)
@@ -362,6 +367,7 @@ export function App() {
         setUsageDelta(p?.delta)
         setUsageTotals(p?.totals)
         setModelInfo({ model: p?.model, max_input_tokens: p?.max_input_tokens, max_output_tokens: p?.max_output_tokens })
+        if (typeof p?.model_ref === 'string') setActiveModelRef(p.model_ref)
       } catch {}
     })
     const offToolCalled = client.on('tool_called', (p) => {
@@ -1302,6 +1308,7 @@ export function App() {
             onTerminalToggle={() => setTerminalPanelOpen(v => !v)}
             showArtifactsButton={hasArtifacts}
             showTerminalButton
+            modelPicker={<ModelPicker client={client} sessionId={sessionId} currentModel={activeModelRef} />}
           />
         )}
         {connectionIssue && (

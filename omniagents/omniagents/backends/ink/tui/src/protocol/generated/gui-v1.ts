@@ -102,6 +102,27 @@ export interface AckEventsParams {
   stream_id: string;
   seq: number;
 }
+export interface ListModelsParams {
+  include_hidden?: boolean;
+  modality?: string;
+  session_id?: string;
+}
+export interface GetModelParams {
+  model: string;
+}
+export interface ListProvidersParams {
+}
+export interface SetSessionModelParams {
+  session_id: string;
+  model: string;
+}
+export interface SetSessionReasoningParams {
+  session_id: string;
+  effort: string;
+}
+export interface SetVoiceModelParams {
+  model: string;
+}
 export interface ForkSessionParams {
   session_id: string;
   new_session_id?: string;
@@ -205,6 +226,7 @@ export interface TokenParams {
   turn?: number;
   response_id?: string;
   model?: string;
+  model_ref?: string;
   max_input_tokens?: number;
   max_output_tokens?: number;
   truncation?: string;
@@ -217,6 +239,7 @@ export interface RunEndParams {
   end_reason: string;
   usage?: Record<string, unknown>;
   model?: string;
+  model_ref?: string;
   max_input_tokens?: number;
   max_output_tokens?: number;
   truncation?: string;
@@ -318,6 +341,12 @@ export interface RpcMethodMap {
   "cancel_queued_message": { params: CancelQueuedMessageParams; result: Record<string, unknown> };
   "resume_session": { params: ResumeSessionParams; result: Record<string, unknown> };
   "ack_events": { params: AckEventsParams; result: Record<string, unknown> };
+  "list_models": { params: ListModelsParams; result: Record<string, unknown> };
+  "get_model": { params: GetModelParams; result: Record<string, unknown> };
+  "list_providers": { params: ListProvidersParams; result: Record<string, unknown> };
+  "set_session_model": { params: SetSessionModelParams; result: Record<string, unknown> };
+  "set_session_reasoning": { params: SetSessionReasoningParams; result: Record<string, unknown> };
+  "set_voice_model": { params: SetVoiceModelParams; result: Record<string, unknown> };
   "fork_session": { params: ForkSessionParams; result: Record<string, unknown> };
   "set_session_hold": { params: SetSessionHoldParams; result: Record<string, unknown> };
   "queue_status": { params: QueueStatusParams; result: Record<string, unknown> };

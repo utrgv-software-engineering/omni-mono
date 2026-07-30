@@ -386,6 +386,19 @@ class ModelConfigStore:
         "model_settings",
         "use_responses",
         "use_responses_websocket",
+        # Catalog metadata (see omniagents.core.models.catalog_api) —
+        # optional, provider-neutral descriptors surfaced by the GUI
+        # protocol's model-catalog RPCs.
+        "hidden",
+        "description",
+        "modalities",
+        "reasoning_options",
+        "service_tier",
+        "speed_tier",
+        "personality",
+        "deprecated",
+        "deprecation_message",
+        "replace_with",
     ]
 
     def get_model_config(self, ref: str) -> Optional[Dict[str, Any]]:
@@ -529,6 +542,7 @@ class ModelConfigStore:
                     "max_input_tokens": merged.get("max_input_tokens"),
                     "max_output_tokens": merged.get("max_output_tokens"),
                     "has_api_key": bool(merged.get("api_key")),
+                    "hidden": bool(merged.get("hidden")),
                 }
                 if merged.get("model_settings"):
                     entry["model_settings"] = merged["model_settings"]

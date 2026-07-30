@@ -162,6 +162,13 @@ class GetConfig(BaseModel):
     )
 
 
+class GetModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    model: str
+
+
 class GetSessionHistory(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -198,6 +205,21 @@ class JsonRpcError(BaseModel):
     code: int
     data: Any | None = None
     message: str
+
+
+class ListModels(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    include_hidden: bool | None = None
+    modality: str | None = None
+    session_id: str | None = None
+
+
+class ListProviders(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
 
 
 class ListQueue(BaseModel):
@@ -325,6 +347,7 @@ class RunEnd(BaseModel):
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     model: str | None = None
+    model_ref: str | None = None
     run_id: str
     seq: int | None = None
     session_id: str
@@ -413,6 +436,29 @@ class SetSessionHold(BaseModel):
     session_id: str
 
 
+class SetSessionModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    model: str
+    session_id: str
+
+
+class SetSessionReasoning(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    effort: str
+    session_id: str
+
+
+class SetVoiceModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    model: str
+
+
 class StartRun(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -443,6 +489,7 @@ class Token(BaseModel):
     max_input_tokens: int | None = None
     max_output_tokens: int | None = None
     model: str | None = None
+    model_ref: str | None = None
     response_id: str | None = None
     run_id: str
     seq: int | None = None
@@ -580,6 +627,12 @@ class Model(
         | CancelQueuedMessage
         | ResumeSession
         | AckEvents
+        | ListModels
+        | GetModel
+        | ListProviders
+        | SetSessionModel
+        | SetSessionReasoning
+        | SetVoiceModel
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -634,6 +687,12 @@ class Model(
         | CancelQueuedMessage
         | ResumeSession
         | AckEvents
+        | ListModels
+        | GetModel
+        | ListProviders
+        | SetSessionModel
+        | SetSessionReasoning
+        | SetVoiceModel
         | ForkSession
         | SetSessionHold
         | QueueStatus

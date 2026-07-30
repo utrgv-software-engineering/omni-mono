@@ -558,6 +558,41 @@ def test_listings_are_scoped_in_sql_not_after_pagination(authz_context):
         alice2_cm.__exit__(None, None, None)
 
 
+def test_cross_user_model_catalog_access_denied(authz_context):
+    """Model-catalog RPCs inherit the resource-scoping rules: naming a
+    session (even on the otherwise global-safe ``list_models``) gates the
+    request on session ownership, and the global-mutating voice default
+    is refused per-principal in multi-user mode."""
+    alice_cm, alice = _connect(authz_context, ALICE)
+    bob_cm, bob = _connect(authz_context, BOB)
+    try:
+        session_id = alice.result("start_run", prompt="hello from alice")["session_id"]
+
+        # list_models is global-safe without a session, but supplying a
+        # session_id auto-scopes it — bob must not learn alice's active
+        # selection through the catalog read.
+        error = bob.expect_denied("list_models", session_id=session_id)
+        assert error["data"]["resource"] == "session"
+        bob.expect_denied("set_session_model", session_id=session_id, model="gpt-5.1")
+        bob.expect_denied("set_session_reasoning", session_id=session_id, effort="high")
+
+        # The voice default is process-wide state: refused per-principal.
+        error = alice.expect_denied("set_voice_model", model="gpt-realtime")
+        assert error["data"]["resource"] == "global"
+
+        # Resourceless catalog reads stay available to every principal.
+        assert "models" in alice.result("list_models")
+        assert "providers" in alice.result("list_providers")
+        assert "found" in bob.result("get_model", model="anything")
+        # Alice keeps catalog access to her own session (this deployment
+        # has no model store, so the result degrades to the typed
+        # no_model_store shape — the point is that she is not denied).
+        assert "models" in alice.result("list_models", session_id=session_id)
+    finally:
+        bob_cm.__exit__(None, None, None)
+        alice_cm.__exit__(None, None, None)
+
+
 def test_legacy_unowned_session_is_not_readable_and_not_claimed(authz_context):
     """D5: an unowned legacy session was world-readable and was silently
     transferred to whoever touched it first, locking out its real owner."""

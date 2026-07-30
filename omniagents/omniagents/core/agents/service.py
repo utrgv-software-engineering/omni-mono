@@ -3024,6 +3024,10 @@ class AgentService(RpcMethodsBase):
                         payload["usage"] = final_details["usage"]
                     if final_details.get("model") is not None:
                         payload["model"] = final_details.get("model")
+                    # Catalog identity of the serving model, so run-level
+                    # usage joins the model catalog (see protocol.md).
+                    if getattr(sess, "active_model", None):
+                        payload["model_ref"] = sess.active_model
                     if final_details.get("max_input_tokens") is not None:
                         payload["max_input_tokens"] = final_details.get(
                             "max_input_tokens"
@@ -3555,6 +3559,150 @@ class AgentService(RpcMethodsBase):
             pass
         _debug_rpc("get_agent_info", info)
         return info
+
+    # ------------------------------------------------------------------
+    #  Model & capability catalog.
+    #
+    #  Typed, provider-neutral catalog reads plus session model/reasoning
+    #  application — the promoted model-picker surface (the builtin
+    #  /models /model /reasoning server functions share the same logic
+    #  via omniagents.core.models.catalog_api). See protocol.md
+    #  § "Model & Capability Catalog".
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _model_catalog_store():
+        from omniagents.core.models import model_store
+
+        return model_store()
+
+    @staticmethod
+    def _no_model_store_reasons() -> list[dict]:
+        from omniagents.core.models import model_setup_hint
+
+        return [
+            {
+                "code": "no_model_store",
+                "message": "No model registry is configured for this product.",
+                "action": model_setup_hint(),
+            }
+        ]
+
+    async def list_models(
+        self,
+        include_hidden: bool = False,
+        modality: str | None = None,
+        session_id: str | None = None,
+    ) -> dict:  # noqa: D401
+        """The full provider-neutral model catalog, deterministically ordered.
+
+        With ``session_id``, the result also carries that session's active
+        selection so pickers can render the current choice atomically.
+        """
+        from omniagents.core.models.catalog_api import build_model_catalog
+
+        store = self._model_catalog_store()
+        if store is None:
+            return {
+                "models": [],
+                "default_model": None,
+                "voice_default_model": None,
+                "errors": [],
+                "reasons": self._no_model_store_reasons(),
+            }
+        result = build_model_catalog(
+            store, include_hidden=include_hidden, modality=modality
+        )
+        result["reasons"] = []
+        if session_id:
+            sess = self._session_manager.get_or_create(
+                session_id, user_id=self._current_user_id()
+            )
+            active = getattr(sess, "active_model", None)
+            result["session"] = {
+                "session_id": sess.id,
+                "active_model": (store.normalize_model_ref(active) if active else None),
+                "reasoning_effort": getattr(sess, "reasoning_effort", None),
+            }
+        return result
+
+    async def get_model(self, model: str) -> dict:  # noqa: D401
+        """One catalog model's descriptor, or typed not-found reasons."""
+        from omniagents.core.models.catalog_api import describe_model
+
+        store = self._model_catalog_store()
+        if store is None:
+            return {
+                "found": False,
+                "model": None,
+                "reasons": self._no_model_store_reasons(),
+            }
+        return describe_model(store, model)
+
+    async def list_providers(self) -> dict:  # noqa: D401
+        """Per-provider capability + health reads, failures isolated."""
+        from omniagents.core.models.catalog_api import build_provider_overview
+
+        store = self._model_catalog_store()
+        if store is None:
+            return {
+                "providers": [],
+                "errors": [],
+                "reasons": self._no_model_store_reasons(),
+            }
+        result = build_provider_overview(store)
+        result["reasons"] = []
+        return result
+
+    async def set_session_model(self, session_id: str, model: str) -> dict:
+        """Switch a session to a catalog model (typed ``/model`` surface).
+
+        On success the session's next runs (and their usage events) carry
+        the new catalog identity; connected clients receive the updated
+        ``ui.set_session_state``. Refusals carry typed, actionable
+        reasons (``unknown_model``, ``realtime_only``).
+        """
+        from omniagents.core.models.catalog_api import apply_session_model
+        from omniagents.core.server_functions.helpers import notify_session_state
+
+        store = self._model_catalog_store()
+        if store is None:
+            return {"ok": False, "reasons": self._no_model_store_reasons()}
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
+        result = apply_session_model(store, sess, model)
+        result["session_id"] = sess.id
+        if result.get("ok"):
+            await notify_session_state(self, sess)
+        return result
+
+    async def set_session_reasoning(self, session_id: str, effort: str) -> dict:
+        """Set a session's reasoning effort (typed ``/reasoning`` surface)."""
+        from omniagents.core.models.catalog_api import apply_session_reasoning
+        from omniagents.core.server_functions.helpers import notify_session_state
+
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
+        result = apply_session_reasoning(sess, effort)
+        result["session_id"] = sess.id
+        if result.get("ok"):
+            await notify_session_state(self, sess)
+        return result
+
+    async def set_voice_model(self, model: str) -> dict:  # noqa: D401
+        """Set the process-wide realtime voice default to a catalog model.
+
+        Global-mutating: refused per-principal in multi-user deployments
+        (see GLOBAL_MUTATING_METHODS). Reconnect voice mode to apply.
+        """
+        from omniagents.core.models.catalog_api import set_voice_default_model
+
+        store = self._model_catalog_store()
+        if store is None:
+            return {"ok": False, "reasons": self._no_model_store_reasons()}
+        return set_voice_default_model(store, model)
 
     # ------------------------------------------------------------------
     #  Background-injected message queue.

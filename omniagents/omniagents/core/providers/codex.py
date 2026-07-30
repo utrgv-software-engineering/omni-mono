@@ -340,11 +340,22 @@ def _model_entry(m: Dict[str, Any]) -> Dict[str, Any]:
     ctx = m.get("context_window")
     if isinstance(ctx, int):
         entry["max_input_tokens"] = ctx
+    max_output = m.get("max_output_tokens")
+    if isinstance(max_output, int):
+        entry["max_output_tokens"] = max_output
     # Carry the backend's default reasoning level when it's one we model
     # (the backend may also report "none").
     default_reasoning = m.get("default_reasoning_level")
     if default_reasoning in ("low", "medium", "high", "xhigh"):
         entry["reasoning"] = default_reasoning
+    # Optional catalog metadata (omniagents.core.models.catalog_api) —
+    # passed through defensively; the backend may omit any of these.
+    description = m.get("description")
+    if isinstance(description, str) and description:
+        entry["description"] = description
+    supported = m.get("supported_reasoning_levels")
+    if isinstance(supported, list) and supported:
+        entry["reasoning_options"] = supported
     return entry
 
 

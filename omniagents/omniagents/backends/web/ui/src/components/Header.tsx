@@ -8,6 +8,7 @@ export function Header({
   onTerminalToggle,
   showArtifactsButton = false,
   showTerminalButton = false,
+  modelPicker,
 }: {
   agentName: string
   connected?: boolean
@@ -16,6 +17,8 @@ export function Header({
   onTerminalToggle?: () => void
   showArtifactsButton?: boolean
   showTerminalButton?: boolean
+  /** Catalog-backed model picker (see ModelPicker.tsx), when available. */
+  modelPicker?: React.ReactNode
 }) {
   return (
     <div className="border-b border-bgCardAlt bg-bgColumn">
@@ -28,6 +31,7 @@ export function Header({
           <div className="text-base font-semibold text-textHeading">{agentName || 'OmniAgent'}</div>
         </div>
         <div className="flex items-center gap-1">
+          {modelPicker}
           {showTerminalButton && onTerminalToggle ? (
             <button
               className="w-8 h-8 rounded hover:bg-bgCardAlt text-textPrimary flex items-center justify-center"

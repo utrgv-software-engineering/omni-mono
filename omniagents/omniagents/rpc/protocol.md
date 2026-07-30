@@ -428,6 +428,7 @@ The server may stream usage updates at the end of each model turn. This allows c
 Notes:
 - The server emits a "token" notification after each model response completes. The "delta" object represents the usage for that single turn; "totals" is the aggregate since the start of the run.
 - Model metadata is included with each token event so clients always see the model used for that turn. A server may change models mid-conversation.
+- `model` is the provider-reported model id for the turn (which may carry a dated suffix or deployment name). When the serving session has a catalog identity, `token` and `run_end` also carry `model_ref` — the normalized catalog ref from the Model & Capability Catalog (see below) — so usage can be joined to catalog entries even after a mid-session `set_session_model`.
 - If present, "max_input_tokens" indicates the maximum input context tokens the model can accept. "max_output_tokens" indicates the maximum tokens the model can generate in a single response. Clients can use these to calculate context utilization and warn when approaching limits.
 - The final aggregate usage and last-known model metadata are also included in the run_end event.
 
@@ -773,6 +774,123 @@ server-level configuration for every connected user and is classified
 global-mutating: allowed in single-user deployments, refused with `-32014`
 for individual principals when the deployment identifies distinct users —
 the same posture as `disable_tool`.
+
+## Model & Capability Catalog
+
+A first-class, provider-neutral model catalog behind every GUI model picker. The catalog view is built by `omniagents.core.models.catalog_api` over the process-wide `ModelConfigStore` (product defaults → governance → user `models.json` → live provider discovery), so all maintained clients consume the same contract. Reference client bindings live in `src/protocol/catalog.ts` (identical in the web and Ink clients).
+
+Failure isolation is part of the contract: one provider's bad configuration or failing discovery hook never hides another provider's models — failures degrade to typed `errors` entries and an `"error"` provider health status. Catalog results never contain resolved secrets.
+
+### list_models(include_hidden?: boolean, modality?: string, session_id?: string)
+
+Returns every catalog model as a full descriptor, deterministically ordered (providers lexicographically, then model names within each provider). `hidden: true` models are excluded unless `include_hidden` is set (they remain resolvable via `get_model` and selectable via `set_session_model`). `modality` filters to models supporting it (`"text"`, `"audio"`). With `session_id`, the result also reports that session's active selection (and the request becomes session-scoped for authorization).
+
+```json
+{
+  "models": [
+    {
+      "id": "codex/gpt-5.5-codex",
+      "model": "gpt-5.5-codex",
+      "label": "GPT-5.5 Codex",
+      "description": "Agentic coding model",
+      "provider": {"name": "codex", "type": "openai-oauth"},
+      "modalities": ["text"],
+      "realtime": false,
+      "limits": {"max_input_tokens": 272000, "max_output_tokens": 128000},
+      "reasoning": {"default": "medium", "options": ["low", "medium", "high", "xhigh"]},
+      "tiers": {"service": null, "speed": null},
+      "personality": {"supported": false, "options": [], "default": null},
+      "availability": {
+        "available": false,
+        "reasons": [
+          {
+            "code": "oauth_signin_required",
+            "message": "The provider account is not signed in.",
+            "action": "Sign in to the provider account to use this model."
+          }
+        ]
+      },
+      "entitlement": {"entitled": false, "credential": "oauth"},
+      "deprecation": {"deprecated": false, "message": null, "replace_with": null},
+      "hidden": false,
+      "is_default": false,
+      "is_voice_default": false,
+      "is_user_defined": false
+    }
+  ],
+  "default_model": "gpt-5.1",
+  "voice_default_model": null,
+  "errors": [],
+  "reasons": [],
+  "session": {"session_id": "sess-1", "active_model": "gpt-5.1", "reasoning_effort": "medium"}
+}
+```
+
+Descriptor field notes:
+- `id` — the canonical catalog identity (normalized model ref: `<name>` for the default provider, `<provider>/<name>` otherwise). Mid-session model changes and usage events (`model_ref`) reference this identity.
+- `model` — the provider-side id (deployment name, slug); what the provider reports in usage `model` fields.
+- `reasoning.options` — the selectable efforts for `set_session_reasoning`; empty when the model does not support reasoning selection. Populated from provider discovery (`reasoning_options`) or the standard vocabulary when a default is declared.
+- `tiers`, `personality`, `description`, `deprecation` — optional provider/config metadata (`service_tier`, `speed_tier`, `personality`, `description`, `deprecated`/`deprecation_message`/`replace_with` keys on provider or model entries), passed through provider-neutrally.
+- `availability` — a configuration read (credentials resolvable, endpoint known), never a network probe. Reason codes: `oauth_signin_required`, `missing_credentials`, `missing_base_url` (all carry `message` and an actionable `action`).
+- `entitlement.credential` — where the model's credential comes from: `platform` (management-plane `credential_ref`), `oauth`, `api_key` (configured), `env` (environment fallback), `none`.
+- `errors` — per-provider failures (`{provider, code: "provider_error", message}`) surfaced without hiding other providers.
+- `reasons` — non-empty only when the whole catalog cannot be served (code `no_model_store`).
+
+### get_model(model: string)
+
+One model's descriptor by ref (normalized before lookup), including hidden models.
+
+```json
+{"found": true, "model": { ...descriptor... }, "reasons": []}
+{"found": false, "model": null, "reasons": [{"code": "unknown_model", "message": "Model 'x' is not in the catalog.", "action": "Call list_models for the available catalog."}]}
+```
+
+### list_providers()
+
+Per-provider capability and health reads.
+
+```json
+{
+  "providers": [
+    {
+      "name": "codex",
+      "type": "openai-oauth",
+      "base_url": null,
+      "is_default_provider": false,
+      "is_user_defined": false,
+      "model_count": 3,
+      "hidden_model_count": 1,
+      "capabilities": {"realtime": false, "reasoning": true, "modalities": ["text"]},
+      "health": {"status": "needs_auth", "detail": "The provider account is not signed in."}
+    }
+  ],
+  "errors": [],
+  "reasons": []
+}
+```
+
+`health.status` is `"ok"` (at least one model available, or no models configured), `"needs_auth"` (all models blocked on credentials/sign-in), or `"error"` (the provider's models could not be enumerated; `detail` carries the failure). Health is config-derived — cheap enough to poll from a picker.
+
+### set_session_model(session_id: string, model: string)
+
+Switches a session to a catalog model — the typed promotion of the `/model` server function (both share one implementation, so the chat and RPC surfaces cannot drift). On success the session's subsequent runs (and their `token`/`run_end` usage events) carry the new catalog identity in `model_ref`, and connected clients receive the updated `ui.set_session_state` client-function call.
+
+```json
+{"ok": true, "session_id": "sess-1", "model": "codex/gpt-5.5-codex", "label": "GPT-5.5 Codex", "provider": "openai-oauth", "max_input_tokens": 272000, "max_output_tokens": 128000, "reasoning_effort": "medium", "warnings": []}
+{"ok": false, "session_id": "sess-1", "reasons": [{"code": "unknown_model", "message": "...", "action": "..."}]}
+```
+
+- Refusal codes: `unknown_model`, `realtime_only` (realtime voice models cannot serve text sessions — use `set_voice_model`).
+- Switching to a currently-unentitled model succeeds (the failure would surface at run time) but returns its availability reasons as `warnings` so pickers can flag it.
+- Authorization: session-scoped — only the session's owner may switch its model.
+
+### set_session_reasoning(session_id: string, effort: string)
+
+Sets the session's reasoning effort (`low` | `medium` | `high` | `xhigh`) — the typed promotion of `/reasoning`. Marks the effort as an explicit override, so later model switches keep it instead of applying the model's default. Invalid efforts return `{"ok": false, "reasons": [{"code": "invalid_reasoning_effort", ...}]}`. Session-scoped.
+
+### set_voice_model(model: string)
+
+Sets the process-wide realtime voice default (`models.json` `voice_default`) — the typed promotion of `/voice-model`. The model must have `realtime` support (`{"code": "not_realtime"}` otherwise). Reconnect voice mode to apply. **Global-mutating**: like `disable_tool`, it changes state for every connected principal, so it is refused per-principal in multi-user deployments and available in single-user mode.
 
 ## MCP Resources
 

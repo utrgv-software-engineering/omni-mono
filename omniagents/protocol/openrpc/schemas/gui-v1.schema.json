@@ -342,6 +342,19 @@
       "type": "object",
       "x-omni-stability": "experimental"
     },
+    "get_model": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "get_session_history": {
       "additionalProperties": false,
       "properties": {
@@ -455,6 +468,28 @@
         "message"
       ],
       "type": "object"
+    },
+    "list_models": {
+      "additionalProperties": false,
+      "properties": {
+        "include_hidden": {
+          "type": "boolean"
+        },
+        "modality": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "list_providers": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object",
+      "x-omni-stability": "stable"
     },
     "list_queue": {
       "additionalProperties": false,
@@ -721,6 +756,9 @@
         "model": {
           "type": "string"
         },
+        "model_ref": {
+          "type": "string"
+        },
         "run_id": {
           "type": "string"
         },
@@ -933,6 +971,53 @@
       "type": "object",
       "x-omni-stability": "experimental"
     },
+    "set_session_model": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "model"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "set_session_reasoning": {
+      "additionalProperties": false,
+      "properties": {
+        "effort": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "effort"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "set_voice_model": {
+      "additionalProperties": false,
+      "properties": {
+        "model": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "start_run": {
       "additionalProperties": false,
       "properties": {
@@ -996,6 +1081,9 @@
           "type": "integer"
         },
         "model": {
+          "type": "string"
+        },
+        "model_ref": {
           "type": "string"
         },
         "response_id": {
@@ -1298,6 +1386,24 @@
     },
     {
       "$ref": "#/$defs/ack_events"
+    },
+    {
+      "$ref": "#/$defs/list_models"
+    },
+    {
+      "$ref": "#/$defs/get_model"
+    },
+    {
+      "$ref": "#/$defs/list_providers"
+    },
+    {
+      "$ref": "#/$defs/set_session_model"
+    },
+    {
+      "$ref": "#/$defs/set_session_reasoning"
+    },
+    {
+      "$ref": "#/$defs/set_voice_model"
     },
     {
       "$ref": "#/$defs/fork_session"

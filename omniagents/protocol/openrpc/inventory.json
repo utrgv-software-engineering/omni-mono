@@ -63,7 +63,13 @@
       "list_queue",
       "cancel_queued_message",
       "resume_session",
-      "ack_events"
+      "ack_events",
+      "list_models",
+      "get_model",
+      "list_providers",
+      "set_session_model",
+      "set_session_reasoning",
+      "set_voice_model"
     ]
   },
   "router_mode": "generated_request_allowlist",

@@ -20,6 +20,12 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | CancelQueuedMessage
   | ResumeSession
   | AckEvents
+  | ListModels
+  | GetModel
+  | ListProviders
+  | SetSessionModel
+  | SetSessionReasoning
+  | SetVoiceModel
   | ForkSession
   | SetSessionHold
   | QueueStatus
@@ -181,6 +187,26 @@ export interface AckEvents {
   session_id: string;
   stream_id: string;
 }
+export interface ListModels {
+  include_hidden?: boolean;
+  modality?: string;
+  session_id?: string;
+}
+export interface GetModel {
+  model: string;
+}
+export interface ListProviders {}
+export interface SetSessionModel {
+  model: string;
+  session_id: string;
+}
+export interface SetSessionReasoning {
+  effort: string;
+  session_id: string;
+}
+export interface SetVoiceModel {
+  model: string;
+}
 export interface ForkSession {
   new_session_id?: string;
   session_id: string;
@@ -291,6 +317,7 @@ export interface Token {
   max_input_tokens?: number;
   max_output_tokens?: number;
   model?: string;
+  model_ref?: string;
   response_id?: string;
   run_id: string;
   seq?: number;
@@ -310,6 +337,7 @@ export interface RunEnd {
   max_input_tokens?: number;
   max_output_tokens?: number;
   model?: string;
+  model_ref?: string;
   run_id: string;
   seq?: number;
   session_id: string;

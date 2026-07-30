@@ -11,6 +11,12 @@ from __future__ import annotations
 
 from omniagents import server_function
 from omniagents.core.models import model_setup_hint, model_store
+from omniagents.core.models.catalog_api import (
+    apply_session_model,
+    apply_session_reasoning,
+    REASONING_EFFORT_LEVELS,
+    set_voice_default_model,
+)
 from omniagents.core.server_functions.helpers import (
     ensure_session_with_workspace,
     notify_session_state,
@@ -155,10 +161,10 @@ async def switch_model(session: Session, text: str) -> dict:
             }
         return {"model": None, "message": model_setup_hint()}
 
-    # Look up the requested model
-    normalized = store.normalize_model_ref(name)
-    model_config = store.get_model_config(normalized) if normalized else None
-    if not model_config or model_config.get("realtime"):
+    # Look up + apply via the shared catalog switching logic (also behind
+    # the typed ``set_session_model`` RPC — the two surfaces must not drift).
+    result = apply_session_model(store, session, name)
+    if not result.get("ok"):
         names = [m["name"] for m in store.list_text_models()]
         return {
             "error": f"Unknown model `{name}`",
@@ -166,28 +172,17 @@ async def switch_model(session: Session, text: str) -> dict:
             "message": f"Unknown model `{name}`. Available: {', '.join(names) or 'none'}",
         }
 
-    # Update session state
-    session.active_model = normalized
-    session.model_config = model_config
-
-    # Apply model's default reasoning if set and not already overridden
-    if model_config.get("reasoning") and not getattr(
-        session, "_reasoning_explicitly_set", False
-    ):
-        session.reasoning_effort = model_config["reasoning"]
-
-    reasoning = getattr(session, "reasoning_effort", None)
-
+    model_config = session.model_config or {}
     return {
-        "model": normalized,
-        "label": model_config.get("label", normalized),
-        "provider": model_config.get("provider"),
-        "max_input_tokens": model_config.get("max_input_tokens"),
-        "max_output_tokens": model_config.get("max_output_tokens"),
-        "reasoning_effort": reasoning,
+        "model": result["model"],
+        "label": result["label"],
+        "provider": result["provider"],
+        "max_input_tokens": result["max_input_tokens"],
+        "max_output_tokens": result["max_output_tokens"],
+        "reasoning_effort": result["reasoning_effort"],
         "message": (
-            f"Switched to **{model_config.get('label', normalized)}** "
-            f"[{model_config.get('provider')}]{_tokens_suffix(model_config)}"
+            f"Switched to **{result['label']}** "
+            f"[{result['provider']}]{_tokens_suffix(model_config)}"
         ),
     }
 
@@ -214,22 +209,17 @@ async def set_reasoning(session: Session, text: str) -> dict:
             "message": f"Current reasoning effort: **{current}**",
         }
 
-    valid_levels = ("low", "medium", "high", "xhigh")
-    if level not in valid_levels:
+    result = apply_session_reasoning(session, level)
+    if not result.get("ok"):
         return {
             "error": f"Invalid level `{level}`",
-            "valid": list(valid_levels),
+            "valid": list(REASONING_EFFORT_LEVELS),
             "message": f"Invalid level `{level}`. Use: low, medium, high, or xhigh",
         }
 
-    session.reasoning_effort = level
-    session._reasoning_explicitly_set = True  # Mark as explicit override
-
-    active_model = getattr(session, "active_model", None)
-
     return {
-        "reasoning_effort": level,
-        "model": active_model,
+        "reasoning_effort": result["reasoning_effort"],
+        "model": result["model"],
         "message": f"Reasoning effort set to **{level}**",
     }
 
@@ -295,9 +285,16 @@ async def switch_voice_model(session: Session, text: str) -> dict:
             ),
         }
 
-    normalized = store.normalize_model_ref(name)
-    config = (store.get_model_config(normalized) if normalized else None) or {}
-    if not normalized or not config.get("realtime"):
+    # Apply via the shared catalog logic (also behind the typed
+    # ``set_voice_model`` RPC — the two surfaces must not drift).
+    result = set_voice_default_model(store, name)
+    if not result.get("ok"):
+        codes = {reason.get("code") for reason in result.get("reasons", [])}
+        if "voice_default_rejected" in codes:
+            return {
+                "error": f"Failed to set voice model `{name}`",
+                "message": f"Failed to set voice model `{name}`.",
+            }
         names = [m["name"] for m in store.list_voice_models()]
         return {
             "error": f"Unknown voice model `{name}`",
@@ -305,19 +302,13 @@ async def switch_voice_model(session: Session, text: str) -> dict:
             "message": f"Unknown voice model `{name}`. Available: {', '.join(names) or 'none'}",
         }
 
-    if not store.set_voice_default_model(normalized):
-        return {
-            "error": f"Failed to set voice model `{name}`",
-            "message": f"Failed to set voice model `{name}`.",
-        }
-
     return {
-        "model": normalized,
-        "label": config.get("label", normalized),
-        "provider": config.get("provider"),
+        "model": result["model"],
+        "label": result["label"],
+        "provider": result["provider"],
         "message": (
-            f"Set voice model to **{config.get('label', normalized)}** "
-            f"[{config.get('provider')}]. Reconnect voice mode to apply."
+            f"Set voice model to **{result['label']}** "
+            f"[{result['provider']}]. Reconnect voice mode to apply."
         ),
     }
 

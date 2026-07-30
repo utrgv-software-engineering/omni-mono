@@ -36,6 +36,13 @@ STABLE_REQUESTS = (
     "cancel_queued_message",
     "resume_session",
     "ack_events",
+    # Model & capability catalog (tkt_5A4tPEYUN85M)
+    "list_models",
+    "get_model",
+    "list_providers",
+    "set_session_model",
+    "set_session_reasoning",
+    "set_voice_model",
 )
 
 EXPERIMENTAL_REQUESTS = (

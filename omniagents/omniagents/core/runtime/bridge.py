@@ -614,6 +614,10 @@ async def stream_agent(
                             "response_id": getattr(data.response, "id", None),
                             # Optional model info so clients can adjust UI per-turn
                             "model": last_model_info.get("model"),
+                            # Catalog identity (normalized model ref) so
+                            # usage can be attributed to a catalog entry
+                            # even mid-session after a model switch.
+                            "model_ref": getattr(session, "active_model", None),
                             "max_input_tokens": last_model_info.get("max_input_tokens"),
                             "max_output_tokens": last_model_info.get(
                                 "max_output_tokens"
@@ -623,6 +627,7 @@ async def stream_agent(
                         # Drop None values to avoid sending JSON null for optional fields
                         for key in [
                             "model",
+                            "model_ref",
                             "max_input_tokens",
                             "max_output_tokens",
                             "truncation",
