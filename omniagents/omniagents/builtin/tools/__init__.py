@@ -1,39 +1,91 @@
-from .artifacts import display_artifact
-from .bash_tool import bash_kill, bash_logs, bash_status, execute_bash
-from .convert_to_markdown import convert_to_markdown
-from .download_file import download_file
-from .elicit import ask_user
-from .file_tools import (
-    glob_files,
-    grep_files,
-    list_directory,
-    read_file,
-    edit_file,
-    write_file,
-    apply_patch,
-)
-from .goal_tools import goal_complete
-from .human import notify, escalate
-from .image_tools import read_image
-from .loop_tools import loop_continue
-from .notebook_tools import edit_notebook, read_notebook
-from .scholar_search import scholar_search
-from .skill_tool import load_skill
-from .slash_tool import dispatch
-from .task_list_tools import task_create, task_get, task_list, task_update
-from .wakeup_tools import cancel_wakeup, schedule_wakeup
-from .web_fetch import web_fetch
-from .worker_tools import (
-    cleanup_worker_worktree,
-    close_worker,
-    get_worker_status,
-    resume_worker,
-    send_worker_message,
-    spawn_worker,
-    wait_for_workers,
-)
-from .web_search import web_search
-from .youtube_search import youtube_search
+"""Builtin tools.
+
+Exports are resolved lazily. Importing this package used to import every
+tool module eagerly, which meant one unavailable dependency took the
+whole package down: in a constrained runtime (Pyodide/WebAssembly, a slim
+container) ``from omniagents.builtin.tools import read_file`` failed
+because ``worker_tools`` pulls in the RPC server, which pulls in FastAPI,
+which pulls in ``agents.mcp`` — none of which the file tools need.
+
+Now a name is imported when it is first accessed, so each tool family
+costs only its own dependencies.
+
+This does NOT change tool registration: the loader discovers builtin tools
+by scanning this directory and importing each module separately
+(``discover_functions_in_dir``), which already skips modules that fail to
+import and warns. Lazy exports simply make direct imports behave the same
+way.
+
+Unlike the lazy loader in the top-level ``omniagents`` package, a failed
+import here is raised rather than turned into ``None`` — a tool that
+silently becomes ``None`` fails later and far more confusingly than one
+that fails at the import that asked for it.
+"""
+
+from __future__ import annotations
+
+import importlib
+from typing import Any, Dict, List
+
+# Exported name -> the module in this package that defines it
+_EXPORTS: Dict[str, str] = {
+    "display_artifact": "artifacts",
+    "execute_bash": "bash_tool",
+    "bash_status": "bash_tool",
+    "bash_logs": "bash_tool",
+    "bash_kill": "bash_tool",
+    "convert_to_markdown": "convert_to_markdown",
+    "download_file": "download_file",
+    "glob_files": "file_tools",
+    "grep_files": "file_tools",
+    "list_directory": "file_tools",
+    "read_file": "file_tools",
+    "edit_file": "file_tools",
+    "write_file": "file_tools",
+    "apply_patch": "file_tools",
+    "ask_user": "elicit",
+    "goal_complete": "goal_tools",
+    "notify": "human",
+    "escalate": "human",
+    "read_image": "image_tools",
+    "loop_continue": "loop_tools",
+    "read_notebook": "notebook_tools",
+    "edit_notebook": "notebook_tools",
+    "scholar_search": "scholar_search",
+    "load_skill": "skill_tool",
+    "dispatch": "slash_tool",
+    "task_create": "task_list_tools",
+    "task_get": "task_list_tools",
+    "task_list": "task_list_tools",
+    "task_update": "task_list_tools",
+    "schedule_wakeup": "wakeup_tools",
+    "cancel_wakeup": "wakeup_tools",
+    "web_fetch": "web_fetch",
+    "web_search": "web_search",
+    "youtube_search": "youtube_search",
+    "spawn_worker": "worker_tools",
+    "wait_for_workers": "worker_tools",
+    "get_worker_status": "worker_tools",
+    "send_worker_message": "worker_tools",
+    "close_worker": "worker_tools",
+    "resume_worker": "worker_tools",
+    "cleanup_worker_worktree": "worker_tools",
+}
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(f".{module_name}", __name__)
+    value = getattr(module, name)
+    globals()[name] = value  # cache so later lookups skip __getattr__
+    return value
+
+
+def __dir__() -> List[str]:
+    return sorted(set(globals()) | set(_EXPORTS))
+
 
 __all__ = [
     "display_artifact",
