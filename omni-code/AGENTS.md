@@ -59,13 +59,25 @@ run (`omniagents run --project <manifest> --mode ink ...`, so `--mode
 web|server`, `--host`, `--port`, `--output json` etc. pass through);
 `omni -- <words>` forces prompt mode even for reserved words.
 
-## Tests
+## Checks
+
+All four gates run in CI (`.github/workflows/quality.yml`) and must
+pass locally before pushing; the tools are in the `dev` dependency
+group and configured in `pyproject.toml`:
 
 ```bash
+.venv/bin/black --check .        # format (fix with: black .)
+.venv/bin/ruff check .           # lint (autofix with: ruff check --fix .)
+.venv/bin/mypy                   # typecheck (targets come from pyproject)
 PYTHONPATH=$PWD .venv/bin/pytest tests/
 ```
 
 (Plain `pytest` also works — pyproject sets `pythonpath = ["."]`.)
+`evaluations/fixtures/` is deliberately excluded from format, lint,
+and typecheck: those trees are eval fixture workspaces — intentionally
+imperfect code the agent operates on during scenarios — so never
+"clean them up" to satisfy a tool.
+
 Write targeted tests for the behavior you change; do not restructure
 the suite. Several tests assert deterministic orderings and exact
 strings — keep fixtures deterministic.

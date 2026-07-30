@@ -51,8 +51,7 @@ def test_update_cache_lives_in_omni_code_config_dir(monkeypatch, tmp_path):
     from omniagents.core.config import product_config_dir as get_config_dir
 
     assert (
-        fw_updater.get_update_cache_path(_config())
-        == get_config_dir() / "update.json"
+        fw_updater.get_update_cache_path(_config()) == get_config_dir() / "update.json"
     )
 
 

@@ -5,15 +5,13 @@ which is the part that doesn't need a real docker/aci environment.
 """
 
 import asyncio
-import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
-
-from omniagents.core.runtime import serve_harness as serve_cli
 from omniagents.core.runtime import serve_harness
+from omniagents.core.runtime import serve_harness as serve_cli
 from omniagents.core.runtime import serve_state as aws
-
 
 # --------------------------------------------------------------------------
 # Fakes
@@ -130,7 +128,12 @@ def wired(monkeypatch):
         "omniagents.core.agents.service.current_service", lambda: service
     )
 
-    calls = {"teardown": [], "attach": [], "terminal": [], "orchestrator": []}
+    calls: dict[str, list[Any]] = {
+        "teardown": [],
+        "attach": [],
+        "terminal": [],
+        "orchestrator": [],
+    }
 
     async def fake_teardown(session, started_services):
         calls["teardown"].append((session, started_services))

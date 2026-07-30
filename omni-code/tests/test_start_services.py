@@ -11,9 +11,7 @@ import re
 from types import SimpleNamespace
 
 import pytest
-
 from omniagents.core.runtime import serve_harness as serve_cli
-
 
 CODE = serve_cli.ServiceSpec(
     name="code_server",

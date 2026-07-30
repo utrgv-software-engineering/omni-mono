@@ -1,11 +1,10 @@
-from pathlib import Path
 import subprocess
 import sys
-import tomllib
 import zipfile
+from pathlib import Path
 
+import tomllib
 from setuptools import find_namespace_packages
-
 
 ROOT = Path(__file__).resolve().parents[1]
 

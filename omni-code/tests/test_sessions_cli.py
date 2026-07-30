@@ -9,13 +9,11 @@ summary envelope comes from project.yml (`sessions.summary_envelope`).
 
 import json
 
-import pytest
-
-from omniagents.core.product import product_info
-from omniagents.product_cli import main as cli_main
 import omniagents.core.session.history_db as history_db
 from omniagents.core.paths import get_sessions_db_path
+from omniagents.core.product import product_info
 from omniagents.core.session.summarize import manifest_session_envelope
+from omniagents.product_cli import main as cli_main
 
 
 def _sessions(args: list[str]) -> int:
@@ -26,24 +24,37 @@ def _reset_history_db(monkeypatch):
     monkeypatch.setattr(history_db, "_STORES", {})
 
 
-def _seed_session(*, project: str, agent: str, session_id: str, messages: list[dict], archived: bool = False):
+def _seed_session(
+    *,
+    project: str,
+    agent: str,
+    session_id: str,
+    messages: list[dict],
+    archived: bool = False,
+):
     history_db.register_session(session_id, project_slug=project, agent_slug=agent)
     for msg in messages:
-        history_db.append_message(session_id, msg, project_slug=project, agent_slug=agent)
+        history_db.append_message(
+            session_id, msg, project_slug=project, agent_slug=agent
+        )
     if archived:
-        history_db.set_archived(session_id, True, project_slug=project, agent_slug=agent)
+        history_db.set_archived(
+            session_id, True, project_slug=project, agent_slug=agent
+        )
 
 
 def test_build_model_provider_uses_chat_completions_when_configured():
     from omniagents.core.models import provider_from_runtime as build_model_provider
 
-    provider, env = build_model_provider({
-        "provider": "openai-compatible",
-        "model": "gpt-test",
-        "api_key": "sk-test",
-        "base_url": "https://example.test/v1",
-        "use_responses": False,
-    })
+    provider, env = build_model_provider(
+        {
+            "provider": "openai-compatible",
+            "model": "gpt-test",
+            "api_key": "sk-test",
+            "base_url": "https://example.test/v1",
+            "use_responses": False,
+        }
+    )
 
     assert env == {}
     assert provider is not None
@@ -228,7 +239,19 @@ def test_sessions_summarize_parses_json(monkeypatch, tmp_path, capsys):
         captured["model"] = model
         captured["runtime"] = runtime
         captured["prompt"] = prompt
-        return json.dumps({"summary": "ok", "decisions": [], "constraints": [], "key_files": [], "commands": [], "tests": [], "open_questions": [], "next_steps": [], "notable_errors": []})
+        return json.dumps(
+            {
+                "summary": "ok",
+                "decisions": [],
+                "constraints": [],
+                "key_files": [],
+                "commands": [],
+                "tests": [],
+                "open_questions": [],
+                "next_steps": [],
+                "notable_errors": [],
+            }
+        )
 
     monkeypatch.setattr(
         "omniagents.core.runtime.ephemeral.run_project_agent_once", fake_run
@@ -381,8 +404,14 @@ def test_sessions_list_after_filters(monkeypatch, tmp_path, capsys):
 
     conn = sqlite3.connect(str(db_path))
     try:
-        conn.execute("UPDATE sessions SET created_at=? WHERE session_id=?", ("2024-01-01 00:00:00", "s1"))
-        conn.execute("UPDATE sessions SET created_at=? WHERE session_id=?", ("2025-01-01 00:00:00", "s2"))
+        conn.execute(
+            "UPDATE sessions SET created_at=? WHERE session_id=?",
+            ("2024-01-01 00:00:00", "s1"),
+        )
+        conn.execute(
+            "UPDATE sessions SET created_at=? WHERE session_id=?",
+            ("2025-01-01 00:00:00", "s2"),
+        )
         conn.commit()
     finally:
         conn.close()

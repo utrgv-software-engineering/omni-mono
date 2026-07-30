@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 import yaml
-
 from omniagents.core.project.runtime import (
     build_spec_from_project,
     load_project,

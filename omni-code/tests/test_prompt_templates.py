@@ -9,11 +9,8 @@ through its conventional resolution (no builders installed, the
 discovered omni-code product manifest's ``paths.prompts``).
 """
 
-import pytest
-
 from omniagents.core.autonomy import goal as goal_mod
 from omniagents.core.autonomy import loop as loop_mod
-
 
 # ---------------------------------------------------------------------------
 # Legacy builders, copied verbatim from the deleted omni_code/goal_prompts.py
@@ -72,9 +69,9 @@ def _legacy_goal_tick(*, goal: str, max_turns: int) -> str:
     return (
         f"[goal] Tick. Goal: {goal} (budget {max_turns} turns total). "
         "Take the next concrete step. Reuse context — don't re-read files you have. "
-        "If the goal is achieved or verified, call `goal_complete(reason=\"achieved\", evidence=\"...\")`. "
+        'If the goal is achieved or verified, call `goal_complete(reason="achieved", evidence="...")`. '
         "If you're truly blocked on something requiring human input, use `escalate` "
-        "or call `goal_complete(reason=\"blocked\", evidence=\"...\")`. "
+        'or call `goal_complete(reason="blocked", evidence="...")`. '
         "For long-running work, kick it off with `execute_bash(background=True)` or "
         "`spawn_worker(...)` and end your turn — the completion notification will wake you."
     )

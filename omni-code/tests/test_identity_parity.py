@@ -10,9 +10,10 @@ update the literals in that case).
 
 from pathlib import Path
 
-import omni_code
 from omniagents.core.product import load_product_info
 from omniagents.core.project.runtime import load_project
+
+import omni_code
 
 PKG = Path(omni_code.__file__).resolve().parent
 MANIFEST = PKG / "project.yml"

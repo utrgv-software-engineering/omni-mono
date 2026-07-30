@@ -1,10 +1,8 @@
-import asyncio
 import time
 
 import pytest
-
-from omniagents.core.autonomy import next_cron_fire, split_loop_interval_and_prompt
 from omniagents.builtin.server_functions import loop as loop_mod
+from omniagents.core.autonomy import next_cron_fire, split_loop_interval_and_prompt
 
 
 class FakeSession:
@@ -13,6 +11,11 @@ class FakeSession:
         self.variables = {}
         self.pending_notifications = []
         self.current_task = None
+
+
+# Module-level handle set by the service_session fixture (via ``global``)
+# so FakeService methods can reach the current session.
+session: FakeSession
 
 
 class FakeService:

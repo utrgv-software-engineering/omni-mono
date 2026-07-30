@@ -15,11 +15,12 @@ builtin ``session.ensure``) was deleted with the migration.
 
 from pathlib import Path
 
+from omniagents.core.runtime import serve_state as aws
+from omniagents.core.runtime import workspace_info as ws_seams
+
 # Importing the omni context module installs the workspace-info providers
 # (module-level wiring, same as the recap/compaction summarizers).
 import omni_code.agents.omni.context  # noqa: F401
-from omniagents.core.runtime import serve_state as aws
-from omniagents.core.runtime import workspace_info as ws_seams
 
 
 def _omni_spec():

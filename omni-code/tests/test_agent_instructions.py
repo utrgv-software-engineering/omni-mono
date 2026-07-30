@@ -13,7 +13,6 @@ extras (e.g. per-scenario eval variables).
 from pathlib import Path
 
 import yaml
-
 from omniagents.core.utils.jinja_instructions import (
     instruction_search_paths,
     render_template,
@@ -123,8 +122,7 @@ def test_worker_owns_its_prompt_with_coding_delta_inline():
     assert rendered.count("# Additional Instructions") == 1
     assert rendered.count("Do not commit changes to git.") == 1
     assert (
-        rendered.count("list every file you created or changed by absolute path")
-        == 1
+        rendered.count("list every file you created or changed by absolute path") == 1
     )
     # Nothing duplicated from the generic protocol.
     assert rendered.count("Stay focused on the assigned task.") == 1

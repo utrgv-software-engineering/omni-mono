@@ -1,8 +1,9 @@
 import asyncio
+from typing import Any
 
 import agents
-
 from omniagents.core.runtime.bridge import stream_agent
+
 from omni_code.agents.omni.runtime_hooks.error import on_error
 
 
@@ -17,6 +18,7 @@ class FakeSession:
         self.history = []
         self.pending_events = []
         self.current_stream_result = None
+        self.variables: dict[str, Any] = {}
 
     def append_message(self, item):
         self.history.append(item)
@@ -31,8 +33,12 @@ class FakeService:
             return None
         return await on_error(service=self, event=event, **kwargs)
 
-    async def server_call(self, function: str, args=None, session_id: str | None = None):
-        self.calls.append({"function": function, "args": args, "session_id": session_id})
+    async def server_call(
+        self, function: str, args=None, session_id: str | None = None
+    ):
+        self.calls.append(
+            {"function": function, "args": args, "session_id": session_id}
+        )
 
 
 class FakeContextError(Exception):
@@ -47,6 +53,7 @@ class FakeLiteLLMContextError(Exception):
 
 class FakeLiteLLMProxyContextError(Exception):
     """Mimics the actual LiteLLM proxy error: code="400", real error buried in message."""
+
     def __init__(self):
         super().__init__("error code: 400")
         self.body = {
@@ -93,7 +100,9 @@ def test_stream_agent_triggers_compact_and_retries(monkeypatch):
     result = asyncio.run(run())
     assert calls["count"] == 2
     assert result is not None
-    assert service.calls == [{"function": "compact", "args": {}, "session_id": "sess-1"}]
+    assert service.calls == [
+        {"function": "compact", "args": {}, "session_id": "sess-1"}
+    ]
     assert [item.get("role") for item in session.history].count("user") == 1
 
 
@@ -125,7 +134,9 @@ def test_stream_agent_triggers_compact_for_litellm_proxy_context_error(monkeypat
 
     asyncio.run(run())
     assert calls["count"] == 2
-    assert service.calls == [{"function": "compact", "args": {}, "session_id": "sess-1"}]
+    assert service.calls == [
+        {"function": "compact", "args": {}, "session_id": "sess-1"}
+    ]
 
 
 def test_stream_agent_triggers_compact_for_litellm_context_error(monkeypatch):
@@ -157,4 +168,6 @@ def test_stream_agent_triggers_compact_for_litellm_context_error(monkeypatch):
 
     asyncio.run(run())
     assert calls["count"] == 2
-    assert service.calls == [{"function": "compact", "args": {}, "session_id": "sess-1"}]
+    assert service.calls == [
+        {"function": "compact", "args": {}, "session_id": "sess-1"}
+    ]

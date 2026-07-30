@@ -7,11 +7,8 @@ through the real entrypoint and faking the framework's check/upgrade
 primitives.
 """
 
-import pytest
-
 import omniagents.core.updater as fw_updater
 from omniagents.core.updater import UpdateCheckResult
-
 from omniagents.product_cli import main as cli_main
 
 

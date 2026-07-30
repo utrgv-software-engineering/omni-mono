@@ -16,9 +16,7 @@ from omniagents.core.session.summarize import manifest_session_envelope
 
 REPO = Path(__file__).resolve().parents[1]
 MANIFEST = REPO / "omni_code" / "project.yml"
-INSTRUCTIONS = (
-    REPO / "omni_code" / "agents" / "session_summarizer" / "instructions.md"
-)
+INSTRUCTIONS = REPO / "omni_code" / "agents" / "session_summarizer" / "instructions.md"
 
 # Identity keys summarize_session sets itself (out.setdefault(...) in
 # omniagents.core.session.summarize) — present in the prompt's schema so

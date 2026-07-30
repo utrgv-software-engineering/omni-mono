@@ -14,12 +14,11 @@ extensions module at all.
 import sys
 from types import SimpleNamespace
 
-import pytest
-
 import omniagents.cli as fw_cli
 import omniagents.core.models.cli as fw_models_cli
 import omniagents.core.models.governed as fw_governed
 import omniagents.core.updater as fw_updater
+import pytest
 from omniagents.core.models import install_model_catalog
 from omniagents.core.product import product_info
 from omniagents.product_cli import main as cli_main
@@ -32,9 +31,7 @@ def cli_env(monkeypatch):
     calls = []
     store = install_model_catalog(product_info().manifest_path)
     monkeypatch.setattr(store, "load_config", lambda: calls.append("models_load"))
-    monkeypatch.setattr(
-        store, "resolve_model_for_runtime", lambda model_name=None: {}
-    )
+    monkeypatch.setattr(store, "resolve_model_for_runtime", lambda model_name=None: {})
     monkeypatch.setattr(store, "has_models_configured", lambda: True)
     monkeypatch.setattr(
         fw_governed, "apply_platform_model_governance", lambda config_dir=None: None
@@ -42,11 +39,12 @@ def cli_env(monkeypatch):
     monkeypatch.setattr(fw_updater, "maybe_print_update_notice", lambda config: None)
 
     run = {}
-    monkeypatch.setattr(
-        fw_cli,
-        "main",
-        lambda: (calls.append("run"), run.update({"argv": list(sys.argv)})),
-    )
+
+    def fake_run():
+        calls.append("run")
+        run.update({"argv": list(sys.argv)})
+
+    monkeypatch.setattr(fw_cli, "main", fake_run)
     return SimpleNamespace(calls=calls, run=run, monkeypatch=monkeypatch)
 
 

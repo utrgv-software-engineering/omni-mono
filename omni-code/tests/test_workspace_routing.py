@@ -24,16 +24,14 @@ in-memory job registry remains process-local.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 from typing import Any, List, Tuple
 
+import omniagents.builtin.tools.bash_tool as bash_tool
 import pytest
 from agents.tool import ToolContext
 from agents.usage import Usage
-
-import importlib
-
-import omniagents.builtin.tools.bash_tool as bash_tool
 
 # import_module: the package re-exports the tool object under the same
 # name as its module, so a plain ``import ... as`` would bind the
@@ -43,8 +41,8 @@ conversion_tools = importlib.import_module(
 )
 import omniagents.builtin.tools.notebook_tools as notebook_tools
 import omniagents.core.workers.isolation as worker_isolation
-from omniagents.core.workers import serve_worker_sources
 from omniagents.builtin.tools import _bash_jobs
+from omniagents.core.workers import serve_worker_sources
 from omniagents.workspace import (
     ExecResult,
     Workspace,
@@ -412,7 +410,11 @@ def test_worker_worktree_ready_checks_git_sources_not_manifest_root(monkeypatch)
         "omniagents.core.runtime.serve_state.get_sources",
         lambda: [
             {"kind": "local-git", "mountName": "api", "path": "/host/api"},
-            {"kind": "git-remote", "mountName": "web", "repoUrl": "https://example.com/web.git"},
+            {
+                "kind": "git-remote",
+                "mountName": "web",
+                "repoUrl": "https://example.com/web.git",
+            },
         ],
     )
 
@@ -435,7 +437,9 @@ def test_create_worker_worktree_for_sources_preserves_mount_layout(monkeypatch):
     async def exec_with_missing_scratch(command: Any, **kwargs: Any) -> ExecResult:
         fake._record("exec", command, **kwargs)
         if isinstance(command, str) and command.startswith("test -e "):
-            return ExecResult(stdout="", stderr="", exit_code=1, wall_time_seconds=0.001)
+            return ExecResult(
+                stdout="", stderr="", exit_code=1, wall_time_seconds=0.001
+            )
         return ExecResult(stdout="", stderr="", exit_code=0, wall_time_seconds=0.001)
 
     fake.exec = exec_with_missing_scratch  # type: ignore[method-assign]
@@ -477,7 +481,9 @@ def test_create_worker_worktree_for_sources_preserves_mount_layout(monkeypatch):
     assert info["sources"][2]["worktree_path"].endswith("/notes")
 
     commands = [call[1][0] for call in fake.calls if call[0] == "exec"]
-    assert any("mkdir -p /scratch/worktrees/workspace-worker-pip" in c for c in commands)
+    assert any(
+        "mkdir -p /scratch/worktrees/workspace-worker-pip" in c for c in commands
+    )
     assert any("git -C /host/api worktree add" in c for c in commands)
     assert any("git -C /workspace/web worktree add" in c for c in commands)
     assert any("cp -a /host/notes" in c for c in commands)
@@ -521,7 +527,10 @@ def test_remove_worker_worktree_removes_each_source_worktree():
     assert removed is True
     commands = [call[1][0] for call in fake.calls if call[0] == "exec"]
     assert any("git -C /host/api worktree remove --force" in c for c in commands)
-    assert any("git -C /host/api branch -D worker/workspace-worker-pip/api" in c for c in commands)
+    assert any(
+        "git -C /host/api branch -D worker/workspace-worker-pip/api" in c
+        for c in commands
+    )
     assert any("rm -rf /scratch/worktrees/workspace-worker-pip" in c for c in commands)
 
 
@@ -600,7 +609,9 @@ def test_read_job_log_falls_back_to_local_registered_job_log_on_root_mismatch(tm
     assert size == len(log_text.encode("utf-8"))
 
 
-def test_read_job_log_reports_missing_local_registered_job_log_after_root_mismatch(tmp_path):
+def test_read_job_log_reports_missing_local_registered_job_log_after_root_mismatch(
+    tmp_path,
+):
     job_id = "bash-missing"
     log_path = tmp_path / ".omniagents" / "jobs" / f"{job_id}.log"
     fake = _RootMismatchWorkspace(root="/other-root")

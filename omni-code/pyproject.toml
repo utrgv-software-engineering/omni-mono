@@ -24,7 +24,42 @@ dev = [
     "pytest-asyncio>=1.0",
     "setuptools",  # tests/test_packaging.py imports setuptools
     "pip",  # tests/test_packaging.py shells out to `python -m pip wheel`
+    "black>=26.5",
+    "ruff>=0.16",
+    "mypy>=2.3",
 ]
+
+# ── Quality gates ─────────────────────────────────────────────────────
+# evaluations/fixtures/ holds eval fixture workspaces — deliberately
+# imperfect code the agent operates on during scenarios. It is test
+# material, not product code, so all three tools skip it.
+
+[tool.black]
+line-length = 88
+# Explicit floor from requires-python; without this black infers every
+# version through py315 and warns when run under an older interpreter.
+target-version = ["py310", "py311", "py312", "py313"]
+extend-exclude = "/evaluations/fixtures/"
+
+[tool.ruff]
+line-length = 88
+extend-exclude = ["evaluations/fixtures"]
+
+[tool.ruff.lint]
+# Pragmatic starter set: pyflakes + pycodestyle errors + import sorting.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately import after runtime setup calls (e.g.
+# install_model_catalog) — E402 is the pattern, not an accident.
+"tests/*" = ["E402"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["omni_code", "tests", "evaluations/measures.py"]
+check_untyped_defs = true
+# omniagents and other fury-hosted deps ship without stubs/py.typed.
+ignore_missing_imports = true
 
 [project.scripts]
 # Console scripts are the framework's generic product entries; they find

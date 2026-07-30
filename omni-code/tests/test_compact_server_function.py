@@ -107,7 +107,11 @@ def test_compactor_agent_owns_the_checkpoint_summary_prompt():
     from omniagents.core.config.loader import load_agent_spec_from_yaml
 
     agent_yml = (
-        Path(__file__).parent.parent / "omni_code" / "agents" / "compactor" / "agent.yml"
+        Path(__file__).parent.parent
+        / "omni_code"
+        / "agents"
+        / "compactor"
+        / "agent.yml"
     )
     spec = load_agent_spec_from_yaml(str(agent_yml))
     text = spec.get_agent_instructions()

@@ -23,14 +23,16 @@ from __future__ import annotations
 
 import asyncio
 import time
-import subprocess
 from pathlib import Path
 
 import pytest
-
-import omniagents.builtin.tools.bash_tool as bash_tool
 from omniagents.builtin.server_functions import bash_jobs as bj
-from omniagents.builtin.tools._bash_jobs import get_registry, Job, log_path_for, new_job_id
+from omniagents.builtin.tools._bash_jobs import (
+    Job,
+    get_registry,
+    log_path_for,
+    new_job_id,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -78,8 +80,9 @@ def _make_service():
     """Construct a real AgentService and register the bash_jobs.* server
     functions the way the loader would for the omni-code agent."""
     from unittest.mock import Mock
-    from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
+
     from omniagents.core.agents.service import AgentService
+    from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 
     spec = Mock(spec=AgentSpec)
     spec.name = "t"
@@ -139,9 +142,10 @@ def _make_service():
 async def _spawn_quick_job_async(tmp_path: Path, session_id: str | None) -> str:
     """Spawn a real bg job through the workspace.spawn path that the
     migrated ``execute_bash(background=True)`` uses. Returns the job_id."""
-    from omniagents import workspace as _ws
     import asyncio as _asyncio
     import shlex as _shlex
+
+    from omniagents import workspace as _ws
     from omniagents.builtin.tools._bash_jobs import _watch_job
 
     job_id = new_job_id()
@@ -198,14 +202,14 @@ def test_registry_unified_under_real_discovery_flow():
     so both bindings of ``get_registry`` resolve to the same module
     global no matter which import path reaches it.
     """
-    import omniagents.builtin.server_functions as _builtin_sfs
-    import omniagents.builtin.tools as _builtin_tools
     from pathlib import Path as _Path
 
-    from omniagents.core.tools.discovery import discover_functions_in_dir
+    import omniagents.builtin.server_functions as _builtin_sfs
+    import omniagents.builtin.tools as _builtin_tools
     from omniagents.core.server_functions.discovery import (
         discover_server_functions_in_dir,
     )
+    from omniagents.core.tools.discovery import discover_functions_in_dir
 
     repo_root = _Path(__file__).resolve().parents[1]
     builtin_tools_dir = _Path(_builtin_tools.__file__).parent

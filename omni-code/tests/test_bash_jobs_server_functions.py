@@ -9,15 +9,12 @@ fields for unknown jobs).
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 
-import pytest
-
 import omniagents.builtin.tools.bash_tool as bash_tool
+import pytest
 from omniagents.builtin.server_functions import bash_jobs as bj
 from omniagents.builtin.tools._bash_jobs import get_registry
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

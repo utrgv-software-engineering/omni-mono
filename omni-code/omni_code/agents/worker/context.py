@@ -12,7 +12,7 @@ variables) pass through untouched and render via the template's
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from omniagents import context_factory
 
@@ -20,5 +20,5 @@ from omni_code.agents.omni.context import build_coding_context as _build_coding_
 
 
 @context_factory
-def build_worker_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
+def build_worker_context(variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     return _build_coding_context(variables)

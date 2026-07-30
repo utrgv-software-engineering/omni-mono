@@ -1,7 +1,6 @@
 import os
 
 import pytest
-
 from omniagents.core.models import install_model_catalog
 from omniagents.core.product import product_info
 from omniagents.core.runtime import slash_agents
@@ -22,13 +21,15 @@ async def run_init_agent(max_turns: int = 1000) -> str:
 
 
 @pytest.mark.asyncio
-async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, tmp_path):
+async def test_run_init_agent_uses_model_provider_and_restores_env(
+    monkeypatch, tmp_path
+):
     from omniagents.core.models import model_store
 
     models = model_store()
-    import omniagents.core.models as models_mod
-    import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
+    import omniagents.core.config.loader as loader
+    import omniagents.core.models as models_mod
     from agents import Runner
 
     # resolve_model_runtime is the framework's now; it reads the store
@@ -52,9 +53,19 @@ async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, 
             self.model_name = None
             self.model_settings = None
 
-    monkeypatch.setattr(loader, "load_agent_spec_from_yaml", lambda *_args, **_kwargs: FakeSpec())
+    monkeypatch.setattr(
+        loader, "load_agent_spec_from_yaml", lambda *_args, **_kwargs: FakeSpec()
+    )
 
-    async def fake_build_agent(*, settings, mcp_servers, spec, session=None, approval_callback=None, _loading_stack=None):
+    async def fake_build_agent(
+        *,
+        settings,
+        mcp_servers,
+        spec,
+        session=None,
+        approval_callback=None,
+        _loading_stack=None,
+    ):
         captured["spec"] = spec
         return object()
 
@@ -62,12 +73,18 @@ async def test_run_init_agent_uses_model_provider_and_restores_env(monkeypatch, 
 
     dummy_provider = object()
 
-    monkeypatch.setattr(models_mod, "provider_from_runtime", lambda _runtime: (dummy_provider, {"OPENAI_API_KEY": "sk-temp"}))
+    monkeypatch.setattr(
+        models_mod,
+        "provider_from_runtime",
+        lambda _runtime: (dummy_provider, {"OPENAI_API_KEY": "sk-temp"}),
+    )
 
     prior = os.environ.get("OPENAI_API_KEY")
     os.environ["OPENAI_API_KEY"] = "sk-original"
 
-    def fake_run_streamed(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
+    def fake_run_streamed(
+        _agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs
+    ):
         assert run_config is not None
         assert run_config.model_provider is dummy_provider
         assert os.environ.get("OPENAI_API_KEY") == "sk-temp"
@@ -116,9 +133,9 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
     from omniagents.core.models import model_store
 
     models = model_store()
-    import omniagents.core.models as models_mod
-    import omniagents.core.config.loader as loader
     import omniagents.core.agents.builder as builder
+    import omniagents.core.config.loader as loader
+    import omniagents.core.models as models_mod
     from agents import Runner
 
     monkeypatch.setattr(
@@ -137,7 +154,13 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
     )
 
     async def fake_build_agent(
-        *, settings, mcp_servers, spec, session=None, approval_callback=None, _loading_stack=None
+        *,
+        settings,
+        mcp_servers,
+        spec,
+        session=None,
+        approval_callback=None,
+        _loading_stack=None,
     ):
         return object()
 
@@ -148,7 +171,9 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
 
     captured: dict = {}
 
-    def fake_run_streamed(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
+    def fake_run_streamed(
+        _agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs
+    ):
         captured["context"] = context
 
         class FakeResult:
@@ -171,9 +196,9 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
 
     await run_init_agent(max_turns=5)
 
-    assert captured["context"] is not None, (
-        "Runner.run was called without context= — workspace_root not propagated"
-    )
+    assert (
+        captured["context"] is not None
+    ), "Runner.run was called without context= — workspace_root not propagated"
     assert isinstance(captured["context"], dict)
     assert captured["context"].get("workspace_root") == str(tmp_path), (
         f"workspace_root mismatch: got {captured['context'].get('workspace_root')!r}, "
@@ -182,9 +207,7 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
 
 
 @pytest.mark.asyncio
-async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
-    monkeypatch, tmp_path
-):
+async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(monkeypatch, tmp_path):
     """If $PWD is unset, the slash command should anchor workspace_root
     to Path.cwd() rather than passing None (which would raise
     WorkspaceRootRequiredError downstream when init_agent's apply_patch
@@ -192,11 +215,11 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
     from omniagents.core.models import model_store
 
     models = model_store()
-    import omniagents.core.models as models_mod
-    import omniagents.core.config.loader as loader
+
     import omniagents.core.agents.builder as builder
+    import omniagents.core.config.loader as loader
+    import omniagents.core.models as models_mod
     from agents import Runner
-    from pathlib import Path
 
     monkeypatch.setattr(
         models,
@@ -214,7 +237,13 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
     )
 
     async def fake_build_agent(
-        *, settings, mcp_servers, spec, session=None, approval_callback=None, _loading_stack=None
+        *,
+        settings,
+        mcp_servers,
+        spec,
+        session=None,
+        approval_callback=None,
+        _loading_stack=None,
     ):
         return object()
 
@@ -225,7 +254,9 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(
 
     captured: dict = {}
 
-    def fake_run_streamed(_agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs):
+    def fake_run_streamed(
+        _agent, _input, *, context=None, max_turns=10, run_config=None, **_kwargs
+    ):
         captured["context"] = context
 
         class FakeResult:

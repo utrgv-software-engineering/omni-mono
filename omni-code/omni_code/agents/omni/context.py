@@ -99,13 +99,26 @@ def build_available_skills_block(variables: Dict[str, Any]) -> str:
     return _fw_block(skill_roots(workspace_root))
 
 
-_SKIP_DIRS = frozenset({
-    ".git", ".hg", ".svn",
-    "node_modules", "__pycache__", ".venv", "venv",
-    ".tox", ".mypy_cache", ".pytest_cache",
-    "dist", "build", ".next", ".nuxt",
-    "target", ".cargo",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        "dist",
+        "build",
+        ".next",
+        ".nuxt",
+        "target",
+        ".cargo",
+    }
+)
 
 _MAX_WALK_DEPTH = 5
 
@@ -126,10 +139,7 @@ def discover_agents_md(start_dir: str) -> List[str]:
             dirs.clear()
             continue
 
-        dirs[:] = [
-            d for d in dirs
-            if d not in _SKIP_DIRS and not d.startswith(".")
-        ]
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
 
         if "AGENTS.md" in files:
             found.append(os.path.join(root, "AGENTS.md"))
@@ -168,7 +178,7 @@ def _source_local_path(source: Dict[str, Any]) -> Optional[str]:
         return path
 
 
-def format_agents_md_block(variables: Dict[str, Any] = None) -> str:
+def format_agents_md_block(variables: Optional[Dict[str, Any]] = None) -> str:
     """Format AGENTS.md references and workspace-source descriptors into
     an instruction block.
 
@@ -221,12 +231,12 @@ def format_agents_md_block(variables: Dict[str, Any] = None) -> str:
         for src in sources:
             kind = src.get("kind") or "unknown"
             mount = src.get("mountName") or ""
-            path = src.get("path")
+            src_path = src.get("path")
             repo_url = src.get("repoUrl")
             ref = src.get("ref")
             attrs = [f'kind="{kind}"', f'mount="{mount}"']
-            if isinstance(path, str) and path.strip():
-                resolved = _source_local_path(src) or path
+            if isinstance(src_path, str) and src_path.strip():
+                resolved = _source_local_path(src) or src_path
                 attrs.append(f'path="{resolved}"')
             if isinstance(repo_url, str) and repo_url.strip():
                 attrs.append(f'repo="{repo_url}"')
@@ -239,14 +249,16 @@ def format_agents_md_block(variables: Dict[str, Any] = None) -> str:
         parts.append("\n<agents_md_files>")
         for path in agents_paths:
             scope = os.path.dirname(path)
-            parts.append(f"\n<file>\n<location>{path}</location>\n<scope>{scope}</scope>\n</file>")
+            parts.append(
+                f"\n<file>\n<location>{path}</location>\n<scope>{scope}</scope>\n</file>"
+            )
         parts.append("\n</agents_md_files>\n")
 
     return "".join(parts)
 
 
 @context_factory
-def build_coding_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
+def build_coding_context(variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Build the instruction context for the coding agent.
 
@@ -273,7 +285,7 @@ def build_coding_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
 
 
 @model_config_resolver
-def resolve_default_model() -> Dict[str, Any]:
+def resolve_default_model() -> Optional[Dict[str, Any]]:
     """
     Resolve the default model configuration.
 

@@ -6,7 +6,6 @@ from the session context, since omni-code relies on it for the host
 execution target."""
 
 import pytest
-
 from omniagents.builtin.server_functions import terminal as terminal_mod
 
 
@@ -15,7 +14,9 @@ class FakeTerminalManager:
         self.created = []
         self.closed = []
 
-    async def create_terminal(self, session_id, *, shell=None, cwd=None, cols=None, rows=None):
+    async def create_terminal(
+        self, session_id, *, shell=None, cwd=None, cols=None, rows=None
+    ):
         self.created.append(
             {
                 "session_id": session_id,

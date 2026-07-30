@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-
 from omniagents.builtin.server_functions import goal as goal_mod
 
 

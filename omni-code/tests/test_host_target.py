@@ -13,12 +13,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from omniagents.core.runtime import serve_harness as serve_cli
 
 # Product identity resolves via the framework's entry-point discovery.
 from omniagents.core.sandbox.profiles import (
     TerminalSpec,
+)
+from omniagents.core.sandbox.profiles import (
     resolve_product_profile as resolve_profile,
 )
 from omniagents.rpc.terminal_backends import (
@@ -26,7 +27,6 @@ from omniagents.rpc.terminal_backends import (
     PtyOpenError,
     SessionPtyBackend,
 )
-
 
 # --------------------------------------------------------------------------
 # Fakes
@@ -156,9 +156,10 @@ async def test_fs_list_dir_browses_container_when_sandboxed():
     # fs_list_dir is the framework builtin; importing the omni context
     # installs the providers that surface omni serve's published state
     # (serve_state) to it.
-    import omni_code.agents.omni.context  # noqa: F401
     import omniagents.builtin.server_functions.workspace_info as fsmod
     from omniagents.core.runtime import serve_state as aws
+
+    import omni_code.agents.omni.context  # noqa: F401
 
     class _SdkEntry:
         def __init__(self, name, is_dir):

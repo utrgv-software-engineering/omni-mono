@@ -7,17 +7,19 @@ Jinja2 instruction templates.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from omniagents import context_factory
-from omniagents import model_config_resolver
-from omniagents import realtime_settings_resolver
+from omniagents import (
+    context_factory,
+    model_config_resolver,
+    realtime_settings_resolver,
+)
 
 from omni_code.agents.omni.context import build_coding_context
 
 
 @context_factory
-def build_voice_context(variables: Dict[str, Any] = None) -> Dict[str, Any]:
+def build_voice_context(variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The voice agent shares the coding agent's context (date/time,
     AGENTS.md discovery, available skills) — same factory, no drift."""
     return build_coding_context(variables)

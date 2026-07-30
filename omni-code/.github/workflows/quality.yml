@@ -1,0 +1,43 @@
+name: Quality Gates
+
+# Format (black), lint (ruff), typecheck (mypy), and tests (pytest).
+# Tool configuration lives in pyproject.toml; the same four commands are
+# documented in AGENTS.md and must pass locally before pushing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        # omniagents is hosted on the public Gemfury index; keep PyPI as
+        # the primary index (see README "End-User Install" notes).
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . --extra-index-url https://pypi.fury.io/ericmichael/
+          pip install --group dev
+
+      - name: Format (black)
+        run: black --check .
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Typecheck (mypy)
+        run: mypy
+
+      - name: Tests (pytest)
+        run: pytest tests/
