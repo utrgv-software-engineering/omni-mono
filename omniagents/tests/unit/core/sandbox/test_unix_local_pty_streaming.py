@@ -4,8 +4,8 @@ Uses the real ExtendedUnixLocalSandboxSession against a temp workspace
 — no docker required. Verifies:
 
 * A long-running interactive shell delivers output via streaming.
-* :meth:`pty_resize` propagates into the shell (``tput cols`` reports
-  the new width).
+* :meth:`pty_resize` propagates into the shell (``stty size`` reports
+  the new kernel PTY winsize).
 * Cancelling the iterator unregisters the consumer cleanly so further
   consumers still work.
 """
@@ -88,10 +88,11 @@ async def test_pty_resize_propagates_to_shell():
             assert pid is not None
 
             await inner.pty_resize(pid, cols=132, rows=43)
-            text = await _run_in_shell(inner, pid, "tput cols && tput lines")
-            # tput emits the dimensions on stdout — they're whatever
-            # the kernel says the PTY now is. Allow some flexibility in
-            # how the shell echoes vs prints them.
+            # `stty size` reads the kernel's PTY winsize directly via
+            # ioctl — unlike `tput` it needs no $TERM/terminfo, so the
+            # assert holds in TERM-less environments (CI) too. Output is
+            # "<rows> <cols>".
+            text = await _run_in_shell(inner, pid, "stty size")
             assert "132" in text
             assert "43" in text
 

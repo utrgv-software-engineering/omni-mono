@@ -65,10 +65,12 @@ async def test_session_pty_backend_round_trip():
             text = await _read_until(manager, descriptor, "SESSION_PASS")
             assert "SESSION_PASS" in text
 
-            # Resize and verify
+            # Resize and verify. `stty size` reads the kernel PTY winsize
+            # via ioctl — no $TERM/terminfo required, so this holds in
+            # TERM-less environments (CI) too. Output is "<rows> <cols>".
             await manager.resize(descriptor, 132, 43)
             await asyncio.sleep(0.05)  # coalesce window
-            await manager.write_input(descriptor, b"tput cols\n")
+            await manager.write_input(descriptor, b"stty size\n")
             text = await _read_until(manager, descriptor, "132")
             assert "132" in text
 

@@ -17,7 +17,11 @@ jobs:
         with:
           node-version: '20'
       - name: Install dependencies
-        run: python -m pip install '.[dev,server]'
+        # sandbox-docker: serve_harness's 3-tier docker resume path imports
+        # the docker SDK (no daemon needed — tests use fakes).
+        # sandbox-aci: the lifecycle-session mixin invariant covers
+        # AciSandboxClient, and the aci unit suites unskip with it.
+        run: python -m pip install '.[dev,server,sandbox-docker,sandbox-aci]'
       - name: Install web dependencies
         working-directory: omniagents/studio/server/web
         run: npm ci

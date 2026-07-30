@@ -296,6 +296,31 @@ def _no_ambient_product_discovery(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Pytest fixture: process-global product identity must not leak across tests
+# ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _isolate_product_identity():
+    """``load_project()`` installs a manifest's ``product:`` section as the
+    process-wide default identity (``omniagents.core.product``). Without
+    per-test restoration, any test that loads a project fixture carrying a
+    ``product:`` section (e.g. the studio ``basic_project`` fixture, slug
+    ``studio_fixture``) silently rewrites how every later test derives
+    slugs, dot-dirs, and config paths — skill roots become
+    ``.studio_fixture/skills`` instead of ``.omniagents/skills``. Snapshot
+    the identity globals before each test and restore them after, so a
+    test only ever sees identity state it installed itself."""
+    from omniagents.core import product
+
+    current = product._current
+    explicitly_set = product._explicitly_set
+    discovered = product._discovered
+    yield
+    product._current = current
+    product._explicitly_set = explicitly_set
+    product._discovered = discovered
+
+
+# ---------------------------------------------------------------------------
 # Pytest fixture: temporary history DB for tests
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
