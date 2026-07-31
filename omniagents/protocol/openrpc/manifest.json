@@ -6,7 +6,7 @@
     "omniagents/backends/ink/tui/src/protocol/generated/gui-v1.ts",
     "omniagents/backends/web/ui/src/protocol/generated/schema-types.ts"
   ],
-  "canonical_sha256": "618958b217f339bac9b54163b9c926a71e26449d6d25a22744634ab19661f85a",
+  "canonical_sha256": "d2736325a0e2856a988e4de06c184f799b7ba786ef13a7fc38eb08d1976276eb",
   "generator": "scripts.protocol.generate_gui_protocol",
   "generator_version": "1",
   "protocol_version": "1.0.0",

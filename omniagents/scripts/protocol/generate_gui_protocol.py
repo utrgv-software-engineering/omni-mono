@@ -70,6 +70,26 @@ REQUIRED_FIELDS = {
     "account_refresh": ("provider",),
     "account_select": ("provider",),
     "account_changed": ("provider", "reason"),
+    "fs_watch": ("session_id", "path"),
+    "fs_unwatch": ("session_id", "watch_id"),
+    "fs_list": ("session_id", "path"),
+    "fs_stat": ("session_id", "path"),
+    "fs_download_open": ("session_id", "path"),
+    "fs_download_read": ("session_id", "transfer_id"),
+    "fs_download_close": ("session_id", "transfer_id"),
+    "fs_upload_open": ("session_id", "path", "size"),
+    "fs_upload_chunk": ("session_id", "transfer_id", "offset", "data"),
+    "fs_upload_commit": ("session_id", "transfer_id"),
+    "fs_upload_abort": ("session_id", "transfer_id"),
+    "fs_events": ("session_id", "watch_id", "events"),
+    "fs_rescan_required": ("session_id", "watch_id", "reason"),
+    "fs_transfer_progress": (
+        "session_id",
+        "transfer_id",
+        "direction",
+        "transferred",
+        "total",
+    ),
     "run_started": ("run_id", "session_id"),
     "run_status": ("run_id", "session_id", "status", "message"),
     "tool_called": ("run_id", "session_id", "tool", "input", "call_id"),
@@ -182,6 +202,10 @@ OPTIONAL_FIELDS = {
     "account_login_complete": ("code",),
     "account_usage": ("provider",),
     "account_changed": ("account",),
+    "fs_watch": ("recursive", "poll_interval_ms"),
+    "fs_list": ("recursive",),
+    "fs_download_read": ("offset", "length"),
+    "fs_upload_open": ("sha256", "overwrite"),
 }
 
 # Every server→client notification carries the optional replay envelope.
@@ -194,6 +218,7 @@ for _operation in OPERATIONS:
 ARRAY_FIELDS = {
     "disable_mcp_servers",
     "disable_tools",
+    "events",
     "functions",
     "items",
     "options",
@@ -204,7 +229,9 @@ BOOLEAN_FIELDS = {
     "include_archived",
     "include_hidden",
     "ok",
+    "overwrite",
     "persist_response",
+    "recursive",
     "redact",
     "trigger_run",
 }
@@ -212,14 +239,18 @@ INTEGER_FIELDS = {
     "after_seq",
     "attempt",
     "depth",
+    "length",
     "limit",
     "max_input_tokens",
     "max_output_tokens",
     "next_delay",
     "offset",
+    "poll_interval_ms",
     "seq",
+    "size",
     "timeout_ms",
     "total",
+    "transferred",
     "turn",
     "version",
 }
@@ -291,6 +322,17 @@ RESULT_TYPES = {
     "account_usage": ("dict[str, Any]", "Record<string, unknown>"),
     "account_select": ("dict[str, Any]", "Record<string, unknown>"),
     "elicitation_response": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_watch": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_unwatch": ("bool", "boolean"),
+    "fs_list": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_stat": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_download_open": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_download_read": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_download_close": ("bool", "boolean"),
+    "fs_upload_open": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_upload_chunk": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_upload_commit": ("dict[str, Any]", "Record<string, unknown>"),
+    "fs_upload_abort": ("bool", "boolean"),
 }
 
 IDENTITY_SCHEMA = {
@@ -545,6 +587,63 @@ PROTOCOL_ERRORS = {
             },
         },
     },
+    "FsPathInvalid": {
+        "code": -32060,
+        "message": "Filesystem path invalid",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind"],
+            "properties": {
+                "kind": {"const": "fs_path_invalid"},
+                "path": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
+    "FsNotFound": {
+        "code": -32061,
+        "message": "File or directory not found",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind"],
+            "properties": {
+                "kind": {"const": "fs_not_found"},
+                "path": {"type": "string"},
+                "session_id": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
+    "FsTransferInvalid": {
+        "code": -32062,
+        "message": "Filesystem transfer invalid",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind"],
+            "properties": {
+                "kind": {"const": "fs_transfer_invalid"},
+                "transfer_id": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
+    "FsWatchInvalid": {
+        "code": -32063,
+        "message": "Filesystem watch invalid",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind"],
+            "properties": {
+                "kind": {"const": "fs_watch_invalid"},
+                "watch_id": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
     "TransportOverloaded": {
         "code": -32020,
         "message": "Transport overloaded",
@@ -664,6 +763,15 @@ def build_openrpc() -> dict:
                         {"$ref": "#/components/errors/AccountCapabilityUnsupported"},
                         {"$ref": "#/components/errors/AccountStateInvalid"},
                         {"$ref": "#/components/errors/AccountAuthFailed"},
+                    ]
+                )
+            if operation.name.startswith("fs_"):
+                entry["errors"].extend(
+                    [
+                        {"$ref": "#/components/errors/FsPathInvalid"},
+                        {"$ref": "#/components/errors/FsNotFound"},
+                        {"$ref": "#/components/errors/FsTransferInvalid"},
+                        {"$ref": "#/components/errors/FsWatchInvalid"},
                     ]
                 )
         if operation.kind == "correlated_notification":

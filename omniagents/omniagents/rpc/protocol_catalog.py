@@ -70,6 +70,22 @@ EXPERIMENTAL_REQUESTS = (
     "get_config",
     "validate_config",
     "write_config",
+    # Workspace filesystem watch & chunked transfer (tkt_B5fXOZHf08K1).
+    # Experimental on entry per the governance default for brand-new
+    # surfaces: clients opt in via initialize.capabilities
+    # .experimental_operations until the shape has proven itself in the
+    # desktop client.
+    "fs_watch",
+    "fs_unwatch",
+    "fs_list",
+    "fs_stat",
+    "fs_download_open",
+    "fs_download_read",
+    "fs_download_close",
+    "fs_upload_open",
+    "fs_upload_chunk",
+    "fs_upload_commit",
+    "fs_upload_abort",
 )
 
 STABLE_NOTIFICATIONS = (
@@ -112,6 +128,12 @@ CORRELATED_NOTIFICATIONS = {
 EXPERIMENTAL_NOTIFICATIONS = (
     "session_forked",
     "session_variables_changed",
+    # Filesystem watch/transfer events (tkt_B5fXOZHf08K1). Per-connection
+    # and never journaled: after a reconnect clients re-subscribe
+    # (fs_watch) and rescan (fs_list) instead of replaying.
+    "fs_events",
+    "fs_rescan_required",
+    "fs_transfer_progress",
 )
 
 OPERATIONS = tuple(

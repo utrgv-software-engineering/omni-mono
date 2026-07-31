@@ -25,6 +25,12 @@ _CRITICAL_EVENTS = frozenset(
         "client_request",
         "client_request_resolved",
         "realtime_error",
+        # Filesystem watch frames are already coalesced and bounded by
+        # FilesystemManager (overflow becomes one fs_rescan_required), so
+        # what does get emitted must not be silently dropped — losing a
+        # diff or a rescan signal breaks incremental sync invisibly.
+        "fs_events",
+        "fs_rescan_required",
     }
 )
 
@@ -60,6 +66,14 @@ def classify_event(
                 payload.get("message_id"),
             ),
             event_class="text_delta",
+        )
+    if method == "fs_transfer_progress":
+        # Progress is replaceable state per transfer; key on the transfer
+        # so two concurrent transfers never coalesce into each other.
+        return EventQueuePolicy(
+            policy=QueuePolicy.COALESCE_LATEST,
+            key=(method, payload.get("session_id"), payload.get("transfer_id")),
+            event_class="replacement_state",
         )
     if method in _LATEST_EVENTS:
         return EventQueuePolicy(

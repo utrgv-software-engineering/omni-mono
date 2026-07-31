@@ -50,6 +50,9 @@ GUI_OPTIONAL_NOTIFICATIONS = frozenset(
         "session_forked",
         "session_variables_changed",
         "account_changed",
+        "fs_events",
+        "fs_rescan_required",
+        "fs_transfer_progress",
     }
 )
 # Request params that carry credential material. Redacted from every
@@ -291,8 +294,17 @@ class JsonRpcEndpoint:
         from omniagents.core.agents.elicitation import ElicitationError
         from omniagents.core.providers.accounts import AccountRpcError
         from omniagents.core.session.event_log import ResyncRequiredError
+        from omniagents.rpc.filesystem import FilesystemRpcError
 
-        if isinstance(exc, (ResyncRequiredError, AccountRpcError, ElicitationError)):
+        if isinstance(
+            exc,
+            (
+                ResyncRequiredError,
+                AccountRpcError,
+                ElicitationError,
+                FilesystemRpcError,
+            ),
+        ):
             await channel.send_error(call_id, exc.code, str(exc), exc.data)
             return
         data: Dict[str, Any] = {"type": exc.__class__.__name__, "message": str(exc)}

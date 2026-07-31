@@ -1187,6 +1187,144 @@ logs, or persisted history. Snapshots are built from an identity/quota
 allowlist; `api_key`/`code` request params are masked in server debug
 logging; account events bypass the session journal entirely.
 
+## Workspace Filesystem Watch & Transfer (`fs_*` methods, experimental)
+
+GUI clients keep a session's workspace view synchronized without polling
+and move large files without oversized JSON frames. All `fs_*` operations
+are **experimental**: clients opt in through
+`initialize.capabilities.experimental_operations` (requests *and* the
+three notifications), and un-granted calls fail with `-32013`.
+
+Every wire path is **workspace-relative POSIX** and canonicalized
+server-side before any I/O: absolute paths, drive letters, backslashes,
+NUL bytes, and `..` traversal above the root are rejected with `-32060
+fs_path_invalid`. On host workspaces the resolved path (symlinks
+included) must stay inside the workspace root, so symlink escapes are
+also `-32060`. Every method names a `session_id` and is authorized by
+session ownership — another principal's workspace answers `-32014`
+before any filesystem access happens.
+
+### Substrate model
+
+File access rides the same session/sandbox boundary the terminal uses:
+the server resolves each session to a `Workspace` (host filesystem by
+default; products that host the workspace inside a sandbox container or
+remote backend install `AgentService.workspace_factory`). Watching is an
+honest server-side polling scanner with coalesced diffs; the `fs_watch`
+result reports the mechanism:
+
+| mechanism        | substrate            | snapshot source                        | default poll |
+|------------------|----------------------|----------------------------------------|--------------|
+| `poll:host`      | host filesystem      | `os.scandir` walk in a worker thread   | 1000 ms      |
+| `poll:workspace` | sandbox / remote     | recursive `Workspace.list_dir` calls   | 2000 ms      |
+
+Symlinked directories are recorded but never descended into, so links
+cannot pull foreign trees into a watch.
+
+### Watching
+
+- `fs_watch {session_id, path, recursive?, poll_interval_ms?}` →
+  `{watch_id, session_id, path, recursive, mechanism, poll_interval_ms}`.
+  The baseline snapshot is taken at subscribe time; only subsequent
+  changes produce events. Poll interval is clamped to 200–30000 ms.
+- `fs_unwatch {session_id, watch_id}` → `true`.
+- `fs_events {session_id, watch_id, events}` — server notification. Each
+  event is `{type: "created"|"modified"|"deleted", path, entry_type:
+  "file"|"directory"}`. Diffs are coalesced per poll cycle (at most one
+  event per path per cycle) and batched into frames of ≤128 events.
+- `fs_rescan_required {session_id, watch_id, reason}` — overflow signal:
+  - `reason: "event_overflow"` — a single cycle changed more than 512
+    paths. The events are **not** delivered; the client relists
+    (`fs_list`) the watched path. The watch keeps running.
+  - `reason: "scan_limit_exceeded"` — the tree grew past the watchable
+    limit (25 000 entries). The watch terminates; re-subscribe to a
+    narrower path (per-directory non-recursive watches scale to any
+    repo, mirroring how file-explorer UIs watch expanded folders).
+
+Watches are **per-connection state, never journaled** in the durable
+replay log (`resume_session` will not replay them). Rationale: change
+events are high-volume, coalescible, and fully derivable from the tree
+itself, so replaying them after a gap would be dishonest. On reconnect a
+client re-subscribes with `fs_watch` and rescans with `fs_list` — the
+same recovery as `fs_rescan_required`.
+
+Flood posture (#292): coalescing plus the overflow signal bound every
+frame, so a build touching 100k files becomes one `fs_rescan_required`,
+never a burst that overflows the transport queue or kills the connection
+with `TransportOverloadedError`.
+
+### Listing
+
+- `fs_list {session_id, path, recursive?}` →
+  `{path, entries: [{path, type, size, mtime}], truncated}` — the rescan
+  primitive after `fs_rescan_required` and after reconnect. `truncated`
+  is set when the listing hit the scan limit.
+- `fs_stat {session_id, path}` → `{path, type, size, mtime, mime}`.
+
+### Chunked transfers
+
+Large payloads never ride in a single JSON-RPC frame. Transfers use
+**chunked frames over the existing `/ws` connection** (base64 chunks of
+≤256 KiB, explicit offsets) rather than a side-channel HTTP byte-range
+endpoint. Rationale: the deployed server surface is WebSocket-first —
+the remote proxy mode (`remote_ws_url`) forwards only `/ws*` routes, the
+desktop launcher already tunnels this socket, and terminal streaming set
+the precedent for chunk-over-WS. An HTTP endpoint would need its own
+ticket-auth path (#294) and would not traverse existing proxies.
+
+Downloads are **client-pull** — each chunk is a request/response, so
+flow control is inherent and cancellation is just closing the transfer:
+
+- `fs_download_open {session_id, path}` → `{transfer_id, session_id,
+  path, size, mime, mtime, sha256, chunk_size}`. The server hashes the
+  file at open (one streaming pass); on non-host substrates the content
+  is staged server-side in one substrate read so chunks serve a stable
+  point-in-time view. The path is resolved **once**, here: subsequent
+  chunks come from the file handle this open retained, so a path replaced
+  with an outward-pointing symlink mid-transfer cannot redirect reads
+  outside the workspace root. Files above the transfer limit (512 MiB,
+  the download mirror of the upload cap) are refused with `-32062
+  reason: "size_out_of_range"` before any content is read.
+- `fs_download_read {session_id, transfer_id, offset?, length?}` →
+  `{transfer_id, offset, data, bytes, eof, size}`. Omitting `offset`
+  continues sequentially; passing it resumes after a reconnect.
+- `fs_download_close {session_id, transfer_id}` → `true` (cancel or
+  finish).
+
+Uploads are sequential staged chunks, committed atomically:
+
+- `fs_upload_open {session_id, path, size, sha256?, overwrite?}` →
+  `{transfer_id, session_id, path, chunk_size}`.
+- `fs_upload_chunk {session_id, transfer_id, offset, data}` →
+  `{transfer_id, received, size}`. `offset` must equal the bytes
+  received so far (`-32062 reason: "offset_mismatch"` otherwise), so a
+  lost frame can never corrupt the staged file.
+- `fs_upload_commit {session_id, transfer_id}` → `{path, size, sha256}`.
+  Verifies the declared size and (when supplied) sha256 against the
+  received bytes (`-32062 reason: "checksum_mismatch"`), then moves the
+  staged content into place (`os.replace` on host; one substrate write
+  elsewhere).
+- `fs_upload_abort {session_id, transfer_id}` → `true` — cancellation
+  mid-transfer discards the staging file.
+
+`fs_transfer_progress {session_id, transfer_id, direction, transferred,
+total}` is emitted (throttled) to the owning connection during both
+directions and on completion.
+
+Transfers, like watches, are bound to the creating connection: after a
+reconnect, reopen and resume via `offset`. A transfer id presented from
+another connection — even by the same user — answers `-32062
+fs_transfer_invalid`.
+
+### Errors
+
+| code   | kind                  | meaning                                              |
+|--------|-----------------------|------------------------------------------------------|
+| -32060 | `fs_path_invalid`     | absolute/escaping/malformed path, symlink escape     |
+| -32061 | `fs_not_found`        | missing file/directory, unknown session workspace    |
+| -32062 | `fs_transfer_invalid` | unknown transfer, bad offset/length, size/checksum mismatch, payload above the 512 MiB transfer cap, target exists, transfer limit |
+| -32063 | `fs_watch_invalid`    | unknown watch, watch limit, tree too large           |
+
 ## Authentication
 
 Optional token-based authentication via URL query parameter:

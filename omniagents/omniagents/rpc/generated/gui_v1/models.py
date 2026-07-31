@@ -538,6 +538,126 @@ class WriteConfigResult(RootModel[dict[str, Any]]):
     pass
 
 
+class FsWatchParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    path: str
+    recursive: bool | None = None
+    poll_interval_ms: int | None = None
+
+
+class FsWatchResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsUnwatchParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    watch_id: str
+
+
+class FsUnwatchResult(RootModel[bool]):
+    pass
+
+
+class FsListParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    path: str
+    recursive: bool | None = None
+
+
+class FsListResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsStatParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    path: str
+
+
+class FsStatResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsDownloadOpenParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    path: str
+
+
+class FsDownloadOpenResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsDownloadReadParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    transfer_id: str
+    offset: int | None = None
+    length: int | None = None
+
+
+class FsDownloadReadResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsDownloadCloseParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    transfer_id: str
+
+
+class FsDownloadCloseResult(RootModel[bool]):
+    pass
+
+
+class FsUploadOpenParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    path: str
+    size: int
+    sha256: str | None = None
+    overwrite: bool | None = None
+
+
+class FsUploadOpenResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsUploadChunkParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    transfer_id: str
+    offset: int
+    data: str
+
+
+class FsUploadChunkResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsUploadCommitParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    transfer_id: str
+
+
+class FsUploadCommitResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsUploadAbortParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    transfer_id: str
+
+
+class FsUploadAbortResult(RootModel[bool]):
+    pass
+
+
 class InitializedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pass
@@ -763,6 +883,35 @@ class SessionVariablesChangedParams(BaseModel):
     stream_id: str | None = None
 
 
+class FsEventsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    watch_id: str
+    events: list[Any]
+    seq: int | None = None
+    stream_id: str | None = None
+
+
+class FsRescanRequiredParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    watch_id: str
+    reason: str
+    seq: int | None = None
+    stream_id: str | None = None
+
+
+class FsTransferProgressParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    transfer_id: str
+    direction: str
+    transferred: int
+    total: int
+    seq: int | None = None
+    stream_id: str | None = None
+
+
 CLIENT_REQUEST_MODELS = {
     "initialize": InitializeParams,
     "start_run": StartRunParams,
@@ -813,6 +962,17 @@ CLIENT_REQUEST_MODELS = {
     "get_config": GetConfigParams,
     "validate_config": ValidateConfigParams,
     "write_config": WriteConfigParams,
+    "fs_watch": FsWatchParams,
+    "fs_unwatch": FsUnwatchParams,
+    "fs_list": FsListParams,
+    "fs_stat": FsStatParams,
+    "fs_download_open": FsDownloadOpenParams,
+    "fs_download_read": FsDownloadReadParams,
+    "fs_download_close": FsDownloadCloseParams,
+    "fs_upload_open": FsUploadOpenParams,
+    "fs_upload_chunk": FsUploadChunkParams,
+    "fs_upload_commit": FsUploadCommitParams,
+    "fs_upload_abort": FsUploadAbortParams,
 }
 CLIENT_RESULT_MODELS = {
     "initialize": InitializeResult,
@@ -864,6 +1024,17 @@ CLIENT_RESULT_MODELS = {
     "get_config": GetConfigResult,
     "validate_config": ValidateConfigResult,
     "write_config": WriteConfigResult,
+    "fs_watch": FsWatchResult,
+    "fs_unwatch": FsUnwatchResult,
+    "fs_list": FsListResult,
+    "fs_stat": FsStatResult,
+    "fs_download_open": FsDownloadOpenResult,
+    "fs_download_read": FsDownloadReadResult,
+    "fs_download_close": FsDownloadCloseResult,
+    "fs_upload_open": FsUploadOpenResult,
+    "fs_upload_chunk": FsUploadChunkResult,
+    "fs_upload_commit": FsUploadCommitResult,
+    "fs_upload_abort": FsUploadAbortResult,
 }
 CLIENT_NOTIFICATION_MODELS = {"initialized": InitializedParams}
 SERVER_NOTIFICATION_MODELS = {
@@ -886,6 +1057,9 @@ SERVER_NOTIFICATION_MODELS = {
     "elicitation_resolved": ElicitationResolvedParams,
     "session_forked": SessionForkedParams,
     "session_variables_changed": SessionVariablesChangedParams,
+    "fs_events": FsEventsParams,
+    "fs_rescan_required": FsRescanRequiredParams,
+    "fs_transfer_progress": FsTransferProgressParams,
 }
 STABLE_REQUESTS = frozenset(
     [
@@ -942,6 +1116,17 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "get_config",
         "validate_config",
         "write_config",
+        "fs_watch",
+        "fs_unwatch",
+        "fs_list",
+        "fs_stat",
+        "fs_download_open",
+        "fs_download_read",
+        "fs_download_close",
+        "fs_upload_open",
+        "fs_upload_chunk",
+        "fs_upload_commit",
+        "fs_upload_abort",
     ]
 )
 STABLE_NOTIFICATIONS = frozenset(
@@ -966,4 +1151,12 @@ STABLE_NOTIFICATIONS = frozenset(
         "elicitation_resolved",
     ]
 )
-EXPERIMENTAL_NOTIFICATIONS = frozenset(["session_forked", "session_variables_changed"])
+EXPERIMENTAL_NOTIFICATIONS = frozenset(
+    [
+        "session_forked",
+        "session_variables_changed",
+        "fs_events",
+        "fs_rescan_required",
+        "fs_transfer_progress",
+    ]
+)

@@ -204,6 +204,60 @@ export interface ValidateConfigParams {
 export interface WriteConfigParams {
   updates: Record<string, unknown>;
 }
+export interface FsWatchParams {
+  session_id: string;
+  path: string;
+  recursive?: boolean;
+  poll_interval_ms?: number;
+}
+export interface FsUnwatchParams {
+  session_id: string;
+  watch_id: string;
+}
+export interface FsListParams {
+  session_id: string;
+  path: string;
+  recursive?: boolean;
+}
+export interface FsStatParams {
+  session_id: string;
+  path: string;
+}
+export interface FsDownloadOpenParams {
+  session_id: string;
+  path: string;
+}
+export interface FsDownloadReadParams {
+  session_id: string;
+  transfer_id: string;
+  offset?: number;
+  length?: number;
+}
+export interface FsDownloadCloseParams {
+  session_id: string;
+  transfer_id: string;
+}
+export interface FsUploadOpenParams {
+  session_id: string;
+  path: string;
+  size: number;
+  sha256?: string;
+  overwrite?: boolean;
+}
+export interface FsUploadChunkParams {
+  session_id: string;
+  transfer_id: string;
+  offset: number;
+  data: string;
+}
+export interface FsUploadCommitParams {
+  session_id: string;
+  transfer_id: string;
+}
+export interface FsUploadAbortParams {
+  session_id: string;
+  transfer_id: string;
+}
 export interface InitializedParams {
 }
 export interface RunStartedParams {
@@ -388,6 +442,29 @@ export interface SessionVariablesChangedParams {
   seq?: number;
   stream_id?: string;
 }
+export interface FsEventsParams {
+  session_id: string;
+  watch_id: string;
+  events: unknown[];
+  seq?: number;
+  stream_id?: string;
+}
+export interface FsRescanRequiredParams {
+  session_id: string;
+  watch_id: string;
+  reason: string;
+  seq?: number;
+  stream_id?: string;
+}
+export interface FsTransferProgressParams {
+  session_id: string;
+  transfer_id: string;
+  direction: string;
+  transferred: number;
+  total: number;
+  seq?: number;
+  stream_id?: string;
+}
 export interface RpcMethodMap {
   "initialize": { params: InitializeParams; result: InitializeResult };
   "start_run": { params: StartRunParams; result: StartRunResult };
@@ -438,6 +515,17 @@ export interface RpcMethodMap {
   "get_config": { params: GetConfigParams; result: Record<string, unknown> };
   "validate_config": { params: ValidateConfigParams; result: Record<string, unknown> };
   "write_config": { params: WriteConfigParams; result: Record<string, unknown> };
+  "fs_watch": { params: FsWatchParams; result: Record<string, unknown> };
+  "fs_unwatch": { params: FsUnwatchParams; result: boolean };
+  "fs_list": { params: FsListParams; result: Record<string, unknown> };
+  "fs_stat": { params: FsStatParams; result: Record<string, unknown> };
+  "fs_download_open": { params: FsDownloadOpenParams; result: Record<string, unknown> };
+  "fs_download_read": { params: FsDownloadReadParams; result: Record<string, unknown> };
+  "fs_download_close": { params: FsDownloadCloseParams; result: boolean };
+  "fs_upload_open": { params: FsUploadOpenParams; result: Record<string, unknown> };
+  "fs_upload_chunk": { params: FsUploadChunkParams; result: Record<string, unknown> };
+  "fs_upload_commit": { params: FsUploadCommitParams; result: Record<string, unknown> };
+  "fs_upload_abort": { params: FsUploadAbortParams; result: boolean };
 }
 export interface RpcNotificationMap {
   "run_started": RunStartedParams;
@@ -459,6 +547,9 @@ export interface RpcNotificationMap {
   "elicitation_resolved": ElicitationResolvedParams;
   "session_forked": SessionForkedParams;
   "session_variables_changed": SessionVariablesChangedParams;
+  "fs_events": FsEventsParams;
+  "fs_rescan_required": FsRescanRequiredParams;
+  "fs_transfer_progress": FsTransferProgressParams;
 }
 export interface RpcClientNotificationMap {
   "initialized": InitializedParams;

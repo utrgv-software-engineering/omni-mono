@@ -267,6 +267,139 @@ class ForkSession(BaseModel):
     session_id: str
 
 
+class FsDownloadClose(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session_id: str
+    transfer_id: str
+
+
+class FsDownloadOpen(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    path: str
+    session_id: str
+
+
+class FsDownloadRead(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    length: int | None = None
+    offset: int | None = None
+    session_id: str
+    transfer_id: str
+
+
+class FsEvents(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    events: list[Any]
+    seq: int | None = None
+    session_id: str
+    stream_id: str | None = None
+    watch_id: str
+
+
+class FsList(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    path: str
+    recursive: bool | None = None
+    session_id: str
+
+
+class FsRescanRequired(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    reason: str
+    seq: int | None = None
+    session_id: str
+    stream_id: str | None = None
+    watch_id: str
+
+
+class FsStat(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    path: str
+    session_id: str
+
+
+class FsTransferProgress(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    direction: str
+    seq: int | None = None
+    session_id: str
+    stream_id: str | None = None
+    total: int
+    transfer_id: str
+    transferred: int
+
+
+class FsUnwatch(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session_id: str
+    watch_id: str
+
+
+class FsUploadAbort(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session_id: str
+    transfer_id: str
+
+
+class FsUploadChunk(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    data: str
+    offset: int
+    session_id: str
+    transfer_id: str
+
+
+class FsUploadCommit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session_id: str
+    transfer_id: str
+
+
+class FsUploadOpen(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    overwrite: bool | None = None
+    path: str
+    session_id: str
+    sha256: str | None = None
+    size: int
+
+
+class FsWatch(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    path: str
+    poll_interval_ms: int | None = None
+    recursive: bool | None = None
+    session_id: str
+
+
 class GetAgentInfo(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -772,6 +905,17 @@ class Model(
         | GetConfig
         | ValidateConfig
         | WriteConfig
+        | FsWatch
+        | FsUnwatch
+        | FsList
+        | FsStat
+        | FsDownloadOpen
+        | FsDownloadRead
+        | FsDownloadClose
+        | FsUploadOpen
+        | FsUploadChunk
+        | FsUploadCommit
+        | FsUploadAbort
         | Initialized
         | RunStarted
         | RunStatus
@@ -792,6 +936,9 @@ class Model(
         | ElicitationResolved
         | SessionForked
         | SessionVariablesChanged
+        | FsEvents
+        | FsRescanRequired
+        | FsTransferProgress
     ]
 ):
     root: (
@@ -844,6 +991,17 @@ class Model(
         | GetConfig
         | ValidateConfig
         | WriteConfig
+        | FsWatch
+        | FsUnwatch
+        | FsList
+        | FsStat
+        | FsDownloadOpen
+        | FsDownloadRead
+        | FsDownloadClose
+        | FsUploadOpen
+        | FsUploadChunk
+        | FsUploadCommit
+        | FsUploadAbort
         | Initialized
         | RunStarted
         | RunStatus
@@ -864,4 +1022,7 @@ class Model(
         | ElicitationResolved
         | SessionForked
         | SessionVariablesChanged
+        | FsEvents
+        | FsRescanRequired
+        | FsTransferProgress
     )

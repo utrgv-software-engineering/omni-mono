@@ -48,6 +48,17 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | GetConfig
   | ValidateConfig
   | WriteConfig
+  | FsWatch
+  | FsUnwatch
+  | FsList
+  | FsStat
+  | FsDownloadOpen
+  | FsDownloadRead
+  | FsDownloadClose
+  | FsUploadOpen
+  | FsUploadChunk
+  | FsUploadCommit
+  | FsUploadAbort
   | Initialized
   | RunStarted
   | RunStatus
@@ -67,7 +78,10 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ElicitationRequested
   | ElicitationResolved
   | SessionForked
-  | SessionVariablesChanged;
+  | SessionVariablesChanged
+  | FsEvents
+  | FsRescanRequired
+  | FsTransferProgress;
 
 export interface Initialize {
   capabilities: Capabilities;
@@ -308,6 +322,60 @@ export interface WriteConfig {
     [k: string]: unknown;
   };
 }
+export interface FsWatch {
+  path: string;
+  poll_interval_ms?: number;
+  recursive?: boolean;
+  session_id: string;
+}
+export interface FsUnwatch {
+  session_id: string;
+  watch_id: string;
+}
+export interface FsList {
+  path: string;
+  recursive?: boolean;
+  session_id: string;
+}
+export interface FsStat {
+  path: string;
+  session_id: string;
+}
+export interface FsDownloadOpen {
+  path: string;
+  session_id: string;
+}
+export interface FsDownloadRead {
+  length?: number;
+  offset?: number;
+  session_id: string;
+  transfer_id: string;
+}
+export interface FsDownloadClose {
+  session_id: string;
+  transfer_id: string;
+}
+export interface FsUploadOpen {
+  overwrite?: boolean;
+  path: string;
+  session_id: string;
+  sha256?: string;
+  size: number;
+}
+export interface FsUploadChunk {
+  data: string;
+  offset: number;
+  session_id: string;
+  transfer_id: string;
+}
+export interface FsUploadCommit {
+  session_id: string;
+  transfer_id: string;
+}
+export interface FsUploadAbort {
+  session_id: string;
+  transfer_id: string;
+}
 export interface Initialized {}
 export interface RunStarted {
   prompt?: string;
@@ -514,4 +582,27 @@ export interface SessionVariablesChanged {
   variables: {
     [k: string]: unknown;
   };
+}
+export interface FsEvents {
+  events: unknown[];
+  seq?: number;
+  session_id: string;
+  stream_id?: string;
+  watch_id: string;
+}
+export interface FsRescanRequired {
+  reason: string;
+  seq?: number;
+  session_id: string;
+  stream_id?: string;
+  watch_id: string;
+}
+export interface FsTransferProgress {
+  direction: string;
+  seq?: number;
+  session_id: string;
+  stream_id?: string;
+  total: number;
+  transfer_id: string;
+  transferred: number;
 }

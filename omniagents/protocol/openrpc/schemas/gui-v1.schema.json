@@ -585,6 +585,316 @@
       "type": "object",
       "x-omni-stability": "experimental"
     },
+    "fs_download_close": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "transfer_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "transfer_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_download_open": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "path"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_download_read": {
+      "additionalProperties": false,
+      "properties": {
+        "length": {
+          "type": "integer"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "transfer_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "transfer_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_events": {
+      "additionalProperties": false,
+      "properties": {
+        "events": {
+          "items": {},
+          "type": "array"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        },
+        "watch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "watch_id",
+        "events"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_list": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "recursive": {
+          "type": "boolean"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "path"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_rescan_required": {
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        },
+        "watch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "watch_id",
+        "reason"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_stat": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "path"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_transfer_progress": {
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "transfer_id": {
+          "type": "string"
+        },
+        "transferred": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "transfer_id",
+        "direction",
+        "transferred",
+        "total"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_unwatch": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "watch_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "watch_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_upload_abort": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "transfer_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "transfer_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_upload_chunk": {
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "transfer_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "transfer_id",
+        "offset",
+        "data"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_upload_commit": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "transfer_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "transfer_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_upload_open": {
+      "additionalProperties": false,
+      "properties": {
+        "overwrite": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "path",
+        "size"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "fs_watch": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "poll_interval_ms": {
+          "type": "integer"
+        },
+        "recursive": {
+          "type": "boolean"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "path"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "get_agent_info": {
       "additionalProperties": false,
       "properties": {},
@@ -1727,6 +2037,39 @@
       "$ref": "#/$defs/write_config"
     },
     {
+      "$ref": "#/$defs/fs_watch"
+    },
+    {
+      "$ref": "#/$defs/fs_unwatch"
+    },
+    {
+      "$ref": "#/$defs/fs_list"
+    },
+    {
+      "$ref": "#/$defs/fs_stat"
+    },
+    {
+      "$ref": "#/$defs/fs_download_open"
+    },
+    {
+      "$ref": "#/$defs/fs_download_read"
+    },
+    {
+      "$ref": "#/$defs/fs_download_close"
+    },
+    {
+      "$ref": "#/$defs/fs_upload_open"
+    },
+    {
+      "$ref": "#/$defs/fs_upload_chunk"
+    },
+    {
+      "$ref": "#/$defs/fs_upload_commit"
+    },
+    {
+      "$ref": "#/$defs/fs_upload_abort"
+    },
+    {
       "$ref": "#/$defs/initialized"
     },
     {
@@ -1785,6 +2128,15 @@
     },
     {
       "$ref": "#/$defs/session_variables_changed"
+    },
+    {
+      "$ref": "#/$defs/fs_events"
+    },
+    {
+      "$ref": "#/$defs/fs_rescan_required"
+    },
+    {
+      "$ref": "#/$defs/fs_transfer_progress"
     }
   ]
 }

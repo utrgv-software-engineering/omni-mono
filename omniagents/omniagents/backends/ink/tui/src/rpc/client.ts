@@ -817,6 +817,139 @@ export class RPCClient extends EventEmitter {
     }>;
   }
 
+  // ----- Workspace filesystem watch & chunked transfer (fs_*, experimental) -----
+
+  async fsWatch(
+    sessionId: string,
+    path: string,
+    opts?: { recursive?: boolean; pollIntervalMs?: number },
+  ): Promise<FsWatchResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, path };
+    if (opts?.recursive !== undefined) params.recursive = opts.recursive;
+    if (opts?.pollIntervalMs !== undefined)
+      params.poll_interval_ms = opts.pollIntervalMs;
+    return this.call(
+      "fs_watch",
+      params as unknown as RpcMethodMap["fs_watch"]["params"],
+    ) as Promise<FsWatchResult>;
+  }
+
+  async fsUnwatch(sessionId: string, watchId: string): Promise<boolean> {
+    return this.call("fs_unwatch", {
+      session_id: sessionId,
+      watch_id: watchId,
+    });
+  }
+
+  async fsList(
+    sessionId: string,
+    path: string,
+    recursive = false,
+  ): Promise<FsListResult> {
+    return this.call("fs_list", {
+      session_id: sessionId,
+      path,
+      recursive,
+    }) as Promise<FsListResult>;
+  }
+
+  async fsStat(sessionId: string, path: string): Promise<FsStatResult> {
+    return this.call("fs_stat", {
+      session_id: sessionId,
+      path,
+    }) as Promise<FsStatResult>;
+  }
+
+  async fsDownloadOpen(
+    sessionId: string,
+    path: string,
+  ): Promise<FsDownloadOpenResult> {
+    return this.call("fs_download_open", {
+      session_id: sessionId,
+      path,
+    }) as Promise<FsDownloadOpenResult>;
+  }
+
+  async fsDownloadRead(
+    sessionId: string,
+    transferId: string,
+    opts?: { offset?: number; length?: number },
+  ): Promise<FsDownloadChunk> {
+    const params: Record<string, unknown> = {
+      session_id: sessionId,
+      transfer_id: transferId,
+    };
+    if (opts?.offset !== undefined) params.offset = opts.offset;
+    if (opts?.length !== undefined) params.length = opts.length;
+    return this.call(
+      "fs_download_read",
+      params as unknown as RpcMethodMap["fs_download_read"]["params"],
+    ) as Promise<FsDownloadChunk>;
+  }
+
+  async fsDownloadClose(
+    sessionId: string,
+    transferId: string,
+  ): Promise<boolean> {
+    return this.call("fs_download_close", {
+      session_id: sessionId,
+      transfer_id: transferId,
+    });
+  }
+
+  async fsUploadOpen(
+    sessionId: string,
+    path: string,
+    size: number,
+    opts?: { sha256?: string; overwrite?: boolean },
+  ): Promise<FsUploadOpenResult> {
+    const params: Record<string, unknown> = {
+      session_id: sessionId,
+      path,
+      size,
+    };
+    if (opts?.sha256 !== undefined) params.sha256 = opts.sha256;
+    if (opts?.overwrite !== undefined) params.overwrite = opts.overwrite;
+    return this.call(
+      "fs_upload_open",
+      params as unknown as RpcMethodMap["fs_upload_open"]["params"],
+    ) as Promise<FsUploadOpenResult>;
+  }
+
+  async fsUploadChunk(
+    sessionId: string,
+    transferId: string,
+    offset: number,
+    data: string,
+  ): Promise<FsUploadChunkResult> {
+    return this.call("fs_upload_chunk", {
+      session_id: sessionId,
+      transfer_id: transferId,
+      offset,
+      data,
+    }) as Promise<FsUploadChunkResult>;
+  }
+
+  async fsUploadCommit(
+    sessionId: string,
+    transferId: string,
+  ): Promise<FsUploadCommitResult> {
+    return this.call("fs_upload_commit", {
+      session_id: sessionId,
+      transfer_id: transferId,
+    }) as Promise<FsUploadCommitResult>;
+  }
+
+  async fsUploadAbort(
+    sessionId: string,
+    transferId: string,
+  ): Promise<boolean> {
+    return this.call("fs_upload_abort", {
+      session_id: sessionId,
+      transfer_id: transferId,
+    });
+  }
+
   /**
    * Make a generic RPC call
    */
@@ -1197,4 +1330,103 @@ export type AccountChangedPayload = {
   provider: string;
   reason: "login" | "logout" | "refresh" | "select";
   account?: AccountSnapshot;
+};
+
+/** One entry in fs_list results and fs_events payloads. */
+export type FsEntryType = "file" | "directory";
+
+export type FsWatchResult = {
+  watch_id: string;
+  session_id: string;
+  path: string;
+  recursive: boolean;
+  mechanism: "poll:host" | "poll:workspace";
+  poll_interval_ms: number;
+};
+
+export type FsListEntry = {
+  path: string;
+  type: FsEntryType;
+  size: number | null;
+  mtime: number | null;
+};
+
+export type FsListResult = {
+  path: string;
+  entries: FsListEntry[];
+  truncated: boolean;
+};
+
+export type FsStatResult = {
+  path: string;
+  type: FsEntryType;
+  size: number | null;
+  mtime: number | null;
+  mime?: string;
+};
+
+export type FsDownloadOpenResult = {
+  transfer_id: string;
+  session_id: string;
+  path: string;
+  size: number;
+  mime: string;
+  mtime: number | null;
+  sha256: string;
+  chunk_size: number;
+};
+
+export type FsDownloadChunk = {
+  transfer_id: string;
+  offset: number;
+  data: string;
+  bytes: number;
+  eof: boolean;
+  size: number;
+};
+
+export type FsUploadOpenResult = {
+  transfer_id: string;
+  session_id: string;
+  path: string;
+  chunk_size: number;
+};
+
+export type FsUploadChunkResult = {
+  transfer_id: string;
+  received: number;
+  size: number;
+};
+
+export type FsUploadCommitResult = {
+  path: string;
+  size: number;
+  sha256: string;
+};
+
+/** Payload of the `fs_events` server notification. */
+export type FsEventsPayload = {
+  session_id: string;
+  watch_id: string;
+  events: Array<{
+    type: "created" | "modified" | "deleted";
+    path: string;
+    entry_type: FsEntryType;
+  }>;
+};
+
+/** Payload of the `fs_rescan_required` server notification. */
+export type FsRescanRequiredPayload = {
+  session_id: string;
+  watch_id: string;
+  reason: "event_overflow" | "scan_limit_exceeded";
+};
+
+/** Payload of the `fs_transfer_progress` server notification. */
+export type FsTransferProgressPayload = {
+  session_id: string;
+  transfer_id: string;
+  direction: "download" | "upload";
+  transferred: number;
+  total: number;
 };

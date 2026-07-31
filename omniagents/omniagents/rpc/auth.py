@@ -283,6 +283,23 @@ RESOURCE_SCOPED_METHODS = frozenset(
         # session gates who may change its model / reasoning effort.
         "set_session_model",
         "set_session_reasoning",
+        # Workspace filesystem watch & transfer (tkt_B5fXOZHf08K1): the
+        # workspace belongs to a session's sandbox, so every fs_* method
+        # names a session_id and is gated on session ownership — watching
+        # or transferring another user's workspace is refused (-32014).
+        # Watch/transfer ids are additionally bound to the creating
+        # connection inside FilesystemManager.
+        "fs_watch",
+        "fs_unwatch",
+        "fs_list",
+        "fs_stat",
+        "fs_download_open",
+        "fs_download_read",
+        "fs_download_close",
+        "fs_upload_open",
+        "fs_upload_chunk",
+        "fs_upload_commit",
+        "fs_upload_abort",
     }
 )
 

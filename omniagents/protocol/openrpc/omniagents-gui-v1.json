@@ -245,6 +245,97 @@
         },
         "message": "Elicitation not found"
       },
+      "FsNotFound": {
+        "code": -32061,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fs_not_found"
+            },
+            "path": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "session_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "File or directory not found"
+      },
+      "FsPathInvalid": {
+        "code": -32060,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fs_path_invalid"
+            },
+            "path": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "Filesystem path invalid"
+      },
+      "FsTransferInvalid": {
+        "code": -32062,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fs_transfer_invalid"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "transfer_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "Filesystem transfer invalid"
+      },
+      "FsWatchInvalid": {
+        "code": -32063,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fs_watch_invalid"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "watch_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "Filesystem watch invalid"
+      },
       "InitializationRequired": {
         "code": -32010,
         "data": {
@@ -3096,6 +3187,791 @@
       "x-omni-stability": "experimental"
     },
     {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_watch",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_watch/properties/session_id"
+          }
+        },
+        {
+          "name": "path",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_watch/properties/path"
+          }
+        },
+        {
+          "name": "recursive",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_watch/properties/recursive"
+          }
+        },
+        {
+          "name": "poll_interval_ms",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_watch/properties/poll_interval_ms"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_watch_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_watch",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_watch"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_unwatch",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_unwatch/properties/session_id"
+          }
+        },
+        {
+          "name": "watch_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_unwatch/properties/watch_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_unwatch_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_unwatch",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_unwatch"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_list/properties/session_id"
+          }
+        },
+        {
+          "name": "path",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_list/properties/path"
+          }
+        },
+        {
+          "name": "recursive",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_list/properties/recursive"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_list_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_list",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_list"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_stat",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_stat/properties/session_id"
+          }
+        },
+        {
+          "name": "path",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_stat/properties/path"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_stat_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_stat",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_stat"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_download_open",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_open/properties/session_id"
+          }
+        },
+        {
+          "name": "path",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_open/properties/path"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_download_open_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_download_open",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_open"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_download_read",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_read/properties/session_id"
+          }
+        },
+        {
+          "name": "transfer_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_read/properties/transfer_id"
+          }
+        },
+        {
+          "name": "offset",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_read/properties/offset"
+          }
+        },
+        {
+          "name": "length",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_read/properties/length"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_download_read_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_download_read",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_read"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_download_close",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_close/properties/session_id"
+          }
+        },
+        {
+          "name": "transfer_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_close/properties/transfer_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_download_close_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_download_close",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_download_close"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_upload_open",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_open/properties/session_id"
+          }
+        },
+        {
+          "name": "path",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_open/properties/path"
+          }
+        },
+        {
+          "name": "size",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_open/properties/size"
+          }
+        },
+        {
+          "name": "sha256",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_open/properties/sha256"
+          }
+        },
+        {
+          "name": "overwrite",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_open/properties/overwrite"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_upload_open_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_upload_open",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_open"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_upload_chunk",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_chunk/properties/session_id"
+          }
+        },
+        {
+          "name": "transfer_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_chunk/properties/transfer_id"
+          }
+        },
+        {
+          "name": "offset",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_chunk/properties/offset"
+          }
+        },
+        {
+          "name": "data",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_chunk/properties/data"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_upload_chunk_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_upload_chunk",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_chunk"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_upload_commit",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_commit/properties/session_id"
+          }
+        },
+        {
+          "name": "transfer_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_commit/properties/transfer_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_upload_commit_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_upload_commit",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_commit"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/FsPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsNotFound"
+        },
+        {
+          "$ref": "#/components/errors/FsTransferInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsWatchInvalid"
+        }
+      ],
+      "name": "fs_upload_abort",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_abort/properties/session_id"
+          }
+        },
+        {
+          "name": "transfer_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_abort/properties/transfer_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_upload_abort_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_upload_abort",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_abort"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
       "name": "initialized",
       "paramStructure": "by-name",
       "params": [],
@@ -4487,6 +5363,182 @@
       "x-omni-kind": "notification",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/session_variables_changed"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "name": "fs_events",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_events/properties/session_id"
+          }
+        },
+        {
+          "name": "watch_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_events/properties/watch_id"
+          }
+        },
+        {
+          "name": "events",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_events/properties/events"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_events/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_events/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_events_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_events",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_events"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "name": "fs_rescan_required",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_rescan_required/properties/session_id"
+          }
+        },
+        {
+          "name": "watch_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_rescan_required/properties/watch_id"
+          }
+        },
+        {
+          "name": "reason",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_rescan_required/properties/reason"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_rescan_required/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_rescan_required/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_rescan_required_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_rescan_required",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_rescan_required"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "name": "fs_transfer_progress",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress/properties/session_id"
+          }
+        },
+        {
+          "name": "transfer_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress/properties/transfer_id"
+          }
+        },
+        {
+          "name": "direction",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress/properties/direction"
+          }
+        },
+        {
+          "name": "transferred",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress/properties/transferred"
+          }
+        },
+        {
+          "name": "total",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress/properties/total"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "fs_transfer_progress_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation fs_transfer_progress",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress"
       },
       "x-omni-stability": "experimental"
     }

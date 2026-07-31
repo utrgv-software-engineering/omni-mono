@@ -6,7 +6,10 @@
   "notifications": {
     "experimental": [
       "session_forked",
-      "session_variables_changed"
+      "session_variables_changed",
+      "fs_events",
+      "fs_rescan_required",
+      "fs_transfer_progress"
     ],
     "stable": [
       "initialized",
@@ -43,7 +46,18 @@
       "export_session",
       "get_config",
       "validate_config",
-      "write_config"
+      "write_config",
+      "fs_watch",
+      "fs_unwatch",
+      "fs_list",
+      "fs_stat",
+      "fs_download_open",
+      "fs_download_read",
+      "fs_download_close",
+      "fs_upload_open",
+      "fs_upload_chunk",
+      "fs_upload_commit",
+      "fs_upload_abort"
     ],
     "stable": [
       "initialize",

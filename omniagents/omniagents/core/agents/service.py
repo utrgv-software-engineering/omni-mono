@@ -53,6 +53,9 @@ from omniagents.rpc.auth import (
     AuthorizationPolicy,
 )
 from omniagents.rpc.auth import _OwnerUnknown as _OwnerUnknownType
+from omniagents.rpc.filesystem import FilesystemManager, FsNotFoundError
+from omniagents.workspace.base import Workspace
+from omniagents.workspace.host import HostWorkspace
 from omniagents.core.providers.accounts import AccountManager
 from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.core.agents.specs import AgentSpec
@@ -529,6 +532,16 @@ class AgentService(RpcMethodsBase):
         self._connected_channels: list[Any] = []
         # Provider account & usage state behind the ``account_*`` RPCs.
         self.accounts = AccountManager()
+        # Workspace filesystem watch/transfer state behind the ``fs_*``
+        # RPCs. Products that host the workspace on a non-host substrate
+        # (sandbox containers, remote backends) install ``workspace_factory``
+        # so fs access rides the same session/sandbox boundary the terminal
+        # does; the default resolves the session's workspace_root on the
+        # host filesystem.
+        self.workspace_factory: Callable[[str], Workspace | None] | None = None
+        self.filesystem = FilesystemManager(
+            workspace_resolver=self._filesystem_workspace
+        )
 
         # Register audit backend if enabled in security config
         try:
@@ -4552,6 +4565,7 @@ class AgentService(RpcMethodsBase):
         manager = getattr(self, "terminal_manager", None)
         if manager is not None:
             await manager.cleanup_session(session_id)
+        self.filesystem.cleanup_session(session_id)
         return ok
 
     async def delete_session(self, session_id: str) -> bool:  # noqa: D401
@@ -4597,6 +4611,7 @@ class AgentService(RpcMethodsBase):
         manager = getattr(self, "terminal_manager", None)
         if manager is not None:
             await manager.cleanup_session(session_id)
+        self.filesystem.cleanup_session(session_id)
 
         # Delete from database
         from omniagents.core.session import history_db
@@ -4846,6 +4861,9 @@ class AgentService(RpcMethodsBase):
             self._connected_channels.remove(channel)
         except ValueError:
             pass
+        # Watches and transfers are per-connection: a dropped socket tears
+        # them down (clients re-subscribe and rescan after reconnecting).
+        self.filesystem.cleanup_channel(channel)
 
     async def _broadcast_account_changed(
         self, provider: str, reason: str, account: Optional[dict] = None
@@ -4921,6 +4939,137 @@ class AgentService(RpcMethodsBase):
         result = self.accounts.select(provider)
         await self._broadcast_account_changed(provider, "select", result.get("account"))
         return result
+
+    # ------------------------------------------------------------------
+    #  Workspace filesystem watch & transfer (``fs_*`` RPCs).
+    #
+    #  Thin wrappers over ``self.filesystem`` (FilesystemManager): the
+    #  manager owns watches, transfers, canonical-path confinement and
+    #  typed -3206x errors; this layer owns workspace resolution and
+    #  channel binding. Authorization: every method names a session_id and
+    #  is RESOURCE_SCOPED (see omniagents/rpc/auth.py) — another
+    #  principal's workspace is refused with -32014 before any I/O.
+    #  Notifications (fs_events/fs_rescan_required/fs_transfer_progress)
+    #  are per-connection and deliberately NOT journaled in the replay
+    #  log: on reconnect, clients re-subscribe and rescan.
+    # ------------------------------------------------------------------
+
+    async def _filesystem_workspace(self, session_id: str) -> "Workspace":
+        """Resolve the Workspace behind *session_id* for ``fs_*`` calls.
+
+        A configured ``workspace_factory`` wins (products route this at
+        the sandbox/remote substrate); the default anchors a confined
+        ``HostWorkspace`` at the session's resolved ``workspace_root``.
+        """
+        factory = self.workspace_factory
+        if factory is not None:
+            workspace = factory(session_id)
+            if workspace is not None:
+                return workspace
+        sess = self.get_session(session_id)
+        if sess is None:
+            raise FsNotFoundError("unknown session", session_id=session_id)
+        root = self._ws_root_from(getattr(sess, "context", None)) or self._ws_root_from(
+            getattr(sess, "variables", None)
+        )
+        if not root:
+            root = self._default_workspace_root
+        if not root:
+            raise FsNotFoundError(
+                "session has no workspace root", session_id=session_id
+            )
+        return HostWorkspace(root=root)
+
+    async def fs_watch(
+        self,
+        session_id: str,
+        path: str,
+        recursive: bool | None = None,
+        poll_interval_ms: int | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.filesystem.watch(
+            session_id,
+            path,
+            recursive=True if recursive is None else recursive,
+            poll_interval_ms=poll_interval_ms,
+            channel=self.channel,
+        )
+
+    async def fs_unwatch(self, session_id: str, watch_id: str) -> bool:  # noqa: D401
+        return await self.filesystem.unwatch(session_id, watch_id, channel=self.channel)
+
+    async def fs_list(
+        self, session_id: str, path: str, recursive: bool = False
+    ) -> dict:  # noqa: D401
+        return await self.filesystem.list(session_id, path, recursive=recursive)
+
+    async def fs_stat(self, session_id: str, path: str) -> dict:  # noqa: D401
+        return await self.filesystem.stat(session_id, path)
+
+    async def fs_download_open(self, session_id: str, path: str) -> dict:  # noqa: D401
+        return await self.filesystem.download_open(
+            session_id, path, channel=self.channel
+        )
+
+    async def fs_download_read(
+        self,
+        session_id: str,
+        transfer_id: str,
+        offset: int | None = None,
+        length: int | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.filesystem.download_read(
+            session_id,
+            transfer_id,
+            offset=offset,
+            length=length,
+            channel=self.channel,
+        )
+
+    async def fs_download_close(
+        self, session_id: str, transfer_id: str
+    ) -> bool:  # noqa: D401
+        return await self.filesystem.download_close(
+            session_id, transfer_id, channel=self.channel
+        )
+
+    async def fs_upload_open(
+        self,
+        session_id: str,
+        path: str,
+        size: int,
+        sha256: str | None = None,
+        overwrite: bool = False,
+    ) -> dict:  # noqa: D401
+        return await self.filesystem.upload_open(
+            session_id,
+            path,
+            size,
+            sha256=sha256,
+            overwrite=overwrite,
+            channel=self.channel,
+        )
+
+    async def fs_upload_chunk(
+        self, session_id: str, transfer_id: str, offset: int, data: str
+    ) -> dict:  # noqa: D401
+        return await self.filesystem.upload_chunk(
+            session_id, transfer_id, offset, data, channel=self.channel
+        )
+
+    async def fs_upload_commit(
+        self, session_id: str, transfer_id: str
+    ) -> dict:  # noqa: D401
+        return await self.filesystem.upload_commit(
+            session_id, transfer_id, channel=self.channel
+        )
+
+    async def fs_upload_abort(
+        self, session_id: str, transfer_id: str
+    ) -> bool:  # noqa: D401
+        return await self.filesystem.upload_abort(
+            session_id, transfer_id, channel=self.channel
+        )
 
     # (Removed) get_model_info: model metadata is now sent inline with usage events
 
