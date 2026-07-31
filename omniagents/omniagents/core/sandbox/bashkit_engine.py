@@ -191,6 +191,7 @@ class BashkitSandboxSession(BaseSandboxSession):
         self._mirrored = bool(git or network)
         # VFS paths at the last sync, so deletions in the shell reach the mirror.
         self._vfs_seen: set = set()
+        self._mirrored_names: set = set()
 
         if bash is None:
             from bashkit import Bash
@@ -221,6 +222,7 @@ class BashkitSandboxSession(BaseSandboxSession):
                 )
             if builtins:
                 bash_kwargs["custom_builtins"] = builtins
+                self._mirrored_names = set(builtins)
             bash_kwargs.setdefault("python", True)
             bash = Bash(**bash_kwargs)
         elif git or network:
@@ -327,6 +329,20 @@ class BashkitSandboxSession(BaseSandboxSession):
         for separator, statement in statements:
             if separator == "&&" and code != 0:
                 break
+
+            # Only statements that actually invoke a mirroring builtin pay for
+            # the sync. It copies the whole workspace both ways, so doing it
+            # around every statement made each command after a real `git clone`
+            # copy thousands of files twice - enough to trip the execution
+            # watchdog. Skipping is safe: a plain `echo > f` lands in the VFS,
+            # and the next git statement mirrors it in.
+            if not self._uses_mirrored_builtin(statement):
+                result = await self._run(statement)
+                out += result.stdout
+                err += result.stderr
+                code = result.exit_code
+                continue
+
             baseline = _mirror_in(
                 self.bash.fs(),
                 str(self.state.manifest.root),
@@ -343,6 +359,11 @@ class BashkitSandboxSession(BaseSandboxSession):
             code = result.exit_code
 
         return ExecResult(stdout=out.encode(), stderr=err.encode(), exit_code=code)
+
+    def _uses_mirrored_builtin(self, statement: str) -> bool:
+        """Whether a statement invokes a builtin that reads the mirror."""
+        words = statement.replace("|", " ").replace("(", " ").split()
+        return any(word in self._mirrored_names for word in words)
 
     async def _run(self, script: str):
         """Run one script through bashkit, async where the build has it."""
