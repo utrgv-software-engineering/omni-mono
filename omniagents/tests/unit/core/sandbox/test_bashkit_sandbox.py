@@ -22,8 +22,12 @@ SALES = "region,units\nwest,120\neast,340\nwest,80\n"
 
 
 @pytest.fixture
-def sandbox():
-    return BashkitSandboxSession(files={"/workspace/sales.csv": SALES})
+def sandbox(tmp_path):
+    # The workspace is a real directory now, mounted into the shell, so tests
+    # need a writable root - "/workspace" is not creatable off Pyodide.
+    return BashkitSandboxSession(
+        root=str(tmp_path / "workspace"), files={"sales.csv": SALES}
+    )
 
 
 # ------------------------------- lifecycle ------------------------------- #
@@ -42,13 +46,13 @@ async def test_starts_in_the_manifest_root(sandbox):
     # that starts anywhere else silently resolves them in the wrong place.
     await sandbox.start()
     result = await sandbox.exec("pwd")
-    assert result.stdout.decode().strip() == "/workspace"
+    assert result.stdout.decode().strip() == sandbox.state.manifest.root
 
 
 @pytest.mark.asyncio
 async def test_provisioned_files_are_present(sandbox):
     await sandbox.start()
-    assert (await sandbox.read(Path("/workspace/sales.csv"))).read().decode() == SALES
+    assert (await sandbox.read(Path(sandbox.state.manifest.root) / "sales.csv")).read().decode() == SALES
 
 
 # --------------------------------- exec ---------------------------------- #
@@ -94,8 +98,8 @@ async def test_exec_returns_bytes(sandbox):
 @pytest.mark.asyncio
 async def test_write_creates_parent_directories(sandbox):
     await sandbox.start()
-    await sandbox.write(Path("/workspace/deep/nested/file.txt"), io.BytesIO(b"hi\n"))
-    assert (await sandbox.read(Path("/workspace/deep/nested/file.txt"))).read() == b"hi\n"
+    await sandbox.write(Path(sandbox.state.manifest.root, "deep/nested/file.txt"), io.BytesIO(b"hi\n"))
+    assert (await sandbox.read(Path(sandbox.state.manifest.root, "deep/nested/file.txt"))).read() == b"hi\n"
 
 
 @pytest.mark.asyncio
@@ -103,21 +107,21 @@ async def test_ls_reports_full_paths_and_kinds(sandbox):
     # Matches parse_ls_la's convention (full path, no . or ..) so callers
     # written against other backends behave the same here.
     await sandbox.start()
-    await sandbox.mkdir("/workspace/subdir", parents=True)
-    entries = {e.path: e for e in await sandbox.ls("/workspace")}
-    assert set(entries) == {"/workspace/sales.csv", "/workspace/subdir"}
-    assert entries["/workspace/sales.csv"].is_dir() is False
-    assert entries["/workspace/subdir"].is_dir() is True
-    assert entries["/workspace/sales.csv"].size == len(SALES)
+    await sandbox.mkdir(f"{sandbox.state.manifest.root}/subdir", parents=True)
+    entries = {e.path: e for e in await sandbox.ls(sandbox.state.manifest.root)}
+    assert set(entries) == {f"{sandbox.state.manifest.root}/sales.csv", f"{sandbox.state.manifest.root}/subdir"}
+    assert entries[f"{sandbox.state.manifest.root}/sales.csv"].is_dir() is False
+    assert entries[f"{sandbox.state.manifest.root}/subdir"].is_dir() is True
+    assert entries[f"{sandbox.state.manifest.root}/sales.csv"].size == len(SALES)
 
 
 @pytest.mark.asyncio
 async def test_mkdir_and_rm(sandbox):
     await sandbox.start()
-    await sandbox.mkdir("/workspace/tmp", parents=True)
-    assert "/workspace/tmp" in [e.path for e in await sandbox.ls("/workspace")]
-    await sandbox.rm("/workspace/tmp", recursive=True)
-    assert "/workspace/tmp" not in [e.path for e in await sandbox.ls("/workspace")]
+    await sandbox.mkdir(f"{sandbox.state.manifest.root}/tmp", parents=True)
+    assert f"{sandbox.state.manifest.root}/tmp" in [e.path for e in await sandbox.ls(sandbox.state.manifest.root)]
+    await sandbox.rm(f"{sandbox.state.manifest.root}/tmp", recursive=True)
+    assert f"{sandbox.state.manifest.root}/tmp" not in [e.path for e in await sandbox.ls(sandbox.state.manifest.root)]
 
 
 # ------------------------------- snapshots -------------------------------- #
@@ -125,15 +129,17 @@ async def test_mkdir_and_rm(sandbox):
 
 @pytest.mark.asyncio
 async def test_snapshot_and_restore(sandbox):
+    # Files live on the real filesystem now, so the workspace is snapshotted
+    # here rather than by bash.snapshot(), which only holds shell state.
     await sandbox.start()
-    saved = sandbox.bash.snapshot()
+    saved = sandbox.snapshot_workspace()
     await sandbox.exec("echo mutated > volatile.txt")
-    assert "/workspace/volatile.txt" in [e.path for e in await sandbox.ls("/workspace")]
+    assert f"{sandbox.state.manifest.root}/volatile.txt" in [e.path for e in await sandbox.ls(sandbox.state.manifest.root)]
 
-    sandbox.bash.restore_snapshot(saved)
-    paths = [e.path for e in await sandbox.ls("/workspace")]
-    assert "/workspace/volatile.txt" not in paths
-    assert "/workspace/sales.csv" in paths
+    sandbox.restore_workspace(saved)
+    paths = [e.path for e in await sandbox.ls(sandbox.state.manifest.root)]
+    assert f"{sandbox.state.manifest.root}/volatile.txt" not in paths
+    assert f"{sandbox.state.manifest.root}/sales.csv" in paths
 
 
 # --------------------- the workspace layer on top of it ------------------- #

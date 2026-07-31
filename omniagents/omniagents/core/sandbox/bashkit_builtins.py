@@ -16,13 +16,10 @@ can be a thin front end over a Python library that already works in Pyodide:
   links, trees and blobs a student can actually inspect.
 * ``curl`` → httpx, which is how the platform already reaches the model.
 
-**How git bridges filesystems.** dulwich works against ordinary paths, so it
-cannot see bashkit's VFS. Each invocation therefore mirrors the workspace
-subtree out to the host/Emscripten filesystem, runs dulwich there, and
-mirrors the result — ``.git`` included — back in. Deletions propagate both
-ways, so ``git checkout`` dropping a file is reflected in the shell. The
-copies are bounded by the workspace, which for a lesson is a handful of small
-files.
+**One filesystem.** The sandbox mounts the workspace directory into bashkit
+(``FileSystem.real``), so the shell, Python and dulwich all operate on the
+same bytes. These builtins therefore open files directly — there is nothing
+to bridge, and no second copy to drift out of step.
 
 Two behaviours deliberately differ from bashkit's built-in network handling:
 a blocked URL is a loud error rather than a silent empty result (bashkit
@@ -41,124 +38,6 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 _DIR_TYPES = {"directory", "dir"}
 
 DEFAULT_AUTHOR = "Student <student@example.com>"
-
-
-# --------------------------------------------------------------------------
-# VFS <-> real filesystem mirroring
-# --------------------------------------------------------------------------
-
-
-def _vfs_entries(fs: Any, root: str) -> List[tuple]:
-    """``(path, is_dir)`` for everything under ``root`` in the bashkit VFS."""
-    found: List[tuple] = []
-    pending = [root]
-    while pending:
-        current = pending.pop()
-        try:
-            entries = fs.read_dir(current)
-        except Exception:
-            continue
-        for entry in entries:
-            name = entry.get("name")
-            if not name:
-                continue
-            path = posixpath.join(current, name)
-            is_dir = (entry.get("metadata") or {}).get("file_type") in _DIR_TYPES
-            found.append((path, is_dir))
-            if is_dir:
-                pending.append(path)
-    return found
-
-
-# bashkit's VFS refuses files past 10 MB. Git packfiles from a real remote
-# blow through that (cloning bashkit itself pulls a 23 MB pack), so oversized
-# blobs stay in the mirror and never enter the VFS. Git keeps working - it
-# reads the mirror - the file just is not listed by `ls`.
-VFS_MAX_FILE_BYTES = 9_500_000
-
-
-def _mirror_in(fs: Any, root: str, mirror: str, previous: Optional[set] = None) -> set:
-    """Copy the VFS subtree at ``root`` onto the real filesystem.
-
-    The mirror is updated in place rather than rebuilt. Rebuilding would
-    discard whatever lives only in the mirror - exactly the oversized pack
-    files - and a clone would lose its object store on the next command.
-
-    Returns the set of VFS paths seen, which the caller feeds back in as
-    ``previous`` so deletions made in the shell propagate to the mirror.
-    """
-    os.makedirs(mirror, exist_ok=True)
-    seen: set = set()
-    for path, is_dir in sorted(_vfs_entries(fs, root)):
-        relative = posixpath.relpath(path, root)
-        target = os.path.join(mirror, relative)
-        seen.add(path)
-        if is_dir:
-            os.makedirs(target, exist_ok=True)
-            continue
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        try:
-            with open(target, "wb") as handle:
-                handle.write(fs.read_file(path))
-        except Exception:
-            continue
-
-    for gone in (previous or set()) - seen:
-        relative = posixpath.relpath(gone, root)
-        target = os.path.join(mirror, relative)
-        if os.path.isdir(target):
-            shutil.rmtree(target, ignore_errors=True)
-        elif os.path.exists(target):
-            os.remove(target)
-    return seen
-
-
-def _mirror_out(fs: Any, root: str, mirror: str, baseline: Optional[set] = None) -> None:
-    """Copy the mirror back into the VFS.
-
-    Deletion is the subtle part. The mirror is a snapshot taken *before* the
-    command ran, so anything the shell itself wrote during the command (a
-    plain ``echo > file``) exists in the VFS and not in the mirror. Pruning
-    everything the mirror lacks would delete exactly those files - which is
-    what happened before ``baseline`` existed: ``echo hello > f.txt`` was
-    erased before ``git add`` could stage it, and every commit came out with
-    an empty tree.
-
-    So only paths that *were* mirrored in and have since disappeared from the
-    mirror count as real deletions (``git rm``, ``git checkout``).
-    """
-    known = baseline if baseline is not None else set()
-    written: set = set()
-    kept_dirs: set = set()
-    for directory, subdirs, files in os.walk(mirror):
-        # Directories are recreated even when empty: a fresh `git init` leaves
-        # `.git/objects` and `.git/refs` empty, and without them dulwich does
-        # not recognise the directory as a repository at all.
-        for name in subdirs:
-            relative = os.path.relpath(os.path.join(directory, name), mirror)
-            destination = posixpath.join(root, relative.replace(os.sep, "/"))
-            if not fs.exists(destination):
-                fs.mkdir(destination, True)
-            kept_dirs.add(destination)
-        for name in files:
-            source = os.path.join(directory, name)
-            relative = os.path.relpath(source, mirror)
-            destination = posixpath.join(root, relative.replace(os.sep, "/"))
-            if os.path.getsize(source) > VFS_MAX_FILE_BYTES:
-                # Left in the mirror on purpose; see VFS_MAX_FILE_BYTES.
-                continue
-            parent = posixpath.dirname(destination)
-            if parent and not fs.exists(parent):
-                fs.mkdir(parent, True)
-            with open(source, "rb") as handle:
-                fs.write_file(destination, handle.read())
-            written.add(destination)
-
-    for path in sorted(known - written - kept_dirs, reverse=True):
-        try:
-            fs.remove(path, True)
-        except Exception:
-            pass
 
 
 # --------------------------------------------------------------------------
@@ -184,23 +63,22 @@ def _open_repo(porcelain: Any, path: str):
 def make_git_builtin(
     *,
     root: str = "/workspace",
-    mirror: str = "/tmp/omniagents-git/workspace",
     author: str = DEFAULT_AUTHOR,
     proxy_base: Optional[str] = None,
 ) -> Callable:
     """Build a ``git`` builtin backed by dulwich.
 
-    The callback never touches the bashkit VFS. It cannot: a ``ctx.fs``
-    operation inside a builtin panics in the wasm build ("failed to spawn
-    thread"), because those ops may run off-thread and Pyodide has no
-    threads. So the builtin reads and writes only ``mirror`` on the ordinary
-    filesystem, and :class:`BashkitSandboxSession` mirrors the workspace in
-    before each command and back out after - where calling ``bash.fs()`` is
-    safe because it happens outside the callback.
+    dulwich works on ordinary paths, and so does the shell: the sandbox mounts
+    the workspace directory into bashkit, so both see the same bytes. The
+    callback therefore needs no bridge at all - it opens the very files the
+    student is looking at.
+
+    (It still avoids ``ctx.fs``: VFS handle operations inside a builtin panic
+    on wasm, since they may run off-thread and Pyodide has no threads. Plain
+    ``open()`` is both simpler and safe.)
 
     Args:
-        root: VFS path the mirror corresponds to, used to map ``ctx.cwd``.
-        mirror: real-filesystem directory holding the mirrored workspace.
+        root: the workspace directory, used to resolve ``ctx.cwd``.
         author: identity used until ``git config user.name``/``user.email``
             set one.
         proxy_base: same-origin git proxy (e.g. ``https://book/git``) that
@@ -227,32 +105,25 @@ def make_git_builtin(
         if not argv:
             return BuiltinResult(stderr="usage: git <command> [<args>]\n", exit_code=1)
 
-        os.makedirs(mirror, exist_ok=True)
-        work = _work_dir(ctx, root, mirror)
-        out, err, code = _run_git(
-            porcelain, argv, work, mirror, author, proxy_base
-        )
+        os.makedirs(root, exist_ok=True)
+        work = _work_dir(ctx, root)
+        out, err, code = _run_git(porcelain, argv, work, root, author, proxy_base)
         return BuiltinResult(stdout=out, stderr=err, exit_code=code)
 
     return git
 
 
-def _work_dir(ctx: Any, root: str, mirror: str) -> str:
-    """Map the shell's cwd onto the mirror."""
+def _work_dir(ctx: Any, root: str) -> str:
+    """Where the shell is standing. The same path Python sees."""
     cwd = str(getattr(ctx, "cwd", root) or root)
-    if cwd.startswith(root):
-        relative = posixpath.relpath(cwd, root).lstrip("./")
-        candidate = os.path.join(mirror, relative) if relative else mirror
-    else:
-        candidate = mirror
-    return candidate if os.path.isdir(candidate) else mirror
+    return cwd if os.path.isdir(cwd) else root
 
 
 def _run_git(
     porcelain: Any,
     argv: List[str],
     work: str,
-    mirror: str,
+    root: str,
     author: str,
     proxy_base: Optional[str] = None,
 ) -> tuple:
@@ -265,7 +136,7 @@ def _run_git(
             if os.path.isdir(os.path.join(current, ".git")):
                 return current
             parent = os.path.dirname(current)
-            if parent == current or len(parent) < len(mirror):
+            if parent == current or len(parent) < len(root):
                 return None
             current = parent
 
@@ -702,6 +573,99 @@ def _remote_hint(error: Exception, url: str, proxy_base: Optional[str]) -> str:
 
 
 # --------------------------------------------------------------------------
+# python
+# --------------------------------------------------------------------------
+
+
+def make_python_builtin(*, root: str = "/workspace") -> Callable:
+    """A ``python3`` that is the interpreter the rest of the page uses.
+
+    bashkit embeds Monty, a small Rust Python. It runs simple scripts, which
+    is exactly what makes it dangerous here: `python3 main.py` would quietly
+    execute the student's file under a *different* interpreter from the Run
+    button - no httpx, no openai, no omniagents, different semantics - and
+    usually appear to work.
+
+    Since the shell and Python share one filesystem, the file the shell names
+    is the file this process can open. So `python3` runs it here, in the real
+    CPython, with the real packages.
+    """
+
+    def python(ctx: Any):
+        import contextlib
+        import io as _io
+        import runpy
+        import sys
+
+        from bashkit import BuiltinResult
+
+        argv = [str(a) for a in ctx.argv]
+        cwd = str(getattr(ctx, "cwd", root) or root)
+
+        code = None
+        script = None
+        args: List[str] = []
+        index = 0
+        while index < len(argv):
+            token = argv[index]
+            if token == "-c" and index + 1 < len(argv):
+                code = argv[index + 1]
+                args = argv[index + 2:]
+                break
+            if token in ("--version", "-V"):
+                return BuiltinResult(stdout=f"Python {sys.version.split()[0]}\n")
+            if token.startswith("-"):
+                index += 1
+                continue
+            script = token
+            args = argv[index + 1:]
+            break
+
+        if code is None and script is None:
+            return BuiltinResult(
+                stderr="python3: interactive mode is unavailable here; "
+                "pass a script or -c\n",
+                exit_code=2,
+            )
+
+        target = None
+        if script is not None:
+            target = script if script.startswith("/") else os.path.join(cwd, script)
+            if not os.path.isfile(target):
+                return BuiltinResult(
+                    stderr=f"python3: can't open file '{script}': "
+                    f"[Errno 2] No such file or directory\n",
+                    exit_code=2,
+                )
+
+        out, err = _io.StringIO(), _io.StringIO()
+        saved_argv, saved_cwd = sys.argv, os.getcwd()
+        exit_code = 0
+        try:
+            sys.argv = [script or "-c", *args]
+            os.chdir(cwd if os.path.isdir(cwd) else root)
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                if target is not None:
+                    runpy.run_path(target, run_name="__main__")
+                else:
+                    exec(compile(code, "<stdin>", "exec"), {"__name__": "__main__"})
+        except SystemExit as stop:
+            exit_code = int(stop.code or 0)
+        except BaseException:
+            import traceback
+
+            traceback.print_exc(file=err)
+            exit_code = 1
+        finally:
+            sys.argv = saved_argv
+            os.chdir(saved_cwd)
+
+        return BuiltinResult(stdout=out.getvalue(), stderr=err.getvalue(), exit_code=exit_code)
+
+    return python
+
+
+# --------------------------------------------------------------------------
 # curl / wget
 # --------------------------------------------------------------------------
 
@@ -728,7 +692,6 @@ def make_http_builtins(
     allow_all: bool = False,
     timeout: float = 30.0,
     root: str = "/workspace",
-    mirror: str = "/tmp/omniagents-git/workspace",
 ) -> Dict[str, Callable]:
     """Build ``curl`` and ``wget`` builtins over httpx.
 
@@ -830,15 +793,11 @@ def make_http_builtins(
 
         body, err, code, output, silent = result
         if output:
-            # Written to the mirror, not through ctx.fs: VFS ops inside a
-            # builtin panic on wasm. The session copies the mirror back into
-            # the workspace once the command returns.
-            work = _work_dir(ctx, root, mirror)
-            target = (
-                os.path.join(mirror, output.lstrip("/"))
-                if output.startswith("/")
-                else os.path.join(work, output)
-            )
+            # Straight to the workspace: it is one filesystem, so the file
+            # exists the moment this returns. (Not via ctx.fs - VFS handle ops
+            # inside a builtin panic on wasm.)
+            work = _work_dir(ctx, root)
+            target = output if output.startswith("/") else os.path.join(work, output)
             os.makedirs(os.path.dirname(target) or work, exist_ok=True)
             with open(target, "wb") as handle:
                 handle.write(body.encode())

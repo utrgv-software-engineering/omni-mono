@@ -210,11 +210,19 @@ class SandboxWorkspace(Workspace):
         self,
         session: Any,
         *,
-        root: str = "/workspace",
+        root: Optional[str] = None,
         scratch_root: str = "/tmp/omniagents/scratch",
         default_user: Optional[str] = None,
     ) -> None:
         self._session = session
+        # Follow the session's manifest root unless told otherwise. Hardcoding
+        # "/workspace" silently disagreed with any sandbox rooted elsewhere,
+        # and every path then resolved somewhere the session never looks.
+        if root is None:
+            try:
+                root = str(session.state.manifest.root)
+            except AttributeError:
+                root = "/workspace"
         # Normalized once so every later comparison is against one spelling:
         # an unnormalized ``root="/workspace/"`` made ``resolve(".")`` answer
         # ``/workspace/`` while ``resolve("a.txt")`` answered
