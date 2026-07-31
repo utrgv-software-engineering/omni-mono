@@ -26,6 +26,7 @@ from omniagents.rpc.filesystem import (
     canonical_relpath,
 )
 from omniagents.workspace.host import HostWorkspace
+from omniagents.workspace.types import FileEntry
 
 TIMEOUT = 5.0
 
@@ -720,3 +721,170 @@ async def test_transfer_limit_per_connection(tmp_path):
     with pytest.raises(FsTransferError) as excinfo:
         await manager.upload_open("s1", "b.bin", 1, channel=channel)
     assert excinfo.value.data["reason"] == "transfer_limit_exceeded"
+
+
+# ---------------------------------------------------------------------------
+#  Non-host substrates (tkt_z8T1amZ-GUs0)
+# ---------------------------------------------------------------------------
+
+
+class _BadEntryWorkspace(GenericWorkspace):
+    """A substrate that mixes one contract-violating entry into a listing.
+
+    ``FileEntry.path`` is workspace-relative on every backend shipped
+    here, but a third-party ``Workspace`` (or a future backend regression)
+    could still hand back an absolute path. One such entry used to abort
+    the caller's entire ``fs_list`` with ``-32060 fs_path_invalid`` and
+    kill a running watch's scan.
+    """
+
+    async def list_dir(self, path=".", **kwargs):
+        entries = await self._inner.list_dir(path, **kwargs)
+        entries.insert(
+            0,
+            FileEntry(
+                name="rogue.txt",
+                path=f"{self.root}/rogue.txt",
+                is_dir=False,
+                size=3,
+            ),
+        )
+        return entries
+
+
+@pytest.mark.asyncio
+async def test_one_bad_entry_does_not_abort_a_generic_listing(tmp_path):
+    (tmp_path / "keep.txt").write_text("keep", encoding="utf-8")
+    manager = make_manager(_BadEntryWorkspace(root=str(tmp_path)))
+    listing = await manager.list("s1", ".", recursive=True)
+    assert [entry["path"] for entry in listing["entries"]] == ["keep.txt"]
+
+
+@pytest.mark.asyncio
+async def test_stat_reads_size_from_the_substrate_listing(tmp_path):
+    """``fs_stat`` on a non-host substrate matches ``FileEntry.name``.
+
+    That match only works because ``name`` is the bare basename on every
+    backend; when ``SandboxWorkspace`` reported an absolute path there it
+    never fired, and every sandbox file was advertised with ``size: null``
+    — including to ``download_open``'s pre-read size cap.
+
+    The file lives in a **subdirectory** on purpose: at the workspace root
+    ``entry.name`` and ``entry.path`` are the same string, so matching on
+    the wrong one passes anyway and the defect only shows up against a
+    real container — which CI never runs.
+    """
+    (tmp_path / "nested").mkdir()
+    (tmp_path / "nested" / "sized.bin").write_bytes(b"0123456789")
+    manager = make_manager(GenericWorkspace(root=str(tmp_path)))
+    info = await manager.stat("s1", "nested/sized.bin")
+    assert info["type"] == "file"
+    assert info["size"] == 10
+
+
+@pytest.mark.asyncio
+async def test_generic_scan_does_not_descend_symlinked_directories(tmp_path):
+    """Mirrors the host scanner: ``is_symlink`` must be set by the backend."""
+    outside = tmp_path.parent / "outside-generic"
+    outside.mkdir(exist_ok=True)
+    (outside / "secret.txt").write_text("secret", encoding="utf-8")
+    root = tmp_path / "root"
+    root.mkdir()
+    try:
+        os.symlink(outside, root / "link")
+    except OSError:  # pragma: no cover
+        pytest.skip("symlinks unavailable")
+    manager = make_manager(GenericWorkspace(root=str(root)))
+    listing = await manager.list("s1", ".", recursive=True)
+    assert [entry["path"] for entry in listing["entries"]] == ["link"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_cls", [HostWorkspace, GenericWorkspace])
+async def test_unaddressable_names_are_dropped_identically_on_both_scanners(
+    tmp_path, workspace_cls
+):
+    """A name the wire cannot express is dropped on *every* substrate.
+
+    ``back\\slash`` and ``C:`` are legal POSIX filenames — the workspace
+    layer lists them — but ``canonical_relpath`` refuses both spellings,
+    so a client could never stat or download such an entry. The host fast
+    path used to emit them anyway while the generic path dropped them,
+    which made the same tree report differently per substrate.
+    """
+    (tmp_path / "keep.txt").write_text("keep", encoding="utf-8")
+    (tmp_path / "back\\slash").mkdir()
+    (tmp_path / "C:").mkdir()
+    # Whitespace-padded names do not *raise* in canonicalization — they
+    # come back *changed*. Advertising the changed spelling would invent a
+    # filename that fs_stat then cannot find.
+    (tmp_path / " lead.txt").write_text("lead", encoding="utf-8")
+    (tmp_path / "trail.txt ").write_text("trail", encoding="utf-8")
+    manager = make_manager(workspace_cls(root=str(tmp_path)))
+    listing = await manager.list("s1", ".", recursive=True)
+    assert [entry["path"] for entry in listing["entries"]] == ["keep.txt"]
+
+
+@pytest.mark.asyncio
+async def test_stat_does_not_advertise_a_symlinks_own_size(tmp_path):
+    """``FileEntry.size`` is an lstat size; a download follows the link.
+
+    Advertising the link's own length as the file's size would be a
+    confidently wrong number — and would hand ``download_open``'s pre-read
+    cap a value that lets an oversized target through.
+    """
+    (tmp_path / "big.bin").write_bytes(b"0" * 4096)
+    try:
+        os.symlink(tmp_path / "big.bin", tmp_path / "biglink")
+    except OSError:  # pragma: no cover
+        pytest.skip("symlinks unavailable")
+    info = await make_manager(GenericWorkspace(root=str(tmp_path))).stat(
+        "s1", "biglink"
+    )
+    assert info["type"] == "file"
+    assert info["size"] is None
+
+
+@pytest.mark.asyncio
+async def test_oversized_target_behind_a_symlink_is_still_refused(tmp_path):
+    """The post-read check is the hard limit when nothing is advertised."""
+    (tmp_path / "big.bin").write_bytes(b"0" * 4096)
+    try:
+        os.symlink(tmp_path / "big.bin", tmp_path / "biglink")
+    except OSError:  # pragma: no cover
+        pytest.skip("symlinks unavailable")
+    manager = make_manager(GenericWorkspace(root=str(tmp_path)), max_download_bytes=64)
+    with pytest.raises(FsTransferError) as excinfo:
+        await manager.download_open("s1", "biglink", channel=FakeChannel())
+    assert excinfo.value.data["reason"] == "size_out_of_range"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_cls", [HostWorkspace, GenericWorkspace])
+@pytest.mark.parametrize("padded", [" lead.txt", "lead.txt "])
+async def test_whitespace_padded_names_never_alias_onto_a_real_file(
+    tmp_path, workspace_cls, padded
+):
+    """Two real files must never collapse into one snapshot entry.
+
+    ``canonical_relpath`` strips surrounding whitespace, so `` lead.txt``
+    and ``lead.txt`` canonicalize identically. Keying the snapshot on the
+    canonical form made one of the two vanish outright — no log, no
+    ``truncated`` flag — and left a watch flapping created/deleted as the
+    alias won and lost.
+    """
+    # Both paddings, because a sorted listing hides the alias in one
+    # direction: " lead.txt" sorts *before* "lead.txt" (so the real file
+    # overwrites the alias and the bug looks benign) while "lead.txt "
+    # sorts *after* it (so the padded file wins and 20 bytes are served
+    # under a name that holds 4).
+    (tmp_path / padded).write_bytes(b"x" * 20)
+    (tmp_path / "lead.txt").write_bytes(b"y" * 4)
+    manager = make_manager(workspace_cls(root=str(tmp_path)))
+    listing = await manager.list("s1", ".", recursive=True)
+    assert [entry["path"] for entry in listing["entries"]] == ["lead.txt"]
+    # The surviving entry is the file that actually bears that name, not
+    # the padded one wearing its spelling.
+    assert [entry["size"] for entry in listing["entries"]] == [4]
+    # And the advertised path really resolves.
+    assert (await manager.stat("s1", "lead.txt"))["size"] == 4

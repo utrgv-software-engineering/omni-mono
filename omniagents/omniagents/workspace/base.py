@@ -148,7 +148,29 @@ class Workspace(abc.ABC):
         include_hidden: bool = False,
         respect_gitignore: bool = True,
         sort_by: Literal["name", "mtime", "size"] = "name",
-    ) -> List[FileEntry]: ...
+    ) -> List[FileEntry]:
+        """List one directory as substrate-independent
+        :class:`~omniagents.workspace.types.FileEntry` values.
+
+        Every backend returns entries whose ``name`` is a bare basename
+        and whose ``path`` is a **workspace-relative POSIX path** — see
+        :class:`FileEntry` for the full contract. ``include_hidden``
+        filters on the basename, so a dotfile is a dotfile on every
+        substrate.
+
+        Failures are ``OSError``-compatible on every backend, never the
+        substrate's own transport exception:
+
+        * :class:`FileNotFoundError` — *path* does not exist;
+        * :class:`NotADirectoryError` — *path* exists but is not a
+          directory;
+        * :class:`PermissionError` — *path* cannot be read;
+        * plain :class:`OSError` for anything else the substrate refused.
+
+        A single entry the backend cannot describe is skipped, not
+        raised: one bad entry must never abort a whole listing.
+        """
+        ...
 
     @abc.abstractmethod
     async def glob(

@@ -106,7 +106,11 @@ from typing import (
 )
 
 from omniagents.workspace.base import Workspace
-from omniagents.workspace.types import ExecResult, WorkspaceEscapeError
+from omniagents.workspace.types import (
+    ExecResult,
+    WorkspaceError,
+    WorkspaceEscapeError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -298,19 +302,6 @@ def _redacted_source(source: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any
     if "repoUrl" in out:
         out["repoUrl"] = redact_remote_url(out.get("repoUrl"))
     return out
-
-
-def _entry_basename(entry: Any) -> str:
-    """Substrate-independent basename for one :class:`FileEntry`.
-
-    ``HostWorkspace`` reports a bare name and a workspace-relative path;
-    ``SandboxWorkspace`` passes the SDK's *absolute container path*
-    through for **both** fields. Only the last path component means the
-    same thing everywhere, so discovery is built from that plus the
-    directory it is walking — never from the reported path.
-    """
-    candidate = getattr(entry, "name", "") or getattr(entry, "path", "")
-    return posixpath.basename(str(candidate).replace("\\", "/").rstrip("/"))
 
 
 def _join_workspace(repo_rel: str, path_rel: str) -> str:
@@ -1656,16 +1647,16 @@ class GitManager:
                 entries = await workspace.list_dir(
                     current, include_hidden=True, respect_gitignore=False
                 )
-            except Exception:
+            except (OSError, WorkspaceError):
                 # Discovery is best-effort by construction: one unreadable
                 # or mis-typed directory must not fail the whole listing.
-                # Deliberately broad — substrates raise their own transport
-                # errors here (a sandbox session surfaces the container's
-                # ``ls`` failure, not an OSError), and a repository the
-                # caller cannot reach is simply not offered.
+                # ``Workspace.list_dir`` guarantees an OSError family on
+                # every substrate (a sandbox session's own ``ls`` failure
+                # is translated at the workspace layer), so this no longer
+                # has to swallow every exception to survive a container.
                 logger.debug("git discovery skipped %r", current, exc_info=True)
                 continue
-            names = {_entry_basename(entry) for entry in entries}
+            names = {entry.name for entry in entries}
             if ".git" in names:
                 found.append(current)
                 if len(found) >= self._max_repositories:
@@ -1676,15 +1667,27 @@ class GitManager:
             if level >= depth:
                 continue
             for entry in entries:
-                basename = _entry_basename(entry)
-                if not entry.is_dir or entry.is_symlink or basename == ".git":
+                if not entry.is_dir or entry.is_symlink or entry.name == ".git":
                     continue
-                queue.append(
-                    (
-                        canonical_repo_path(_join_workspace(current, basename)),
-                        level + 1,
+                # ``FileEntry.path`` is workspace-relative on every
+                # substrate, so it addresses the child directly — but the
+                # two path policies are deliberately not the same: a
+                # backslash is a legal character inside a POSIX filename
+                # (so ``FileEntry`` keeps it) and is refused on this
+                # surface's wire (``canonical_repo_path``). A directory an
+                # agent can create, such as ``back\slash``, must therefore
+                # be skipped rather than abort the whole enumeration —
+                # including the legitimate repositories found alongside it.
+                try:
+                    child = canonical_repo_path(entry.path)
+                except GitPathError:
+                    logger.debug(
+                        "git discovery skipped entry %r: not addressable on "
+                        "this surface",
+                        entry.path,
                     )
-                )
+                    continue
+                queue.append((child, level + 1))
 
         sources = self._source_provider()
         by_mount = {

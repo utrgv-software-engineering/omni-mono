@@ -20,6 +20,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
+from ._entries import log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace
 from .types import (
     ExecResult,
@@ -214,34 +215,43 @@ class HostWorkspace(Workspace):
         absolute = Path(self.resolve(path))
 
         def _list() -> List[FileEntry]:
-            if not absolute.is_dir():
-                return []
+            # ``iterdir`` raises the OSError subclass the contract promises
+            # (FileNotFoundError / NotADirectoryError / PermissionError) —
+            # deliberately not swallowed into an empty listing, so callers
+            # can tell "empty directory" from "no such directory" and the
+            # sandbox backend has host behavior to mirror.
             out: List[FileEntry] = []
             for entry in absolute.iterdir():
                 if not include_hidden and entry.name.startswith("."):
                     continue
                 try:
-                    stat = entry.stat()
+                    # ``lstat``: an entry is described by itself, never by
+                    # a symlink target, so a dangling link still lists.
+                    stat = entry.lstat()
+                    is_dir = entry.is_dir() and not entry.is_symlink()
+                    is_symlink = entry.is_symlink()
                 except OSError:
+                    # One unreadable entry never aborts the listing.
                     continue
-                rel = self._display_path(entry)
-                out.append(
-                    FileEntry(
-                        name=entry.name,
-                        path=rel,
-                        is_dir=entry.is_dir(),
-                        size=stat.st_size if entry.is_file() else None,
-                        mtime=datetime.fromtimestamp(stat.st_mtime),
-                        is_symlink=entry.is_symlink(),
+                try:
+                    out.append(
+                        make_entry(
+                            name=entry.name,
+                            path=self._display_path(entry),
+                            is_dir=is_dir,
+                            size=stat.st_size,
+                            mtime=datetime.fromtimestamp(stat.st_mtime),
+                            is_symlink=is_symlink,
+                            # Unconfined host workspaces may legitimately
+                            # list outside the root, where no relative
+                            # spelling exists.
+                            allow_absolute=not self.confine,
+                        )
                     )
-                )
-            keyfn = {
-                "name": lambda e: e.name,
-                "mtime": lambda e: (e.mtime or datetime.min, e.name),
-                "size": lambda e: (-(e.size or 0), e.name),
-            }[sort_by]
-            out.sort(key=keyfn)
-            return out
+                except ValueError as error:
+                    log_skipped_entry("HostWorkspace", str(absolute), error)
+                    continue
+            return sort_entries(out, sort_by)
 
         return await asyncio.to_thread(_list)
 

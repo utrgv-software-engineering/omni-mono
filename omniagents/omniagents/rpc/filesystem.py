@@ -60,6 +60,26 @@ enforce the boundary in :meth:`HostWorkspace.resolve`, which resolves
 symlinks — a symlink pointing outside the root raises
 ``WorkspaceEscapeError`` and surfaces as ``-32060 fs_path_invalid``.
 
+Sandbox workspaces enforce the same boundary in two layers:
+``SandboxWorkspace.resolve`` refuses absolute and ``..`` paths lexically,
+and the SDK session's path policy refuses symlinks whose target escapes
+the manifest root — a rejection the workspace layer translates into
+``WorkspaceEscapeError`` rather than leaking an untyped transport
+failure.
+
+The two substrates agree on *refusing*; they do not agree on the error
+**code** for a symlink that points outside the root. ``HostWorkspace``
+realpaths inside ``resolve``, so the escape is visible before any I/O and
+surfaces as ``-32060 fs_path_invalid``. On a sandbox the same path simply
+does not exist as far as the workspace can see — the confinement check in
+``exists``/``is_file`` answers ``False`` — so ``fs_stat`` and
+``fs_download_open`` answer ``-32061 fs_not_found`` instead
+(``fs_upload_commit`` does surface ``fs_path_invalid``, because the commit
+reaches the substrate write). Both refuse, neither serves a byte, and
+nothing about the outside file leaks; a client that branches on the code
+must treat both as "refused". Unifying them would cost a container round
+trip on every predicate call.
+
 Downloads resolve the path exactly once, at ``fs_download_open``, and
 serve every chunk from the file object retained by that open. A path
 replaced with an outward-pointing symlink *after* the transfer opened
@@ -219,6 +239,30 @@ class _SnapshotEntry:
 _Snapshot = Dict[str, _SnapshotEntry]
 
 
+def _wire_relpath(rel: str) -> Optional[str]:
+    """The wire spelling of *rel*, or ``None`` when it has none.
+
+    ``canonical_relpath`` both validates *and normalizes* — it strips
+    surrounding whitespace, among other things — so using its return value
+    as the path of a real directory entry would invent names. A file
+    called ``" lead.txt"`` would be advertised as ``"lead.txt"``, which
+    ``fs_stat`` then cannot find; worse, ``" lead.txt"`` and ``"lead.txt"``
+    canonicalize to the same key, so one of two real files would vanish
+    from a listing (and a watch would see the alias flap as spurious
+    created/deleted churn).
+
+    Only an exact round-trip is addressable over this wire. Anything else
+    — a name that raises, or one that merely *changes* — is dropped, the
+    same way on every substrate. Rewriting it would be the silent-wrong-
+    answer failure this surface is supposed to avoid.
+    """
+    try:
+        canonical = canonical_relpath(rel)
+    except FsPathError:
+        return None
+    return canonical if canonical == rel else None
+
+
 def _scan_host(
     base_abs: str, root_abs: str, recursive: bool, max_entries: int
 ) -> Tuple[_Snapshot, bool]:
@@ -245,6 +289,15 @@ def _scan_host(
             except OSError:
                 continue
             rel = os.path.relpath(entry.path, root_abs).replace(os.sep, "/")
+            if _wire_relpath(rel) is None:
+                # A name this wire cannot express — a backslash, a drive
+                # letter, surrounding whitespace — is dropped here exactly
+                # as it is on every other substrate. Listing it would offer
+                # the client an entry it could never stat or download, and
+                # doing so on the host only would make the same tree report
+                # differently per substrate.
+                logger.debug("fs scan skipped un-addressable host entry %r", rel)
+                continue
             if len(out) >= max_entries:
                 truncated = True
                 stack.clear()
@@ -262,7 +315,15 @@ def _scan_host(
 async def _scan_generic(
     workspace: Workspace, base_rel: str, recursive: bool, max_entries: int
 ) -> Tuple[_Snapshot, bool]:
-    """Snapshot through the Workspace interface (sandbox/remote substrates)."""
+    """Snapshot through the Workspace interface (sandbox/remote substrates).
+
+    ``FileEntry.path`` is a workspace-relative POSIX path on every
+    substrate (see :class:`~omniagents.workspace.types.FileEntry`), so
+    ``canonical_relpath`` here is a *check*, not a conversion: an entry a
+    backend still managed to spell wrongly is dropped from the snapshot
+    with a debug log rather than aborting the caller's whole listing or
+    killing a running watch.
+    """
     out: _Snapshot = {}
     truncated = False
     queue = [base_rel]
@@ -272,14 +333,23 @@ async def _scan_generic(
             entries = await workspace.list_dir(
                 directory, include_hidden=True, respect_gitignore=False
             )
-        except (FileNotFoundError, NotADirectoryError):
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
+            # A directory that vanished, turned into a file, or became
+            # unreadable between scans is simply gone from this snapshot.
             continue
         for entry in entries:
             if len(out) >= max_entries:
                 truncated = True
                 queue.clear()
                 break
-            rel = canonical_relpath(entry.path)
+            rel = _wire_relpath(entry.path)
+            if rel is None:
+                logger.debug(
+                    "fs scan skipped un-addressable entry %r under %r",
+                    entry.path,
+                    directory,
+                )
+                continue
             out[rel] = _SnapshotEntry(
                 is_dir=entry.is_dir,
                 size=0 if entry.is_dir else int(entry.size or 0),
@@ -538,15 +608,30 @@ class FilesystemManager:
         mtime: Optional[float] = None
         parent = posixpath.dirname(rel) or "."
         name = posixpath.basename(rel)
+        # ``FileEntry.name`` is the bare basename on every substrate, so
+        # this match works on sandbox/remote workspaces too. It used to be
+        # the absolute container path on ``SandboxWorkspace``, which meant
+        # the match never fired and every sandbox file was advertised with
+        # ``size: null`` — including to ``download_open``'s pre-read size
+        # cap, which was therefore never enforced there.
         try:
             for entry in await workspace.list_dir(
                 parent, include_hidden=True, respect_gitignore=False
             ):
                 if entry.name == name:
-                    size = entry.size
+                    # ``FileEntry.size`` is an ``lstat`` size by contract —
+                    # it describes the entry, not a symlink's target. For a
+                    # symlink that is the length of the link text, which is
+                    # emphatically not what a client asking "how big is
+                    # this download?" means. Report ``null`` (a documented
+                    # "unknown") rather than a confidently wrong number;
+                    # the host branch above realpaths and so reports the
+                    # true size.
+                    if not entry.is_symlink:
+                        size = entry.size
                     mtime = _mtime_to_float(entry.mtime) or None
                     break
-        except Exception:
+        except OSError:
             pass
         return {"path": rel, "type": "file", "size": size, "mtime": mtime}
 
@@ -812,8 +897,17 @@ class FilesystemManager:
                 if not await workspace.is_file(rel):
                     raise FsNotFoundError("no such file", path=rel)
                 # Substrate reads materialize the whole file, so the cap is
-                # enforced against the advertised size *before* reading —
-                # an oversized file must never be pulled into memory first.
+                # checked against the advertised size *before* reading
+                # whenever the substrate can advertise one.
+                #
+                # This is a best-effort early exit, NOT the guarantee: the
+                # advertised size is absent for a symlink (whose lstat size
+                # describes the link, not its target) and on substrates
+                # whose listing carries no size at all. The hard limit is
+                # the post-read ``_check_download_size(len(data))`` below,
+                # which always runs. An oversized file reached through an
+                # in-workspace symlink is therefore still refused, but only
+                # after it has been read once.
                 info = await self._stat_entry(workspace, rel)
                 advertised = info.get("size")
                 if isinstance(advertised, int):

@@ -33,6 +33,7 @@ import errno
 import itertools
 import json
 import os
+import posixpath
 import shutil
 import sys
 from datetime import datetime
@@ -40,6 +41,7 @@ from importlib import resources as importlib_resources
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Literal, Optional, Sequence
 
+from ._entries import log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace
 from .types import (
     ExecResult,
@@ -279,6 +281,33 @@ def _is_not_found(err: PyodideWorkerError) -> bool:
         return True
     msg = str(err).lower()
     return "no such file" in msg or "enoent" in msg
+
+
+_NOT_A_DIRECTORY_ERRNOS = {errno.ENOTDIR}
+
+
+def _is_not_a_directory(err: PyodideWorkerError) -> bool:
+    if err.errno in _NOT_A_DIRECTORY_ERRNOS:
+        return True
+    msg = str(err).lower()
+    return "not a directory" in msg or "enotdir" in msg
+
+
+_PERMISSION_ERRNOS = {errno.EACCES, errno.EPERM}
+
+
+def _is_permission_denied(err: PyodideWorkerError) -> bool:
+    """Whether the worker refused an operation for permission reasons.
+
+    Emscripten's ``FS.ErrnoError`` carries a real ``errno`` and the worker
+    forwards it, so this backend can honor the ``PermissionError`` arm of
+    the :meth:`Workspace.list_dir` contract rather than being the one
+    substrate that cannot.
+    """
+    if err.errno in _PERMISSION_ERRNOS:
+        return True
+    msg = str(err).lower()
+    return "permission denied" in msg or "eacces" in msg or "eperm" in msg
 
 
 # Pure-Python composite ops, executed inside the worker via exec_python.
@@ -579,45 +608,49 @@ class PyodideWorkspace(Workspace):
         try:
             result = await self._worker.call("fs_readdir", {"path": absolute})
         except PyodideWorkerError as e:
+            # OSError-compatible, like every other backend: an empty list
+            # would make "missing directory" indistinguishable from "empty
+            # directory".
             if _is_not_found(e):
-                return []
-            raise
+                raise FileNotFoundError(absolute) from e
+            if _is_not_a_directory(e):
+                raise NotADirectoryError(absolute) from e
+            if _is_permission_denied(e):
+                raise PermissionError(absolute) from e
+            raise OSError(f"{absolute}: {e}") from e
 
         out: List[FileEntry] = []
         for entry in result.get("entries", []):
-            name = entry.get("name", "")
-            if not include_hidden and isinstance(name, str) and name.startswith("."):
+            name = str(entry.get("name", ""))
+            if not include_hidden and name.startswith("."):
                 continue
             child_abs = (
                 absolute.rstrip("/") + "/" + name if absolute != "/" else "/" + name
             )
-            try:
-                rel = str(PurePosixPath(child_abs).relative_to(self.root))
-            except ValueError:
-                rel = name
             mtime_raw = entry.get("mtime")
             mtime = (
                 datetime.fromtimestamp(mtime_raw)
                 if isinstance(mtime_raw, (int, float)) and mtime_raw > 0
                 else None
             )
-            out.append(
-                FileEntry(
-                    name=name,
-                    path=rel,
-                    is_dir=bool(entry.get("is_dir")),
-                    size=int(entry["size"]) if entry.get("is_file") else None,
-                    mtime=mtime,
-                    is_symlink=bool(entry.get("is_symlink")),
+            # The worker stats with ``FS.lstat``, so ``is_dir`` already
+            # describes the entry itself rather than a symlink target —
+            # exactly the shared contract.
+            try:
+                out.append(
+                    make_entry(
+                        name=name,
+                        path=posixpath.relpath(child_abs, self.root),
+                        is_dir=bool(entry.get("is_dir")),
+                        size=entry.get("size"),
+                        mtime=mtime,
+                        is_symlink=bool(entry.get("is_symlink")),
+                    )
                 )
-            )
-        keyfn = {
-            "name": lambda e: e.name,
-            "mtime": lambda e: (e.mtime or datetime.min, e.name),
-            "size": lambda e: (-(e.size or 0), e.name),
-        }[sort_by]
-        out.sort(key=keyfn)
-        return out
+            except ValueError as error:
+                log_skipped_entry("PyodideWorkspace", absolute, error)
+                continue
+        return sort_entries(out, sort_by)
 
     async def glob(
         self,

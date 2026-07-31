@@ -6,16 +6,20 @@ shell execution through ``session.exec`` and ``session.pty_exec_start``;
 discovery (glob/grep) shells out to ``find`` and ``grep`` inside the
 sandbox.
 
-Path semantics: sandbox sessions accept paths relative to the manifest
-root or absolute paths inside the container. We pass strings through and
-let the session do its own validation; the host-side workspace's
-``WorkspaceEscapeError`` semantics are enforced by the session's own
-path-policy machinery.
+Path semantics: paths are resolved against the manifest root exactly as
+they are on the host. :meth:`SandboxWorkspace.resolve` normalizes ``..``
+lexically and raises :class:`WorkspaceEscapeError` for anything that
+would step outside :attr:`root`, so the two substrates refuse the same
+inputs with the same typed error. Symlink escapes cannot be caught
+lexically; those are refused by the SDK session's own path policy, whose
+rejection is translated back into :class:`WorkspaceEscapeError` here
+instead of leaking an SDK transport exception to callers.
 """
 
 from __future__ import annotations
 
 import io
+import posixpath
 import shlex
 import time
 import uuid
@@ -23,13 +27,175 @@ from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
+from ._entries import entry_basename, log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace
 from .types import (
     ExecResult,
     FileEntry,
     GrepMatch,
+    WorkspaceEscapeError,
     WorkspaceFeatureUnavailable,
 )
+
+#: The SDK's stable ``ErrorCode`` values (``SandboxError.error_code``),
+#: mapped onto the workspace layer's error types. ``invalid_manifest_path``
+#: is how the session's path policy refuses an absolute path, a ``..``
+#: escape, or a symlink whose target resolves outside every allowed root;
+#: mapping it to :class:`WorkspaceEscapeError` is what lets the ``fs_*`` /
+#: ``git_*`` surfaces answer with the same typed wire error on both
+#: substrates instead of an untyped transport failure.
+_SDK_ERROR_CODES: Dict[str, type] = {
+    "invalid_manifest_path": WorkspaceEscapeError,
+    "workspace_read_not_found": FileNotFoundError,
+    "workspace_root_not_found": FileNotFoundError,
+    "apply_patch_file_not_found": FileNotFoundError,
+}
+
+#: ``errno``-style markers in a container's own error text, for failures
+#: the SDK reports as a generic non-zero exec (``ls`` failing, say) whose
+#: only detail is the command's stderr.
+_OS_ERROR_MARKERS = (
+    ("no such file or directory", FileNotFoundError),
+    ("file not found", FileNotFoundError),
+    ("not a directory", NotADirectoryError),
+    ("permission denied", PermissionError),
+    ("access denied", PermissionError),
+)
+
+#: Prose fallbacks for the path-policy rejection, in case an SDK version
+#: raises it without a machine-readable code.
+_ESCAPE_MARKERS = (
+    "manifest path must be relative",
+    "manifest path must not escape root",
+    "invalid_manifest_path",
+)
+
+
+def _session_error_text(error: BaseException) -> str:
+    """Everything a session error can tell us, lowercased.
+
+    SDK errors carry the container's stdout/stderr in a ``context`` mapping
+    rather than in ``str(error)``, so a message-only match would miss the
+    ``ls`` failure we need to classify.
+    """
+    parts = [str(error), type(error).__name__]
+    context = getattr(error, "context", None)
+    if isinstance(context, dict):
+        parts.extend(str(value) for value in context.values())
+    result = getattr(error, "result", None)
+    for stream in ("stdout", "stderr"):
+        raw = getattr(result, stream, None)
+        if isinstance(raw, bytes):
+            parts.append(raw.decode("utf-8", errors="replace"))
+        elif isinstance(raw, str):
+            parts.append(raw)
+    return " ".join(parts).lower()
+
+
+def _flag(entry: Any, attribute: str) -> bool:
+    """Read one boolean-ish attribute off a session's directory entry.
+
+    The SDK's ``FileEntry.is_dir`` is a **method**, so the obvious
+    ``bool(getattr(entry, "is_dir", False))`` evaluated a bound method and
+    was ``True`` for every entry — files, symlinks and FIFOs all reported
+    as directories. Call it when it's callable; never trust its truthiness.
+    """
+    value = getattr(entry, attribute, False)
+    if callable(value):
+        try:
+            value = value()
+        except Exception:  # pragma: no cover - defensive
+            return False
+    return bool(value)
+
+
+def _entry_kind(entry: Any) -> "tuple[bool, bool]":
+    """``(is_dir, is_symlink)`` for one session entry, lstat semantics.
+
+    The SDK's ``kind`` enum is authoritative when present: an entry is
+    described by *itself*, so a symlink is a symlink whatever it points at
+    (and ``ls -la`` cannot tell us what that is without another round
+    trip). Sessions without ``kind`` fall back to boolean/callable
+    attributes.
+    """
+    kind = getattr(entry, "kind", None)
+    kind_value = str(getattr(kind, "value", kind) or "")
+    if kind_value:
+        return kind_value == "directory", kind_value == "symlink"
+    return _flag(entry, "is_dir"), _flag(entry, "is_symlink")
+
+
+def _entry_mtime(entry: Any) -> Optional[datetime]:
+    raw = getattr(entry, "mtime", None)
+    if isinstance(raw, datetime):
+        return raw
+    if isinstance(raw, (int, float)) and raw > 0:
+        try:
+            return datetime.fromtimestamp(raw)
+        except (OverflowError, OSError, ValueError):  # pragma: no cover
+            return None
+    return None
+
+
+def _drop_ambiguous(entries: List[FileEntry], directory: str) -> List[FileEntry]:
+    """Remove entries whose path the substrate reported more than once.
+
+    The SDK's ``ls`` parser splits the ``ls -la`` line on whitespace, so a
+    filename with a *leading* space loses it: a directory holding both
+    ``" lead.txt"`` and ``"lead.txt"`` comes back as two entries both
+    called ``lead.txt``, with different sizes. There is no way to tell
+    from that output which row belongs to which file, and guessing gets it
+    wrong half the time — ``fs_stat`` picked the first match and reported
+    the 20-byte padded file's size for the 4-byte real one.
+
+    Neither row is trustworthy, so both are dropped and logged rather than
+    reported under a name that does not round-trip. This is a limitation
+    of the SDK's text-parsing listing, not of the workspace layer; the
+    honest answer here is "this listing cannot describe those files".
+    """
+    seen: Dict[str, int] = {}
+    for entry in entries:
+        seen[entry.path] = seen.get(entry.path, 0) + 1
+    duplicated = {path for path, count in seen.items() if count > 1}
+    if not duplicated:
+        return entries
+    for path in sorted(duplicated):
+        log_skipped_entry(
+            "SandboxWorkspace",
+            directory,
+            ValueError(
+                f"the substrate listing reported {path!r} {seen[path]} times; "
+                "the entries cannot be told apart, so none is reported"
+            ),
+        )
+    return [entry for entry in entries if entry.path not in duplicated]
+
+
+def _translate_session_error(error: BaseException, path: str) -> BaseException:
+    """Map one SDK session failure onto the workspace layer's error types.
+
+    Returns the exception to raise; the caller chains the original as
+    ``__cause__`` so nothing about the substrate failure is lost.
+    """
+    if isinstance(error, (WorkspaceEscapeError, OSError)):
+        return error
+    code = getattr(error, "error_code", None)
+    mapped = _SDK_ERROR_CODES.get(str(code)) if code is not None else None
+    if mapped is WorkspaceEscapeError:
+        return WorkspaceEscapeError(
+            f"Path {path!r} was refused by the sandbox path policy: {error}"
+        )
+    if mapped is not None:
+        return mapped(f"{path}: {error}")
+    text = _session_error_text(error)
+    if any(marker in text for marker in _ESCAPE_MARKERS):
+        return WorkspaceEscapeError(
+            f"Path {path!r} was refused by the sandbox path policy: {error}"
+        )
+    for marker, os_error in _OS_ERROR_MARKERS:
+        if marker in text:
+            return os_error(f"{path}: {error}")
+    return OSError(f"{path}: {error}")
 
 
 class SandboxWorkspace(Workspace):
@@ -49,7 +215,12 @@ class SandboxWorkspace(Workspace):
         default_user: Optional[str] = None,
     ) -> None:
         self._session = session
-        self.root = root
+        # Normalized once so every later comparison is against one spelling:
+        # an unnormalized ``root="/workspace/"`` made ``resolve(".")`` answer
+        # ``/workspace/`` while ``resolve("a.txt")`` answered
+        # ``/workspace/a.txt``, and the two disagree as dict keys, in
+        # ``posixpath.relpath`` and in the ``$root|$root/*`` shell guard.
+        self.root = posixpath.normpath(root) if root else "/"
         # Scratch dir lives outside the manifest mount on purpose: anything
         # tool-internal (worktrees, background-spawn logs) should never
         # collide with the user's workspace files. The path is reachable
@@ -70,16 +241,36 @@ class SandboxWorkspace(Workspace):
     # ----------------------------- helpers ----------------------------- #
 
     def resolve(self, path: str) -> str:
-        # Sandbox paths are interpreted relative to the manifest root by
-        # the session itself. We just normalize: relative paths become
-        # ``<root>/<path>``; absolute paths stay as-is. The session enforces
-        # the actual sandbox/host boundary via its WorkspacePathPolicy.
+        """Absolute container path for *path*, confined to :attr:`root`.
+
+        Relative paths anchor at the root; absolute paths are accepted
+        only when they are already inside it. ``..`` is normalized
+        lexically *before* the check, so ``sub/../../etc`` is refused
+        rather than handed to the container as
+        ``/workspace/sub/../../etc``. This mirrors
+        :meth:`HostWorkspace.resolve` and :meth:`PyodideWorkspace.resolve`
+        — one typed :class:`WorkspaceEscapeError` on every substrate.
+
+        Lexical normalization cannot see through symlinks (resolving one
+        would need a container round trip, and this method is sync). A
+        symlink whose target leaves the root is refused by the SDK
+        session's path policy on the actual read/write/list call, and that
+        rejection is translated back into ``WorkspaceEscapeError`` too.
+        """
+        root = PurePosixPath(self.root)
         if not path or path == ".":
             return self.root
-        p = PurePosixPath(path)
-        if p.is_absolute():
-            return str(p)
-        return str(PurePosixPath(self.root) / p)
+        candidate = PurePosixPath(path)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        # posixpath.normpath collapses "." and ".." without touching disk.
+        full = PurePosixPath(posixpath.normpath(str(candidate)))
+        if full != root and root not in full.parents:
+            raise WorkspaceEscapeError(
+                f"Path {path!r} resolves to {str(full)!r}, outside workspace "
+                f"root {self.root!r}"
+            )
+        return str(full)
 
     # ----------------------------- file I/O ---------------------------- #
 
@@ -89,9 +280,12 @@ class SandboxWorkspace(Workspace):
 
     async def read_bytes(self, path: str) -> bytes:
         absolute = self.resolve(path)
-        stream = await self._session.read(
-            PurePosixPath(absolute), user=self._default_user
-        )
+        try:
+            stream = await self._session.read(
+                PurePosixPath(absolute), user=self._default_user
+            )
+        except Exception as error:
+            raise _translate_session_error(error, absolute) from error
         try:
             return stream.read()
         finally:
@@ -144,42 +338,60 @@ class SandboxWorkspace(Workspace):
                     # mkdir may complain on existing dirs depending on backend;
                     # write itself will fail loudly if the parent really doesn't exist.
                     pass
-        await self._session.write(
-            PurePosixPath(absolute), io.BytesIO(data), user=self._default_user
+        try:
+            await self._session.write(
+                PurePosixPath(absolute), io.BytesIO(data), user=self._default_user
+            )
+        except Exception as error:
+            raise _translate_session_error(error, absolute) from error
+
+    async def _test(self, flag: str, path: str) -> bool:
+        """``test -<flag>`` on *path*, refused when it leaves the root.
+
+        ``HostWorkspace``'s predicates resolve symlinks and answer
+        ``False`` for anything outside the root; a bare ``test`` in the
+        container follows symlinks silently, so a link pointing at
+        ``/etc`` would answer ``True`` there and ``False`` on the host for
+        the same call. The shell prefix realpaths the argument and refuses
+        it when the target escapes — a refusal can only ever turn a
+        ``True`` into a ``False``, never the reverse.
+
+        ``readlink -f`` exists in coreutils and busybox. If an image
+        somehow lacks it the probe answers ``False`` rather than falling
+        back to a lexical check: the lexical path of a symlink is inside
+        the root by construction, so a fallback would let ``test -f``
+        follow the link and answer for a file outside the workspace —
+        exactly what this guard exists to prevent. Failing closed costs a
+        false negative on an image with no ``readlink``; failing open
+        would cost the guarantee.
+        """
+        try:
+            absolute = self.resolve(path)
+        except WorkspaceEscapeError:
+            # Mirrors HostWorkspace: a path outside the workspace does not
+            # "exist" as far as this workspace is concerned, rather than
+            # raising at a predicate call site.
+            return False
+        target = shlex.quote(absolute)
+        root = shlex.quote(self.root)
+        script = (
+            f"real=$(readlink -f -- {target} 2>/dev/null) || exit 1; "
+            f'case "$real" in {root}|{root}/*) ;; *) exit 1 ;; esac; '
+            f"test -{flag} {target}"
         )
+        result = await self._session.exec(
+            "sh", "-lc", script, shell=False, user=self._default_user
+        )
+        return result.exit_code == 0
 
     async def exists(self, path: str) -> bool:
-        absolute = self.resolve(path)
-        result = await self._session.exec(
-            "sh",
-            "-lc",
-            f"test -e {shlex.quote(absolute)}",
-            shell=False,
-            user=self._default_user,
-        )
-        return result.exit_code == 0
+        return await self._test("e", path)
 
     async def is_file(self, path: str) -> bool:
-        absolute = self.resolve(path)
-        result = await self._session.exec(
-            "sh",
-            "-lc",
-            f"test -f {shlex.quote(absolute)}",
-            shell=False,
-            user=self._default_user,
-        )
-        return result.exit_code == 0
+        return await self._test("f", path)
 
     async def is_dir(self, path: str) -> bool:
-        absolute = self.resolve(path)
-        result = await self._session.exec(
-            "sh",
-            "-lc",
-            f"test -d {shlex.quote(absolute)}",
-            shell=False,
-            user=self._default_user,
-        )
-        return result.exit_code == 0
+        return await self._test("d", path)
 
     async def mkdir(
         self,
@@ -214,48 +426,85 @@ class SandboxWorkspace(Workspace):
         respect_gitignore: bool = True,
         sort_by: Literal["name", "mtime", "size"] = "name",
     ) -> List[FileEntry]:
+        """List one container directory in the shared ``FileEntry`` shape.
+
+        The SDK's own ``FileEntry`` is a different type with different
+        semantics, and translating it naively is what made this backend
+        diverge from every other one:
+
+        * it has **no** ``name`` field, so falling back to ``path`` put the
+          *absolute container path* in ``name`` — hidden-file filtering
+          never matched, and every consumer that joined ``name`` or
+          ``path`` onto a workspace-relative base built a broken path;
+        * ``is_dir`` is a **method**, so ``bool(getattr(entry, "is_dir"))``
+          was ``True`` for every entry — files, symlinks and FIFOs all
+          reported as directories;
+        * ``kind`` already distinguishes symlinks, but ``is_symlink`` was
+          left at its default ``False``, so callers that refuse to descend
+          into symlinks (this module's own scanners among them) descended
+          anyway.
+
+        Everything now goes through ``EntryKind`` and ``make_entry``.
+        """
         # `respect_gitignore` is documented but not enforced — same fallback
-        # as HostWorkspace when no git binary is available. SDK's
-        # session.ls returns its own FileEntry shape; we translate to ours.
+        # as HostWorkspace when no git binary is available.
         _ = respect_gitignore
         absolute = self.resolve(path)
-        sdk_entries = await self._session.ls(
-            PurePosixPath(absolute), user=self._default_user
-        )
+        try:
+            sdk_entries = await self._session.ls(
+                PurePosixPath(absolute), user=self._default_user
+            )
+        except Exception as error:
+            # Never leak the container's transport error: callers get the
+            # same OSError family the host backend raises.
+            raise _translate_session_error(error, absolute) from error
+
         out: List[FileEntry] = []
         for sdk_entry in sdk_entries:
-            name = getattr(sdk_entry, "name", None) or getattr(sdk_entry, "path", "")
-            if not include_hidden and isinstance(name, str) and name.startswith("."):
+            raw_path = str(getattr(sdk_entry, "path", "") or "")
+            if not raw_path:
                 continue
-            entry_path = getattr(sdk_entry, "path", name)
-            is_dir = bool(getattr(sdk_entry, "is_dir", False))
-            size = getattr(sdk_entry, "size", None)
-            mtime_raw = getattr(sdk_entry, "mtime", None)
-            mtime = (
-                mtime_raw
-                if isinstance(mtime_raw, datetime)
-                else (
-                    datetime.fromtimestamp(mtime_raw)
-                    if isinstance(mtime_raw, (int, float))
-                    else None
-                )
+            # The SDK always reports absolute container paths; a duck-typed
+            # session reporting bare names is anchored at the directory we
+            # just listed rather than mis-read as workspace-relative.
+            child = (
+                posixpath.normpath(raw_path)
+                if raw_path.startswith("/")
+                else posixpath.normpath(posixpath.join(absolute, raw_path))
             )
-            out.append(
-                FileEntry(
-                    name=str(name),
-                    path=str(entry_path),
-                    is_dir=is_dir,
-                    size=size,
-                    mtime=mtime,
+            # ``ls -la`` on a *file* echoes the argument back as the only
+            # entry: that is the container telling us the target is not a
+            # directory. The host backend raises NotADirectoryError for
+            # the same call, so this one does too.
+            if child == absolute:
+                raise NotADirectoryError(f"{absolute}: not a directory")
+            name = entry_basename(child)
+            if not include_hidden and name.startswith("."):
+                continue
+            is_dir, is_symlink = _entry_kind(sdk_entry)
+            try:
+                out.append(
+                    make_entry(
+                        name=name,
+                        path=posixpath.relpath(child, self.root),
+                        is_dir=is_dir,
+                        size=getattr(sdk_entry, "size", None),
+                        # The SDK's own listing carries no timestamp, so this
+                        # is ``None`` on a real container rather than
+                        # fabricated; a substrate that does expose one is
+                        # passed through.
+                        mtime=_entry_mtime(sdk_entry),
+                        is_symlink=is_symlink,
+                    )
                 )
-            )
-        keyfn = {
-            "name": lambda e: e.name,
-            "mtime": lambda e: (e.mtime or datetime.min, e.name),
-            "size": lambda e: (-(e.size or 0), e.name),
-        }[sort_by]
-        out.sort(key=keyfn)
-        return out
+            except ValueError as error:
+                # One entry the substrate described in a way that cannot be
+                # expressed as a workspace-relative path is skipped, never
+                # raised — a single bad entry must not abort the listing —
+                # but never silently: see log_skipped_entry.
+                log_skipped_entry("SandboxWorkspace", absolute, error)
+                continue
+        return sort_entries(_drop_ambiguous(out, absolute), sort_by)
 
     async def glob(
         self,

@@ -10,11 +10,15 @@ substrate-dependent and cannot be proven on the host:
   session's path policy rather than the host filesystem;
 * commands run as argv with ``shell=False`` and no ``cwd`` (the sandbox
   workspace refuses ``cwd`` in that mode);
-* discovery walks ``list_dir``, whose ``FileEntry`` fields do **not**
-  mean the same thing on both substrates — the sandbox passes the SDK's
+* discovery walks ``list_dir``. Its ``FileEntry`` fields used **not** to
+  mean the same thing on both substrates — the sandbox passed the SDK's
   absolute container path through for both ``name`` and ``path``, and a
-  mis-typed entry surfaces the container's own ``ls`` failure rather
-  than an ``OSError``. Both were real bugs this test found.
+  mis-typed entry surfaced the container's own ``ls`` failure rather than
+  an ``OSError``. Both were real bugs this test found; both are now fixed
+  in the workspace layer itself (tkt_z8T1amZ-GUs0), and this module's
+  discovery assertions are what proves the layer fix rather than a
+  git-side workaround — ``git.py`` reads ``entry.name``/``entry.path``
+  directly again.
 
 Skipped unless Docker is reachable and the image is already present, so
 it never pulls in CI.

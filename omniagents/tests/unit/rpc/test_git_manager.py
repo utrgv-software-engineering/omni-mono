@@ -508,6 +508,31 @@ async def test_multi_repository_projects_are_addressed_unambiguously(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("awkward", ["back\\slash", "C:", "E:migration.sql"])
+async def test_discovery_survives_directories_it_cannot_address(
+    workspace_root: Path, manager: GitManager, awkward: str
+):
+    """A directory name this surface's wire policy refuses must be skipped,
+    not allowed to abort the whole enumeration.
+
+    ``FileEntry`` deliberately treats a backslash as a filename character
+    (it is one, on POSIX) while ``canonical_repo_path`` refuses it on the
+    wire, along with drive-letter spellings. An agent can create such a
+    directory; when it did, ``git_list_repositories`` failed outright with
+    ``git_path_invalid`` and the caller lost every legitimate repository
+    alongside it.
+    """
+    target = init_repo(workspace_root / "app")
+    write(target / "f.txt", "x\n")
+    git(target, "add", "-A")
+    git(target, "commit", "-qm", "init")
+    (workspace_root / awkward).mkdir()
+
+    listing = await manager.list_repositories("s1")
+    assert [item["repo"] for item in listing["repositories"]] == ["app"]
+
+
+@pytest.mark.asyncio
 async def test_repo_outside_the_workspace_is_refused(tmp_path: Path):
     outer = init_repo(tmp_path / "outer")
     inner = outer / "workspace"
