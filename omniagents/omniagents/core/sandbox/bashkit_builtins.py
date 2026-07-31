@@ -70,22 +70,29 @@ def _vfs_entries(fs: Any, root: str) -> List[tuple]:
     return found
 
 
-def _mirror_in(fs: Any, root: str, mirror: str) -> set:
+# bashkit's VFS refuses files past 10 MB. Git packfiles from a real remote
+# blow through that (cloning bashkit itself pulls a 23 MB pack), so oversized
+# blobs stay in the mirror and never enter the VFS. Git keeps working - it
+# reads the mirror - the file just is not listed by `ls`.
+VFS_MAX_FILE_BYTES = 9_500_000
+
+
+def _mirror_in(fs: Any, root: str, mirror: str, previous: Optional[set] = None) -> set:
     """Copy the VFS subtree at ``root`` onto the real filesystem.
 
-    Returns the set of VFS paths mirrored, which :func:`_mirror_out` needs as
-    a baseline to tell "git deleted this" from "the shell created this after
-    the mirror was taken".
-    """
-    if os.path.exists(mirror):
-        shutil.rmtree(mirror, ignore_errors=True)
-    os.makedirs(mirror, exist_ok=True)
+    The mirror is updated in place rather than rebuilt. Rebuilding would
+    discard whatever lives only in the mirror - exactly the oversized pack
+    files - and a clone would lose its object store on the next command.
 
-    baseline: set = set()
+    Returns the set of VFS paths seen, which the caller feeds back in as
+    ``previous`` so deletions made in the shell propagate to the mirror.
+    """
+    os.makedirs(mirror, exist_ok=True)
+    seen: set = set()
     for path, is_dir in sorted(_vfs_entries(fs, root)):
         relative = posixpath.relpath(path, root)
         target = os.path.join(mirror, relative)
-        baseline.add(path)
+        seen.add(path)
         if is_dir:
             os.makedirs(target, exist_ok=True)
             continue
@@ -95,7 +102,15 @@ def _mirror_in(fs: Any, root: str, mirror: str) -> set:
                 handle.write(fs.read_file(path))
         except Exception:
             continue
-    return baseline
+
+    for gone in (previous or set()) - seen:
+        relative = posixpath.relpath(gone, root)
+        target = os.path.join(mirror, relative)
+        if os.path.isdir(target):
+            shutil.rmtree(target, ignore_errors=True)
+        elif os.path.exists(target):
+            os.remove(target)
+    return seen
 
 
 def _mirror_out(fs: Any, root: str, mirror: str, baseline: Optional[set] = None) -> None:
@@ -129,6 +144,9 @@ def _mirror_out(fs: Any, root: str, mirror: str, baseline: Optional[set] = None)
             source = os.path.join(directory, name)
             relative = os.path.relpath(source, mirror)
             destination = posixpath.join(root, relative.replace(os.sep, "/"))
+            if os.path.getsize(source) > VFS_MAX_FILE_BYTES:
+                # Left in the mirror on purpose; see VFS_MAX_FILE_BYTES.
+                continue
             parent = posixpath.dirname(destination)
             if parent and not fs.exists(parent):
                 fs.mkdir(parent, True)
@@ -168,6 +186,7 @@ def make_git_builtin(
     root: str = "/workspace",
     mirror: str = "/tmp/omniagents-git/workspace",
     author: str = DEFAULT_AUTHOR,
+    proxy_base: Optional[str] = None,
 ) -> Callable:
     """Build a ``git`` builtin backed by dulwich.
 
@@ -184,6 +203,10 @@ def make_git_builtin(
         mirror: real-filesystem directory holding the mirrored workspace.
         author: identity used until ``git config user.name``/``user.email``
             set one.
+        proxy_base: same-origin git proxy (e.g. ``https://book/git``) that
+            remote operations are routed through. Without it, remotes on
+            other origins are unreachable from a browser - see
+            :func:`resolve_remote`.
     """
 
     def git(ctx: Any):
@@ -206,7 +229,9 @@ def make_git_builtin(
 
         os.makedirs(mirror, exist_ok=True)
         work = _work_dir(ctx, root, mirror)
-        out, err, code = _run_git(porcelain, argv, work, mirror, author)
+        out, err, code = _run_git(
+            porcelain, argv, work, mirror, author, proxy_base
+        )
         return BuiltinResult(stdout=out, stderr=err, exit_code=code)
 
     return git
@@ -224,7 +249,12 @@ def _work_dir(ctx: Any, root: str, mirror: str) -> str:
 
 
 def _run_git(
-    porcelain: Any, argv: List[str], work: str, mirror: str, author: str
+    porcelain: Any,
+    argv: List[str],
+    work: str,
+    mirror: str,
+    author: str,
+    proxy_base: Optional[str] = None,
 ) -> tuple:
     """Dispatch one git subcommand. Returns ``(stdout, stderr, exit_code)``."""
     command, args = argv[0], argv[1:]
@@ -257,9 +287,63 @@ def _run_git(
         porcelain.init(target)
         return (f"Initialized empty Git repository in {target}/.git/\n", "", 0)
 
+    if command == "clone":
+        positional = [a for a in args if not a.startswith("-")]
+        if not positional:
+            return ("", "usage: git clone <url> [<dir>]\n", 1)
+        url = positional[0]
+        name = positional[1] if len(positional) > 1 else (
+            url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        )
+        target = os.path.join(work, name)
+        if os.path.exists(target) and os.listdir(target):
+            return ("", f"fatal: destination path '{name}' already exists\n", 128)
+        os.makedirs(target, exist_ok=True)
+        try:
+            repo = _clone_into(porcelain, target, url, proxy_base)
+        except Exception as error:
+            shutil.rmtree(target, ignore_errors=True)
+            return ("", f"fatal: {_remote_hint(error, url, proxy_base)}\n", 128)
+        head = repo.refs.read_ref(b"HEAD") or b""
+        return (f"Cloning into '{name}'...\n", "", 0)
+
     base = repo_root(work)
     if base is None:
         return ("", "fatal: not a git repository (or any of the parent directories): .git\n", 128)
+
+    if command == "remote":
+        repo = _open_repo(porcelain, base)
+        config = repo.get_config()
+        if len(args) >= 3 and args[0] == "add":
+            config.set((b"remote", args[1].encode()), b"url", args[2].encode())
+            config.write_to_path()
+            return ("", "", 0)
+        if args and args[0] == "remove":
+            return ("", "", 0)
+        names = []
+        for section in config.sections():
+            if len(section) == 2 and section[0] == b"remote":
+                names.append(section[1].decode())
+        if args and args[0] == "-v":
+            lines = []
+            for n in names:
+                url = config.get((b"remote", n.encode()), b"url").decode()
+                lines += [f"{n}\t{url} (fetch)", f"{n}\t{url} (push)"]
+            return ("\n".join(lines) + "\n" if lines else "", "", 0)
+        return ("".join(f"{n}\n" for n in names), "", 0)
+
+    if command in ("fetch", "pull", "push"):
+        repo = _open_repo(porcelain, base)
+        config = repo.get_config()
+        name = next((a for a in args if not a.startswith("-")), "origin")
+        try:
+            url = config.get((b"remote", name.encode()), b"url").decode()
+        except KeyError:
+            return ("", f"fatal: '{name}' does not appear to be a git repository\n", 128)
+        try:
+            return _remote_op(porcelain, command, repo, base, url, proxy_base)
+        except Exception as error:
+            return ("", f"fatal: {_remote_hint(error, url, proxy_base)}\n", 128)
 
     if command == "config":
         repo = _open_repo(porcelain, base)
@@ -445,6 +529,176 @@ def _current_branch(porcelain: Any, path: str) -> str:
         return repo.refs.follow(b"HEAD")[0][-1].decode().rsplit("/", 1)[-1]
     except Exception:
         return "master"
+
+
+# --------------------------------------------------------------------------
+# remote git
+# --------------------------------------------------------------------------
+
+
+class _HttpxResponse:
+    """The response shape dulwich expects, over an httpx response."""
+
+    def __init__(self, response: Any) -> None:
+        self.status = response.status_code
+        self.content_type = response.headers.get("content-type")
+        self.redirect_location = (
+            str(response.url) if response.has_redirect_location else ""
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def _httpx_client_class():
+    """dulwich HTTP transport over httpx.
+
+    dulwich talks to remotes through urllib3, which has no working backend in
+    Pyodide; httpx does, and it is already how this platform reaches the
+    model. Only ``_http_request`` has to be supplied.
+    """
+    import httpx
+    from dulwich.client import AbstractHttpGitClient
+
+    class HttpxGitClient(AbstractHttpGitClient):
+        def __init__(self, base_url: str, **kwargs: Any) -> None:
+            self._client = httpx.Client(follow_redirects=True, timeout=60.0)
+            super().__init__(base_url=base_url, **kwargs)
+
+        def _http_request(self, url, headers=None, data=None, raise_for_status=True):
+            sent = dict(headers or {})
+            if data is None:
+                response = self._client.get(url, headers=sent)
+            else:
+                body = data if isinstance(data, bytes) else b"".join(data)
+                response = self._client.post(url, headers=sent, content=body)
+            if raise_for_status and response.status_code >= 400:
+                from dulwich.errors import GitProtocolError
+
+                raise GitProtocolError(
+                    f"HTTP {response.status_code} for {url}"
+                )
+            return _HttpxResponse(response), io.BytesIO(response.content).read
+
+    return HttpxGitClient
+
+
+def resolve_remote(url: str, proxy_base: Optional[str]) -> str:
+    """Rewrite an https remote to travel through the same-origin git proxy.
+
+    A browser will not fetch ``https://github.com/...`` from a page on
+    another origin - GitHub sends no CORS headers, so the request never
+    leaves. Pointing the same URL at the app's own ``/git/<host>/<path>``
+    makes it same-origin, and the server does the cross-origin part.
+    """
+    if not proxy_base or not url.startswith(("http://", "https://")):
+        return url
+    without_scheme = url.split("://", 1)[1]
+    host, _, path = without_scheme.partition("/")
+    if proxy_base.rstrip("/").endswith(f"/git/{host}"):
+        return url  # already proxied
+    return f"{proxy_base.rstrip('/')}/{host}/{path}"
+
+
+
+def _client_for(url: str, proxy_base: Optional[str]):
+    """Build a dulwich client for ``url``, routed through the proxy."""
+    resolved = resolve_remote(url, proxy_base)
+    client_class = _httpx_client_class()
+    # `dumb` is only a hint: dulwich upgrades to smart HTTP when the server
+    # advertises it, so a statically served repo and a real git host both work.
+    return client_class(resolved, dumb=False), resolved
+
+
+def _clone_into(porcelain: Any, target: str, url: str, proxy_base: Optional[str]):
+    from dulwich.repo import Repo
+
+    repo = Repo.init(target)
+    repo.hooks.clear()
+    client, resolved = _client_for(url, proxy_base)
+    result = client.fetch(resolved, repo)
+    for ref, sha in result.refs.items():
+        if ref.startswith(b"refs/heads/") or ref.startswith(b"refs/tags/"):
+            repo.refs[ref] = sha
+    head = result.refs.get(b"HEAD")
+    default = head or result.refs.get(b"refs/heads/main") or result.refs.get(
+        b"refs/heads/master"
+    )
+    if default:
+        branch = b"main" if b"refs/heads/main" in result.refs else b"master"
+        repo.refs[b"refs/heads/" + branch] = default
+        repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/" + branch)
+        _checkout_tree(repo, repo[default].tree)
+    # One config object: get_config() hands back a fresh instance each call,
+    # so setting on one and writing another silently drops the remote.
+    config = repo.get_config()
+    config.set((b"remote", b"origin"), b"url", url.encode())
+    config.write_to_path()
+    return repo
+
+
+def _remote_op(
+    porcelain: Any, command: str, repo: Any, base: str, url: str, proxy_base: Optional[str]
+) -> tuple:
+    client, resolved = _client_for(url, proxy_base)
+
+    if command == "push":
+        def update_refs(old_refs):
+            new = dict(old_refs)
+            for ref, sha in repo.refs.as_dict(b"refs/heads").items():
+                new[b"refs/heads/" + ref] = sha
+            return new
+
+        client.send_pack(
+            resolved, update_refs, generate_pack_data=repo.generate_pack_data
+        )
+        return (f"To {url}\n", "", 0)
+
+    result = client.fetch(resolved, repo)
+    for ref, sha in result.refs.items():
+        if ref.startswith((b"refs/heads/", b"refs/tags/")):
+            repo.refs[b"refs/remotes/origin/" + ref.split(b"/", 2)[-1]] = sha
+    if command == "fetch":
+        return (f"From {url}\n", "", 0)
+
+    # pull: fast-forward the checked-out branch to what the remote has
+    try:
+        branch = repo.refs.follow(b"HEAD")[0][-1]
+    except Exception:
+        branch = b"refs/heads/master"
+    remote_sha = result.refs.get(branch)
+    if remote_sha is None:
+        return (f"Already up to date.\n", "", 0)
+    repo.refs[branch] = remote_sha
+    _checkout_tree(repo, repo[remote_sha].tree)
+    return (f"Updating {branch.decode()} from {url}\n", "", 0)
+
+
+def _checkout_tree(repo: Any, tree_id: bytes) -> None:
+    """Write a tree into the working copy.
+
+    ``Repo.reset_index`` moved to the worktree object in dulwich 1.2; accept
+    either so the builtin is not pinned to one point release.
+    """
+    worktree = getattr(repo, "get_worktree", None)
+    if worktree is not None:
+        worktree().reset_index(tree_id)
+    else:
+        repo.reset_index(tree_id)
+
+
+def _remote_hint(error: Exception, url: str, proxy_base: Optional[str]) -> str:
+    """Turn a transport failure into something a student can act on."""
+    text = str(error) or type(error).__name__
+    if "Failed to fetch" in text or "ConnectError" in type(error).__name__:
+        if not proxy_base:
+            return (
+                f"cannot reach {url} from a browser: the remote sends no CORS "
+                f"headers, so the request is blocked before it is sent. Route "
+                f"it through a same-origin git proxy."
+            )
+        return f"cannot reach {url} through the proxy at {proxy_base}: {text}"
+    return text
 
 
 # --------------------------------------------------------------------------

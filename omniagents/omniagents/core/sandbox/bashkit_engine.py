@@ -52,7 +52,7 @@ from agents.sandbox.session import BaseSandboxSession, SandboxSessionState
 from agents.sandbox.snapshot import NoopSnapshot
 from agents.sandbox.types import ExecResult, User
 
-from .bashkit_builtins import _mirror_in, _mirror_out
+from .bashkit_builtins import DEFAULT_AUTHOR, _mirror_in, _mirror_out
 
 _DIR_TYPES = {"directory", "dir"}
 
@@ -181,7 +181,7 @@ class BashkitSandboxSession(BaseSandboxSession):
         root: str = "/workspace",
         bash: Any = None,
         session_id: str = "bashkit",
-        git: bool = False,
+        git: Any = False,
         network: Any = None,
         **bash_kwargs: Any,
     ) -> None:
@@ -189,6 +189,8 @@ class BashkitSandboxSession(BaseSandboxSession):
         # the workspace. Set before they are constructed, since they capture it.
         self._mirror = f"/tmp/omniagents-mirror/{session_id}"
         self._mirrored = bool(git or network)
+        # VFS paths at the last sync, so deletions in the shell reach the mirror.
+        self._vfs_seen: set = set()
 
         if bash is None:
             from bashkit import Bash
@@ -197,7 +199,13 @@ class BashkitSandboxSession(BaseSandboxSession):
             if git:
                 from .bashkit_builtins import make_git_builtin
 
-                builtins["git"] = make_git_builtin(root=root, mirror=self._mirror)
+                git_spec = {} if git is True else dict(git)
+                builtins["git"] = make_git_builtin(
+                    root=root,
+                    mirror=self._mirror,
+                    proxy_base=git_spec.get("proxy_base"),
+                    author=git_spec.get("author", DEFAULT_AUTHOR),
+                )
             if network:
                 from .bashkit_builtins import make_http_builtins
 
@@ -320,8 +328,12 @@ class BashkitSandboxSession(BaseSandboxSession):
             if separator == "&&" and code != 0:
                 break
             baseline = _mirror_in(
-                self.bash.fs(), str(self.state.manifest.root), self._mirror
+                self.bash.fs(),
+                str(self.state.manifest.root),
+                self._mirror,
+                self._vfs_seen,
             )
+            self._vfs_seen = baseline
             result = await self._run(statement)
             _mirror_out(
                 self.bash.fs(), str(self.state.manifest.root), self._mirror, baseline
