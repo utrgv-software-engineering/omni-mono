@@ -71,6 +71,22 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | FsUploadChunk
   | FsUploadCommit
   | FsUploadAbort
+  | GitListRepositories
+  | GitStatus
+  | GitDiff
+  | GitLog
+  | GitListBranches
+  | GitListWorktrees
+  | GitConflicts
+  | GitStage
+  | GitUnstage
+  | GitDiscard
+  | GitCommit
+  | GitCheckout
+  | GitReset
+  | GitFetch
+  | GitPull
+  | GitPush
   | Initialized
   | RunStarted
   | RunStatus
@@ -94,7 +110,8 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | SessionVariablesChanged
   | FsEvents
   | FsRescanRequired
-  | FsTransferProgress;
+  | FsTransferProgress
+  | GitOperationProgress;
 
 export interface Initialize {
   capabilities: Capabilities;
@@ -455,6 +472,123 @@ export interface FsUploadAbort {
   session_id: string;
   transfer_id: string;
 }
+export interface GitListRepositories {
+  max_depth?: number;
+  path?: string;
+  session_id: string;
+}
+export interface GitStatus {
+  include_ignored?: boolean;
+  include_untracked?: boolean;
+  paths?: unknown[];
+  repo: string;
+  session_id: string;
+}
+export interface GitDiff {
+  context_lines?: number;
+  from_rev?: string;
+  mode?: string;
+  paths?: unknown[];
+  repo: string;
+  session_id: string;
+  to_rev?: string;
+}
+export interface GitLog {
+  max_count?: number;
+  paths?: unknown[];
+  repo: string;
+  rev?: string;
+  session_id: string;
+  skip?: number;
+}
+export interface GitListBranches {
+  include_remote?: boolean;
+  repo: string;
+  session_id: string;
+}
+export interface GitListWorktrees {
+  repo: string;
+  session_id: string;
+}
+export interface GitConflicts {
+  paths?: unknown[];
+  repo: string;
+  session_id: string;
+}
+export interface GitStage {
+  context_lines?: number;
+  hunks?: unknown[];
+  mode?: string;
+  paths?: unknown[];
+  repo: string;
+  session_id: string;
+}
+export interface GitUnstage {
+  context_lines?: number;
+  hunks?: unknown[];
+  paths?: unknown[];
+  repo: string;
+  session_id: string;
+}
+export interface GitDiscard {
+  confirmation_token?: string;
+  context_lines?: number;
+  hunks?: unknown[];
+  paths?: unknown[];
+  repo: string;
+  session_id: string;
+}
+export interface GitCommit {
+  allow_empty?: boolean;
+  amend?: boolean;
+  author?: string;
+  confirmation_token?: string;
+  message: string;
+  repo: string;
+  session_id: string;
+}
+export interface GitCheckout {
+  branch: string;
+  confirmation_token?: string;
+  create?: boolean;
+  detach?: boolean;
+  discard_changes?: boolean;
+  repo: string;
+  session_id: string;
+  start_point?: string;
+}
+export interface GitReset {
+  confirmation_token?: string;
+  mode?: string;
+  paths?: unknown[];
+  repo: string;
+  rev?: string;
+  session_id: string;
+}
+export interface GitFetch {
+  prune?: boolean;
+  refspec?: string;
+  remote?: string;
+  repo: string;
+  session_id: string;
+}
+export interface GitPull {
+  rebase?: boolean;
+  refspec?: string;
+  remote?: string;
+  repo: string;
+  session_id: string;
+}
+export interface GitPush {
+  confirmation_token?: string;
+  force?: boolean;
+  force_with_lease?: boolean;
+  refspec?: string;
+  remote?: string;
+  repo: string;
+  session_id: string;
+  set_upstream?: boolean;
+}
 export interface Initialized {}
 export interface RunStarted {
   prompt?: string;
@@ -695,4 +829,16 @@ export interface FsTransferProgress {
   total: number;
   transfer_id: string;
   transferred: number;
+}
+export interface GitOperationProgress {
+  detail?: {
+    [k: string]: unknown;
+  };
+  operation: string;
+  operation_id: string;
+  phase: string;
+  repo: string;
+  seq?: number;
+  session_id: string;
+  stream_id?: string;
 }

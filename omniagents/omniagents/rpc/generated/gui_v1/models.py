@@ -784,6 +784,219 @@ class FsUploadAbortResult(RootModel[bool]):
     pass
 
 
+class GitListRepositoriesParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    path: str | None = None
+    max_depth: int | None = None
+
+
+class GitListRepositoriesResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitStatusParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    include_untracked: bool | None = None
+    include_ignored: bool | None = None
+    paths: list[Any] | None = None
+
+
+class GitStatusResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitDiffParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    mode: str | None = None
+    paths: list[Any] | None = None
+    context_lines: int | None = None
+    from_rev: str | None = None
+    to_rev: str | None = None
+
+
+class GitDiffResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitLogParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    rev: str | None = None
+    max_count: int | None = None
+    skip: int | None = None
+    paths: list[Any] | None = None
+
+
+class GitLogResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitListBranchesParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    include_remote: bool | None = None
+
+
+class GitListBranchesResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitListWorktreesParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+
+
+class GitListWorktreesResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitConflictsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    paths: list[Any] | None = None
+
+
+class GitConflictsResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitStageParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    paths: list[Any] | None = None
+    hunks: list[Any] | None = None
+    context_lines: int | None = None
+    mode: str | None = None
+
+
+class GitStageResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitUnstageParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    paths: list[Any] | None = None
+    hunks: list[Any] | None = None
+    context_lines: int | None = None
+
+
+class GitUnstageResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitDiscardParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    paths: list[Any] | None = None
+    hunks: list[Any] | None = None
+    context_lines: int | None = None
+    confirmation_token: str | None = None
+
+
+class GitDiscardResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitCommitParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    message: str
+    amend: bool | None = None
+    allow_empty: bool | None = None
+    author: str | None = None
+    confirmation_token: str | None = None
+
+
+class GitCommitResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitCheckoutParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    branch: str
+    create: bool | None = None
+    start_point: str | None = None
+    detach: bool | None = None
+    discard_changes: bool | None = None
+    confirmation_token: str | None = None
+
+
+class GitCheckoutResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitResetParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    mode: str | None = None
+    rev: str | None = None
+    paths: list[Any] | None = None
+    confirmation_token: str | None = None
+
+
+class GitResetResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitFetchParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    remote: str | None = None
+    refspec: str | None = None
+    prune: bool | None = None
+
+
+class GitFetchResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitPullParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    remote: str | None = None
+    refspec: str | None = None
+    rebase: bool | None = None
+
+
+class GitPullResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitPushParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    repo: str
+    remote: str | None = None
+    refspec: str | None = None
+    force: bool | None = None
+    force_with_lease: bool | None = None
+    set_upstream: bool | None = None
+    confirmation_token: str | None = None
+
+
+class GitPushResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class InitializedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pass
@@ -1051,6 +1264,18 @@ class FsTransferProgressParams(BaseModel):
     stream_id: str | None = None
 
 
+class GitOperationProgressParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    operation_id: str
+    repo: str
+    operation: str
+    phase: str
+    detail: dict[str, Any] | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
 CLIENT_REQUEST_MODELS = {
     "initialize": InitializeParams,
     "start_run": StartRunParams,
@@ -1124,6 +1349,22 @@ CLIENT_REQUEST_MODELS = {
     "fs_upload_chunk": FsUploadChunkParams,
     "fs_upload_commit": FsUploadCommitParams,
     "fs_upload_abort": FsUploadAbortParams,
+    "git_list_repositories": GitListRepositoriesParams,
+    "git_status": GitStatusParams,
+    "git_diff": GitDiffParams,
+    "git_log": GitLogParams,
+    "git_list_branches": GitListBranchesParams,
+    "git_list_worktrees": GitListWorktreesParams,
+    "git_conflicts": GitConflictsParams,
+    "git_stage": GitStageParams,
+    "git_unstage": GitUnstageParams,
+    "git_discard": GitDiscardParams,
+    "git_commit": GitCommitParams,
+    "git_checkout": GitCheckoutParams,
+    "git_reset": GitResetParams,
+    "git_fetch": GitFetchParams,
+    "git_pull": GitPullParams,
+    "git_push": GitPushParams,
 }
 CLIENT_RESULT_MODELS = {
     "initialize": InitializeResult,
@@ -1198,6 +1439,22 @@ CLIENT_RESULT_MODELS = {
     "fs_upload_chunk": FsUploadChunkResult,
     "fs_upload_commit": FsUploadCommitResult,
     "fs_upload_abort": FsUploadAbortResult,
+    "git_list_repositories": GitListRepositoriesResult,
+    "git_status": GitStatusResult,
+    "git_diff": GitDiffResult,
+    "git_log": GitLogResult,
+    "git_list_branches": GitListBranchesResult,
+    "git_list_worktrees": GitListWorktreesResult,
+    "git_conflicts": GitConflictsResult,
+    "git_stage": GitStageResult,
+    "git_unstage": GitUnstageResult,
+    "git_discard": GitDiscardResult,
+    "git_commit": GitCommitResult,
+    "git_checkout": GitCheckoutResult,
+    "git_reset": GitResetResult,
+    "git_fetch": GitFetchResult,
+    "git_pull": GitPullResult,
+    "git_push": GitPushResult,
 }
 CLIENT_NOTIFICATION_MODELS = {"initialized": InitializedParams}
 SERVER_NOTIFICATION_MODELS = {
@@ -1224,6 +1481,7 @@ SERVER_NOTIFICATION_MODELS = {
     "fs_events": FsEventsParams,
     "fs_rescan_required": FsRescanRequiredParams,
     "fs_transfer_progress": FsTransferProgressParams,
+    "git_operation_progress": GitOperationProgressParams,
 }
 STABLE_REQUESTS = frozenset(
     [
@@ -1303,6 +1561,22 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "fs_upload_chunk",
         "fs_upload_commit",
         "fs_upload_abort",
+        "git_list_repositories",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_list_branches",
+        "git_list_worktrees",
+        "git_conflicts",
+        "git_stage",
+        "git_unstage",
+        "git_discard",
+        "git_commit",
+        "git_checkout",
+        "git_reset",
+        "git_fetch",
+        "git_pull",
+        "git_push",
     ]
 )
 STABLE_NOTIFICATIONS = frozenset(
@@ -1335,5 +1609,6 @@ EXPERIMENTAL_NOTIFICATIONS = frozenset(
         "fs_events",
         "fs_rescan_required",
         "fs_transfer_progress",
+        "git_operation_progress",
     ]
 )

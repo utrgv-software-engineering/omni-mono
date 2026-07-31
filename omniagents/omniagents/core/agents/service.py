@@ -14,7 +14,7 @@ import copy
 import logging
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
-from typing import Optional, Dict, Any, Callable
+from typing import Awaitable, Optional, Dict, Any, Callable
 from pathlib import Path
 import inspect
 
@@ -54,6 +54,7 @@ from omniagents.rpc.auth import (
 )
 from omniagents.rpc.auth import _OwnerUnknown as _OwnerUnknownType
 from omniagents.rpc.filesystem import FilesystemManager, FsNotFoundError
+from omniagents.rpc.git import GitManager
 from omniagents.workspace.base import Workspace
 from omniagents.workspace.host import HostWorkspace
 from omniagents.core.providers.accounts import AccountManager
@@ -553,6 +554,13 @@ class AgentService(RpcMethodsBase):
         self.filesystem = FilesystemManager(
             workspace_resolver=self._filesystem_workspace
         )
+
+        # Typed git operations behind the ``git_*`` RPCs. Shares the
+        # workspace resolver with the filesystem surface, so a product
+        # that installs ``workspace_factory`` gets git inside the sandbox
+        # for free — the manager never assumes a host subprocess in the
+        # server's cwd.
+        self.git = GitManager(workspace_resolver=self._filesystem_workspace)
 
         # Register audit backend if enabled in security config
         try:
@@ -5558,6 +5566,271 @@ class AgentService(RpcMethodsBase):
     ) -> bool:  # noqa: D401
         return await self.filesystem.upload_abort(
             session_id, transfer_id, channel=self.channel
+        )
+
+    # ------------------------------------------------------------------
+    #  Typed git operations (``git_*`` RPCs, tkt_l_l0lUi4A5V2).
+    #
+    #  Thin wrappers over ``self.git`` (GitManager): the manager owns
+    #  repository confinement, machine-format parsing, the hunk model,
+    #  index rollback and typed -3209x errors; this layer owns nothing but
+    #  argument pass-through and the progress-notification channel.
+    #  Authorization: every method names a session_id and is
+    #  RESOURCE_SCOPED (see omniagents/rpc/auth.py) — another principal's
+    #  repository is refused with -32014 before any git process starts.
+    #  ``git_operation_progress`` is per-connection and deliberately NOT
+    #  journaled: a reconnecting client refetches git_status.
+    # ------------------------------------------------------------------
+
+    def _git_progress(self) -> "Callable[[dict], Awaitable[None]]":
+        channel = self.channel
+
+        async def emit(payload: dict) -> None:
+            if channel is None:
+                return
+            await channel.async_call("git_operation_progress", payload)
+
+        return emit
+
+    async def git_list_repositories(
+        self,
+        session_id: str,
+        path: str | None = None,
+        max_depth: int | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.list_repositories(
+            session_id, path=path, max_depth=max_depth
+        )
+
+    async def git_status(
+        self,
+        session_id: str,
+        repo: str,
+        include_untracked: bool | None = None,
+        include_ignored: bool | None = None,
+        paths: list | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.status(
+            session_id,
+            repo,
+            include_untracked=include_untracked,
+            include_ignored=include_ignored,
+            paths=paths,
+        )
+
+    async def git_diff(
+        self,
+        session_id: str,
+        repo: str,
+        mode: str | None = None,
+        paths: list | None = None,
+        context_lines: int | None = None,
+        from_rev: str | None = None,
+        to_rev: str | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.diff(
+            session_id,
+            repo,
+            mode=mode,
+            paths=paths,
+            context_lines=context_lines,
+            from_rev=from_rev,
+            to_rev=to_rev,
+        )
+
+    async def git_log(
+        self,
+        session_id: str,
+        repo: str,
+        rev: str | None = None,
+        max_count: int | None = None,
+        skip: int | None = None,
+        paths: list | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.log(
+            session_id, repo, rev=rev, max_count=max_count, skip=skip, paths=paths
+        )
+
+    async def git_list_branches(
+        self, session_id: str, repo: str, include_remote: bool | None = None
+    ) -> dict:  # noqa: D401
+        return await self.git.list_branches(
+            session_id, repo, include_remote=include_remote
+        )
+
+    async def git_list_worktrees(
+        self, session_id: str, repo: str
+    ) -> dict:  # noqa: D401
+        return await self.git.list_worktrees(session_id, repo)
+
+    async def git_conflicts(
+        self, session_id: str, repo: str, paths: list | None = None
+    ) -> dict:  # noqa: D401
+        return await self.git.conflicts(session_id, repo, paths=paths)
+
+    async def git_stage(
+        self,
+        session_id: str,
+        repo: str,
+        paths: list | None = None,
+        hunks: list | None = None,
+        context_lines: int | None = None,
+        mode: str | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.stage(
+            session_id,
+            repo,
+            paths=paths,
+            hunks=hunks,
+            context_lines=context_lines,
+            mode=mode,
+        )
+
+    async def git_unstage(
+        self,
+        session_id: str,
+        repo: str,
+        paths: list | None = None,
+        hunks: list | None = None,
+        context_lines: int | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.unstage(
+            session_id, repo, paths=paths, hunks=hunks, context_lines=context_lines
+        )
+
+    async def git_discard(
+        self,
+        session_id: str,
+        repo: str,
+        paths: list | None = None,
+        hunks: list | None = None,
+        context_lines: int | None = None,
+        confirmation_token: str | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.discard(
+            session_id,
+            repo,
+            paths=paths,
+            hunks=hunks,
+            context_lines=context_lines,
+            confirmation_token=confirmation_token,
+        )
+
+    async def git_commit(
+        self,
+        session_id: str,
+        repo: str,
+        message: str,
+        amend: bool | None = None,
+        allow_empty: bool | None = None,
+        author: str | None = None,
+        confirmation_token: str | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.commit(
+            session_id,
+            repo,
+            message,
+            amend=amend,
+            allow_empty=allow_empty,
+            author=author,
+            confirmation_token=confirmation_token,
+        )
+
+    async def git_checkout(
+        self,
+        session_id: str,
+        repo: str,
+        branch: str,
+        create: bool | None = None,
+        start_point: str | None = None,
+        detach: bool | None = None,
+        discard_changes: bool | None = None,
+        confirmation_token: str | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.checkout(
+            session_id,
+            repo,
+            branch=branch,
+            create=create,
+            start_point=start_point,
+            detach=detach,
+            discard_changes=discard_changes,
+            confirmation_token=confirmation_token,
+        )
+
+    async def git_reset(
+        self,
+        session_id: str,
+        repo: str,
+        mode: str | None = None,
+        rev: str | None = None,
+        paths: list | None = None,
+        confirmation_token: str | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.reset(
+            session_id,
+            repo,
+            mode=mode,
+            rev=rev,
+            paths=paths,
+            confirmation_token=confirmation_token,
+        )
+
+    async def git_fetch(
+        self,
+        session_id: str,
+        repo: str,
+        remote: str | None = None,
+        refspec: str | None = None,
+        prune: bool | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.fetch(
+            session_id,
+            repo,
+            remote=remote,
+            refspec=refspec,
+            prune=prune,
+            progress=self._git_progress(),
+        )
+
+    async def git_pull(
+        self,
+        session_id: str,
+        repo: str,
+        remote: str | None = None,
+        refspec: str | None = None,
+        rebase: bool | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.pull(
+            session_id,
+            repo,
+            remote=remote,
+            refspec=refspec,
+            rebase=rebase,
+            progress=self._git_progress(),
+        )
+
+    async def git_push(
+        self,
+        session_id: str,
+        repo: str,
+        remote: str | None = None,
+        refspec: str | None = None,
+        force: bool | None = None,
+        force_with_lease: bool | None = None,
+        set_upstream: bool | None = None,
+        confirmation_token: str | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.push(
+            session_id,
+            repo,
+            remote=remote,
+            refspec=refspec,
+            force=force,
+            force_with_lease=force_with_lease,
+            set_upstream=set_upstream,
+            confirmation_token=confirmation_token,
+            progress=self._git_progress(),
         )
 
     # (Removed) get_model_info: model metadata is now sent inline with usage events

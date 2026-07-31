@@ -92,6 +92,9 @@ type TestClient = {
   listSessions: RPCClient["listSessions"];
   archiveSession: RPCClient["archiveSession"];
   registerClientFunction: RPCClient["registerClientFunction"];
+  gitStatus: RPCClient["gitStatus"];
+  gitStage: RPCClient["gitStage"];
+  gitDiscard: RPCClient["gitDiscard"];
 };
 
 function connectedClient(sent: string[]): TestClient {
@@ -355,5 +358,64 @@ describe("RPCClient", () => {
     // Deliberate close never triggers a reconnect loop.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(mockSockets).toHaveLength(1);
+  });
+});
+
+describe("RPCClient typed git wrappers", () => {
+  it("omits unset git options instead of sending nulls", async () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.gitStatus("sess", "apps/api");
+    expect(JSON.parse(sent[0]!)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "git_status",
+      params: { session_id: "sess", repo: "apps/api" },
+    });
+  });
+
+  it("sends hunk selections verbatim", async () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.gitStage("sess", ".", {
+      hunks: [{ path: "src/app.ts", hunk_id: "deadbeefdeadbeef" }],
+    });
+    expect(JSON.parse(sent[0]!)).toMatchObject({
+      method: "git_stage",
+      params: {
+        session_id: "sess",
+        repo: ".",
+        hunks: [{ path: "src/app.ts", hunk_id: "deadbeefdeadbeef" }],
+      },
+    });
+  });
+
+  it("preserves the typed confirmation error for destructive operations", async () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    const response = client.gitDiscard("sess", ".", { paths: ["a.txt"] });
+    const request = JSON.parse(sent[0]!) as Record<string, unknown>;
+    client.handleMessage({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: {
+        code: -32093,
+        message: "discard_changes discards work and must be confirmed explicitly",
+        data: {
+          kind: "git_confirmation_required",
+          operation: "discard_changes",
+          confirmation_token: "tok",
+          impact: { paths: ["a.txt"] },
+        },
+      },
+    });
+
+    await expect(response).rejects.toMatchObject({
+      code: -32093,
+      data: { kind: "git_confirmation_required", confirmation_token: "tok" },
+    });
   });
 });

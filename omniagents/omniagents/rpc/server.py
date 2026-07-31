@@ -54,6 +54,7 @@ GUI_OPTIONAL_NOTIFICATIONS = frozenset(
         "fs_events",
         "fs_rescan_required",
         "fs_transfer_progress",
+        "git_operation_progress",
     }
 )
 # Request params that carry credential material. Redacted from every
@@ -303,6 +304,7 @@ class JsonRpcEndpoint:
         from omniagents.core.providers.accounts import AccountRpcError
         from omniagents.core.session.event_log import ResyncRequiredError
         from omniagents.rpc.filesystem import FilesystemRpcError
+        from omniagents.rpc.git import GitRpcError
 
         if isinstance(
             exc,
@@ -312,6 +314,7 @@ class JsonRpcEndpoint:
                 ElicitationError,
                 McpRpcError,
                 FilesystemRpcError,
+                GitRpcError,
             ),
         ):
             await channel.send_error(call_id, exc.code, str(exc), exc.data)

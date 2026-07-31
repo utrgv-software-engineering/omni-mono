@@ -312,6 +312,123 @@ export interface FsUploadAbortParams {
   session_id: string;
   transfer_id: string;
 }
+export interface GitListRepositoriesParams {
+  session_id: string;
+  path?: string;
+  max_depth?: number;
+}
+export interface GitStatusParams {
+  session_id: string;
+  repo: string;
+  include_untracked?: boolean;
+  include_ignored?: boolean;
+  paths?: unknown[];
+}
+export interface GitDiffParams {
+  session_id: string;
+  repo: string;
+  mode?: string;
+  paths?: unknown[];
+  context_lines?: number;
+  from_rev?: string;
+  to_rev?: string;
+}
+export interface GitLogParams {
+  session_id: string;
+  repo: string;
+  rev?: string;
+  max_count?: number;
+  skip?: number;
+  paths?: unknown[];
+}
+export interface GitListBranchesParams {
+  session_id: string;
+  repo: string;
+  include_remote?: boolean;
+}
+export interface GitListWorktreesParams {
+  session_id: string;
+  repo: string;
+}
+export interface GitConflictsParams {
+  session_id: string;
+  repo: string;
+  paths?: unknown[];
+}
+export interface GitStageParams {
+  session_id: string;
+  repo: string;
+  paths?: unknown[];
+  hunks?: unknown[];
+  context_lines?: number;
+  mode?: string;
+}
+export interface GitUnstageParams {
+  session_id: string;
+  repo: string;
+  paths?: unknown[];
+  hunks?: unknown[];
+  context_lines?: number;
+}
+export interface GitDiscardParams {
+  session_id: string;
+  repo: string;
+  paths?: unknown[];
+  hunks?: unknown[];
+  context_lines?: number;
+  confirmation_token?: string;
+}
+export interface GitCommitParams {
+  session_id: string;
+  repo: string;
+  message: string;
+  amend?: boolean;
+  allow_empty?: boolean;
+  author?: string;
+  confirmation_token?: string;
+}
+export interface GitCheckoutParams {
+  session_id: string;
+  repo: string;
+  branch: string;
+  create?: boolean;
+  start_point?: string;
+  detach?: boolean;
+  discard_changes?: boolean;
+  confirmation_token?: string;
+}
+export interface GitResetParams {
+  session_id: string;
+  repo: string;
+  mode?: string;
+  rev?: string;
+  paths?: unknown[];
+  confirmation_token?: string;
+}
+export interface GitFetchParams {
+  session_id: string;
+  repo: string;
+  remote?: string;
+  refspec?: string;
+  prune?: boolean;
+}
+export interface GitPullParams {
+  session_id: string;
+  repo: string;
+  remote?: string;
+  refspec?: string;
+  rebase?: boolean;
+}
+export interface GitPushParams {
+  session_id: string;
+  repo: string;
+  remote?: string;
+  refspec?: string;
+  force?: boolean;
+  force_with_lease?: boolean;
+  set_upstream?: boolean;
+  confirmation_token?: string;
+}
 export interface InitializedParams {
 }
 export interface RunStartedParams {
@@ -530,6 +647,16 @@ export interface FsTransferProgressParams {
   seq?: number;
   stream_id?: string;
 }
+export interface GitOperationProgressParams {
+  session_id: string;
+  operation_id: string;
+  repo: string;
+  operation: string;
+  phase: string;
+  detail?: Record<string, unknown>;
+  seq?: number;
+  stream_id?: string;
+}
 export interface RpcMethodMap {
   "initialize": { params: InitializeParams; result: InitializeResult };
   "start_run": { params: StartRunParams; result: StartRunResult };
@@ -603,6 +730,22 @@ export interface RpcMethodMap {
   "fs_upload_chunk": { params: FsUploadChunkParams; result: Record<string, unknown> };
   "fs_upload_commit": { params: FsUploadCommitParams; result: Record<string, unknown> };
   "fs_upload_abort": { params: FsUploadAbortParams; result: boolean };
+  "git_list_repositories": { params: GitListRepositoriesParams; result: Record<string, unknown> };
+  "git_status": { params: GitStatusParams; result: Record<string, unknown> };
+  "git_diff": { params: GitDiffParams; result: Record<string, unknown> };
+  "git_log": { params: GitLogParams; result: Record<string, unknown> };
+  "git_list_branches": { params: GitListBranchesParams; result: Record<string, unknown> };
+  "git_list_worktrees": { params: GitListWorktreesParams; result: Record<string, unknown> };
+  "git_conflicts": { params: GitConflictsParams; result: Record<string, unknown> };
+  "git_stage": { params: GitStageParams; result: Record<string, unknown> };
+  "git_unstage": { params: GitUnstageParams; result: Record<string, unknown> };
+  "git_discard": { params: GitDiscardParams; result: Record<string, unknown> };
+  "git_commit": { params: GitCommitParams; result: Record<string, unknown> };
+  "git_checkout": { params: GitCheckoutParams; result: Record<string, unknown> };
+  "git_reset": { params: GitResetParams; result: Record<string, unknown> };
+  "git_fetch": { params: GitFetchParams; result: Record<string, unknown> };
+  "git_pull": { params: GitPullParams; result: Record<string, unknown> };
+  "git_push": { params: GitPushParams; result: Record<string, unknown> };
 }
 export interface RpcNotificationMap {
   "run_started": RunStartedParams;
@@ -628,6 +771,7 @@ export interface RpcNotificationMap {
   "fs_events": FsEventsParams;
   "fs_rescan_required": FsRescanRequiredParams;
   "fs_transfer_progress": FsTransferProgressParams;
+  "git_operation_progress": GitOperationProgressParams;
 }
 export interface RpcClientNotificationMap {
   "initialized": InitializedParams;

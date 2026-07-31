@@ -844,6 +844,262 @@ export class RPCClient {
   async fsUploadAbort(sessionId: string, transferId: string): Promise<boolean> {
     return this.call('fs_upload_abort', { session_id: sessionId, transfer_id: transferId })
   }
+
+  // ----- Typed git operations (git_*, experimental) -----
+
+  async gitListRepositories(
+    sessionId: string,
+    opts?: { path?: string; maxDepth?: number },
+  ): Promise<GitListRepositoriesResult> {
+    const params: Record<string, unknown> = { session_id: sessionId }
+    if (opts?.path !== undefined) params.path = opts.path
+    if (opts?.maxDepth !== undefined) params.max_depth = opts.maxDepth
+    return this.call(
+      'git_list_repositories',
+      params as unknown as RpcMethodMap['git_list_repositories']['params'],
+    ) as Promise<GitListRepositoriesResult>
+  }
+
+  async gitStatus(
+    sessionId: string,
+    repo: string,
+    opts?: { includeUntracked?: boolean; includeIgnored?: boolean; paths?: string[] },
+  ): Promise<GitStatusResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (opts?.includeUntracked !== undefined) params.include_untracked = opts.includeUntracked
+    if (opts?.includeIgnored !== undefined) params.include_ignored = opts.includeIgnored
+    if (opts?.paths !== undefined) params.paths = opts.paths
+    return this.call(
+      'git_status',
+      params as unknown as RpcMethodMap['git_status']['params'],
+    ) as Promise<GitStatusResult>
+  }
+
+  async gitDiff(
+    sessionId: string,
+    repo: string,
+    opts?: {
+      mode?: GitDiffMode
+      paths?: string[]
+      contextLines?: number
+      fromRev?: string
+      toRev?: string
+    },
+  ): Promise<GitDiffResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (opts?.mode !== undefined) params.mode = opts.mode
+    if (opts?.paths !== undefined) params.paths = opts.paths
+    if (opts?.contextLines !== undefined) params.context_lines = opts.contextLines
+    if (opts?.fromRev !== undefined) params.from_rev = opts.fromRev
+    if (opts?.toRev !== undefined) params.to_rev = opts.toRev
+    return this.call(
+      'git_diff',
+      params as unknown as RpcMethodMap['git_diff']['params'],
+    ) as Promise<GitDiffResult>
+  }
+
+  async gitLog(
+    sessionId: string,
+    repo: string,
+    opts?: { rev?: string; maxCount?: number; skip?: number; paths?: string[] },
+  ): Promise<GitLogResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (opts?.rev !== undefined) params.rev = opts.rev
+    if (opts?.maxCount !== undefined) params.max_count = opts.maxCount
+    if (opts?.skip !== undefined) params.skip = opts.skip
+    if (opts?.paths !== undefined) params.paths = opts.paths
+    return this.call(
+      'git_log',
+      params as unknown as RpcMethodMap['git_log']['params'],
+    ) as Promise<GitLogResult>
+  }
+
+  async gitListBranches(
+    sessionId: string,
+    repo: string,
+    includeRemote?: boolean,
+  ): Promise<GitListBranchesResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (includeRemote !== undefined) params.include_remote = includeRemote
+    return this.call(
+      'git_list_branches',
+      params as unknown as RpcMethodMap['git_list_branches']['params'],
+    ) as Promise<GitListBranchesResult>
+  }
+
+  async gitListWorktrees(sessionId: string, repo: string): Promise<GitListWorktreesResult> {
+    return this.call('git_list_worktrees', {
+      session_id: sessionId,
+      repo,
+    }) as Promise<GitListWorktreesResult>
+  }
+
+  async gitConflicts(
+    sessionId: string,
+    repo: string,
+    paths?: string[],
+  ): Promise<GitConflictsResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (paths !== undefined) params.paths = paths
+    return this.call(
+      'git_conflicts',
+      params as unknown as RpcMethodMap['git_conflicts']['params'],
+    ) as Promise<GitConflictsResult>
+  }
+
+  async gitStage(
+    sessionId: string,
+    repo: string,
+    selection: GitSelection,
+  ): Promise<GitStageResult> {
+    return this.call(
+      'git_stage',
+      gitSelectionParams(sessionId, repo, selection) as unknown as RpcMethodMap['git_stage']['params'],
+    ) as Promise<GitStageResult>
+  }
+
+  async gitUnstage(
+    sessionId: string,
+    repo: string,
+    selection: GitSelection,
+  ): Promise<GitUnstageResult> {
+    return this.call(
+      'git_unstage',
+      gitSelectionParams(sessionId, repo, selection) as unknown as RpcMethodMap['git_unstage']['params'],
+    ) as Promise<GitUnstageResult>
+  }
+
+  /**
+   * Discard worktree changes. Destructive: the first call answers
+   * `-32093 git_confirmation_required` with an impact description and a
+   * single-use token that must be echoed back in `confirmationToken`.
+   */
+  async gitDiscard(
+    sessionId: string,
+    repo: string,
+    selection: GitSelection & { confirmationToken?: string },
+  ): Promise<GitDiscardResult> {
+    const params = gitSelectionParams(sessionId, repo, selection)
+    if (selection.confirmationToken !== undefined) {
+      params.confirmation_token = selection.confirmationToken
+    }
+    return this.call(
+      'git_discard',
+      params as unknown as RpcMethodMap['git_discard']['params'],
+    ) as Promise<GitDiscardResult>
+  }
+
+  async gitCommit(
+    sessionId: string,
+    repo: string,
+    message: string,
+    opts?: { amend?: boolean; allowEmpty?: boolean; author?: string; confirmationToken?: string },
+  ): Promise<GitCommitResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo, message }
+    if (opts?.amend !== undefined) params.amend = opts.amend
+    if (opts?.allowEmpty !== undefined) params.allow_empty = opts.allowEmpty
+    if (opts?.author !== undefined) params.author = opts.author
+    if (opts?.confirmationToken !== undefined) params.confirmation_token = opts.confirmationToken
+    return this.call(
+      'git_commit',
+      params as unknown as RpcMethodMap['git_commit']['params'],
+    ) as Promise<GitCommitResult>
+  }
+
+  async gitCheckout(
+    sessionId: string,
+    repo: string,
+    branch: string,
+    opts?: {
+      create?: boolean
+      startPoint?: string
+      detach?: boolean
+      discardChanges?: boolean
+      confirmationToken?: string
+    },
+  ): Promise<GitStatusResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo, branch }
+    if (opts?.create !== undefined) params.create = opts.create
+    if (opts?.startPoint !== undefined) params.start_point = opts.startPoint
+    if (opts?.detach !== undefined) params.detach = opts.detach
+    if (opts?.discardChanges !== undefined) params.discard_changes = opts.discardChanges
+    if (opts?.confirmationToken !== undefined) params.confirmation_token = opts.confirmationToken
+    return this.call(
+      'git_checkout',
+      params as unknown as RpcMethodMap['git_checkout']['params'],
+    ) as Promise<GitStatusResult>
+  }
+
+  async gitReset(
+    sessionId: string,
+    repo: string,
+    opts?: { mode?: GitResetMode; rev?: string; paths?: string[]; confirmationToken?: string },
+  ): Promise<GitStatusResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (opts?.mode !== undefined) params.mode = opts.mode
+    if (opts?.rev !== undefined) params.rev = opts.rev
+    if (opts?.paths !== undefined) params.paths = opts.paths
+    if (opts?.confirmationToken !== undefined) params.confirmation_token = opts.confirmationToken
+    return this.call(
+      'git_reset',
+      params as unknown as RpcMethodMap['git_reset']['params'],
+    ) as Promise<GitStatusResult>
+  }
+
+  async gitFetch(
+    sessionId: string,
+    repo: string,
+    opts?: { remote?: string; refspec?: string; prune?: boolean },
+  ): Promise<GitFetchResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (opts?.remote !== undefined) params.remote = opts.remote
+    if (opts?.refspec !== undefined) params.refspec = opts.refspec
+    if (opts?.prune !== undefined) params.prune = opts.prune
+    return this.call(
+      'git_fetch',
+      params as unknown as RpcMethodMap['git_fetch']['params'],
+    ) as Promise<GitFetchResult>
+  }
+
+  async gitPull(
+    sessionId: string,
+    repo: string,
+    opts?: { remote?: string; refspec?: string; rebase?: boolean },
+  ): Promise<GitPullResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (opts?.remote !== undefined) params.remote = opts.remote
+    if (opts?.refspec !== undefined) params.refspec = opts.refspec
+    if (opts?.rebase !== undefined) params.rebase = opts.rebase
+    return this.call(
+      'git_pull',
+      params as unknown as RpcMethodMap['git_pull']['params'],
+    ) as Promise<GitPullResult>
+  }
+
+  async gitPush(
+    sessionId: string,
+    repo: string,
+    opts?: {
+      remote?: string
+      refspec?: string
+      force?: boolean
+      forceWithLease?: boolean
+      setUpstream?: boolean
+      confirmationToken?: string
+    },
+  ): Promise<GitPushResult> {
+    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    if (opts?.remote !== undefined) params.remote = opts.remote
+    if (opts?.refspec !== undefined) params.refspec = opts.refspec
+    if (opts?.force !== undefined) params.force = opts.force
+    if (opts?.forceWithLease !== undefined) params.force_with_lease = opts.forceWithLease
+    if (opts?.setUpstream !== undefined) params.set_upstream = opts.setUpstream
+    if (opts?.confirmationToken !== undefined) params.confirmation_token = opts.confirmationToken
+    return this.call(
+      'git_push',
+      params as unknown as RpcMethodMap['git_push']['params'],
+    ) as Promise<GitPushResult>
+  }
 }
 
 /** One entry in fs_list results and fs_events payloads. */
@@ -1077,4 +1333,314 @@ export type QueueChangedPayload = {
   session_id: string
   depth: number
   items: QueuedMessage[]
+}
+
+// ----- Typed git operations (git_*, experimental) -----
+
+/** A repository is always addressed by its `repo` id — never implicitly. */
+export type GitRepository = {
+  repo: string
+  root: string
+  absolute_root: string
+  branch: string | null
+  detached: boolean
+  bare: boolean
+  git_common_dir: string | null
+  is_linked_worktree: boolean
+}
+
+export type GitListRepositoriesResult = {
+  session_id: string
+  path: string
+  repositories: GitRepository[]
+  truncated: boolean
+}
+
+export type GitDiffMode = 'worktree' | 'staged' | 'head' | 'range'
+export type GitResetMode = 'soft' | 'mixed' | 'hard'
+
+export type GitFileStatus =
+  | 'unmodified'
+  | 'modified'
+  | 'type_changed'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'unmerged'
+  | 'unknown'
+
+export type GitStatusEntry = {
+  path: string
+  orig_path: string | null
+  xy: string
+  index_status: GitFileStatus
+  worktree_status: GitFileStatus
+  staged: boolean
+  unstaged: boolean
+  submodule: boolean
+  similarity: number | null
+  unmerged: {
+    base_mode: string
+    ours_mode: string
+    theirs_mode: string
+    worktree_mode: string
+    base_oid: string
+    ours_oid: string
+    theirs_oid: string
+  } | null
+}
+
+export type GitStatusResult = {
+  session_id: string
+  repo: string
+  head: { detached: boolean; unborn: boolean; branch: string | null; oid: string | null }
+  upstream: { name: string; ahead: number; behind: number } | null
+  entries: GitStatusEntry[]
+  untracked: string[]
+  ignored: string[]
+  conflicted: string[]
+  stash_count: number
+  clean: boolean
+  state: 'clean' | 'merging' | 'rebasing' | 'cherry_picking' | 'reverting'
+}
+
+/** One line of a hunk. `origin` is structural — never a rendered prefix. */
+export type GitDiffLine = {
+  origin: 'context' | 'add' | 'delete' | 'no_newline'
+  content: string
+  old_lineno: number | null
+  new_lineno: number | null
+}
+
+/**
+ * `hunk_id` is content-addressed over the hunk body and the diff scope, so
+ * a selection made against a stale diff fails closed (`-32094` with
+ * `reason: "hunk_not_found"`) instead of applying somewhere unintended.
+ */
+export type GitDiffHunk = {
+  hunk_id: string
+  index: number
+  header: string
+  section_heading: string
+  old_start: number
+  old_lines: number
+  new_start: number
+  new_lines: number
+  lines: GitDiffLine[]
+}
+
+export type GitDiffFile = {
+  path: string
+  old_path: string | null
+  change: GitFileStatus
+  old_mode: string
+  new_mode: string
+  old_oid: string
+  new_oid: string
+  similarity: number | null
+  binary: boolean
+  added_lines: number | null
+  deleted_lines: number | null
+  unmerged: boolean
+  submodule: boolean
+  /** False for binary blobs, submodules and unmerged paths: stage whole. */
+  hunk_selectable: boolean
+  hunks: GitDiffHunk[]
+}
+
+export type GitDiffResult = {
+  session_id: string
+  repo: string
+  mode: GitDiffMode
+  context_lines: number
+  files: GitDiffFile[]
+}
+
+export type GitCommitSummary = {
+  oid: string
+  short_oid: string
+  parents: string[]
+  author_name: string
+  author_email: string
+  authored_at: string
+  committer_name: string
+  committer_email: string
+  committed_at: string
+  refs: string[]
+  subject: string
+  body: string
+}
+
+export type GitLogResult = { session_id: string; repo: string; commits: GitCommitSummary[] }
+
+export type GitBranch = {
+  ref: string
+  name: string
+  oid: string
+  remote: boolean
+  upstream: string | null
+  upstream_remote: string | null
+  current: boolean
+  worktree_path: string | null
+  category: 'branch' | 'worker'
+}
+
+export type GitListBranchesResult = { session_id: string; repo: string; branches: GitBranch[] }
+
+export type GitWorktree = {
+  path: string
+  head: string | null
+  branch: string | null
+  detached: boolean
+  bare: boolean
+  locked: boolean
+  lock_reason: string | null
+  prunable: boolean
+  /** Workspace-relative `repo` id, or null when outside the workspace. */
+  repo: string | null
+  /** Worker worktrees live in the framework scratch area and are read-only here. */
+  accessible: boolean
+  inaccessible_reason: 'outside_workspace' | null
+  category: 'worktree' | 'worker'
+}
+
+export type GitListWorktreesResult = {
+  session_id: string
+  repo: string
+  worktrees: GitWorktree[]
+}
+
+/** A conflict region delimited by git's fixed ASCII markers. */
+export type GitConflictRegion = {
+  start_line: number
+  end_line: number
+  ours_label: string
+  base_label: string | null
+  theirs_label: string
+  ours: string[]
+  base: string[] | null
+  theirs: string[]
+}
+
+export type GitConflict = {
+  path: string
+  stages: Partial<Record<'base' | 'ours' | 'theirs', { mode: string; oid: string }>>
+  regions: GitConflictRegion[]
+  regions_available: boolean
+}
+
+export type GitConflictsResult = {
+  session_id: string
+  repo: string
+  state: GitStatusResult['state']
+  conflicts: GitConflict[]
+}
+
+/** A hunk-level selection: `{ path, hunk_id }` from a `git_diff` result. */
+export type GitHunkRef = { path: string; hunk_id: string }
+
+export type GitSelection = {
+  paths?: string[]
+  hunks?: GitHunkRef[]
+  contextLines?: number
+  /** Which git_diff view the `hunks` came from (git_stage only). */
+  mode?: 'worktree' | 'head'
+}
+
+export function gitSelectionParams(
+  sessionId: string,
+  repo: string,
+  selection: GitSelection,
+): Record<string, unknown> {
+  const params: Record<string, unknown> = { session_id: sessionId, repo }
+  if (selection.paths !== undefined) params.paths = selection.paths
+  if (selection.hunks !== undefined) params.hunks = selection.hunks
+  if (selection.contextLines !== undefined) params.context_lines = selection.contextLines
+  if (selection.mode !== undefined) params.mode = selection.mode
+  return params
+}
+
+export type GitStageResult = {
+  session_id: string
+  repo: string
+  staged_paths: string[]
+  staged_hunks: GitHunkRef[]
+}
+
+export type GitUnstageResult = {
+  session_id: string
+  repo: string
+  unstaged_paths: string[]
+  unstaged_hunks: GitHunkRef[]
+}
+
+export type GitDiscardResult = {
+  session_id: string
+  repo: string
+  discarded_paths: string[]
+  discarded_hunks: GitHunkRef[]
+}
+
+export type GitCommitResult = {
+  session_id: string
+  repo: string
+  oid: string
+  amended: boolean
+}
+
+export type GitRefUpdate = {
+  ref: string
+  old_oid: string | null
+  new_oid: string | null
+  change: 'created' | 'updated' | 'deleted'
+}
+
+export type GitFetchResult = {
+  session_id: string
+  repo: string
+  remote: string | null
+  updated_refs: GitRefUpdate[]
+}
+
+export type GitPullResult = {
+  session_id: string
+  repo: string
+  ok: boolean
+  state: GitStatusResult['state']
+  conflicted: string[]
+  head: GitStatusResult['head']
+}
+
+/**
+ * `status` comes from `git push --porcelain`'s leading flag character;
+ * `summary_raw` is display text and is never parsed.
+ */
+export type GitPushUpdate = {
+  flag: string
+  status: 'fast_forward' | 'forced_update' | 'deleted' | 'created' | 'rejected' | 'up_to_date' | 'unknown'
+  rejected: boolean
+  source_ref: string
+  target_ref: string
+  summary_raw: string
+  reason_raw: string | null
+}
+
+export type GitPushResult = {
+  session_id: string
+  repo: string
+  ok: boolean
+  remote_url: string | null
+  updates: GitPushUpdate[]
+  rejected: string[]
+}
+
+/** Payload of the `git_operation_progress` server notification. */
+export type GitOperationProgressPayload = {
+  session_id: string
+  operation_id: string
+  repo: string
+  operation: 'fetch' | 'pull' | 'push'
+  phase: 'started' | 'completed' | 'failed'
+  detail?: Record<string, unknown>
 }

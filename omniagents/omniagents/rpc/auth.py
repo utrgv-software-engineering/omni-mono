@@ -331,6 +331,30 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "fs_upload_chunk",
         "fs_upload_commit",
         "fs_upload_abort",
+        # Typed git operations (tkt_l_l0lUi4A5V2): a repository is
+        # addressed relative to a session's workspace/sandbox, so every
+        # git_* method names a session_id and is gated on session
+        # ownership — reading or mutating a repository in another
+        # principal's workspace is refused (-32014) before any git
+        # process starts. Confirmation tokens for destructive operations
+        # are additionally bound to the minting session inside
+        # ConfirmationBroker, so a token cannot be replayed across users.
+        "git_list_repositories",
+        "git_status",
+        "git_diff",
+        "git_log",
+        "git_list_branches",
+        "git_list_worktrees",
+        "git_conflicts",
+        "git_stage",
+        "git_unstage",
+        "git_discard",
+        "git_commit",
+        "git_checkout",
+        "git_reset",
+        "git_fetch",
+        "git_pull",
+        "git_push",
     }
 )
 

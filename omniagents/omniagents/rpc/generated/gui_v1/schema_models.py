@@ -434,6 +434,201 @@ class GetUserHistory(BaseModel):
     limit: int | None = None
 
 
+class GitCheckout(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    branch: str
+    confirmation_token: str | None = None
+    create: bool | None = None
+    detach: bool | None = None
+    discard_changes: bool | None = None
+    repo: str
+    session_id: str
+    start_point: str | None = None
+
+
+class GitCommit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    allow_empty: bool | None = None
+    amend: bool | None = None
+    author: str | None = None
+    confirmation_token: str | None = None
+    message: str
+    repo: str
+    session_id: str
+
+
+class GitConflicts(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    paths: list[Any] | None = None
+    repo: str
+    session_id: str
+
+
+class GitDiff(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    context_lines: int | None = None
+    from_rev: str | None = None
+    mode: str | None = None
+    paths: list[Any] | None = None
+    repo: str
+    session_id: str
+    to_rev: str | None = None
+
+
+class GitDiscard(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    confirmation_token: str | None = None
+    context_lines: int | None = None
+    hunks: list[Any] | None = None
+    paths: list[Any] | None = None
+    repo: str
+    session_id: str
+
+
+class GitFetch(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    prune: bool | None = None
+    refspec: str | None = None
+    remote: str | None = None
+    repo: str
+    session_id: str
+
+
+class GitListBranches(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    include_remote: bool | None = None
+    repo: str
+    session_id: str
+
+
+class GitListRepositories(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    max_depth: int | None = None
+    path: str | None = None
+    session_id: str
+
+
+class GitListWorktrees(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    repo: str
+    session_id: str
+
+
+class GitLog(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    max_count: int | None = None
+    paths: list[Any] | None = None
+    repo: str
+    rev: str | None = None
+    session_id: str
+    skip: int | None = None
+
+
+class GitOperationProgress(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    detail: dict[str, Any] | None = None
+    operation: str
+    operation_id: str
+    phase: str
+    repo: str
+    seq: int | None = None
+    session_id: str
+    stream_id: str | None = None
+
+
+class GitPull(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    rebase: bool | None = None
+    refspec: str | None = None
+    remote: str | None = None
+    repo: str
+    session_id: str
+
+
+class GitPush(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    confirmation_token: str | None = None
+    force: bool | None = None
+    force_with_lease: bool | None = None
+    refspec: str | None = None
+    remote: str | None = None
+    repo: str
+    session_id: str
+    set_upstream: bool | None = None
+
+
+class GitReset(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    confirmation_token: str | None = None
+    mode: str | None = None
+    paths: list[Any] | None = None
+    repo: str
+    rev: str | None = None
+    session_id: str
+
+
+class GitStage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    context_lines: int | None = None
+    hunks: list[Any] | None = None
+    mode: str | None = None
+    paths: list[Any] | None = None
+    repo: str
+    session_id: str
+
+
+class GitStatus(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    include_ignored: bool | None = None
+    include_untracked: bool | None = None
+    paths: list[Any] | None = None
+    repo: str
+    session_id: str
+
+
+class GitUnstage(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    context_lines: int | None = None
+    hunks: list[Any] | None = None
+    paths: list[Any] | None = None
+    repo: str
+    session_id: str
+
+
 class Identity(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1045,6 +1240,22 @@ class Model(
         | FsUploadChunk
         | FsUploadCommit
         | FsUploadAbort
+        | GitListRepositories
+        | GitStatus
+        | GitDiff
+        | GitLog
+        | GitListBranches
+        | GitListWorktrees
+        | GitConflicts
+        | GitStage
+        | GitUnstage
+        | GitDiscard
+        | GitCommit
+        | GitCheckout
+        | GitReset
+        | GitFetch
+        | GitPull
+        | GitPush
         | Initialized
         | RunStarted
         | RunStatus
@@ -1069,6 +1280,7 @@ class Model(
         | FsEvents
         | FsRescanRequired
         | FsTransferProgress
+        | GitOperationProgress
     ]
 ):
     root: (
@@ -1144,6 +1356,22 @@ class Model(
         | FsUploadChunk
         | FsUploadCommit
         | FsUploadAbort
+        | GitListRepositories
+        | GitStatus
+        | GitDiff
+        | GitLog
+        | GitListBranches
+        | GitListWorktrees
+        | GitConflicts
+        | GitStage
+        | GitUnstage
+        | GitDiscard
+        | GitCommit
+        | GitCheckout
+        | GitReset
+        | GitFetch
+        | GitPull
+        | GitPush
         | Initialized
         | RunStarted
         | RunStatus
@@ -1168,4 +1396,5 @@ class Model(
         | FsEvents
         | FsRescanRequired
         | FsTransferProgress
+        | GitOperationProgress
     )

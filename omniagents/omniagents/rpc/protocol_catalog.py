@@ -104,6 +104,27 @@ EXPERIMENTAL_REQUESTS = (
     "fs_upload_chunk",
     "fs_upload_commit",
     "fs_upload_abort",
+    # Typed git operations & interactive diff (tkt_l_l0lUi4A5V2).
+    # Experimental on entry, matching the fs_* precedent: the Omni
+    # Desktop interactive diff UI is a follow-up, so the hunk model has
+    # not yet been proven by a shipped consumer. Clients opt in via
+    # initialize.capabilities.experimental_operations.
+    "git_list_repositories",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_list_branches",
+    "git_list_worktrees",
+    "git_conflicts",
+    "git_stage",
+    "git_unstage",
+    "git_discard",
+    "git_commit",
+    "git_checkout",
+    "git_reset",
+    "git_fetch",
+    "git_pull",
+    "git_push",
 )
 
 STABLE_NOTIFICATIONS = (
@@ -156,6 +177,12 @@ EXPERIMENTAL_NOTIFICATIONS = (
     "fs_events",
     "fs_rescan_required",
     "fs_transfer_progress",
+    # Lifecycle progress for long-running git operations
+    # (tkt_l_l0lUi4A5V2). The phases are the server's own state machine,
+    # never a reading of git's human-facing progress output. Not
+    # journaled: like the fs_* events these are per-connection and
+    # derivable — a reconnecting client refetches git_status.
+    "git_operation_progress",
 )
 
 OPERATIONS = tuple(

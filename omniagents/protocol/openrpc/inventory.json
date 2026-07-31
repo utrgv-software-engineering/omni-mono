@@ -9,7 +9,8 @@
       "session_variables_changed",
       "fs_events",
       "fs_rescan_required",
-      "fs_transfer_progress"
+      "fs_transfer_progress",
+      "git_operation_progress"
     ],
     "stable": [
       "initialized",
@@ -61,7 +62,23 @@
       "fs_upload_open",
       "fs_upload_chunk",
       "fs_upload_commit",
-      "fs_upload_abort"
+      "fs_upload_abort",
+      "git_list_repositories",
+      "git_status",
+      "git_diff",
+      "git_log",
+      "git_list_branches",
+      "git_list_worktrees",
+      "git_conflicts",
+      "git_stage",
+      "git_unstage",
+      "git_discard",
+      "git_commit",
+      "git_checkout",
+      "git_reset",
+      "git_fetch",
+      "git_pull",
+      "git_push"
     ],
     "stable": [
       "initialize",

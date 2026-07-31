@@ -324,3 +324,107 @@ describe('RPCClient lifecycle', () => {
     expect(client.connectionState).toMatchObject({ state: 'closed', permanent: true })
   })
 })
+
+describe('RPCClient typed git wrappers', () => {
+  async function connectedClient(): Promise<{ client: RPCClient; socket: MockWebSocket }> {
+    const client = new RPCClient('ws://example.test/ws')
+    await client.connect()
+    return { client, socket: MockWebSocket.instances[MockWebSocket.instances.length - 1]! }
+  }
+
+  function lastRequest(socket: MockWebSocket): { method: string; params: unknown } {
+    return JSON.parse(socket.sent[socket.sent.length - 1]!) as {
+      method: string
+      params: unknown
+    }
+  }
+
+  it('omits unset options instead of sending nulls', async () => {
+    const { client, socket } = await connectedClient()
+
+    void client.gitStatus('sess', 'apps/web')
+    expect(lastRequest(socket)).toMatchObject({
+      method: 'git_status',
+      params: { session_id: 'sess', repo: 'apps/web' },
+    })
+    expect(Object.keys((lastRequest(socket).params as object) ?? {})).toEqual([
+      'session_id',
+      'repo',
+    ])
+
+    void client.gitDiff('sess', 'apps/web', { mode: 'staged', contextLines: 5 })
+    expect(lastRequest(socket)).toMatchObject({
+      method: 'git_diff',
+      params: { session_id: 'sess', repo: 'apps/web', mode: 'staged', context_lines: 5 },
+    })
+  })
+
+  it('sends hunk selections verbatim so ids survive the round trip', async () => {
+    const { client, socket } = await connectedClient()
+
+    void client.gitStage('sess', '.', {
+      paths: ['README.md'],
+      hunks: [{ path: 'src/app.ts', hunk_id: 'deadbeefdeadbeef' }],
+    })
+
+    expect(lastRequest(socket)).toEqual({
+      jsonrpc: '2.0',
+      id: expect.any(Number) as unknown as number,
+      method: 'git_stage',
+      params: {
+        session_id: 'sess',
+        repo: '.',
+        paths: ['README.md'],
+        hunks: [{ path: 'src/app.ts', hunk_id: 'deadbeefdeadbeef' }],
+      },
+    })
+  })
+
+  it('threads the confirmation token through destructive operations', async () => {
+    const { client, socket } = await connectedClient()
+
+    void client.gitDiscard('sess', '.', {
+      hunks: [{ path: 'a.txt', hunk_id: 'abc123abc123abc1' }],
+      confirmationToken: 'token-xyz',
+    })
+    expect(lastRequest(socket)).toMatchObject({
+      method: 'git_discard',
+      params: { confirmation_token: 'token-xyz' },
+    })
+
+    void client.gitPush('sess', '.', { forceWithLease: true, confirmationToken: 'token-2' })
+    expect(lastRequest(socket)).toMatchObject({
+      method: 'git_push',
+      params: { force_with_lease: true, confirmation_token: 'token-2' },
+    })
+  })
+
+  it('surfaces the typed confirmation error unchanged', async () => {
+    const { client, socket } = await connectedClient()
+
+    const pending = client.gitReset('sess', '.', { mode: 'hard' })
+    const request = JSON.parse(socket.sent[socket.sent.length - 1]!) as { id: number }
+    socket.onmessage?.({
+      data: JSON.stringify({
+        jsonrpc: '2.0',
+        id: request.id,
+        error: {
+          code: -32093,
+          message: 'reset_hard discards work and must be confirmed explicitly',
+          data: {
+            kind: 'git_confirmation_required',
+            operation: 'reset_hard',
+            confirmation_token: 'tok',
+            impact: { dirty_paths: ['a.txt'] },
+          },
+        },
+      }),
+    })
+
+    await expect(pending).rejects.toMatchObject({
+      name: 'JSONRPCError',
+      code: -32093,
+      data: { kind: 'git_confirmation_required', confirmation_token: 'tok' },
+    })
+  })
+})

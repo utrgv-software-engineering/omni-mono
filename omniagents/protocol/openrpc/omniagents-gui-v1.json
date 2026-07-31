@@ -336,6 +336,223 @@
         },
         "message": "Filesystem watch invalid"
       },
+      "GitCapabilityUnavailable": {
+        "code": -32095,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "git_capability_unavailable"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "message": "Git capability unavailable on this substrate"
+      },
+      "GitConfirmationRequired": {
+        "code": -32093,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "confirmation_token": {
+              "type": "string"
+            },
+            "impact": {
+              "type": "object"
+            },
+            "kind": {
+              "const": "git_confirmation_required"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "operation",
+            "confirmation_token",
+            "impact"
+          ],
+          "type": "object"
+        },
+        "message": "Git operation requires explicit confirmation"
+      },
+      "GitOperationFailed": {
+        "code": -32092,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "kind": {
+              "const": "git_operation_failed"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "rolled_back": {
+              "type": "boolean"
+            },
+            "stderr": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "operation"
+          ],
+          "type": "object"
+        },
+        "message": "Git operation failed"
+      },
+      "GitPathInvalid": {
+        "code": -32091,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "git_path_invalid"
+            },
+            "path": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "Git path invalid"
+      },
+      "GitRepositoryNotFound": {
+        "code": -32090,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "git_repository_not_found"
+            },
+            "path": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "toplevel": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "Git repository not found"
+      },
+      "GitStateInvalid": {
+        "code": -32094,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "change": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "git_state_invalid"
+            },
+            "mode": {
+              "type": "string"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "stale": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "hunk_id": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "hunk_id"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "supported": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "message": "Git repository state invalid for this operation"
+      },
       "InitializationRequired": {
         "code": -32010,
         "data": {
@@ -5085,6 +5302,1513 @@
       "x-omni-stability": "experimental"
     },
     {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_list_repositories",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_repositories/properties/session_id"
+          }
+        },
+        {
+          "name": "path",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_repositories/properties/path"
+          }
+        },
+        {
+          "name": "max_depth",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_repositories/properties/max_depth"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_list_repositories_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_list_repositories",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_repositories"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_status",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_status/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_status/properties/repo"
+          }
+        },
+        {
+          "name": "include_untracked",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_status/properties/include_untracked"
+          }
+        },
+        {
+          "name": "include_ignored",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_status/properties/include_ignored"
+          }
+        },
+        {
+          "name": "paths",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_status/properties/paths"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_status_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_status",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_status"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_diff",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_diff/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_diff/properties/repo"
+          }
+        },
+        {
+          "name": "mode",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_diff/properties/mode"
+          }
+        },
+        {
+          "name": "paths",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_diff/properties/paths"
+          }
+        },
+        {
+          "name": "context_lines",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_diff/properties/context_lines"
+          }
+        },
+        {
+          "name": "from_rev",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_diff/properties/from_rev"
+          }
+        },
+        {
+          "name": "to_rev",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_diff/properties/to_rev"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_diff_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_diff",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_diff"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_log",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_log/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_log/properties/repo"
+          }
+        },
+        {
+          "name": "rev",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_log/properties/rev"
+          }
+        },
+        {
+          "name": "max_count",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_log/properties/max_count"
+          }
+        },
+        {
+          "name": "skip",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_log/properties/skip"
+          }
+        },
+        {
+          "name": "paths",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_log/properties/paths"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_log_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_log",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_log"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_list_branches",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_branches/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_branches/properties/repo"
+          }
+        },
+        {
+          "name": "include_remote",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_branches/properties/include_remote"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_list_branches_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_list_branches",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_branches"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_list_worktrees",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_worktrees/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_worktrees/properties/repo"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_list_worktrees_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_list_worktrees",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_list_worktrees"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_conflicts",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_conflicts/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_conflicts/properties/repo"
+          }
+        },
+        {
+          "name": "paths",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_conflicts/properties/paths"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_conflicts_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_conflicts",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_conflicts"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_stage",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_stage/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_stage/properties/repo"
+          }
+        },
+        {
+          "name": "paths",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_stage/properties/paths"
+          }
+        },
+        {
+          "name": "hunks",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_stage/properties/hunks"
+          }
+        },
+        {
+          "name": "context_lines",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_stage/properties/context_lines"
+          }
+        },
+        {
+          "name": "mode",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_stage/properties/mode"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_stage_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_stage",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_stage"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_unstage",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_unstage/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_unstage/properties/repo"
+          }
+        },
+        {
+          "name": "paths",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_unstage/properties/paths"
+          }
+        },
+        {
+          "name": "hunks",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_unstage/properties/hunks"
+          }
+        },
+        {
+          "name": "context_lines",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_unstage/properties/context_lines"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_unstage_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_unstage",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_unstage"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_discard",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_discard/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_discard/properties/repo"
+          }
+        },
+        {
+          "name": "paths",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_discard/properties/paths"
+          }
+        },
+        {
+          "name": "hunks",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_discard/properties/hunks"
+          }
+        },
+        {
+          "name": "context_lines",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_discard/properties/context_lines"
+          }
+        },
+        {
+          "name": "confirmation_token",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_discard/properties/confirmation_token"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_discard_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_discard",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_discard"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_commit",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_commit/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_commit/properties/repo"
+          }
+        },
+        {
+          "name": "message",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_commit/properties/message"
+          }
+        },
+        {
+          "name": "amend",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_commit/properties/amend"
+          }
+        },
+        {
+          "name": "allow_empty",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_commit/properties/allow_empty"
+          }
+        },
+        {
+          "name": "author",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_commit/properties/author"
+          }
+        },
+        {
+          "name": "confirmation_token",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_commit/properties/confirmation_token"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_commit_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_commit",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_commit"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_checkout",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout/properties/repo"
+          }
+        },
+        {
+          "name": "branch",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout/properties/branch"
+          }
+        },
+        {
+          "name": "create",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout/properties/create"
+          }
+        },
+        {
+          "name": "start_point",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout/properties/start_point"
+          }
+        },
+        {
+          "name": "detach",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout/properties/detach"
+          }
+        },
+        {
+          "name": "discard_changes",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout/properties/discard_changes"
+          }
+        },
+        {
+          "name": "confirmation_token",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout/properties/confirmation_token"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_checkout_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_checkout",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_checkout"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_reset",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_reset/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_reset/properties/repo"
+          }
+        },
+        {
+          "name": "mode",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_reset/properties/mode"
+          }
+        },
+        {
+          "name": "rev",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_reset/properties/rev"
+          }
+        },
+        {
+          "name": "paths",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_reset/properties/paths"
+          }
+        },
+        {
+          "name": "confirmation_token",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_reset/properties/confirmation_token"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_reset_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_reset",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_reset"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_fetch",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_fetch/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_fetch/properties/repo"
+          }
+        },
+        {
+          "name": "remote",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_fetch/properties/remote"
+          }
+        },
+        {
+          "name": "refspec",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_fetch/properties/refspec"
+          }
+        },
+        {
+          "name": "prune",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_fetch/properties/prune"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_fetch_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_fetch",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_fetch"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_pull",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_pull/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_pull/properties/repo"
+          }
+        },
+        {
+          "name": "remote",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_pull/properties/remote"
+          }
+        },
+        {
+          "name": "refspec",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_pull/properties/refspec"
+          }
+        },
+        {
+          "name": "rebase",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_pull/properties/rebase"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_pull_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_pull",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_pull"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitRepositoryNotFound"
+        },
+        {
+          "$ref": "#/components/errors/GitPathInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitOperationFailed"
+        },
+        {
+          "$ref": "#/components/errors/GitConfirmationRequired"
+        },
+        {
+          "$ref": "#/components/errors/GitStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/GitCapabilityUnavailable"
+        }
+      ],
+      "name": "git_push",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push/properties/session_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push/properties/repo"
+          }
+        },
+        {
+          "name": "remote",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push/properties/remote"
+          }
+        },
+        {
+          "name": "refspec",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push/properties/refspec"
+          }
+        },
+        {
+          "name": "force",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push/properties/force"
+          }
+        },
+        {
+          "name": "force_with_lease",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push/properties/force_with_lease"
+          }
+        },
+        {
+          "name": "set_upstream",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push/properties/set_upstream"
+          }
+        },
+        {
+          "name": "confirmation_token",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push/properties/confirmation_token"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_push_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_push",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_push"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
       "name": "initialized",
       "paramStructure": "by-name",
       "params": [],
@@ -6734,6 +8458,81 @@
       "x-omni-kind": "notification",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_transfer_progress"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "name": "git_operation_progress",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress/properties/session_id"
+          }
+        },
+        {
+          "name": "operation_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress/properties/operation_id"
+          }
+        },
+        {
+          "name": "repo",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress/properties/repo"
+          }
+        },
+        {
+          "name": "operation",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress/properties/operation"
+          }
+        },
+        {
+          "name": "phase",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress/properties/phase"
+          }
+        },
+        {
+          "name": "detail",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress/properties/detail"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "git_operation_progress_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation git_operation_progress",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress"
       },
       "x-omni-stability": "experimental"
     }

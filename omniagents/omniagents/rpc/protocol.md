@@ -1540,6 +1540,352 @@ fs_transfer_invalid`.
 | -32062 | `fs_transfer_invalid` | unknown transfer, bad offset/length, size/checksum mismatch, payload above the 512 MiB transfer cap, target exists, transfer limit |
 | -32063 | `fs_watch_invalid`    | unknown watch, watch limit, tree too large           |
 
+## Typed Git Operations & Interactive Diff (`git_*` methods, experimental)
+
+Safe, reviewable Git workflows that never require a client to parse shell
+output. Every method is **session-scoped** (`RESOURCE_SCOPED`, so another
+principal's repository answers `-32014`) and **experimental**: clients opt
+in through `initialize.capabilities.experimental_operations`.
+
+All git invocations ride the same `Workspace` boundary the terminal and
+the `fs_*` surface use, so the repository may live on the host, inside a
+sandbox container or on a remote backend. Commands are argv lists run with
+`shell=False` against `git -C <repo>` — never a shell string, never the
+server's own cwd. A substrate that cannot run a shell answers
+`-32095 git_capability_unavailable` instead of failing obscurely.
+
+### Addressing a repository
+
+`git_list_repositories {session_id, path?, max_depth?}` →
+`{session_id, path, repositories: [{repo, root, absolute_root, branch,
+detached, bare, git_common_dir, is_linked_worktree}], truncated}`.
+
+`repo` — the workspace-relative POSIX path of the repository root, `"."`
+for the workspace root itself — is the **only** accepted repository
+address, and it is required on every other method. There is no implicit
+"the" repository, which is what makes a multi-repository project
+unambiguous.
+
+Confinement rests on four independent facts, all compared against the
+*substrate's own* workspace root (a container path inside a sandbox, a
+host path on the host):
+
+1. the wire path canonicalizes to a relative POSIX path (no `..`, no
+   absolute or drive-letter paths, no backslashes);
+2. the resolved directory is inside the workspace root. This is checked
+   by the git surface itself rather than delegated to the workspace's own
+   `confine` flag, which some embedders switch off;
+3. `rev-parse --show-toplevel` is that same directory, so a workspace
+   nested *inside* a larger repository has no operable repository —
+   `-32090` with `reason: "outside_workspace"` — rather than silently
+   operating on the parent project;
+4. `rev-parse --absolute-git-dir` **and** `--git-common-dir` are inside
+   the workspace root too. Without (4) a plain **file** named `.git`
+   holding `gitdir: /outside/.git` satisfies (3) while every object, ref,
+   index and config entry is read from — and written to — outside the
+   workspace.
+
+A repository without a work tree (a bare repository) answers `-32090`
+with `reason: "no_work_tree"`.
+
+`git_list_repositories` also reports the launcher's published `--source`
+descriptors: a repository that *is* a published source carries it in
+`source`, and any published source that is not reachable inside the
+workspace appears in `unreachable_sources` with
+`reason: "not_in_workspace"` — the gap is shown, not hidden. Every remote
+URL leaving this surface (`source.repoUrl`, `unreachable_sources[].repo_url`
+and `git_push`'s `remote_url`) has its **userinfo stripped**, so a
+credential-bearing URL a launcher published — `https://user:token@host/…`,
+or a bare token in the userinfo — is never echoed back.
+
+Discovery clamps: `max_depth` is capped at **4**. The effective value
+comes back as `max_depth`, `max_depth_clamped` says whether the request
+was reduced, and `truncated` is true whenever the answer is incomplete
+for *any* reason (the 64-repository cap or a clamped depth).
+
+### Reading state
+
+- `git_status {session_id, repo, include_untracked?, include_ignored?,
+  paths?}` → `{repo, head: {detached, unborn, branch, oid}, upstream:
+  {name, ahead, behind} | null, entries: [...], untracked, ignored,
+  conflicted, stash_count, clean, state}`. Parsed from
+  `--porcelain=v2 --branch -z`; `state` is one of `clean`, `merging`,
+  `rebasing`, `cherry_picking`, `reverting`, detected from the pseudo-refs
+  by exit code. Detached and unborn HEADs are flags, not sentinel strings.
+  Caveat: `rebasing` is detected via `REBASE_HEAD`, which git writes for a
+  rebase stopped on a **conflict**; a rebase paused at an `edit` or
+  `break` step writes no such ref and reports `clean` (with a detached
+  HEAD). Detecting that exactly needs a git-directory probe on every
+  status call and is deferred.
+- `git_log {session_id, repo, rev?, max_count?, skip?, paths?}` →
+  `{commits: [{oid, short_oid, parents, author_*, authored_at,
+  committer_*, committed_at, refs, subject, body}]}`, read from a
+  `%x00`/`%x1e`-delimited `--format`, so subjects and bodies may contain
+  anything.
+- `git_list_branches {session_id, repo, include_remote?}` →
+  `{branches: [{ref, name, oid, remote, upstream, upstream_remote,
+  current, worktree_path, category}]}`. `category` is `worker` for the
+  `worker/` namespace `WorktreeIsolation` creates, otherwise `branch`.
+- `git_list_worktrees {session_id, repo}` →
+  `{worktrees: [{path, head, branch, detached, bare, locked, lock_reason,
+  prunable, repo, accessible, inaccessible_reason, category}]}` from
+  `git worktree list --porcelain`. Worker worktrees live under the
+  framework scratch root, i.e. outside the session workspace: they are
+  reported with `accessible: false` and `inaccessible_reason:
+  "outside_workspace"` and cannot be operated on through this surface.
+- `git_conflicts {session_id, repo, paths?}` →
+  `{state, conflicts: [{path, stages, regions, regions_available}],
+  content_truncated}`. Each stage is
+  `{mode, oid, content, content_truncated}`: identities from
+  `git ls-files -u -z`, contents from `git cat-file blob <oid>`. The
+  contents matter because under git's default `merge` conflict style the
+  working file has **no** base section, so `regions[].base` is null — the
+  stage blobs are what make base/ours/theirs available to a three-way
+  merge editor without a separate blob-read RPC. Contents are decoded as
+  text and capped at 1 MiB per blob (`content: null` with
+  `content_truncated: true` above it) for the first 25 conflicted paths
+  (`content_truncated` at the top level when there are more); binary
+  conflicts should be resolved file-level. Regions are parsed from the
+  fixed ASCII conflict markers (both `merge` and `diff3` styles), which
+  are part of git's file format, not its message catalog.
+
+### The diff and hunk model
+
+`git_diff {session_id, repo, mode?, paths?, context_lines?, from_rev?,
+to_rev?}` → `{repo, mode, context_lines, files: [...]}`.
+
+`mode` is `worktree` (index → worktree, the default), `staged`
+(HEAD → index), `head` (HEAD → worktree) or `range` (`from_rev` required,
+`to_rev` optional).
+
+Each file carries `{path, old_path, change, old_mode, new_mode, old_oid,
+new_oid, similarity, binary, added_lines, deleted_lines, unmerged,
+submodule, hunk_selectable, hunks}`. File-level metadata is taken from
+`--raw -z` and `--numstat -z` (`-`/`-` is the structural binary marker);
+hunks are parsed from the unified-diff grammar with prefixes pinned to
+`a/`/`b/`. Unmerged paths appear with `unmerged: true` and no hunks —
+`git_conflicts` is their representation.
+
+Each hunk carries `{hunk_id, index, header, section_heading, old_start,
+old_lines, new_start, new_lines, lines}` where every line is
+`{origin: "context" | "add" | "delete" | "no_newline", content,
+old_lineno, new_lineno}` — a renderer never re-derives meaning from a `+`
+or `-` prefix character.
+
+`hunk_id` is a **content-addressed** digest over the diff scope, the path
+and the full hunk body. Two consequences a client can rely on:
+
+* the same hunk keeps the same id across repeated `git_diff` calls, so a
+  selection UI can hold ids across refreshes, and
+* the moment the underlying change moves, the id stops resolving, and the
+  operation fails closed with `-32094 git_state_invalid`
+  (`reason: "hunk_not_found"`, plus the offending `{path, hunk_id}` pairs)
+  instead of applying somewhere unintended.
+
+`hunk_selectable` is false for binary blobs, submodule pointers, unmerged
+paths and **type changes** (a file replaced by a symlink or the reverse —
+git renders one such change as two whole-file patches, which has no single
+coherent line numbering). Those are file-level only, and the client learns
+it from the diff rather than from a failure.
+
+Diff clamps: `context_lines` is capped at **64**; the effective value comes
+back as `context_lines`, with `context_lines_clamped` when the request was
+reduced. `from_rev`/`to_rev` outside `mode: "range"` are a typed error
+(`-32094`, `reason: "parameter_not_applicable"`), never silently dropped.
+
+`git_log` caps `max_count` at **1000**; the effective value comes back as
+`max_count` and `truncated` is true when the caller asked for more history
+than was returned. Any git invocation whose output would exceed **16 MiB**
+answers `-32092` with `reason: "output_truncated"` rather than returning a
+half-read diff.
+
+### Staging, unstaging and discarding
+
+All three take a selection of whole `paths`, individual `hunks`
+(`[{path, hunk_id}]`), or both — a path may not appear in both halves of
+the same call (`reason: "overlapping_selection"`).
+
+- `git_stage {session_id, repo, paths?, hunks?, context_lines?, mode?}` →
+  `{staged_paths, staged_hunks}`. `mode` names the diff the `hunks` came
+  from: `worktree` (default) or `head` — the "all my changes" view a UI
+  usually opens on. Hunk ids are scope-bound, so staging a `head` diff's
+  hunks requires saying so; a head-scope stage additionally needs the file
+  to be unstaged (its index entry must still match HEAD), otherwise git
+  refuses and the typed failure says so.
+- `git_unstage {session_id, repo, paths?, hunks?, context_lines?}` →
+  `{unstaged_paths, unstaged_hunks}`.
+- `git_discard {session_id, repo, paths?, hunks?, context_lines?,
+  confirmation_token?}` → `{discarded_paths, discarded_hunks}`.
+  **Destructive** — see below.
+
+Hunk selections are applied by rebuilding a minimal patch from a
+*freshly recomputed* diff and feeding it to `git apply`. Line numbers are
+recomputed for the direction of the apply: staging preserves the old side
+(the index is the preimage) and shifts the new side by the size change of
+the hunks included before it; unstaging and discarding are reverse applies,
+so the new side is preserved and the old side shifts instead. Dropping a
+hunk therefore never leaves the remaining hunks claiming line numbers that
+no longer exist.
+
+Only `paths` staging picks up untracked files — a file git has never seen
+has no diff to select hunks from. On an unborn branch, `git_unstage` drops
+the index entry (there is no HEAD to restore from).
+
+`paths` are git **pathspecs**, so a directory or a wildcard is legal and
+may also cover a file selected by hunk. Exact and ancestor-directory
+overlaps are refused up front (`reason: "overlapping_selection"`); a
+wildcard that git expands onto the same file is only discovered when the
+hunk step runs, and is rolled back (see below).
+
+Mutating operations are serialized per `(session, repository)`, so
+concurrent calls — a deck of parallel agent columns, or a user clicking
+"stage hunk" quickly — queue instead of losing to git's `index.lock`.
+Contention from a git process *outside* this server still surfaces, as
+`-32092` with `reason: "index_locked"`; the signal is the lockfile's
+existence, never git's message text.
+
+### Failure rollback
+
+`git apply` is all-or-nothing, so a hunk-only operation cannot half-apply.
+An operation with **both** `paths` and `hunks` runs two git commands, so
+the index tree is captured with `git write-tree` before the first and read
+back with `git read-tree` if a later step fails; the error then carries
+`rolled_back: true`. The rollback is not limited to git-level failures —
+an OS-level error or a cancellation between steps restores the snapshot
+too. An index that cannot be snapshotted (unmerged entries) refuses
+multi-step operations outright (`reason: "unmerged_index"`) rather than
+risking a partial result.
+
+Patches are written to a scratch file inside the repository's git
+directory and passed to `git apply` as an argument, so patch size is
+unbounded and no code path in this surface runs a shell.
+
+`git_discard` cannot be undone by definition, so it is validated
+end-to-end *before* anything runs — every path must have tracked changes,
+every hunk id must resolve — and then applied as a single atomic reverse
+patch (`--binary`, so binary and deleted files restore correctly).
+
+### Destructive-action policy
+
+Five operations never run on a bare request:
+
+| operation | trigger |
+|-----------|---------|
+| `discard_changes` | any `git_discard` |
+| `reset_hard` | `git_reset` with `mode: "hard"` |
+| `checkout_discard_changes` | `git_checkout` with `discard_changes: true` |
+| `force_push` | `git_push` with `force`, `force_with_lease`, or a refspec with a leading `+` |
+| `delete_remote_ref` | `git_push` with a refspec whose source side is empty (`:refs/heads/x`) |
+| `amend_commit` | `git_commit` with `amend: true` |
+
+Destructive intent lives in the *refspec* as much as in the flags, and can
+come from repository configuration that mentions neither
+(`remote.<name>.push = +refs/…`, `remote.<name>.mirror = true`). So the
+gate does not predict git's decision from the request: the identical argv
+runs once with `--dry-run` first and the confirmation is driven by the
+porcelain flags git itself reports (`+` forced, `-` deleted). The
+`impact` then carries `planned_updates` — the refs git said it would
+rewrite or remove.
+
+The first call answers `-32093 git_confirmation_required` with
+
+```json
+{
+  "kind": "git_confirmation_required",
+  "operation": "reset_hard",
+  "repo": "apps/web",
+  "confirmation_token": "<single-use>",
+  "impact": { "target": "HEAD", "head_oid": "…", "dirty_paths": ["a.txt"] },
+  "reason": "confirmation_required"
+}
+```
+
+The client shows `impact` and re-sends the same call with
+`confirmation_token`. Tokens are single-use, expire, and are bound to the
+exact `(session, repo, operation, impact)` they were minted for — the
+impact is **recomputed from live repository state** at redemption, so a
+repository that moved in between invalidates the token and the client is
+shown the new impact (`reason: "stale_confirmation"`). A token minted for
+one session, repository or operation cannot unlock another.
+
+Every impact that describes lost work carries a `content_digest` of the
+exact bytes involved, not just the paths: `git_discard` digests the patch
+it would reverse, and `reset_hard`/`checkout_discard_changes` digest
+`git diff HEAD --binary`. A parallel agent column rewriting a file between
+the prompt and the confirmation therefore invalidates the token instead of
+destroying work the user never saw.
+
+### Branches, commits and history
+
+- `git_commit {session_id, repo, message, amend?, allow_empty?, author?,
+  confirmation_token?}` → `{oid, amended}`. Hooks are **not** run
+  (`--no-verify`): an RPC surface must not execute repository-supplied
+  code on behalf of a remote client. Committing with nothing staged is
+  `-32094` (`reason: "nothing_staged"`), not a shell error.
+- `git_checkout {session_id, repo, branch, create?, start_point?, detach?,
+  discard_changes?, confirmation_token?}` → the post-switch `git_status`
+  payload.
+- `git_reset {session_id, repo, mode?, rev?, paths?,
+  confirmation_token?}` → the post-reset `git_status` payload. A pathspec
+  reset is always mixed.
+
+Revisions, refspecs and remote names that begin with `-` are refused
+(`reason: "invalid_revision"` / `"invalid_remote"`): commands are argv
+lists, so the only injection left is a value git would read as an option.
+
+### Network operations
+
+`remote` is a **remote name**, never a URL: it must name a remote already
+configured in the repository (`-32094`, `reason: "unknown_remote"`, with
+the configured names in `supported`). Because repository config lives
+inside the workspace and the session can write it, a **local** remote — a
+filesystem path or a `file://` URL — must also resolve inside the
+workspace root (`reason: "remote_outside_workspace"`); network remotes
+(`https`/`ssh`/`git`) cross no workspace boundary and are left alone. Accepting a URL would let a caller
+point git at any path or scheme reachable from the sandbox, importing
+objects from outside the workspace; and an `ext::` URL turns a remote into
+a shell command. As a second line of defence `protocol.ext.allow=never` is
+pinned on the command line, which outranks repository-local config. A
+`refspec` without a `remote` is refused too (`reason: "missing_remote"`) —
+git reads its first positional as the repository, so it would be silently
+reinterpreted as one.
+
+- `git_fetch {session_id, repo, remote?, refspec?, prune?}` →
+  `{remote, updated_refs: [{ref, old_oid, new_oid, change}]}`. Remote-
+  tracking refs are snapshotted before and after, so ref movement is
+  reported structurally without reading a line of git's progress output.
+- `git_pull {session_id, repo, remote?, refspec?, rebase?}` →
+  `{ok, state, conflicted, head}`. A pull that stops on a conflict is a
+  **state**, not an error: `ok: false` with the conflicted paths. Only a
+  failure that leaves no conflict raises `-32092`.
+- `git_push {session_id, repo, remote?, refspec?, force?,
+  force_with_lease?, set_upstream?, confirmation_token?}` →
+  `{ok, remote_url, updates, rejected}` from `git push --porcelain`. The
+  meaning comes from the leading flag character (`status` is one of
+  `created`, `fast_forward`, `forced_update`, `deleted`, `rejected`,
+  `up_to_date`); the trailing human summary is passed through untouched as
+  `summary_raw` and is never interpreted. A rejected push is a result, not
+  an exception.
+
+`git_operation_progress {session_id, operation_id, repo, operation, phase,
+detail?}` is emitted to the calling connection for `fetch`/`pull`/`push`
+with `phase` in `started`/`completed`/`failed`. The phases are the
+server's own lifecycle, **not** a reading of git's progress output — which
+is exactly why they are safe to expose. Like the `fs_*` events they are
+per-connection and are not journaled: a reconnecting client refetches
+`git_status`.
+
+### Errors
+
+| code   | kind                          | meaning                                                        |
+|--------|-------------------------------|----------------------------------------------------------------|
+| -32090 | `git_repository_not_found`    | no repository at `repo`, or its root is outside the workspace   |
+| -32091 | `git_path_invalid`            | absolute/escaping/malformed `repo` or file path                 |
+| -32092 | `git_operation_failed`        | git exited non-zero; carries `operation`, `exit_code`, `stderr` |
+| -32093 | `git_confirmation_required`   | destructive action without a valid impact-bound token           |
+| -32094 | `git_state_invalid`           | stale hunk id, empty/overlapping selection, unmerged index, nothing staged, bad mode/revision |
+| -32095 | `git_capability_unavailable`  | the substrate has no shell, or git is not installed in it       |
+
 ## Authentication
 
 Optional token-based authentication via URL query parameter:

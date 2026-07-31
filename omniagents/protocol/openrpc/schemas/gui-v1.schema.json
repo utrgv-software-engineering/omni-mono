@@ -946,6 +946,487 @@
       "type": "object",
       "x-omni-stability": "stable"
     },
+    "git_checkout": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "confirmation_token": {
+          "type": "string"
+        },
+        "create": {
+          "type": "boolean"
+        },
+        "detach": {
+          "type": "boolean"
+        },
+        "discard_changes": {
+          "type": "boolean"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "start_point": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo",
+        "branch"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_commit": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_empty": {
+          "type": "boolean"
+        },
+        "amend": {
+          "type": "boolean"
+        },
+        "author": {
+          "type": "string"
+        },
+        "confirmation_token": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo",
+        "message"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_conflicts": {
+      "additionalProperties": false,
+      "properties": {
+        "paths": {
+          "items": {},
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_diff": {
+      "additionalProperties": false,
+      "properties": {
+        "context_lines": {
+          "type": "integer"
+        },
+        "from_rev": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "paths": {
+          "items": {},
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "to_rev": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_discard": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmation_token": {
+          "type": "string"
+        },
+        "context_lines": {
+          "type": "integer"
+        },
+        "hunks": {
+          "items": {},
+          "type": "array"
+        },
+        "paths": {
+          "items": {},
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_fetch": {
+      "additionalProperties": false,
+      "properties": {
+        "prune": {
+          "type": "boolean"
+        },
+        "refspec": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_list_branches": {
+      "additionalProperties": false,
+      "properties": {
+        "include_remote": {
+          "type": "boolean"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_list_repositories": {
+      "additionalProperties": false,
+      "properties": {
+        "max_depth": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_list_worktrees": {
+      "additionalProperties": false,
+      "properties": {
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_log": {
+      "additionalProperties": false,
+      "properties": {
+        "max_count": {
+          "type": "integer"
+        },
+        "paths": {
+          "items": {},
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "skip": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_operation_progress": {
+      "additionalProperties": false,
+      "properties": {
+        "detail": {
+          "type": "object"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "operation_id",
+        "repo",
+        "operation",
+        "phase"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_pull": {
+      "additionalProperties": false,
+      "properties": {
+        "rebase": {
+          "type": "boolean"
+        },
+        "refspec": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_push": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmation_token": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "force_with_lease": {
+          "type": "boolean"
+        },
+        "refspec": {
+          "type": "string"
+        },
+        "remote": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "set_upstream": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_reset": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmation_token": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "paths": {
+          "items": {},
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "rev": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_stage": {
+      "additionalProperties": false,
+      "properties": {
+        "context_lines": {
+          "type": "integer"
+        },
+        "hunks": {
+          "items": {},
+          "type": "array"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "paths": {
+          "items": {},
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_status": {
+      "additionalProperties": false,
+      "properties": {
+        "include_ignored": {
+          "type": "boolean"
+        },
+        "include_untracked": {
+          "type": "boolean"
+        },
+        "paths": {
+          "items": {},
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "git_unstage": {
+      "additionalProperties": false,
+      "properties": {
+        "context_lines": {
+          "type": "integer"
+        },
+        "hunks": {
+          "items": {},
+          "type": "array"
+        },
+        "paths": {
+          "items": {},
+          "type": "array"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "repo"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "identity": {
       "additionalProperties": false,
       "properties": {
@@ -2355,6 +2836,54 @@
       "$ref": "#/$defs/fs_upload_abort"
     },
     {
+      "$ref": "#/$defs/git_list_repositories"
+    },
+    {
+      "$ref": "#/$defs/git_status"
+    },
+    {
+      "$ref": "#/$defs/git_diff"
+    },
+    {
+      "$ref": "#/$defs/git_log"
+    },
+    {
+      "$ref": "#/$defs/git_list_branches"
+    },
+    {
+      "$ref": "#/$defs/git_list_worktrees"
+    },
+    {
+      "$ref": "#/$defs/git_conflicts"
+    },
+    {
+      "$ref": "#/$defs/git_stage"
+    },
+    {
+      "$ref": "#/$defs/git_unstage"
+    },
+    {
+      "$ref": "#/$defs/git_discard"
+    },
+    {
+      "$ref": "#/$defs/git_commit"
+    },
+    {
+      "$ref": "#/$defs/git_checkout"
+    },
+    {
+      "$ref": "#/$defs/git_reset"
+    },
+    {
+      "$ref": "#/$defs/git_fetch"
+    },
+    {
+      "$ref": "#/$defs/git_pull"
+    },
+    {
+      "$ref": "#/$defs/git_push"
+    },
+    {
       "$ref": "#/$defs/initialized"
     },
     {
@@ -2425,6 +2954,9 @@
     },
     {
       "$ref": "#/$defs/fs_transfer_progress"
+    },
+    {
+      "$ref": "#/$defs/git_operation_progress"
     }
   ]
 }
