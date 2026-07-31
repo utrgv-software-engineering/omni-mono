@@ -532,6 +532,17 @@ class AgentService(RpcMethodsBase):
         self._connected_channels: list[Any] = []
         # Provider account & usage state behind the ``account_*`` RPCs.
         self.accounts = AccountManager()
+        # MCP server registry/status/auth behind the ``mcp_*`` management
+        # RPCs (config CRUD, startup transitions, OAuth flows). Process-
+        # global, like the account surface.
+        from omniagents.core.agents.mcp_admin import McpServerManager
+
+        self.mcp_manager = McpServerManager(
+            self.spec,
+            settings_provider=lambda: dict(self._default_settings),
+            broadcast=self._broadcast_mcp_server_status,
+        )
+
         # Workspace filesystem watch/transfer state behind the ``fs_*``
         # RPCs. Products that host the workspace on a non-host substrate
         # (sandbox containers, remote backends) install ``workspace_factory``
@@ -890,13 +901,23 @@ class AgentService(RpcMethodsBase):
             AnyIO cross-task violations.
             """
             settings = dict(self._default_settings)
+            from functools import partial as _partial
+
+            from omniagents.core.agents.mcp_elicitation import (
+                elicitation_scope,
+                make_mcp_elicitation_handler,
+            )
 
             async with AsyncExitStack() as stack:
                 active_servers = []
 
                 try:
                     # Build all MCP servers (spec-level + dynamic session-level)
-                    servers = build_mcp_servers(self.spec, settings)
+                    servers = build_mcp_servers(
+                        self.spec,
+                        settings,
+                        auth_resolver=self.mcp_manager.auth_resolver,
+                    )
 
                     # Build dynamic MCP servers from session (e.g. launcher-provided)
                     for dyn_cfg in dynamic_cfgs:
@@ -925,19 +946,50 @@ class AgentService(RpcMethodsBase):
                     # Handle individual server failures gracefully
                     for server in servers:
                         server_name = getattr(server, "name", "unknown")
+                        # Standardized startup transitions (configured →
+                        # starting → ready | failed) — recorded process-wide
+                        # and broadcast as ``mcp_server_status_changed``.
+                        await self.mcp_manager.record_transition(
+                            server_name,
+                            "starting",
+                            origin=f"session:{session.id[:8]}",
+                        )
+                        # MCP server-initiated elicitations route through
+                        # the #308 protocol, scoped to this session.
+                        handler = make_mcp_elicitation_handler(
+                            _partial(self.request_elicitation, session=session),
+                            server_name=server_name,
+                        )
                         try:
-                            if hasattr(server, "__aenter__") and hasattr(
-                                server, "__aexit__"
-                            ):
-                                # Context manager style (stdio, sse, etc.)
-                                active = await stack.enter_async_context(server)
-                            else:
-                                # Manual connect/cleanup style
-                                await server.connect()
-                                stack.push_async_callback(server.cleanup)
-                                active = server
+                            with elicitation_scope(handler):
+                                if hasattr(server, "__aenter__") and hasattr(
+                                    server, "__aexit__"
+                                ):
+                                    # Context manager style (stdio, sse, etc.)
+                                    active = await stack.enter_async_context(server)
+                                else:
+                                    # Manual connect/cleanup style
+                                    await server.connect()
+                                    stack.push_async_callback(server.cleanup)
+                                    active = server
                             active_servers.append(active)
-                        except Exception as server_err:
+                            await self.mcp_manager.record_transition(
+                                server_name,
+                                "ready",
+                                origin=f"session:{session.id[:8]}",
+                            )
+                        except BaseException as server_err:
+                            from omniagents.core.agents.mcp_admin import (
+                                is_external_cancellation,
+                            )
+
+                            if is_external_cancellation(server_err):
+                                raise
+                            await self.mcp_manager.record_failure(
+                                server_name,
+                                server_err,
+                                origin=f"session:{session.id[:8]}",
+                            )
                             # Log at debug level to avoid TUI interference
                             # Users can enable debug logging to see MCP connection failures
                             from omniagents.core.utils.logging import get_logger
@@ -4681,6 +4733,11 @@ class AgentService(RpcMethodsBase):
             self.spec.mcp_servers = [
                 s for s in mcp_servers if getattr(s, "name", None) != server_name
             ]
+        # Keep the management registry in sync so ``mcp_list_servers``
+        # reports the kill switch instead of silently dropping the entry.
+        manager = getattr(self, "mcp_manager", None)
+        if manager is not None:
+            manager.mark_disabled(server_name)
 
     async def report_incident(
         self,
@@ -4941,6 +4998,438 @@ class AgentService(RpcMethodsBase):
         return result
 
     # ------------------------------------------------------------------
+    #  MCP management, status & OAuth (``mcp_*`` RPCs).
+    #
+    #  Thin wrappers over ``self.mcp_manager`` (McpServerManager) — the
+    #  promoted, single lifecycle contract for configured MCP servers.
+    #  Reads are redacted (write-only header/env secrets), config
+    #  mutations follow the ``disable_tool``/``write_config`` posture
+    #  (process-wide → GLOBAL_MUTATING), and status transitions are
+    #  broadcast (not journaled) via ``mcp_server_status_changed``.
+    #  See omniagents/rpc/protocol.md § "MCP Server Management".
+    # ------------------------------------------------------------------
+
+    async def _broadcast_mcp_server_status(self, payload: dict) -> None:
+        """Notify every connected client of a startup/auth transition.
+
+        Not journaled: server status is process-global (not session
+        history) — the ``account_changed`` decision. Clients refetch via
+        ``mcp_list_servers`` after a reconnect; live sockets get pushes.
+        """
+        _debug_rpc("mcp_server_status_changed", payload)
+        for ch in list(self._connected_channels):
+            try:
+                await ch.async_call("mcp_server_status_changed", payload)
+            except Exception:
+                logger.debug(
+                    "mcp_server_status_changed broadcast failed", exc_info=True
+                )
+
+    async def mcp_list_servers(self, session_id: str | None = None) -> dict:
+        """List configured MCP servers (redacted config + status + auth).
+
+        With ``session_id``, that session's dynamic (app-scoped) servers
+        are appended as ``source: "session"`` entries — and the request
+        becomes resource-scoped to the session owner.
+        """
+        session_entries: list[dict] = []
+        if session_id:
+            sess = self.get_session(session_id)
+            for dyn_cfg in list(getattr(sess, "_dynamic_mcp_servers", None) or []):
+                if isinstance(dyn_cfg, dict):
+                    session_entries.append(
+                        self.mcp_manager.session_server_snapshot(dyn_cfg)
+                    )
+        result = self.mcp_manager.list_servers(session_servers=session_entries)
+        _debug_rpc("mcp_list_servers", {"servers": len(result.get("servers", []))})
+        return result
+
+    async def mcp_get_server(
+        self, server_name: str, refresh: bool | None = None
+    ) -> dict:
+        """Full snapshot of one server: config (redacted), status, auth,
+        and — after a probe — server info, capabilities, tools,
+        resources, resource templates, and prompts.
+
+        ``refresh=True`` connects out-of-session now (a management
+        probe); otherwise the cached discovery snapshot is returned.
+        """
+        _debug_rpc("mcp_get_server", {"server_name": server_name, "refresh": refresh})
+        if refresh:
+            return await self.mcp_manager.probe_server(server_name)
+        return self.mcp_manager.get_server(server_name)
+
+    async def mcp_create_server(
+        self,
+        server_name: str,
+        type: str,
+        params: dict,
+        server_options: dict | None = None,
+    ) -> dict:
+        """Create a user-layer MCP server (validated; secrets write-only)."""
+        _debug_rpc("mcp_create_server", {"server_name": server_name, "type": type})
+        return self.mcp_manager.create_server(server_name, type, params, server_options)
+
+    async def mcp_update_server(
+        self,
+        server_name: str,
+        type: str | None = None,
+        params: dict | None = None,
+        server_options: dict | None = None,
+    ) -> dict:
+        """Update a user-layer MCP server.
+
+        ``params.headers`` / ``params.env`` merge write-only: a string
+        sets a value, ``null`` deletes it, omission keeps the stored
+        (unreadable) value. Other params replace wholesale.
+        """
+        _debug_rpc("mcp_update_server", {"server_name": server_name})
+        return self.mcp_manager.update_server(server_name, type, params, server_options)
+
+    async def mcp_delete_server(self, server_name: str) -> dict:
+        """Delete a user-layer MCP server (config, status, stored auth)."""
+        _debug_rpc("mcp_delete_server", {"server_name": server_name})
+        result = self.mcp_manager.delete_server(server_name)
+        await self._shutdown_active_mcp_instances(server_name)
+        return result
+
+    async def mcp_reload_server(self, server_name: str | None = None) -> dict:
+        """Re-read MCP config files and restart active instances.
+
+        The pick-up-changes chokepoint: re-merges the user-layer files
+        into the live spec (so hand-edits apply) and tears down active
+        per-session instances of the named server (or all servers) —
+        the next agent build reconnects from current configuration.
+        """
+        _debug_rpc("mcp_reload_server", {"server_name": server_name})
+        if server_name is not None:
+            self.mcp_manager.require_config(server_name)
+        self.mcp_manager.apply_to_spec()
+        reloaded = await self._shutdown_active_mcp_instances(server_name)
+        names = (
+            [server_name]
+            if server_name is not None
+            else [cfg.name for cfg in self.mcp_manager.effective_configs()]
+        )
+        for name in names:
+            await self.mcp_manager.record_transition(
+                name, "configured", origin="reload"
+            )
+        return {"ok": True, "reloaded_sessions": reloaded}
+
+    async def _shutdown_active_mcp_instances(
+        self, server_name: str | None = None
+    ) -> int:
+        """Tear down live per-session MCP instances so builds restart them.
+
+        Sessions rebuild lazily: the next ``start_run`` /
+        ``_ensure_session_mcp_servers`` call reconnects from the current
+        spec. Returns the number of sessions torn down. The whole
+        session lifecycle stack is shut down even for a single named
+        server — instances share one AsyncExitStack per session.
+        """
+        count = 0
+        for sess in self._session_manager.iter_active():
+            active = list(getattr(sess, "_mcp_servers_active", []) or [])
+            if not active:
+                continue
+            if server_name is not None and not any(
+                getattr(server, "name", None) == server_name for server in active
+            ):
+                continue
+            shutdown_event = getattr(sess, "_mcp_shutdown", None)
+            if shutdown_event:
+                shutdown_event.set()
+            lifecycle_task = getattr(sess, "_mcp_lifecycle_task", None)
+            if lifecycle_task and not lifecycle_task.done():
+                try:
+                    await asyncio.wait_for(lifecycle_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    lifecycle_task.cancel()
+                    try:
+                        await lifecycle_task
+                    except asyncio.CancelledError:
+                        pass
+                except Exception:
+                    pass
+            setattr(sess, "_mcp_shutdown", None)
+            setattr(sess, "_mcp_lifecycle_task", None)
+            setattr(sess, "_mcp_servers_active", [])
+            count += 1
+        return count
+
+    def _require_single_user_for_session_auth(self) -> None:
+        """Guard: ``mcp_auth_start(session_id=...)`` is single-user only.
+
+        MCP OAuth rewrites process-wide credentials, so it follows the
+        account posture (GLOBAL_MUTATING — refused per-principal in
+        enforced mode). A ``session_id`` would let the central authorizer
+        resolve the request as session-scoped instead; this explicit
+        check keeps the credential-mutation rule airtight.
+        """
+        if self.authorization_policy.enforced:
+            raise AuthorizationDenied(
+                "mcp_auth_start changes credentials for every user and is "
+                "not available to individual principals",
+                resource="global",
+                resource_id="mcp_auth_start",
+            )
+
+    async def mcp_auth_start(
+        self,
+        server_name: str,
+        redirect_uri: str | None = None,
+        session_id: str | None = None,
+    ) -> dict:
+        """Begin an OAuth authorization for an HTTP-family MCP server.
+
+        Returns at the URL-handoff point (``auth_url``), the #306
+        account-flow pattern — no tokens or verifiers in the result.
+        With ``session_id`` (single-user topology only), the URL is also
+        surfaced to that session as a ``url``-kind elicitation via the
+        #308 protocol; accepting it with ``{"code": ...}`` (or the full
+        redirect URL as ``{"url": ...}``) completes the flow without a
+        separate ``mcp_auth_complete`` call.
+        """
+        from omniagents.core.agents.mcp_admin import McpOperationUnsupported
+
+        if session_id:
+            self._require_single_user_for_session_auth()
+        config = self.mcp_manager.require_config(server_name)
+        if config.type == "stdio":
+            raise McpOperationUnsupported(
+                server_name,
+                "oauth",
+                message="stdio MCP servers authenticate via env, not OAuth",
+            )
+        url = (config.params or {}).get("url")
+        if not isinstance(url, str) or not url:
+            raise McpOperationUnsupported(server_name, "oauth")
+        result = await self.mcp_manager.oauth.start(
+            server_name, url, redirect_uri=redirect_uri
+        )
+        if result.get("state") == "completed":
+            return result
+        sess = self.get_session(session_id) if session_id else None
+        if sess is not None:
+            auth_id = str(result.get("auth_id"))
+            asyncio.create_task(
+                self._elicit_mcp_auth(sess, server_name, auth_id, result),
+                name=f"mcp_auth_elicit_{auth_id[:8]}",
+            )
+        return result
+
+    async def _elicit_mcp_auth(
+        self, session: Session, server_name: str, auth_id: str, start_result: dict
+    ) -> None:
+        """Surface a pending OAuth flow as a ``url``-kind elicitation."""
+        try:
+            response = await self.request_elicitation(
+                session=session,
+                kind="url",
+                message=(
+                    f"Authorize the MCP server '{server_name}' in your "
+                    "browser, then paste the code or redirect URL."
+                ),
+                title=f"Connect {server_name}",
+                url=str(start_result.get("auth_url") or ""),
+                source=f"mcp:{server_name}",
+                persist_response=False,
+            )
+        except Exception:
+            logger.debug("mcp auth elicitation failed", exc_info=True)
+            return
+        if response.get("action") != "accept":
+            self.mcp_manager.oauth.cancel(auth_id)
+            return
+        value = response.get("value") or {}
+        code = value.get("code") or value.get("url") or ""
+        try:
+            await self.mcp_manager.oauth.complete(auth_id, str(code))
+        except Exception:
+            logger.debug("mcp auth completion via elicitation failed", exc_info=True)
+
+    async def mcp_auth_complete(self, auth_id: str, code: str) -> dict:
+        """Finish a pending OAuth flow with the authorization code (or
+        the full redirect URL). Tokens are stored server-side only."""
+        _debug_rpc("mcp_auth_complete", {"auth_id": auth_id})
+        return await self.mcp_manager.oauth.complete(auth_id, code)
+
+    async def mcp_auth_cancel(self, auth_id: str) -> bool:
+        """Drop a pending OAuth flow."""
+        _debug_rpc("mcp_auth_cancel", {"auth_id": auth_id})
+        return self.mcp_manager.oauth.cancel(auth_id)
+
+    async def mcp_read_resource(
+        self, server_name: str, uri: str, session_id: str | None = None
+    ) -> dict:
+        """Read one resource — the promoted ``mcp.read_resource``.
+
+        With ``session_id`` the session's live server instance is used
+        (resource-scoped); without one, a management probe connection
+        serves the read.
+        """
+        _debug_rpc("mcp_read_resource", {"server_name": server_name, "uri": uri})
+        if session_id:
+            sess = self.get_session(session_id)
+            return await self._sf_mcp_read_resource(
+                sess, {"server_name": server_name, "uri": uri}
+            )
+        return await self._mcp_management_call(server_name, "read_resource", uri=uri)
+
+    async def mcp_call_tool(
+        self,
+        server_name: str,
+        tool_name: str,
+        session_id: str,
+        args: dict | None = None,
+    ) -> dict:
+        """Invoke a tool out-of-band — the promoted ``mcp.call_tool``.
+
+        Session-scoped by contract: tool calls act on behalf of a
+        session (MCP-Apps postMessage routing), so ``session_id`` is
+        required and ownership of that session authorizes the call.
+        """
+        _debug_rpc(
+            "mcp_call_tool", {"server_name": server_name, "tool_name": tool_name}
+        )
+        # Same session resolution as ``server_call``: create-if-missing
+        # (ownership was already checked by ``authorize_rpc``) and track
+        # the invoking channel for session notifications.
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
+        if self.channel is not None and self.channel not in sess.channels:
+            sess.channels.append(self.channel)
+        return await self._sf_mcp_call_tool(
+            sess,
+            {
+                "server_name": server_name,
+                "tool_name": tool_name,
+                "arguments": args or {},
+            },
+        )
+
+    async def mcp_get_prompt(
+        self,
+        server_name: str,
+        prompt_name: str,
+        args: dict | None = None,
+        session_id: str | None = None,
+    ) -> dict:
+        """Fetch a prompt from a server that supports prompt discovery."""
+        from omniagents.core.agents.mcp_admin import (
+            McpOperationUnsupported,
+            McpServerUnavailable,
+        )
+
+        _debug_rpc(
+            "mcp_get_prompt",
+            {"server_name": server_name, "prompt_name": prompt_name},
+        )
+        arguments = {str(k): str(v) for k, v in (args or {}).items()}
+        if session_id:
+            sess = self.get_session(session_id)
+            server = await self._resolve_mcp_server_by_name(sess, server_name)
+            if server is None:
+                raise McpServerUnavailable(
+                    server_name,
+                    reason_code="not_active",
+                    message="No active MCP server with this name in the session",
+                )
+            client_session = getattr(server, "session", None)
+            if client_session is None or not hasattr(client_session, "get_prompt"):
+                raise McpOperationUnsupported(server_name, "prompts")
+            result = await client_session.get_prompt(
+                prompt_name, arguments=arguments or None
+            )
+            from omniagents.core.agents.mcp_admin import _dump_model
+
+            dumped = _dump_model(result)
+            return {
+                "server_name": server_name,
+                "prompt_name": prompt_name,
+                "result": dumped if isinstance(dumped, dict) else {},
+            }
+        return await self._mcp_management_call(
+            server_name, "get_prompt", prompt_name=prompt_name, args=arguments
+        )
+
+    async def _mcp_management_call(
+        self, server_name: str, operation: str, **kwargs: Any
+    ) -> dict:
+        """Serve a sessionless read via a short-lived probe connection."""
+        import copy as _copy
+
+        from omniagents.core.agents.mcp import (
+            _instantiate_server,
+            _resolve_setting_placeholders,
+        )
+        from omniagents.core.agents.mcp_admin import (
+            McpOperationUnsupported,
+            McpServerUnavailable,
+            _dump_model,
+            _dump_model_list,
+        )
+
+        config = self.mcp_manager.require_config(server_name)
+        settings = dict(self._default_settings)
+        resolved = _resolve_setting_placeholders(
+            _copy.deepcopy(config.params), settings
+        )
+        if not isinstance(resolved, dict):
+            resolved = {}
+        auth = self.mcp_manager.auth_resolver(config)
+        if auth is not None:
+            resolved = dict(resolved)
+            resolved["auth"] = auth
+        server = _instantiate_server(config, resolved)
+        try:
+            await asyncio.wait_for(server.connect(), timeout=15.0)
+            client_session = getattr(server, "session", None)
+            if operation == "read_resource":
+                if client_session is None or not hasattr(
+                    client_session, "read_resource"
+                ):
+                    raise McpOperationUnsupported(server_name, "resources")
+                result = await client_session.read_resource(kwargs["uri"])
+                return {
+                    "server_name": server_name,
+                    "uri": kwargs["uri"],
+                    "contents": _dump_model_list(getattr(result, "contents", [])),
+                }
+            if operation == "get_prompt":
+                if client_session is None or not hasattr(client_session, "get_prompt"):
+                    raise McpOperationUnsupported(server_name, "prompts")
+                result = await client_session.get_prompt(
+                    kwargs["prompt_name"], arguments=kwargs.get("args") or None
+                )
+                dumped = _dump_model(result)
+                return {
+                    "server_name": server_name,
+                    "prompt_name": kwargs["prompt_name"],
+                    "result": dumped if isinstance(dumped, dict) else {},
+                }
+            raise McpOperationUnsupported(server_name, operation)
+        except McpOperationUnsupported:
+            raise
+        except BaseException as exc:
+            from omniagents.core.agents.mcp_admin import is_external_cancellation
+
+            if is_external_cancellation(exc):
+                raise
+            reason_code, reason = await self.mcp_manager.record_failure(
+                server_name, exc, origin="probe"
+            )
+            raise McpServerUnavailable(
+                server_name, reason_code=reason_code, message=reason
+            ) from exc
+        finally:
+            try:
+                await server.cleanup()
+            except BaseException:
+                pass
+
     #  Workspace filesystem watch & transfer (``fs_*`` RPCs).
     #
     #  Thin wrappers over ``self.filesystem`` (FilesystemManager): the

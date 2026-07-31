@@ -86,7 +86,7 @@ async def test_stdio_mcp_server_preserves_state_across_runs(monkeypatch):
 
     server = PlaywrightMockServer()
 
-    def fake_build_mcp(spec, settings):
+    def fake_build_mcp(spec, settings, **kwargs):
         return [server]
 
     monkeypatch.setattr(
@@ -227,7 +227,7 @@ async def test_stdio_mcp_different_sessions_get_isolated_instances(monkeypatch):
 
     servers_created = []
 
-    def fake_build_mcp(spec, settings):
+    def fake_build_mcp(spec, settings, **kwargs):
         server = PlaywrightMockServer()
         servers_created.append(server)
         return [server]
@@ -510,7 +510,7 @@ async def test_minimal_reproduction_sequential_runs_with_mcp(monkeypatch):
     """
     server = FakeMCPServer()
 
-    def fake_build_mcp(spec_arg, settings_arg):
+    def fake_build_mcp(spec_arg, settings_arg, **kwargs):
         return [server]
 
     monkeypatch.setattr(service_module, "build_mcp_servers", fake_build_mcp)
@@ -568,7 +568,7 @@ async def test_hypothesis_1_mcp_without_safeagent(monkeypatch):
     server = FakeMCPServer()
     tool_called = asyncio.Event()
 
-    def fake_build_mcp(spec_arg, settings_arg):
+    def fake_build_mcp(spec_arg, settings_arg, **kwargs):
         return [server]
 
     monkeypatch.setattr(service_module, "build_mcp_servers", fake_build_mcp)
@@ -620,7 +620,7 @@ async def test_hypothesis_3_approval_callback_auto_approve(monkeypatch):
     """
     server = FakeMCPServer()
 
-    def fake_build_mcp(spec_arg, settings_arg):
+    def fake_build_mcp(spec_arg, settings_arg, **kwargs):
         return [server]
 
     monkeypatch.setattr(service_module, "build_mcp_servers", fake_build_mcp)
@@ -784,7 +784,7 @@ async def test_anyio_mcp_with_connection_reuse_reproduces_hang(monkeypatch):
     """
     server = AnyIOMCPServer()
 
-    def fake_build_mcp(spec_arg, settings_arg):
+    def fake_build_mcp(spec_arg, settings_arg, **kwargs):
         return [server]
 
     monkeypatch.setattr(service_module, "build_mcp_servers", fake_build_mcp)

@@ -50,6 +50,7 @@ GUI_OPTIONAL_NOTIFICATIONS = frozenset(
         "session_forked",
         "session_variables_changed",
         "account_changed",
+        "mcp_server_status_changed",
         "fs_events",
         "fs_rescan_required",
         "fs_transfer_progress",
@@ -60,6 +61,11 @@ GUI_OPTIONAL_NOTIFICATIONS = frozenset(
 # must never be reproducible from process output.
 SENSITIVE_PARAM_KEYS = frozenset({"api_key", "code"})
 
+# Dict-valued params whose VALUES are credential channels (MCP server
+# ``headers``/``env`` — the write-only secret model): the whole mapping
+# is masked, matching the ``{name: {is_set}}`` read-path redaction.
+SENSITIVE_CONTAINER_KEYS = frozenset({"headers", "env"})
+
 
 def redact_params(params: Any) -> Any:
     """Copy of *params* with credential-bearing values masked for logging."""
@@ -68,7 +74,8 @@ def redact_params(params: Any) -> Any:
     return {
         key: (
             "[REDACTED]"
-            if key in SENSITIVE_PARAM_KEYS and value
+            if (key in SENSITIVE_PARAM_KEYS and value)
+            or (key in SENSITIVE_CONTAINER_KEYS and isinstance(value, dict) and value)
             else redact_params(value) if isinstance(value, dict) else value
         )
         for key, value in params.items()
@@ -292,6 +299,7 @@ class JsonRpcEndpoint:
         if call_id is None:
             return
         from omniagents.core.agents.elicitation import ElicitationError
+        from omniagents.core.agents.mcp_admin import McpRpcError
         from omniagents.core.providers.accounts import AccountRpcError
         from omniagents.core.session.event_log import ResyncRequiredError
         from omniagents.rpc.filesystem import FilesystemRpcError
@@ -302,10 +310,22 @@ class JsonRpcEndpoint:
                 ResyncRequiredError,
                 AccountRpcError,
                 ElicitationError,
+                McpRpcError,
                 FilesystemRpcError,
             ),
         ):
             await channel.send_error(call_id, exc.code, str(exc), exc.data)
+            return
+        if isinstance(exc, AuthorizationDenied):
+            denied_data = exc.error_data()
+            if method is not None:
+                denied_data["method"] = method
+            await channel.send_error(
+                call_id,
+                RPC_ERROR_AUTHORIZATION_DENIED,
+                str(exc) or "Not authorized",
+                denied_data,
+            )
             return
         data: Dict[str, Any] = {"type": exc.__class__.__name__, "message": str(exc)}
         if method is not None:

@@ -54,6 +54,18 @@ STABLE_REQUESTS = (
     "account_select",
     # Structured user elicitation (tkt_F9tu2m9PjdpY)
     "elicitation_response",
+    # MCP management, status & OAuth (tkt_kVK7F-iaL-OA). Stable on
+    # entry: Desktop connector settings and runtime status consume this
+    # surface. Results are open records (additive-friendly payloads).
+    "mcp_list_servers",
+    "mcp_get_server",
+    "mcp_create_server",
+    "mcp_update_server",
+    "mcp_delete_server",
+    "mcp_reload_server",
+    "mcp_auth_start",
+    "mcp_auth_complete",
+    "mcp_auth_cancel",
 )
 
 EXPERIMENTAL_REQUESTS = (
@@ -70,6 +82,12 @@ EXPERIMENTAL_REQUESTS = (
     "get_config",
     "validate_config",
     "write_config",
+    # Session/OOB MCP operations (tkt_kVK7F-iaL-OA): promoted from the
+    # ``mcp.*`` server functions; experimental until a client depends on
+    # the RPC form.
+    "mcp_read_resource",
+    "mcp_call_tool",
+    "mcp_get_prompt",
     # Workspace filesystem watch & chunked transfer (tkt_B5fXOZHf08K1).
     # Experimental on entry per the governance default for brand-new
     # surfaces: clients opt in via initialize.capabilities
@@ -107,6 +125,10 @@ STABLE_NOTIFICATIONS = (
     # Structured user elicitation (tkt_F9tu2m9PjdpY)
     "elicitation_requested",
     "elicitation_resolved",
+    # MCP startup/auth transitions (tkt_kVK7F-iaL-OA). Broadcast, not
+    # journaled: server status is process-global (the account_changed
+    # precedent) — clients refetch via mcp_list_servers on reconnect.
+    "mcp_server_status_changed",
 )
 
 STABLE_CLIENT_NOTIFICATIONS = ("initialized",)

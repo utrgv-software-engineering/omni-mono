@@ -254,12 +254,36 @@ def _instantiate_server(cfg: MCPServerConfig, params: Dict[str, Any]) -> MCPServ
     )
 
 
-def build_mcp_servers(spec: AgentSpec, settings: Dict[str, Any]) -> List[MCPServer]:
+def build_mcp_servers(
+    spec: AgentSpec,
+    settings: Dict[str, Any],
+    *,
+    auth_resolver: Any = None,
+) -> List[MCPServer]:
+    """Instantiate the spec's MCP servers.
+
+    ``auth_resolver`` (optional) maps an ``MCPServerConfig`` to an
+    ``httpx.Auth`` for HTTP-family transports — the MCP management
+    surface injects stored OAuth credentials here. Explicit ``auth``
+    params always win.
+    """
     servers: List[MCPServer] = []
     for cfg in spec.mcp_servers:
         resolved_params = _resolve_setting_placeholders(deepcopy(cfg.params), settings)
         if resolved_params is None:
             raise ValueError(f"MCP server '{cfg.name}' has params that resolve to None")
+        if (
+            auth_resolver is not None
+            and isinstance(resolved_params, dict)
+            and "auth" not in resolved_params
+        ):
+            try:
+                auth = auth_resolver(cfg)
+            except Exception:
+                auth = None
+            if auth is not None:
+                resolved_params = dict(resolved_params)
+                resolved_params["auth"] = auth
         server = _instantiate_server(cfg, resolved_params)
         servers.append(server)
     return servers

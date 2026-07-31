@@ -700,6 +700,73 @@ export class RPCClient {
     return this.call('account_select', { provider }) as Promise<{ selected_provider: string; account?: AccountSnapshot }>
   }
 
+  // ---------------------------------------------------------------------
+  // MCP server management, status & OAuth — see protocol.md §"MCP Server
+  // Management". Snapshots are redacted server-side (header/env values are
+  // write-only `{is_set}` markers); subscribe to `mcp_server_status_changed`
+  // via `on('mcp_server_status_changed', …)` for startup/auth transitions,
+  // and refetch with `mcpListServers()` after a reconnect (status events
+  // are broadcast, not journaled).
+  // ---------------------------------------------------------------------
+
+  async mcpListServers(sessionId?: string): Promise<McpListServersResult> {
+    const params: Record<string, unknown> = {}
+    if (sessionId) params.session_id = sessionId
+    return this.call('mcp_list_servers', params as RpcMethodMap['mcp_list_servers']['params']) as Promise<McpListServersResult>
+  }
+
+  async mcpGetServer(serverName: string, refresh?: boolean): Promise<McpServerSnapshot> {
+    const params: Record<string, unknown> = { server_name: serverName }
+    if (refresh !== undefined) params.refresh = refresh
+    return this.call('mcp_get_server', params as unknown as RpcMethodMap['mcp_get_server']['params']) as Promise<McpServerSnapshot>
+  }
+
+  async mcpCreateServer(
+    serverName: string,
+    type: McpTransport,
+    params: Record<string, unknown>,
+    serverOptions?: Record<string, unknown>,
+  ): Promise<{ ok: boolean; server: McpServerSnapshot }> {
+    const payload: Record<string, unknown> = { server_name: serverName, type, params }
+    if (serverOptions) payload.server_options = serverOptions
+    return this.call('mcp_create_server', payload as unknown as RpcMethodMap['mcp_create_server']['params']) as Promise<{ ok: boolean; server: McpServerSnapshot }>
+  }
+
+  async mcpUpdateServer(
+    serverName: string,
+    updates: { type?: McpTransport; params?: Record<string, unknown>; serverOptions?: Record<string, unknown> },
+  ): Promise<{ ok: boolean; server: McpServerSnapshot }> {
+    const payload: Record<string, unknown> = { server_name: serverName }
+    if (updates.type) payload.type = updates.type
+    if (updates.params) payload.params = updates.params
+    if (updates.serverOptions) payload.server_options = updates.serverOptions
+    return this.call('mcp_update_server', payload as unknown as RpcMethodMap['mcp_update_server']['params']) as Promise<{ ok: boolean; server: McpServerSnapshot }>
+  }
+
+  async mcpDeleteServer(serverName: string): Promise<{ ok: boolean; server_name: string }> {
+    return this.call('mcp_delete_server', { server_name: serverName }) as Promise<{ ok: boolean; server_name: string }>
+  }
+
+  async mcpReloadServer(serverName?: string): Promise<{ ok: boolean; reloaded_sessions: number }> {
+    const params: Record<string, unknown> = {}
+    if (serverName) params.server_name = serverName
+    return this.call('mcp_reload_server', params as RpcMethodMap['mcp_reload_server']['params']) as Promise<{ ok: boolean; reloaded_sessions: number }>
+  }
+
+  async mcpAuthStart(serverName: string, opts?: { redirectUri?: string; sessionId?: string }): Promise<McpAuthState> {
+    const params: Record<string, unknown> = { server_name: serverName }
+    if (opts?.redirectUri) params.redirect_uri = opts.redirectUri
+    if (opts?.sessionId) params.session_id = opts.sessionId
+    return this.call('mcp_auth_start', params as unknown as RpcMethodMap['mcp_auth_start']['params']) as Promise<McpAuthState>
+  }
+
+  async mcpAuthComplete(authId: string, code: string): Promise<McpAuthState> {
+    return this.call('mcp_auth_complete', { auth_id: authId, code }) as Promise<McpAuthState>
+  }
+
+  async mcpAuthCancel(authId: string): Promise<boolean> {
+    return this.call('mcp_auth_cancel', { auth_id: authId })
+  }
   // ----- Workspace filesystem watch & chunked transfer (fs_*, experimental) -----
 
   async fsWatch(
@@ -916,6 +983,78 @@ export type AccountChangedPayload = {
   provider: string
   reason: 'login' | 'logout' | 'refresh' | 'select'
   account?: AccountSnapshot
+}
+
+export type McpTransport = 'stdio' | 'http' | 'sse' | 'streamable_http'
+
+/**
+ * Redacted MCP server snapshot — `params.headers` / `params.env` values
+ * are write-only `{ is_set: true }` markers, never the stored secrets.
+ */
+export type McpServerSnapshot = {
+  server_name: string
+  source: 'project' | 'user' | 'project_local' | 'session'
+  transport: McpTransport
+  params: Record<string, unknown>
+  server_options: Record<string, unknown>
+  enabled: boolean
+  disabled_reason?: 'user_mcp_disabled' | 'allowlist_blocked' | 'kill_switch'
+  read_only: boolean
+  read_only_reason?: string
+  status: McpServerStatus
+  auth: McpAuthSnapshot
+  server_info?: Record<string, unknown> | null
+  capabilities?: Record<string, unknown> | null
+  counts?: { tools: number; resources: number; resource_templates: number; prompts: number }
+  captured_at?: string
+  tools?: Array<Record<string, unknown>>
+  resources?: Array<Record<string, unknown>>
+  resource_templates?: Array<Record<string, unknown>>
+  prompts?: Array<Record<string, unknown>>
+  supported?: Record<string, boolean>
+}
+
+export type McpServerStatus = {
+  state: 'configured' | 'starting' | 'ready' | 'failed' | 'disabled'
+  reason_code?: string
+  reason?: string
+  at?: string
+  origin?: string
+}
+
+export type McpAuthSnapshot = {
+  kind: 'oauth' | 'headers' | 'env' | 'none'
+  state: 'authenticated' | 'expired' | 'pending' | 'required' | 'configured' | 'not_authenticated' | 'not_required' | 'unknown'
+}
+
+export type McpListServersResult = {
+  servers: McpServerSnapshot[]
+  user_mcp_allowed: boolean
+  write_target: string
+}
+
+/** Result of mcp_auth_start / mcp_auth_complete. */
+export type McpAuthState = {
+  state: 'pending' | 'completed'
+  server_name: string
+  auth_id?: string
+  auth_url?: string
+  redirect_uri?: string
+  auth_state?: string
+}
+
+/**
+ * Payload of the `mcp_server_status_changed` server notification.
+ * Broadcast (not journaled): refetch via `mcp_list_servers` on reconnect.
+ */
+export type McpServerStatusChangedPayload = {
+  server_name: string
+  status: McpServerStatus['state']
+  previous_status?: McpServerStatus['state']
+  reason_code?: string
+  reason?: string
+  auth_state?: string
+  at?: string
 }
 
 /**

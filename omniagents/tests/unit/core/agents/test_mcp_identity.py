@@ -167,3 +167,33 @@ async def test_mcp_predicate_spec_names_and_patterns_match_public_name():
         ("srv", "hello"), "mcp_srv__hello", session, set(), [], False
     )
     assert await default(None, {}, "c3") is True
+
+
+def test_hosted_and_connected_lanes_share_one_grant_namespace():
+    """Approval-identity reconciliation (tkt_kVK7F-iaL-OA): a sticky
+    grant keyed ``(server identity, original tool name)`` covers the
+    operation on BOTH approval lanes — the hosted ``mcp_approval_*``
+    lane (identity = ``server_label``) and the connected function-tool
+    lane (identity = config ``name`` via ``_mcp_identity``) resolve
+    trust from the same session allow-set."""
+    from omniagents.core.agents.service import AgentService
+
+    session = types.SimpleNamespace()
+
+    # A grant written through the hosted chokepoints (safe_mcp_tools /
+    # an "Always" response) ...
+    key = AgentService._mcp_allow_key("github", "create_issue")
+    assert key == ("github", "create_issue")
+    AgentService._session_mcp_allowlist(session).add(key)
+
+    # ... auto-approves the hosted lane ...
+    assert AgentService._is_mcp_tool_always_allowed(session, "github", "create_issue")
+    # ... AND satisfies the connected lane's predicate helper.
+    assert session_allows_mcp_tool(session, "github", "create_issue")
+
+    # Different server identity with the same tool name stays denied on
+    # both lanes — the tuple, never the flat name, keys trust.
+    assert not AgentService._is_mcp_tool_always_allowed(
+        session, "gitlab", "create_issue"
+    )
+    assert not session_allows_mcp_tool(session, "gitlab", "create_issue")

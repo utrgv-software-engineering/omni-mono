@@ -411,6 +411,97 @@ class ElicitationResponseResult(RootModel[dict[str, Any]]):
     pass
 
 
+class McpListServersParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str | None = None
+
+
+class McpListServersResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpGetServerParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+    refresh: bool | None = None
+
+
+class McpGetServerResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpCreateServerParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+    type: str
+    params: dict[str, Any]
+    server_options: dict[str, Any] | None = None
+
+
+class McpCreateServerResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpUpdateServerParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+    type: str | None = None
+    params: dict[str, Any] | None = None
+    server_options: dict[str, Any] | None = None
+
+
+class McpUpdateServerResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpDeleteServerParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+
+
+class McpDeleteServerResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpReloadServerParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str | None = None
+
+
+class McpReloadServerResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpAuthStartParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+    redirect_uri: str | None = None
+    session_id: str | None = None
+
+
+class McpAuthStartResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpAuthCompleteParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    auth_id: str
+    code: str
+
+
+class McpAuthCompleteResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpAuthCancelParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    auth_id: str
+
+
+class McpAuthCancelResult(RootModel[bool]):
+    pass
+
+
 class ForkSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -535,6 +626,41 @@ class WriteConfigParams(BaseModel):
 
 
 class WriteConfigResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpReadResourceParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+    uri: str
+    session_id: str | None = None
+
+
+class McpReadResourceResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpCallToolParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+    tool_name: str
+    session_id: str
+    args: dict[str, Any] | None = None
+
+
+class McpCallToolResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class McpGetPromptParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+    prompt_name: str
+    args: dict[str, Any] | None = None
+    session_id: str | None = None
+
+
+class McpGetPromptResult(RootModel[dict[str, Any]]):
     pass
 
 
@@ -866,6 +992,19 @@ class ElicitationResolvedParams(BaseModel):
     stream_id: str | None = None
 
 
+class McpServerStatusChangedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    server_name: str
+    status: str
+    previous_status: str | None = None
+    reason_code: str | None = None
+    reason: str | None = None
+    auth_state: str | None = None
+    at: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
 class SessionForkedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -949,6 +1088,15 @@ CLIENT_REQUEST_MODELS = {
     "account_usage": AccountUsageParams,
     "account_select": AccountSelectParams,
     "elicitation_response": ElicitationResponseParams,
+    "mcp_list_servers": McpListServersParams,
+    "mcp_get_server": McpGetServerParams,
+    "mcp_create_server": McpCreateServerParams,
+    "mcp_update_server": McpUpdateServerParams,
+    "mcp_delete_server": McpDeleteServerParams,
+    "mcp_reload_server": McpReloadServerParams,
+    "mcp_auth_start": McpAuthStartParams,
+    "mcp_auth_complete": McpAuthCompleteParams,
+    "mcp_auth_cancel": McpAuthCancelParams,
     "fork_session": ForkSessionParams,
     "set_session_hold": SetSessionHoldParams,
     "queue_status": QueueStatusParams,
@@ -962,6 +1110,9 @@ CLIENT_REQUEST_MODELS = {
     "get_config": GetConfigParams,
     "validate_config": ValidateConfigParams,
     "write_config": WriteConfigParams,
+    "mcp_read_resource": McpReadResourceParams,
+    "mcp_call_tool": McpCallToolParams,
+    "mcp_get_prompt": McpGetPromptParams,
     "fs_watch": FsWatchParams,
     "fs_unwatch": FsUnwatchParams,
     "fs_list": FsListParams,
@@ -1011,6 +1162,15 @@ CLIENT_RESULT_MODELS = {
     "account_usage": AccountUsageResult,
     "account_select": AccountSelectResult,
     "elicitation_response": ElicitationResponseResult,
+    "mcp_list_servers": McpListServersResult,
+    "mcp_get_server": McpGetServerResult,
+    "mcp_create_server": McpCreateServerResult,
+    "mcp_update_server": McpUpdateServerResult,
+    "mcp_delete_server": McpDeleteServerResult,
+    "mcp_reload_server": McpReloadServerResult,
+    "mcp_auth_start": McpAuthStartResult,
+    "mcp_auth_complete": McpAuthCompleteResult,
+    "mcp_auth_cancel": McpAuthCancelResult,
     "fork_session": ForkSessionResult,
     "set_session_hold": SetSessionHoldResult,
     "queue_status": QueueStatusResult,
@@ -1024,6 +1184,9 @@ CLIENT_RESULT_MODELS = {
     "get_config": GetConfigResult,
     "validate_config": ValidateConfigResult,
     "write_config": WriteConfigResult,
+    "mcp_read_resource": McpReadResourceResult,
+    "mcp_call_tool": McpCallToolResult,
+    "mcp_get_prompt": McpGetPromptResult,
     "fs_watch": FsWatchResult,
     "fs_unwatch": FsUnwatchResult,
     "fs_list": FsListResult,
@@ -1055,6 +1218,7 @@ SERVER_NOTIFICATION_MODELS = {
     "account_changed": AccountChangedParams,
     "elicitation_requested": ElicitationRequestedParams,
     "elicitation_resolved": ElicitationResolvedParams,
+    "mcp_server_status_changed": McpServerStatusChangedParams,
     "session_forked": SessionForkedParams,
     "session_variables_changed": SessionVariablesChangedParams,
     "fs_events": FsEventsParams,
@@ -1099,6 +1263,15 @@ STABLE_REQUESTS = frozenset(
         "account_usage",
         "account_select",
         "elicitation_response",
+        "mcp_list_servers",
+        "mcp_get_server",
+        "mcp_create_server",
+        "mcp_update_server",
+        "mcp_delete_server",
+        "mcp_reload_server",
+        "mcp_auth_start",
+        "mcp_auth_complete",
+        "mcp_auth_cancel",
     ]
 )
 EXPERIMENTAL_REQUESTS = frozenset(
@@ -1116,6 +1289,9 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "get_config",
         "validate_config",
         "write_config",
+        "mcp_read_resource",
+        "mcp_call_tool",
+        "mcp_get_prompt",
         "fs_watch",
         "fs_unwatch",
         "fs_list",
@@ -1149,6 +1325,7 @@ STABLE_NOTIFICATIONS = frozenset(
         "account_changed",
         "elicitation_requested",
         "elicitation_resolved",
+        "mcp_server_status_changed",
     ]
 )
 EXPERIMENTAL_NOTIFICATIONS = frozenset(

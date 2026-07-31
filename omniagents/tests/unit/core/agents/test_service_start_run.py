@@ -112,7 +112,9 @@ async def test_start_run_retries_emit_status_and_error(monkeypatch):
 async def test_start_run_success_keeps_mcp_stack(monkeypatch):
     server = FakeAsyncServer()
 
-    def fake_build_mcp(spec_arg, settings_arg):
+    def fake_build_mcp(spec_arg, settings_arg, *, auth_resolver=None):
+        # ``auth_resolver`` is threaded in by the mcp_* management surface
+        # (tkt_kVK7F-iaL-OA) so OAuth credentials reach the built servers.
         return [server]
 
     monkeypatch.setattr(service_module, "build_mcp_servers", fake_build_mcp)
@@ -157,7 +159,9 @@ async def test_start_run_success_keeps_mcp_stack(monkeypatch):
 async def test_start_run_failure_keeps_mcp_stack(monkeypatch):
     server = FakeAsyncServer()
 
-    def fake_build_mcp(spec_arg, settings_arg):
+    def fake_build_mcp(spec_arg, settings_arg, *, auth_resolver=None):
+        # ``auth_resolver`` is threaded in by the mcp_* management surface
+        # (tkt_kVK7F-iaL-OA) so OAuth credentials reach the built servers.
         return [server]
 
     monkeypatch.setattr(service_module, "build_mcp_servers", fake_build_mcp)
@@ -194,7 +198,9 @@ async def test_start_run_failure_keeps_mcp_stack(monkeypatch):
 async def test_stop_run_keeps_mcp_stack(monkeypatch):
     server = FakeAsyncServer()
 
-    def fake_build_mcp(spec_arg, settings_arg):
+    def fake_build_mcp(spec_arg, settings_arg, *, auth_resolver=None):
+        # ``auth_resolver`` is threaded in by the mcp_* management surface
+        # (tkt_kVK7F-iaL-OA) so OAuth credentials reach the built servers.
         return [server]
 
     monkeypatch.setattr(service_module, "build_mcp_servers", fake_build_mcp)
@@ -239,7 +245,9 @@ async def test_stop_run_keeps_mcp_stack(monkeypatch):
 async def test_build_agent_failure_closes_mcp_stack(monkeypatch):
     server = FakeAsyncServer()
 
-    def fake_build_mcp(spec_arg, settings_arg):
+    def fake_build_mcp(spec_arg, settings_arg, *, auth_resolver=None):
+        # ``auth_resolver`` is threaded in by the mcp_* management surface
+        # (tkt_kVK7F-iaL-OA) so OAuth credentials reach the built servers.
         return [server]
 
     monkeypatch.setattr(service_module, "build_mcp_servers", fake_build_mcp)

@@ -368,6 +368,189 @@
         "code": -32600,
         "message": "Invalid Request"
       },
+      "McpAuthFailed": {
+        "code": -32076,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "mcp_auth_failed"
+            },
+            "server_name": {
+              "type": "string"
+            },
+            "status": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "server_name"
+          ],
+          "type": "object"
+        },
+        "message": "MCP authorization failed"
+      },
+      "McpAuthStateInvalid": {
+        "code": -32075,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "mcp_auth_state_invalid"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "message": "MCP auth state invalid"
+      },
+      "McpConfigInvalid": {
+        "code": -32071,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "errors": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "field": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "message"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "mcp_config_invalid"
+            },
+            "server_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "errors"
+          ],
+          "type": "object"
+        },
+        "message": "MCP server configuration is invalid"
+      },
+      "McpOperationUnsupported": {
+        "code": -32073,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "mcp_operation_unsupported"
+            },
+            "operation": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "server_name",
+            "operation"
+          ],
+          "type": "object"
+        },
+        "message": "MCP operation unsupported"
+      },
+      "McpServerNotFound": {
+        "code": -32070,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "mcp_server_not_found"
+            },
+            "server_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "server_name"
+          ],
+          "type": "object"
+        },
+        "message": "MCP server not found"
+      },
+      "McpServerReadOnly": {
+        "code": -32072,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "mcp_server_read_only"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "server_name",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "message": "MCP server is read-only"
+      },
+      "McpServerUnavailable": {
+        "code": -32074,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "mcp_server_unavailable"
+            },
+            "reason_code": {
+              "type": "string"
+            },
+            "server_name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "server_name",
+            "reason_code"
+          ],
+          "type": "object"
+        },
+        "message": "MCP server unavailable"
+      },
       "MethodNotFound": {
         "code": -32601,
         "message": "Method not found"
@@ -2545,6 +2728,679 @@
         },
         {
           "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_list_servers",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_list_servers/properties/session_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_list_servers_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_list_servers",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_list_servers"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_get_server",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_get_server/properties/server_name"
+          }
+        },
+        {
+          "name": "refresh",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_get_server/properties/refresh"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_get_server_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_get_server",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_get_server"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_create_server",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_create_server/properties/server_name"
+          }
+        },
+        {
+          "name": "type",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_create_server/properties/type"
+          }
+        },
+        {
+          "name": "params",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_create_server/properties/params"
+          }
+        },
+        {
+          "name": "server_options",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_create_server/properties/server_options"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_create_server_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_create_server",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_create_server"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_update_server",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_update_server/properties/server_name"
+          }
+        },
+        {
+          "name": "type",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_update_server/properties/type"
+          }
+        },
+        {
+          "name": "params",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_update_server/properties/params"
+          }
+        },
+        {
+          "name": "server_options",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_update_server/properties/server_options"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_update_server_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_update_server",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_update_server"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_delete_server",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_delete_server/properties/server_name"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_delete_server_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_delete_server",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_delete_server"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_reload_server",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_reload_server/properties/server_name"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_reload_server_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_reload_server",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_reload_server"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_auth_start",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_start/properties/server_name"
+          }
+        },
+        {
+          "name": "redirect_uri",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_start/properties/redirect_uri"
+          }
+        },
+        {
+          "name": "session_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_start/properties/session_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_auth_start_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_auth_start",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_start"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_auth_complete",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "auth_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_complete/properties/auth_id"
+          }
+        },
+        {
+          "name": "code",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_complete/properties/code"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_auth_complete_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_auth_complete",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_complete"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_auth_cancel",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "auth_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_cancel/properties/auth_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_auth_cancel_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_auth_cancel",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_cancel"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
         }
       ],
       "name": "fork_session",
@@ -3183,6 +4039,263 @@
       "x-omni-kind": "request",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/write_config"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_read_resource",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_read_resource/properties/server_name"
+          }
+        },
+        {
+          "name": "uri",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_read_resource/properties/uri"
+          }
+        },
+        {
+          "name": "session_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_read_resource/properties/session_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_read_resource_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_read_resource",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_read_resource"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_call_tool",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_call_tool/properties/server_name"
+          }
+        },
+        {
+          "name": "tool_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_call_tool/properties/tool_name"
+          }
+        },
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_call_tool/properties/session_id"
+          }
+        },
+        {
+          "name": "args",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_call_tool/properties/args"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_call_tool_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_call_tool",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_call_tool"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/McpServerNotFound"
+        },
+        {
+          "$ref": "#/components/errors/McpConfigInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpServerReadOnly"
+        },
+        {
+          "$ref": "#/components/errors/McpOperationUnsupported"
+        },
+        {
+          "$ref": "#/components/errors/McpServerUnavailable"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthStateInvalid"
+        },
+        {
+          "$ref": "#/components/errors/McpAuthFailed"
+        }
+      ],
+      "name": "mcp_get_prompt",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_get_prompt/properties/server_name"
+          }
+        },
+        {
+          "name": "prompt_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_get_prompt/properties/prompt_name"
+          }
+        },
+        {
+          "name": "args",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_get_prompt/properties/args"
+          }
+        },
+        {
+          "name": "session_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_get_prompt/properties/session_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_get_prompt_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_get_prompt",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_get_prompt"
       },
       "x-omni-stability": "experimental"
     },
@@ -5262,6 +6375,88 @@
       "x-omni-kind": "notification",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/elicitation_resolved"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "name": "mcp_server_status_changed",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "server_name",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/server_name"
+          }
+        },
+        {
+          "name": "status",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/status"
+          }
+        },
+        {
+          "name": "previous_status",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/previous_status"
+          }
+        },
+        {
+          "name": "reason_code",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/reason_code"
+          }
+        },
+        {
+          "name": "reason",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/reason"
+          }
+        },
+        {
+          "name": "auth_state",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/auth_state"
+          }
+        },
+        {
+          "name": "at",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/at"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "mcp_server_status_changed_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation mcp_server_status_changed",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_server_status_changed"
       },
       "x-omni-stability": "stable"
     },

@@ -528,6 +528,123 @@ class McpApprovalResponse(BaseModel):
     request_id: str
 
 
+class McpAuthCancel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    auth_id: str
+
+
+class McpAuthComplete(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    auth_id: str
+    code: str
+
+
+class McpAuthStart(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    redirect_uri: str | None = None
+    server_name: str
+    session_id: str | None = None
+
+
+class McpCallTool(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    args: dict[str, Any] | None = None
+    server_name: str
+    session_id: str
+    tool_name: str
+
+
+class McpCreateServer(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    params: dict[str, Any]
+    server_name: str
+    server_options: dict[str, Any] | None = None
+    type: str
+
+
+class McpDeleteServer(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    server_name: str
+
+
+class McpGetPrompt(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    args: dict[str, Any] | None = None
+    prompt_name: str
+    server_name: str
+    session_id: str | None = None
+
+
+class McpGetServer(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    refresh: bool | None = None
+    server_name: str
+
+
+class McpListServers(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session_id: str | None = None
+
+
+class McpReadResource(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    server_name: str
+    session_id: str | None = None
+    uri: str
+
+
+class McpReloadServer(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    server_name: str | None = None
+
+
+class McpServerStatusChanged(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    at: str | None = None
+    auth_state: str | None = None
+    previous_status: str | None = None
+    reason: str | None = None
+    reason_code: str | None = None
+    seq: int | None = None
+    server_name: str
+    status: str
+    stream_id: str | None = None
+
+
+class McpUpdateServer(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    params: dict[str, Any] | None = None
+    server_name: str
+    server_options: dict[str, Any] | None = None
+    type: str | None = None
+
+
 class MessageOutput(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -892,6 +1009,15 @@ class Model(
         | AccountUsage
         | AccountSelect
         | ElicitationResponse
+        | McpListServers
+        | McpGetServer
+        | McpCreateServer
+        | McpUpdateServer
+        | McpDeleteServer
+        | McpReloadServer
+        | McpAuthStart
+        | McpAuthComplete
+        | McpAuthCancel
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -905,6 +1031,9 @@ class Model(
         | GetConfig
         | ValidateConfig
         | WriteConfig
+        | McpReadResource
+        | McpCallTool
+        | McpGetPrompt
         | FsWatch
         | FsUnwatch
         | FsList
@@ -934,6 +1063,7 @@ class Model(
         | AccountChanged
         | ElicitationRequested
         | ElicitationResolved
+        | McpServerStatusChanged
         | SessionForked
         | SessionVariablesChanged
         | FsEvents
@@ -978,6 +1108,15 @@ class Model(
         | AccountUsage
         | AccountSelect
         | ElicitationResponse
+        | McpListServers
+        | McpGetServer
+        | McpCreateServer
+        | McpUpdateServer
+        | McpDeleteServer
+        | McpReloadServer
+        | McpAuthStart
+        | McpAuthComplete
+        | McpAuthCancel
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -991,6 +1130,9 @@ class Model(
         | GetConfig
         | ValidateConfig
         | WriteConfig
+        | McpReadResource
+        | McpCallTool
+        | McpGetPrompt
         | FsWatch
         | FsUnwatch
         | FsList
@@ -1020,6 +1162,7 @@ class Model(
         | AccountChanged
         | ElicitationRequested
         | ElicitationResolved
+        | McpServerStatusChanged
         | SessionForked
         | SessionVariablesChanged
         | FsEvents

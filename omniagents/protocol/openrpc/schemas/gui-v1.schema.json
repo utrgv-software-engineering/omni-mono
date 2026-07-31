@@ -1174,6 +1174,255 @@
       "type": "object",
       "x-omni-stability": "stable"
     },
+    "mcp_auth_cancel": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "auth_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_auth_complete": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_id": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "auth_id",
+        "code"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_auth_start": {
+      "additionalProperties": false,
+      "properties": {
+        "redirect_uri": {
+          "type": "string"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_call_tool": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "type": "object"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "tool_name",
+        "session_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "mcp_create_server": {
+      "additionalProperties": false,
+      "properties": {
+        "params": {
+          "type": "object"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "server_options": {
+          "type": "object"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "type",
+        "params"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_delete_server": {
+      "additionalProperties": false,
+      "properties": {
+        "server_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_get_prompt": {
+      "additionalProperties": false,
+      "properties": {
+        "args": {
+          "type": "object"
+        },
+        "prompt_name": {
+          "type": "string"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "prompt_name"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "mcp_get_server": {
+      "additionalProperties": false,
+      "properties": {
+        "refresh": {
+          "type": "boolean"
+        },
+        "server_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_list_servers": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_read_resource": {
+      "additionalProperties": false,
+      "properties": {
+        "server_name": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "uri"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "mcp_reload_server": {
+      "additionalProperties": false,
+      "properties": {
+        "server_name": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_server_status_changed": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "auth_state": {
+          "type": "string"
+        },
+        "previous_status": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reason_code": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name",
+        "status"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "mcp_update_server": {
+      "additionalProperties": false,
+      "properties": {
+        "params": {
+          "type": "object"
+        },
+        "server_name": {
+          "type": "string"
+        },
+        "server_options": {
+          "type": "object"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "server_name"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "message_output": {
       "additionalProperties": false,
       "properties": {
@@ -1998,6 +2247,33 @@
       "$ref": "#/$defs/elicitation_response"
     },
     {
+      "$ref": "#/$defs/mcp_list_servers"
+    },
+    {
+      "$ref": "#/$defs/mcp_get_server"
+    },
+    {
+      "$ref": "#/$defs/mcp_create_server"
+    },
+    {
+      "$ref": "#/$defs/mcp_update_server"
+    },
+    {
+      "$ref": "#/$defs/mcp_delete_server"
+    },
+    {
+      "$ref": "#/$defs/mcp_reload_server"
+    },
+    {
+      "$ref": "#/$defs/mcp_auth_start"
+    },
+    {
+      "$ref": "#/$defs/mcp_auth_complete"
+    },
+    {
+      "$ref": "#/$defs/mcp_auth_cancel"
+    },
+    {
       "$ref": "#/$defs/fork_session"
     },
     {
@@ -2035,6 +2311,15 @@
     },
     {
       "$ref": "#/$defs/write_config"
+    },
+    {
+      "$ref": "#/$defs/mcp_read_resource"
+    },
+    {
+      "$ref": "#/$defs/mcp_call_tool"
+    },
+    {
+      "$ref": "#/$defs/mcp_get_prompt"
     },
     {
       "$ref": "#/$defs/fs_watch"
@@ -2122,6 +2407,9 @@
     },
     {
       "$ref": "#/$defs/elicitation_resolved"
+    },
+    {
+      "$ref": "#/$defs/mcp_server_status_changed"
     },
     {
       "$ref": "#/$defs/session_forked"

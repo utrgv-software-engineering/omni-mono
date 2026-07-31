@@ -210,6 +210,18 @@ GLOBAL_SAFE_METHODS = frozenset(
         # carry identity and quota data, never credential material.
         "account_status",
         "account_usage",
+        # MCP management reads: configured-server listings, per-server
+        # snapshots/probes, and sessionless resource/prompt reads. All
+        # redacted (write-only header/env secrets — the layered-config
+        # model) and read-only from the configuration's point of view.
+        # ``mcp_list_servers`` / ``mcp_read_resource`` / ``mcp_get_prompt``
+        # become session-scoped automatically when the optional
+        # ``session_id`` is supplied (resource resolution is by
+        # parameter, like ``list_models``).
+        "mcp_list_servers",
+        "mcp_get_server",
+        "mcp_read_resource",
+        "mcp_get_prompt",
     }
 )
 
@@ -241,6 +253,21 @@ GLOBAL_MUTATING_METHODS = frozenset(
         "account_logout",
         "account_refresh",
         "account_select",
+        # MCP server-config mutations rewrite the process-wide server
+        # registry (spec + the user-layer mcp.json every session builds
+        # from) — the ``disable_mcp_server``/``write_config`` precedent.
+        "mcp_create_server",
+        "mcp_update_server",
+        "mcp_delete_server",
+        "mcp_reload_server",
+        # MCP OAuth flows store credentials every session's server
+        # connections run on — the ``account_login_*`` precedent.
+        # ``mcp_auth_start`` additionally guards its optional
+        # ``session_id`` (elicitation delivery) in the handler so the
+        # parameter cannot re-scope the request in enforced mode.
+        "mcp_auth_start",
+        "mcp_auth_complete",
+        "mcp_auth_cancel",
     }
 )
 
@@ -283,6 +310,10 @@ RESOURCE_SCOPED_METHODS = frozenset(
         # session gates who may change its model / reasoning effort.
         "set_session_model",
         "set_session_reasoning",
+        # Out-of-band MCP tool calls act on behalf of one session
+        # (MCP-Apps postMessage routing): ``session_id`` is required and
+        # its ownership authorizes the call.
+        "mcp_call_tool",
         # Workspace filesystem watch & transfer (tkt_B5fXOZHf08K1): the
         # workspace belongs to a session's sandbox, so every fs_* method
         # names a session_id and is gated on session ownership — watching

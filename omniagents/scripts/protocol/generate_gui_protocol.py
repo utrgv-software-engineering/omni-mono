@@ -112,6 +112,17 @@ REQUIRED_FIELDS = {
     "elicitation_response": ("elicitation_id", "action"),
     "elicitation_requested": ("elicitation_id", "kind", "message"),
     "elicitation_resolved": ("elicitation_id", "status"),
+    "mcp_get_server": ("server_name",),
+    "mcp_create_server": ("server_name", "type", "params"),
+    "mcp_update_server": ("server_name",),
+    "mcp_delete_server": ("server_name",),
+    "mcp_auth_start": ("server_name",),
+    "mcp_auth_complete": ("auth_id", "code"),
+    "mcp_auth_cancel": ("auth_id",),
+    "mcp_read_resource": ("server_name", "uri"),
+    "mcp_call_tool": ("server_name", "tool_name", "session_id"),
+    "mcp_get_prompt": ("server_name", "prompt_name"),
+    "mcp_server_status_changed": ("server_name", "status"),
     "queue_changed": ("session_id", "depth", "items"),
     "session_forked": ("session_id", "new_session_id"),
     "session_variables_changed": ("session_id", "changed", "variables"),
@@ -202,6 +213,22 @@ OPTIONAL_FIELDS = {
     "account_login_complete": ("code",),
     "account_usage": ("provider",),
     "account_changed": ("account",),
+    "mcp_list_servers": ("session_id",),
+    "mcp_get_server": ("refresh",),
+    "mcp_create_server": ("server_options",),
+    "mcp_update_server": ("type", "params", "server_options"),
+    "mcp_reload_server": ("server_name",),
+    "mcp_auth_start": ("redirect_uri", "session_id"),
+    "mcp_read_resource": ("session_id",),
+    "mcp_call_tool": ("args",),
+    "mcp_get_prompt": ("args", "session_id"),
+    "mcp_server_status_changed": (
+        "previous_status",
+        "reason_code",
+        "reason",
+        "auth_state",
+        "at",
+    ),
     "fs_watch": ("recursive", "poll_interval_ms"),
     "fs_list": ("recursive",),
     "fs_download_read": ("offset", "length"),
@@ -233,6 +260,7 @@ BOOLEAN_FIELDS = {
     "persist_response",
     "recursive",
     "redact",
+    "refresh",
     "trigger_run",
 }
 INTEGER_FIELDS = {
@@ -263,8 +291,10 @@ OBJECT_FIELDS = {
     "error",
     "input_schema",
     "metadata",
+    "params",
     "result",
     "safe_tool_overrides",
+    "server_options",
     "totals",
     "updates",
     "usage",
@@ -322,6 +352,18 @@ RESULT_TYPES = {
     "account_usage": ("dict[str, Any]", "Record<string, unknown>"),
     "account_select": ("dict[str, Any]", "Record<string, unknown>"),
     "elicitation_response": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_list_servers": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_get_server": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_create_server": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_update_server": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_delete_server": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_reload_server": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_auth_start": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_auth_complete": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_auth_cancel": ("bool", "boolean"),
+    "mcp_read_resource": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_call_tool": ("dict[str, Any]", "Record<string, unknown>"),
+    "mcp_get_prompt": ("dict[str, Any]", "Record<string, unknown>"),
     "fs_watch": ("dict[str, Any]", "Record<string, unknown>"),
     "fs_unwatch": ("bool", "boolean"),
     "fs_list": ("dict[str, Any]", "Record<string, unknown>"),
@@ -644,6 +686,115 @@ PROTOCOL_ERRORS = {
             },
         },
     },
+    "McpServerNotFound": {
+        "code": -32070,
+        "message": "MCP server not found",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "server_name"],
+            "properties": {
+                "kind": {"const": "mcp_server_not_found"},
+                "server_name": {"type": "string"},
+            },
+        },
+    },
+    "McpConfigInvalid": {
+        "code": -32071,
+        "message": "MCP server configuration is invalid",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "errors"],
+            "properties": {
+                "kind": {"const": "mcp_config_invalid"},
+                "server_name": {"type": "string"},
+                "errors": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["code", "message"],
+                        "properties": {
+                            "code": {"type": "string"},
+                            "field": {"type": "string"},
+                            "message": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+            },
+        },
+    },
+    "McpServerReadOnly": {
+        "code": -32072,
+        "message": "MCP server is read-only",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "server_name", "reason"],
+            "properties": {
+                "kind": {"const": "mcp_server_read_only"},
+                "server_name": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
+    "McpOperationUnsupported": {
+        "code": -32073,
+        "message": "MCP operation unsupported",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "server_name", "operation"],
+            "properties": {
+                "kind": {"const": "mcp_operation_unsupported"},
+                "server_name": {"type": "string"},
+                "operation": {"type": "string"},
+            },
+        },
+    },
+    "McpServerUnavailable": {
+        "code": -32074,
+        "message": "MCP server unavailable",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "server_name", "reason_code"],
+            "properties": {
+                "kind": {"const": "mcp_server_unavailable"},
+                "server_name": {"type": "string"},
+                "reason_code": {"type": "string"},
+            },
+        },
+    },
+    "McpAuthStateInvalid": {
+        "code": -32075,
+        "message": "MCP auth state invalid",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "reason"],
+            "properties": {
+                "kind": {"const": "mcp_auth_state_invalid"},
+                "server_name": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+        },
+    },
+    "McpAuthFailed": {
+        "code": -32076,
+        "message": "MCP authorization failed",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "server_name"],
+            "properties": {
+                "kind": {"const": "mcp_auth_failed"},
+                "server_name": {"type": "string"},
+                "status": {"type": ["integer", "null"]},
+            },
+        },
+    },
     "TransportOverloaded": {
         "code": -32020,
         "message": "Transport overloaded",
@@ -661,6 +812,28 @@ PROTOCOL_ERRORS = {
         },
     },
 }
+
+
+# The MCP management surface (tkt_kVK7F-iaL-OA): requests that can raise
+# the -32070..-32076 typed MCP errors. Deliberately NOT "starts with
+# mcp_" — mcp_approval_response predates this surface and keeps its
+# original error contract.
+MCP_MANAGEMENT_METHODS = frozenset(
+    {
+        "mcp_list_servers",
+        "mcp_get_server",
+        "mcp_create_server",
+        "mcp_update_server",
+        "mcp_delete_server",
+        "mcp_reload_server",
+        "mcp_auth_start",
+        "mcp_auth_complete",
+        "mcp_auth_cancel",
+        "mcp_read_resource",
+        "mcp_call_tool",
+        "mcp_get_prompt",
+    }
+)
 
 
 def _json_bytes(value: object) -> bytes:
@@ -772,6 +945,18 @@ def build_openrpc() -> dict:
                         {"$ref": "#/components/errors/FsNotFound"},
                         {"$ref": "#/components/errors/FsTransferInvalid"},
                         {"$ref": "#/components/errors/FsWatchInvalid"},
+                    ]
+                )
+            if operation.name in MCP_MANAGEMENT_METHODS:
+                entry["errors"].extend(
+                    [
+                        {"$ref": "#/components/errors/McpServerNotFound"},
+                        {"$ref": "#/components/errors/McpConfigInvalid"},
+                        {"$ref": "#/components/errors/McpServerReadOnly"},
+                        {"$ref": "#/components/errors/McpOperationUnsupported"},
+                        {"$ref": "#/components/errors/McpServerUnavailable"},
+                        {"$ref": "#/components/errors/McpAuthStateInvalid"},
+                        {"$ref": "#/components/errors/McpAuthFailed"},
                     ]
                 )
         if operation.kind == "correlated_notification":

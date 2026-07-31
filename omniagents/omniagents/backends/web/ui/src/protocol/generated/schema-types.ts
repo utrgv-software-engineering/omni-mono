@@ -35,6 +35,15 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | AccountUsage
   | AccountSelect
   | ElicitationResponse
+  | McpListServers
+  | McpGetServer
+  | McpCreateServer
+  | McpUpdateServer
+  | McpDeleteServer
+  | McpReloadServer
+  | McpAuthStart
+  | McpAuthComplete
+  | McpAuthCancel
   | ForkSession
   | SetSessionHold
   | QueueStatus
@@ -48,6 +57,9 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | GetConfig
   | ValidateConfig
   | WriteConfig
+  | McpReadResource
+  | McpCallTool
+  | McpGetPrompt
   | FsWatch
   | FsUnwatch
   | FsList
@@ -77,6 +89,7 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | AccountChanged
   | ElicitationRequested
   | ElicitationResolved
+  | McpServerStatusChanged
   | SessionForked
   | SessionVariablesChanged
   | FsEvents
@@ -267,6 +280,51 @@ export interface ElicitationResponse {
     [k: string]: unknown;
   };
 }
+export interface McpListServers {
+  session_id?: string;
+}
+export interface McpGetServer {
+  refresh?: boolean;
+  server_name: string;
+}
+export interface McpCreateServer {
+  params: {
+    [k: string]: unknown;
+  };
+  server_name: string;
+  server_options?: {
+    [k: string]: unknown;
+  };
+  type: string;
+}
+export interface McpUpdateServer {
+  params?: {
+    [k: string]: unknown;
+  };
+  server_name: string;
+  server_options?: {
+    [k: string]: unknown;
+  };
+  type?: string;
+}
+export interface McpDeleteServer {
+  server_name: string;
+}
+export interface McpReloadServer {
+  server_name?: string;
+}
+export interface McpAuthStart {
+  redirect_uri?: string;
+  server_name: string;
+  session_id?: string;
+}
+export interface McpAuthComplete {
+  auth_id: string;
+  code: string;
+}
+export interface McpAuthCancel {
+  auth_id: string;
+}
 export interface ForkSession {
   new_session_id?: string;
   session_id: string;
@@ -321,6 +379,27 @@ export interface WriteConfig {
   updates: {
     [k: string]: unknown;
   };
+}
+export interface McpReadResource {
+  server_name: string;
+  session_id?: string;
+  uri: string;
+}
+export interface McpCallTool {
+  args?: {
+    [k: string]: unknown;
+  };
+  server_name: string;
+  session_id: string;
+  tool_name: string;
+}
+export interface McpGetPrompt {
+  args?: {
+    [k: string]: unknown;
+  };
+  prompt_name: string;
+  server_name: string;
+  session_id?: string;
 }
 export interface FsWatch {
   path: string;
@@ -565,6 +644,17 @@ export interface ElicitationResolved {
   value?: {
     [k: string]: unknown;
   };
+}
+export interface McpServerStatusChanged {
+  at?: string;
+  auth_state?: string;
+  previous_status?: string;
+  reason?: string;
+  reason_code?: string;
+  seq?: number;
+  server_name: string;
+  status: string;
+  stream_id?: string;
 }
 export interface SessionForked {
   new_session_id: string;

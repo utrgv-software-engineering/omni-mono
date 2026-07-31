@@ -554,7 +554,16 @@ Fields:
 - `decision` (string, required): `"approve"` or `"reject"`.
 - `rejection_message` (string, optional): when rejecting, the message returned to the model in place of the tool result.
 
-The server returns `true` if the approval was matched to a pending request and `false` otherwise. There is no `always_approve` flag on this path: hosted-MCP approval state is keyed by `(server_label, tool_name)` inside the SDK, and OmniAgents does not currently maintain a session-level always-allow set for hosted MCP tools. Clients that want sticky approvals should re-prompt or implement a client-side cache.
+The server returns `true` if the approval was matched to a pending request and `false` otherwise. There is no `always_approve` flag on this path; sticky grants for hosted MCP tools are installed via `safe_tool_overrides.safe_mcp_tools` (entries of `{ server_label, tool_name }`) on `start_run` / `enqueue_message`.
+
+#### Approval identity: hosted vs. connected servers
+
+Both MCP approval lanes resolve trust from the **same identity namespace and the same session-level allow-set**, deliberately:
+
+- **Hosted** (`HostedMCPTool`, executed by the model provider): prompts arrive on this `mcp_approval_requested`/`mcp_approval_response` lane keyed by `request_id`; identity is `(server_label, tool_name)` from the hosted tool config.
+- **Connected** (servers from `mcp_servers:` config, executed by this process): MCP-derived function tools go through the *function-tool* lane (`tool_approval_requested` with `call_id`); their payload carries `server_label`/`tool_label` from the stamped `(server name, original tool name)` identity, and an `always_approve` response records that tuple.
+
+Grants from either lane land in one tuple-keyed session allow-set (`(server identity, original tool name)`, never parsed out of flat public names), so "always allow" for `("github", "create_issue")` covers the operation regardless of which execution mode carries it. The `server_label` of a hosted server and the `name` of a connected server share one namespace — give them the same value only when they are genuinely the same server.
 
 ### mcp_approval_resolved (server → client)
 
@@ -1187,6 +1196,212 @@ logs, or persisted history. Snapshots are built from an identity/quota
 allowlist; `api_key`/`code` request params are masked in server debug
 logging; account events bypass the session journal entirely.
 
+## MCP Server Management, Status & OAuth (`mcp_*` methods)
+
+Stable lifecycle contract for configured MCP servers — the surface
+Desktop connector settings and runtime status consume. It *promotes*
+the existing machinery (the loader's `mcp_servers:` merge, the
+Claude-Code-format user `mcp.json` files, the session MCP lifecycle,
+the `mcp.*` server functions) behind typed RPCs; nothing here creates a
+second configuration system.
+
+Server identity is the config `name` (`server_name` on the wire) — the
+same identifier used by `mcp_servers:` YAML, `disable_mcp_server`,
+hosted `server_label`s, and approval grants.
+
+### Config sources and provenance
+
+Every server snapshot carries a `source`:
+
+| `source` | Where it comes from | Writable via this API |
+|----------|--------------------|-----------------------|
+| `project` | `mcp_servers:` in the agent/project YAML | No (`read_only_reason: "project_manifest"`) |
+| `user` | user-global `mcp.json` (`~/.config/<product>/mcp.json`) | **Yes** — the one file this API owns |
+| `project_local` | `<project>/.<product>/mcp.json` (hand-managed) | No (`read_only_reason: "project_local_file"`) |
+| `session` | dynamic app-scoped servers passed in `variables.mcp_servers` | No (`read_only_reason: "session_scoped"`) |
+
+Merge precedence mirrors the loader: `project` < `user` <
+`project_local`. The layered-config keys `allow_user_mcp_servers`,
+`security.mcp_require_allowlist`, and `security.mcp_allowed_servers`
+gate the user layer; gated-out servers still list with
+`enabled: false` and a `disabled_reason`
+(`user_mcp_disabled` / `allowlist_blocked` / `kill_switch`).
+
+### Secrets (write-only header/env model)
+
+Following the layered-config secret model: HTTP `params.headers` values
+and stdio `params.env` values are **write-only**. Every read path
+(`mcp_list_servers`, `mcp_get_server`, status events, validation
+errors) replaces them with `{ "<name>": { "is_set": true } }` markers —
+names visible, values never. On `mcp_update_server`, the two channels
+merge write-only: a string sets a value, `null` deletes one, and an
+omitted name keeps the stored (unreadable) value; all other params
+replace wholesale.
+
+### Typed errors
+
+| Code | Name | `data.kind` | Meaning |
+|------|------|-------------|---------|
+| `-32070` | McpServerNotFound | `mcp_server_not_found` | No configured server has `data.server_name`. |
+| `-32071` | McpConfigInvalid | `mcp_config_invalid` | Create/update failed validation; `data.errors` = `[{code, field, message}]`, never echoing submitted values. |
+| `-32072` | McpServerReadOnly | `mcp_server_read_only` | The server's source is not writable here (`data.reason`: `project_manifest`, `project_local_file`, `user_mcp_disabled`). |
+| `-32073` | McpOperationUnsupported | `mcp_operation_unsupported` | The server/transport lacks the capability (`data.operation`: `oauth`, `resources`, `prompts`, ...). |
+| `-32074` | McpServerUnavailable | `mcp_server_unavailable` | Connect/start failed; `data.reason_code` as below. |
+| `-32075` | McpAuthStateInvalid | `mcp_auth_state_invalid` | Auth operation in the wrong state (`data.reason`: `unknown_auth`, `code_required`). |
+| `-32076` | McpAuthFailed | `mcp_auth_failed` | The authorization server rejected/failed the flow (`data.status` when known). |
+
+### Management & discovery methods
+
+- `mcp_list_servers(session_id?)` → `{ servers: [McpServerSnapshot],
+  user_mcp_allowed, write_target }`. Each snapshot:
+  `server_name`, `source`, `transport`
+  (`stdio`/`http`/`sse`/`streamable_http`), redacted `params`,
+  `server_options`, `enabled` (+`disabled_reason`), `read_only`
+  (+`read_only_reason`), `status` (below), `auth` (below), and — once a
+  probe has run — `server_info`, `capabilities`, discovery `counts`,
+  `captured_at`. With `session_id`, that session's dynamic servers are
+  appended (`source: "session"`) and the request is authorized by
+  session ownership.
+- `mcp_get_server(server_name, refresh?)` → the full snapshot plus
+  discovery detail: `tools`, `resources`, `resource_templates`,
+  `prompts` (MCP-spec shapes via `model_dump`; treat unknown fields as
+  opaque) and `supported` flags per area. `refresh: true` performs a
+  **management probe** — a short-lived out-of-session connection that
+  captures the MCP `initialize` result (`server_info`, `capabilities`)
+  and lists each supported area; without it the cached snapshot is
+  returned.
+- `mcp_create_server(server_name, type, params, server_options?)` /
+  `mcp_update_server(server_name, type?, params?, server_options?)` /
+  `mcp_delete_server(server_name)` — validated CRUD against the
+  user-global `mcp.json` (atomic 0600 writes) **and** the live spec, so
+  the next session build uses the result. Delete also clears cached
+  discovery, status, and any stored OAuth tokens for the server.
+- `mcp_reload_server(server_name?)` → `{ ok, reloaded_sessions }` — the
+  pick-up-changes chokepoint: re-reads the `mcp.json` files into the
+  live spec and tears down active per-session instances of the named
+  server (or all), so the next run reconnects from current config.
+  Status returns to `configured`.
+
+Session/OOB operation methods (experimental until a client depends on
+them; promoted from the `mcp.*` server functions, which remain
+available through `server_call`):
+
+- `mcp_read_resource(server_name, uri, session_id?)` — with
+  `session_id`, reads through the session's live instance
+  (session-owner authorized); without it, through a management probe
+  connection.
+- `mcp_call_tool(server_name, tool_name, session_id, args?)` —
+  `session_id` **required**: OOB tool calls act on behalf of a session
+  (MCP-Apps postMessage routing), and its ownership authorizes the
+  call. The agent does not observe these calls.
+- `mcp_get_prompt(server_name, prompt_name, args?, session_id?)` —
+  prompt fetch where the server supports prompts (discovery lists come
+  from `mcp_get_server`).
+
+### Startup status (`configured → starting → ready | failed`)
+
+Session builds and management probes report through one transition
+contract per server:
+
+- `configured` — known, not started (also after `mcp_reload_server`).
+- `starting` — a connection attempt is in flight.
+- `ready` — connected and initialized.
+- `failed` — with an actionable typed reason: `reason_code` ∈
+  `auth_required`, `auth_expired`, `command_not_found`, `timeout`,
+  `connect_failed`, `invalid_config`, `start_failed` (+ human-readable
+  `reason`).
+- `disabled` — kill-switched via `disable_mcp_server`.
+
+`status.origin` records what drove the last transition
+(`session:<id8>`, `probe`, `reload`, `auth`, `kill_switch`).
+
+### `mcp_server_status_changed` notification (server → client)
+
+```json
+{
+  "server_name": "github",
+  "status": "failed",
+  "previous_status": "starting",
+  "reason_code": "auth_expired",
+  "reason": "Stored credentials are expired; reauthentication required",
+  "auth_state": "expired",
+  "at": "2026-07-30T12:00:00Z"
+}
+```
+
+Broadcast to **every connected client** on each transition. Optional
+(may be disabled at `initialize`) and **not journaled** — the
+`account_changed` decision, made explicitly here: server status is
+process-global, not session history, and replaying stale statuses after
+a reconnect would be wrong. Reconnecting clients **refetch** via
+`mcp_list_servers`; live sockets receive pushes. Status is held in the
+manager across reconnects, so the refetched snapshot always reflects
+the latest transition.
+
+### OAuth (`mcp_auth_*`)
+
+HTTP-family servers that require authorization use the MCP OAuth
+protocol (RFC 9728 protected-resource discovery, RFC 8414 AS metadata,
+dynamic client registration, PKCE) — the account-flow patterns applied
+to MCP:
+
+- `mcp_auth_start(server_name, redirect_uri?, session_id?)` → either
+  `{ state: "completed", ... }` (stored/refreshed credentials already
+  satisfy the server) or `{ state: "pending", auth_id, auth_url,
+  redirect_uri }` — the URL-handoff point. The PKCE verifier and all
+  tokens stay server-side (a 0600 store under the product config dir).
+  With `session_id` (single-user topology only), the URL is also
+  surfaced to that session as a `url`-kind elicitation
+  (`source: "mcp:<server>"`); accepting it with `{ "code": ... }` or
+  `{ "url": "<full redirect URL>" }` completes the flow with no
+  separate `mcp_auth_complete` call.
+- `mcp_auth_complete(auth_id, code)` — finishes a pending flow; `code`
+  may be the raw authorization code or the full redirect URL. Unknown/
+  expired flow → `-32075 unknown_auth`; AS rejection → `-32076`.
+- `mcp_auth_cancel(auth_id)` → `true` when a pending flow was dropped.
+- `stdio` servers authenticate via `params.env`, not OAuth —
+  `mcp_auth_start` on one fails with `-32073`.
+
+Snapshots expose `auth`: `{ kind: "oauth" | "headers" | "env" | "none",
+state }` with `state` ∈ `authenticated`, `expired`, `pending`,
+`required`, `configured`, `not_authenticated`, `not_required`. **Expired
+credentials trigger reauthentication**: when a session build or probe
+fails because stored tokens no longer refresh, the server broadcasts
+`mcp_server_status_changed` with `reason_code: "auth_expired"` /
+`auth_state: "expired"` — the client's cue to call `mcp_auth_start`.
+
+### MCP elicitations
+
+Server-initiated `elicitation/create` requests from session-scoped MCP
+servers route through the structured user-elicitation protocol (see
+"User Elicitation Flow") — never a parallel lane: the request surfaces
+as a `form`-kind `elicitation_requested` with
+`source: "mcp:<server_name>"` and the MCP server's `requestedSchema` as
+`input_schema`; the first `elicitation_response` maps back to the MCP
+`ElicitResult` (`accept` + validated content / `decline` / `cancel`).
+The elicitation capability is advertised to MCP servers only for
+session-scoped connections (management probes decline elicitations).
+
+### Authorization
+
+Reads (`mcp_list_servers`, `mcp_get_server`, `mcp_read_resource`,
+`mcp_get_prompt`) are globally safe — redacted and read-only; supplying
+the optional `session_id` re-scopes them to the session owner.
+`mcp_call_tool` is session-scoped by contract. Config mutations
+(`mcp_create_server`/`mcp_update_server`/`mcp_delete_server`/
+`mcp_reload_server`) and OAuth flows (`mcp_auth_*`) change process-wide
+state every principal shares, so in enforced multi-user deployments
+they are refused for individual principals (the
+`disable_tool`/`account_login_*` precedent). `mcp_auth_start`
+additionally refuses its `session_id` parameter in enforced mode so the
+parameter cannot re-scope a credential mutation.
+
+### Secrets recap
+
+Header/env values are write-only markers on every read path; OAuth
+tokens, verifiers, and client secrets never appear in RPC results,
+notifications, logs (`code` is masked in server debug logging), or the
+session journal (status events are not journaled at all).
 ## Workspace Filesystem Watch & Transfer (`fs_*` methods, experimental)
 
 GUI clients keep a session's workspace view synchronized without polling

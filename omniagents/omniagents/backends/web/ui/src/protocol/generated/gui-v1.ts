@@ -156,6 +156,43 @@ export interface ElicitationResponseParams {
   value?: Record<string, unknown>;
   reason?: string;
 }
+export interface McpListServersParams {
+  session_id?: string;
+}
+export interface McpGetServerParams {
+  server_name: string;
+  refresh?: boolean;
+}
+export interface McpCreateServerParams {
+  server_name: string;
+  type: string;
+  params: Record<string, unknown>;
+  server_options?: Record<string, unknown>;
+}
+export interface McpUpdateServerParams {
+  server_name: string;
+  type?: string;
+  params?: Record<string, unknown>;
+  server_options?: Record<string, unknown>;
+}
+export interface McpDeleteServerParams {
+  server_name: string;
+}
+export interface McpReloadServerParams {
+  server_name?: string;
+}
+export interface McpAuthStartParams {
+  server_name: string;
+  redirect_uri?: string;
+  session_id?: string;
+}
+export interface McpAuthCompleteParams {
+  auth_id: string;
+  code: string;
+}
+export interface McpAuthCancelParams {
+  auth_id: string;
+}
 export interface ForkSessionParams {
   session_id: string;
   new_session_id?: string;
@@ -203,6 +240,23 @@ export interface ValidateConfigParams {
 }
 export interface WriteConfigParams {
   updates: Record<string, unknown>;
+}
+export interface McpReadResourceParams {
+  server_name: string;
+  uri: string;
+  session_id?: string;
+}
+export interface McpCallToolParams {
+  server_name: string;
+  tool_name: string;
+  session_id: string;
+  args?: Record<string, unknown>;
+}
+export interface McpGetPromptParams {
+  server_name: string;
+  prompt_name: string;
+  args?: Record<string, unknown>;
+  session_id?: string;
 }
 export interface FsWatchParams {
   session_id: string;
@@ -429,6 +483,17 @@ export interface ElicitationResolvedParams {
   seq?: number;
   stream_id?: string;
 }
+export interface McpServerStatusChangedParams {
+  server_name: string;
+  status: string;
+  previous_status?: string;
+  reason_code?: string;
+  reason?: string;
+  auth_state?: string;
+  at?: string;
+  seq?: number;
+  stream_id?: string;
+}
 export interface SessionForkedParams {
   session_id: string;
   new_session_id: string;
@@ -502,6 +567,15 @@ export interface RpcMethodMap {
   "account_usage": { params: AccountUsageParams; result: Record<string, unknown> };
   "account_select": { params: AccountSelectParams; result: Record<string, unknown> };
   "elicitation_response": { params: ElicitationResponseParams; result: Record<string, unknown> };
+  "mcp_list_servers": { params: McpListServersParams; result: Record<string, unknown> };
+  "mcp_get_server": { params: McpGetServerParams; result: Record<string, unknown> };
+  "mcp_create_server": { params: McpCreateServerParams; result: Record<string, unknown> };
+  "mcp_update_server": { params: McpUpdateServerParams; result: Record<string, unknown> };
+  "mcp_delete_server": { params: McpDeleteServerParams; result: Record<string, unknown> };
+  "mcp_reload_server": { params: McpReloadServerParams; result: Record<string, unknown> };
+  "mcp_auth_start": { params: McpAuthStartParams; result: Record<string, unknown> };
+  "mcp_auth_complete": { params: McpAuthCompleteParams; result: Record<string, unknown> };
+  "mcp_auth_cancel": { params: McpAuthCancelParams; result: boolean };
   "fork_session": { params: ForkSessionParams; result: Record<string, unknown> };
   "set_session_hold": { params: SetSessionHoldParams; result: Record<string, unknown> };
   "queue_status": { params: QueueStatusParams; result: Record<string, unknown> };
@@ -515,6 +589,9 @@ export interface RpcMethodMap {
   "get_config": { params: GetConfigParams; result: Record<string, unknown> };
   "validate_config": { params: ValidateConfigParams; result: Record<string, unknown> };
   "write_config": { params: WriteConfigParams; result: Record<string, unknown> };
+  "mcp_read_resource": { params: McpReadResourceParams; result: Record<string, unknown> };
+  "mcp_call_tool": { params: McpCallToolParams; result: Record<string, unknown> };
+  "mcp_get_prompt": { params: McpGetPromptParams; result: Record<string, unknown> };
   "fs_watch": { params: FsWatchParams; result: Record<string, unknown> };
   "fs_unwatch": { params: FsUnwatchParams; result: boolean };
   "fs_list": { params: FsListParams; result: Record<string, unknown> };
@@ -545,6 +622,7 @@ export interface RpcNotificationMap {
   "account_changed": AccountChangedParams;
   "elicitation_requested": ElicitationRequestedParams;
   "elicitation_resolved": ElicitationResolvedParams;
+  "mcp_server_status_changed": McpServerStatusChangedParams;
   "session_forked": SessionForkedParams;
   "session_variables_changed": SessionVariablesChangedParams;
   "fs_events": FsEventsParams;

@@ -29,7 +29,8 @@
       "queue_changed",
       "account_changed",
       "elicitation_requested",
-      "elicitation_resolved"
+      "elicitation_resolved",
+      "mcp_server_status_changed"
     ]
   },
   "requests": {
@@ -47,6 +48,9 @@
       "get_config",
       "validate_config",
       "write_config",
+      "mcp_read_resource",
+      "mcp_call_tool",
+      "mcp_get_prompt",
       "fs_watch",
       "fs_unwatch",
       "fs_list",
@@ -95,7 +99,16 @@
       "account_refresh",
       "account_usage",
       "account_select",
-      "elicitation_response"
+      "elicitation_response",
+      "mcp_list_servers",
+      "mcp_get_server",
+      "mcp_create_server",
+      "mcp_update_server",
+      "mcp_delete_server",
+      "mcp_reload_server",
+      "mcp_auth_start",
+      "mcp_auth_complete",
+      "mcp_auth_cancel"
     ]
   },
   "router_mode": "generated_request_allowlist",
