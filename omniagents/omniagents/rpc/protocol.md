@@ -306,10 +306,20 @@ The server sends notifications during agent runs:
   "jsonrpc": "2.0",
   "method": "message_output",
   "params": {
-    "content": "Based on my search, here's what I found..."
+    "run_id": "run-123",
+    "session_id": "sess-123",
+    "content": "Based on my search, here's what I found...",
+    "is_final": false,
+    "message_id": "msg_0a1b2c"
   }
 }
 ```
+
+`message_id` is the model's own id for the message, present when the
+provider mints one. It is optional, and it is what clients key the
+canonical `agent_message` item on — see § Conversation Domain Objects,
+"Ordering and canonical ids". `is_final` is optional and reflects whether
+the runtime considers this the concluding message of the run.
 
 ### run_end
 ```json
@@ -1402,6 +1412,350 @@ Header/env values are write-only markers on every read path; OAuth
 tokens, verifiers, and client secrets never appear in RPC results,
 notifications, logs (`code` is masked in server debug logging), or the
 session journal (status events are not journaled at all).
+## Conversation Domain Objects (`get_thread`, `list_turns`, `list_items`, `get_item`)
+
+The canonical, persisted structure of a conversation: **Thread → Turn →
+Item**. It exists so a client can render a conversation *deterministically*
+— paginating a long history, showing a branch point, resuming after a
+restart — without replaying the transient event stream.
+
+The guarantee: **a completed conversation reconstructs from these reads
+alone.** Every item is stored in exactly one authoritative final state, so
+`list_items` returns everything needed to paint the transcript. The
+`replay` capability (§ Durable Sequenced Event Replay) remains the
+mechanism for catching a *live* run up mid-flight; the two are
+complementary, not alternatives.
+
+Nothing here is a second source of truth. Each field is a promotion of
+state the runtime already produces, mapped as follows.
+
+### Mapping from existing concepts
+
+| Existing concept | Promoted to | Notes |
+| --- | --- | --- |
+| session (`sessions` row) | **Thread** | `thread_id == session_id`; every existing session id keeps working as an address |
+| run (`run_id`) | **Turn** | `turn_id == run_id` for recorded turns |
+| `run_started.prompt` / `prompt_role` | Turn `prompt`/`prompt_role` + a `user_message`/`agent_message` item | `prompt_role: "assistant"` (notification wakeups) records as an agent message |
+| `run_status.attempt` | Turn `attempts` | retry bookkeeping |
+| `run_end.end_reason` / `error` / `usage` / `model` | Turn `status`/`error`/`usage`/`model` | `end_reason` maps to one terminal status |
+| `token.totals` | Turn `usage` | cumulative totals **replace**, never accumulate |
+| `tool_called` + `tool_result` | ONE `tool_call` item | correlated by `call_id`; started → completed/failed |
+| `tool_approval_requested` / `_resolved` | `approval` item (`approval_kind: "tool"`) | the decision is attached by the `tool_approval_response` handler before the item goes terminal |
+| `mcp_approval_requested` / `_resolved` | `approval` item (`approval_kind: "mcp"`) | carries `server_label` |
+| `elicitation_requested` / `_resolved` | `elicitation` item | `cancelled`/`expired` land as `cancelled` |
+| `client_request` with `function: "ui.add_artifact"` | `artifact` item | keyed on `artifact_id` when present, so re-display updates in place |
+| `message_output` | `agent_message` item | |
+| history `reasoning` rows | `reasoning` item | projection only (live reasoning is not broadcast) |
+| `context_summary` checkpoint (`core/runtime/compaction`) | `compaction` item + Thread `compaction` floor | |
+| `fork_session` / `session_forked` | Thread `parent_thread_id` + `branched_from_item_id` | branching is a relationship, not a copy |
+| session archive flag | Thread `status` | `active` / `archived`; kept in step by `archive_session` |
+| durable structured plans | `plan` item (**reserved**) | the kind and its lifecycle rule are declared; plan *recording* lands with tkt_FqUypyxF2tzC |
+| run-level aggregated file diff | `run_diff` item (**reserved**) | individual edits are already `tool_call` items with `tool_kind: "file"`; the per-run *aggregate* has no home on `Turn`, which carries typed metadata rather than free-form content. Turn-scoped, so no `long_lived` exemption. Also tkt_FqUypyxF2tzC |
+
+Tool items additionally carry a `tool_kind` taxonomy so clients can render
+without a tool registry: `command`, `file`, `search`, `web`, `mcp`, `plan`,
+`artifact`, `worker`, `other`. An MCP server's `write_file` classifies as
+`mcp`, not `file` — the `server_label` wins.
+
+### Object shapes
+
+`Thread`:
+
+```json
+{
+  "thread_id": "sess-1", "user_id": "u1", "status": "active",
+  "title": null, "created_at": 0.0, "updated_at": 0.0,
+  "last_seq": 8, "turn_count": 2, "item_count": 8,
+  "parent_thread_id": null, "branched_from_item_id": null,
+  "usage": {"input_tokens": 60}, "compaction": {},
+  "source": "recorded", "projected_at": 1785479178.6, "schema_version": 1
+}
+```
+
+`Turn`:
+
+```json
+{
+  "turn_id": "run_abc", "thread_id": "sess-1", "ordinal": 1,
+  "status": "completed", "created_at": 0.0, "updated_at": 0.0,
+  "completed_at": 0.0, "prompt": "add a test", "prompt_role": "user",
+  "end_reason": "completed", "error": null, "usage": {"input_tokens": 40},
+  "model": "gpt-x", "model_ref": "catalog/gpt-x",
+  "item_count": 5, "first_seq": 1, "last_seq": 5, "attempts": 0,
+  "source": "recorded", "schema_version": 1
+}
+```
+
+`Item`:
+
+```json
+{
+  "item_id": "itm_1f0c…", "thread_id": "sess-1", "turn_id": "run_abc",
+  "seq": 2, "kind": "tool_call", "status": "completed", "role": "assistant",
+  "created_at": 0.0, "updated_at": 0.0, "completed_at": 0.0, "revision": 1,
+  "content": {"tool": "read_file", "tool_kind": "file", "input": "{…}",
+              "output": "def f(): …"},
+  "source_ref": {"event": "tool_called", "call_id": "c1"},
+  "long_lived": false, "source": "recorded", "schema_version": 1
+}
+```
+
+`content` is an **open record** whose fields follow `kind`. That is
+deliberate: a closed schema would make every new tool field a protocol
+break. Clients probe the fields they understand.
+
+**`Thread.item_count` / `Thread.turn_count` / `Turn.item_count` are counted
+at read time**, under the same predicate the corresponding listing uses.
+The stored counters are maintained by non-transactional read-modify-write
+and can drift under concurrent turns, so they are treated as bookkeeping
+and the wire value is recomputed per request. A client sizing a scrollbar
+from `item_count` gets a true number.
+
+**`kind` values `plan` and `run_diff` are RESERVED and not yet produced.**
+They are declared so the durable-plan and run-diff work (tkt_FqUypyxF2tzC)
+is additive against this `stable` surface rather than a breaking widening
+of a closed client union. No server today emits an item of either kind; a
+client should tolerate them but will not receive them yet.
+
+### Ordering and canonical ids
+
+`seq` is a thread-monotonic ordinal and is **the only ordering clients
+should rely on**. Wall-clock timestamps are not monotonic under concurrent
+tool completions.
+
+`item_id` is `"itm_" + sha256(thread_id \0 natural_key)[:32]`, where the
+natural key is built **only from fields the originating payload carries** —
+never from a server-side position:
+
+| Kind | Natural key |
+| --- | --- |
+| `tool_call`, `approval`, `elicitation` | the correlation id (`tool:<call_id>`, `approval:<kind>:<id>`, `elicitation:<id>`) |
+| turn prompt | `prompt:<run_id>` |
+| `agent_message` | `message:<message_id>` when the provider minted one (the optional `message_output.message_id` field), else `message:<turn_id>:<sha256(content)[:16]>:<n>` |
+| mid-run `user_message` | `user:<run_id>:<sha256(content)[:16]>:<n>` |
+| `reasoning` | `reasoning:<rs_id>`, else `reasoning:<turn_id>:<sha256(summary)[:16]>:<n>` |
+| `artifact` | `artifact:<artifact_id>`, else `artifact:req:<request_id>` |
+| `compaction` | `compaction:<sha256(summary)[:16]>:<n>` |
+
+`<n>` is a zero-based **occurrence ordinal**: the number of items already
+recorded under the same digest key. It exists so repeated content is not
+silently collapsed — a user sending "continue" twice in one run gets two
+items, not one — and it stays client-derivable because a client counts its
+own repetitions of the same content in the same run. Keys built on a real
+id (`call_id`, `message_id`, `elicitation_id`, `artifact_id`) carry no
+ordinal and are strictly idempotent: re-delivering such an event updates
+the existing item rather than appending.
+
+Three independent producers — the live recorder, the compatibility
+projection, and a client folding the notification stream — therefore agree
+on the same id for the same logical thing without a shared allocator, and a
+client can compute the id itself to merge live events against a stored
+page. Ids are stable across restarts and across migration. This is also why
+no item-update notification exists: the live stream already carries the
+deltas, and the ids to correlate them are derivable from payloads clients
+already receive.
+
+**The trade-off, stated plainly.** Digest-plus-ordinal keys preserve
+repeated content — the transcript is a record — but they are only
+idempotent against re-delivery for the id-keyed kinds. A digest-keyed event
+delivered twice through a path that bypasses the emission chokepoint would
+append a second item; the chokepoint guarantees one call per original
+emission, so that does not arise in practice. Compaction checkpoints are
+never broadcast, so their ids are not client-derivable — but they also
+never appear in the live stream, so there is no merge boundary for them.
+
+### Item lifecycle
+
+```
+started ──(0..n updates: revision++, updated_at)──► completed | failed | cancelled
+```
+
+- An item is born `started` and reaches **exactly one** terminal state.
+- Updates before the terminal state bump `revision`, so a client can tell a
+  stale cached copy from a current one.
+- **The first terminal state wins.** A duplicate `tool_result` — replayed,
+  double-delivered, or a retried run reusing a `call_id` — cannot rewrite a
+  settled item.
+- At `run_end` the server finalizes every item still open on the thread that
+  belongs to the ending turn *or carries no `turn_id` at all* (an
+  elicitation or `client_request` raised outside a run): `cancelled` when
+  the run was cancelled, otherwise `failed`, with
+  `content.finalized_by = "run_end"` recorded so a reader can distinguish
+  an inferred terminal state from an observed one. **After `run_end` the
+  only non-terminal items that remain are those explicitly marked
+  `long_lived`** — which is what makes store-only reconstruction sound.
+- **`long_lived: true`** exempts an item from that sweep. It is for objects
+  that genuinely outlive their turn — a durable plan accumulates steps
+  across many runs — and it is a property of the row, not an inference from
+  `kind`, so the exemption is always deliberate and inspectable. The owning
+  subsystem is then responsible for landing the item terminally. No
+  first-party producer sets it yet; the flag and `ItemKind.plan` are
+  declared now so durable plans (tkt_FqUypyxF2tzC) are an additive change
+  to a `stable` surface rather than a breaking one.
+- **Terminal governs status, not content.** One kind revises after
+  completion: re-issuing `ui.add_artifact` with the same `artifact_id`
+  means "here is the new version", so the item's `content` is replaced and
+  `revision` is bumped while `status`/`completed_at` stay put. Every other
+  kind is immutable once terminal.
+
+Turns follow the same shape: `running` → `completed | failed | cancelled`,
+terminal once.
+
+### Pagination
+
+Keyset, not offset. `list_items` walks `seq`; `list_turns` walks `ordinal`.
+The `cursor` is an opaque token carrying that position, so a thread being
+written while a client pages through it neither skips nor repeats rows.
+
+```
+list_items(thread_id, turn_id?, kinds?, limit?, cursor?, order?)
+  → { thread_id, turn_id, items[], next_cursor, has_more, total }
+
+list_turns(thread_id, limit?, cursor?, order?)
+  → { thread_id, turns[], next_cursor, has_more, total }
+```
+
+- `limit` defaults to 50 and is **clamped** into `[1, 500]` — `limit=0` or a
+  negative value returns one row rather than erroring, so a client
+  computing a window size mid-scroll is not interrupted.
+- `total` is counted under the **same predicate the page was drawn with**,
+  `turn_id` and `kinds` included.
+- A cursor that is malformed, carries the wrong field, or carries a
+  negative position is rejected with `-32082`; a cursor past the end
+  returns an empty final page.
+- `list_items(turn_id=…)` returns only items tied to that turn. A
+  compaction checkpoint triggered *outside* any run has `turn_id: null` and
+  is reachable only through the unscoped read — so a turn-by-turn
+  reconstruction should page the thread unscoped, or fetch
+  `kinds: ["compaction"]` separately.
+- `order` is `"asc"` (default) or `"desc"`.
+- `kinds` filters to a set of item kinds; unrecognized kinds are dropped
+  from the filter rather than rejected, so a newer client asking for a kind
+  this server does not know gets a narrower page, not an error.
+- Iterate until `has_more` is false. `next_cursor` is null on the last page.
+
+### Backward compatibility
+
+Sessions written before this surface existed have `history`/`sessions` rows
+and no domain rows. They are **projected and persisted (migrated) exactly
+once, at the moment the thread row is first created**, and served from the
+store thereafter.
+
+That ordering is the contract, and it is load-bearing in both directions:
+
+* The **recorder** projects before it creates a thread row. It claims a
+  thread on the first notification of a run, and a session being *resumed*
+  already has a transcript — creating the row empty would make that
+  transcript permanently invisible.
+* The **reader** projects only when no row exists at all. Re-projecting a
+  populated thread would overwrite rows the recorder owns and reset the
+  ordinal cursor, which destroys items.
+
+Together: *a thread row exists ⇒ its prior history has been projected
+exactly once*. Reads never write to an existing thread.
+
+The decision is recorded **explicitly** on `Thread.projected_at` rather
+than inferred from whether the thread has any items. A thread can
+legitimately hold zero items, and inferring a lifecycle fact from a row
+count is what produced this feature's worst bugs.
+
+Every write to session history materializes the thread first — the guard
+lives in `Session.append_message`, not at individual call sites, because
+four separate sites needed it and a fifth would have been missed.
+
+- Projected objects are labelled `source: "adapter"`; live ones are
+  `source: "recorded"`.
+- Legacy history carries no run correlation, so turn boundaries are
+  *inferred* — a new turn opens at each user message — and inferred turns
+  get a `trn_legacy_` id prefix.
+- `function_call` + `function_call_output` collapse into one completed
+  `tool_call` item. A call with no output row is `failed` (it never
+  returned), never left at `started`.
+- Migration refuses to touch a thread that already holds items, so it is
+  safe to re-run against a live deployment.
+- A **fork** is materialized by copying the parent's domain rows, not by
+  re-projecting the copied history — a projection cannot see approvals,
+  artifacts or elicitations, which never reach the history table. Child
+  item ids are re-derived for the child thread and record
+  `source_ref.forked_from_item_id`.
+- **An item still in flight when the fork is taken is landed `cancelled` in
+  the CHILD**, with `content.finalized_by = "fork"`. The parent's run will
+  finish and finalize the parent's copy, but no `run_end` for that run ever
+  reaches the forked thread, so an open copy there would stay `started`
+  forever and falsify the run-end guarantee. `long_lived` items are exempt,
+  as everywhere else.
+- **`turn_id` is copied verbatim across a fork, so it is unique per thread,
+  not globally.** A turn id is a `run_id`, which used to be globally
+  unique; after a fork the parent and child both report the same turn ids
+  for the copied turns. Every read on this surface is thread-scoped, so
+  nothing on the server is ambiguous — but a client caching turns by
+  `turn_id` alone will collide across a fork. **Key turn caches on
+  `(thread_id, turn_id)`.** Item ids do not have this property: they are
+  re-derived per thread and stay globally distinct.
+- Thread-level `source` records how a thread ORIGINATED (`adapter` = began
+  as a projection). Items carry their own `source`, so a resumed legacy
+  thread reads as `adapter` items followed by `recorded` ones.
+- Projected threads carry `created_at`/`updated_at` of `0.0`: the raw
+  history rows the projection reads do not expose per-row timestamps.
+  Ordering is by `seq`, which is authoritative.
+
+### Authorization and stability
+
+All four methods are **`RESOURCE_SCOPED`**. A thread *is* a session
+(`thread_id == session_id`) and its turns and items are that session's
+transcript, so ownership of the session gates the read; a cross-user
+attempt is refused with `-32014` (`data.kind: "authorization_denied"`,
+`data.resource: "thread"`). In an enforced (multi-user) deployment an
+*unknown* thread also returns `-32014` rather than `-32080`, because a
+failed ownership lookup denies — which additionally means thread-id
+existence cannot be probed.
+
+There is deliberately no globally-safe listing counterpart: `list_sessions`
+already covers self-scoped discovery.
+
+The methods are **`stable`** on entry. Desktop renders transcripts from
+this surface, and a deterministic-rendering guarantee is worthless if
+clients must opt in through `initialize.capabilities
+.experimental_operations`. Result payloads stay open records while the item
+`content` shape is still growing.
+
+### Typed errors
+
+| Code | Name | `data.kind` | Raised by |
+| --- | --- | --- | --- |
+| `-32080` | ThreadNotFound | `thread_not_found` | all four methods |
+| `-32081` | ConversationItemNotFound | `item_not_found` | `get_item` |
+| `-32082` | ConversationCursorInvalid | `cursor_invalid` | `list_turns`, `list_items` |
+
+### Storage
+
+Domain objects persist alongside the session history, in whichever backend
+`OMNIAGENTS_HISTORY_BACKEND` selects: SQLite (colocated at
+`<sessions.db>.domain`) or Postgres (`conversation_threads` /
+`conversation_turns` / `conversation_items`, tenant-scoped with row-level
+security pre-positioned on the `app.current_tenant` GUC, matching
+`PgSessionStorage`).
+
+The write path is fed from `stamp_session_event` — the single chokepoint
+every original notification emission already passes through — plus explicit
+hooks for the facts that never broadcast: mid-run `send_user_message`
+appends, compaction checkpoints, reasoning blocks (written straight to
+history by the SDK), and approval decisions (the `*_approval_resolved`
+notifications carry only a correlation id). Each of those hooks
+materializes the thread *before* its row lands in history, so the
+creation-time projection cannot record the same fact twice.
+
+`delete_session` drops the thread, its turns and its items alongside the
+history and the replay journal; `archive_session` moves `Thread.status` to
+`archived`.
+
+Deletion durability: the SQLite store runs with `PRAGMA secure_delete = ON`,
+so freed pages are zeroed rather than left readable in the free list — a
+deleted transcript is not recoverable from the file. (This is cheaper than
+`VACUUM`, which would rewrite the whole database under an exclusive lock on
+every delete.) On Postgres, deleted tuples remain until autovacuum reclaims
+them, matching the existing session-history posture.
+
 ## Workspace Filesystem Watch & Transfer (`fs_*` methods, experimental)
 
 GUI clients keep a session's workspace view synchronized without polling

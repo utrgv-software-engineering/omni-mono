@@ -44,6 +44,10 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | McpAuthStart
   | McpAuthComplete
   | McpAuthCancel
+  | GetThread
+  | ListTurns
+  | ListItems
+  | GetItem
   | ForkSession
   | SetSessionHold
   | QueueStatus
@@ -342,6 +346,27 @@ export interface McpAuthComplete {
 export interface McpAuthCancel {
   auth_id: string;
 }
+export interface GetThread {
+  thread_id: string;
+}
+export interface ListTurns {
+  cursor?: string;
+  limit?: number;
+  order?: string;
+  thread_id: string;
+}
+export interface ListItems {
+  cursor?: string;
+  kinds?: unknown[];
+  limit?: number;
+  order?: string;
+  thread_id: string;
+  turn_id?: string;
+}
+export interface GetItem {
+  item_id: string;
+  thread_id: string;
+}
 export interface ForkSession {
   new_session_id?: string;
   session_id: string;
@@ -632,6 +657,8 @@ export interface ToolResult {
 }
 export interface MessageOutput {
   content: string;
+  is_final?: boolean;
+  message_id?: string;
   run_id: string;
   seq?: number;
   session_id: string;

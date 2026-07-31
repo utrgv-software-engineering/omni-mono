@@ -826,6 +826,19 @@ class SessionEventLog:
 # ---------------------------------------------------------------------------
 
 
+def _record_conversation_event(
+    session: Any, method: str, payload: Dict[str, Any]
+) -> None:
+    """Feed the canonical-domain recorder. Imported lazily to keep the
+    journal free of a hard dependency on the conversation package (and to
+    avoid an import cycle: the recorder's store reads session paths)."""
+    try:
+        from omniagents.core.conversation.recorder import record_session_event
+    except Exception:  # pragma: no cover - import guard
+        return
+    record_session_event(session, method, payload)
+
+
 def stamp_session_event(
     session: Any, method: str, payload: Dict[str, Any]
 ) -> Dict[str, Any]:
@@ -836,7 +849,16 @@ def stamp_session_event(
     and ``request_client_function``). Replay paths re-send stored stamped
     payloads and must NOT call this again — ``record`` is idempotent per
     payload anyway.
+
+    Because it is the single original-emission chokepoint, it is also where
+    the canonical conversation objects are recorded
+    (:func:`omniagents.core.conversation.record_session_event`). That runs
+    BEFORE the replayability filter: ``token`` is deliberately not journaled
+    (transient cumulative usage deltas) but its totals *are* part of a
+    turn's authoritative final state, so the domain recorder must see it.
+    Recording never raises — see the recorder's failure policy.
     """
+    _record_conversation_event(session, method, payload)
     if method not in REPLAYABLE_METHODS:
         return payload
     log = getattr(session, "event_log", None)

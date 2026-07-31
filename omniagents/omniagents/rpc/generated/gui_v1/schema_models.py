@@ -412,6 +412,14 @@ class GetConfig(BaseModel):
     )
 
 
+class GetItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    item_id: str
+    thread_id: str
+
+
 class GetModel(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -424,6 +432,13 @@ class GetSessionHistory(BaseModel):
         extra="forbid",
     )
     session_id: str
+
+
+class GetThread(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    thread_id: str
 
 
 class GetUserHistory(BaseModel):
@@ -652,6 +667,18 @@ class JsonRpcError(BaseModel):
     message: str
 
 
+class ListItems(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cursor: str | None = None
+    kinds: list[Any] | None = None
+    limit: int | None = None
+    order: str | None = None
+    thread_id: str
+    turn_id: str | None = None
+
+
 class ListModels(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -686,6 +713,16 @@ class ListSessions(BaseModel):
     )
     limit: int | None = None
     offset: int | None = None
+
+
+class ListTurns(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cursor: str | None = None
+    limit: int | None = None
+    order: str | None = None
+    thread_id: str
 
 
 class McpApprovalRequested(BaseModel):
@@ -845,6 +882,8 @@ class MessageOutput(BaseModel):
         extra="forbid",
     )
     content: str
+    is_final: bool | None = None
+    message_id: str | None = None
     run_id: str
     seq: int | None = None
     session_id: str
@@ -1213,6 +1252,10 @@ class Model(
         | McpAuthStart
         | McpAuthComplete
         | McpAuthCancel
+        | GetThread
+        | ListTurns
+        | ListItems
+        | GetItem
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -1329,6 +1372,10 @@ class Model(
         | McpAuthStart
         | McpAuthComplete
         | McpAuthCancel
+        | GetThread
+        | ListTurns
+        | ListItems
+        | GetItem
         | ForkSession
         | SetSessionHold
         | QueueStatus

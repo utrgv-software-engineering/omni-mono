@@ -2095,6 +2095,22 @@ class AgentService(RpcMethodsBase):
                 }
             )
 
+        # Attach the decision to the canonical approval item BEFORE the
+        # resolved broadcast drives it terminal — ``tool_approval_resolved``
+        # carries only the correlation id on the wire, so this handler is
+        # the only place that knows what the user actually chose.
+        self._record_conversation(
+            sess,
+            lambda rec: rec.record_approval_decision(
+                sess.id,
+                approval_kind="tool",
+                resource_id=call_id,
+                decision=decision,
+                rejection_message=rejection_message,
+                always_approve=always_approve,
+            ),
+        )
+
         # Notify any other connected channels (multi-tab / voice + chat) so
         # their UI can dismiss any visible approval prompt.
         try:
@@ -2645,6 +2661,19 @@ class AgentService(RpcMethodsBase):
                     "rejection_message": rejection_message,
                 }
             )
+
+        # Same ordering rule as tool approvals: record the decision while
+        # the canonical item is still non-terminal.
+        self._record_conversation(
+            sess,
+            lambda rec: rec.record_approval_decision(
+                sess.id,
+                approval_kind="mcp",
+                resource_id=request_id,
+                decision=decision,
+                rejection_message=rejection_message,
+            ),
+        )
 
         # Notify all channels so multi-tab UIs can dismiss any visible
         # prompt for the same request_id.
@@ -3588,7 +3617,33 @@ class AgentService(RpcMethodsBase):
         if not sess:
             raise RuntimeError("Unknown run_id")
         msg = {"role": "user", "content": content}
+        # ``Session.append_message`` materializes the canonical thread before
+        # the row lands in history (see _materialize_conversation_thread), so
+        # the projection cannot see this row and record it a second time. The
+        # recorder handle is resolved here for the explicit item below.
+        from omniagents.core.conversation.recorder import ensure_conversation_thread
+
+        try:
+            recorder = ensure_conversation_thread(sess)
+        except Exception:
+            logger.exception(
+                "conversation thread not materialized for send_user_message",
+                extra={"session": sess.id},
+            )
+            recorder = None
         sess.append_message(msg)
+        # Mid-run user messages append to history WITHOUT broadcasting, so
+        # they never reach the notification chokepoint the domain recorder
+        # listens on. Record them explicitly or the canonical transcript
+        # would silently drop them.
+        if recorder is not None:
+            try:
+                recorder.record_user_message(sess.id, run_id=run_id, content=content)
+            except Exception:
+                logger.exception(
+                    "mid-run user message not recorded",
+                    extra={"session": sess.id},
+                )
         # No immediate return value; next assistant chunk will arrive via stream.
 
     async def get_run_state(self, session_id: str) -> dict:
@@ -3752,6 +3807,116 @@ class AgentService(RpcMethodsBase):
         result = filter_history_for_api(sess.history)
         _debug_rpc("get_session_history result", {"history": result})
         return result
+
+    # ------------------------------------------------------------------
+    #  Canonical conversation domain objects (tkt_a-QF2Oc4OAsD).
+    #
+    #  Thread / Turn / Item reads over the persisted domain store. The
+    #  write path is the notification chokepoint (see
+    #  ``omniagents.core.conversation.recorder``); the two facts that never
+    #  broadcast — mid-run user messages and compaction checkpoints — are
+    #  recorded from their own code paths via ``_record_conversation``.
+    #  See protocol.md § "Conversation Domain Objects".
+    # ------------------------------------------------------------------
+
+    def _record_conversation(self, session: Session, action: Any) -> None:
+        """Run *action* against a recorder bound to *session*'s shard.
+
+        Best-effort by design: the domain store is a derived projection, and
+        a fault there must not abort the user's turn. Failures are logged,
+        never swallowed silently.
+        """
+        from omniagents.core.conversation.recorder import recorder_for_session
+
+        try:
+            recorder = recorder_for_session(session)
+            if recorder is None:
+                return
+            recorder.ensure_thread(
+                session.id,
+                user_id=getattr(session, "user_id", None),
+                archived=bool(getattr(session, "archived", False)),
+            )
+            action(recorder)
+        except Exception:
+            logger.exception(
+                "conversation domain recording failed",
+                extra={"session": getattr(session, "id", None)},
+            )
+
+    def _conversation_service(self):
+        """Read-side service bound to this process's (project, agent) shard."""
+        from omniagents.core.conversation.service import ConversationService
+
+        manager = self._session_manager
+        return ConversationService(
+            project_slug=getattr(manager, "_project_slug", None),
+            agent_slug=getattr(manager, "_agent_slug", None),
+        )
+
+    async def get_thread(self, thread_id: str) -> dict:  # noqa: D401
+        """The canonical Thread for *thread_id* (== ``session_id``)."""
+        _debug_rpc("get_thread", {"thread_id": thread_id})
+        return self._conversation_service().get_thread(thread_id)
+
+    async def list_turns(
+        self,
+        thread_id: str,
+        limit: int | None = None,
+        cursor: str | None = None,
+        order: str | None = None,
+    ) -> dict:  # noqa: D401
+        """Turns of *thread_id*, keyset-paginated by ``ordinal``."""
+        _debug_rpc(
+            "list_turns",
+            {"thread_id": thread_id, "limit": limit, "cursor": cursor, "order": order},
+        )
+        return self._conversation_service().list_turns(
+            thread_id,
+            limit=limit,
+            cursor=cursor,
+            descending=(order == "desc"),
+        )
+
+    async def list_items(
+        self,
+        thread_id: str,
+        turn_id: str | None = None,
+        kinds: list[str] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        order: str | None = None,
+    ) -> dict:  # noqa: D401
+        """Items of *thread_id*, keyset-paginated by ``seq``.
+
+        Optionally scoped to one ``turn_id`` and/or filtered to a set of
+        item kinds. Everything needed to render the conversation is in the
+        returned items — no event replay.
+        """
+        _debug_rpc(
+            "list_items",
+            {
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "kinds": kinds,
+                "limit": limit,
+                "cursor": cursor,
+                "order": order,
+            },
+        )
+        return self._conversation_service().list_items(
+            thread_id,
+            turn_id=turn_id,
+            kinds=kinds,
+            limit=limit,
+            cursor=cursor,
+            descending=(order == "desc"),
+        )
+
+    async def get_item(self, thread_id: str, item_id: str) -> dict:  # noqa: D401
+        """One item by canonical id."""
+        _debug_rpc("get_item", {"thread_id": thread_id, "item_id": item_id})
+        return self._conversation_service().get_item(thread_id, item_id)
 
     async def fork_session(
         self, session_id: str, *, new_session_id: str | None = None
@@ -3917,6 +4082,13 @@ class AgentService(RpcMethodsBase):
         session_id = params.get("session_id")
         if isinstance(session_id, str) and session_id:
             return self._session_owner(session_id), "session", session_id
+        # A thread IS a session (``thread_id == session_id``), so the
+        # conversation reads inherit session ownership rather than getting
+        # a parallel authorization story. Resolved before ``run_id`` for the
+        # same reason ``session_id`` is: it is the most specific handle.
+        thread_id = params.get("thread_id")
+        if isinstance(thread_id, str) and thread_id:
+            return self._session_owner(thread_id), "thread", thread_id
         run_id = params.get("run_id")
         if isinstance(run_id, str) and run_id:
             sess = self._session_manager.get_by_run_id(run_id)
@@ -4595,6 +4767,11 @@ class AgentService(RpcMethodsBase):
         if ok:
             sess = self.get_session(session_id)
             if sess is not None:
+                # Keep Thread.status in step with the session's archive
+                # flag; the mapping is documented, so it has to be live.
+                self._record_conversation(
+                    sess, lambda rec: rec.record_archived(session_id, True)
+                )
                 # Signal MCP lifecycle task to shutdown
                 shutdown_event = getattr(sess, "_mcp_shutdown", None)
                 if shutdown_event:
@@ -4682,6 +4859,20 @@ class AgentService(RpcMethodsBase):
         deleted = history_db.delete_session(
             session_id, project_slug=project_slug, agent_slug=agent_slug
         )
+
+        # Drop the canonical domain rows alongside the history. These hold
+        # the full transcript — the most privacy-sensitive data this
+        # protocol carries — so leaving them behind after an explicit delete
+        # would be a retention defect, not an oversight.
+        try:
+            from omniagents.core.conversation.store import get_conversation_store
+
+            get_conversation_store(project_slug, agent_slug).delete_thread(session_id)
+        except Exception:
+            logger.exception(
+                "conversation domain rows not deleted",
+                extra={"session": session_id},
+            )
 
         # Delete the durable replay journal alongside the history.
         event_log = getattr(sess, "event_log", None) if sess is not None else None

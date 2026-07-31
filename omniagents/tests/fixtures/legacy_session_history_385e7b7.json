@@ -1,0 +1,128 @@
+{
+  "_comment": "Hand-authored conversation content ROUND-TRIPPED through omniagents at commit 385e7b7 (origin/main, before the canonical conversation domain objects landed): the rows were written with that build's Session.append_message and read back with its history_db.load_history, with sys.path pointed at that worktree and omniagents.__file__ asserted to resolve there. So this is a real prior-version STORAGE round-trip, not a captured transcript from a live agent run. Regenerate only by repeating that procedure against a pre-feature commit.",
+  "generated_from_commit": "385e7b7",
+  "session_id": "legacy-main-session",
+  "history": [
+    {
+      "role": "user",
+      "content": "add a regression test for the parser"
+    },
+    {
+      "type": "reasoning",
+      "id": "rs_1",
+      "summary": [
+        {
+          "type": "summary_text",
+          "text": "read first"
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "name": "read_file",
+      "call_id": "call_1",
+      "arguments": "{\"path\": \"parser.py\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_1",
+      "output": "def parse(s): ..."
+    },
+    {
+      "type": "function_call",
+      "name": "grep_files",
+      "call_id": "call_2",
+      "arguments": "{\"pattern\": \"parse\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_2",
+      "output": "parser.py:1"
+    },
+    {
+      "role": "assistant",
+      "type": "message",
+      "id": "msg_1",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Found it.",
+          "annotations": []
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "name": "write_file",
+      "call_id": "call_3",
+      "arguments": "{\"path\": \"test_parser.py\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_3",
+      "output": "written"
+    },
+    {
+      "type": "function_call",
+      "name": "execute_bash",
+      "call_id": "call_4",
+      "arguments": "{\"command\": \"pytest\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_4",
+      "output": "1 passed"
+    },
+    {
+      "role": "assistant",
+      "type": "message",
+      "id": "msg_2",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Test added and passing.",
+          "annotations": []
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "now compact the context"
+    },
+    {
+      "role": "assistant",
+      "content": "SUMMARY: added a parser regression test.",
+      "omniagents": {
+        "kind": "context_summary",
+        "version": 1
+      }
+    },
+    {
+      "role": "user",
+      "content": "thanks"
+    },
+    {
+      "type": "function_call",
+      "name": "mcp_docs__search",
+      "call_id": "call_5",
+      "arguments": "{\"q\": \"parser\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_5",
+      "output": "3 hits"
+    },
+    {
+      "role": "assistant",
+      "type": "message",
+      "id": "msg_3",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Done.",
+          "annotations": []
+        }
+      ]
+    }
+  ]
+}

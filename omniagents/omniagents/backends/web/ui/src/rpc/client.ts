@@ -767,6 +767,77 @@ export class RPCClient {
   async mcpAuthCancel(authId: string): Promise<boolean> {
     return this.call('mcp_auth_cancel', { auth_id: authId })
   }
+
+  // ---------------------------------------------------------------------
+  // Canonical conversation domain objects — see protocol.md
+  // §"Conversation Domain Objects". These reads serve the PERSISTED model:
+  // a completed conversation renders from `listItems()` alone, with no
+  // event-journal replay. Live turns still stream over the existing
+  // notifications; `item_id` correlation is derived, not transported.
+  // ---------------------------------------------------------------------
+
+  async getThread(threadId: string): Promise<ConversationThread> {
+    return this.call('get_thread', { thread_id: threadId }) as unknown as Promise<ConversationThread>
+  }
+
+  async listTurns(
+    threadId: string,
+    opts?: { limit?: number; cursor?: string; order?: 'asc' | 'desc' },
+  ): Promise<ConversationTurnPage> {
+    const params: Record<string, unknown> = { thread_id: threadId }
+    if (opts?.limit !== undefined) params.limit = opts.limit
+    if (opts?.cursor) params.cursor = opts.cursor
+    if (opts?.order) params.order = opts.order
+    return this.call('list_turns', params as unknown as RpcMethodMap['list_turns']['params']) as unknown as Promise<ConversationTurnPage>
+  }
+
+  async listItems(
+    threadId: string,
+    opts?: {
+      turnId?: string
+      kinds?: ConversationItemKind[]
+      limit?: number
+      cursor?: string
+      order?: 'asc' | 'desc'
+    },
+  ): Promise<ConversationItemPage> {
+    const params: Record<string, unknown> = { thread_id: threadId }
+    if (opts?.turnId) params.turn_id = opts.turnId
+    if (opts?.kinds) params.kinds = opts.kinds
+    if (opts?.limit !== undefined) params.limit = opts.limit
+    if (opts?.cursor) params.cursor = opts.cursor
+    if (opts?.order) params.order = opts.order
+    return this.call('list_items', params as unknown as RpcMethodMap['list_items']['params']) as unknown as Promise<ConversationItemPage>
+  }
+
+  async getItem(threadId: string, itemId: string): Promise<ConversationItem> {
+    return this.call('get_item', { thread_id: threadId, item_id: itemId }) as unknown as Promise<ConversationItem>
+  }
+
+  /**
+   * Walk every page of a thread's items. Pagination is keyset-based, so a
+   * thread that grows mid-walk neither skips nor repeats rows — which is
+   * the whole reason large histories are paged instead of returned whole.
+   */
+  async listAllItems(
+    threadId: string,
+    opts?: { turnId?: string; kinds?: ConversationItemKind[]; pageSize?: number },
+  ): Promise<ConversationItem[]> {
+    const out: ConversationItem[] = []
+    let cursor: string | undefined
+    for (;;) {
+      const page = await this.listItems(threadId, {
+        turnId: opts?.turnId,
+        kinds: opts?.kinds,
+        limit: opts?.pageSize,
+        cursor,
+      })
+      out.push(...page.items)
+      if (!page.has_more || !page.next_cursor) break
+      cursor = page.next_cursor
+    }
+    return out
+  }
   // ----- Workspace filesystem watch & chunked transfer (fs_*, experimental) -----
 
   async fsWatch(
@@ -1333,6 +1404,125 @@ export type QueueChangedPayload = {
   session_id: string
   depth: number
   items: QueuedMessage[]
+}
+
+// ---------------------------------------------------------------------
+// Canonical conversation domain objects (tkt_a-QF2Oc4OAsD)
+// ---------------------------------------------------------------------
+
+export type ConversationItemKind =
+  | 'user_message'
+  | 'agent_message'
+  | 'reasoning'
+  | 'tool_call'
+  | 'approval'
+  | 'elicitation'
+  | 'artifact'
+  | 'compaction'
+  /** Reserved, not yet produced — see protocol.md § Conversation Domain Objects. */
+  | 'plan'
+  | 'run_diff'
+
+/** Item lifecycle. Exactly one terminal state is ever reached. */
+export type ConversationItemStatus = 'started' | 'completed' | 'failed' | 'cancelled'
+
+export type ConversationTurnStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+
+export type ConversationToolKind =
+  | 'command'
+  | 'file'
+  | 'search'
+  | 'web'
+  | 'mcp'
+  | 'plan'
+  | 'artifact'
+  | 'worker'
+  | 'other'
+
+export type ConversationThread = {
+  thread_id: string
+  user_id: string | null
+  status: 'active' | 'archived'
+  title: string | null
+  created_at: number
+  updated_at: number
+  last_seq: number
+  turn_count: number
+  item_count: number
+  parent_thread_id: string | null
+  branched_from_item_id: string | null
+  usage: Record<string, unknown>
+  compaction: Record<string, unknown>
+  /** `recorded` = written live; `adapter` = projected from legacy history. */
+  source: 'recorded' | 'adapter'
+  /** When pre-existing history was materialized; null = not yet settled. */
+  projected_at: number | null
+  schema_version: number
+}
+
+export type ConversationTurn = {
+  turn_id: string
+  thread_id: string
+  ordinal: number
+  status: ConversationTurnStatus
+  created_at: number
+  updated_at: number
+  completed_at: number | null
+  prompt: string | null
+  prompt_role: string | null
+  end_reason: string | null
+  error: Record<string, unknown> | null
+  usage: Record<string, unknown>
+  model: string | null
+  model_ref: string | null
+  item_count: number
+  first_seq: number | null
+  last_seq: number | null
+  attempts: number
+  source: 'recorded' | 'adapter'
+  schema_version: number
+}
+
+/**
+ * `content` is an open record whose shape follows `kind` — the server keeps
+ * it open on purpose so a tool growing a field is not a protocol break.
+ */
+export type ConversationItem = {
+  item_id: string
+  thread_id: string
+  turn_id: string | null
+  /** Thread-monotonic ordinal. The ONLY ordering clients should rely on. */
+  seq: number
+  kind: ConversationItemKind
+  status: ConversationItemStatus
+  role: string | null
+  created_at: number
+  updated_at: number
+  completed_at: number | null
+  revision: number
+  content: Record<string, unknown>
+  source_ref: Record<string, unknown>
+  /** Exempt from run-end finalization; the owning subsystem lands it. */
+  long_lived: boolean
+  source: 'recorded' | 'adapter'
+  schema_version: number
+}
+
+export type ConversationTurnPage = {
+  thread_id: string
+  turns: ConversationTurn[]
+  next_cursor: string | null
+  has_more: boolean
+  total: number
+}
+
+export type ConversationItemPage = {
+  thread_id: string
+  turn_id: string | null
+  items: ConversationItem[]
+  next_cursor: string | null
+  has_more: boolean
+  total: number
 }
 
 // ----- Typed git operations (git_*, experimental) -----

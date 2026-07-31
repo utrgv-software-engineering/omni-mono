@@ -337,4 +337,10 @@ def temp_history_db(tmp_path, monkeypatch):
     for connection, _ in history_db._STORES.values():
         connection.close()
     history_db._STORES.clear()
+    # The canonical-conversation store caches a sqlite connection per
+    # resolved db path; closing it here keeps the per-test temp dir free of
+    # open handles (Windows) and the cache from growing across the suite.
+    from omniagents.core.conversation.store import reset_conversation_store
+
+    reset_conversation_store()
     gc.collect()

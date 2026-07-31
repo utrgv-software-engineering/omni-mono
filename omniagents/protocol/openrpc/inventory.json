@@ -125,7 +125,11 @@
       "mcp_reload_server",
       "mcp_auth_start",
       "mcp_auth_complete",
-      "mcp_auth_cancel"
+      "mcp_auth_cancel",
+      "get_thread",
+      "list_turns",
+      "list_items",
+      "get_item"
     ]
   },
   "router_mode": "generated_request_allowlist",

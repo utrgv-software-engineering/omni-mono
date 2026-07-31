@@ -193,6 +193,27 @@ export interface McpAuthCompleteParams {
 export interface McpAuthCancelParams {
   auth_id: string;
 }
+export interface GetThreadParams {
+  thread_id: string;
+}
+export interface ListTurnsParams {
+  thread_id: string;
+  limit?: number;
+  cursor?: string;
+  order?: string;
+}
+export interface ListItemsParams {
+  thread_id: string;
+  turn_id?: string;
+  kinds?: unknown[];
+  limit?: number;
+  cursor?: string;
+  order?: string;
+}
+export interface GetItemParams {
+  thread_id: string;
+  item_id: string;
+}
 export interface ForkSessionParams {
   session_id: string;
   new_session_id?: string;
@@ -473,6 +494,8 @@ export interface MessageOutputParams {
   run_id: string;
   session_id: string;
   content: string;
+  is_final?: boolean;
+  message_id?: string;
   seq?: number;
   stream_id?: string;
 }
@@ -703,6 +726,10 @@ export interface RpcMethodMap {
   "mcp_auth_start": { params: McpAuthStartParams; result: Record<string, unknown> };
   "mcp_auth_complete": { params: McpAuthCompleteParams; result: Record<string, unknown> };
   "mcp_auth_cancel": { params: McpAuthCancelParams; result: boolean };
+  "get_thread": { params: GetThreadParams; result: Record<string, unknown> };
+  "list_turns": { params: ListTurnsParams; result: Record<string, unknown> };
+  "list_items": { params: ListItemsParams; result: Record<string, unknown> };
+  "get_item": { params: GetItemParams; result: Record<string, unknown> };
   "fork_session": { params: ForkSessionParams; result: Record<string, unknown> };
   "set_session_hold": { params: SetSessionHoldParams; result: Record<string, unknown> };
   "queue_status": { params: QueueStatusParams; result: Record<string, unknown> };

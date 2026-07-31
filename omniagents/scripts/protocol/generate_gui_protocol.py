@@ -146,6 +146,10 @@ REQUIRED_FIELDS = {
     "mcp_call_tool": ("server_name", "tool_name", "session_id"),
     "mcp_get_prompt": ("server_name", "prompt_name"),
     "mcp_server_status_changed": ("server_name", "status"),
+    "get_thread": ("thread_id",),
+    "list_turns": ("thread_id",),
+    "list_items": ("thread_id",),
+    "get_item": ("thread_id", "item_id"),
     "queue_changed": ("session_id", "depth", "items"),
     "session_forked": ("session_id", "new_session_id"),
     "session_variables_changed": ("session_id", "changed", "variables"),
@@ -188,6 +192,7 @@ OPTIONAL_FIELDS = {
     "enqueue_notification": ("source", "safe_tool_overrides"),
     "report_incident": ("disable_tools", "disable_mcp_servers"),
     "export_session": ("redact",),
+    "message_output": ("is_final", "message_id"),
     "run_started": ("prompt", "prompt_role"),
     "run_status": ("attempt", "total", "next_delay"),
     "tool_result": ("metadata",),
@@ -256,6 +261,8 @@ OPTIONAL_FIELDS = {
     "fs_list": ("recursive",),
     "fs_download_read": ("offset", "length"),
     "fs_upload_open": ("sha256", "overwrite"),
+    "list_turns": ("limit", "cursor", "order"),
+    "list_items": ("turn_id", "kinds", "limit", "cursor", "order"),
     "git_list_repositories": ("path", "max_depth"),
     "git_status": ("include_untracked", "include_ignored", "paths"),
     "git_diff": ("mode", "paths", "context_lines", "from_rev", "to_rev"),
@@ -301,6 +308,7 @@ ARRAY_FIELDS = {
     "functions",
     "hunks",
     "items",
+    "kinds",
     "options",
     "paths",
 }
@@ -322,6 +330,7 @@ BOOLEAN_FIELDS = {
     "set_upstream",
     "include_archived",
     "include_hidden",
+    "is_final",
     "ok",
     "overwrite",
     "persist_response",
@@ -447,6 +456,10 @@ RESULT_TYPES = {
     "fs_upload_chunk": ("dict[str, Any]", "Record<string, unknown>"),
     "fs_upload_commit": ("dict[str, Any]", "Record<string, unknown>"),
     "fs_upload_abort": ("bool", "boolean"),
+    "get_thread": ("dict[str, Any]", "Record<string, unknown>"),
+    "list_turns": ("dict[str, Any]", "Record<string, unknown>"),
+    "list_items": ("dict[str, Any]", "Record<string, unknown>"),
+    "get_item": ("dict[str, Any]", "Record<string, unknown>"),
     "git_list_repositories": ("dict[str, Any]", "Record<string, unknown>"),
     "git_status": ("dict[str, Any]", "Record<string, unknown>"),
     "git_diff": ("dict[str, Any]", "Record<string, unknown>"),
@@ -883,6 +896,46 @@ PROTOCOL_ERRORS = {
             },
         },
     },
+    "ThreadNotFound": {
+        "code": -32080,
+        "message": "Unknown thread",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "thread_id"],
+            "properties": {
+                "kind": {"const": "thread_not_found"},
+                "thread_id": {"type": "string"},
+            },
+        },
+    },
+    "ConversationItemNotFound": {
+        "code": -32081,
+        "message": "Unknown conversation item",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "thread_id", "item_id"],
+            "properties": {
+                "kind": {"const": "item_not_found"},
+                "thread_id": {"type": "string"},
+                "item_id": {"type": "string"},
+            },
+        },
+    },
+    "ConversationCursorInvalid": {
+        "code": -32082,
+        "message": "Malformed pagination cursor",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "cursor"],
+            "properties": {
+                "kind": {"const": "cursor_invalid"},
+                "cursor": {"type": "string"},
+            },
+        },
+    },
     "GitRepositoryNotFound": {
         "code": -32090,
         "message": "Git repository not found",
@@ -1014,6 +1067,11 @@ PROTOCOL_ERRORS = {
         },
     },
 }
+
+
+# The canonical conversation surface (tkt_a-QF2Oc4OAsD): requests that can
+# raise the -32080..-32082 typed errors.
+CONVERSATION_METHODS = frozenset({"get_thread", "list_turns", "list_items", "get_item"})
 
 
 # The MCP management surface (tkt_kVK7F-iaL-OA): requests that can raise
@@ -1149,6 +1207,16 @@ def build_openrpc() -> dict:
                         {"$ref": "#/components/errors/FsWatchInvalid"},
                     ]
                 )
+            if operation.name in CONVERSATION_METHODS:
+                entry["errors"].append({"$ref": "#/components/errors/ThreadNotFound"})
+                if operation.name == "get_item":
+                    entry["errors"].append(
+                        {"$ref": "#/components/errors/ConversationItemNotFound"}
+                    )
+                if operation.name in ("list_turns", "list_items"):
+                    entry["errors"].append(
+                        {"$ref": "#/components/errors/ConversationCursorInvalid"}
+                    )
             if operation.name.startswith("git_"):
                 entry["errors"].extend(
                     [

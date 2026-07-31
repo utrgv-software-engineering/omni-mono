@@ -174,6 +174,50 @@
         },
         "message": "Capability mismatch"
       },
+      "ConversationCursorInvalid": {
+        "code": -32082,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "cursor": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "cursor_invalid"
+            }
+          },
+          "required": [
+            "kind",
+            "cursor"
+          ],
+          "type": "object"
+        },
+        "message": "Malformed pagination cursor"
+      },
+      "ConversationItemNotFound": {
+        "code": -32081,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "item_not_found"
+            },
+            "thread_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "item_id"
+          ],
+          "type": "object"
+        },
+        "message": "Unknown conversation item"
+      },
       "ElicitationAlreadyResolved": {
         "code": -32051,
         "data": {
@@ -829,6 +873,26 @@
           "type": "object"
         },
         "message": "Resync required"
+      },
+      "ThreadNotFound": {
+        "code": -32080,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "thread_not_found"
+            },
+            "thread_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id"
+          ],
+          "type": "object"
+        },
+        "message": "Unknown thread"
       },
       "TransportOverloaded": {
         "code": -32020,
@@ -3596,6 +3660,274 @@
       "x-omni-kind": "request",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/mcp_auth_cancel"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        }
+      ],
+      "name": "get_thread",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/get_thread/properties/thread_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "get_thread_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation get_thread",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/get_thread"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ConversationCursorInvalid"
+        }
+      ],
+      "name": "list_turns",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_turns/properties/thread_id"
+          }
+        },
+        {
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_turns/properties/limit"
+          }
+        },
+        {
+          "name": "cursor",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_turns/properties/cursor"
+          }
+        },
+        {
+          "name": "order",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_turns/properties/order"
+          }
+        }
+      ],
+      "result": {
+        "name": "list_turns_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation list_turns",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/list_turns"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ConversationCursorInvalid"
+        }
+      ],
+      "name": "list_items",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_items/properties/thread_id"
+          }
+        },
+        {
+          "name": "turn_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_items/properties/turn_id"
+          }
+        },
+        {
+          "name": "kinds",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_items/properties/kinds"
+          }
+        },
+        {
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_items/properties/limit"
+          }
+        },
+        {
+          "name": "cursor",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_items/properties/cursor"
+          }
+        },
+        {
+          "name": "order",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_items/properties/order"
+          }
+        }
+      ],
+      "result": {
+        "name": "list_items_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation list_items",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/list_items"
+      },
+      "x-omni-stability": "stable"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ConversationItemNotFound"
+        }
+      ],
+      "name": "get_item",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/get_item/properties/thread_id"
+          }
+        },
+        {
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/get_item/properties/item_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "get_item_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation get_item",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/get_item"
       },
       "x-omni-stability": "stable"
     },
@@ -7135,6 +7467,20 @@
           "required": true,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/message_output/properties/content"
+          }
+        },
+        {
+          "name": "is_final",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/message_output/properties/is_final"
+          }
+        },
+        {
+          "name": "message_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/message_output/properties/message_id"
           }
         },
         {

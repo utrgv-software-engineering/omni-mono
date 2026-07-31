@@ -66,6 +66,15 @@ STABLE_REQUESTS = (
     "mcp_auth_start",
     "mcp_auth_complete",
     "mcp_auth_cancel",
+    # Canonical conversation domain objects (tkt_a-QF2Oc4OAsD). Stable on
+    # entry — Desktop renders transcripts from this surface, and the
+    # deterministic-rendering guarantee is worthless if clients have to
+    # opt in via experimental_operations. Results are open records: item
+    # ``content`` shape follows the item kind and grows with the tools.
+    "get_thread",
+    "list_turns",
+    "list_items",
+    "get_item",
 )
 
 EXPERIMENTAL_REQUESTS = (

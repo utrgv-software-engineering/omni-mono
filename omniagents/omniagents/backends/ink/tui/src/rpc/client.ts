@@ -39,6 +39,13 @@ import type {
   SetVoiceModelResult,
 } from "../protocol/catalog.js";
 import { SessionReplayCoordinator, type ResumeResult } from "./replay.js";
+import type {
+  ConversationItem,
+  ConversationItemKind,
+  ConversationItemPage,
+  ConversationThread,
+  ConversationTurnPage,
+} from "../types/conversation.js";
 
 type InkNotificationMap = {
   [Event in ServerEvent as Event["method"]]: Event["params"];
@@ -924,6 +931,90 @@ export class RPCClient extends EventEmitter {
 
   async mcpAuthCancel(authId: string): Promise<boolean> {
     return this.call("mcp_auth_cancel", { auth_id: authId });
+  }
+
+  // ---------------------------------------------------------------------
+  // Canonical conversation domain objects — see protocol.md
+  // §"Conversation Domain Objects". Reads serve the PERSISTED model: a
+  // completed conversation renders from `listItems()` alone, with no
+  // event-journal replay.
+  // ---------------------------------------------------------------------
+
+  async getThread(threadId: string): Promise<ConversationThread> {
+    return this.call("get_thread", {
+      thread_id: threadId,
+    }) as unknown as Promise<ConversationThread>;
+  }
+
+  async listTurns(
+    threadId: string,
+    opts?: { limit?: number; cursor?: string; order?: "asc" | "desc" },
+  ): Promise<ConversationTurnPage> {
+    const params: Record<string, unknown> = { thread_id: threadId };
+    if (opts?.limit !== undefined) params.limit = opts.limit;
+    if (opts?.cursor) params.cursor = opts.cursor;
+    if (opts?.order) params.order = opts.order;
+    return this.call(
+      "list_turns",
+      params as unknown as RpcMethodMap["list_turns"]["params"],
+    ) as unknown as Promise<ConversationTurnPage>;
+  }
+
+  async listItems(
+    threadId: string,
+    opts?: {
+      turnId?: string;
+      kinds?: ConversationItemKind[];
+      limit?: number;
+      cursor?: string;
+      order?: "asc" | "desc";
+    },
+  ): Promise<ConversationItemPage> {
+    const params: Record<string, unknown> = { thread_id: threadId };
+    if (opts?.turnId) params.turn_id = opts.turnId;
+    if (opts?.kinds) params.kinds = opts.kinds;
+    if (opts?.limit !== undefined) params.limit = opts.limit;
+    if (opts?.cursor) params.cursor = opts.cursor;
+    if (opts?.order) params.order = opts.order;
+    return this.call(
+      "list_items",
+      params as unknown as RpcMethodMap["list_items"]["params"],
+    ) as unknown as Promise<ConversationItemPage>;
+  }
+
+  async getItem(threadId: string, itemId: string): Promise<ConversationItem> {
+    return this.call("get_item", {
+      thread_id: threadId,
+      item_id: itemId,
+    }) as unknown as Promise<ConversationItem>;
+  }
+
+  /**
+   * Walk every page of a thread's items. Keyset pagination means a thread
+   * that grows mid-walk neither skips nor repeats rows.
+   */
+  async listAllItems(
+    threadId: string,
+    opts?: {
+      turnId?: string;
+      kinds?: ConversationItemKind[];
+      pageSize?: number;
+    },
+  ): Promise<ConversationItem[]> {
+    const out: ConversationItem[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await this.listItems(threadId, {
+        turnId: opts?.turnId,
+        kinds: opts?.kinds,
+        limit: opts?.pageSize,
+        cursor,
+      });
+      out.push(...page.items);
+      if (!page.has_more || !page.next_cursor) break;
+      cursor = page.next_cursor;
+    }
+    return out;
   }
 
   // ----- Workspace filesystem watch & chunked transfer (fs_*, experimental) -----

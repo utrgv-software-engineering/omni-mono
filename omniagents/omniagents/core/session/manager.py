@@ -596,6 +596,71 @@ def _apply_legacy_compaction_window(history: list[dict]) -> list[dict]:
     return history_since_last_checkpoint(history, include_checkpoint=True)
 
 
+def _is_reasoning(message: Any) -> bool:
+    return isinstance(message, dict) and message.get("type") == "reasoning"
+
+
+def _materialize_conversation_thread(session: Any) -> Any:
+    """Ensure the canonical thread exists before a history row is written.
+
+    Returns the recorder so the caller can reuse it. After the first call
+    for a session this is a single indexed lookup that returns early.
+
+    Suppressed while :meth:`SessionManager.fork_session` replays the
+    parent's rows into a new session, for two reasons.
+
+    The ordinary one: the fork is materialized by
+    ``ConversationRecorder.record_fork`` from the parent's DOMAIN rows,
+    which are strictly richer than a projection of the same history
+    (approvals, artifacts and elicitations never reach the history table).
+    Claiming the child here would pre-empt that copy with the poorer form.
+
+    The one that actually bites: ``AgentService.fork_session`` broadcasts
+    ``session_forked`` inside a bare ``try/except Exception: pass``, so
+    ``record_fork`` **not running at all** is a reachable path. Without this
+    exemption the first replayed row would claim the child and stamp
+    ``projected_at`` while its history is still empty — and ``backfill_thread``
+    then refuses the thread forever, leaving a permanently blank transcript:
+    the original fork defect, resurrected through the failure window. With
+    the exemption the loop leaves no thread row behind, so a later read
+    projects the copied history and the fork is readable either way.
+    """
+    if getattr(session, "_skip_conversation_materialization", False):
+        return None
+    try:
+        from omniagents.core.conversation.recorder import ensure_conversation_thread
+
+        return ensure_conversation_thread(session)
+    except Exception:
+        Debug.log(
+            f"[session] conversation thread not materialized for "
+            f"{getattr(session, 'id', None)!r}"
+        )
+        return None
+
+
+def _record_reasoning_item(session: Any, recorder: Any, message: dict) -> None:
+    """Promote a persisted reasoning block into a canonical Item.
+
+    Reasoning is the one conversation element with no notification: the SDK
+    writes it straight to history, so it never reaches the broadcast
+    chokepoint the domain recorder listens on. Without this hook a recorded
+    thread would carry no reasoning while a projected one does — the two
+    producers of the same read surface disagreeing about the same
+    conversation.
+    """
+    if recorder is None or not _is_reasoning(message):
+        return
+    try:
+        recorder.record_reasoning(
+            session.id,
+            run_id=getattr(session, "active_run_id", None),
+            item=message,
+        )
+    except Exception:
+        Debug.log(f"[session] reasoning item not recorded for {session.id!r}")
+
+
 class Session:  # noqa: D101
     """Lightweight container for a client session.
 
@@ -682,6 +747,9 @@ class Session:  # noqa: D101
             if session_id
             else False
         )
+        # Set only while SessionManager.fork_session replays a parent's
+        # rows into this session — see _materialize_conversation_thread.
+        self._skip_conversation_materialization: bool = False
         self.always_allow_tools: set[str] = set()
         self.always_allow_patterns: set[str] = set()
         self.always_allow_mcp_tools: set[tuple[str, str]] = set()
@@ -766,6 +834,16 @@ class Session:  # noqa: D101
 
     def append_message(self, message: dict) -> None:
         """Add a message to this session and persist it."""
+        # Materialize the canonical thread BEFORE the row lands in history.
+        #
+        # Thread creation projects whatever history already exists, so a row
+        # written first would be projected AND separately recorded by
+        # whoever wrote it — one fact, two items. That bug was found and
+        # fixed four separate times (mid-run user messages, compaction
+        # checkpoints, reasoning blocks, assistant-role wakeups) before it
+        # was clear the guard belongs HERE, at the single point every
+        # history write passes through, rather than at each call site.
+        recorder = _materialize_conversation_thread(self)
         self.history.append(message)
         db_append_message(
             self.id,
@@ -773,6 +851,7 @@ class Session:  # noqa: D101
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
         )
+        _record_reasoning_item(self, recorder, message)
 
     # ------------------------------------------------------------------
     # Session variables — mutable, persisted, broadcast-on-change dict
@@ -1166,11 +1245,18 @@ class SessionManager:  # noqa: D101
             agent_slug=self._agent_slug,
             user_id=new_session.user_id,
         )
-        for msg in new_history:
-            try:
-                new_session.append_message(dict(msg))
-            except Exception:
-                continue
+        # See _materialize_conversation_thread: record_fork copies the
+        # parent's domain rows, so the child must NOT be materialized from
+        # its own half-written history mid-loop.
+        new_session._skip_conversation_materialization = True
+        try:
+            for msg in new_history:
+                try:
+                    new_session.append_message(dict(msg))
+                except Exception:
+                    continue
+        finally:
+            new_session._skip_conversation_materialization = False
         new_session.context = context if context is not None else source_session.context
         new_session.variables = (
             variables if variables is not None else source_session.variables

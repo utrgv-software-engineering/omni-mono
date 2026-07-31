@@ -907,6 +907,23 @@
       "type": "object",
       "x-omni-stability": "experimental"
     },
+    "get_item": {
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id",
+        "item_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "get_model": {
       "additionalProperties": false,
       "properties": {
@@ -929,6 +946,19 @@
       },
       "required": [
         "session_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "get_thread": {
+      "additionalProperties": false,
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id"
       ],
       "type": "object",
       "x-omni-stability": "stable"
@@ -1515,6 +1545,35 @@
       ],
       "type": "object"
     },
+    "list_items": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "kinds": {
+          "items": {},
+          "type": "array"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "order": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
     "list_models": {
       "additionalProperties": false,
       "properties": {
@@ -1566,6 +1625,28 @@
           "type": "integer"
         }
       },
+      "type": "object",
+      "x-omni-stability": "stable"
+    },
+    "list_turns": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "order": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id"
+      ],
       "type": "object",
       "x-omni-stability": "stable"
     },
@@ -1908,6 +1989,12 @@
       "additionalProperties": false,
       "properties": {
         "content": {
+          "type": "string"
+        },
+        "is_final": {
+          "type": "boolean"
+        },
+        "message_id": {
           "type": "string"
         },
         "run_id": {
@@ -2753,6 +2840,18 @@
     },
     {
       "$ref": "#/$defs/mcp_auth_cancel"
+    },
+    {
+      "$ref": "#/$defs/get_thread"
+    },
+    {
+      "$ref": "#/$defs/list_turns"
+    },
+    {
+      "$ref": "#/$defs/list_items"
+    },
+    {
+      "$ref": "#/$defs/get_item"
     },
     {
       "$ref": "#/$defs/fork_session"

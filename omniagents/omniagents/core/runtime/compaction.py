@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from typing import Any, Awaitable, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 # Two compaction layers coexist deliberately:
 # - SDK-native (``core/session/compaction.py``): server-side trimming on
@@ -515,8 +518,47 @@ async def run_checkpoint_compaction(
         ),
         "omniagents": {"kind": CHECKPOINT_KIND, "version": 1},
     }
+    recorder = _conversation_recorder(session)
     session.append_message(summary_item)
+    _record_checkpoint_item(session, recorder, summary_item)
     return summary_item
+
+
+def _conversation_recorder(session: Any) -> Any:
+    """Materialize the canonical thread BEFORE the checkpoint row is
+    appended to history — otherwise the creation-time projection sees the
+    checkpoint and records it, and the explicit call below records it
+    again."""
+    try:
+        from omniagents.core.conversation.recorder import ensure_conversation_thread
+
+        return ensure_conversation_thread(session)
+    except Exception:
+        logger.exception("conversation thread not materialized for compaction")
+        return None
+
+
+def _record_checkpoint_item(session: Any, recorder: Any, summary_item: dict) -> None:
+    """Promote the checkpoint into a canonical compaction Item.
+
+    Compaction writes straight to history without broadcasting, so it never
+    reaches the notification chokepoint the domain recorder listens on. The
+    recorded item also moves the thread's compaction floor, which is how a
+    client knows which items are still in the model's live context.
+    Best-effort: a domain-store fault must not fail a compaction.
+    """
+    if recorder is None:
+        return
+    try:
+        recorder.record_compaction_checkpoint(
+            session.id,
+            summary=str(summary_item.get("content") or ""),
+            kind=CHECKPOINT_KIND,
+            version=1,
+            run_id=getattr(session, "active_run_id", None),
+        )
+    except Exception:
+        logger.exception("compaction checkpoint not recorded as a domain item")
 
 
 def make_auto_compact_error_hook(*, state_key: str, command: str = "compact"):

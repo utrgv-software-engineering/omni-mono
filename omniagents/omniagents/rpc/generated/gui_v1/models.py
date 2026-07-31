@@ -502,6 +502,51 @@ class McpAuthCancelResult(RootModel[bool]):
     pass
 
 
+class GetThreadParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+
+
+class GetThreadResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class ListTurnsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    limit: int | None = None
+    cursor: str | None = None
+    order: str | None = None
+
+
+class ListTurnsResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class ListItemsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    turn_id: str | None = None
+    kinds: list[Any] | None = None
+    limit: int | None = None
+    cursor: str | None = None
+    order: str | None = None
+
+
+class ListItemsResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GetItemParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    item_id: str
+
+
+class GetItemResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class ForkSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -1053,6 +1098,8 @@ class MessageOutputParams(BaseModel):
     run_id: str
     session_id: str
     content: str
+    is_final: bool | None = None
+    message_id: str | None = None
     seq: int | None = None
     stream_id: str | None = None
 
@@ -1322,6 +1369,10 @@ CLIENT_REQUEST_MODELS = {
     "mcp_auth_start": McpAuthStartParams,
     "mcp_auth_complete": McpAuthCompleteParams,
     "mcp_auth_cancel": McpAuthCancelParams,
+    "get_thread": GetThreadParams,
+    "list_turns": ListTurnsParams,
+    "list_items": ListItemsParams,
+    "get_item": GetItemParams,
     "fork_session": ForkSessionParams,
     "set_session_hold": SetSessionHoldParams,
     "queue_status": QueueStatusParams,
@@ -1412,6 +1463,10 @@ CLIENT_RESULT_MODELS = {
     "mcp_auth_start": McpAuthStartResult,
     "mcp_auth_complete": McpAuthCompleteResult,
     "mcp_auth_cancel": McpAuthCancelResult,
+    "get_thread": GetThreadResult,
+    "list_turns": ListTurnsResult,
+    "list_items": ListItemsResult,
+    "get_item": GetItemResult,
     "fork_session": ForkSessionResult,
     "set_session_hold": SetSessionHoldResult,
     "queue_status": QueueStatusResult,
@@ -1530,6 +1585,10 @@ STABLE_REQUESTS = frozenset(
         "mcp_auth_start",
         "mcp_auth_complete",
         "mcp_auth_cancel",
+        "get_thread",
+        "list_turns",
+        "list_items",
+        "get_item",
     ]
 )
 EXPERIMENTAL_REQUESTS = frozenset(

@@ -331,6 +331,19 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "fs_upload_chunk",
         "fs_upload_commit",
         "fs_upload_abort",
+        # Canonical conversation domain objects (tkt_a-QF2Oc4OAsD). A
+        # thread IS a session (``thread_id == session_id``) and its turns
+        # and items are that session's transcript — the most
+        # privacy-sensitive data the protocol carries. Every method names a
+        # ``thread_id``, so ownership of the session gates the read and a
+        # cross-user attempt is refused with -32014. There is deliberately
+        # no globally-safe listing counterpart: ``list_sessions`` already
+        # covers self-scoped discovery, and adding a second global surface
+        # over transcripts would widen the blast radius for nothing.
+        "get_thread",
+        "list_turns",
+        "list_items",
+        "get_item",
         # Typed git operations (tkt_l_l0lUi4A5V2): a repository is
         # addressed relative to a session's workspace/sandbox, so every
         # git_* method names a session_id and is gated on session

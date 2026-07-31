@@ -301,6 +301,7 @@ class JsonRpcEndpoint:
             return
         from omniagents.core.agents.elicitation import ElicitationError
         from omniagents.core.agents.mcp_admin import McpRpcError
+        from omniagents.core.conversation.service import ConversationRpcError
         from omniagents.core.providers.accounts import AccountRpcError
         from omniagents.core.session.event_log import ResyncRequiredError
         from omniagents.rpc.filesystem import FilesystemRpcError
@@ -314,6 +315,7 @@ class JsonRpcEndpoint:
                 ElicitationError,
                 McpRpcError,
                 FilesystemRpcError,
+                ConversationRpcError,
                 GitRpcError,
             ),
         ):

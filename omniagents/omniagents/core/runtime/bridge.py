@@ -198,12 +198,20 @@ def _stream_event_payload(item, run_id: str, *, session_id: str, session=None):
         return "tool_result", payload
     elif item.type == "message_output_item":
         text = ItemHelpers.text_message_output(item)
-        return "message_output", {
+        # The model's own message id, when the provider minted one. Clients
+        # use it to correlate this event with the canonical conversation
+        # item without inventing an ordinal the server would have to agree
+        # with (see protocol.md § Conversation Domain Objects).
+        message_id = getattr(getattr(item, "raw_item", None), "id", None)
+        payload = {
             "run_id": run_id,
             "session_id": session_id,
             "content": text,
             "is_final": False,
         }
+        if isinstance(message_id, str) and message_id:
+            payload["message_id"] = message_id
+        return "message_output", payload
     return None, None
 
 
