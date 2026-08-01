@@ -959,9 +959,7 @@ PROTOCOL_ERRORS = {
             "properties": {
                 "kind": {"const": "fs_read_only"},
                 "path": {"type": "string"},
-                "reason": {
-                    "enum": ["source_read_only", "backend_not_writable"]
-                },
+                "reason": {"enum": ["source_read_only", "backend_not_writable"]},
             },
         },
     },
@@ -1931,6 +1929,7 @@ def build_pinned_tool_outputs(schema: dict) -> tuple[bytes, bytes]:
                 "--output-model-type",
                 "pydantic_v2.BaseModel",
                 "--disable-timestamp",
+                "--use-annotated",
                 "--output",
                 str(python_path),
             ],
@@ -2001,6 +2000,7 @@ def render() -> dict[Path, bytes]:
                 "options": [
                     "--output-model-type=pydantic_v2.BaseModel",
                     "--disable-timestamp",
+                    "--use-annotated",
                 ],
             },
             "typescript": {

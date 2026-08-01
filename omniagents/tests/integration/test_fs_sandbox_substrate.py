@@ -187,6 +187,7 @@ async def test_list_dir_raises_os_errors_not_transport_errors(populated):
 @pytest.mark.asyncio
 async def test_fs_list_returns_workspace_relative_entries(populated):
     listing = await _manager(populated).list("s1", ".", recursive=True)
+    assert listing["writable"] is True
     by_path = {entry["path"]: entry for entry in listing["entries"]}
     # Recursion happened (sub was descended) and no absolute path leaked.
     assert "sub/n.txt" in by_path
@@ -196,6 +197,7 @@ async def test_fs_list_returns_workspace_relative_entries(populated):
         "type": "file",
         "size": 6,
         "mtime": None,
+        "writable": True,
     }
     assert by_path["sub"]["type"] == "directory"
     # The symlinked directory is listed but never descended into: nothing

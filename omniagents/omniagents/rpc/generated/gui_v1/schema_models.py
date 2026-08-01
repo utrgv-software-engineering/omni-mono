@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, RootModel, constr
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 
 class AccountChanged(BaseModel):
@@ -396,11 +396,11 @@ class FsUploadOpen(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    expected_sha256: constr(pattern=r"^[0-9a-fA-F]{64}$") | None = None
+    expected_sha256: Annotated[str | None, Field(pattern="^[0-9a-fA-F]{64}$")] = None
     overwrite: bool | None = None
     path: str
     session_id: str
-    sha256: constr(pattern=r"^[0-9a-fA-F]{64}$") | None = None
+    sha256: Annotated[str | None, Field(pattern="^[0-9a-fA-F]{64}$")] = None
     size: int
 
 

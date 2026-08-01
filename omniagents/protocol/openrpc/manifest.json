@@ -16,7 +16,8 @@
       "name": "datamodel-code-generator",
       "options": [
         "--output-model-type=pydantic_v2.BaseModel",
-        "--disable-timestamp"
+        "--disable-timestamp",
+        "--use-annotated"
       ],
       "version": "0.71.0"
     },
