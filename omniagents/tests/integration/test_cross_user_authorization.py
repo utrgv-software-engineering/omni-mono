@@ -18,6 +18,7 @@ from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.runtime import bridge as runner_bridge
 from omniagents.rpc.auth import RPC_ERROR_AUTHORIZATION_DENIED
+from omniagents.rpc.base import RpcMethodsBase
 from agents import Agent
 
 ALICE = {"Authorization": "Bearer alice-token"}
@@ -410,6 +411,55 @@ def test_realtime_sessions_bound_to_principal():
         await service.authorize_rpc(bob, "start_session", {"session_id": "rt-2"})
 
     asyncio.run(check())
+
+
+def test_realtime_notifications_stay_on_the_principal_s_channel():
+    """Concurrent requests retain the channel set in their own task context.
+
+    Realtime methods are shared by every connection.  This forces two tasks
+    to set different channels before either reads the value; an ordinary
+    instance attribute would make both calls observe the last writer.
+    """
+
+    class Channel:
+        def __init__(self, principal):
+            self.principal = type("Principal", (), {"user_id": principal})()
+            self.notifications = []
+
+        async def async_call(self, method, params):
+            self.notifications.append({"method": method, "params": params})
+
+    service = RpcMethodsBase()
+    alice = Channel("alice")
+    bob = Channel("bob")
+
+    async def check():
+        ready = 0
+        release = asyncio.Event()
+
+        async def request(channel):
+            nonlocal ready
+            service.channel = channel
+            ready += 1
+            if ready == 2:
+                release.set()
+            await release.wait()
+            await asyncio.sleep(0)
+            principal = service.channel.principal.user_id
+            await service.channel.async_call(
+                "principal_probe", {"principal": principal}
+            )
+            return principal
+
+        assert await asyncio.gather(request(alice), request(bob)) == ["alice", "bob"]
+
+    asyncio.run(check())
+    assert alice.notifications == [
+        {"method": "principal_probe", "params": {"principal": "alice"}}
+    ]
+    assert bob.notifications == [
+        {"method": "principal_probe", "params": {"principal": "bob"}}
+    ]
 
 
 # ---------------------------------------------------------------------------

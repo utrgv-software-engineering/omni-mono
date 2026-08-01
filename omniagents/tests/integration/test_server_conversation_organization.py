@@ -427,6 +427,33 @@ def test_descendants_expose_the_branch_relationship(single_user_context):
         cm.__exit__(None, None, None)
 
 
+def test_supported_forks_preserve_one_owner_through_the_whole_tree(context):
+    """The supported fork primitive cannot manufacture mixed-owner ancestry."""
+    from omniagents.core.providers.auth.base import UserIdentity
+    from omniagents.rpc.auth import AuthorizationDenied
+
+    manager = context.service._session_manager
+    root = manager.get_or_create("owner-root", user_id="alice")
+    child = manager.fork_session(root, new_session_id="owner-child")
+    grandchild = manager.fork_session(child, new_session_id="owner-grandchild")
+
+    assert [session.user_id for session in (root, child, grandchild)] == [
+        "alice",
+        "alice",
+        "alice",
+    ]
+
+    async def check_cross_owner_denial():
+        bob = UserIdentity(user_id="bob")
+        for session in (root, child, grandchild):
+            with pytest.raises(AuthorizationDenied):
+                await context.service.authorize_rpc(
+                    bob, "fork_session", {"session_id": session.id}
+                )
+
+    asyncio.run(check_cross_owner_denial())
+
+
 def test_forking_a_running_turn_is_refused(single_user_context):
     cm, rpc = connect(single_user_context)
     try:
