@@ -105,11 +105,19 @@ class PerUserIdentityAssertion(UpstreamCredential):
 
     preserves_identity = True
 
-    def __init__(self, *, signing_secret: str, audience: str) -> None:
-        from omniagents.rpc.identity_assertion import validate_signing_secret
+    def __init__(
+        self, *, signing_secret: str, audience: str, allowed_roles: Any = None
+    ) -> None:
+        from omniagents.rpc.identity_assertion import (
+            normalize_role_allowlist,
+            validate_signing_secret,
+        )
 
         self._secret = validate_signing_secret(signing_secret)
         self._audience = audience
+        self._allowed_roles = normalize_role_allowlist(
+            allowed_roles, field_name="remote_agent.identity_allowed_roles"
+        )
 
     def headers_for(self, principal: "UserIdentity | None") -> Dict[str, str]:
         from omniagents.rpc.identity_assertion import mint_identity_assertion
@@ -120,7 +128,10 @@ class PerUserIdentityAssertion(UpstreamCredential):
             # principal we did not authenticate.
             raise ValueError("No authenticated principal to assert upstream")
         assertion = mint_identity_assertion(
-            principal, secret=self._secret, audience=self._audience
+            principal,
+            secret=self._secret,
+            audience=self._audience,
+            allowed_roles=self._allowed_roles,
         )
         return {"Authorization": f"Bearer {assertion}"}
 
@@ -255,7 +266,11 @@ def _resolve_upstream_credential(
             getattr(spec, "remote_identity_audience", None)
             or DEFAULT_ASSERTION_AUDIENCE
         )
-        return PerUserIdentityAssertion(signing_secret=secret, audience=audience)
+        return PerUserIdentityAssertion(
+            signing_secret=secret,
+            audience=audience,
+            allowed_roles=getattr(spec, "remote_identity_allowed_roles", None),
+        )
 
     if authenticator.identifies_principals:
         raise ValueError(

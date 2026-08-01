@@ -2786,10 +2786,11 @@ with `TransportOverloadedError`.
 ### Listing
 
 - `fs_list {session_id, path, recursive?}` →
-  `{path, entries: [{path, type, size, mtime}], truncated}` — the rescan
+  `{path, writable, entries: [{path, type, size, mtime, writable}], truncated}` — the rescan
   primitive after `fs_rescan_required` and after reconnect. `truncated`
-  is set when the listing hit the scan limit.
-- `fs_stat {session_id, path}` → `{path, type, size, mtime, mime}`.
+  is set when the listing hit the scan limit. `writable` combines launcher
+  source policy with the backend's effective permissions.
+- `fs_stat {session_id, path}` → `{path, type, size, mtime, mime, writable}`.
 
 ### Chunked transfers
 
@@ -2823,8 +2824,17 @@ flow control is inherent and cancellation is just closing the transfer:
 
 Uploads are sequential staged chunks, committed atomically:
 
-- `fs_upload_open {session_id, path, size, sha256?, overwrite?}` →
+- `fs_upload_open {session_id, path, size, sha256?, expected_sha256?, overwrite?}` →
   `{transfer_id, session_id, path, chunk_size}`.
+  `sha256` describes the new bytes. `expected_sha256` is a separate
+  64-hex precondition on the file currently at `path`: commit requires that
+  target to exist and match, otherwise it returns `-32062 reason:
+  "precondition_failed"` without modifying the target. Supplying the
+  precondition is itself explicit replacement intent; `overwrite` is not
+  additionally required. Omitting it preserves the legacy `overwrite`
+  behavior. Source/backend writability is checked before a transfer is
+  allocated and before target-existence or expected-content details are
+  disclosed; refusal is `-32064 fs_read_only`.
 - `fs_upload_chunk {session_id, transfer_id, offset, data}` →
   `{transfer_id, received, size}`. `offset` must equal the bytes
   received so far (`-32062 reason: "offset_mismatch"` otherwise), so a
@@ -2833,7 +2843,14 @@ Uploads are sequential staged chunks, committed atomically:
   Verifies the declared size and (when supplied) sha256 against the
   received bytes (`-32062 reason: "checksum_mismatch"`), then moves the
   staged content into place (`os.replace` on host; one substrate write
-  elsewhere).
+  elsewhere). Commits from this server are serialized by canonical
+  session/workspace target, so two RPC writers using the same expected
+  digest cannot both succeed. Writability is rechecked inside that lock,
+  immediately before the expected-content check and publish, so a policy or
+  permission change while chunks are in flight fails closed without exposing
+  target precondition state. External shell/process writers do not take
+  this lock and can race the final check/replacement; portable strict CAS
+  against those writers is not promised.
 - `fs_upload_abort {session_id, transfer_id}` → `true` — cancellation
   mid-transfer discards the staging file.
 
@@ -2854,6 +2871,7 @@ fs_transfer_invalid`.
 | -32061 | `fs_not_found`        | missing file/directory, unknown session workspace    |
 | -32062 | `fs_transfer_invalid` | unknown transfer, bad offset/length, size/checksum mismatch, payload above the 512 MiB transfer cap, target exists, transfer limit |
 | -32063 | `fs_watch_invalid`    | unknown watch, watch limit, tree too large           |
+| -32064 | `fs_read_only`        | launcher source policy or backend denies mutation (`source_read_only` / `backend_not_writable`) |
 
 ## Typed Git Operations & Interactive Diff (`git_*` methods, experimental)
 

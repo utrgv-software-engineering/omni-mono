@@ -76,7 +76,13 @@ def test_set_sources_accepts_typed_descriptors():
         [SourceDescriptor(kind="git-remote", mount_name="lib", repo_url="u", ref="r")]
     )
     assert serve_state.get_sources() == [
-        {"kind": "git-remote", "mountName": "lib", "repoUrl": "u", "ref": "r"}
+        {
+            "kind": "git-remote",
+            "mountName": "lib",
+            "writable": True,
+            "repoUrl": "u",
+            "ref": "r",
+        }
     ]
 
 
@@ -100,8 +106,25 @@ def test_get_source_descriptors_parses_published_dicts():
 
 
 def test_source_descriptor_dict_round_trip():
-    d = {"kind": "local", "mountName": "app", "path": "/host/app"}
+    d = {
+        "kind": "local",
+        "mountName": "app",
+        "writable": False,
+        "path": "/host/app",
+    }
     assert SourceDescriptor.from_dict(d).to_dict() == d
+
+
+@pytest.mark.parametrize(
+    "raw", [{}, {"writable": None}, {"writable": 1}, {"writable": "false"}]
+)
+def test_source_descriptor_writable_defaults_true_for_missing_or_junk(raw):
+    assert SourceDescriptor.from_dict(raw).writable is True
+
+
+def test_source_descriptor_writable_respects_explicit_boolean():
+    assert SourceDescriptor.from_dict({"writable": True}).writable is True
+    assert SourceDescriptor.from_dict({"writable": False}).writable is False
 
 
 # ----------------------------- switch context ---------------------------- #

@@ -911,10 +911,11 @@ export class RPCClient {
     sessionId: string,
     path: string,
     size: number,
-    opts?: { sha256?: string; overwrite?: boolean },
+    opts?: { sha256?: string; expectedSha256?: string; overwrite?: boolean },
   ): Promise<FsUploadOpenResult> {
     const params: Record<string, unknown> = { session_id: sessionId, path, size }
     if (opts?.sha256 !== undefined) params.sha256 = opts.sha256
+    if (opts?.expectedSha256 !== undefined) params.expected_sha256 = opts.expectedSha256
     if (opts?.overwrite !== undefined) params.overwrite = opts.overwrite
     return this.call('fs_upload_open', params as unknown as RpcMethodMap['fs_upload_open']['params']) as Promise<FsUploadOpenResult>
   }

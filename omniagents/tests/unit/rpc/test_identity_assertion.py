@@ -11,10 +11,13 @@ from omniagents.rpc.identity_assertion import (
     ASSERTION_VERSION,
     DEFAULT_ASSERTION_AUDIENCE,
     MAX_ASSERTION_TTL_SECONDS,
+    MAX_ASSERTED_ROLES,
+    MAX_ASSERTED_ROLE_LENGTH,
     InvalidIdentityAssertion,
     _b64u_decode,
     _b64u_encode,
     mint_identity_assertion,
+    normalize_role_allowlist,
     validate_signing_secret,
     verify_identity_assertion,
 )
@@ -35,7 +38,9 @@ def _identity() -> UserIdentity:
 
 def test_round_trip_preserves_the_whole_principal():
     verified = verify_identity_assertion(
-        mint_identity_assertion(_identity(), secret=SECRET), secret=SECRET
+        mint_identity_assertion(_identity(), secret=SECRET, allowed_roles=["admin"]),
+        secret=SECRET,
+        allowed_roles=["admin"],
     )
     identity = verified.identity
     assert identity.user_id == "alice"
@@ -44,6 +49,86 @@ def test_round_trip_preserves_the_whole_principal():
     assert identity.roles == ["admin"]
     assert identity.claims == {"tid": "contoso"}
     assert verified.jti
+
+
+def test_roles_are_fail_closed_and_require_symmetric_allowlists(caplog, monkeypatch):
+    monkeypatch.setattr("omniagents.rpc.identity_assertion._next_dropped_role_log", 0.0)
+    token = mint_identity_assertion(_identity(), secret=SECRET)
+    mint_identity_assertion(_identity(), secret=SECRET)
+    verified = verify_identity_assertion(token, secret=SECRET)
+    assert verified.identity.roles == []
+    assert caplog.text.count("Dropped roles") == 1
+
+    token = mint_identity_assertion(_identity(), secret=SECRET, allowed_roles=["admin"])
+    with pytest.raises(InvalidIdentityAssertion, match="unauthorized role"):
+        verify_identity_assertion(token, secret=SECRET)
+
+    verified = verify_identity_assertion(token, secret=SECRET, allowed_roles=["admin"])
+    assert verified.identity.roles == ["admin"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_assertion_provider_enforces_its_role_allowlist():
+    from omniagents.core.providers.auth.proxy_assertion import (
+        ProxyAssertionAuthProvider,
+    )
+
+    token = mint_identity_assertion(_identity(), secret=SECRET, allowed_roles=["admin"])
+    default_provider = ProxyAssertionAuthProvider({"signing_secret": SECRET})
+    rejected = await default_provider.authenticate(token)
+    assert rejected.authenticated is False
+    assert "unauthorized role" in rejected.error
+
+    permitted_provider = ProxyAssertionAuthProvider(
+        {"signing_secret": SECRET, "allowed_roles": ["admin", "admin"]}
+    )
+    accepted = await permitted_provider.authenticate(token)
+    assert accepted.authenticated is True
+    assert accepted.identity.roles == ["admin"]
+
+
+def test_role_allowlists_are_exact_case_sensitive_and_deduplicated():
+    assert normalize_role_allowlist(["admin", "Admin", "admin"]) == [
+        "admin",
+        "Admin",
+    ]
+    identity = UserIdentity(user_id="alice", roles=["admin", "Admin", "admin"])
+    token = mint_identity_assertion(
+        identity, secret=SECRET, allowed_roles=["admin", "admin"]
+    )
+    verified = verify_identity_assertion(token, secret=SECRET, allowed_roles=["admin"])
+    assert verified.identity.roles == ["admin"]
+
+
+@pytest.mark.parametrize(
+    "roles",
+    [
+        "admin",
+        [""],
+        [1],
+        ["x" * (MAX_ASSERTED_ROLE_LENGTH + 1)],
+        [f"role-{index}" for index in range(MAX_ASSERTED_ROLES + 1)],
+    ],
+)
+def test_invalid_role_allowlists_are_rejected(roles):
+    with pytest.raises(ValueError):
+        normalize_role_allowlist(roles)
+
+
+def test_verifier_rejects_malformed_or_oversized_asserted_roles():
+    for roles in (
+        "admin",
+        [1],
+        ["x" * (MAX_ASSERTED_ROLE_LENGTH + 1)],
+        [f"role-{index}" for index in range(MAX_ASSERTED_ROLES + 1)],
+    ):
+        token = _sign_payload(_payload(roles=roles))
+        with pytest.raises(InvalidIdentityAssertion):
+            verify_identity_assertion(
+                token,
+                secret=SECRET,
+                allowed_roles=[f"role-{index}" for index in range(MAX_ASSERTED_ROLES)],
+            )
 
 
 def test_each_assertion_has_a_distinct_replay_id():

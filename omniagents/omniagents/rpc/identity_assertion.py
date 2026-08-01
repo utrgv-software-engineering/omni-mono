@@ -72,7 +72,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from omniagents.core.providers.auth.base import UserIdentity
 
@@ -82,9 +82,12 @@ __all__ = [
     "DEFAULT_ASSERTION_TTL_SECONDS",
     "MAX_ASSERTION_TTL_SECONDS",
     "MIN_SIGNING_SECRET_LENGTH",
+    "MAX_ASSERTED_ROLES",
+    "MAX_ASSERTED_ROLE_LENGTH",
     "InvalidIdentityAssertion",
     "VerifiedAssertion",
     "mint_identity_assertion",
+    "normalize_role_allowlist",
     "validate_signing_secret",
     "verify_identity_assertion",
 ]
@@ -110,6 +113,15 @@ MAX_ASSERTION_TTL_SECONDS = 120.0
 #: refusing short secrets at configuration time is cheaper than
 #: discovering a brute-forceable one in production.
 MIN_SIGNING_SECRET_LENGTH = 32
+
+#: Keep assertion/config parsing bounded. Roles are exact, case-sensitive
+#: identifiers; no case folding or whitespace rewriting is performed.
+MAX_ASSERTED_ROLES = 64
+MAX_ASSERTED_ROLE_LENGTH = 128
+
+#: Dropped-role warnings can otherwise arrive once per proxied connection.
+_DROPPED_ROLE_LOG_INTERVAL_SECONDS = 10.0
+_next_dropped_role_log = 0.0
 
 #: Minimum number of *distinct* characters. Length alone accepts
 #: ``"a" * 32``, 32 spaces and 32 NUL bytes, none of which is a key.
@@ -152,6 +164,76 @@ class VerifiedAssertion:
     identity: UserIdentity
     jti: str
     expires_at: float
+
+
+def normalize_role_allowlist(
+    roles: Any, *, field_name: str = "allowed_roles"
+) -> List[str]:
+    """Validate and de-duplicate an explicit role allowlist.
+
+    Role matching is deliberately exact and case-sensitive. Empty is a valid
+    (and safe) default: identity assertions carry no roles until both hops are
+    configured to permit them.
+    """
+    if roles is None:
+        return []
+    if not isinstance(roles, (list, tuple)):
+        raise ValueError(f"{field_name} must be a list of role strings")
+
+    normalized: List[str] = []
+    seen = set()
+    for role in roles:
+        if not isinstance(role, str) or not role:
+            raise ValueError(f"{field_name} entries must be non-empty strings")
+        if len(role) > MAX_ASSERTED_ROLE_LENGTH:
+            raise ValueError(
+                f"{field_name} role {role!r} exceeds "
+                f"{MAX_ASSERTED_ROLE_LENGTH} characters"
+            )
+        if role not in seen:
+            seen.add(role)
+            normalized.append(role)
+            if len(normalized) > MAX_ASSERTED_ROLES:
+                raise ValueError(
+                    f"{field_name} permits at most {MAX_ASSERTED_ROLES} roles"
+                )
+    return normalized
+
+
+def _filter_asserted_roles(
+    identity: UserIdentity, allowed_roles: Iterable[str]
+) -> List[str]:
+    """Return locally-held roles explicitly permitted for assertion."""
+    global _next_dropped_role_log
+
+    allowed = set(allowed_roles)
+    selected: List[str] = []
+    seen = set()
+    dropped: List[str] = []
+    for role in identity.roles or []:
+        if (
+            not isinstance(role, str)
+            or not role
+            or len(role) > MAX_ASSERTED_ROLE_LENGTH
+        ):
+            dropped.append(repr(role))
+        elif role not in allowed:
+            dropped.append(role)
+        elif role not in seen:
+            seen.add(role)
+            selected.append(role)
+
+    if dropped:
+        clock = time.monotonic()
+        if clock >= _next_dropped_role_log:
+            _next_dropped_role_log = clock + _DROPPED_ROLE_LOG_INTERVAL_SECONDS
+            logger.warning(
+                "Dropped roles not permitted by remote_agent.identity_allowed_roles "
+                "while minting proxy assertion for user_id=%s: %s",
+                identity.user_id,
+                ", ".join(dropped[:MAX_ASSERTED_ROLES]),
+            )
+    return selected
 
 
 def _b64u_encode(raw: bytes) -> str:
@@ -286,6 +368,7 @@ def mint_identity_assertion(
     audience: str = DEFAULT_ASSERTION_AUDIENCE,
     ttl_seconds: float = DEFAULT_ASSERTION_TTL_SECONDS,
     now: Optional[float] = None,
+    allowed_roles: Any = None,
 ) -> str:
     """Sign an assertion naming *identity* for one upstream connection."""
     key = validate_signing_secret(secret)
@@ -303,6 +386,9 @@ def mint_identity_assertion(
             f"got {ttl_seconds}."
         )
     issued = time.time() if now is None else now
+    role_allowlist = normalize_role_allowlist(
+        allowed_roles, field_name="remote_agent.identity_allowed_roles"
+    )
     payload: Dict[str, Any] = {
         "v": ASSERTION_VERSION,
         "iss": _ISSUER,
@@ -313,7 +399,7 @@ def mint_identity_assertion(
         "sub": identity.user_id,
         "email": identity.email,
         "name": identity.display_name,
-        "roles": list(identity.roles or []),
+        "roles": _filter_asserted_roles(identity, role_allowlist),
         "claims": dict(identity.claims or {}),
     }
     body = _b64u_encode(
@@ -329,6 +415,7 @@ def verify_identity_assertion(
     secret: str,
     audience: str = DEFAULT_ASSERTION_AUDIENCE,
     now: Optional[float] = None,
+    allowed_roles: Any = None,
 ) -> VerifiedAssertion:
     """Validate *token* and return the principal it asserts.
 
@@ -414,10 +501,32 @@ def verify_identity_assertion(
     if not isinstance(jti, str) or not jti:
         raise InvalidIdentityAssertion("Identity assertion has no replay id")
 
-    raw_roles = payload.get("roles")
-    roles: List[str] = (
-        [str(role) for role in raw_roles] if isinstance(raw_roles, list) else []
+    allowed = set(
+        normalize_role_allowlist(
+            allowed_roles, field_name="proxy_assertion.allowed_roles"
+        )
     )
+    raw_roles = payload.get("roles")
+    if not isinstance(raw_roles, list):
+        raise InvalidIdentityAssertion("Identity assertion has invalid roles")
+    if len(raw_roles) > MAX_ASSERTED_ROLES:
+        raise InvalidIdentityAssertion("Identity assertion has too many roles")
+    roles: List[str] = []
+    seen_roles = set()
+    for role in raw_roles:
+        if (
+            not isinstance(role, str)
+            or not role
+            or len(role) > MAX_ASSERTED_ROLE_LENGTH
+        ):
+            raise InvalidIdentityAssertion("Identity assertion has invalid roles")
+        if role not in allowed:
+            raise InvalidIdentityAssertion(
+                "Identity assertion contains unauthorized role"
+            )
+        if role not in seen_roles:
+            seen_roles.add(role)
+            roles.append(role)
     raw_claims = payload.get("claims")
     claims: Dict[str, Any] = dict(raw_claims) if isinstance(raw_claims, dict) else {}
     email = payload.get("email")

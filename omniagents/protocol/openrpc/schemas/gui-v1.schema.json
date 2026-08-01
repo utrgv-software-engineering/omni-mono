@@ -882,6 +882,10 @@
     "fs_upload_open": {
       "additionalProperties": false,
       "properties": {
+        "expected_sha256": {
+          "pattern": "^[0-9a-fA-F]{64}$",
+          "type": "string"
+        },
         "overwrite": {
           "type": "boolean"
         },
@@ -892,6 +896,7 @@
           "type": "string"
         },
         "sha256": {
+          "pattern": "^[0-9a-fA-F]{64}$",
           "type": "string"
         },
         "size": {

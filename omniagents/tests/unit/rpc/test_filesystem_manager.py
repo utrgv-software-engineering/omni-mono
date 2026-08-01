@@ -21,6 +21,7 @@ from omniagents.rpc.filesystem import (
     FilesystemManager,
     FsNotFoundError,
     FsPathError,
+    FsReadOnlyError,
     FsTransferError,
     FsWatchError,
     canonical_relpath,
@@ -61,6 +62,19 @@ class GenericWorkspace:
 
     def __getattr__(self, name: str):
         return getattr(self._inner, name)
+
+
+class NonexistentTargetWorkspace(GenericWorkspace):
+    """Generic double whose upload target checks require no host thread."""
+
+    async def is_dir(self, path: str) -> bool:
+        return path == "."
+
+    async def is_file(self, path: str) -> bool:
+        return False
+
+    async def path_writable(self, path: str, *, directory: bool) -> bool:
+        return True
 
 
 def make_manager(workspace, **overrides) -> FilesystemManager:
@@ -141,11 +155,14 @@ async def test_list_and_stat(tmp_path):
     assert paths["dir/a.txt"]["type"] == "file"
     assert paths["dir/a.txt"]["size"] == 5
     assert listing["truncated"] is False
+    assert listing["writable"] is True
+    assert all(entry["writable"] is True for entry in listing["entries"])
 
     info = await manager.stat("s1", "dir/a.txt")
     assert info["type"] == "file"
     assert info["size"] == 5
     assert info["mime"] == "text/plain"
+    assert info["writable"] is True
 
     with pytest.raises(FsNotFoundError):
         await manager.stat("s1", "missing.txt")
@@ -153,6 +170,150 @@ async def test_list_and_stat(tmp_path):
         await manager.stat("s1", "../outside")
     with pytest.raises(FsNotFoundError):
         await manager.list("s1", "dir/a.txt")
+
+
+@pytest.mark.asyncio
+async def test_list_and_stat_report_source_policy_writability(tmp_path):
+    class ListingWorkspace:
+        root = "/workspace"
+
+        async def is_dir(self, path):
+            return path in {".", "read-only"}
+
+        async def is_file(self, path):
+            return path == "read-only/a.txt"
+
+        async def path_writable(self, path, *, directory):
+            return True
+
+        async def list_dir(self, path=".", **kwargs):
+            if path == ".":
+                return [FileEntry(name="read-only", path="read-only", is_dir=True)]
+            if path == "read-only":
+                return [
+                    FileEntry(
+                        name="a.txt",
+                        path="read-only/a.txt",
+                        is_dir=False,
+                        size=5,
+                    )
+                ]
+            raise FileNotFoundError(path)
+
+    async def source_writable(session_id, workspace, rel):
+        return not (rel == "read-only" or rel.startswith("read-only/"))
+
+    manager = make_manager(
+        ListingWorkspace(), source_writability_resolver=source_writable
+    )
+    listing = await manager.list("s1", ".", recursive=True)
+    entries = {entry["path"]: entry for entry in listing["entries"]}
+    assert listing["writable"] is True
+    assert entries["read-only"]["writable"] is False
+    assert entries["read-only/a.txt"]["writable"] is False
+    assert (await manager.stat("s1", "read-only/a.txt"))["writable"] is False
+
+
+@pytest.mark.asyncio
+async def test_live_host_source_policy_follows_symlink_destination(tmp_path):
+    from omniagents.core.agents.service import AgentService
+    from omniagents.core.runtime import serve_state
+
+    writable = tmp_path / "writable"
+    read_only = tmp_path / "read-only"
+    writable.mkdir()
+    read_only.mkdir()
+    (read_only / "a.txt").write_text("hello")
+    os.symlink(read_only, writable / "crossed")
+    serve_state.set_sources(
+        [
+            {
+                "kind": "local",
+                "mountName": "writable",
+                "path": str(writable),
+                "writable": True,
+            },
+            {
+                "kind": "local",
+                "mountName": "read-only",
+                "path": str(read_only),
+                "writable": False,
+            },
+        ]
+    )
+    try:
+        workspace = HostWorkspace(root=str(tmp_path))
+        assert not await AgentService._filesystem_source_writable(
+            None, "s1", workspace, "writable/crossed/a.txt"
+        )
+    finally:
+        serve_state.set_sources(None)
+
+
+@pytest.mark.asyncio
+async def test_live_host_source_policy_keeps_symlink_origin_read_only(tmp_path):
+    from omniagents.core.agents.service import AgentService
+    from omniagents.core.runtime import serve_state
+
+    writable = tmp_path / "writable"
+    read_only = tmp_path / "read-only"
+    writable.mkdir()
+    read_only.mkdir()
+    (writable / "a.txt").write_text("hello")
+    os.symlink(writable, read_only / "crossed")
+    serve_state.set_sources(
+        [
+            {
+                "kind": "local",
+                "mountName": "writable",
+                "path": str(writable),
+                "writable": True,
+            },
+            {
+                "kind": "local",
+                "mountName": "read-only",
+                "path": str(read_only),
+                "writable": False,
+            },
+        ]
+    )
+    try:
+        workspace = HostWorkspace(root=str(tmp_path))
+        assert not await AgentService._filesystem_source_writable(
+            None, "s1", workspace, "read-only/crossed/a.txt"
+        )
+    finally:
+        serve_state.set_sources(None)
+
+
+@pytest.mark.asyncio
+async def test_live_generic_source_policy_rejects_unprovable_symlink(tmp_path):
+    from omniagents.core.agents.service import AgentService
+    from omniagents.core.runtime import serve_state
+
+    class SymlinkWorkspace:
+        root = "/workspace"
+
+        async def list_dir(self, path=".", **kwargs):
+            assert path == "."
+            return [
+                FileEntry(
+                    name="alias",
+                    path="alias",
+                    is_dir=False,
+                    is_symlink=True,
+                )
+            ]
+
+    serve_state.set_sources(
+        [{"kind": "local", "mountName": "read-only", "writable": False}]
+    )
+    try:
+        assert not await AgentService._filesystem_source_writable(
+            None, "s1", SymlinkWorkspace(), "alias/new.txt"
+        )
+    finally:
+        serve_state.set_sources(None)
 
 
 @pytest.mark.asyncio
@@ -708,6 +869,220 @@ async def test_upload_open_rejects_existing_target_and_escapes(tmp_path):
         await manager.upload_open("s1", "/abs.bin", 3, channel=channel)
     with pytest.raises(FsTransferError):
         await manager.upload_open("s1", "too-big.bin", 1 << 62, channel=channel)
+
+
+@pytest.mark.asyncio
+async def test_upload_open_read_only_precedes_target_exists_and_allocates_nothing(
+    tmp_path,
+):
+    (tmp_path / "exists.bin").write_bytes(b"old")
+
+    async def source_writable(session_id, workspace, rel):
+        return False
+
+    manager = make_manager(
+        HostWorkspace(root=str(tmp_path)),
+        source_writability_resolver=source_writable,
+    )
+    with pytest.raises(FsReadOnlyError) as excinfo:
+        await manager.upload_open(
+            "s1", "exists.bin", 3, overwrite=False, channel=FakeChannel()
+        )
+    assert excinfo.value.code == -32064
+    assert excinfo.value.data == {
+        "kind": "fs_read_only",
+        "path": "exists.bin",
+        "reason": "source_read_only",
+    }
+    assert manager.transfer_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_upload_open_reports_backend_not_writable(tmp_path):
+    manager = make_manager(HostWorkspace(root=str(tmp_path)))
+
+    async def backend_not_writable(workspace, rel):
+        return False
+
+    manager._backend_writable = backend_not_writable  # type: ignore[method-assign]
+    with pytest.raises(FsReadOnlyError) as excinfo:
+        await manager.upload_open("s1", "new.bin", 3, channel=FakeChannel())
+    assert excinfo.value.data["reason"] == "backend_not_writable"
+
+
+@pytest.mark.asyncio
+async def test_upload_commit_rechecks_policy_before_expected_content(tmp_path):
+    target = tmp_path / "target.bin"
+    target.write_bytes(b"old")
+    policy = {"writable": True}
+
+    async def source_writable(session_id, workspace, rel):
+        return policy["writable"]
+
+    workspace = NonexistentTargetWorkspace(root=str(tmp_path))
+    manager = make_manager(workspace, source_writability_resolver=source_writable)
+    channel = FakeChannel()
+    transfer_id = await _stage_upload(
+        manager,
+        channel,
+        "target.bin",
+        b"new",
+        expected_sha256=hashlib.sha256(b"not the target").hexdigest(),
+    )
+    policy["writable"] = False
+
+    with pytest.raises(FsReadOnlyError) as excinfo:
+        await manager.upload_commit("s1", transfer_id, channel=channel)
+
+    assert excinfo.value.data["reason"] == "source_read_only"
+    assert target.read_bytes() == b"old"
+
+
+async def _stage_upload(
+    manager: FilesystemManager,
+    channel: FakeChannel,
+    path: str,
+    payload: bytes,
+    **open_options: Any,
+) -> str:
+    opened = await manager.upload_open(
+        "s1", path, len(payload), channel=channel, **open_options
+    )
+    await manager.upload_chunk(
+        "s1",
+        opened["transfer_id"],
+        0,
+        base64.b64encode(payload).decode(),
+        channel=channel,
+    )
+    return opened["transfer_id"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_cls", [HostWorkspace, GenericWorkspace])
+async def test_upload_expected_sha256_matches_current_target(tmp_path, workspace_cls):
+    old = b"old contents"
+    new = b"new contents"
+    (tmp_path / "target.bin").write_bytes(old)
+    manager = make_manager(workspace_cls(root=str(tmp_path)))
+    channel = FakeChannel()
+    transfer_id = await _stage_upload(
+        manager,
+        channel,
+        "target.bin",
+        new,
+        expected_sha256=hashlib.sha256(old).hexdigest().upper(),
+    )
+    result = await manager.upload_commit("s1", transfer_id, channel=channel)
+    assert result["sha256"] == hashlib.sha256(new).hexdigest()
+    assert (tmp_path / "target.bin").read_bytes() == new
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_cls", [HostWorkspace, GenericWorkspace])
+@pytest.mark.parametrize("target_exists", [True, False])
+async def test_upload_expected_sha256_mismatch_or_missing_preserves_target(
+    tmp_path, workspace_cls, target_exists
+):
+    old = b"current"
+    target = tmp_path / "target.bin"
+    if target_exists:
+        target.write_bytes(old)
+    manager = make_manager(workspace_cls(root=str(tmp_path)))
+    channel = FakeChannel()
+    transfer_id = await _stage_upload(
+        manager,
+        channel,
+        "target.bin",
+        b"replacement",
+        expected_sha256=hashlib.sha256(b"different").hexdigest(),
+    )
+
+    with pytest.raises(FsTransferError) as excinfo:
+        await manager.upload_commit("s1", transfer_id, channel=channel)
+
+    assert excinfo.value.code == -32062
+    assert excinfo.value.data["reason"] == "precondition_failed"
+    if target_exists:
+        assert target.read_bytes() == old
+    else:
+        assert not target.exists()
+
+
+@pytest.mark.asyncio
+async def test_upload_expected_sha256_is_rechecked_after_interleaving_write(tmp_path):
+    target = tmp_path / "target.bin"
+    target.write_bytes(b"at open")
+    manager = make_manager(HostWorkspace(root=str(tmp_path)))
+    channel = FakeChannel()
+    transfer_id = await _stage_upload(
+        manager,
+        channel,
+        "target.bin",
+        b"replacement",
+        expected_sha256=hashlib.sha256(b"at open").hexdigest(),
+    )
+    target.write_bytes(b"changed while upload was staged")
+
+    with pytest.raises(FsTransferError) as excinfo:
+        await manager.upload_commit("s1", transfer_id, channel=channel)
+
+    assert excinfo.value.data["reason"] == "precondition_failed"
+    assert target.read_bytes() == b"changed while upload was staged"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("workspace_cls", [HostWorkspace, GenericWorkspace])
+async def test_competing_rpc_upload_preconditions_allow_exactly_one_commit(
+    tmp_path, workspace_cls
+):
+    original = b"original"
+    target = tmp_path / "target.bin"
+    target.write_bytes(original)
+    manager = make_manager(workspace_cls(root=str(tmp_path)))
+    first_channel = FakeChannel()
+    second_channel = FakeChannel()
+    expected = hashlib.sha256(original).hexdigest()
+    first = await _stage_upload(
+        manager,
+        first_channel,
+        "target.bin",
+        b"first",
+        expected_sha256=expected,
+    )
+    second = await _stage_upload(
+        manager,
+        second_channel,
+        "target.bin",
+        b"second",
+        expected_sha256=expected,
+    )
+
+    results = await asyncio.gather(
+        manager.upload_commit("s1", first, channel=first_channel),
+        manager.upload_commit("s1", second, channel=second_channel),
+        return_exceptions=True,
+    )
+
+    successes = [result for result in results if isinstance(result, dict)]
+    failures = [result for result in results if isinstance(result, FsTransferError)]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert failures[0].data["reason"] == "precondition_failed"
+    assert target.read_bytes() in {b"first", b"second"}
+
+
+@pytest.mark.asyncio
+async def test_upload_open_rejects_malformed_sha256_preconditions(tmp_path):
+    manager = make_manager(HostWorkspace(root=str(tmp_path)))
+    channel = FakeChannel()
+
+    for field in ("sha256", "expected_sha256"):
+        with pytest.raises(FsTransferError) as excinfo:
+            await manager.upload_open(
+                "s1", "target.bin", 1, channel=channel, **{field: "not-a-digest"}
+            )
+        assert excinfo.value.data["reason"] == "invalid_checksum"
 
 
 @pytest.mark.asyncio

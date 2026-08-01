@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, RootModel
+from pydantic import BaseModel, ConfigDict, RootModel, constr
 
 
 class AccountChanged(BaseModel):
@@ -396,10 +396,11 @@ class FsUploadOpen(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    expected_sha256: constr(pattern=r"^[0-9a-fA-F]{64}$") | None = None
     overwrite: bool | None = None
     path: str
     session_id: str
-    sha256: str | None = None
+    sha256: constr(pattern=r"^[0-9a-fA-F]{64}$") | None = None
     size: int
 
 

@@ -599,7 +599,8 @@ class AgentService(RpcMethodsBase):
         # host filesystem.
         self.workspace_factory: Callable[[str], Workspace | None] | None = None
         self.filesystem = FilesystemManager(
-            workspace_resolver=self._filesystem_workspace
+            workspace_resolver=self._filesystem_workspace,
+            source_writability_resolver=self._filesystem_source_writable,
         )
 
         # Typed git operations behind the ``git_*`` RPCs. Shares the
@@ -6525,6 +6526,83 @@ class AgentService(RpcMethodsBase):
             )
         return HostWorkspace(root=root)
 
+    async def _filesystem_source_writable(
+        self, session_id: str, workspace: "Workspace", rel: str
+    ) -> bool:
+        """Resolve launcher source policy for a workspace-relative path.
+
+        Host paths are matched canonically against every declared source root,
+        so a symlink crossing from a writable source into a read-only one
+        inherits the destination policy. Generic backends have no portable
+        realpath operation: they use the manifest's exact first-component
+        mount name and fail closed when any existing path component is a
+        symlink whose destination policy cannot be proven.
+        """
+        from omniagents.core.runtime.serve_state import get_source_descriptors
+
+        sources = [source for source in get_source_descriptors() if source.mount_name]
+        if not sources or rel == ".":
+            return True
+
+        if isinstance(workspace, HostWorkspace):
+            workspace_root = Path(workspace.root).resolve(strict=False)
+            lexical_target = Path(os.path.normpath(str(workspace_root / rel)))
+            resolved_target = Path(workspace.resolve(rel)).resolve(strict=False)
+            candidates: list[tuple[int, bool]] = []
+            for source in sources:
+                roots: list[tuple[Path, Path]] = []
+                lexical_root = workspace_root / source.mount_name
+                roots.append((lexical_root, lexical_root.resolve(strict=False)))
+                local_path = source.local_path()
+                if local_path is not None:
+                    local_root = Path(local_path)
+                    roots.append((local_root, local_root.resolve(strict=False)))
+                for lexical_root, canonical_root in roots:
+                    for target, root in (
+                        (lexical_target, lexical_root),
+                        (resolved_target, canonical_root),
+                    ):
+                        try:
+                            target.relative_to(root)
+                        except ValueError:
+                            continue
+                        candidates.append((len(root.parts), source.writable))
+            if not candidates:
+                return True
+            # Both the path spelling the client chose and its canonical target
+            # are security boundaries. A read-only policy on either side wins;
+            # this prevents symlinks crossing RO -> RW as well as RW -> RO.
+            return all(writable for _, writable in candidates)
+
+        parts = rel.split("/")
+        source = next(
+            (source for source in sources if source.mount_name == parts[0]), None
+        )
+        if source is not None and not source.writable:
+            return False
+
+        # Even an unrecognised first component can be an alias into a declared
+        # read-only mount. Generic backends cannot canonicalize that target, so
+        # any existing symlink component is an unprovable policy boundary and
+        # must fail closed.
+        parent = "."
+        for index, component in enumerate(parts):
+            try:
+                entries = await workspace.list_dir(
+                    parent, include_hidden=True, respect_gitignore=False
+                )
+            except OSError:
+                return False
+            entry = next((item for item in entries if item.name == component), None)
+            if entry is None:
+                break
+            if entry.is_symlink:
+                return False
+            if index < len(parts) - 1 and not entry.is_dir:
+                return False
+            parent = entry.path
+        return True
+
     async def fs_watch(
         self,
         session_id: str,
@@ -6584,6 +6662,7 @@ class AgentService(RpcMethodsBase):
         path: str,
         size: int,
         sha256: str | None = None,
+        expected_sha256: str | None = None,
         overwrite: bool = False,
     ) -> dict:  # noqa: D401
         return await self.filesystem.upload_open(
@@ -6591,6 +6670,7 @@ class AgentService(RpcMethodsBase):
             path,
             size,
             sha256=sha256,
+            expected_sha256=expected_sha256,
             overwrite=overwrite,
             channel=self.channel,
         )

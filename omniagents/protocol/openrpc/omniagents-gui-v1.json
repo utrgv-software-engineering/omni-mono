@@ -410,6 +410,32 @@
         },
         "message": "Filesystem path invalid"
       },
+      "FsReadOnly": {
+        "code": -32064,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "fs_read_only"
+            },
+            "path": {
+              "type": "string"
+            },
+            "reason": {
+              "enum": [
+                "source_read_only",
+                "backend_not_writable"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        "message": "Filesystem target is read-only"
+      },
       "FsTransferInvalid": {
         "code": -32062,
         "data": {
@@ -5083,6 +5109,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_watch",
@@ -5162,6 +5191,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_unwatch",
@@ -5227,6 +5259,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_list",
@@ -5299,6 +5334,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_stat",
@@ -5364,6 +5402,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_download_open",
@@ -5429,6 +5470,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_download_read",
@@ -5508,6 +5552,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_download_close",
@@ -5573,6 +5620,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_upload_open",
@@ -5604,6 +5654,13 @@
           "required": false,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_open/properties/sha256"
+          }
+        },
+        {
+          "name": "expected_sha256",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fs_upload_open/properties/expected_sha256"
           }
         },
         {
@@ -5659,6 +5716,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_upload_chunk",
@@ -5738,6 +5798,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_upload_commit",
@@ -5803,6 +5866,9 @@
         },
         {
           "$ref": "#/components/errors/FsWatchInvalid"
+        },
+        {
+          "$ref": "#/components/errors/FsReadOnly"
         }
       ],
       "name": "fs_upload_abort",

@@ -16,6 +16,7 @@ Configure it on the **upstream**::
           type: proxy_assertion
           signing_secret: "${OMNI_PROXY_IDENTITY_SECRET}"
           audience: "omniagents-upstream"   # optional; must match the proxy
+          allowed_roles: [operator]          # optional; defaults empty
 
 and on the **proxy**::
 
@@ -23,6 +24,7 @@ and on the **proxy**::
       ws_url: "wss://upstream.example/ws"
       identity_secret_env: OMNI_PROXY_IDENTITY_SECRET
       identity_audience: "omniagents-upstream"   # optional
+      identity_allowed_roles: [operator]          # optional; defaults empty
 
 Selecting this provider is an explicit request for authentication, so it
 fails closed exactly like
@@ -110,6 +112,7 @@ class ProxyAssertionAuthProvider(AuthProvider):
         super().__init__(config or {})
         from omniagents.rpc.identity_assertion import (
             DEFAULT_ASSERTION_AUDIENCE,
+            normalize_role_allowlist,
             validate_signing_secret,
         )
 
@@ -141,6 +144,9 @@ class ProxyAssertionAuthProvider(AuthProvider):
                 "start with authentication silently disabled."
             ) from exc
         self._audience = str(cfg.get("audience") or DEFAULT_ASSERTION_AUDIENCE)
+        self._allowed_roles = normalize_role_allowlist(
+            cfg.get("allowed_roles"), field_name="proxy_assertion.allowed_roles"
+        )
         # jti -> expiry. Assertions are single-use **within this process**
         # (see ``_consume``); a horizontally scaled upstream needs a
         # shared cache for that to hold deployment-wide.
@@ -166,7 +172,10 @@ class ProxyAssertionAuthProvider(AuthProvider):
             )
         try:
             verified = verify_identity_assertion(
-                token, secret=self._secret, audience=self._audience
+                token,
+                secret=self._secret,
+                audience=self._audience,
+                allowed_roles=self._allowed_roles,
             )
         except InvalidIdentityAssertion as exc:
             logger.warning("Rejected proxy identity assertion: %s", exc)

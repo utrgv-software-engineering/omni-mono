@@ -320,6 +320,7 @@ export interface FsUploadOpenParams {
   path: string;
   size: number;
   sha256?: string;
+  expected_sha256?: string;
   overwrite?: boolean;
 }
 export interface FsUploadChunkParams {

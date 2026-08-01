@@ -92,6 +92,7 @@ class SourceDescriptor:
 
     kind: str = ""
     mount_name: str = ""
+    writable: bool = True
     path: Optional[str] = None
     repo_url: Optional[str] = None
     ref: Optional[str] = None
@@ -130,6 +131,9 @@ class SourceDescriptor:
         return cls(
             kind=_str("kind") or "",
             mount_name=_str("mountName") or "",
+            writable=(
+                data["writable"] if isinstance(data.get("writable"), bool) else True
+            ),
             path=_str("path"),
             repo_url=_str("repoUrl"),
             ref=_str("ref"),
@@ -137,7 +141,11 @@ class SourceDescriptor:
 
     def to_dict(self) -> Dict[str, Any]:
         """The wire-protocol dict (only populated fields)."""
-        out: Dict[str, Any] = {"kind": self.kind, "mountName": self.mount_name}
+        out: Dict[str, Any] = {
+            "kind": self.kind,
+            "mountName": self.mount_name,
+            "writable": self.writable,
+        }
         if self.path is not None:
             out["path"] = self.path
         if self.repo_url is not None:

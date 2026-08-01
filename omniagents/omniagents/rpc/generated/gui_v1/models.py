@@ -793,6 +793,7 @@ class FsUploadOpenParams(BaseModel):
     path: str
     size: int
     sha256: str | None = None
+    expected_sha256: str | None = None
     overwrite: bool | None = None
 
 

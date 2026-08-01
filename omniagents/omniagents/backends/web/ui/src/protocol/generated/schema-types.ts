@@ -490,6 +490,7 @@ export interface FsDownloadClose {
   transfer_id: string;
 }
 export interface FsUploadOpen {
+  expected_sha256?: string;
   overwrite?: boolean;
   path: string;
   session_id: string;

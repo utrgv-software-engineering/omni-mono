@@ -386,6 +386,9 @@ class AgentSpec:
     # ``security.providers.auth.audience``. Defaults to
     # ``DEFAULT_ASSERTION_AUDIENCE`` on both hops.
     remote_identity_audience: str | None = None
+    # Exact, case-sensitive roles this proxy may carry to its upstream.
+    # Empty by default so a signing secret alone cannot confer privileges.
+    remote_identity_allowed_roles: List[str] = field(default_factory=list)
 
     # --- Optional hook to register example/server functions on the AgentService --- #
     # A callable that will be invoked by the server on startup to register

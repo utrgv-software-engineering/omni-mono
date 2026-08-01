@@ -118,10 +118,12 @@ __all__ = [
     "FilesystemRpcError",
     "FsNotFoundError",
     "FsPathError",
+    "FsReadOnlyError",
     "FsTransferError",
     "FsWatchError",
     "RPC_ERROR_FS_NOT_FOUND",
     "RPC_ERROR_FS_PATH_INVALID",
+    "RPC_ERROR_FS_READ_ONLY",
     "RPC_ERROR_FS_TRANSFER_INVALID",
     "RPC_ERROR_FS_WATCH_INVALID",
     "canonical_relpath",
@@ -133,13 +135,15 @@ RPC_ERROR_FS_PATH_INVALID = -32060
 RPC_ERROR_FS_NOT_FOUND = -32061
 RPC_ERROR_FS_TRANSFER_INVALID = -32062
 RPC_ERROR_FS_WATCH_INVALID = -32063
+RPC_ERROR_FS_READ_ONLY = -32064
 
 
 class FilesystemRpcError(Exception):
     """Typed ``fs_*`` error surfaced to the wire verbatim.
 
     ``code``/``data`` follow the shapes reserved in the OpenRPC contract
-    (``FsPathInvalid``/``FsNotFound``/``FsTransferInvalid``/``FsWatchInvalid``).
+    (``FsPathInvalid``/``FsNotFound``/``FsTransferInvalid``/
+    ``FsWatchInvalid``/``FsReadOnly``).
     """
 
     code: int = RPC_ERROR_FS_PATH_INVALID
@@ -172,6 +176,11 @@ class FsTransferError(FilesystemRpcError):
 class FsWatchError(FilesystemRpcError):
     code = RPC_ERROR_FS_WATCH_INVALID
     kind = "fs_watch_invalid"
+
+
+class FsReadOnlyError(FilesystemRpcError):
+    code = RPC_ERROR_FS_READ_ONLY
+    kind = "fs_read_only"
 
 
 def canonical_relpath(path: str) -> str:
@@ -470,6 +479,7 @@ class _UploadState:
     path: str
     declared_size: int
     declared_sha256: Optional[str]
+    expected_sha256: Optional[str]
     overwrite: bool
     spool: Any
     hasher: Any = field(default_factory=hashlib.sha256)
@@ -495,6 +505,9 @@ class FilesystemManager:
         self,
         *,
         workspace_resolver: Callable[[str], Awaitable[Workspace]],
+        source_writability_resolver: Optional[
+            Callable[[str, Workspace, str], Awaitable[bool]]
+        ] = None,
         poll_interval_host: float = 1.0,
         poll_interval_generic: float = 2.0,
         min_poll_interval: float = 0.2,
@@ -510,6 +523,7 @@ class FilesystemManager:
         progress_interval: float = 0.4,
     ) -> None:
         self._workspace_resolver = workspace_resolver
+        self._source_writability_resolver = source_writability_resolver
         self._poll_interval_host = poll_interval_host
         self._poll_interval_generic = poll_interval_generic
         self._min_poll_interval = min_poll_interval
@@ -526,6 +540,13 @@ class FilesystemManager:
         self._watches: Dict[str, _WatchState] = {}
         self._downloads: Dict[str, _DownloadState] = {}
         self._uploads: Dict[str, _UploadState] = {}
+        # Same-process RPC commits to one session/workspace/path are serialized
+        # so an expected-content precondition and its publish form one critical
+        # section. This cannot prevent an out-of-process shell writer from
+        # changing a host path between our final read and os.replace; that
+        # boundary is documented in the wire contract.
+        self._upload_commit_locks: Dict[Tuple[str, type, str, str], asyncio.Lock] = {}
+        self._upload_commit_lock_users: Dict[Tuple[str, type, str, str], int] = {}
 
     # ------------------------------------------------------------------
     #  Shared helpers
@@ -533,6 +554,108 @@ class FilesystemManager:
 
     async def _workspace(self, session_id: str) -> Workspace:
         return await self._workspace_resolver(session_id)
+
+    async def _effective_writability(
+        self, session_id: str, workspace: Workspace, rel: str
+    ) -> Tuple[bool, Optional[str]]:
+        """Return the effective GUI mutation policy for one canonical path."""
+        resolver = self._source_writability_resolver
+        if resolver is not None and not await resolver(session_id, workspace, rel):
+            return False, "source_read_only"
+        if not await self._backend_writable(workspace, rel):
+            return False, "backend_not_writable"
+        return True, None
+
+    async def _assert_writable(
+        self, session_id: str, workspace: Workspace, rel: str
+    ) -> None:
+        writable, reason = await self._effective_writability(session_id, workspace, rel)
+        if not writable:
+            raise FsReadOnlyError(
+                "filesystem target is read-only", path=rel, reason=reason
+            )
+
+    async def _reported_writable(
+        self, session_id: str, workspace: Workspace, rel: str
+    ) -> bool:
+        """Report escaped/unprovable listing entries as non-writable.
+
+        Recursive scans intentionally include a symlink entry without
+        descending through it. An outward-pointing symlink must therefore not
+        fail the caller's entire listing merely because permission probing
+        cannot resolve it inside the workspace boundary.
+        """
+        try:
+            return (await self._effective_writability(session_id, workspace, rel))[0]
+        except WorkspaceEscapeError:
+            return False
+
+    @staticmethod
+    async def _backend_writable(workspace: Workspace, rel: str) -> bool:
+        """Best available backend permission check without mutating the target.
+
+        Host workspaces expose real permission bits. Other substrates may
+        provide an async ``path_writable(path, *, directory)`` capability; a
+        shell-backed workspace is probed as its configured runtime user. A
+        backend that can prove neither is reported read-only instead of
+        advertising a write that may fail.
+        """
+        if not isinstance(workspace, HostWorkspace):
+            probe = rel
+            is_directory = await workspace.is_dir(probe)
+            is_file = False if is_directory else await workspace.is_file(probe)
+            if not is_directory and not is_file:
+                probe = posixpath.dirname(probe) or "."
+                while not await workspace.is_dir(probe):
+                    parent = posixpath.dirname(probe) or "."
+                    if parent == probe:
+                        return False
+                    probe = parent
+                is_directory = True
+
+            capability = getattr(workspace, "path_writable", None)
+            if callable(capability):
+                try:
+                    return bool(await capability(probe, directory=is_directory))
+                except Exception:
+                    return False
+
+            if not bool(getattr(workspace, "supports_shell", False)):
+                return False
+            try:
+                absolute = workspace.resolve(probe)
+                writable = await workspace.exec(["test", "-w", absolute], shell=False)
+                if writable.exit_code != 0:
+                    return False
+                if is_directory:
+                    searchable = await workspace.exec(
+                        ["test", "-x", absolute], shell=False
+                    )
+                    return searchable.exit_code == 0
+                return True
+            except Exception:
+                return False
+
+        absolute = workspace.resolve(rel)
+
+        def _check() -> bool:
+            if os.path.exists(absolute):
+                if os.path.isdir(absolute):
+                    return os.access(absolute, os.W_OK | os.X_OK)
+                parent = os.path.dirname(absolute) or workspace.root
+                return os.access(absolute, os.W_OK) and os.access(
+                    parent, os.W_OK | os.X_OK
+                )
+
+            parent = os.path.dirname(absolute) or workspace.root
+            while not os.path.exists(parent):
+                next_parent = os.path.dirname(parent)
+                if next_parent == parent:
+                    return False
+                parent = next_parent
+            return os.path.isdir(parent) and os.access(parent, os.W_OK | os.X_OK)
+
+        return await asyncio.to_thread(_check)
 
     @staticmethod
     def _mechanism(workspace: Workspace) -> str:
@@ -648,6 +771,7 @@ class FilesystemManager:
             raise FsPathError(str(exc), path=path) from exc
         if info["type"] == "file":
             info["mime"] = guess_mime(rel)
+        info["writable"] = await self._reported_writable(session_id, workspace, rel)
         return info
 
     async def list(
@@ -669,10 +793,19 @@ class FilesystemManager:
                 "type": "directory" if entry.is_dir else "file",
                 "size": None if entry.is_dir else entry.size,
                 "mtime": entry.mtime or None,
+                "writable": await self._reported_writable(
+                    session_id, workspace, entry_path
+                ),
             }
             for entry_path, entry in sorted(snapshot.items())
         ]
-        return {"path": rel, "entries": entries, "truncated": truncated}
+        writable = await self._reported_writable(session_id, workspace, rel)
+        return {
+            "path": rel,
+            "entries": entries,
+            "truncated": truncated,
+            "writable": writable,
+        }
 
     @staticmethod
     async def _is_dir(workspace: Workspace, rel: str) -> bool:
@@ -1066,6 +1199,7 @@ class FilesystemManager:
         size: int,
         *,
         sha256: Optional[str] = None,
+        expected_sha256: Optional[str] = None,
         overwrite: bool = False,
         channel: Any,
     ) -> Dict[str, Any]:
@@ -1077,17 +1211,36 @@ class FilesystemManager:
             raise FsTransferError(
                 "declared size out of range", reason="size_out_of_range"
             )
+        for field_name, digest in (
+            ("sha256", sha256),
+            ("expected_sha256", expected_sha256),
+        ):
+            if digest is not None and (
+                len(digest) != 64
+                or any(
+                    character not in "0123456789abcdefABCDEF" for character in digest
+                )
+            ):
+                raise FsTransferError(
+                    f"{field_name} must be a 64-character hexadecimal digest",
+                    reason="invalid_checksum",
+                )
         workspace = await self._workspace(session_id)
         try:
             if isinstance(workspace, HostWorkspace):
                 # Resolving the target validates the whole path (symlinked
                 # parents included) against the workspace boundary.
                 workspace.resolve(rel)
+            await self._assert_writable(session_id, workspace, rel)
             if await workspace.is_dir(rel):
                 raise FsTransferError(
                     "target is a directory", reason="target_is_directory"
                 )
-            if not overwrite and await workspace.exists(rel):
+            if (
+                not overwrite
+                and expected_sha256 is None
+                and await workspace.exists(rel)
+            ):
                 raise FsTransferError("target already exists", reason="target_exists")
         except WorkspaceEscapeError as exc:
             raise FsPathError(str(exc), path=path) from exc
@@ -1099,6 +1252,7 @@ class FilesystemManager:
             path=rel,
             declared_size=size,
             declared_sha256=sha256.lower() if sha256 else None,
+            expected_sha256=(expected_sha256.lower() if expected_sha256 else None),
             overwrite=overwrite,
             spool=tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024),
         )
@@ -1193,45 +1347,93 @@ class FilesystemManager:
                 transfer_id=transfer_id,
                 reason="checksum_mismatch",
             )
-        if not state.overwrite and await state.workspace.exists(state.path):
-            raise FsTransferError(
-                "target already exists",
-                transfer_id=transfer_id,
-                reason="target_exists",
-            )
-        workspace = state.workspace
+        # Resolve the workspace again at commit: session routing and substrate
+        # confinement/policy may have changed while chunks were in flight.
+        workspace = await self._workspace(session_id)
+        lock_key = (
+            session_id,
+            type(workspace),
+            str(workspace.root),
+            canonical_relpath(state.path),
+        )
+        lock = self._upload_commit_locks.setdefault(lock_key, asyncio.Lock())
+        self._upload_commit_lock_users[lock_key] = (
+            self._upload_commit_lock_users.get(lock_key, 0) + 1
+        )
         try:
-            if isinstance(workspace, HostWorkspace):
-                absolute = workspace.resolve(state.path)
-                spool = state.spool
+            async with lock:
+                try:
+                    # Source/backend policy is authoritative and is checked
+                    # before target existence or expected-content details are
+                    # disclosed. It is re-evaluated under the publish lock in
+                    # case policy or permissions changed during transfer.
+                    await self._assert_writable(session_id, workspace, state.path)
+                    if isinstance(workspace, HostWorkspace):
+                        # Re-resolve under the commit lock immediately before
+                        # checking the target and publishing the staged bytes.
+                        absolute = workspace.resolve(state.path)
+                    else:
+                        absolute = None
 
-                def _write_host() -> None:
-                    os.makedirs(os.path.dirname(absolute) or ".", exist_ok=True)
-                    spool.seek(0)
-                    fd, staging = tempfile.mkstemp(
-                        prefix=".omni-upload-",
-                        dir=os.path.dirname(absolute) or ".",
-                    )
-                    try:
-                        with os.fdopen(fd, "wb") as handle:
-                            for block in iter(lambda: spool.read(1024 * 1024), b""):
-                                handle.write(block)
-                        os.replace(staging, absolute)
-                    except BaseException:
-                        try:
-                            os.unlink(staging)
-                        except OSError:
-                            pass
-                        raise
+                    if state.expected_sha256 is not None:
+                        current_sha256 = await self._target_sha256(
+                            workspace, state.path, absolute=absolute
+                        )
+                        if current_sha256 != state.expected_sha256:
+                            raise FsTransferError(
+                                "target does not match expected_sha256",
+                                transfer_id=transfer_id,
+                                reason="precondition_failed",
+                            )
+                    elif not state.overwrite and await workspace.exists(state.path):
+                        raise FsTransferError(
+                            "target already exists",
+                            transfer_id=transfer_id,
+                            reason="target_exists",
+                        )
 
-                await asyncio.to_thread(_write_host)
-            else:
-                state.spool.seek(0)
-                await workspace.write_bytes(
-                    state.path, state.spool.read(), create_dirs=True
-                )
+                    if isinstance(workspace, HostWorkspace):
+                        assert absolute is not None
+                        spool = state.spool
+
+                        def _write_host() -> None:
+                            os.makedirs(os.path.dirname(absolute) or ".", exist_ok=True)
+                            spool.seek(0)
+                            fd, staging = tempfile.mkstemp(
+                                prefix=".omni-upload-",
+                                dir=os.path.dirname(absolute) or ".",
+                            )
+                            try:
+                                with os.fdopen(fd, "wb") as handle:
+                                    for block in iter(
+                                        lambda: spool.read(1024 * 1024), b""
+                                    ):
+                                        handle.write(block)
+                                os.replace(staging, absolute)
+                            except BaseException:
+                                try:
+                                    os.unlink(staging)
+                                except OSError:
+                                    pass
+                                raise
+
+                        await asyncio.to_thread(_write_host)
+                    else:
+                        state.spool.seek(0)
+                        await workspace.write_bytes(
+                            state.path, state.spool.read(), create_dirs=True
+                        )
+                except WorkspaceEscapeError as exc:
+                    raise FsPathError(str(exc), path=state.path) from exc
         except WorkspaceEscapeError as exc:
             raise FsPathError(str(exc), path=state.path) from exc
+        finally:
+            users = self._upload_commit_lock_users[lock_key] - 1
+            if users:
+                self._upload_commit_lock_users[lock_key] = users
+            else:
+                self._upload_commit_lock_users.pop(lock_key, None)
+                self._upload_commit_locks.pop(lock_key, None)
         self._close_upload(state)
         await self._maybe_progress(
             state,
@@ -1241,6 +1443,36 @@ class FilesystemManager:
             force=True,
         )
         return {"path": state.path, "size": state.received, "sha256": computed}
+
+    async def _target_sha256(
+        self,
+        workspace: Workspace,
+        path: str,
+        *,
+        absolute: Optional[str],
+    ) -> Optional[str]:
+        """Return the current target digest, or ``None`` when it is absent.
+
+        The caller holds the same-server commit lock. Host files stream into
+        the hasher; generic substrates use their necessarily materialized read.
+        Direct filesystem writers remain outside this RPC lock.
+        """
+        if isinstance(workspace, HostWorkspace):
+            assert absolute is not None
+
+            def _hash_host() -> Optional[str]:
+                if not os.path.isfile(absolute):
+                    return None
+                hasher = hashlib.sha256()
+                with open(absolute, "rb") as handle:
+                    for block in iter(lambda: handle.read(1024 * 1024), b""):
+                        hasher.update(block)
+                return hasher.hexdigest()
+
+            return await asyncio.to_thread(_hash_host)
+        if not await workspace.is_file(path):
+            return None
+        return hashlib.sha256(await workspace.read_bytes(path)).hexdigest()
 
     async def upload_abort(
         self, session_id: str, transfer_id: str, *, channel: Any

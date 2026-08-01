@@ -280,7 +280,7 @@ OPTIONAL_FIELDS = {
     "fs_watch": ("recursive", "poll_interval_ms"),
     "fs_list": ("recursive",),
     "fs_download_read": ("offset", "length"),
-    "fs_upload_open": ("sha256", "overwrite"),
+    "fs_upload_open": ("sha256", "expected_sha256", "overwrite"),
     "list_turns": ("limit", "cursor", "order"),
     "list_items": ("turn_id", "kinds", "limit", "cursor", "order"),
     "list_threads": (
@@ -478,6 +478,17 @@ OBJECT_FIELDS = {
 #: stays visible here rather than being smuggled in as a renamed wire field.
 OPERATION_FIELD_TYPES = {
     ("item_updated", "content"): "object",
+}
+
+OPERATION_FIELD_SCHEMAS = {
+    ("fs_upload_open", "sha256"): {
+        "type": "string",
+        "pattern": "^[0-9a-fA-F]{64}$",
+    },
+    ("fs_upload_open", "expected_sha256"): {
+        "type": "string",
+        "pattern": "^[0-9a-fA-F]{64}$",
+    },
 }
 
 
@@ -935,6 +946,22 @@ PROTOCOL_ERRORS = {
                 "kind": {"const": "fs_watch_invalid"},
                 "watch_id": {"type": "string"},
                 "reason": {"type": "string"},
+            },
+        },
+    },
+    "FsReadOnly": {
+        "code": -32064,
+        "message": "Filesystem target is read-only",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "reason"],
+            "properties": {
+                "kind": {"const": "fs_read_only"},
+                "path": {"type": "string"},
+                "reason": {
+                    "enum": ["source_read_only", "backend_not_writable"]
+                },
             },
         },
     },
@@ -1483,6 +1510,7 @@ def build_openrpc() -> dict:
                         {"$ref": "#/components/errors/FsNotFound"},
                         {"$ref": "#/components/errors/FsTransferInvalid"},
                         {"$ref": "#/components/errors/FsWatchInvalid"},
+                        {"$ref": "#/components/errors/FsReadOnly"},
                     ]
                 )
             if (
@@ -1594,7 +1622,10 @@ def build_schema() -> dict:
         optional = list(OPTIONAL_FIELDS.get(operation.name, ()))
         properties = {}
         for field in required + optional:
-            if operation.name == "initialize" and field == "protocol_version":
+            field_schema = OPERATION_FIELD_SCHEMAS.get((operation.name, field))
+            if field_schema is not None:
+                properties[field] = field_schema
+            elif operation.name == "initialize" and field == "protocol_version":
                 properties[field] = {"type": "string"}
             elif operation.name == "initialize" and field in {
                 "identity",

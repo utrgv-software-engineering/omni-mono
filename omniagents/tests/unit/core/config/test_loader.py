@@ -550,6 +550,7 @@ def test_loader_handles_remote_agent_config(tmp_path):
         remote_agent:
           ws_url: ws://example
           auth_token_env: REMOTE_TOKEN
+          identity_allowed_roles: [operator, Operator, operator]
         tools:
           - local_tool
         """,
@@ -557,10 +558,26 @@ def test_loader_handles_remote_agent_config(tmp_path):
     spec = load_agent_spec_from_yaml(str(yaml_path))
     assert spec.remote_ws_url == "ws://example"
     assert spec.remote_auth_token_key == "REMOTE_TOKEN"
+    assert spec.remote_identity_allowed_roles == ["operator", "Operator"]
     assert spec.available_tools == []
     assert spec.model_name is None
     assert spec.get_agent_instructions() == ""
     assert spec.handoff_configs == []
+
+
+def test_loader_rejects_invalid_remote_identity_role_allowlist(tmp_path):
+    yaml_path = tmp_path / "agent.yaml"
+    write(
+        yaml_path,
+        """
+        name: RemoteAgent
+        remote_agent:
+          ws_url: ws://example
+          identity_allowed_roles: admin
+        """,
+    )
+    with pytest.raises(ValueError, match="identity_allowed_roles must be a list"):
+        load_agent_spec_from_yaml(str(yaml_path))
 
 
 def test_loader_skips_missing_handoff_yaml(tmp_path):
