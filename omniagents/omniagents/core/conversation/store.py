@@ -157,20 +157,14 @@ class ConversationStore(ABC):
         """Threads matching the SAME predicate :meth:`list_threads` pages."""
 
     @abstractmethod
-    def list_descendant_threads(
-        self, root_thread_id: str, *, max_depth: int, limit: int
-    ) -> List[Tuple[Thread, int]]:
-        """The fork subtree below *root_thread_id*, as ``(thread, depth)``.
+    def get_threads(self, thread_ids: Sequence[str]) -> Dict[str, Thread]:
+        """A whole PAGE of thread rows, in one statement per batch.
 
-        Breadth-first, root excluded, depth 1 = direct children. Walked in
-        SQL (a recursive CTE) rather than by repeated round trips, and
-        bounded by both *max_depth* and *limit* so a cycle introduced by a
-        corrupted ``parent_thread_id`` cannot spin.
-
-        Descendants are additionally restricted to the root's own owner:
-        a fork inherits its parent's ``user_id``, so a child with a
-        different owner is anomalous and is not something an ancestry read
-        should surface.
+        Keyed by id and silently missing the ones that are gone, so a
+        caller that assembled its id list from a separate walk is not
+        broken by a concurrent delete between the two reads. Exists so
+        that a page derived from :meth:`descendant_thread_rows` costs two
+        statements rather than N.
         """
 
     def compact_search_index(self) -> None:
@@ -214,19 +208,29 @@ class ConversationStore(ABC):
     ) -> List[Tuple[str, Optional[str], Optional[str]]]:
         """EVERY thread below *root_thread_id*, as ``(id, user_id, parent)``.
 
-        Deliberately unlike :meth:`list_descendant_threads` in two ways,
-        both of which are the difference between a read and an integrity
-        check:
+        **The only descendant walk in the system.** The ancestry read, the
+        archive/unarchive cascade and the delete guard all derive from this
+        one result (via
+        :meth:`~omniagents.core.conversation.service.ConversationService.descendant_nodes`),
+        because two walks over one relation drift: an owner-scoped CTE and
+        a per-node-scoped cascade once disagreed about which of the
+        caller's own threads existed below a fork owned by somebody else.
+
+        Two properties make it usable as an integrity check as well as a
+        read:
 
         * **Unbounded.** No depth ceiling, no row limit. A capped walk used
           as a delete guard silently answers "these are all the children"
           when it is not, and the caller then orphans the overflow. Cycle
           termination comes from de-duplicating on ``thread_id`` alone (the
-          recursive ``UNION``), not from a depth cap.
+          recursive ``UNION``), not from a depth cap. Callers that cap —
+          the ancestry read — cap their OUTPUT and say so.
         * **Owner-agnostic.** A descendant owned by someone else — or, on a
           partially backfilled shard, owned by nobody — still holds a
           ``parent_thread_id`` pointing here. Whether the relationship
-          exists is not a question about who may read it.
+          exists is not a question about who may read it; every caller that
+          reads or acts turns the returned owner into its own per-node
+          access decision.
         """
 
     @abstractmethod
@@ -1068,53 +1072,25 @@ class SqliteConversationStore(ConversationStore):
             )
         return int(row[0]) if row else 0
 
-    def list_descendant_threads(
-        self, root_thread_id: str, *, max_depth: int, limit: int
-    ) -> List[Tuple[Thread, int]]:
-        columns = ", ".join(f"t.{column}" for column in _THREAD_COLUMNS)
-        # ``UNION`` (not ``UNION ALL``) dedupes the frontier, so a
-        # parent_thread_id cycle terminates instead of recursing forever;
-        # max_depth and LIMIT bound it a second time.
-        sql = f"""
-            WITH RECURSIVE subtree(thread_id, depth) AS (
-                SELECT thread_id, 1 FROM threads
-                 WHERE parent_thread_id = ?
-                   AND thread_id <> ?
-                   AND user_id IS ?
-                UNION
-                SELECT c.thread_id, s.depth + 1
-                  FROM threads c
-                  JOIN subtree s ON c.parent_thread_id = s.thread_id
-                 WHERE s.depth < ?
-                   AND c.thread_id <> ?
-                   AND c.user_id IS ?
-            )
-            SELECT {columns}, s.depth
-              FROM subtree s JOIN threads t ON t.thread_id = s.thread_id
-             ORDER BY s.depth ASC, t.thread_id ASC
-             LIMIT ?
-        """
+    def get_threads(self, thread_ids: Sequence[str]) -> Dict[str, Thread]:
+        ids = list(dict.fromkeys(thread_ids))
+        if not ids:
+            return {}
+        columns = ", ".join(_THREAD_COLUMNS)
+        found: Dict[str, Thread] = {}
         with self._lock:
             conn = self._connect()
-            root = conn.execute(
-                "SELECT user_id FROM threads WHERE thread_id = ?", (root_thread_id,)
-            ).fetchone()
-            if root is None:
-                return []
-            owner = root[0]
-            rows = conn.execute(
-                sql,
-                (
-                    root_thread_id,
-                    root_thread_id,
-                    owner,
-                    max_depth,
-                    root_thread_id,
-                    owner,
-                    limit,
-                ),
-            ).fetchall()
-        return [(_thread_from_row(row[:-1]), int(row[-1])) for row in rows]
+            for start in range(0, len(ids), _COUNT_BATCH):
+                chunk = ids[start : start + _COUNT_BATCH]
+                placeholders = ", ".join("?" * len(chunk))
+                for row in conn.execute(
+                    f"SELECT {columns} FROM threads "
+                    f"WHERE thread_id IN ({placeholders})",
+                    chunk,
+                ).fetchall():
+                    thread = _thread_from_row(row)
+                    found[thread.thread_id] = thread
+        return found
 
     def compact_search_index(self) -> None:
         if not self._fts_ready:
@@ -1161,8 +1137,10 @@ class SqliteConversationStore(ConversationStore):
     ) -> List[Tuple[str, Optional[str], Optional[str]]]:
         # The recursive row is the thread id ALONE, so ``UNION`` dedupes on
         # it and a parent_thread_id cycle terminates without needing a
-        # depth ceiling to stop it. (``list_descendant_threads`` carries a
-        # depth in its row, so there the ceiling IS the cycle guard.)
+        # depth ceiling to stop it. Depth is derived from the returned
+        # parent links in Python (ConversationService.descendant_nodes),
+        # which keeps this the only walk and lets the same rows serve the
+        # capped read and the uncapped guard.
         sql = """
             WITH RECURSIVE subtree(thread_id) AS (
                 SELECT thread_id FROM threads
@@ -2046,62 +2024,22 @@ class PgConversationStore(ConversationStore):
                 row = cur.fetchone()
         return int(row[0]) if row else 0
 
-    def list_descendant_threads(
-        self, root_thread_id: str, *, max_depth: int, limit: int
-    ) -> List[Tuple[Thread, int]]:
-        columns = ", ".join(f"t.{column}" for column in _PG_THREAD_FIELD_NAMES)
-        sql = f"""
-            WITH RECURSIVE subtree(thread_id, depth) AS (
-                SELECT thread_id, 1 FROM conversation_threads
-                 WHERE {self._SHARD_SCOPE}
-                   AND parent_thread_id = %s
-                   AND thread_id <> %s
-                   AND user_id IS NOT DISTINCT FROM %s
-                UNION
-                SELECT c.thread_id, s.depth + 1
-                  FROM conversation_threads c
-                  JOIN subtree s ON c.parent_thread_id = s.thread_id
-                 WHERE c.tenant_id = %s AND c.project_slug = %s
-                   AND c.agent_slug = %s
-                   AND s.depth < %s
-                   AND c.thread_id <> %s
-                   AND c.user_id IS NOT DISTINCT FROM %s
-            )
-            SELECT {columns}, s.depth
-              FROM subtree s
-              JOIN conversation_threads t ON t.thread_id = s.thread_id
-             WHERE t.tenant_id = %s AND t.project_slug = %s AND t.agent_slug = %s
-             ORDER BY s.depth ASC, t.thread_id ASC
-             LIMIT %s
-        """
+    def get_threads(self, thread_ids: Sequence[str]) -> Dict[str, Thread]:
+        ids = list(dict.fromkeys(thread_ids))
+        if not ids:
+            return {}
+        found: Dict[str, Thread] = {}
         with self._conn() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT user_id FROM conversation_threads "
-                    f"WHERE {self._THREAD_SCOPE}",
-                    (*self._scope, root_thread_id),
+                    f"{self._THREAD_SELECT} WHERE {self._SHARD_SCOPE} "
+                    "AND thread_id = ANY(%s)",
+                    (*self._scope, ids),
                 )
-                root = cur.fetchone()
-                if root is None:
-                    return []
-                owner = root[0]
-                cur.execute(
-                    sql,
-                    (
-                        *self._scope,
-                        root_thread_id,
-                        root_thread_id,
-                        owner,
-                        *self._scope,
-                        max_depth,
-                        root_thread_id,
-                        owner,
-                        *self._scope,
-                        limit,
-                    ),
-                )
-                rows = cur.fetchall()
-        return [(_thread_from_row(row[:-1]), int(row[-1])) for row in rows]
+                for row in cur.fetchall():
+                    thread = _thread_from_row(row)
+                    found[thread.thread_id] = thread
+        return found
 
     def _count_for_threads(
         self, table: str, thread_ids: Sequence[str]

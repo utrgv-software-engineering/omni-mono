@@ -33,7 +33,7 @@ from .test_store import (  # noqa: F401 — re-run against the PG backend
     TestProjectionWrite,
     TestSeqAllocation,
     TestPageCounts,
-    TestThreadAncestry,
+    TestBulkThreadReads,
     TestThreadListing,
     TestThreadSearch,
     TestUnboundedDescendantWalk,

@@ -198,12 +198,12 @@ MUTATIONS: List[Mutation] = [
     Mutation(
         "delete: the guard walk is UNBOUNDED, unlike the ancestry read",
         AGENT,
-        "            descendants = self._conversation_service().descendant_owners(session_id)",
+        "            descendants = self._conversation_service().descendant_nodes(session_id)",
         """            descendants = [
-                (child.thread_id, child.user_id)
-                for child, _ in self._conversation_service().store
-                .list_descendant_threads(session_id, max_depth=32, limit=500)
-            ]""",
+                node
+                for node in self._conversation_service().descendant_nodes(session_id)
+                if node.depth <= 32
+            ][:500]""",
         [BRANCH_TESTS],
     ),
     Mutation(
@@ -249,8 +249,8 @@ MUTATIONS: List[Mutation] = [
     Mutation(
         "delete: the cascade removes deepest first",
         SERVICE,
-        "        ordered = sorted(parents, key=lambda child: (-depth_of(child), child))",
-        "        ordered = sorted(parents, key=lambda child: (depth_of(child), child))",
+        "        nodes.sort(key=lambda node: (-node.depth, node.thread_id))",
+        "        nodes.sort(key=lambda node: (node.depth, node.thread_id))",
         [BRANCH_TESTS],
     ),
     Mutation(
@@ -272,14 +272,14 @@ MUTATIONS: List[Mutation] = [
     Mutation(
         "archive: cascades to the fork subtree",
         SERVICE,
-        "        for child, owner in self.descendant_owners(thread_id):",
-        "        for child, owner in []:",
+        "        for node in self.descendant_nodes(thread_id):",
+        "        for node in []:",
         [BRANCH_TESTS, INTEG],
     ),
     Mutation(
         "archive: the cascade skips descendants the caller cannot access",
         SERVICE,
-        """            if not can_access(owner):
+        """            if not can_access(node.user_id):
                 skipped += 1
                 continue""",
         "            pass",
@@ -295,7 +295,7 @@ MUTATIONS: List[Mutation] = [
     Mutation(
         "delete: a refusal does not name a thread the caller cannot read",
         AGENT,
-        "        visible = [child for child, owner in descendants if can_access(owner)]",
+        "        visible = [node.thread_id for node in descendants if can_access(node.user_id)]",
         "        visible = list(descendant_ids)",
         [INTEG],
     ),
@@ -669,19 +669,67 @@ MUTATIONS: List[Mutation] = [
     ),
     # -- Ancestry -------------------------------------------------------
     Mutation(
-        "ancestry: an ancestry READ stays within the owner",
-        STORE,
-        """                   AND thread_id <> ?
-                   AND user_id IS ?""",
-        "                   AND thread_id <> ?",
-        [STORE_TESTS],
+        # tkt_YF3ocr6GxnXa changed this invariant's SHAPE, not its force.
+        # It used to be "the read stays inside the root's owner", enforced
+        # transitively in SQL; the read now descends past a foreign node
+        # and omits only that node. Both halves get a mutant.
+        "ancestry: an ancestry READ omits a node the caller cannot access",
+        SERVICE,
+        "            and can_access(node.user_id)",
+        "            and True",
+        [BRANCH_TESTS, INTEG],
+    ),
+    Mutation(
+        "ancestry: an ancestry READ descends PAST a node it omits",
+        SERVICE,
+        """        visible = [
+            node
+            for node in self.descendant_nodes(thread_id)
+            if (max_depth is None or node.depth <= max_depth)
+            and can_access(node.user_id)
+        ]""",
+        """        _reachable: set[str] = set()
+        _parents = {
+            child: parent
+            for child, _, parent in self.store.descendant_thread_rows(thread_id)
+        }
+        for _node in sorted(self.descendant_nodes(thread_id), key=lambda n: n.depth):
+            _parent = _parents.get(_node.thread_id)
+            if _parent in _parents and _parent not in _reachable:
+                continue
+            if can_access(_node.user_id):
+                _reachable.add(_node.thread_id)
+        visible = [
+            node
+            for node in self.descendant_nodes(thread_id)
+            if (max_depth is None or node.depth <= max_depth)
+            and node.thread_id in _reachable
+        ]""",
+        [BRANCH_TESTS],
     ),
     Mutation(
         "ancestry: an ancestry READ respects its depth ceiling",
-        STORE,
-        "                 WHERE s.depth < ?",
-        "                 WHERE s.depth < 1000000 + 0 * ?",
-        [STORE_TESTS, INTEG],
+        SERVICE,
+        "        rows = [node for node in accessible if node.depth <= depth]",
+        "        rows = list(accessible)",
+        [BRANCH_TESTS, INTEG],
+    ),
+    Mutation(
+        # The clip is only honest if the payload admits it: the cascade
+        # this read predicts is uncapped, so a silent clip reintroduces
+        # tkt_YF3ocr6GxnXa one axis over.
+        "ancestry: a clipped ancestry READ says so",
+        SERVICE,
+        "        truncated = len(accessible) > len(page)",
+        "        truncated = len(rows) > len(page)",
+        [BRANCH_TESTS],
+    ),
+    Mutation(
+        "ancestry: the shared walk is derived once per node, not per query",
+        SERVICE,
+        "                if cursor in depths:",
+        "                if False:",
+        [BRANCH_TESTS],
     ),
     # -- Retention ------------------------------------------------------
     Mutation(
@@ -734,10 +782,10 @@ MUTATIONS: List[Mutation] = [
         "export: descendants are enumerated on request",
         SERVICE,
         """            payload["descendant_thread_ids"] = [
-                child.thread_id
-                for child, _ in self.store.list_descendant_threads(
-                    thread_id, max_depth=MAX_DESCENDANT_DEPTH, limit=MAX_DESCENDANTS
-                )
+                node.thread_id
+                for node in self.accessible_descendants(
+                    thread_id, can_access=can_access, max_depth=MAX_DESCENDANT_DEPTH
+                )[:MAX_DESCENDANTS]
             ]""",
         '            payload["descendant_thread_ids"] = []',
         [BRANCH_TESTS],

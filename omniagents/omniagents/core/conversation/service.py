@@ -57,6 +57,7 @@ __all__ = [
     "CascadeResult",
     "ConversationRpcError",
     "ConversationService",
+    "DescendantNode",
     "ForkPointInvalid",
     "InvalidCursor",
     "ItemNotFound",
@@ -133,6 +134,21 @@ MAX_LISTED_DESCENDANTS = 100
 #: half a client's annotation is data loss.
 METADATA_MAX_KEYS = 64
 METADATA_MAX_BYTES = 16_384
+
+
+@dataclass(frozen=True)
+class DescendantNode:
+    """One thread below a root, as the single descendant walk reports it.
+
+    Carries the owner because ownership is decided **per node**: the walk
+    itself answers "does this relationship exist", and every caller — the
+    ancestry read, the archive cascade, the delete guard — turns
+    ``user_id`` into its own access decision over the same rows.
+    """
+
+    thread_id: str
+    user_id: Optional[str]
+    depth: int
 
 
 @dataclass(frozen=True)
@@ -679,7 +695,12 @@ class ConversationService:
         }
 
     def list_descendants(
-        self, thread_id: str, *, max_depth: int | None = None, limit: int | None = None
+        self,
+        thread_id: str,
+        *,
+        can_access: "Callable[[Optional[str]], bool]",
+        max_depth: int | None = None,
+        limit: int | None = None,
     ) -> Dict[str, Any]:
         """The fork subtree below *thread_id*, plus its own ancestry links.
 
@@ -687,20 +708,43 @@ class ConversationService:
         to know where the thread it is looking at came FROM as well as what
         came after it, and two round trips to draw one widget is how
         multi-column navigation ends up inconsistent between columns.
+
+        **Ownership is per node, not per path** — see
+        :meth:`descendant_nodes`. ``can_access`` has no default, for the
+        same reason the cascade's has none: an unscoped ancestry read is
+        fail-OPEN, and "forgot the scope" and "deliberately unscoped" must
+        not be the same expression.
+
+        ``truncated`` covers BOTH clips. The cascade this read is supposed
+        to predict is uncapped, so a depth clip that did not raise the flag
+        reproduced the very defect the per-node rule fixed, one axis over:
+        the read shows 32 of a 40-deep chain, the cascade archives all 40,
+        and nothing in the payload says the client is not seeing everything
+        that is about to move. A descendant the caller may not access is
+        NOT a clip — it is never shown to anybody and the cascade never
+        touches it.
         """
         thread = self.ensure_thread(thread_id)
         depth = max(
             1, min(int(max_depth or MAX_DESCENDANT_DEPTH), MAX_DESCENDANT_DEPTH)
         )
         count = max(1, min(int(limit or MAX_DESCENDANTS), MAX_DESCENDANTS))
-        rows = self.store.list_descendant_threads(
-            thread_id, max_depth=depth, limit=count + 1
-        )
-        truncated = len(rows) > count
+        # Uncapped on purpose: ``truncated`` is a statement about what was
+        # withheld, and it cannot be computed from an already-clipped list.
+        accessible = self.accessible_descendants(thread_id, can_access=can_access)
+        rows = [node for node in accessible if node.depth <= depth]
         page = rows[:count]
-        payloads = self._with_exact_counts([child for child, _ in page])
+        truncated = len(accessible) > len(page)
+        # One batched read for the page rather than one per row: the walk
+        # above returns ids, and the ancestry read is a listing surface.
+        by_id = self.store.get_threads([node.thread_id for node in page])
+        present = [
+            (node, by_id[node.thread_id]) for node in page if node.thread_id in by_id
+        ]
+        payloads = self._with_exact_counts([thread_row for _, thread_row in present])
         descendants = [
-            {**payload, "depth": depth} for payload, (_, depth) in zip(payloads, page)
+            {**payload, "depth": node.depth}
+            for payload, (node, _) in zip(payloads, present)
         ]
         return {
             "thread_id": thread_id,
@@ -715,6 +759,7 @@ class ConversationService:
         self,
         thread_id: str,
         *,
+        can_access: "Callable[[Optional[str]], bool]",
         limit: int | None = None,
         cursor: str | None = None,
         include_descendants: bool = False,
@@ -740,6 +785,10 @@ class ConversationService:
         headers — ``list_turns`` pages the rest. Saying "no silent cap" and
         then silently capping one of the three lists is the kind of gap
         this surface is supposed to be free of.
+
+        ``include_descendants`` names the same nodes the ancestry read
+        shows, under the same per-node ``can_access`` — which is why the
+        predicate is required here rather than optional.
         """
         thread = self.ensure_thread(thread_id)
         size = _clamp(limit)
@@ -762,58 +811,127 @@ class ConversationService:
             "has_more": page.has_more,
         }
         if include_descendants:
+            # The SAME walk and the SAME per-node scoping the ancestry read
+            # uses: an export whose id list disagreed with the branch tree
+            # the client just drew is the divergence this method would
+            # otherwise reintroduce from a third copy.
             payload["descendant_thread_ids"] = [
-                child.thread_id
-                for child, _ in self.store.list_descendant_threads(
-                    thread_id, max_depth=MAX_DESCENDANT_DEPTH, limit=MAX_DESCENDANTS
-                )
+                node.thread_id
+                for node in self.accessible_descendants(
+                    thread_id, can_access=can_access, max_depth=MAX_DESCENDANT_DEPTH
+                )[:MAX_DESCENDANTS]
             ]
         else:
             payload["descendant_thread_ids"] = []
         _ = thread
         return payload
 
-    def descendant_owners(self, thread_id: str) -> List[tuple[str, Optional[str]]]:
-        """Every thread below *thread_id* with its owner, deepest FIRST.
+    def descendant_nodes(self, thread_id: str) -> List[DescendantNode]:
+        """**The** descendant walk. Every other one is a view of this.
 
-        This is the integrity walk, and it is deliberately not the read
-        (:meth:`list_descendants`). A read may cap and say so; a delete
-        guard may not. A capped guard reports "these are all the children"
-        when it is not, and the caller then destroys the root and orphans
-        the overflow — the refuse-don't-orphan policy defeated through the
-        back door.
+        One walk backs three surfaces that must describe the same tree —
+        the ancestry read (:meth:`list_descendants`), the archive/unarchive
+        cascade (:meth:`set_status`) and the delete guard. They diverged
+        once: the read required the caller's ownership at every HOP while
+        the cascade checked it per NODE, so a thread of the caller's
+        forked below somebody else's fork was invisible to the read and
+        still came back in ``cascaded_thread_ids``.
 
-        It is also **owner-agnostic**: a descendant belonging to another
-        principal, or (on a partially backfilled shard) to nobody, still
-        points at this thread. Whether the relationship exists is not a
-        question about who may read it — which is exactly why the owner
-        comes back with each id. Every caller that ACTS on a descendant
-        (the delete cascade, :meth:`set_status`) turns that into an access
-        decision of its own; none of them may treat "the walk found it" as
-        "the caller may touch it".
+        Two properties resolve that, and both live here rather than in any
+        caller:
 
-        Deepest first, so a caller deleting in this order never removes a
-        parent before a child that still points at it: an interrupted
-        cascade leaves a shorter valid chain rather than a broken one.
+        * **Unbounded and owner-agnostic.** It answers "does this
+          relationship exist", which is an integrity question. A capped
+          guard reports "these are all the children" when it is not, and
+          the caller then destroys the root and orphans the overflow. A
+          caller that wants a bounded answer — the read — bounds its own
+          OUTPUT and says ``truncated``.
+        * **Ownership is per node.** ``user_id`` rides along with every id
+          so each caller makes its own access decision, node by node.
+          Ownership is a property of a thread, not of a path: a fork of a
+          fork of your own thread is still yours, and a stranger forking
+          in between is not a reason to hide it from you. A path-scoped
+          rule protects nothing either — the foreign node itself is
+          excluded by the per-node check either way; all the extra
+          strictness hides is the caller's OWN threads.
+
+        ``depth`` is 1 for a direct child and counts hops in the REAL
+        tree, foreign nodes included, so two callers filtering the same
+        rows differently still agree about shape.
+
+        Ordered deepest FIRST, then by id: a caller deleting in this order
+        never removes a parent before a child that still points at it, so
+        an interrupted cascade leaves a shorter valid chain rather than a
+        broken one.
         """
         rows = self.store.descendant_thread_rows(thread_id)
         parents = {child: parent for child, _, parent in rows}
         owners = {child: owner for child, owner, _ in rows}
 
-        def depth_of(child: str) -> int:
-            # Walk to the root, guarding against a parent_thread_id cycle
-            # the SQL de-duplication tolerated.
-            seen = {child}
-            depth = 0
-            cursor = parents.get(child)
-            while cursor is not None and cursor in parents and cursor not in seen:
-                seen.add(cursor)
-                depth += 1
-                cursor = parents.get(cursor)
-            return depth
+        # Memoized: the walk under this is UNBOUNDED (the delete guard
+        # needs it to be), so re-deriving each node's chain from scratch is
+        # O(n^2) on a fork chain — a ``limit=5`` read on a 6000-node line
+        # visited every node once per node. Each chain is walked at most
+        # once and every node on it is resolved on the way back down.
+        depths: Dict[str, int] = {}
 
-        ordered = sorted(parents, key=lambda child: (-depth_of(child), child))
-        return [(child, owners.get(child)) for child in ordered]
+        def depth_of(child: str) -> int:
+            chain: List[str] = []
+            on_chain: set[str] = set()
+            cursor: Optional[str] = child
+            base = 0
+            while cursor is not None and cursor in parents:
+                if cursor in depths:
+                    base = depths[cursor]
+                    break
+                if cursor in on_chain:
+                    # A parent_thread_id cycle the SQL de-duplication
+                    # tolerated. Stop rather than spin; the numbers below a
+                    # cycle are arbitrary either way, but they terminate.
+                    break
+                chain.append(cursor)
+                on_chain.add(cursor)
+                cursor = parents.get(cursor)
+            for offset, node in enumerate(reversed(chain), start=1):
+                depths[node] = base + offset
+            return depths[child]
+
+        nodes = [
+            DescendantNode(
+                thread_id=child, user_id=owners.get(child), depth=depth_of(child)
+            )
+            for child in parents
+        ]
+        nodes.sort(key=lambda node: (-node.depth, node.thread_id))
+        return nodes
+
+    def accessible_descendants(
+        self,
+        thread_id: str,
+        *,
+        can_access: "Callable[[Optional[str]], bool]",
+        max_depth: int | None = None,
+    ) -> List[DescendantNode]:
+        """The nodes below *thread_id* the caller may see, shallowest first.
+
+        The read-shaped view of :meth:`descendant_nodes`: same walk, same
+        rows, per-node ``can_access``, ordered the way a branch tree is
+        drawn.
+
+        *max_depth* caps the OUTPUT — the walk beneath it stays unbounded,
+        so a node the cap excludes is still descended through. ``None``
+        means no ceiling, which is what a caller that has to REPORT its own
+        clipping wants: it needs the full accessible set to know whether it
+        withheld any of it.
+        """
+        visible = [
+            node
+            for node in self.descendant_nodes(thread_id)
+            if (max_depth is None or node.depth <= max_depth)
+            and can_access(node.user_id)
+        ]
+        visible.sort(key=lambda node: (node.depth, node.thread_id))
+        return visible
 
     # -- organization: mutations -----------------------------------------
 
@@ -923,7 +1041,7 @@ class ConversationService:
 
         **The cascade is scoped by ``can_access``, and the parameter has no
         default.** The walk it rides on
-        (:meth:`descendant_owners`) is deliberately owner-agnostic — it
+        (:meth:`descendant_nodes`) is deliberately owner-agnostic — it
         answers "does this relationship exist", which is an integrity
         question. Acting on those descendants is an ACCESS question, and
         the two must not share an answer: an unscoped cascade writes
@@ -955,12 +1073,12 @@ class ConversationService:
         # The named thread's access was decided by the RPC gate before this
         # was called; the descendants' has not been decided anywhere yet.
         apply(thread_id)
-        for child, owner in self.descendant_owners(thread_id):
-            if not can_access(owner):
+        for node in self.descendant_nodes(thread_id):
+            if not can_access(node.user_id):
                 skipped += 1
                 continue
-            if apply(child):
-                moved.append(child)
+            if apply(node.thread_id):
+                moved.append(node.thread_id)
         return CascadeResult(moved=moved, skipped=skipped)
 
     # -- branching --------------------------------------------------------

@@ -2013,12 +2013,51 @@ trips to paint one widget is how multi-column navigation drifts between
 columns. Each descendant carries a `depth` (1 = direct child) and the same
 live-state fields the listing adds.
 
-The walk is a recursive CTE (never N round trips), bounded by `max_depth`
-(default and ceiling 32) and `limit` (default and ceiling 500), and
-deduped so a `parent_thread_id` cycle terminates instead of spinning.
-Descendants are restricted to the root thread's own owner: a fork inherits
-its parent's `user_id`, so a differently-owned child is anomalous and is
-not something an ancestry read should surface.
+The walk is a recursive CTE (never N round trips) deduped so a
+`parent_thread_id` cycle terminates instead of spinning. `max_depth`
+(default and ceiling 32) and `limit` (default and ceiling 500) bound the
+**output**, not the walk.
+
+**`truncated` covers both clips.** It is `true` whenever an accessible
+descendant exists that the payload does not name — because it sat past
+`max_depth`, or past `limit`, or both. This matters because the cascade
+the read predicts is NOT capped: a 40-deep chain reads back as 32 nodes
+and archives as 40, so a depth clip that stayed silent would reproduce
+this surface's central defect one axis over. A client that sees
+`truncated: true` has not seen everything `cascaded_thread_ids` will
+report and must not treat the list as complete.
+
+A descendant the caller may not access is **not** a clip and does not set
+the flag: it is shown to nobody and acted on by nobody, so nothing is
+being withheld from this caller.
+
+#### Descendant ownership is decided PER NODE
+
+**A descendant is included when the caller may access *that thread*, not
+when the caller owns every thread on the path to it.** The walk descends
+past a fork owned by somebody else and keeps going: a fork of a fork of
+your own conversation is still yours, and a stranger forking in between is
+not a reason to make your own thread unreachable from the branch tree. The
+stranger's fork is itself omitted, so nothing crosses a principal boundary
+— path-scoping would have hidden only the caller's OWN threads, which buys
+no confidentiality at all. `depth` counts hops in the real tree, omitted
+nodes included, so a skipped level shows up as a gap rather than as a
+wrong shape.
+
+**This is the same rule, over the same walk, as the archive/unarchive
+cascade, the `include_descendants` id list and the `-32111` delete
+guard.** It has to be: the two used to differ — the read required
+ownership at every hop while the cascade checked it per node — and a
+client could draw a branch tree with no descendants and then get one back
+in `cascaded_thread_ids`. There is exactly one descendant walk in the
+server (`ConversationService.descendant_nodes`); the read, the cascade and
+the guard are filters over its result, not walks of their own.
+
+The rule is shared; the **bounds are not**. Only the read caps its output,
+so "the read and the cascade agree" holds over the accessible node set,
+and holds as an id-for-id equality only while `truncated` is `false`.
+Where they can still differ, the payload says so — see `truncated` above,
+and the `-32111` `truncated` flag below.
 
 ### Branching from a turn (`fork_session`)
 
@@ -2136,7 +2175,9 @@ declared, not silent.
 
 `include_descendants` returns the ids of every forked descendant so a
 consumer can export the whole branch tree; the descendants' contents are
-fetched by exporting each in turn.
+fetched by exporting each in turn. The ids are the ones
+`list_thread_descendants` shows, under the same per-node ownership rule
+and from the same walk.
 
 ### Retention (`purge_threads`)
 
@@ -2241,14 +2282,18 @@ the whole shard, so a parent and its descendants either both fall inside
 it or the survivor's dangling pointer is a thread the window deliberately
 kept.
 
-Three properties of the guard are load-bearing, and each is the opposite
-of the corresponding property of the ancestry *read*:
+Three properties of the guard are load-bearing. The first two are how it
+differs from the ancestry *read* — which shares its walk but not its
+bounds or its reporting:
 
-* **The guard walk is unbounded.** `list_thread_descendants` caps at
-  `max_depth`/`limit` and reports `truncated`; the delete guard does not
-  cap at all. A capped guard answers "these are all the children" when it
-  is not, and the caller then destroys the root and orphans the overflow —
-  the refuse-don't-orphan policy defeated through the back door. The
+* **The guard is uncapped; the read caps its OUTPUT.**
+  `list_thread_descendants` clips at `max_depth`/`limit` and reports
+  `truncated`; the delete guard clips nothing. A capped guard answers
+  "these are all the children" when it is not, and the caller then
+  destroys the root and orphans the overflow — the refuse-don't-orphan
+  policy defeated through the back door. The shared walk is therefore
+  unbounded and the read discards what exceeds its caps, rather than the
+  walk stopping early and the guard inheriting a short answer. The
   `-32111` payload reports an exact `descendant_count` and marks
   `truncated: true` when the *id list* is clipped, so a capped enumeration
   can never be read as a complete one.
@@ -2259,7 +2304,10 @@ of the corresponding property of the ancestry *read*:
   become a side channel for the ids of threads `list_thread_descendants`
   deliberately hides: `-32111` names only the descendants the caller may
   read, counts ALL of them in `descendant_count`, and sets `truncated`
-  when the two differ. `-32014` likewise reports how many foreign
+  when the two differ. The names are drawn with the same per-node test the
+  read uses, so an untruncated `-32111` list is the same branch tree the
+  client already has; when either surface sets `truncated`, they are both
+  saying the list is a subset and neither may be read as complete. `-32014` likewise reports how many foreign
   descendants blocked the cascade without naming any, and its
   `resource_id` is the thread the caller named. A cascade, which *acts* on
   the descendants, is refused with `-32014` if any descendant is not the

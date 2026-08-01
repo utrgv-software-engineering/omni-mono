@@ -4200,13 +4200,33 @@ class AgentService(RpcMethodsBase):
         max_depth: int | None = None,
         limit: int | None = None,
     ) -> dict:  # noqa: D401
-        """The fork subtree below *thread_id*, plus its own branch point."""
+        """The fork subtree below *thread_id*, plus its own branch point.
+
+        Ownership is checked **per node**, so a fork of a fork of the
+        caller's own thread is returned even when a stranger's fork sits
+        between the two — and the stranger's is still omitted. This is the
+        same rule and the same walk the archive cascade and the delete
+        guard use.
+
+        The rule is shared; the BOUNDS are not. This read caps at
+        ``max_depth``/``limit`` and the cascade caps at nothing, so the
+        branch tree a client draws here equals the set
+        ``cascaded_thread_ids`` will report **only while ``truncated`` is
+        false**. When it is true the client is looking at a subset of what
+        an archive would move, and the flag is how it knows.
+        """
         _debug_rpc(
             "list_thread_descendants",
             {"thread_id": thread_id, "max_depth": max_depth, "limit": limit},
         )
         result = self._conversation_service().list_descendants(
-            thread_id, max_depth=max_depth, limit=limit
+            thread_id,
+            # The SAME per-node predicate the archive cascade and the
+            # delete guard use, over the same walk: the branch tree a
+            # client draws here has to be the node set those act on.
+            can_access=self._descendant_access_predicate(),
+            max_depth=max_depth,
+            limit=limit,
         )
         for child in result["descendants"]:
             child.update(self._thread_live_state(child["thread_id"]))
@@ -4351,6 +4371,7 @@ class AgentService(RpcMethodsBase):
         )
         return self._conversation_service().export_thread(
             thread_id,
+            can_access=self._descendant_access_predicate(),
             limit=limit,
             cursor=cursor,
             include_descendants=bool(include_descendants),
@@ -5563,7 +5584,7 @@ class AgentService(RpcMethodsBase):
             # cannot see a descendant owned by someone else, or by nobody on
             # a partially backfilled shard, and lets a plain delete orphan it
             # with no error at all.
-            descendants = self._conversation_service().descendant_owners(session_id)
+            descendants = self._conversation_service().descendant_nodes(session_id)
         except Exception:
             logger.exception(
                 "descendant lookup failed; refusing to delete",
@@ -5572,13 +5593,16 @@ class AgentService(RpcMethodsBase):
             # Fail closed: an unanswerable descendant lookup must not read
             # as "no descendants" and silently orphan a subtree.
             raise
-        descendant_ids = [child for child, _ in descendants]
+        descendant_ids = [node.thread_id for node in descendants]
         can_access = self._descendant_access_predicate()
         # The guard COUNTS every descendant (integrity) but only NAMES the
         # ones the caller may read: the owner-agnostic walk must not become
         # a side channel for the ids of threads that
-        # ``list_thread_descendants`` deliberately hides.
-        visible = [child for child, owner in descendants if can_access(owner)]
+        # ``list_thread_descendants`` deliberately hides. The per-node test
+        # is the one that read applies too, so the names in a -32111 are
+        # the same branch tree the client already has — up to each
+        # surface's own cap, which both report as ``truncated``.
+        visible = [node.thread_id for node in descendants if can_access(node.user_id)]
         if descendant_ids and not cascade:
             raise _conversation_service_module.ThreadHasDescendants(
                 session_id, len(descendant_ids), visible

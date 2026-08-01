@@ -422,27 +422,142 @@ def test_raised_typed_errors_validate_against_their_published_schema():
         Draft202012Validator(component["data"]).validate(error.data)
 
 
+#: Where a typed conversation error can be constructed. The classes live
+#: in the first file; the second raises two of them.
+_ERROR_SOURCES = (
+    "omniagents/core/conversation/service.py",
+    "omniagents/core/agents/service.py",
+)
+
+
+def _emitted_error_fields() -> dict[int, set[str]]:
+    """``error code -> the field names its construction sites can emit``.
+
+    Read from the AST rather than by substring, because ``field in
+    source`` passes for any plausible name that appears ANYWHERE in the
+    module — ``thread_id`` and ``descendant_count`` occur dozens of times
+    apart from any error — so the converse check was only ever able to
+    catch an invented word. What it claims to check is that the SERVER
+    CONSTRUCTS the field, and that is a property of the call sites.
+
+    Every ``data`` key reaches ``ConversationRpcError.__init__`` as a
+    keyword, by exactly two routes: the ``super().__init__(...)`` call in
+    a subclass's ``__init__``, or — for the two subclasses that forward
+    ``**data`` — the keywords at each ``raise`` site. Both are collected.
+    """
+    import ast
+
+    from omniagents.core.conversation import service as conversation_service
+
+    trees = {path: ast.parse((ROOT / path).read_text()) for path in _ERROR_SOURCES}
+
+    explicit: dict[str, set[str]] = {}
+    forwards: set[str] = set()
+    codes: dict[str, int] = {}
+
+    for node in ast.walk(trees[_ERROR_SOURCES[0]]):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if not any(
+            isinstance(base, ast.Name) and base.id == "ConversationRpcError"
+            for base in node.bases
+        ):
+            continue
+        for statement in node.body:
+            if isinstance(statement, ast.Assign) and isinstance(
+                statement.value, ast.Name
+            ):
+                target = statement.targets[0]
+                if isinstance(target, ast.Name) and target.id == "code":
+                    codes[node.name] = getattr(conversation_service, statement.value.id)
+            if not (
+                isinstance(statement, ast.FunctionDef) and statement.name == "__init__"
+            ):
+                continue
+            for call in ast.walk(statement):
+                if not isinstance(call, ast.Call):
+                    continue
+                func = call.func
+                if not (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "__init__"
+                    and isinstance(func.value, ast.Call)
+                    and isinstance(func.value.func, ast.Name)
+                    and func.value.func.id == "super"
+                ):
+                    continue
+                names = explicit.setdefault(node.name, set())
+                for keyword in call.keywords:
+                    if keyword.arg is None:
+                        # ``**data`` — this subclass's fields are decided
+                        # by its raise sites, not by its constructor.
+                        forwards.add(node.name)
+                    else:
+                        names.add(keyword.arg)
+
+    # Construction sites, for the forwarding subclasses.
+    for tree in trees.values():
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr if isinstance(func, ast.Attribute) else None
+            )
+            if name not in forwards:
+                continue
+            assert name is not None
+            for keyword in call.keywords:
+                if keyword.arg is not None:
+                    explicit.setdefault(name, set()).add(keyword.arg)
+
+    assert codes, "no typed conversation errors found — the AST walk is broken"
+    return {codes[name]: fields for name, fields in explicit.items() if name in codes}
+
+
 def test_every_declared_error_property_is_reachable_from_code():
     """The other direction: a declared field nothing can emit is a promise
     the server does not keep."""
-    from omniagents.core.conversation import service as conversation_service
-
     document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
-    source = (ROOT / "omniagents/core/conversation/service.py").read_text()
-    conversation_codes = {
-        conversation_service.RPC_ERROR_SEARCH_UNAVAILABLE,
-        conversation_service.RPC_ERROR_THREAD_HAS_DESCENDANTS,
-        conversation_service.RPC_ERROR_FORK_POINT_INVALID,
-        conversation_service.RPC_ERROR_THREAD_ON_LEGAL_HOLD,
-        conversation_service.RPC_ERROR_THREAD_METADATA_INVALID,
-    }
+    emitted = _emitted_error_fields()
+
     for entry in _error_component_by_code(document).values():
-        if entry["code"] not in conversation_codes:
+        if entry["code"] not in emitted:
             continue
         for field in entry["data"]["properties"]:
             if field == "kind":
                 continue
-            assert field in source, (
-                f"{entry['message']!r} declares {field!r}, which no code "
-                "path in conversation/service.py produces"
+            assert field in emitted[entry["code"]], (
+                f"{entry['message']!r} declares {field!r}, which no error "
+                "construction site produces"
             )
+
+
+def test_the_reachability_check_is_stronger_than_a_substring_scan():
+    """The AST check must reject what ``field in source`` waved through.
+
+    ``parent_thread_id`` and ``max_depth`` are real, frequent identifiers
+    in ``conversation/service.py`` — a substring scan accepts them as
+    "reachable" — but no error construction site passes either one, so a
+    component declaring them would ship a field no client ever receives.
+    """
+    source = (ROOT / "omniagents/core/conversation/service.py").read_text()
+    emitted = _emitted_error_fields()
+
+    from omniagents.core.conversation import service as conversation_service
+
+    descendants = emitted[conversation_service.RPC_ERROR_THREAD_HAS_DESCENDANTS]
+    for plausible in ("parent_thread_id", "max_depth", "branched_from_item_id"):
+        assert plausible in source  # the old check passed on these
+        assert plausible not in descendants  # the new one does not
+
+    # ...while everything the constructor really emits still passes.
+    assert {"thread_id", "descendant_thread_ids", "descendant_count", "truncated"} <= (
+        descendants
+    )
+    # And the forwarding subclasses are covered through their raise sites.
+    fork = emitted[conversation_service.RPC_ERROR_FORK_POINT_INVALID]
+    assert {"thread_id", "turn_id", "next_item_id"} <= fork
+    assert "parent_thread_id" not in fork

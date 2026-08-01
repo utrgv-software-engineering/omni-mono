@@ -1518,6 +1518,328 @@ class TestArchiveCascadeScoping:
 
 
 # ---------------------------------------------------------------------
+# The ancestry READ and the cascade must describe the same tree
+# (tkt_YF3ocr6GxnXa)
+# ---------------------------------------------------------------------
+
+
+def _mixed_ownership_tree(store, service):
+    """``root(alice) -> foreign(bob) -> leaf(alice)``, read as alice.
+
+    A foreign node BETWEEN two owned ones is the shape that separated the
+    two walks: a walk that requires the caller's ownership at every hop
+    stops at ``foreign`` and never sees ``leaf``, while a walk that checks
+    ownership per node descends past it and acts on ``leaf``.
+    """
+    from types import SimpleNamespace
+
+    from omniagents.core.conversation.model import Thread
+    from omniagents.core.providers.auth.base import UserIdentity
+    from omniagents.rpc.auth import AuthorizationPolicy
+
+    for thread_id, owner, parent in (
+        ("mix-root", "alice", None),
+        ("mix-foreign", "bob", "mix-root"),
+        ("mix-leaf", "alice", "mix-foreign"),
+    ):
+        store.upsert_thread(
+            Thread(
+                thread_id=thread_id,
+                user_id=owner,
+                parent_thread_id=parent,
+                created_at=9.0,
+                updated_at=9.0,
+            )
+        )
+    service.authorization_policy = AuthorizationPolicy(enforced=True)
+    service.channel = SimpleNamespace(principal=UserIdentity(user_id="alice"))
+    return "mix-root"
+
+
+class TestAncestryReadMatchesTheCascade:
+    def test_the_read_and_the_cascade_agree_on_the_accessible_set(self, store, service):
+        """The branch tree a client draws is what the cascade will act on."""
+        root = _mixed_ownership_tree(store, service)
+
+        seen = asyncio.run(service.list_thread_descendants(root))
+        read_ids = {child["thread_id"] for child in seen["descendants"]}
+
+        moved = asyncio.run(service.update_thread(root, status="archived"))
+        cascaded = set(moved["cascaded_thread_ids"])
+
+        assert read_ids == cascaded
+        assert read_ids == {"mix-leaf"}
+
+    def test_the_foreign_node_is_neither_surfaced_nor_acted_on(self, store, service):
+        """Descending PAST a foreign node must not start returning it."""
+        from omniagents.core.conversation.model import ThreadStatus
+
+        root = _mixed_ownership_tree(store, service)
+
+        seen = asyncio.run(service.list_thread_descendants(root))
+        assert "mix-foreign" not in {c["thread_id"] for c in seen["descendants"]}
+
+        moved = asyncio.run(service.update_thread(root, status="archived"))
+        assert "mix-foreign" not in moved["cascaded_thread_ids"]
+        assert moved["inaccessible_descendant_count"] == 1
+        assert store.get_thread("mix-foreign").status is ThreadStatus.ACTIVE
+        assert store.get_thread("mix-leaf").status is ThreadStatus.ARCHIVED
+
+    def test_the_depth_of_a_node_below_a_foreign_one_is_its_true_depth(
+        self, store, service
+    ):
+        """``depth`` counts hops in the real tree, foreign nodes included."""
+        root = _mixed_ownership_tree(store, service)
+        seen = asyncio.run(service.list_thread_descendants(root))
+        assert [(c["thread_id"], c["depth"]) for c in seen["descendants"]] == [
+            ("mix-leaf", 2)
+        ]
+
+    def test_export_sees_the_same_set_as_the_ancestry_read(self, store, service):
+        """``export_thread`` rides the same walk, not a third one."""
+        root = _mixed_ownership_tree(store, service)
+        exported = asyncio.run(service.export_thread(root, include_descendants=True))
+        assert exported["descendant_thread_ids"] == ["mix-leaf"]
+
+    def test_the_delete_guard_names_the_same_set(self, store, service):
+        """``-32111`` names the branch tree the client already drew."""
+        root = _mixed_ownership_tree(store, service)
+        with pytest.raises(ThreadHasDescendants) as caught:
+            asyncio.run(service.delete_session(root))
+        # Every descendant is COUNTED (integrity), only the accessible one
+        # is NAMED — and the named set is the ancestry read's set.
+        assert caught.value.data["descendant_thread_ids"] == ["mix-leaf"]
+        assert caught.value.data["descendant_count"] == 2
+
+
+def _chain(store, service, *, length, owner="alice", foreign_through=0, prefix=""):
+    """A single ``root -> d1 -> d2 -> ...`` line of *length* descendants.
+
+    The first *foreign_through* links belong to ``bob``; everything after
+    them is the caller's again. Returns the root id.
+    """
+    from types import SimpleNamespace
+
+    from omniagents.core.conversation.model import Thread
+    from omniagents.core.providers.auth.base import UserIdentity
+    from omniagents.rpc.auth import AuthorizationPolicy
+
+    def put(thread_id, user_id, parent):
+        store.upsert_thread(
+            Thread(
+                thread_id=thread_id,
+                user_id=user_id,
+                parent_thread_id=parent,
+                created_at=9.0,
+                updated_at=9.0,
+            )
+        )
+
+    root = f"{prefix}chain-root"
+    put(root, owner, None)
+    previous = root
+    for index in range(1, length + 1):
+        node = f"{prefix}d{index}"
+        put(node, "bob" if index <= foreign_through else owner, previous)
+        previous = node
+    service.authorization_policy = AuthorizationPolicy(enforced=True)
+    service.channel = SimpleNamespace(principal=UserIdentity(user_id=owner))
+    return root
+
+
+class TestTheReadDeclaresWhatItWithheld:
+    """``truncated`` must cover BOTH clips, or the cascade still surprises.
+
+    The whole point of this ticket is that a client can tell from the
+    ancestry payload what the cascade is about to touch. A depth or count
+    clip that does not raise ``truncated`` reintroduces exactly the
+    reported defect one axis over: the read shows a set, the cascade acts
+    on a bigger one, and nothing in the payload says so.
+    """
+
+    def _archive(self, service, root):
+        moved = asyncio.run(service.update_thread(root, status="archived"))
+        return set(moved["cascaded_thread_ids"])
+
+    def test_the_depth_clip_sets_truncated(self, store, service):
+        root = _chain(store, service, length=40)
+        seen = asyncio.run(service.list_thread_descendants(root))
+        read = {child["thread_id"] for child in seen["descendants"]}
+
+        assert len(read) == 32  # the depth ceiling
+        assert seen["truncated"] is True, (
+            "the read withheld d33..d40 and said nothing; the cascade " "archives them"
+        )
+        assert read < self._archive(service, root)
+
+    def test_the_count_clip_still_sets_truncated(self, store, service):
+        from omniagents.core.conversation.model import Thread
+
+        from_ = "wide-root"
+        store.upsert_thread(
+            Thread(
+                thread_id=from_,
+                user_id="alice",
+                parent_thread_id=None,
+                created_at=9.0,
+                updated_at=9.0,
+            )
+        )
+        for index in range(600):
+            store.upsert_thread(
+                Thread(
+                    thread_id=f"w{index:04d}",
+                    user_id="alice",
+                    parent_thread_id=from_,
+                    created_at=9.0,
+                    updated_at=9.0,
+                )
+            )
+        _chain(store, service, length=0, prefix="unused-")  # enforced principal
+        seen = asyncio.run(service.list_thread_descendants(from_))
+        assert len(seen["descendants"]) == 500
+        assert seen["truncated"] is True
+
+    def test_a_deep_owned_thread_below_foreign_hops_is_declared(self, store, service):
+        """The ticket's opening sentence, on the depth axis.
+
+        33 of bob's forks, then one of alice's. The read cannot show it
+        (past the ceiling) but the cascade archives it, so the read has to
+        at least admit it is not the whole picture.
+        """
+        root = _chain(store, service, length=34, foreign_through=33)
+        seen = asyncio.run(service.list_thread_descendants(root))
+
+        assert {c["thread_id"] for c in seen["descendants"]} == set()
+        assert seen["truncated"] is True
+        assert self._archive(service, root) == {"d34"}
+
+    def test_an_uncapped_read_is_not_truncated(self, store, service):
+        """The flag stays off when the read really is the whole set."""
+        root = _chain(store, service, length=5)
+        seen = asyncio.run(service.list_thread_descendants(root))
+        assert len(seen["descendants"]) == 5
+        assert seen["truncated"] is False
+        assert {c["thread_id"] for c in seen["descendants"]} == self._archive(
+            service, root
+        )
+
+    def test_a_foreign_node_alone_does_not_trip_truncated(self, store, service):
+        """Omitting what the caller may not see is not a clip.
+
+        ``truncated`` means "there are accessible descendants you are not
+        being shown". A foreign node is not one of those — it is never
+        shown to anybody and the cascade never acts on it.
+        """
+        root = _mixed_ownership_tree(store, service)
+        seen = asyncio.run(service.list_thread_descendants(root))
+        assert {c["thread_id"] for c in seen["descendants"]} == {"mix-leaf"}
+        assert seen["truncated"] is False
+
+
+class TestTheWalkIsLinear:
+    """A deep chain must cost O(n), not O(n^2).
+
+    ``depth_of`` re-walked each node's ancestor chain, which was bounded
+    by the SQL depth ceiling until this ticket removed it — after which a
+    ``limit=5`` read on a long chain visited every node once per node.
+    Measured on the regression: 6000 nodes went 0.021s -> 1.614s.
+
+    Pinned as a RATIO rather than a wall-clock budget so the assertion
+    means the same thing on a slow machine: doubling the chain roughly
+    doubles linear work and roughly quadruples quadratic work.
+    """
+
+    def _elapsed(self, store, service, length, prefix):
+        import time
+
+        root = _chain(store, service, length=length, prefix=prefix)
+        start = time.perf_counter()
+        seen = asyncio.run(service.list_thread_descendants(root, limit=5))
+        elapsed = time.perf_counter() - start
+        assert len(seen["descendants"]) == 5  # the read really did run
+        return elapsed
+
+    def test_doubling_the_chain_does_not_quadruple_the_work(self, store, service):
+        small = self._elapsed(store, service, 1500, "s-")
+        large = self._elapsed(store, service, 3000, "l-")
+        assert large < small * 3, (
+            f"{small:.4f}s at 1500 -> {large:.4f}s at 3000: the ancestry "
+            "walk is superlinear again"
+        )
+
+
+class TestAncestryReadShape:
+    """Depth, caps and cycle behaviour, now that the walk is shared."""
+
+    def _tree(self, store, service):
+        from types import SimpleNamespace
+
+        from omniagents.core.conversation.model import Thread
+        from omniagents.core.providers.auth.base import UserIdentity
+        from omniagents.rpc.auth import AuthorizationPolicy
+
+        for thread_id, parent in (
+            ("root", None),
+            ("c1", "root"),
+            ("c2", "root"),
+            ("g1", "c1"),
+            ("gg1", "g1"),
+        ):
+            store.upsert_thread(
+                Thread(
+                    thread_id=thread_id,
+                    user_id="u1",
+                    parent_thread_id=parent,
+                    created_at=9.0,
+                    updated_at=9.0,
+                )
+            )
+        service.authorization_policy = AuthorizationPolicy(enforced=True)
+        service.channel = SimpleNamespace(principal=UserIdentity(user_id="u1"))
+
+    def _read(self, service, **kwargs):
+        seen = asyncio.run(service.list_thread_descendants("root", **kwargs))
+        return [(c["thread_id"], c["depth"]) for c in seen["descendants"]]
+
+    def test_the_whole_subtree_comes_back_shallowest_first(self, store, service):
+        self._tree(store, service)
+        assert self._read(service) == [("c1", 1), ("c2", 1), ("g1", 2), ("gg1", 3)]
+
+    def test_max_depth_bounds_the_output(self, store, service):
+        self._tree(store, service)
+        assert {t for t, _ in self._read(service, max_depth=2)} == {"c1", "c2", "g1"}
+
+    def test_limit_bounds_the_output_and_says_so(self, store, service):
+        self._tree(store, service)
+        seen = asyncio.run(service.list_thread_descendants("root", limit=2))
+        assert len(seen["descendants"]) == 2
+        assert seen["truncated"] is True
+
+    def test_a_parent_cycle_terminates(self, store, service):
+        from omniagents.core.conversation.model import Thread
+
+        self._tree(store, service)
+        store.upsert_thread(
+            Thread(
+                thread_id="root",
+                user_id="u1",
+                parent_thread_id="gg1",
+                created_at=9.0,
+                updated_at=9.0,
+            )
+        )
+        assert {t for t, _ in self._read(service)} == {"c1", "c2", "g1", "gg1"}
+
+    def test_an_unknown_root_is_a_thread_not_found(self, store, service):
+        from omniagents.core.conversation.service import ThreadNotFound
+
+        self._tree(store, service)
+        with pytest.raises(ThreadNotFound):
+            asyncio.run(service.list_thread_descendants("nope"))
+
+
+# ---------------------------------------------------------------------
 # Retention, at the byte level
 # ---------------------------------------------------------------------
 

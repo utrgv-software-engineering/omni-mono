@@ -817,59 +817,38 @@ class TestUnboundedDescendantWalk:
         assert rows == {"kid": "root", "grandkid": "kid"}
 
 
-class TestThreadAncestry:
+class TestBulkThreadReads:
+    """``get_threads`` — the page fetch the ancestry read is assembled from.
+
+    The descendant walk returns ids (see :class:`TestDescendantWalk`); the
+    read turns a page of them into rows with this, in one statement rather
+    than N.
+    """
+
     def _tree(self, store):
         store.upsert_thread(make_thread(thread_id="root", user_id="u1"))
-        store.upsert_thread(
-            make_thread(thread_id="c1", user_id="u1", parent_thread_id="root")
-        )
-        store.upsert_thread(
-            make_thread(thread_id="c2", user_id="u1", parent_thread_id="root")
-        )
-        store.upsert_thread(
-            make_thread(thread_id="g1", user_id="u1", parent_thread_id="c1")
-        )
-        store.upsert_thread(
-            make_thread(thread_id="gg1", user_id="u1", parent_thread_id="g1")
-        )
+        for child in ("c1", "c2"):
+            store.upsert_thread(
+                make_thread(thread_id=child, user_id="u1", parent_thread_id="root")
+            )
 
-    def test_walks_the_whole_subtree_with_depths(self, store):
+    def test_a_page_of_ids_comes_back_keyed_by_id(self, store):
         self._tree(store)
-        rows = store.list_descendant_threads("root", max_depth=10, limit=50)
-        assert [(t.thread_id, d) for t, d in rows] == [
-            ("c1", 1),
-            ("c2", 1),
-            ("g1", 2),
-            ("gg1", 3),
-        ]
+        found = store.get_threads(["root", "c1", "c2"])
+        assert set(found) == {"root", "c1", "c2"}
+        assert found["c1"].parent_thread_id == "root"
 
-    def test_max_depth_bounds_the_walk(self, store):
+    def test_missing_ids_are_absent_rather_than_an_error(self, store):
+        """A concurrent delete between the walk and the fetch is normal."""
         self._tree(store)
-        rows = store.list_descendant_threads("root", max_depth=2, limit=50)
-        assert {t.thread_id for t, _ in rows} == {"c1", "c2", "g1"}
+        assert set(store.get_threads(["c1", "gone"])) == {"c1"}
 
-    def test_limit_bounds_the_walk(self, store):
+    def test_an_empty_request_touches_the_database_not_at_all(self, store):
+        assert store.get_threads([]) == {}
+
+    def test_duplicate_ids_collapse(self, store):
         self._tree(store)
-        assert len(store.list_descendant_threads("root", max_depth=10, limit=2)) == 2
-
-    def test_a_parent_cycle_terminates(self, store):
-        self._tree(store)
-        store.upsert_thread(
-            make_thread(thread_id="root", user_id="u1", parent_thread_id="gg1")
-        )
-        rows = store.list_descendant_threads("root", max_depth=32, limit=50)
-        assert {t.thread_id for t, _ in rows} == {"c1", "c2", "g1", "gg1"}
-
-    def test_a_differently_owned_child_is_not_surfaced(self, store):
-        self._tree(store)
-        store.upsert_thread(
-            make_thread(thread_id="alien", user_id="u2", parent_thread_id="root")
-        )
-        rows = store.list_descendant_threads("root", max_depth=10, limit=50)
-        assert "alien" not in {t.thread_id for t, _ in rows}
-
-    def test_an_unknown_root_has_no_descendants(self, store):
-        assert store.list_descendant_threads("nope", max_depth=10, limit=50) == []
+        assert set(store.get_threads(["c1", "c1", "c1"])) == {"c1"}
 
 
 # ---------------------------------------------------------------------
