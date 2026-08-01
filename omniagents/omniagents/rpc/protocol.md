@@ -101,6 +101,114 @@ the default `NoneAuthProvider` (or a token provider with no token configured)
 every connection is the same anonymous identity, so ownership and
 global-effect rules are skipped and single-user behavior is unchanged.
 
+### Identity across a proxy hop
+
+Proxy mode (`remote_agent.ws_url`) terminates the client's WebSocket at a
+proxy server and opens a second one to an upstream server. The upstream never
+sees the client's credential, so **something must carry the principal across
+the hop** — otherwise every proxied user arrives upstream as one identity and
+the ownership rules above have nothing to separate.
+
+The proxy authenticates the local user with its own `AuthProvider`, then mints
+a short-lived **signed identity assertion** naming that principal and presents
+it upstream in the ordinary `Authorization: Bearer` header. The upstream
+validates it with the `proxy_assertion` provider and resolves the asserted
+principal, so `authorize_rpc` upstream sees distinct users and a cross-user
+attempt is refused with `-32014` — which travels back down through the proxy
+like any other frame.
+
+Proxy:
+
+```yaml
+remote_agent:
+  ws_url: "wss://upstream.example/ws"
+  identity_secret_env: OMNI_PROXY_IDENTITY_SECRET
+  identity_audience: "omniagents-upstream"   # optional
+security:
+  providers:
+    auth: { type: oidc, ... }                # or token/platform
+```
+
+Upstream:
+
+```yaml
+security:
+  providers:
+    auth:
+      type: proxy_assertion
+      signing_secret: "${OMNI_PROXY_IDENTITY_SECRET}"
+      audience: "omniagents-upstream"        # optional; must match
+```
+
+Assertion properties: HMAC-SHA256 with an HKDF-derived, purpose-bound key over
+a fixed version prefix (no `alg` field an attacker can influence), 30 s
+lifetime with a 120 s verification cap and finite-number lifetime validation,
+audience-bound, single-use per upstream process via a `jti` replay cache that
+is never evicted under pressure, and header-only (never a query parameter).
+The signing secret must be at least 32 characters with real variety, and is
+rejected when it is shaped like an unexpanded environment-variable name, is
+untrimmed, or is also one of the proxy's own client credentials — a client
+holding the signing key could mint an assertion for any user.
+
+An upstream reached both directly and through a proxy uses
+`type: composite` with an `accept:` list rather than choosing one; `none` and
+nested `composite` are refused inside it.
+
+**Shared upstream token (`remote_agent.auth_token_env`) is single-tenant
+only.** It presents every proxied connection the same upstream identity. A
+proxy whose own authenticator identifies distinct principals **refuses to
+start** with it configured — there is no silent fallback. It remains supported
+where the proxy identifies no principals (the desktop/launcher topology), which
+is exactly the case where there is one user to represent. The guard is
+symmetric: an identity secret on a hop that authenticates *nobody* is also
+refused, because every assertion would name the same `anonymous` principal and
+the upstream would treat all of them as one owner.
+
+Providers declare three capabilities rather than having them inferred from
+their class — a gateway-header provider in front of Azure EasyAuth or
+oauth2-proxy must be able to state them whatever it subclasses. All default to
+the fail-closed answer.
+
+| capability | means | False for |
+|---|---|---|
+| `identifies_principals` | two callers can get *different* `user_id`s | `none`; a **single shared `token:`** (every holder is `token_user`) |
+| `enforces_authorization` | ownership + global-effect rules apply | `none` only (follows `identifies_principals`, so a subclass declaring per-user identity re-enables it) |
+| `supports_connect_tickets` | `POST /auth/ws-ticket` is registered | `proxy_assertion` |
+
+`identifies_principals` and `enforces_authorization` are separate on purpose,
+and a single shared token is exactly where they diverge: it is **one**
+principal, so the proxy must not claim it can propagate per-user identity —
+but it is still a credentialed deployment, so process-wide mutators stay
+refused and unclassified methods stay default-denied. Collapsing them into one
+flag would trade that control away to fix the proxy claim.
+
+A `composite` aggregates each capability in the direction that is safe for it:
+the two capability *claims* are conjunctions (the weakest member decides what
+the composite may honestly claim), while `enforces_authorization` is a
+disjunction (the strictest member decides, so adding a credentialed member
+never relaxes the surface). In particular a composite containing
+`proxy_assertion` offers no connect tickets — otherwise an identity assertion
+could be exchanged for a longer-lived query-string ticket at the very route
+that exists to serve browsers.
+
+Transient capacity refusals are distinguished from credential failures: they
+answer HTTP 503 on the upgrade (never a pre-accept close, which Starlette
+renders as 403 and which would erase the distinction), and a proxy relays them
+to its client as a **retryable 1013**, not a terminal 4401.
+
+Close codes are relayed, not flattened: the proxy passes the upstream's
+WebSocket close code through to the client, and maps a rejected upstream
+*handshake* to a terminal 4401. A proxied client therefore still sees 4401/4403
+as terminal and does not enter a reconnect loop.
+
+**Trust boundary.** The signing secret makes the proxy a trusted identity
+*issuer*: a compromised proxy can assert any user id upstream. That is inherent
+to terminating the client connection at the proxy — holding one upstream
+credential per user has the same blast radius with a larger secret inventory.
+What the assertion buys is that the upstream can distinguish proxied users at
+all, and that a user who reaches the proxy cannot choose which identity is
+asserted for them.
+
 ### Terminal WebSocket
 
 Agents that enable interactive terminals expose an additional WebSocket endpoint at `/ws/terminal`. Clients obtain a `terminal_id` and `terminal_token` by invoking the `terminal.create` server function, then connect (authenticating like any other surface) and send an attach frame as the **first message**:
@@ -3092,13 +3200,6 @@ per-connection and are not journaled: a reconnecting client refetches
 | -32093 | `git_confirmation_required`   | destructive action without a valid impact-bound token           |
 | -32094 | `git_state_invalid`           | stale hunk id, empty/overlapping selection, unmerged index, nothing staged, bad mode/revision |
 | -32095 | `git_capability_unavailable`  | the substrate has no shell, or git is not installed in it       |
-
-## Authentication
-
-Optional token-based authentication via URL query parameter:
-```
-ws://server:8000/ws?token=your-auth-token
-```
 
 ## Error Handling
 

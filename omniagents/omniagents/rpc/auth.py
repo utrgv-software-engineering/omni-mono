@@ -50,11 +50,13 @@ __all__ = [
     "RESOURCE_SCOPED_METHODS",
     "AuthorizationPolicy",
     "AuthenticationFailed",
+    "AuthenticationUnavailable",
     "AuthorizationDenied",
     "ConnectionAuthenticator",
     "OwnerLookupError",
     "RPC_ERROR_AUTHORIZATION_DENIED",
     "WS_CLOSE_FORBIDDEN",
+    "WS_CLOSE_TRY_AGAIN_LATER",
     "WS_CLOSE_UNAUTHENTICATED",
     "WsTicketBroker",
     "build_ws_auth_dependency",
@@ -107,6 +109,11 @@ WS_CLOSE_UNAUTHENTICATED = 4401
 #: allowed to use the requested resource (e.g. another user's terminal).
 WS_CLOSE_FORBIDDEN = 4403
 
+#: WebSocket close code for a transient capacity refusal. Unlike
+#: 4401/4403 this is explicitly **retryable**: clients should back off
+#: and reconnect.
+WS_CLOSE_TRY_AGAIN_LATER = 1013
+
 #: JSON-RPC error code for per-request authorization failures. The error
 #: ``data.kind`` is ``"authorization_denied"``.
 RPC_ERROR_AUTHORIZATION_DENIED = -32014
@@ -121,6 +128,17 @@ _LEGACY_TOKEN_QUERY_PARAM = "token"
 
 class AuthenticationFailed(Exception):
     """Raised when no acceptable credential resolves to an identity."""
+
+
+class AuthenticationUnavailable(AuthenticationFailed):
+    """Raised when authentication could not be *attempted* right now.
+
+    A transient capacity condition, not a credential problem. Surfaced as
+    a retryable close (:data:`WS_CLOSE_TRY_AGAIN_LATER` / HTTP 503)
+    rather than the terminal 4401, which clients are required never to
+    retry — reporting a 30-second capacity condition as terminal would
+    permanently disconnect every well-behaved client.
+    """
 
 
 class AuthorizationDenied(Exception):
@@ -424,12 +442,20 @@ RESOURCE_SCOPED_METHODS = frozenset(
 class AuthorizationPolicy:
     """Decides access for one deployment's authentication mode.
 
-    ``enforced`` is True when the configured provider identifies distinct
-    principals (token/OIDC/platform). When it is False — the
-    ``NoneAuthProvider`` single-user default, or a token provider with no
-    token configured — every connection is the same anonymous principal,
-    so ownership and global-effect rules are vacuous and skipped: the
-    open-source single-user experience is untouched.
+    ``enforced`` is True whenever the deployment is credentialed at all
+    (token/OIDC/platform/proxy-assertion), which includes a single shared
+    token: ownership is vacuous there — everyone is the same principal,
+    so ``can_access`` passes anyway — but process-wide mutators stay
+    refused and unclassified methods stay default-denied.
+
+    It is False only for the ``NoneAuthProvider`` default, the genuinely
+    unauthenticated single-user topology, so the open-source local
+    experience is untouched.
+
+    This is deliberately NOT the same question as
+    :attr:`ConnectionAuthenticator.identifies_principals`, which asks
+    whether two callers can get *different* ``user_id``s — the thing the
+    serve proxy needs before it claims to propagate identity upstream.
     """
 
     def __init__(self, *, enforced: bool) -> None:
@@ -557,27 +583,45 @@ class ConnectionAuthenticator:
     def identifies_principals(self) -> bool:
         """Whether this deployment distinguishes users.
 
-        False for the ``NoneAuthProvider`` default and for a
-        ``TokenAuthProvider`` with no token configured — both authenticate
-        every connection as the same anonymous identity, so ownership
-        enforcement would have nothing to separate.
-        """
-        from omniagents.core.providers.auth.none import NoneAuthProvider
-        from omniagents.core.providers.auth.token import TokenAuthProvider
+        Reads the provider's **declared** capability
+        (:attr:`~omniagents.core.providers.auth.base.AuthProvider.identifies_principals`),
+        defaulting to True for anything that does not declare one — an
+        unknown provider is assumed multi-user, which fails closed.
 
-        provider = self.provider
-        if isinstance(provider, NoneAuthProvider):
-            return False
-        if isinstance(provider, TokenAuthProvider):
-            return bool(
-                getattr(provider, "_token", "") or getattr(provider, "_tokens", {})
-            )
-        return True
+        This is deliberately not an ``isinstance`` test. Inferring the
+        answer from the class made the capability undeclarable: a
+        provider that resolves a distinct principal per connection but
+        happens to derive from ``NoneAuthProvider`` (the gateway-header
+        shape used in front of Azure EasyAuth / oauth2-proxy) was read as
+        single-user, which silently disabled ownership enforcement and
+        let the serve proxy collapse every user onto one upstream
+        identity.
+        """
+        return bool(getattr(self.provider, "identifies_principals", True))
+
+    @property
+    def supports_connect_tickets(self) -> bool:
+        """Whether ``POST /auth/ws-ticket`` should be registered."""
+        return bool(getattr(self.provider, "supports_connect_tickets", True))
+
+    @property
+    def enforces_authorization(self) -> bool:
+        """Whether ownership / global-effect rules apply.
+
+        Separate from :attr:`identifies_principals` on purpose. A single
+        shared bearer token identifies exactly one principal — so the
+        proxy must not claim it can propagate per-user identity — yet it
+        is still a credentialed deployment where ``disable_tool`` and
+        friends should be refused and unclassified methods should stay
+        default-denied. Collapsing the two would have silently traded
+        that control away to fix the proxy claim.
+        """
+        return bool(getattr(self.provider, "enforces_authorization", True))
 
     @property
     def authorization_policy(self) -> AuthorizationPolicy:
         """The authorization policy implied by this authenticator."""
-        return AuthorizationPolicy(enforced=self.identifies_principals)
+        return AuthorizationPolicy(enforced=self.enforces_authorization)
 
     # ------------------------------------------------------------------
     # Construction from an AgentSpec
@@ -669,15 +713,34 @@ class ConnectionAuthenticator:
         # 4. No explicit credential — let the provider decide (NoneAuth
         # authenticates anonymously; token/OIDC providers reject).
         result = await self.provider.authenticate(_HeaderOnlyRequest(headers))
-        if not result.authenticated or result.identity is None:
-            raise AuthenticationFailed(result.error or "Authentication required")
-        return result.identity
+        return self._identity_or_raise(result, "Authentication required")
 
     async def _authenticate_token(self, token: str) -> UserIdentity:
+        # ASGI decodes request headers as latin-1, so an anonymous client
+        # can put any byte in ``Authorization``. Bearer credentials are
+        # ASCII by definition (RFC 6750 token68), and the comparisons
+        # providers run on them are not: ``hmac.compare_digest`` raises
+        # TypeError on a non-ASCII str and ``str.encode("ascii")`` raises
+        # UnicodeEncodeError. Neither is an AuthenticationFailed, so both
+        # escape every handler and surface as an unauthenticated HTTP 500.
+        #
+        # The guard lives here, at the single point every credential
+        # transport funnels through, rather than in each provider — one
+        # audited provider does not make the class of bug go away.
+        if not isinstance(token, str) or not token.isascii():
+            raise AuthenticationFailed("Malformed credential")
         result = await self.provider.authenticate(token)
-        if not result.authenticated or result.identity is None:
-            raise AuthenticationFailed(result.error or "Invalid credentials")
-        return result.identity
+        return self._identity_or_raise(result, "Invalid credentials")
+
+    @staticmethod
+    def _identity_or_raise(result: Any, default_error: str) -> UserIdentity:
+        """Translate an :class:`AuthResult` into an identity or an error."""
+        if result.authenticated and result.identity is not None:
+            return result.identity
+        message = result.error or default_error
+        if getattr(result, "retryable", False):
+            raise AuthenticationUnavailable(message)
+        raise AuthenticationFailed(message)
 
 
 def build_ws_auth_dependency(authenticator: ConnectionAuthenticator):
@@ -690,6 +753,21 @@ def build_ws_auth_dependency(authenticator: ConnectionAuthenticator):
     async def _authenticate(websocket: WebSocket) -> None:
         try:
             identity = await authenticator.authenticate_ws(websocket)
+        except AuthenticationUnavailable as exc:
+            # Retryable: the client SHOULD back off and reconnect, unlike
+            # 4401. Must be caught before AuthenticationFailed (its base).
+            #
+            # Deliberately does NOT call ``websocket.close()`` first. A
+            # close before ``accept()`` is rendered by Starlette as an
+            # HTTP 403 upgrade rejection, which erases the distinction —
+            # the close code never reaches the wire on a handshake that
+            # never completed. Raising alone yields a genuine HTTP 503,
+            # which a direct client can tell apart from 403 and which the
+            # serve proxy maps to a retryable 1013 close for its own
+            # client (``_upstream_handshake_close_code``).
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            ) from exc
         except AuthenticationFailed as exc:
             await websocket.close(code=WS_CLOSE_UNAUTHENTICATED, reason=str(exc)[:120])
             raise HTTPException(
@@ -712,6 +790,10 @@ def register_ticket_route(app: Any, authenticator: ConnectionAuthenticator) -> N
     async def _issue_ticket(request: Request) -> Dict[str, Any]:
         try:
             identity = await authenticator.authenticate_http(request)
+        except AuthenticationUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+            ) from exc
         except AuthenticationFailed as exc:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)

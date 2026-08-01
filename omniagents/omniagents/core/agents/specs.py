@@ -375,6 +375,17 @@ class AgentSpec:
     remote_auth_token_key: str | None = (
         None  # Name of env var holding the bearer token (optional)
     )
+    # Name of the env var holding the HMAC secret used to sign per-user
+    # identity assertions on the serve proxy hop. When set, each proxied
+    # connection presents the upstream an assertion naming the principal
+    # this hop authenticated, so upstream ownership checks see distinct
+    # users. Mutually exclusive with ``remote_auth_token_key`` (a single
+    # shared upstream identity, single-tenant deployments only).
+    remote_identity_secret_key: str | None = None
+    # Audience the assertions are minted for; must match the upstream's
+    # ``security.providers.auth.audience``. Defaults to
+    # ``DEFAULT_ASSERTION_AUDIENCE`` on both hops.
+    remote_identity_audience: str | None = None
 
     # --- Optional hook to register example/server functions on the AgentService --- #
     # A callable that will be invoked by the server on startup to register

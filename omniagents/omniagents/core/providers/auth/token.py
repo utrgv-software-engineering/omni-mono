@@ -62,6 +62,22 @@ class TokenAuthProvider(AuthProvider):
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config or {})
         cfg = config or {}
+        if cfg.get("token") and cfg.get("tokens"):
+            # There is no coherent reading of the pair: `token` maps every
+            # holder to one `token_user` while `tokens` maps each to its
+            # own identity. Treating the mix as "identifies principals"
+            # collapses the shared holders; treating it as "does not"
+            # made the serve proxy pick a single shared upstream identity
+            # for genuinely distinct users — the safe configuration was
+            # the one getting refused. Refuse the ambiguity at the source.
+            raise ValueError(
+                "Token authentication has both `token` and `tokens` "
+                "configured. A single shared `token` authenticates every "
+                "holder as one principal, while `tokens` maps each "
+                "credential to its own user — there is no meaningful "
+                "combination of the two. Configure exactly one (use "
+                "`tokens` for multi-user deployments)."
+            )
         unresolved: List[str] = []
 
         token_value, env_name = _expand_env(cfg.get("token", ""))
@@ -98,6 +114,13 @@ class TokenAuthProvider(AuthProvider):
                 "environment variables, or use `security.providers.auth.type: "
                 "none` for an explicitly unauthenticated server."
             )
+        # A single ``token:`` is ONE principal: every holder authenticates
+        # as ``user_id="token_user"`` (see ``authenticate`` below), so
+        # ownership rules have nothing to separate and the serve proxy
+        # must not be told this deployment identifies users. Only the
+        # multi-token ``tokens:`` map is genuinely per-user. The mixed
+        # config is rejected above, so these are the only two cases.
+        self.identifies_principals = bool(self._tokens)
         if unresolved:
             logger.warning(
                 "TokenAuthProvider: %d configured token(s) did not resolve "

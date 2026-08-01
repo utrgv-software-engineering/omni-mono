@@ -563,10 +563,16 @@ def load_agent_spec_from_yaml(
     # --- Remote Agent preliminary ---
     remote_ws_url: str | None = None
     remote_token_env: str | None = None
+    remote_identity_secret_env: str | None = None
+    remote_identity_audience: str | None = None
     if isinstance(config.get("remote_agent"), dict):
         remote_cfg_tmp = config["remote_agent"]
         remote_ws_url = remote_cfg_tmp.get("ws_url")
         remote_token_env = remote_cfg_tmp.get("auth_token_env")
+        # Per-user identity propagation across the proxy hop. See
+        # ``omniagents.rpc.identity_assertion``.
+        remote_identity_secret_env = remote_cfg_tmp.get("identity_secret_env")
+        remote_identity_audience = remote_cfg_tmp.get("identity_audience")
 
     # --- Extract and Derive Basic Info ---
     agent_name = config.get("name", "Unnamed Agent")
@@ -2225,6 +2231,8 @@ def load_agent_spec_from_yaml(
         # Remote agent metadata
         remote_ws_url=remote_ws_url,
         remote_auth_token_key=remote_token_env,
+        remote_identity_secret_key=remote_identity_secret_env,
+        remote_identity_audience=remote_identity_audience,
         # Storage Metadata
         project_slug=None,
         agent_slug=agent_slug,

@@ -3,13 +3,18 @@ from __future__ import annotations
 import os
 import asyncio
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from typing import Optional, Dict, Any, Callable
+from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from omniagents.core.providers.auth.base import UserIdentity
 
 from fastapi import FastAPI, WebSocket
 from fastapi import WebSocketDisconnect
 from omniagents.rpc import JsonRpcEndpoint
 from omniagents.rpc.auth import (
     WS_CLOSE_FORBIDDEN,
+    WS_CLOSE_TRY_AGAIN_LATER,
+    WS_CLOSE_UNAUTHENTICATED,
     ConnectionAuthenticator,
     build_ws_auth_dependency,
     register_ticket_route,
@@ -53,7 +58,7 @@ def _compose_remote_ws_url(
     """Build the upstream URL, stripping every credential query param.
 
     Upstream authentication travels in the ``Authorization`` header (see
-    :func:`_remote_auth_headers`), never in the URL.
+    :class:`UpstreamCredential`), never in the URL.
     """
     target = _derive_remote_ws_url(base_url, suffix=suffix)
     parsed = urlparse(target)
@@ -71,10 +76,202 @@ def _compose_remote_ws_url(
     return urlunparse(parsed._replace(query=urlencode(query)))
 
 
-def _remote_auth_headers(remote_token: str | None) -> Dict[str, str]:
-    if not remote_token:
-        return {}
-    return {"Authorization": f"Bearer {remote_token}"}
+class UpstreamCredential:
+    """How the proxy hop authenticates *one* connection upstream.
+
+    The proxy terminates the client's WebSocket, so the upstream never
+    sees the original credential. Whatever this returns is the only thing
+    the upstream can authorize against — which is why it takes the
+    locally authenticated principal rather than being computed once at
+    startup.
+    """
+
+    #: Whether the upstream can tell proxied users apart.
+    preserves_identity: bool = False
+
+    def headers_for(self, principal: "UserIdentity | None") -> Dict[str, str]:
+        raise NotImplementedError
+
+
+class PerUserIdentityAssertion(UpstreamCredential):
+    """Mint a fresh signed assertion naming the local principal.
+
+    This is what makes per-user authorization survive the hop: the
+    upstream resolves ``alice`` and ``bob`` as distinct principals and
+    runs its ordinary ``AgentService.authorize_rpc`` ownership checks
+    against them, so a cross-user attempt is refused with -32014 upstream
+    and the error travels back down the proxy like any other frame.
+    """
+
+    preserves_identity = True
+
+    def __init__(self, *, signing_secret: str, audience: str) -> None:
+        from omniagents.rpc.identity_assertion import validate_signing_secret
+
+        self._secret = validate_signing_secret(signing_secret)
+        self._audience = audience
+
+    def headers_for(self, principal: "UserIdentity | None") -> Dict[str, str]:
+        from omniagents.rpc.identity_assertion import mint_identity_assertion
+
+        if principal is None:
+            # Unreachable while the auth dependency guards the route; if
+            # it ever becomes reachable, refuse rather than assert a
+            # principal we did not authenticate.
+            raise ValueError("No authenticated principal to assert upstream")
+        assertion = mint_identity_assertion(
+            principal, secret=self._secret, audience=self._audience
+        )
+        return {"Authorization": f"Bearer {assertion}"}
+
+
+class SharedUpstreamToken(UpstreamCredential):
+    """One shared credential for every proxied connection.
+
+    **Single-tenant only.** Every local user reaches the upstream as the
+    same principal, so upstream ownership rules cannot separate them.
+    :func:`_resolve_upstream_credential` refuses to build this when the
+    proxy's own authenticator identifies distinct principals, so it can
+    only be selected where there is exactly one principal to begin with
+    (the desktop/launcher topology it exists for).
+    """
+
+    preserves_identity = False
+
+    def __init__(self, token: str | None) -> None:
+        self._headers: Dict[str, str] = (
+            {"Authorization": f"Bearer {token}"} if token else {}
+        )
+
+    def headers_for(self, principal: "UserIdentity | None") -> Dict[str, str]:
+        return dict(self._headers)
+
+
+def _configured_client_credentials(spec: Any, auth_token: str | None = None) -> set:
+    """Every credential a *client* of this proxy legitimately holds.
+
+    Used to refuse a signing secret that doubles as one of them. Bob has
+    to hold his own bearer token to reach the proxy at all, so if that
+    token is also the assertion signing key he can mint
+    ``sub=alice, roles=["admin"]`` and dial the upstream himself. The
+    signing key must be a secret no client ever sees.
+    """
+    security = getattr(spec, "security_config", None) or {}
+    auth_cfg = (security.get("providers") or {}).get("auth") or {}
+    found = _credentials_in_auth_config(auth_cfg)
+    # ``build_app(auth_token=...)`` — the ``serve --token X`` path — is a
+    # client credential too, and it does not appear anywhere in
+    # ``security_config``. Reading only the spec missed the exact shape
+    # the migration notes recommend.
+    if auth_token:
+        found.add(auth_token)
+    return found
+
+
+def _credentials_in_auth_config(auth_cfg: Any) -> set:
+    """Recursively collect literal/`${VAR}`-resolved credentials."""
+    from omniagents.core.providers.auth.token import _expand_env
+
+    found: set = set()
+    if not isinstance(auth_cfg, dict):
+        return found
+    kind = str(auth_cfg.get("type", "")).lower()
+    if kind == "composite":
+        for entry in auth_cfg.get("accept") or []:
+            found |= _credentials_in_auth_config(entry)
+        return found
+    if kind == "token":
+        single, _ = _expand_env(auth_cfg.get("token", ""))
+        if single:
+            found.add(single)
+        for raw in auth_cfg.get("tokens") or {}:
+            value, _ = _expand_env(raw)
+            if value:
+                found.add(value)
+    return found
+
+
+def _resolve_upstream_credential(
+    spec: Any,
+    authenticator: ConnectionAuthenticator,
+    *,
+    auth_token: str | None = None,
+) -> UpstreamCredential:
+    """Pick — and validate — how this proxy authenticates upstream.
+
+    Fails closed at startup rather than silently degrading, the
+    ``TokenAuthProvider`` precedent. The rule, applied to **both**
+    branches: what the upstream sees must match what this hop can
+    actually distinguish. A hop that separates its users may not present
+    one shared identity, and a hop that separates nobody may not claim to
+    assert per-user identity.
+    """
+    from omniagents.rpc.identity_assertion import DEFAULT_ASSERTION_AUDIENCE
+
+    secret_key = getattr(spec, "remote_identity_secret_key", None)
+    token_key = getattr(spec, "remote_auth_token_key", None)
+    remote_token = os.getenv(token_key) or None if token_key else None
+
+    if secret_key:
+        if remote_token:
+            raise ValueError(
+                "Proxy mode has both `remote_agent.identity_secret_env` and a "
+                "resolved `remote_agent.auth_token_env`. These are two "
+                "different upstream authentication schemes and there is no "
+                "precedence rule between them — configure exactly one."
+            )
+        if not authenticator.identifies_principals:
+            # Otherwise every assertion names ``anonymous``. Upstream that
+            # is enforced mode with a single owner, so ``anonymous`` can
+            # read every session ``anonymous`` created — total cross-user
+            # access, under a credential that advertises the opposite.
+            raise ValueError(
+                "Proxy mode has `remote_agent.identity_secret_env` set, but "
+                "this hop authenticates no distinct principals, so every "
+                "assertion would name the same `anonymous` user and the "
+                "upstream would treat all of them as one owner with full "
+                "access to each other's sessions. Configure authentication "
+                "on this hop (`security.providers.auth`), or drop the "
+                "identity secret and use the single-tenant "
+                "`remote_agent.auth_token_env` credential."
+            )
+        secret = os.getenv(secret_key) or None
+        if not secret:
+            raise ValueError(
+                f"`remote_agent.identity_secret_env` names `{secret_key}`, but "
+                "that environment variable is unset or empty. Refusing to fall "
+                "back to a shared upstream identity."
+            )
+        if secret in _configured_client_credentials(spec, auth_token):
+            raise ValueError(
+                f"The identity-assertion signing secret (`{secret_key}`) is "
+                "also a credential this proxy hands to its own clients. Any "
+                "client holding it could mint an assertion for any user — "
+                "including one with the `admin` role — and present it to the "
+                "upstream directly. Use a separate secret that no client "
+                "ever sees."
+            )
+        audience = (
+            getattr(spec, "remote_identity_audience", None)
+            or DEFAULT_ASSERTION_AUDIENCE
+        )
+        return PerUserIdentityAssertion(signing_secret=secret, audience=audience)
+
+    if authenticator.identifies_principals:
+        raise ValueError(
+            "Proxy mode (`remote_agent.ws_url`) is configured with per-user "
+            "authentication on this hop but no upstream identity secret, so "
+            "every local principal would reach the upstream as the same "
+            "identity and upstream ownership checks could not separate them. "
+            "Set `remote_agent.identity_secret_env` and configure the upstream "
+            "with `security.providers.auth.type: proxy_assertion`. The shared "
+            "`auth_token_env` credential is supported for single-tenant "
+            "deployments only (no authentication configured on this hop)."
+        )
+
+    # Single-tenant: this hop identifies no principals, so there is one
+    # user and one upstream identity is the honest representation.
+    return SharedUpstreamToken(remote_token)
 
 
 async def _connect_remote(url: str, headers: Dict[str, str]):
@@ -87,6 +284,25 @@ async def _connect_remote(url: str, headers: Dict[str, str]):
         return await websockets.connect(url, extra_headers=headers or None)
 
 
+def _upstream_handshake_close_code(exc: BaseException) -> int:
+    """Map a failed upstream WebSocket handshake to a close code.
+
+    An upstream that refuses the credential answers the HTTP upgrade with
+    401/403. Reporting that to the client as a generic 1011 would turn a
+    terminal authentication failure into a retryable transport error.
+    """
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if status in (401, 403, 407):
+        return WS_CLOSE_UNAUTHENTICATED
+    if status in (429, 503):
+        # Transient upstream capacity — retryable, unlike 4401.
+        return WS_CLOSE_TRY_AGAIN_LATER
+    return 1011
+
+
 async def _proxy_websocket(
     websocket: WebSocket,
     *,
@@ -94,7 +310,7 @@ async def _proxy_websocket(
     remote_headers: Dict[str, str] | None = None,
 ) -> None:
     try:
-        from websockets.exceptions import ConnectionClosed
+        from websockets.exceptions import ConnectionClosed, InvalidHandshake
     except Exception:
         await websocket.close(code=4404)
         return
@@ -102,7 +318,14 @@ async def _proxy_websocket(
     await websocket.accept()
 
     try:
-        remote = await _connect_remote(remote_url, remote_headers or {})
+        try:
+            remote = await _connect_remote(remote_url, remote_headers or {})
+        except InvalidHandshake as exc:
+            # The upstream rejected the upgrade — almost always a refused
+            # credential. Relay it as a terminal auth close so the client
+            # stops instead of reconnecting forever.
+            await websocket.close(code=_upstream_handshake_close_code(exc))
+            return
         async with remote:
 
             async def _client_to_remote() -> None:
@@ -144,8 +367,17 @@ async def _proxy_websocket(
                     await task
                 except Exception:
                     pass
+            # Relay the upstream's close code instead of flattening it.
+            # 4401/4403 are terminal by contract — clients must not
+            # reconnect on them — so a proxy that reports 1000 (or 1011)
+            # turns an authorization refusal into an infinite retry loop.
+            close_code = getattr(remote, "close_code", None)
+            close_reason = getattr(remote, "close_reason", None) or ""
         try:
-            await websocket.close()
+            if isinstance(close_code, int) and close_code != 1005:
+                await websocket.close(code=close_code, reason=str(close_reason)[:120])
+            else:
+                await websocket.close()
         except Exception:
             pass
     except Exception:
@@ -208,45 +440,51 @@ def build_app(
     authenticator = ConnectionAuthenticator.from_spec(spec, auth_token=auth_token)
     app.state.connection_authenticator = authenticator
     auth_dep = build_ws_auth_dependency(authenticator)
-    register_ticket_route(app, authenticator)
+    # Connect tickets exist because browsers cannot set WebSocket headers.
+    # A surface reached only by server-to-server credentials declines them
+    # (``proxy_assertion``): minting one there would move a proxy-derived
+    # credential into a query string and hand it a fresh TTL, extending
+    # the lifetime of the assertion that bought it.
+    if authenticator.supports_connect_tickets:
+        register_ticket_route(app, authenticator)
 
     remote_ws_url = getattr(spec, "remote_ws_url", None)
     if remote_ws_url:
-        remote_token = None
-        remote_token_key = getattr(spec, "remote_auth_token_key", None)
-        if remote_token_key:
-            remote_token = os.getenv(remote_token_key) or None
-        remote_headers = _remote_auth_headers(remote_token)
+        # Validated at startup: a hop that distinguishes its own users
+        # cannot present the upstream a single shared identity.
+        upstream_credential = _resolve_upstream_credential(
+            spec, authenticator, auth_token=auth_token
+        )
+        app.state.upstream_credential = upstream_credential
+
+        async def _proxy_to(websocket: WebSocket, suffix: str) -> None:
+            # The upstream credential is derived per connection from the
+            # principal this hop authenticated, so identity — not just
+            # bytes — crosses the hop.
+            try:
+                remote_headers = upstream_credential.headers_for(
+                    getattr(websocket.state, "principal", None)
+                )
+            except Exception:
+                await websocket.close(code=WS_CLOSE_UNAUTHENTICATED)
+                return
+            url = _compose_remote_ws_url(
+                remote_ws_url,
+                suffix=suffix,
+                websocket=websocket,
+            )
+            await _proxy_websocket(
+                websocket, remote_url=url, remote_headers=remote_headers
+            )
 
         async def _ws_proxy(websocket: WebSocket):
-            url = _compose_remote_ws_url(
-                remote_ws_url,
-                suffix="",
-                websocket=websocket,
-            )
-            await _proxy_websocket(
-                websocket, remote_url=url, remote_headers=remote_headers
-            )
+            await _proxy_to(websocket, "")
 
         async def _ws_realtime_proxy(websocket: WebSocket):
-            url = _compose_remote_ws_url(
-                remote_ws_url,
-                suffix="/realtime",
-                websocket=websocket,
-            )
-            await _proxy_websocket(
-                websocket, remote_url=url, remote_headers=remote_headers
-            )
+            await _proxy_to(websocket, "/realtime")
 
         async def _ws_terminal_proxy(websocket: WebSocket):
-            url = _compose_remote_ws_url(
-                remote_ws_url,
-                suffix="/terminal",
-                websocket=websocket,
-            )
-            await _proxy_websocket(
-                websocket, remote_url=url, remote_headers=remote_headers
-            )
+            await _proxy_to(websocket, "/terminal")
 
         deps = [auth_dep]
         app.add_api_websocket_route("/ws", _ws_proxy, dependencies=deps)
