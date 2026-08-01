@@ -7,18 +7,42 @@ because that second part is what lets agent file and shell tools run in a
 browser with no special casing.
 """
 
+import importlib.util
 import io
+import os
+import tarfile
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
-pytest.importorskip("bashkit", reason="bashkit is an optional backend dependency")
+REQUIRE_BASHKIT_ENV = "OMNIAGENTS_REQUIRE_BASHKIT"
+
+if importlib.util.find_spec("bashkit") is None:
+    if os.environ.get(REQUIRE_BASHKIT_ENV, "").strip() not in ("", "0"):
+        raise RuntimeError(
+            f"{REQUIRE_BASHKIT_ENV} is set, so this suite must execute, but "
+            "bashkit is not installed. Install the sandbox-bashkit extra or "
+            f"unset {REQUIRE_BASHKIT_ENV} to allow the local skip."
+        )
+    pytest.skip(
+        "bashkit is an optional backend dependency",
+        allow_module_level=True,
+    )
 
 from omniagents.core.sandbox.bashkit_engine import BashkitSandboxSession  # noqa: E402
 from omniagents.workspace import SandboxWorkspace  # noqa: E402
 
 SALES = "region,units\nwest,120\neast,340\nwest,80\n"
+
+
+def _tar_with_file(name: str, contents: bytes = b"escaped\n") -> bytes:
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as archive:
+        info = tarfile.TarInfo(name=name)
+        info.size = len(contents)
+        archive.addfile(info, io.BytesIO(contents))
+    return buffer.getvalue()
 
 
 @pytest.fixture
@@ -157,6 +181,43 @@ async def test_snapshot_and_restore(sandbox):
     assert f"{sandbox.state.manifest.root}/sales.csv" in paths
 
 
+def test_restore_rejects_parent_traversal_without_destroying_workspace(
+    sandbox, tmp_path
+):
+    escaped = tmp_path / "escaped.txt"
+
+    with pytest.raises(tarfile.OutsideDestinationError):
+        sandbox.restore_workspace(_tar_with_file("../escaped.txt"))
+
+    assert not escaped.exists()
+    assert Path(sandbox.state.manifest.root, "sales.csv").read_text() == SALES
+
+
+def test_restore_confines_absolute_archive_paths(sandbox, tmp_path):
+    escaped = tmp_path / "absolute-escape.txt"
+
+    sandbox.restore_workspace(_tar_with_file(str(escaped)))
+
+    assert not escaped.exists()
+    # tarfile's data filter strips the leading slash, keeping the member under
+    # the extraction root rather than writing to its archive-supplied path.
+    confined = Path(sandbox.state.manifest.root, *escaped.parts[1:])
+    assert confined.read_bytes() == b"escaped\n"
+
+
+def test_restore_supports_a_relative_workspace_root(sandbox, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Path("relative-workspace").mkdir()
+    Path("relative-workspace/original.txt").write_text("before\n")
+    relative = BashkitSandboxSession(root="relative-workspace", bash=sandbox.bash)
+    saved = relative.snapshot_workspace()
+    Path("relative-workspace/original.txt").write_text("after\n")
+
+    relative.restore_workspace(saved)
+
+    assert Path("relative-workspace/original.txt").read_text() == "before\n"
+
+
 # --------------------- the workspace layer on top of it ------------------- #
 
 
@@ -192,3 +253,33 @@ async def test_workspace_discovery(ws):
     assert [(m.path, m.line_number) for m in await ws.grep("east")] == [
         ("sales.csv", 3)
     ]
+
+
+@pytest.mark.asyncio
+async def test_workspace_discovery_recurses_and_accepts_reserved_context(ws):
+    await ws.write_text("deep/nested/data.csv", "before\neast\nafter\n")
+
+    assert await ws.glob("*.csv") == ["deep/nested/data.csv", "sales.csv"]
+    assert [
+        (match.path, match.line_number, match.line)
+        for match in await ws.grep("east", file_pattern="*.csv", context_lines=1)
+    ] == [
+        ("sales.csv", 3, "east,340"),
+        ("deep/nested/data.csv", 2, "east"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mounted_discovery_refuses_paths_outside_workspace(sandbox, tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("do not expose me\n")
+
+    found = await sandbox.exec("find", str(tmp_path), "-name", "*.txt", shell=False)
+    searched = await sandbox.exec(
+        "grep", "-rn", "-e", "expose", str(tmp_path), shell=False
+    )
+
+    assert found.exit_code != 0
+    assert str(secret).encode() not in found.stdout
+    assert searched.exit_code != 0
+    assert b"do not expose me" not in searched.stdout

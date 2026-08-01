@@ -17,6 +17,8 @@ from omniagents.core.conversation.service import (
     ConversationService,
     ForkPointInvalid,
     ItemNotFound,
+    MAX_DESCENDANTS,
+    MAX_DESCENDANT_DEPTH,
     ThreadHasDescendants,
     ThreadMetadataInvalid,
     ThreadOnLegalHold,
@@ -597,10 +599,12 @@ class TestExportAndRetention:
         asyncio.run(service.fork_session(session.id, new_session_id="sess-branch"))
         without = asyncio.run(service.export_thread(session.id))
         assert without["descendant_thread_ids"] == []
+        assert without["descendants_truncated"] is False
         with_kids = asyncio.run(
             service.export_thread(session.id, include_descendants=True)
         )
         assert with_kids["descendant_thread_ids"] == ["sess-branch"]
+        assert with_kids["descendants_truncated"] is False
 
     def test_deleting_a_session_leaves_no_journal_behind(self, store, service):
         """The journal holds the notification payloads verbatim — the same
@@ -1600,6 +1604,7 @@ class TestAncestryReadMatchesTheCascade:
         root = _mixed_ownership_tree(store, service)
         exported = asyncio.run(service.export_thread(root, include_descendants=True))
         assert exported["descendant_thread_ids"] == ["mix-leaf"]
+        assert exported["descendants_truncated"] is False
 
     def test_the_delete_guard_names_the_same_set(self, store, service):
         """``-32111`` names the branch tree the client already drew."""
@@ -1700,6 +1705,36 @@ class TestTheReadDeclaresWhatItWithheld:
         assert len(seen["descendants"]) == 500
         assert seen["truncated"] is True
 
+    def test_export_declares_the_count_clip(self, store, service):
+        from omniagents.core.conversation.model import Thread
+
+        root = "wide-export-root"
+        store.upsert_thread(
+            Thread(
+                thread_id=root,
+                user_id="alice",
+                parent_thread_id=None,
+                created_at=9.0,
+                updated_at=9.0,
+            )
+        )
+        for index in range(MAX_DESCENDANTS + 1):
+            store.upsert_thread(
+                Thread(
+                    thread_id=f"export-w{index:04d}",
+                    user_id="alice",
+                    parent_thread_id=root,
+                    created_at=9.0,
+                    updated_at=9.0,
+                )
+            )
+        _chain(store, service, length=0, prefix="unused-export-")
+
+        exported = asyncio.run(service.export_thread(root, include_descendants=True))
+
+        assert len(exported["descendant_thread_ids"]) == MAX_DESCENDANTS
+        assert exported["descendants_truncated"] is True
+
     def test_a_deep_owned_thread_below_foreign_hops_is_declared(self, store, service):
         """The ticket's opening sentence, on the depth axis.
 
@@ -1713,6 +1748,22 @@ class TestTheReadDeclaresWhatItWithheld:
         assert {c["thread_id"] for c in seen["descendants"]} == set()
         assert seen["truncated"] is True
         assert self._archive(service, root) == {"d34"}
+
+    def test_export_declares_a_depth_clip_without_leaking_foreign_nodes(
+        self, store, service
+    ):
+        root = _chain(
+            store,
+            service,
+            length=MAX_DESCENDANT_DEPTH + 2,
+            foreign_through=MAX_DESCENDANT_DEPTH + 1,
+            prefix="export-depth-",
+        )
+
+        exported = asyncio.run(service.export_thread(root, include_descendants=True))
+
+        assert exported["descendant_thread_ids"] == []
+        assert exported["descendants_truncated"] is True
 
     def test_an_uncapped_read_is_not_truncated(self, store, service):
         """The flag stays off when the read really is the whole set."""

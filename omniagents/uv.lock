@@ -477,6 +477,22 @@ wheels = [
 ]
 
 [[package]]
+name = "bashkit"
+version = "0.14.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/90/75a9b28ee140f8b9bd9c1e0fece447b88a2128f64fce72f2f7a42e53c8c8/bashkit-0.14.5.tar.gz", hash = "sha256:7349a1e5f33f23740a7da57822537df69a04faeb98455ba064cadef58ecac742", size = 1717298, upload-time = "2026-08-01T03:54:11.777Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/e7/170ee3de442173bd9345570a87828ac9294737767535efefb9bcd20e51c4/bashkit-0.14.5-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:e602b38376d0a9eef683f6e102ff410267dda323c6f972d5a15bb97eec40ca69", size = 13016033, upload-time = "2026-08-01T03:53:48.047Z" },
+    { url = "https://files.pythonhosted.org/packages/41/c0/ee507470562d51c7968807d8f22d976e5859be22da76d738d6adb4d6cce8/bashkit-0.14.5-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:5e63725155f27503b6186b53eb29d97b16cd3e0428a0e8c76fb343a1fb45825e", size = 12278358, upload-time = "2026-08-01T03:53:51.314Z" },
+    { url = "https://files.pythonhosted.org/packages/2d/c6/262149ae91afa697716251f03eef0d006d2c8ba541d8511de5dbe8445823/bashkit-0.14.5-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:617d848d9247ea5a4f5b0d090625f84e906a93cac7061e2a09d1e7c2a896d97a", size = 13003032, upload-time = "2026-08-01T03:53:54.55Z" },
+    { url = "https://files.pythonhosted.org/packages/af/9a/8b5bf110d956020b2338f525075fd9c50ac11ef5580423b16aefc894a4c7/bashkit-0.14.5-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0657a46722ef2826b0255e21d879069c884a265ce29d920873ba3d4d8f5a25d0", size = 13768887, upload-time = "2026-08-01T03:53:58.09Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/71/fe4616268f2d0d65ae36cc90119eca63f006ba546b6a41c7c09d71f4714f/bashkit-0.14.5-cp39-abi3-musllinux_1_1_aarch64.whl", hash = "sha256:c5ee064e5dc83de3ec6088370c3ab783ce4d60d7cb27b79ee0504e6784ccbc27", size = 13059409, upload-time = "2026-08-01T03:54:01.236Z" },
+    { url = "https://files.pythonhosted.org/packages/45/9b/811fe6c5a7f27a785c5d28bd4189730c0dd53d2f42899e533147834ee8f2/bashkit-0.14.5-cp39-abi3-musllinux_1_1_x86_64.whl", hash = "sha256:7dc32cd9b9d59e1e4107a3711144fa173601c1296f784a9a1e17088419d4f064", size = 13989414, upload-time = "2026-08-01T03:54:04.138Z" },
+    { url = "https://files.pythonhosted.org/packages/27/f6/6967161e5da01d0983d73c1cdfead2e381cfdfdcf1e49322410bb1f131b8/bashkit-0.14.5-cp39-abi3-pyemscripten_2025_0_wasm32.whl", hash = "sha256:aa33fd477f9f0254ef81c8ae68c1760411e2e9f36b4440246502a57d71aa7f7e", size = 4421278, upload-time = "2026-08-01T03:54:06.652Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/65/58797673ab0d745ea0faec80e0317217eb8bda490f273dd5f474658b8bbc/bashkit-0.14.5-cp39-abi3-win_amd64.whl", hash = "sha256:d58332487b2eeb140e431dd184e99603559b68d0ec6dbf8de5a0dd87e5c11f8b", size = 14325033, upload-time = "2026-08-01T03:54:09.359Z" },
+]
+
+[[package]]
 name = "beautifulsoup4"
 version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3397,6 +3413,7 @@ all = [
     { name = "azure-mgmt-containerinstance" },
     { name = "azure-storage-blob" },
     { name = "azure-storage-file-share" },
+    { name = "bashkit" },
     { name = "fastapi", extra = ["all"] },
     { name = "httpx" },
     { name = "markitdown", extra = ["all", "docx", "pdf"] },
@@ -3458,6 +3475,9 @@ sandbox-aci = [
     { name = "azure-mgmt-containerinstance" },
     { name = "azure-storage-file-share" },
     { name = "websockets" },
+]
+sandbox-bashkit = [
+    { name = "bashkit" },
 ]
 sandbox-blaxel = [
     { name = "openai-agents", extra = ["blaxel"] },
@@ -3557,6 +3577,7 @@ requires-dist = [
     { name = "azure-mgmt-containerinstance", marker = "extra == 'sandbox-aci'", specifier = ">=10.1" },
     { name = "azure-storage-blob", marker = "extra == 'audio-blob'", specifier = ">=12.20" },
     { name = "azure-storage-file-share", marker = "extra == 'sandbox-aci'", specifier = ">=12.0" },
+    { name = "bashkit", marker = "extra == 'sandbox-bashkit'", specifier = ">=0.14.4,<0.15" },
     { name = "beautifulsoup4" },
     { name = "bitsandbytes", marker = "extra == 'training'", specifier = ">=0.43" },
     { name = "black", marker = "extra == 'dev'", specifier = "==26.5.1" },
@@ -3577,7 +3598,7 @@ requires-dist = [
     { name = "mkdocs-material", marker = "extra == 'dev'", specifier = ">=9.5.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.19.0" },
-    { name = "omniagents", extras = ["audio-blob", "litellm", "markdown", "oidc", "platform", "presidio", "sandbox-aci", "sandbox-blaxel", "sandbox-cloudflare", "sandbox-daytona", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-vercel", "server", "session-encrypted", "session-mongodb", "session-postgres", "session-redis", "session-sqlalchemy", "studio", "studio-server", "voice", "web"], marker = "extra == 'all'" },
+    { name = "omniagents", extras = ["audio-blob", "litellm", "markdown", "oidc", "platform", "presidio", "sandbox-aci", "sandbox-bashkit", "sandbox-blaxel", "sandbox-cloudflare", "sandbox-daytona", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-vercel", "server", "session-encrypted", "session-mongodb", "session-postgres", "session-redis", "session-sqlalchemy", "studio", "studio-server", "voice", "web"], marker = "extra == 'all'" },
     { name = "omniagents", extras = ["oidc", "platform", "presidio"], marker = "extra == 'enterprise'" },
     { name = "openai", specifier = "<2.45" },
     { name = "openai-agents", extras = ["blaxel"], marker = "extra == 'sandbox-blaxel'", specifier = ">=0.16.0,<0.17" },
@@ -3624,7 +3645,7 @@ requires-dist = [
     { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=5.1.0" },
     { name = "websockets", marker = "extra == 'sandbox-aci'", specifier = ">=12" },
 ]
-provides-extras = ["voice", "litellm", "studio", "server", "web", "studio-server", "docs", "markdown", "oidc", "sqlcipher", "session-sqlalchemy", "session-redis", "session-mongodb", "session-encrypted", "session-postgres", "audio-blob", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-daytona", "sandbox-blaxel", "sandbox-vercel", "sandbox-cloudflare", "sandbox-aci", "presidio", "platform", "enterprise", "all", "training", "dev"]
+provides-extras = ["voice", "litellm", "studio", "server", "web", "studio-server", "docs", "markdown", "oidc", "sqlcipher", "session-sqlalchemy", "session-redis", "session-mongodb", "session-encrypted", "session-postgres", "audio-blob", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-daytona", "sandbox-blaxel", "sandbox-vercel", "sandbox-cloudflare", "sandbox-bashkit", "sandbox-aci", "presidio", "platform", "enterprise", "all", "training", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

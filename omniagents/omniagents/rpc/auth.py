@@ -20,7 +20,8 @@ Supported credential transports, in resolution order:
    default; re-enable during migration with
    ``OMNIAGENTS_LEGACY_QUERY_AUTH=1`` (or ``security.legacy_query_auth:
    true`` in the spec's security config). A deprecation warning (never
-   containing the token) is logged on use.
+   containing the token) is logged on use. Header-only provider credentials,
+   including proxy identity assertions, are never accepted this way.
 
 Authentication failures close the socket with :data:`WS_CLOSE_UNAUTHENTICATED`
 (4401) or :data:`WS_CLOSE_FORBIDDEN` (4403). Both codes are terminal:
@@ -36,7 +37,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-from fastapi import Depends, HTTPException, Request, WebSocket, status
+from fastapi import (
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketException,
+    status,
+)
 
 from omniagents.core.providers.auth.base import AuthProvider, UserIdentity
 
@@ -701,6 +709,10 @@ class ConnectionAuthenticator:
                         "header or a /auth/ws-ticket connect ticket "
                         f"(set {LEGACY_QUERY_AUTH_ENV}=1 during migration)"
                     )
+                if not bool(getattr(self.provider, "supports_legacy_query_auth", True)):
+                    raise AuthenticationFailed(
+                        "This authentication provider requires Authorization headers"
+                    )
                 if not self._legacy_warned:
                     self._legacy_warned = True
                     logger.warning(
@@ -746,8 +758,10 @@ class ConnectionAuthenticator:
 def build_ws_auth_dependency(authenticator: ConnectionAuthenticator):
     """FastAPI dependency shared by every WebSocket route.
 
-    Stores the resolved principal on ``websocket.state.principal``; closes
-    the socket with 4401 and raises 403 when authentication fails.
+    Stores the resolved principal on ``websocket.state.principal``. Terminal
+    authentication failures raise one WebSocket exception with code 4401 so
+    Starlette owns the close; closing first and then raising an HTTP exception
+    attempts a second ASGI response and produces an unhandled RuntimeError.
     """
 
     async def _authenticate(websocket: WebSocket) -> None:
@@ -769,10 +783,9 @@ def build_ws_auth_dependency(authenticator: ConnectionAuthenticator):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
             ) from exc
         except AuthenticationFailed as exc:
-            await websocket.close(code=WS_CLOSE_UNAUTHENTICATED, reason=str(exc)[:120])
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
-            ) from exc
+            raise WebSocketException(
+                code=WS_CLOSE_UNAUTHENTICATED, reason=str(exc)[:120]
+            ) from None
         websocket.state.principal = identity
 
     return Depends(_authenticate)

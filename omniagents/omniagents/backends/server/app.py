@@ -63,12 +63,17 @@ def _compose_remote_ws_url(
     target = _derive_remote_ws_url(base_url, suffix=suffix)
     parsed = urlparse(target)
 
+    # Client-supplied routing hints are allowed only where the operator has
+    # not pinned a value in ``remote_agent.ws_url``. Applying the configured
+    # query last makes that policy explicit and prevents a caller from
+    # overriding upstream deployment controls (model, tenant, api-version,
+    # etc.).
     query: dict[str, str] = {}
-    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+    for key, value in websocket.query_params.multi_items():
         if key in _CREDENTIAL_QUERY_PARAMS:
             continue
         query[key] = value
-    for key, value in websocket.query_params.multi_items():
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
         if key in _CREDENTIAL_QUERY_PARAMS:
             continue
         query[key] = value

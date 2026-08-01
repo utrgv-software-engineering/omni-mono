@@ -147,6 +147,9 @@ def test_composite_capabilities_are_conjunctions(monkeypatch):
     assert composite.identifies_principals is True
     # proxy_assertion declines tickets, so the composite must too.
     assert composite.supports_connect_tickets is False
+    # Identity assertions are header-only even when legacy query auth remains
+    # enabled for a direct token member.
+    assert composite.supports_legacy_query_auth is False
 
 
 def test_composite_capability_guard_survives_a_registered_none_alike(monkeypatch):

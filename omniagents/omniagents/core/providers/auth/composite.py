@@ -38,7 +38,8 @@ use it to layer two verifiers of the *same* credential.
 Capabilities compose in the direction that is safe for each. A request
 may arrive on *any* member, so:
 
-* ``identifies_principals`` and ``supports_connect_tickets`` are
+* ``identifies_principals``, ``supports_connect_tickets``, and
+  ``supports_legacy_query_auth`` are
   **conjunctions** — they are capability claims, and the weakest member
   sets what the composite may honestly claim;
 * ``enforces_authorization`` is a **disjunction** — it is a restriction,
@@ -141,6 +142,20 @@ class CompositeAuthProvider(AuthProvider):
         """
         return all(
             getattr(member, "supports_connect_tickets", True)
+            for member in self._members
+        )
+
+    @property
+    def supports_legacy_query_auth(self) -> bool:  # type: ignore[override]
+        """Decline legacy query credentials if any member is header-only.
+
+        The query parameter does not identify which member should verify it.
+        Allowing it for a composite containing ``proxy_assertion`` would
+        therefore put an identity assertion in a URL despite that provider's
+        header-only contract.
+        """
+        return all(
+            getattr(member, "supports_legacy_query_auth", True)
             for member in self._members
         )
 

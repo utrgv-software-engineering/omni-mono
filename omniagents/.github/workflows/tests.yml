@@ -21,7 +21,9 @@ jobs:
         # the docker SDK (no daemon needed — tests use fakes).
         # sandbox-aci: the lifecycle-session mixin invariant covers
         # AciSandboxClient, and the aci unit suites unskip with it.
-        run: python -m pip install '.[dev,server,sandbox-docker,sandbox-aci]'
+        # sandbox-bashkit: browser-sandbox contract and snapshot security
+        # tests must execute rather than disappearing behind importorskip.
+        run: python -m pip install '.[dev,server,sandbox-docker,sandbox-bashkit,sandbox-aci]'
       - name: Install web dependencies
         working-directory: omniagents/studio/server/web
         run: npm ci
@@ -35,6 +37,10 @@ jobs:
         working-directory: omniagents/backends/web/ui
         run: npm run lint
       - name: Run coverage suite
+        env:
+          # Promotes a missing Bashkit dependency from a local-friendly skip
+          # to a collection failure. CI must never pass without this suite.
+          OMNIAGENTS_REQUIRE_BASHKIT: '1'
         run: ./scripts/run_coverage.sh
       - name: Upload coverage artifacts
         if: always()

@@ -40,7 +40,7 @@ class AuthProvider(ABC):
     - Authenticating incoming requests (WebSocket or HTTP)
     - Extracting user identity from valid credentials
 
-    Three **declared capabilities** drive security decisions elsewhere.
+    Four **declared capabilities** drive security decisions elsewhere.
     They are attributes a provider states, deliberately not something
     inferred from its type: a provider that resolves a distinct principal
     per connection (a gateway-header provider in front of Azure EasyAuth
@@ -77,6 +77,13 @@ class AuthProvider(ABC):
     #: only by server-to-server credentials should decline it rather than
     #: mint a query-string credential nothing will use.
     supports_connect_tickets: bool = True
+
+    #: Whether this provider may receive bearer credentials through the
+    #: deprecated ``?token=`` WebSocket query parameter. Server-to-server
+    #: credentials such as proxy identity assertions must remain header-only,
+    #: even when an operator temporarily enables legacy query authentication
+    #: for ordinary client bearer tokens.
+    supports_legacy_query_auth: bool = True
 
     def __init__(self, config: Dict[str, Any]) -> None:
         self.config = config

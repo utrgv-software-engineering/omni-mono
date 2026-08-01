@@ -291,7 +291,8 @@ The same mechanism guards `/ws`, `/ws/realtime`, and `/ws/terminal`, and all
 three resolve the same authenticated principal. The legacy
 `ws://server:8000/ws?token=...` query form is deprecated and only accepted when
 the server sets `OMNIAGENTS_LEGACY_QUERY_AUTH=1` (or
-`security.legacy_query_auth: true`) during migration.
+`security.legacy_query_auth: true`) during migration. Proxy identity assertions
+remain header-only and are never accepted through this legacy query transport.
 
 Authentication failures close the socket with code `4401` (or `4403` for
 authorization failures); both are terminal — do not auto-reconnect without new

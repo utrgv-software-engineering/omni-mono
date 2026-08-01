@@ -41,8 +41,10 @@ other, and agent file/shell tools work in a browser with no special casing.
 
 from __future__ import annotations
 
+import fnmatch
 import io
 import os
+import re
 import shlex
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional, Sequence
@@ -200,12 +202,41 @@ class BashkitSandboxSession(BaseSandboxSession):
         import io as _io
         import shutil
         import tarfile
+        import tempfile
 
         root = str(self.state.manifest.root)
-        shutil.rmtree(root, ignore_errors=True)
-        os.makedirs(root, exist_ok=True)
-        with tarfile.open(fileobj=_io.BytesIO(data), mode="r") as archive:
-            archive.extractall(root)
+        parent = os.path.dirname(root) or "."
+        os.makedirs(parent, exist_ok=True)
+
+        # Extract into a disposable sibling first.  ``data`` rejects archive
+        # members that escape through ``..`` or links, strips leading slashes,
+        # and refuses device files.  Staging also means a rejected/corrupt
+        # snapshot cannot destroy the workspace it was supposed to replace.
+        with tempfile.TemporaryDirectory(
+            prefix=f".{os.path.basename(root)}.restore-", dir=parent
+        ) as staging:
+            with tarfile.open(fileobj=_io.BytesIO(data), mode="r") as archive:
+                archive.extractall(staging, filter="data")
+
+            # Swap only after extraction has succeeded. Rename the previous
+            # workspace out of the way first so a failed final rename can put
+            # it back intact instead of leaving a partially deleted tree.
+            backup = tempfile.mkdtemp(
+                prefix=f".{os.path.basename(root)}.backup-", dir=parent
+            )
+            os.rmdir(backup)
+            had_workspace = os.path.lexists(root)
+            try:
+                if had_workspace:
+                    os.replace(root, backup)
+                os.replace(staging, root)
+            except Exception:
+                if had_workspace and not os.path.lexists(root):
+                    os.replace(backup, root)
+                raise
+            else:
+                if had_workspace:
+                    shutil.rmtree(backup, ignore_errors=True)
 
     async def hydrate_workspace(self, *args: Any, **kwargs: Any) -> None:
         # Nothing to fetch: the workspace *is* the interpreter's filesystem,
@@ -241,6 +272,15 @@ class BashkitSandboxSession(BaseSandboxSession):
         # terminal has to remember where it is between commands, so the script
         # has to reach the persistent interpreter directly.
         parts = [str(part) for part in command]
+        # Bashkit's built-in find/grep walk its private VFS and do not cross a
+        # ``FileSystem.real`` mount. SandboxWorkspace deliberately invokes
+        # these two as argv (shell=False), which lets the session provide the
+        # same operations against the mounted workspace without intercepting
+        # arbitrary shell scripts.
+        if len(parts) >= 4 and parts[0] == "find" and "-name" in parts:
+            return self._find_mounted_files(parts)
+        if len(parts) >= 4 and parts[0] == "grep" and "-e" in parts:
+            return self._grep_mounted_files(parts)
         if len(parts) == 3 and parts[0] in ("sh", "bash") and parts[1] in ("-c", "-lc"):
             script = parts[2]
         else:
@@ -262,14 +302,99 @@ class BashkitSandboxSession(BaseSandboxSession):
         )
 
     async def _run(self, script: str):
-        """Run one script through bashkit, async where the build has it."""
-        run_async = getattr(self.bash, "execute", None)
-        if run_async is not None:
-            return await run_async(script)
-        # The wasm build ships only the sync entry point. Blocking costs
-        # nothing meaningful: bashkit is in-memory, and Pyodide has no threads
-        # for an async variant to yield to.
+        """Run one script through bashkit's in-memory interpreter."""
+        # The native package exposes ``execute`` as an asyncio Future, but its
+        # current bridge never resolves under CPython.  The sync entry point is
+        # also the portable API exposed by the wasm build.  It does no host I/O
+        # and Pyodide has no worker thread to yield to, so calling it directly
+        # is both deterministic in CI and appropriate in the browser.
         return self.bash.execute_sync(script)
+
+    def _find_mounted_files(self, command: Sequence[str]) -> ExecResult:
+        """Implement SandboxWorkspace's ``find`` argv over the real mount."""
+        root = self._confined_mounted_root(command[1])
+        if root is None:
+            return ExecResult(
+                stdout=b"", stderr=b"find: path outside workspace\n", exit_code=1
+            )
+        pattern = command[command.index("-name") + 1]
+        recursive = "-maxdepth" not in command
+        exclude_hidden = "-not" in command and "*/.*" in command
+        matches: list[str] = []
+
+        for current, directories, files in os.walk(root):
+            if exclude_hidden:
+                directories[:] = [
+                    name for name in directories if not name.startswith(".")
+                ]
+                files = [name for name in files if not name.startswith(".")]
+            for name in [*directories, *files]:
+                if fnmatch.fnmatchcase(name, pattern):
+                    matches.append(os.path.join(current, name))
+            if not recursive:
+                directories[:] = []
+
+        stdout = "".join(f"{path}\n" for path in sorted(matches)).encode()
+        return ExecResult(stdout=stdout, stderr=b"", exit_code=0)
+
+    def _grep_mounted_files(self, command: Sequence[str]) -> ExecResult:
+        """Implement SandboxWorkspace's recursive ``grep`` over the mount."""
+        root = self._confined_mounted_root(command[-1])
+        if root is None:
+            return ExecResult(
+                stdout=b"", stderr=b"grep: path outside workspace\n", exit_code=2
+            )
+        pattern = command[command.index("-e") + 1]
+        include = "*"
+        if "--include" in command:
+            include = command[command.index("--include") + 1]
+        # ``context_lines`` is reserved by the Workspace contract; Host- and
+        # PyodideWorkspace intentionally ignore it because GrepMatch has no
+        # context field. Accept ``-C`` here while returning the same match-only
+        # result rather than leaking grep's context framing into the parser.
+        flags = 0 if "-i" not in command else re.IGNORECASE
+        try:
+            expression = re.compile(pattern, flags)
+        except re.error as error:
+            return ExecResult(
+                stdout=b"",
+                stderr=f"grep: {error}\n".encode(),
+                exit_code=2,
+            )
+
+        matches: list[str] = []
+        for current, _, files in os.walk(root):
+            for name in files:
+                if not fnmatch.fnmatchcase(name, include):
+                    continue
+                path = os.path.join(current, name)
+                if os.path.islink(path):
+                    continue
+                try:
+                    with open(path, encoding="utf-8", errors="replace") as handle:
+                        for line_number, line in enumerate(handle, 1):
+                            if expression.search(line):
+                                content = line.rstrip("\r\n")
+                                matches.append(f"{path}:{line_number}:{content}\n")
+                except OSError:
+                    continue
+
+        return ExecResult(
+            stdout="".join(matches).encode(),
+            stderr=b"",
+            exit_code=0 if matches else 1,
+        )
+
+    def _confined_mounted_root(self, candidate: str) -> Optional[str]:
+        """Return a real path only when it remains under the workspace."""
+        workspace = os.path.realpath(str(self.state.manifest.root))
+        requested = os.path.realpath(candidate)
+        try:
+            if os.path.commonpath((workspace, requested)) != workspace:
+                return None
+        except ValueError:
+            return None
+        return requested
 
     # ------------------------------ file I/O ------------------------------- #
     #

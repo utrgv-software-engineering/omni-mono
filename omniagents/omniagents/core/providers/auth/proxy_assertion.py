@@ -107,6 +107,7 @@ class ProxyAssertionAuthProvider(AuthProvider):
     #: Declared capabilities; see :class:`AuthProvider`.
     identifies_principals = True
     supports_connect_tickets = False
+    supports_legacy_query_auth = False
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         super().__init__(config or {})
@@ -179,7 +180,7 @@ class ProxyAssertionAuthProvider(AuthProvider):
             )
         except InvalidIdentityAssertion as exc:
             logger.warning("Rejected proxy identity assertion: %s", exc)
-            return AuthResult(authenticated=False, error=str(exc))
+            return AuthResult(authenticated=False, error="Invalid identity assertion")
 
         outcome = self._consume(
             verified.jti, verified.expires_at, verified.identity.user_id
@@ -189,9 +190,7 @@ class ProxyAssertionAuthProvider(AuthProvider):
                 "Rejected replayed proxy identity assertion for user_id=%s",
                 verified.identity.user_id,
             )
-            return AuthResult(
-                authenticated=False, error="Identity assertion was already used"
-            )
+            return AuthResult(authenticated=False, error="Invalid identity assertion")
         if outcome != CONSUME_OK:
             # Capacity, not credentials. Reported as retryable so a
             # short-lived condition does not permanently disconnect

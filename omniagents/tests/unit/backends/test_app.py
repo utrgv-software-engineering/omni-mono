@@ -1,4 +1,5 @@
 import pytest
+from starlette.datastructures import QueryParams
 
 from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
@@ -17,6 +18,29 @@ async def stub_build_agent(settings, mcp, app):
 def test_build_app_requires_spec():
     with pytest.raises(ValueError):
         server_app.build_app()
+
+
+def test_operator_upstream_query_params_override_client_values():
+    class Socket:
+        query_params = QueryParams(
+            "model=client&client_hint=enabled&token=do-not-forward"
+        )
+
+    url = server_app._compose_remote_ws_url(
+        "wss://upstream.example/ws?model=operator&api-version=2026-08-01&ticket=x",
+        suffix="/realtime",
+        websocket=Socket(),
+    )
+
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(url)
+    assert parsed.path == "/ws/realtime"
+    assert parse_qs(parsed.query) == {
+        "model": ["operator"],
+        "api-version": ["2026-08-01"],
+        "client_hint": ["enabled"],
+    }
 
 
 def test_register_server_functions_failure(capsys):

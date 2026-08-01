@@ -9,6 +9,7 @@ import pytest
 
 from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.core.providers.auth.none import NoneAuthProvider
+from omniagents.core.providers.auth.proxy_assertion import ProxyAssertionAuthProvider
 from omniagents.core.providers.auth.token import TokenAuthProvider
 from omniagents.rpc.auth import (
     GLOBAL_MUTATING_METHODS,
@@ -20,6 +21,7 @@ from omniagents.rpc.auth import (
     AuthorizationPolicy,
     ConnectionAuthenticator,
     WsTicketBroker,
+    build_ws_auth_dependency,
     legacy_query_auth_enabled,
     principal_can_access,
 )
@@ -108,6 +110,52 @@ async def test_query_token_accepted_when_legacy_enabled():
     )
     identity = await auth.authenticate_ws(FakeWebSocket(query={"token": "sekrit"}))
     assert identity.user_id == "token_user"
+
+
+@pytest.mark.asyncio
+async def test_legacy_query_auth_never_accepts_identity_assertions():
+    """The migration flag is for client tokens, not proxy credentials."""
+    from omniagents.rpc.identity_assertion import mint_identity_assertion
+
+    secret = "legacy-query-assertion-test-secret-0123456789"
+    provider = ProxyAssertionAuthProvider({"signing_secret": secret})
+    auth = ConnectionAuthenticator(provider, allow_query_token=True)
+    assertion = mint_identity_assertion(UserIdentity(user_id="alice"), secret=secret)
+
+    with pytest.raises(AuthenticationFailed, match="Authorization headers"):
+        await auth.authenticate_ws(FakeWebSocket(query={"token": assertion}))
+
+    header_assertion = mint_identity_assertion(
+        UserIdentity(user_id="alice"), secret=secret
+    )
+    identity = await auth.authenticate_ws(
+        FakeWebSocket(headers={"authorization": f"Bearer {header_assertion}"})
+    )
+    assert identity.user_id == "alice"
+
+
+@pytest.mark.asyncio
+async def test_failed_websocket_auth_has_one_terminal_close_owner():
+    """The dependency raises one 4401 instead of closing then responding."""
+    from fastapi import WebSocketException
+
+    class Socket(FakeWebSocket):
+        def __init__(self):
+            super().__init__()
+            self.close_calls = []
+
+        async def close(self, **kwargs):
+            self.close_calls.append(kwargs)
+
+    websocket = Socket()
+    dependency = build_ws_auth_dependency(
+        ConnectionAuthenticator(TokenAuthProvider({"token": "sekrit"}))
+    ).dependency
+
+    with pytest.raises(WebSocketException) as excinfo:
+        await dependency(websocket)
+    assert excinfo.value.code == 4401
+    assert websocket.close_calls == []
 
 
 @pytest.mark.asyncio

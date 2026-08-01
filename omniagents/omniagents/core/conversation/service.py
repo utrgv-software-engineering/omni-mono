@@ -788,7 +788,10 @@ class ConversationService:
 
         ``include_descendants`` names the same nodes the ancestry read
         shows, under the same per-node ``can_access`` — which is why the
-        predicate is required here rather than optional.
+        predicate is required here rather than optional. Its id list has
+        the same depth and count ceilings, and ``descendants_truncated``
+        declares when either ceiling withheld an accessible descendant.
+        A descendant the caller may not access is not a clip.
         """
         thread = self.ensure_thread(thread_id)
         size = _clamp(limit)
@@ -814,15 +817,18 @@ class ConversationService:
             # The SAME walk and the SAME per-node scoping the ancestry read
             # uses: an export whose id list disagreed with the branch tree
             # the client just drew is the divergence this method would
-            # otherwise reintroduce from a third copy.
-            payload["descendant_thread_ids"] = [
-                node.thread_id
-                for node in self.accessible_descendants(
-                    thread_id, can_access=can_access, max_depth=MAX_DESCENDANT_DEPTH
-                )[:MAX_DESCENDANTS]
-            ]
+            # otherwise reintroduce from a third copy. Keep the accessible
+            # set uncapped until after the page is formed so the truncation
+            # signal covers BOTH the depth and count ceilings.
+            accessible = self.accessible_descendants(thread_id, can_access=can_access)
+            descendants = [
+                node for node in accessible if node.depth <= MAX_DESCENDANT_DEPTH
+            ][:MAX_DESCENDANTS]
+            payload["descendant_thread_ids"] = [node.thread_id for node in descendants]
+            payload["descendants_truncated"] = len(accessible) > len(descendants)
         else:
             payload["descendant_thread_ids"] = []
+            payload["descendants_truncated"] = False
         _ = thread
         return payload
 

@@ -63,6 +63,9 @@ The legacy `?token=<bearer>` query parameter is **deprecated and disabled by
 default**. During migration it can be re-enabled with
 `OMNIAGENTS_LEGACY_QUERY_AUTH=1` (or `security.legacy_query_auth: true`); the
 server logs a deprecation warning (never containing the token) when it is used.
+This compatibility flag applies only to ordinary client bearer tokens. Proxy
+identity assertions remain header-only and are rejected in `?token=` even when
+the flag is enabled.
 
 **Failure semantics** — authentication failures close the socket with code
 `4401`; authorization failures on attach-style sockets close with `4403`. Both
@@ -109,6 +112,11 @@ sees the client's credential, so **something must carry the principal across
 the hop** — otherwise every proxied user arrives upstream as one identity and
 the ownership rules above have nothing to separate.
 
+Non-credential client query parameters are forwarded to the upstream only when
+the operator has not already configured the same key in `remote_agent.ws_url`.
+Configured URL parameters take precedence; `token` and `ticket` are stripped
+from both sources.
+
 The proxy authenticates the local user with its own `AuthProvider`, then mints
 a short-lived **signed identity assertion** naming that principal and presents
 it upstream in the ordinary `Authorization: Bearer` header. The upstream
@@ -147,6 +155,10 @@ audience-bound, single-use per upstream process via a `jti` replay cache that
 retains consumed ids through expiration plus the verification clock-skew
 allowance and is never evicted under pressure, and header-only (never a query
 parameter).
+Clients receive the single error `Invalid identity assertion` for malformed,
+forged, expired, unauthorized-role, or replayed assertions. The upstream logs
+the specific verification reason for operator diagnostics without exposing
+that distinction to an unauthenticated caller.
 The signing secret must be at least 32 characters with real variety, and is
 rejected when it is shaped like an unexpanded environment-variable name, is
 untrimmed, or is also one of the proxy's own client credentials — a client
@@ -2263,7 +2275,7 @@ be a branch.
 ```
 export_thread(thread_id, limit?, cursor?, include_descendants?)
   → { thread, turns[], items[], next_cursor, has_more,
-      descendant_thread_ids[] }
+      turns_truncated, descendant_thread_ids[], descendants_truncated }
 ```
 
 Exports the **canonical objects**, not the raw history, for the same
@@ -2283,11 +2295,16 @@ convenience has a ceiling of 500. When a thread has more turns than that,
 `turns_truncated` is `true` and `list_turns` pages the rest — the cap is
 declared, not silent.
 
-`include_descendants` returns the ids of every forked descendant so a
-consumer can export the whole branch tree; the descendants' contents are
-fetched by exporting each in turn. The ids are the ones
-`list_thread_descendants` shows, under the same per-node ownership rule
-and from the same walk.
+`include_descendants` returns forked descendant ids so a consumer can
+export the whole branch tree; the descendants' contents are fetched by
+exporting each in turn. The ids are the ones `list_thread_descendants`
+shows, under the same per-node ownership rule and from the same walk. Like
+that ancestry read, the id list is capped at depth 32 and 500 entries.
+`descendants_truncated` is `true` when either ceiling withheld an
+accessible descendant, so a consumer never mistakes the bounded list for
+the complete tree. A descendant the caller may not access is not a clip
+and does not set the flag. When descendants were not requested, the list
+is empty and `descendants_truncated` is `false`.
 
 ### Retention (`purge_threads`)
 

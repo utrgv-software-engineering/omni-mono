@@ -104,6 +104,9 @@ sandbox-vercel = [
 sandbox-cloudflare = [
     "openai-agents[cloudflare]>=0.16.0,<0.17",
 ]
+sandbox-bashkit = [
+    "bashkit>=0.14.4,<0.15",
+]
 sandbox-aci = [
     "azure-identity>=1.15",
     "azure-mgmt-containerinstance>=10.1",
@@ -122,7 +125,7 @@ platform = [
 ]
 enterprise = ["omniagents[oidc,presidio,platform]"]
 all = [
-    "omniagents[server,web,studio,studio-server,voice,litellm,markdown,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,session-postgres,audio-blob,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-aci]",
+    "omniagents[server,web,studio,studio-server,voice,litellm,markdown,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,session-postgres,audio-blob,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-bashkit,sandbox-aci]",
 ]
 training = [
     # GRPO/SFT agent fine-tuning (omniagents.training).

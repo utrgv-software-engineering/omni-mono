@@ -70,16 +70,18 @@ def test_roles_are_fail_closed_and_require_symmetric_allowlists(caplog, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_proxy_assertion_provider_enforces_its_role_allowlist():
+async def test_proxy_assertion_provider_coarsens_client_verification_errors(caplog):
     from omniagents.core.providers.auth.proxy_assertion import (
         ProxyAssertionAuthProvider,
     )
 
     token = mint_identity_assertion(_identity(), secret=SECRET, allowed_roles=["admin"])
     default_provider = ProxyAssertionAuthProvider({"signing_secret": SECRET})
-    rejected = await default_provider.authenticate(token)
+    with caplog.at_level("WARNING"):
+        rejected = await default_provider.authenticate(token)
     assert rejected.authenticated is False
-    assert "unauthorized role" in rejected.error
+    assert rejected.error == "Invalid identity assertion"
+    assert "unauthorized role" in caplog.text
 
     permitted_provider = ProxyAssertionAuthProvider(
         {"signing_secret": SECRET, "allowed_roles": ["admin", "admin"]}
@@ -478,7 +480,7 @@ async def test_replay_id_is_retained_through_expiration_plus_clock_skew(
 
     replay = await provider.authenticate(token)
     assert replay.authenticated is False
-    assert replay.error == "Identity assertion was already used"
+    assert replay.error == "Invalid identity assertion"
     assert provider._seen["boundary-jti"][0] == (
         expires_at + ASSERTION_CLOCK_SKEW_SECONDS
     )
@@ -505,7 +507,7 @@ async def test_replay_id_expires_only_after_verifier_acceptance_window(monkeypat
     clock[0] = expires_at + ASSERTION_CLOCK_SKEW_SECONDS + 0.001
     expired = await provider.authenticate(consumed)
     assert expired.authenticated is False
-    assert expired.error == "Identity assertion has expired"
+    assert expired.error == "Invalid identity assertion"
 
     # A new valid assertion triggers the amortized sweep and demonstrates
     # that entries are reclaimed once no verifier can accept them.
