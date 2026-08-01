@@ -7,6 +7,7 @@ import shlex
 from typing import List, Optional, Dict, Tuple, Union, Any
 from omniagents.core.tools import rich_function_tool, RichToolOutput, approval_metadata
 from functools import lru_cache
+
 try:
     import pygit2
 except ImportError:  # pragma: no cover - runtimes without libgit2

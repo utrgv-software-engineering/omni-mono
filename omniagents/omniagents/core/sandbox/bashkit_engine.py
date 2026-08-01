@@ -57,6 +57,7 @@ from .bashkit_builtins import DEFAULT_AUTHOR
 
 _DIR_TYPES = {"directory", "dir"}
 
+
 class BashkitSandboxSession(BaseSandboxSession):
     """Sandbox session backed by a bashkit interpreter.
 
@@ -157,9 +158,12 @@ class BashkitSandboxSession(BaseSandboxSession):
     def describe(self) -> str:
         return f"bashkit sandbox at {self.state.manifest.root}"
 
-    @property
     def supports_pty(self) -> bool:
         # bashkit runs commands to completion; there is no terminal to attach.
+        # Deliberately a plain method, not a property: the base class and every
+        # sibling backend declare it as one, and SandboxWorkspace calls it as
+        # one (`self._session.supports_pty()`), so a property would raise
+        # TypeError: 'bool' object is not callable.
         return False
 
     async def _after_start(self) -> None:
@@ -170,7 +174,9 @@ class BashkitSandboxSession(BaseSandboxSession):
         # execute calls, exactly like a shell session.
         await super()._after_start()
         root = str(self.state.manifest.root)
-        self.bash.execute_sync(f"mkdir -p {shlex.quote(root)} && cd {shlex.quote(root)}")
+        self.bash.execute_sync(
+            f"mkdir -p {shlex.quote(root)} && cd {shlex.quote(root)}"
+        )
 
     def snapshot_workspace(self) -> bytes:
         """Freeze the workspace directory.
@@ -206,11 +212,21 @@ class BashkitSandboxSession(BaseSandboxSession):
         # and it is already in memory by the time the session exists.
         return None
 
-    async def persist_workspace(self, *args: Any, **kwargs: Any) -> None:
+    async def persist_workspace(self, *args: Any, **kwargs: Any) -> io.IOBase:
         # Callers that want durability across page loads use
-        # ``bash.snapshot()`` and store the bytes themselves - there is no
-        # host filesystem here to persist onto.
-        return None
+        # ``bash.snapshot()``/``snapshot_workspace()`` and store the bytes
+        # themselves. Nothing is persisted through this path, but the base
+        # class promises a readable byte stream and ``hydrate_workspace`` on
+        # other backends feeds the result straight to ``tarfile.open`` — so
+        # hand back a valid *empty* archive rather than None, which would
+        # explode at the first read.
+        import tarfile
+
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w"):
+            pass
+        buffer.seek(0)
+        return buffer
 
     # -------------------------------- exec --------------------------------- #
 
@@ -262,9 +278,7 @@ class BashkitSandboxSession(BaseSandboxSession):
     # see through that mount - writes through it would land underneath and be
     # invisible to every command.
 
-    async def read(
-        self, path: Path, *, user: str | User | None = None
-    ) -> io.IOBase:
+    async def read(self, path: Path, *, user: str | User | None = None) -> io.IOBase:
         with open(str(path), "rb") as handle:
             return io.BytesIO(handle.read())
 
@@ -277,11 +291,13 @@ class BashkitSandboxSession(BaseSandboxSession):
             os.makedirs(parent, exist_ok=True)
         payload = data.read()
         with open(target, "wb") as handle:
-            handle.write(payload if isinstance(payload, bytes) else str(payload).encode())
+            handle.write(
+                payload if isinstance(payload, bytes) else str(payload).encode()
+            )
 
     async def ls(
         self, path: Path | str, *, user: str | User | None = None
-    ) -> Sequence[FileEntry]:
+    ) -> list[FileEntry]:
         base = str(path)
         entries: list[FileEntry] = []
         for name in os.listdir(base):

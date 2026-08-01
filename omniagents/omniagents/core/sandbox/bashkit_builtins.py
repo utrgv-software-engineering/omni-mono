@@ -151,7 +151,11 @@ def _run_git(
             return _parse_author(author)
 
     if command == "init":
-        target = os.path.join(work, args[0]) if args and not args[0].startswith("-") else work
+        target = (
+            os.path.join(work, args[0])
+            if args and not args[0].startswith("-")
+            else work
+        )
         os.makedirs(target, exist_ok=True)
         if os.path.isdir(os.path.join(target, ".git")):
             return (f"Reinitialized existing Git repository in {target}/.git/\n", "", 0)
@@ -163,8 +167,10 @@ def _run_git(
         if not positional:
             return ("", "usage: git clone <url> [<dir>]\n", 1)
         url = positional[0]
-        name = positional[1] if len(positional) > 1 else (
-            url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+        name = (
+            positional[1]
+            if len(positional) > 1
+            else (url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git"))
         )
         target = os.path.join(work, name)
         if os.path.exists(target) and os.listdir(target):
@@ -180,7 +186,11 @@ def _run_git(
 
     base = repo_root(work)
     if base is None:
-        return ("", "fatal: not a git repository (or any of the parent directories): .git\n", 128)
+        return (
+            "",
+            "fatal: not a git repository (or any of the parent directories): .git\n",
+            128,
+        )
 
     if command == "remote":
         repo = _open_repo(porcelain, base)
@@ -210,7 +220,11 @@ def _run_git(
         try:
             url = config.get((b"remote", name.encode()), b"url").decode()
         except KeyError:
-            return ("", f"fatal: '{name}' does not appear to be a git repository\n", 128)
+            return (
+                "",
+                f"fatal: '{name}' does not appear to be a git repository\n",
+                128,
+            )
         try:
             return _remote_op(porcelain, command, repo, base, url, proxy_base)
         except Exception as error:
@@ -227,7 +241,11 @@ def _run_git(
         if len(args) == 1:
             section, _, key = args[0].rpartition(".")
             try:
-                return (config.get((section.encode(),), key.encode()).decode() + "\n", "", 0)
+                return (
+                    config.get((section.encode(),), key.encode()).decode() + "\n",
+                    "",
+                    0,
+                )
             except KeyError:
                 return ("", "", 1)
         return ("", "usage: git config <key> [<value>]\n", 1)
@@ -309,7 +327,11 @@ def _run_git(
         try:
             walker = list(repo.get_walker())
         except Exception:
-            return ("", "fatal: your current branch does not have any commits yet\n", 128)
+            return (
+                "",
+                "fatal: your current branch does not have any commits yet\n",
+                128,
+            )
         if limit:
             walker = walker[:limit]
         chunks = []
@@ -347,9 +369,7 @@ def _run_git(
             return ("", "", 0)
         current = _current_branch(porcelain, base)
         return (
-            "".join(
-                f"* {n}\n" if n == current else f"  {n}\n" for n in sorted(names)
-            ),
+            "".join(f"* {n}\n" if n == current else f"  {n}\n" for n in sorted(names)),
             "",
             0,
         )
@@ -446,9 +466,7 @@ def _httpx_client_class():
             if raise_for_status and response.status_code >= 400:
                 from dulwich.errors import GitProtocolError
 
-                raise GitProtocolError(
-                    f"HTTP {response.status_code} for {url}"
-                )
+                raise GitProtocolError(f"HTTP {response.status_code} for {url}")
             return _HttpxResponse(response), io.BytesIO(response.content).read
 
     return HttpxGitClient
@@ -471,7 +489,6 @@ def resolve_remote(url: str, proxy_base: Optional[str]) -> str:
     return f"{proxy_base.rstrip('/')}/{host}/{path}"
 
 
-
 def _client_for(url: str, proxy_base: Optional[str]):
     """Build a dulwich client for ``url``, routed through the proxy."""
     resolved = resolve_remote(url, proxy_base)
@@ -492,8 +509,10 @@ def _clone_into(porcelain: Any, target: str, url: str, proxy_base: Optional[str]
         if ref.startswith(b"refs/heads/") or ref.startswith(b"refs/tags/"):
             repo.refs[ref] = sha
     head = result.refs.get(b"HEAD")
-    default = head or result.refs.get(b"refs/heads/main") or result.refs.get(
-        b"refs/heads/master"
+    default = (
+        head
+        or result.refs.get(b"refs/heads/main")
+        or result.refs.get(b"refs/heads/master")
     )
     if default:
         branch = b"main" if b"refs/heads/main" in result.refs else b"master"
@@ -509,11 +528,17 @@ def _clone_into(porcelain: Any, target: str, url: str, proxy_base: Optional[str]
 
 
 def _remote_op(
-    porcelain: Any, command: str, repo: Any, base: str, url: str, proxy_base: Optional[str]
+    porcelain: Any,
+    command: str,
+    repo: Any,
+    base: str,
+    url: str,
+    proxy_base: Optional[str],
 ) -> tuple:
     client, resolved = _client_for(url, proxy_base)
 
     if command == "push":
+
         def update_refs(old_refs):
             new = dict(old_refs)
             for ref, sha in repo.refs.as_dict(b"refs/heads").items():
@@ -610,7 +635,7 @@ def make_python_builtin(*, root: str = "/workspace") -> Callable:
             token = argv[index]
             if token == "-c" and index + 1 < len(argv):
                 code = argv[index + 1]
-                args = argv[index + 2:]
+                args = argv[index + 2 :]
                 break
             if token in ("--version", "-V"):
                 return BuiltinResult(stdout=f"Python {sys.version.split()[0]}\n")
@@ -618,7 +643,7 @@ def make_python_builtin(*, root: str = "/workspace") -> Callable:
                 index += 1
                 continue
             script = token
-            args = argv[index + 1:]
+            args = argv[index + 1 :]
             break
 
         if code is None and script is None:
@@ -648,6 +673,10 @@ def make_python_builtin(*, root: str = "/workspace") -> Callable:
                 if target is not None:
                     runpy.run_path(target, run_name="__main__")
                 else:
+                    # ``target`` is None only when ``script`` is None, and the
+                    # both-are-None case returned above — so ``-c code`` was
+                    # given. Narrow it for the type checker.
+                    assert code is not None
                     exec(compile(code, "<stdin>", "exec"), {"__name__": "__main__"})
         except SystemExit as stop:
             exit_code = int(stop.code or 0)
@@ -660,7 +689,9 @@ def make_python_builtin(*, root: str = "/workspace") -> Callable:
             sys.argv = saved_argv
             os.chdir(saved_cwd)
 
-        return BuiltinResult(stdout=out.getvalue(), stderr=err.getvalue(), exit_code=exit_code)
+        return BuiltinResult(
+            stdout=out.getvalue(), stderr=err.getvalue(), exit_code=exit_code
+        )
 
     return python
 

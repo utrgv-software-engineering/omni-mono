@@ -52,7 +52,9 @@ async def test_starts_in_the_manifest_root(sandbox):
 @pytest.mark.asyncio
 async def test_provisioned_files_are_present(sandbox):
     await sandbox.start()
-    assert (await sandbox.read(Path(sandbox.state.manifest.root) / "sales.csv")).read().decode() == SALES
+    assert (
+        await sandbox.read(Path(sandbox.state.manifest.root) / "sales.csv")
+    ).read().decode() == SALES
 
 
 # --------------------------------- exec ---------------------------------- #
@@ -98,8 +100,12 @@ async def test_exec_returns_bytes(sandbox):
 @pytest.mark.asyncio
 async def test_write_creates_parent_directories(sandbox):
     await sandbox.start()
-    await sandbox.write(Path(sandbox.state.manifest.root, "deep/nested/file.txt"), io.BytesIO(b"hi\n"))
-    assert (await sandbox.read(Path(sandbox.state.manifest.root, "deep/nested/file.txt"))).read() == b"hi\n"
+    await sandbox.write(
+        Path(sandbox.state.manifest.root, "deep/nested/file.txt"), io.BytesIO(b"hi\n")
+    )
+    assert (
+        await sandbox.read(Path(sandbox.state.manifest.root, "deep/nested/file.txt"))
+    ).read() == b"hi\n"
 
 
 @pytest.mark.asyncio
@@ -109,7 +115,10 @@ async def test_ls_reports_full_paths_and_kinds(sandbox):
     await sandbox.start()
     await sandbox.mkdir(f"{sandbox.state.manifest.root}/subdir", parents=True)
     entries = {e.path: e for e in await sandbox.ls(sandbox.state.manifest.root)}
-    assert set(entries) == {f"{sandbox.state.manifest.root}/sales.csv", f"{sandbox.state.manifest.root}/subdir"}
+    assert set(entries) == {
+        f"{sandbox.state.manifest.root}/sales.csv",
+        f"{sandbox.state.manifest.root}/subdir",
+    }
     assert entries[f"{sandbox.state.manifest.root}/sales.csv"].is_dir() is False
     assert entries[f"{sandbox.state.manifest.root}/subdir"].is_dir() is True
     assert entries[f"{sandbox.state.manifest.root}/sales.csv"].size == len(SALES)
@@ -119,9 +128,13 @@ async def test_ls_reports_full_paths_and_kinds(sandbox):
 async def test_mkdir_and_rm(sandbox):
     await sandbox.start()
     await sandbox.mkdir(f"{sandbox.state.manifest.root}/tmp", parents=True)
-    assert f"{sandbox.state.manifest.root}/tmp" in [e.path for e in await sandbox.ls(sandbox.state.manifest.root)]
+    assert f"{sandbox.state.manifest.root}/tmp" in [
+        e.path for e in await sandbox.ls(sandbox.state.manifest.root)
+    ]
     await sandbox.rm(f"{sandbox.state.manifest.root}/tmp", recursive=True)
-    assert f"{sandbox.state.manifest.root}/tmp" not in [e.path for e in await sandbox.ls(sandbox.state.manifest.root)]
+    assert f"{sandbox.state.manifest.root}/tmp" not in [
+        e.path for e in await sandbox.ls(sandbox.state.manifest.root)
+    ]
 
 
 # ------------------------------- snapshots -------------------------------- #
@@ -134,7 +147,9 @@ async def test_snapshot_and_restore(sandbox):
     await sandbox.start()
     saved = sandbox.snapshot_workspace()
     await sandbox.exec("echo mutated > volatile.txt")
-    assert f"{sandbox.state.manifest.root}/volatile.txt" in [e.path for e in await sandbox.ls(sandbox.state.manifest.root)]
+    assert f"{sandbox.state.manifest.root}/volatile.txt" in [
+        e.path for e in await sandbox.ls(sandbox.state.manifest.root)
+    ]
 
     sandbox.restore_workspace(saved)
     paths = [e.path for e in await sandbox.ls(sandbox.state.manifest.root)]
@@ -174,4 +189,6 @@ async def test_workspace_discovery(ws):
     entries = {e.name: e.is_dir for e in await ws.list_dir(".")}
     assert entries == {"sales.csv": False, "subdir": True}
     assert await ws.glob("*.csv") == ["sales.csv"]
-    assert [(m.path, m.line_number) for m in await ws.grep("east")] == [("sales.csv", 3)]
+    assert [(m.path, m.line_number) for m in await ws.grep("east")] == [
+        ("sales.csv", 3)
+    ]
