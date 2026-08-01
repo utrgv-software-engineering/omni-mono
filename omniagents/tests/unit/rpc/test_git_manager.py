@@ -1464,6 +1464,56 @@ async def test_a_failing_git_command_carries_the_exit_code_not_prose(
     assert "stderr" in data
 
 
+class _RecordingWorkspace(HostWorkspace):
+    """A host workspace that remembers how every command was invoked."""
+
+    def __init__(self, root: str) -> None:
+        super().__init__(root=root)
+        self.exec_kwargs: List[Dict[str, Any]] = []
+
+    async def exec(self, command, **kwargs):  # type: ignore[override]
+        self.exec_kwargs.append({"command": command, **kwargs})
+        return await super().exec(command, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_every_git_command_is_argv_with_no_cwd(repo: Path):
+    """The invocation shape a sandbox substrate requires (tkt_k5Yk_JBkrIw6).
+
+    ``SandboxWorkspace.exec`` refuses ``cwd=`` together with
+    ``shell=False`` and has no shell to interpolate into, so ``git.py``
+    addresses repositories with ``git -C`` and passes an argv list. On the
+    host both spellings work identically, which is exactly why this can
+    regress unnoticed: without this assertion the only thing that would
+    catch a stray ``cwd=`` or ``shell=True`` is
+    ``test_git_sandbox_substrate.py``, which needs Docker.
+    """
+    workspace = _RecordingWorkspace(root=str(repo.parent))
+    manager = make_manager(workspace)
+    write(repo / "f.txt", two_hunk_edit())
+
+    await manager.list_repositories("s1")
+    await manager.status("s1", "app")
+    diff = await manager.diff("s1", "app")
+    await manager.stage(
+        "s1",
+        "app",
+        hunks=[{"path": "f.txt", "hunk_id": diff["files"][0]["hunks"][0]["hunk_id"]}],
+    )
+    await manager.commit("s1", "app", "from a recorded run")
+    await manager.log("s1", "app")
+
+    assert workspace.exec_kwargs, "no command reached the workspace boundary"
+    for call in workspace.exec_kwargs:
+        assert call.get("shell") is False, call
+        assert call.get("cwd") is None, call
+        assert isinstance(call["command"], (list, tuple)), call
+        assert call["command"][0] == "git"
+        # ``git -C`` is how the repository is addressed; a bare `git` with
+        # an implied working directory would operate on the wrong tree.
+        assert call["command"][1] == "-C", call
+
+
 @pytest.mark.asyncio
 async def test_concurrent_reads_share_one_workspace(repo: Path, manager: GitManager):
     write(repo / "f.txt", two_hunk_edit())

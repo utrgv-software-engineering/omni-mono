@@ -19,8 +19,10 @@ a real container the surface was unusable:
   directories.
 
 Skipped unless Docker is reachable and the image is already present, so
-it never pulls in CI — same posture as
-``test_git_sandbox_substrate.py``.
+it never pulls itself — same posture as ``test_git_sandbox_substrate.py``,
+and CI provisions the image in the ``sandbox-substrate`` job where
+``OMNIAGENTS_REQUIRE_SANDBOX_IMAGE`` turns the skip into a hard failure
+(tkt_k5Yk_JBkrIw6).
 """
 
 from __future__ import annotations
@@ -28,8 +30,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
-import shutil
-import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
@@ -43,22 +43,14 @@ from omniagents.rpc.filesystem import (
 )
 from omniagents.workspace.sandbox import SandboxWorkspace
 from omniagents.workspace.types import WorkspaceEscapeError
+from tests.integration._sandbox_image import image_available
 
 IMAGE = "alpine/git:latest"
 TIMEOUT = 30.0
 
 
-def _image_available() -> bool:
-    if shutil.which("docker") is None:
-        return False
-    probe = subprocess.run(
-        ["docker", "image", "inspect", IMAGE], capture_output=True, check=False
-    )
-    return probe.returncode == 0
-
-
 pytestmark = pytest.mark.skipif(
-    not _image_available(),
+    not image_available(IMAGE),
     reason=f"docker image {IMAGE} is not available locally",
 )
 

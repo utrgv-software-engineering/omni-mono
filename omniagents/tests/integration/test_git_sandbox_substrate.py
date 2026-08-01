@@ -21,19 +21,19 @@ substrate-dependent and cannot be proven on the host:
   directly again.
 
 Skipped unless Docker is reachable and the image is already present, so
-it never pulls in CI.
+it never pulls itself — CI provisions the image in the
+``sandbox-substrate`` job and sets ``OMNIAGENTS_REQUIRE_SANDBOX_IMAGE``,
+which turns the skip into a hard failure there (tkt_k5Yk_JBkrIw6).
 """
 
 from __future__ import annotations
-
-import shutil
-import subprocess
 
 import pytest
 import pytest_asyncio
 
 from omniagents.rpc.git import GitConfirmationRequired, GitManager
 from omniagents.workspace.sandbox import SandboxWorkspace
+from tests.integration._sandbox_image import image_available
 
 IMAGE = "alpine/git:latest"
 
@@ -47,17 +47,8 @@ def two_hunk_edit() -> str:
     return "\n".join(lines) + "\n"
 
 
-def _image_available() -> bool:
-    if shutil.which("docker") is None:
-        return False
-    probe = subprocess.run(
-        ["docker", "image", "inspect", IMAGE], capture_output=True, check=False
-    )
-    return probe.returncode == 0
-
-
 pytestmark = pytest.mark.skipif(
-    not _image_available(),
+    not image_available(IMAGE),
     reason=f"docker image {IMAGE} is not available locally",
 )
 

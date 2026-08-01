@@ -139,6 +139,35 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
 
 Tests use pytest with fixtures defined in `tests/conftest.py`. The test suite uses temporary databases to ensure isolation. Coverage is collected for Python and web (Vitest) components separately.
 
+#### Sandbox-substrate suites (Docker)
+
+`tests/integration/test_git_sandbox_substrate.py` and
+`tests/integration/test_fs_sandbox_substrate.py` drive the `git_*` / `fs_*`
+surfaces against a **real container**, because the substrate-dependent
+defects they exist for (absolute `FileEntry` paths, an unconfined
+`SandboxWorkspace.resolve`, `fs_stat` reporting `size: null`, a
+bound-method `is_dir`) are all invisible to the host-only suites.
+
+They skip unless `alpine/git:latest` is already present locally, and they
+never pull it themselves:
+
+```bash
+docker pull alpine/git:latest
+pytest tests/integration/test_git_sandbox_substrate.py \
+       tests/integration/test_fs_sandbox_substrate.py
+```
+
+CI runs them in the separate `sandbox-substrate` job
+(`.github/workflows/tests.yml`), which pulls the image and sets
+`OMNIAGENTS_REQUIRE_SANDBOX_IMAGE=1` — that turns the skip into a
+collection error, so the job cannot pass by skipping everything.
+
+**Runtime: 1m42s for the job on `ubuntu-latest`** — 66s of that is pytest
+(31 tests, each creating and deleting its own container), the rest is the
+image pull and the pip install. Locally, ~53s for the two modules on a
+warm image. Keep the job off the main matrix: the cost is wall-clock
+container time, not CPU.
+
 ### Git Workflow Notes
 
 - **Always check branch and working tree status** before making changes (`git status -sb`)

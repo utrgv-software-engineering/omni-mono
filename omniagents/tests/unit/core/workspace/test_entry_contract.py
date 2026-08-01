@@ -488,6 +488,118 @@ async def test_sandbox_predicates_confine_symlink_targets_in_container() -> None
     assert "/workspace/link" in script
 
 
+# ---------------------------------------------------------------------------
+#  The confinement probe, run through a real shell (tkt_k5Yk_JBkrIw6)
+# ---------------------------------------------------------------------------
+#
+# Asserting the probe *script contains* "readlink -f" does not prove the
+# probe refuses anything: the script is what decides, and only running it
+# can say what it decides. Both properties below used to hold in exactly
+# one place — ``test_fs_sandbox_substrate.py``, which needs Docker and
+# never ran in CI. The script is ordinary POSIX shell, so a session double
+# that executes it with the host's ``/bin/sh`` proves them here too, with
+# no container involved.
+
+
+class _ShellSession(_FakeSession):
+    """Session double that really runs the probe script under ``/bin/sh``.
+
+    *root* is a host directory standing in for the container's workspace
+    mount, so ``resolve()``'s output addresses a real path and the script's
+    ``readlink``/``test`` see a real tree.
+    """
+
+    def __init__(self, root: str, *, path_prefix: Optional[str] = None) -> None:
+        super().__init__()
+        self._root = root
+        self._path_prefix = path_prefix
+
+    async def exec(self, *args: Any, **kwargs: Any) -> _ExecResult:
+        import subprocess
+
+        script = args[-1]
+        self.exec_calls.append(script)
+        env = dict(os.environ)
+        if self._path_prefix:
+            env["PATH"] = f"{self._path_prefix}:{env['PATH']}"
+        completed = subprocess.run(
+            ["/bin/sh", "-lc", script],
+            capture_output=True,
+            check=False,
+            env=env,
+        )
+        return _ExecResult(completed.returncode, completed.stdout)
+
+
+def _shell_workspace(root: Path, **kwargs: Any) -> SandboxWorkspace:
+    return SandboxWorkspace(session=_ShellSession(str(root), **kwargs), root=str(root))
+
+
+def _probe_tree(root: Path, outside: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "a.txt").write_text("inside", encoding="utf-8")
+    outside.write_text("secret", encoding="utf-8")
+    os.symlink(outside, root / "escaping_file")
+    os.symlink(outside.parent, root / "escaping_dir")
+
+
+@pytest.mark.asyncio
+async def test_sandbox_probe_refuses_a_symlink_out_of_the_root(tmp_path: Path) -> None:
+    """``test -f`` follows symlinks; the ``case`` guard is what refuses.
+
+    Without it the probe answers for a file the workspace does not
+    contain — the same ``True`` the host backend answers ``False`` to.
+    """
+    root = tmp_path / "workspace"
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    try:
+        _probe_tree(root, outside_dir / "secret.txt")
+    except OSError:  # pragma: no cover - platforms without symlink perms
+        pytest.skip("symlinks unavailable")
+    workspace = _shell_workspace(root)
+
+    assert await workspace.is_file("a.txt") is True
+    assert await workspace.is_file("escaping_file") is False
+    assert await workspace.exists("escaping_file") is False
+    assert await workspace.is_dir("escaping_dir") is False
+
+
+@pytest.mark.asyncio
+async def test_sandbox_probe_fails_closed_when_readlink_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    """No ``readlink`` means no answer — never a lexical fallback.
+
+    A symlink's *lexical* path is inside the root by construction, so
+    falling back to it would hand ``test -f`` the link and let it answer
+    for the target outside the workspace. Refusing everything (including
+    the legitimate ``a.txt``) is the correct failure mode; the cost is a
+    false negative on an image with no ``readlink``.
+    """
+    root = tmp_path / "workspace"
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    try:
+        _probe_tree(root, outside_dir / "secret.txt")
+    except OSError:  # pragma: no cover
+        pytest.skip("symlinks unavailable")
+
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "readlink").write_text("#!/bin/sh\nexit 127\n", encoding="utf-8")
+    (shim / "readlink").chmod(0o755)
+    workspace = _shell_workspace(root, path_prefix=str(shim))
+
+    assert await workspace.is_file("escaping_file") is False
+    assert await workspace.exists("escaping_file") is False
+    assert await workspace.is_dir("escaping_dir") is False
+    assert await workspace.is_file("a.txt") is False
+    # And a working readlink restores the ordinary answers, proving the
+    # shim — not some unrelated breakage — caused the refusals above.
+    assert await _shell_workspace(root).is_file("a.txt") is True
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("code", "expected"),
