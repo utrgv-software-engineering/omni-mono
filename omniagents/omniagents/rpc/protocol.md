@@ -144,7 +144,9 @@ Assertion properties: HMAC-SHA256 with an HKDF-derived, purpose-bound key over
 a fixed version prefix (no `alg` field an attacker can influence), 30 s
 lifetime with a 120 s verification cap and finite-number lifetime validation,
 audience-bound, single-use per upstream process via a `jti` replay cache that
-is never evicted under pressure, and header-only (never a query parameter).
+retains consumed ids through expiration plus the verification clock-skew
+allowance and is never evicted under pressure, and header-only (never a query
+parameter).
 The signing secret must be at least 32 characters with real variety, and is
 rejected when it is shaped like an unexpanded environment-variable name, is
 untrimmed, or is also one of the proxy's own client credentials — a client

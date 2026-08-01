@@ -80,6 +80,7 @@ __all__ = [
     "ASSERTION_VERSION",
     "DEFAULT_ASSERTION_AUDIENCE",
     "DEFAULT_ASSERTION_TTL_SECONDS",
+    "ASSERTION_CLOCK_SKEW_SECONDS",
     "MAX_ASSERTION_TTL_SECONDS",
     "MIN_SIGNING_SECRET_LENGTH",
     "MAX_ASSERTED_ROLES",
@@ -128,8 +129,10 @@ _next_dropped_role_log = 0.0
 MIN_SIGNING_SECRET_DISTINCT_CHARS = 8
 
 #: Both hops are in one deployment and expected to be NTP-synced. This
-#: adds directly to the replay window, so keep it small.
-_CLOCK_SKEW_SECONDS = 10.0
+#: adds directly to the replay window, so keep it small. The proxy-assertion
+#: provider also uses this value when deciding how long a consumed replay id
+#: remains live; verification and replay retention must share one boundary.
+ASSERTION_CLOCK_SKEW_SECONDS = 10.0
 
 _ISSUER = "omniagents-proxy"
 
@@ -327,7 +330,7 @@ def _log_skew(kind: str, offset_seconds: float) -> None:
         "distro after host sleep will do this).",
         kind,
         offset_seconds,
-        _CLOCK_SKEW_SECONDS,
+        ASSERTION_CLOCK_SKEW_SECONDS,
     )
 
 
@@ -487,10 +490,10 @@ def verify_identity_assertion(
         raise InvalidIdentityAssertion("Identity assertion lifetime exceeds the cap")
 
     clock = time.time() if now is None else now
-    if expires_at < clock - _CLOCK_SKEW_SECONDS:
+    if expires_at < clock - ASSERTION_CLOCK_SKEW_SECONDS:
         _log_skew("expired", clock - expires_at)
         raise InvalidIdentityAssertion("Identity assertion has expired")
-    if issued_at > clock + _CLOCK_SKEW_SECONDS:
+    if issued_at > clock + ASSERTION_CLOCK_SKEW_SECONDS:
         _log_skew("not yet valid", issued_at - clock)
         raise InvalidIdentityAssertion("Identity assertion is not yet valid")
 

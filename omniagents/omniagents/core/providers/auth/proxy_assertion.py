@@ -147,9 +147,9 @@ class ProxyAssertionAuthProvider(AuthProvider):
         self._allowed_roles = normalize_role_allowlist(
             cfg.get("allowed_roles"), field_name="proxy_assertion.allowed_roles"
         )
-        # jti -> expiry. Assertions are single-use **within this process**
-        # (see ``_consume``); a horizontally scaled upstream needs a
-        # shared cache for that to hold deployment-wide.
+        # jti -> replay-valid-until. Assertions are single-use **within this
+        # process** (see ``_consume``); a horizontally scaled upstream needs
+        # a shared cache for that to hold deployment-wide.
         self._seen: Dict[str, Tuple[float, str]] = {}
         self._per_principal: Dict[str, int] = {}
         self._next_prune = 0.0
@@ -249,6 +249,12 @@ class ProxyAssertionAuthProvider(AuthProvider):
           longer costs a full-dictionary scan (measured at 339 µs each,
           which made the flood cheaper for the attacker than the target).
         """
+        # Verification accepts through ``exp + clock skew`` (inclusive), so
+        # forgetting the jti at bare ``exp`` opens a replay window in which
+        # an otherwise-valid assertion becomes reusable. Keep this import
+        # local to avoid the auth-provider package's initialization cycle.
+        from omniagents.rpc.identity_assertion import ASSERTION_CLOCK_SKEW_SECONDS
+
         now = time.time()
         # O(1) and first: a replay must be caught even at capacity.
         if jti in self._seen:
@@ -268,7 +274,10 @@ class ProxyAssertionAuthProvider(AuthProvider):
         if len(self._seen) >= _MAX_REPLAY_ENTRIES:
             return CONSUME_CAPACITY
 
-        self._seen[jti] = (expires_at, subject)
+        self._seen[jti] = (
+            expires_at + ASSERTION_CLOCK_SKEW_SECONDS,
+            subject,
+        )
         self._per_principal[subject] = self._per_principal.get(subject, 0) + 1
         return CONSUME_OK
 

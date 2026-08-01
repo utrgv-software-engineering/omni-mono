@@ -3,12 +3,14 @@
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 
 from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.rpc.identity_assertion import (
     ASSERTION_VERSION,
+    ASSERTION_CLOCK_SKEW_SECONDS,
     DEFAULT_ASSERTION_AUDIENCE,
     MAX_ASSERTION_TTL_SECONDS,
     MAX_ASSERTED_ROLES,
@@ -432,3 +434,87 @@ def test_replay_cache_cannot_be_flushed_to_enable_a_replay():
         assert replayed.authenticated is False
     finally:
         loop.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "boundary_offset",
+    [-0.001, 0.0],
+    ids=["just-before-boundary", "exact-boundary"],
+)
+async def test_replay_id_is_retained_through_expiration_plus_clock_skew(
+    monkeypatch, boundary_offset
+):
+    """An assertion still accepted by the verifier must remain single-use."""
+    from omniagents.core.providers.auth import proxy_assertion as provider_module
+    from omniagents.rpc import identity_assertion as assertion_module
+
+    expires_at = 1_000.0
+    clock = [expires_at - 1.0]
+    fake_time = SimpleNamespace(time=lambda: clock[0])
+    monkeypatch.setattr(provider_module, "time", fake_time)
+    monkeypatch.setattr(assertion_module, "time", fake_time)
+
+    token = _sign_payload(
+        _payload(iat=expires_at - 30.0, exp=expires_at, jti="boundary-jti")
+    )
+    provider = provider_module.ProxyAssertionAuthProvider({"signing_secret": SECRET})
+    assert (await provider.authenticate(token)).authenticated is True
+
+    clock[0] = expires_at + ASSERTION_CLOCK_SKEW_SECONDS + boundary_offset
+    if boundary_offset == 0.0:
+        assert clock[0] == expires_at + ASSERTION_CLOCK_SKEW_SECONDS
+    # Force the amortized sweep with another valid assertion. Before the fix,
+    # that sweep forgot boundary-jti at bare exp even though the verifier
+    # still accepted its token during the skew allowance.
+    sweep_trigger = _sign_payload(
+        _payload(
+            iat=clock[0] - 1.0,
+            exp=clock[0] + 30.0,
+            jti="sweep-trigger-jti",
+        )
+    )
+    assert (await provider.authenticate(sweep_trigger)).authenticated is True
+
+    replay = await provider.authenticate(token)
+    assert replay.authenticated is False
+    assert replay.error == "Identity assertion was already used"
+    assert provider._seen["boundary-jti"][0] == (
+        expires_at + ASSERTION_CLOCK_SKEW_SECONDS
+    )
+
+
+@pytest.mark.asyncio
+async def test_replay_id_expires_only_after_verifier_acceptance_window(monkeypatch):
+    """After exp + skew the token is invalid and its replay id is reclaimable."""
+    from omniagents.core.providers.auth import proxy_assertion as provider_module
+    from omniagents.rpc import identity_assertion as assertion_module
+
+    expires_at = 2_000.0
+    clock = [expires_at - 1.0]
+    fake_time = SimpleNamespace(time=lambda: clock[0])
+    monkeypatch.setattr(provider_module, "time", fake_time)
+    monkeypatch.setattr(assertion_module, "time", fake_time)
+
+    consumed = _sign_payload(
+        _payload(iat=expires_at - 30.0, exp=expires_at, jti="expired-jti")
+    )
+    provider = provider_module.ProxyAssertionAuthProvider({"signing_secret": SECRET})
+    assert (await provider.authenticate(consumed)).authenticated is True
+
+    clock[0] = expires_at + ASSERTION_CLOCK_SKEW_SECONDS + 0.001
+    expired = await provider.authenticate(consumed)
+    assert expired.authenticated is False
+    assert expired.error == "Identity assertion has expired"
+
+    # A new valid assertion triggers the amortized sweep and demonstrates
+    # that entries are reclaimed once no verifier can accept them.
+    fresh = _sign_payload(
+        _payload(
+            iat=clock[0] - 1.0,
+            exp=clock[0] + 30.0,
+            jti="fresh-jti",
+        )
+    )
+    assert (await provider.authenticate(fresh)).authenticated is True
+    assert "expired-jti" not in provider._seen
