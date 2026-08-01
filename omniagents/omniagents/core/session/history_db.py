@@ -113,7 +113,14 @@ def purge_old_sessions(
     *,
     project_slug: str | None = None,
     agent_slug: str | None = None,
-) -> int:
+) -> list[str]:
+    """Purge history rows past the retention window; returns the purged ids.
+
+    This is the HISTORY half only. Use
+    :func:`omniagents.core.session.retention.purge_expired_sessions` unless
+    you are deliberately leaving the conversation domain rows and the replay
+    journal in place.
+    """
     return _resolve_backend().purge_old_sessions(
         retention_days, project_slug=project_slug, agent_slug=agent_slug
     )

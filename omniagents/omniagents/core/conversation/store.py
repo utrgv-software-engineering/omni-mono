@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
+import logging
 import os
 import sqlite3
 from threading import Lock
@@ -37,22 +38,40 @@ from omniagents.core.paths import get_sessions_db_path
 
 from .model import (
     ITEM_SCHEMA_VERSION,
+    UNSCOPED,
     Item,
     ItemKind,
     ItemStatus,
+    SearchHit,
     Thread,
+    ThreadFilter,
     ThreadStatus,
     Turn,
     TurnStatus,
+    derive_search_text,
+    search_terms,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ConversationStore",
     "PgConversationStore",
+    "SearchUnavailable",
     "SqliteConversationStore",
     "get_conversation_store",
     "reset_conversation_store",
 ]
+
+
+class SearchUnavailable(RuntimeError):
+    """The active backend has no full-text index available.
+
+    Raised instead of quietly degrading to a Python substring scan: a
+    search that silently stops using the index would return *different*
+    results (and different previews) from the same query on the same data,
+    which is worse than a typed failure the client can report.
+    """
 
 
 def _dumps(value: Any) -> str:
@@ -103,7 +122,134 @@ class ConversationStore(ABC):
 
     @abstractmethod
     def delete_thread(self, thread_id: str) -> bool:
-        """Remove a thread and everything under it. True if it existed."""
+        """Remove a thread and everything under it. True if it existed.
+
+        "Everything" includes the full-text index entries. A search index
+        that outlived the transcript would keep answering queries with
+        previews of deleted content — the same retention defect as leaving
+        the domain rows behind."""
+
+    @abstractmethod
+    def list_threads(
+        self,
+        thread_filter: ThreadFilter,
+        *,
+        limit: int,
+        after: Optional[Tuple[float, str]] = None,
+        descending: bool = True,
+    ) -> List[Thread]:
+        """One keyset page of threads ordered by ``(updated_at, thread_id)``.
+
+        ``after`` is the position from the previous page's cursor, applied
+        as a strict composite comparison so a listing that is being written
+        while a client pages through it neither skips nor repeats rows.
+
+        Every field of *thread_filter* — the ownership scope included — is
+        applied in SQL, in the same statement as ``LIMIT``. The scope has
+        no default and "every principal" is the explicit
+        :data:`~omniagents.core.conversation.model.UNSCOPED` sentinel, so a
+        caller who omitted it gets a type error rather than an unscoped
+        listing.
+        """
+
+    @abstractmethod
+    def count_threads(self, thread_filter: ThreadFilter) -> int:
+        """Threads matching the SAME predicate :meth:`list_threads` pages."""
+
+    @abstractmethod
+    def list_descendant_threads(
+        self, root_thread_id: str, *, max_depth: int, limit: int
+    ) -> List[Tuple[Thread, int]]:
+        """The fork subtree below *root_thread_id*, as ``(thread, depth)``.
+
+        Breadth-first, root excluded, depth 1 = direct children. Walked in
+        SQL (a recursive CTE) rather than by repeated round trips, and
+        bounded by both *max_depth* and *limit* so a cycle introduced by a
+        corrupted ``parent_thread_id`` cannot spin.
+
+        Descendants are additionally restricted to the root's own owner:
+        a fork inherits its parent's ``user_id``, so a child with a
+        different owner is anomalous and is not something an ancestry read
+        should surface.
+        """
+
+    def compact_search_index(self) -> None:
+        """Reclaim search-index space freed by deleted threads.
+
+        A deletion removes the row and its searchable entry immediately,
+        but SQLite's FTS5 deletes are TOMBSTONES: the terms of the deleted
+        transcript stay in the index's segment blobs until a merge rewrites
+        them, so the words of a deleted conversation remain in the database
+        file — readable with a hex editor — after ``delete_thread`` returns
+        and even after ``VACUUM``. ``PRAGMA secure_delete`` cannot help,
+        because the pages were never freed.
+
+        Callers run this ONCE at the end of a destructive operation rather
+        than per row: the cost is proportional to the whole index (~22 ms
+        for a 60k-item shard), which is fine for one delete or one
+        retention pass and is not fine multiplied by a 500-thread cascade.
+
+        Default no-op: a backend whose index is a column of the row it
+        describes has nothing to reclaim.
+        """
+
+    @abstractmethod
+    def count_items_for_threads(self, thread_ids: Sequence[str]) -> Dict[str, int]:
+        """Exact item counts for a whole PAGE, in one statement.
+
+        The stored ``Thread.item_count`` is maintained by non-transactional
+        read-modify-write and drifts under concurrent turns, and a listing
+        is the surface a client sizes its UI from. Counting per row would
+        be N round trips for a page of N; one grouped count is two.
+        """
+
+    @abstractmethod
+    def count_turns_for_threads(self, thread_ids: Sequence[str]) -> Dict[str, int]:
+        """Exact turn counts for a whole page. See
+        :meth:`count_items_for_threads`."""
+
+    @abstractmethod
+    def descendant_thread_rows(
+        self, root_thread_id: str
+    ) -> List[Tuple[str, Optional[str], Optional[str]]]:
+        """EVERY thread below *root_thread_id*, as ``(id, user_id, parent)``.
+
+        Deliberately unlike :meth:`list_descendant_threads` in two ways,
+        both of which are the difference between a read and an integrity
+        check:
+
+        * **Unbounded.** No depth ceiling, no row limit. A capped walk used
+          as a delete guard silently answers "these are all the children"
+          when it is not, and the caller then orphans the overflow. Cycle
+          termination comes from de-duplicating on ``thread_id`` alone (the
+          recursive ``UNION``), not from a depth cap.
+        * **Owner-agnostic.** A descendant owned by someone else — or, on a
+          partially backfilled shard, owned by nobody — still holds a
+          ``parent_thread_id`` pointing here. Whether the relationship
+          exists is not a question about who may read it.
+        """
+
+    @abstractmethod
+    def search(
+        self,
+        query: str,
+        thread_filter: ThreadFilter,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> Tuple[List[SearchHit], int]:
+        """Full-text search over titles and item content.
+
+        Returns ``(hits, total_matching_threads)``. One hit per matching
+        thread, carrying the count of matching rows in that thread and the
+        highest-ranked match's backend-generated preview.
+
+        Ranked results are paged by ``offset``, not by a keyset: rank is
+        not a monotonic column, so there is no position to resume from.
+        The predicate — ownership included — is applied in SQL alongside
+        the match, so a page is never shrunk after the database drew it.
+
+        Raises :class:`SearchUnavailable` when the backend has no index."""
 
     @abstractmethod
     def allocate_seq(self, thread_id: str, count: int = 1) -> int:
@@ -222,6 +368,11 @@ _THREAD_COLUMNS = (
     "source",
     "projected_at",
     "schema_version",
+    # Appended, never inserted: ``_thread_from_row`` reads by position, so
+    # a column added in the middle would silently re-map every field after
+    # it.
+    "pinned",
+    "metadata_json",
 )
 
 _TURN_COLUMNS = (
@@ -265,6 +416,13 @@ _ITEM_COLUMNS = (
     "source",
     "schema_version",
 )
+
+#: The item write set: every stored column plus the derived, indexed
+#: search projection. ``search_text`` is deliberately NOT in
+#: ``_ITEM_COLUMNS`` (the read/round-trip set) because it is not a field of
+#: :class:`Item` — it is an index input recomputed from ``content`` on
+#: every write, so it can never drift from the content it describes.
+_ITEM_WRITE_COLUMNS = _ITEM_COLUMNS + ("search_text",)
 
 
 # ---------------------------------------------------------------------
@@ -311,7 +469,9 @@ def _sqlite_upsert(table: str, columns: tuple[str, ...], key: tuple[str, ...]) -
 
 _SQLITE_UPSERT_THREAD = _sqlite_upsert("threads", _THREAD_COLUMNS, ("thread_id",))
 _SQLITE_UPSERT_TURN = _sqlite_upsert("turns", _TURN_COLUMNS, ("thread_id", "turn_id"))
-_SQLITE_UPSERT_ITEM = _sqlite_upsert("items", _ITEM_COLUMNS, ("thread_id", "item_id"))
+_SQLITE_UPSERT_ITEM = _sqlite_upsert(
+    "items", _ITEM_WRITE_COLUMNS, ("thread_id", "item_id")
+)
 
 
 def _thread_values(thread: Thread) -> Tuple[Any, ...]:
@@ -332,6 +492,8 @@ def _thread_values(thread: Thread) -> Tuple[Any, ...]:
         thread.source,
         thread.projected_at,
         int(thread.schema_version),
+        1 if thread.pinned else 0,
+        _dumps(thread.metadata),
     )
 
 
@@ -353,6 +515,8 @@ def _thread_from_row(row: Sequence[Any]) -> Thread:
         source=row[13] or "recorded",
         projected_at=float(row[14]) if row[14] is not None else None,
         schema_version=int(row[15] or ITEM_SCHEMA_VERSION),
+        pinned=bool(row[16]),
+        metadata=_loads(row[17]),
     )
 
 
@@ -424,6 +588,7 @@ def _item_values(item: Item) -> Tuple[Any, ...]:
         1 if item.long_lived else 0,
         item.source,
         int(item.schema_version),
+        derive_search_text(item.kind, item.content),
     )
 
 
@@ -447,6 +612,16 @@ def _item_from_row(row: Sequence[Any]) -> Item:
         schema_version=int(row[15] or ITEM_SCHEMA_VERSION),
     )
 
+
+#: How many thread ids one grouped-count statement binds at a time. SQLite
+#: caps host parameters (999 by default); the batch keeps the page-count
+#: query one statement per batch rather than one per row either way.
+_COUNT_BATCH = 400
+
+#: Rows per transaction in the Postgres ``search_text`` backfill. Small
+#: enough that an upgrade never holds one long write transaction over the
+#: whole table.
+_PG_BACKFILL_BATCH = 500
 
 _TERMINAL_STATUS_VALUES = tuple(
     status.value
@@ -476,7 +651,9 @@ _SQLITE_SCHEMA = (
         compaction_json       TEXT    NOT NULL DEFAULT '{}',
         source                TEXT    NOT NULL DEFAULT 'recorded',
         projected_at          REAL,
-        schema_version        INTEGER NOT NULL DEFAULT 1
+        schema_version        INTEGER NOT NULL DEFAULT 1,
+        pinned                INTEGER NOT NULL DEFAULT 0,
+        metadata_json         TEXT    NOT NULL DEFAULT '{}'
     )
     """,
     """
@@ -522,12 +699,19 @@ _SQLITE_SCHEMA = (
         long_lived      INTEGER NOT NULL DEFAULT 0,
         source          TEXT    NOT NULL DEFAULT 'recorded',
         schema_version  INTEGER NOT NULL DEFAULT 1,
+        search_text     TEXT,
         PRIMARY KEY (thread_id, item_id)
     )
     """,
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_items_thread_seq ON items(thread_id, seq)",
     "CREATE INDEX IF NOT EXISTS idx_items_turn ON items(thread_id, turn_id, seq)",
     "CREATE INDEX IF NOT EXISTS idx_turns_ordinal ON turns(thread_id, ordinal)",
+    # The thread listing's ordering key and its two hottest filters. The
+    # listing is the sidebar of every client, so it runs constantly.
+    "CREATE INDEX IF NOT EXISTS idx_threads_listing "
+    "ON threads(user_id, status, updated_at, thread_id)",
+    "CREATE INDEX IF NOT EXISTS idx_threads_parent ON threads(parent_thread_id)",
+    "CREATE INDEX IF NOT EXISTS idx_turns_model ON turns(model, thread_id)",
 )
 
 #: Additive column migrations for stores created by an earlier build. Each
@@ -535,6 +719,88 @@ _SQLITE_SCHEMA = (
 _SQLITE_MIGRATIONS = (
     "ALTER TABLE items ADD COLUMN long_lived INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE threads ADD COLUMN projected_at REAL",
+    "ALTER TABLE threads ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE threads ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'",
+    "ALTER TABLE items ADD COLUMN search_text TEXT",
+)
+
+# ---------------------------------------------------------------------
+# Full-text search (SQLite / FTS5)
+#
+# Two standalone FTS5 tables, keyed by the content table's ``rowid`` so a
+# delete or a revision is an O(1) index operation rather than a scan.
+#
+# Standalone rather than ``content=''`` external-content tables on purpose:
+# an external-content table requires the trigger to hand FTS5 the OLD
+# indexed value on every delete, and any row written before the index
+# existed has no such value. Getting that wrong does not raise — it
+# corrupts the index — so the duplicated text is the price of a
+# maintenance path that cannot silently rot.
+#
+# Sync is by TRIGGER, not by a Python call at each write site, so the index
+# stays correct for every path that touches the tables, including the bulk
+# ``write_projection`` and the cascade inside ``delete_thread``.
+# ---------------------------------------------------------------------
+
+_SQLITE_FTS_SCHEMA = (
+    """
+    CREATE VIRTUAL TABLE IF NOT EXISTS item_search USING fts5(
+        thread_id UNINDEXED,
+        item_id   UNINDEXED,
+        turn_id   UNINDEXED,
+        kind      UNINDEXED,
+        seq       UNINDEXED,
+        text
+    )
+    """,
+    """
+    CREATE VIRTUAL TABLE IF NOT EXISTS thread_search USING fts5(
+        thread_id UNINDEXED,
+        text
+    )
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS item_search_ai AFTER INSERT ON items BEGIN
+        INSERT INTO item_search(rowid, thread_id, item_id, turn_id, kind, seq, text)
+        VALUES (new.rowid, new.thread_id, new.item_id, new.turn_id, new.kind,
+                new.seq, COALESCE(new.search_text, ''));
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS item_search_ad AFTER DELETE ON items BEGIN
+        DELETE FROM item_search WHERE rowid = old.rowid;
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS item_search_au AFTER UPDATE ON items BEGIN
+        DELETE FROM item_search WHERE rowid = old.rowid;
+        INSERT INTO item_search(rowid, thread_id, item_id, turn_id, kind, seq, text)
+        VALUES (new.rowid, new.thread_id, new.item_id, new.turn_id, new.kind,
+                new.seq, COALESCE(new.search_text, ''));
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS thread_search_ai AFTER INSERT ON threads BEGIN
+        INSERT INTO thread_search(rowid, thread_id, text)
+        VALUES (new.rowid, new.thread_id, COALESCE(new.title, ''));
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS thread_search_ad AFTER DELETE ON threads BEGIN
+        DELETE FROM thread_search WHERE rowid = old.rowid;
+    END
+    """,
+    # Guarded: a thread row is rewritten on every recorded item (counters,
+    # updated_at), and reindexing an unchanged title on each of those would
+    # make the index the dominant cost of a streaming run.
+    """
+    CREATE TRIGGER IF NOT EXISTS thread_search_au AFTER UPDATE ON threads
+    WHEN old.title IS NOT new.title BEGIN
+        DELETE FROM thread_search WHERE rowid = old.rowid;
+        INSERT INTO thread_search(rowid, thread_id, text)
+        VALUES (new.rowid, new.thread_id, COALESCE(new.title, ''));
+    END
+    """,
 )
 
 
@@ -558,6 +824,7 @@ class SqliteConversationStore(ConversationStore):
         self._path = str(path)
         self._lock = Lock()
         self._conn: sqlite3.Connection | None = None
+        self._fts_ready = False
 
     def _connect(self) -> sqlite3.Connection:
         if self._conn is not None:
@@ -583,8 +850,82 @@ class SqliteConversationStore(ConversationStore):
                 # additive-migration shape the session-history schema uses.
                 pass
         conn.commit()
+        self._fts_ready = self._bootstrap_fts(conn)
         self._conn = conn
         return conn
+
+    def _bootstrap_fts(self, conn: sqlite3.Connection) -> bool:
+        """Create (and, on an upgrade, populate) the FTS5 index.
+
+        Returns whether full-text search is available. FTS5 is a compile
+        time option; a Python built against a SQLite without it must still
+        be able to *use* the store, so the failure is recorded here and
+        surfaced as a typed error at search time rather than at open time.
+
+        The population order matters. ``search_text`` is backfilled for
+        pre-upgrade rows **before** the triggers exist, so the backfill
+        does not fire N index writes for rows the index is about to be
+        seeded with wholesale; the index is then seeded from the fully
+        populated table in one statement.
+        """
+        existing = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE name IN "
+                "('item_search', 'thread_search')"
+            ).fetchall()
+        }
+        fresh = "item_search" not in existing or "thread_search" not in existing
+        if fresh:
+            self._backfill_search_text(conn)
+        try:
+            for statement in _SQLITE_FTS_SCHEMA:
+                conn.execute(statement)
+        except sqlite3.OperationalError:
+            logger.warning(
+                "SQLite build has no FTS5 module; conversation search is "
+                "unavailable for %s",
+                self._path,
+            )
+            conn.rollback()
+            return False
+        if fresh:
+            conn.execute("DELETE FROM item_search")
+            conn.execute("DELETE FROM thread_search")
+            conn.execute(
+                "INSERT INTO item_search"
+                "(rowid, thread_id, item_id, turn_id, kind, seq, text) "
+                "SELECT rowid, thread_id, item_id, turn_id, kind, seq, "
+                "COALESCE(search_text, '') FROM items"
+            )
+            conn.execute(
+                "INSERT INTO thread_search(rowid, thread_id, text) "
+                "SELECT rowid, thread_id, COALESCE(title, '') FROM threads"
+            )
+        conn.commit()
+        return True
+
+    @staticmethod
+    def _backfill_search_text(conn: sqlite3.Connection) -> None:
+        """Compute ``search_text`` for rows written before the column existed.
+
+        ``NULL`` means "never computed" — an item whose content yields no
+        searchable text stores ``''`` — so this is exactly the set of
+        pre-upgrade rows and re-running it is a no-op.
+        """
+        rows = conn.execute(
+            "SELECT rowid, kind, content_json FROM items " "WHERE search_text IS NULL"
+        ).fetchall()
+        if not rows:
+            return
+        conn.executemany(
+            "UPDATE items SET search_text = ? WHERE rowid = ?",
+            [
+                (derive_search_text(kind, _loads(content)), rowid)
+                for rowid, kind, content in rows
+            ],
+        )
+        conn.commit()
 
     def close(self) -> None:
         with self._lock:
@@ -625,6 +966,318 @@ class SqliteConversationStore(ConversationStore):
             conn.execute("DELETE FROM items WHERE thread_id = ?", (thread_id,))
             conn.commit()
             return cursor.rowcount > 0
+
+    @staticmethod
+    def _thread_predicate(
+        thread_filter: ThreadFilter,
+    ) -> Tuple[List[str], List[Any]]:
+        """The filter as SQL. Every field lands here — including the scope.
+
+        There is no code path that applies part of this predicate in Python
+        after the fact: the listing, the count and the search all build
+        their WHERE from this one function, so a page and its ``total``
+        cannot disagree and an ownership scope cannot be forgotten at one
+        of three call sites.
+        """
+        clauses: List[str] = ["1 = 1"]
+        params: List[Any] = []
+        if thread_filter.user_id is not UNSCOPED:
+            # ``user_id = ?`` never matches a NULL owner, which is the
+            # intended behaviour: an unowned thread is not accessible to a
+            # named principal (see rpc.auth.principal_can_access).
+            clauses.append("threads.user_id = ?")
+            params.append(thread_filter.user_id)
+        if thread_filter.status is not None:
+            clauses.append("threads.status = ?")
+            params.append(thread_filter.status.value)
+        if thread_filter.pinned is not None:
+            clauses.append("threads.pinned = ?")
+            params.append(1 if thread_filter.pinned else 0)
+        if thread_filter.source is not None:
+            clauses.append("threads.source = ?")
+            params.append(thread_filter.source)
+        if thread_filter.parent_thread_id is not None:
+            clauses.append("threads.parent_thread_id = ?")
+            params.append(thread_filter.parent_thread_id)
+        if thread_filter.created_after is not None:
+            clauses.append("threads.created_at >= ?")
+            params.append(float(thread_filter.created_after))
+        if thread_filter.created_before is not None:
+            clauses.append("threads.created_at < ?")
+            params.append(float(thread_filter.created_before))
+        if thread_filter.updated_after is not None:
+            clauses.append("threads.updated_at >= ?")
+            params.append(float(thread_filter.updated_after))
+        if thread_filter.updated_before is not None:
+            clauses.append("threads.updated_at < ?")
+            params.append(float(thread_filter.updated_before))
+        if thread_filter.model is not None:
+            # The model is a property of a Turn, not of a Thread, and
+            # denormalizing it onto the thread row would add a write-path
+            # field that can go stale. An EXISTS keeps one source of truth.
+            clauses.append(
+                "EXISTS (SELECT 1 FROM turns WHERE turns.thread_id = "
+                "threads.thread_id AND turns.model = ?)"
+            )
+            params.append(thread_filter.model)
+        return clauses, params
+
+    def list_threads(
+        self,
+        thread_filter: ThreadFilter,
+        *,
+        limit: int,
+        after: Optional[Tuple[float, str]] = None,
+        descending: bool = True,
+    ) -> List[Thread]:
+        clauses, params = self._thread_predicate(thread_filter)
+        if after is not None:
+            sort_value, thread_id = after
+            comparison = "<" if descending else ">"
+            clauses.append(
+                f"(threads.updated_at {comparison} ? OR "
+                f"(threads.updated_at = ? AND threads.thread_id {comparison} ?))"
+            )
+            params.extend([float(sort_value), float(sort_value), thread_id])
+        order = "DESC" if descending else "ASC"
+        params.append(limit)
+        columns = ", ".join(f"threads.{column}" for column in _THREAD_COLUMNS)
+        with self._lock:
+            rows = (
+                self._connect()
+                .execute(
+                    f"SELECT {columns} FROM threads WHERE {' AND '.join(clauses)} "
+                    f"ORDER BY threads.updated_at {order}, threads.thread_id {order} "
+                    "LIMIT ?",
+                    params,
+                )
+                .fetchall()
+            )
+        return [_thread_from_row(row) for row in rows]
+
+    def count_threads(self, thread_filter: ThreadFilter) -> int:
+        clauses, params = self._thread_predicate(thread_filter)
+        with self._lock:
+            row = (
+                self._connect()
+                .execute(
+                    f"SELECT COUNT(*) FROM threads WHERE {' AND '.join(clauses)}",
+                    params,
+                )
+                .fetchone()
+            )
+        return int(row[0]) if row else 0
+
+    def list_descendant_threads(
+        self, root_thread_id: str, *, max_depth: int, limit: int
+    ) -> List[Tuple[Thread, int]]:
+        columns = ", ".join(f"t.{column}" for column in _THREAD_COLUMNS)
+        # ``UNION`` (not ``UNION ALL``) dedupes the frontier, so a
+        # parent_thread_id cycle terminates instead of recursing forever;
+        # max_depth and LIMIT bound it a second time.
+        sql = f"""
+            WITH RECURSIVE subtree(thread_id, depth) AS (
+                SELECT thread_id, 1 FROM threads
+                 WHERE parent_thread_id = ?
+                   AND thread_id <> ?
+                   AND user_id IS ?
+                UNION
+                SELECT c.thread_id, s.depth + 1
+                  FROM threads c
+                  JOIN subtree s ON c.parent_thread_id = s.thread_id
+                 WHERE s.depth < ?
+                   AND c.thread_id <> ?
+                   AND c.user_id IS ?
+            )
+            SELECT {columns}, s.depth
+              FROM subtree s JOIN threads t ON t.thread_id = s.thread_id
+             ORDER BY s.depth ASC, t.thread_id ASC
+             LIMIT ?
+        """
+        with self._lock:
+            conn = self._connect()
+            root = conn.execute(
+                "SELECT user_id FROM threads WHERE thread_id = ?", (root_thread_id,)
+            ).fetchone()
+            if root is None:
+                return []
+            owner = root[0]
+            rows = conn.execute(
+                sql,
+                (
+                    root_thread_id,
+                    root_thread_id,
+                    owner,
+                    max_depth,
+                    root_thread_id,
+                    owner,
+                    limit,
+                ),
+            ).fetchall()
+        return [(_thread_from_row(row[:-1]), int(row[-1])) for row in rows]
+
+    def compact_search_index(self) -> None:
+        if not self._fts_ready:
+            self._connect()
+        if not self._fts_ready:
+            return
+        with self._lock:
+            conn = self._connect()
+            for table in ("item_search", "thread_search"):
+                try:
+                    conn.execute(f"INSERT INTO {table}({table}) VALUES('optimize')")
+                except sqlite3.OperationalError:  # pragma: no cover - defensive
+                    logger.exception("FTS optimize failed for %s", table)
+            conn.commit()
+
+    def _count_for_threads(
+        self, table: str, thread_ids: Sequence[str]
+    ) -> Dict[str, int]:
+        ids = list(dict.fromkeys(thread_ids))
+        if not ids:
+            return {}
+        counts: Dict[str, int] = {thread_id: 0 for thread_id in ids}
+        with self._lock:
+            conn = self._connect()
+            for start in range(0, len(ids), _COUNT_BATCH):
+                chunk = ids[start : start + _COUNT_BATCH]
+                placeholders = ", ".join("?" * len(chunk))
+                for thread_id, total in conn.execute(
+                    f"SELECT thread_id, COUNT(*) FROM {table} "
+                    f"WHERE thread_id IN ({placeholders}) GROUP BY thread_id",
+                    chunk,
+                ).fetchall():
+                    counts[thread_id] = int(total)
+        return counts
+
+    def count_items_for_threads(self, thread_ids: Sequence[str]) -> Dict[str, int]:
+        return self._count_for_threads("items", thread_ids)
+
+    def count_turns_for_threads(self, thread_ids: Sequence[str]) -> Dict[str, int]:
+        return self._count_for_threads("turns", thread_ids)
+
+    def descendant_thread_rows(
+        self, root_thread_id: str
+    ) -> List[Tuple[str, Optional[str], Optional[str]]]:
+        # The recursive row is the thread id ALONE, so ``UNION`` dedupes on
+        # it and a parent_thread_id cycle terminates without needing a
+        # depth ceiling to stop it. (``list_descendant_threads`` carries a
+        # depth in its row, so there the ceiling IS the cycle guard.)
+        sql = """
+            WITH RECURSIVE subtree(thread_id) AS (
+                SELECT thread_id FROM threads
+                 WHERE parent_thread_id = ? AND thread_id <> ?
+                UNION
+                SELECT c.thread_id
+                  FROM threads c
+                  JOIN subtree s ON c.parent_thread_id = s.thread_id
+                 WHERE c.thread_id <> ?
+            )
+            SELECT t.thread_id, t.user_id, t.parent_thread_id
+              FROM subtree s JOIN threads t ON t.thread_id = s.thread_id
+             ORDER BY t.thread_id ASC
+        """
+        with self._lock:
+            rows = (
+                self._connect()
+                .execute(sql, (root_thread_id, root_thread_id, root_thread_id))
+                .fetchall()
+            )
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    def search(
+        self,
+        query: str,
+        thread_filter: ThreadFilter,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> Tuple[List[SearchHit], int]:
+        if not self._fts_ready:
+            self._connect()
+        if not self._fts_ready:
+            raise SearchUnavailable(
+                "This SQLite build has no FTS5 module; conversation search "
+                "is unavailable."
+            )
+        terms = search_terms(query)
+        if not terms:
+            return [], 0
+        # Each term is re-quoted as an FTS5 string literal (doubling any
+        # embedded quote), so no character a user types is ever parsed as
+        # FTS5 syntax. Adjacent quoted strings are an implicit AND.
+        match = " ".join('"' + term.replace('"', '""') + '"' for term in terms)
+        clauses, params = self._thread_predicate(thread_filter)
+        matches_sql = f"""
+            WITH matches AS (
+                SELECT m.thread_id AS thread_id,
+                       m.item_id   AS item_id,
+                       m.turn_id   AS turn_id,
+                       m.kind      AS match_kind,
+                       m.seq       AS seq,
+                       m.preview   AS preview,
+                       m.rank_value AS rank_value
+                  FROM (
+                        SELECT thread_id, item_id, turn_id, kind, seq,
+                               snippet(item_search, 5, '', '', '…', 12) AS preview,
+                               bm25(item_search) AS rank_value
+                          FROM item_search WHERE item_search MATCH ?
+                        UNION ALL
+                        SELECT thread_id, NULL, NULL, 'thread_title', NULL,
+                               snippet(thread_search, 1, '', '', '…', 12),
+                               bm25(thread_search)
+                          FROM thread_search WHERE thread_search MATCH ?
+                       ) m
+                  JOIN threads ON threads.thread_id = m.thread_id
+                 WHERE {' AND '.join(clauses)}
+            )
+        """
+        page_sql = matches_sql + """
+            SELECT thread_id, COUNT(*) AS match_count, MIN(rank_value) AS best
+              FROM matches GROUP BY thread_id
+             ORDER BY best ASC, thread_id ASC LIMIT ? OFFSET ?
+            """
+        total_sql = matches_sql + "SELECT COUNT(DISTINCT thread_id) FROM matches"
+        match_params = [match, match, *params]
+        with self._lock:
+            conn = self._connect()
+            grouped = conn.execute(
+                page_sql, [*match_params, limit, max(0, offset)]
+            ).fetchall()
+            total_row = conn.execute(total_sql, match_params).fetchone()
+            total = int(total_row[0]) if total_row else 0
+            if not grouped:
+                return [], total
+            thread_ids = [row[0] for row in grouped]
+            placeholders = ", ".join("?" * len(thread_ids))
+            best_rows = conn.execute(
+                matches_sql
+                + "SELECT thread_id, item_id, turn_id, match_kind, seq, preview, "
+                "rank_value FROM matches "
+                f"WHERE thread_id IN ({placeholders}) "
+                "ORDER BY thread_id ASC, rank_value ASC",
+                [*match_params, *thread_ids],
+            ).fetchall()
+        best_by_thread: Dict[str, Sequence[Any]] = {}
+        for row in best_rows:
+            best_by_thread.setdefault(row[0], row)
+        hits: List[SearchHit] = []
+        for thread_id, match_count, _best in grouped:
+            best = best_by_thread.get(thread_id)
+            if best is None:  # pragma: no cover - grouped implies a member
+                continue
+            hits.append(
+                SearchHit(
+                    thread_id=thread_id,
+                    match_count=int(match_count),
+                    match_kind=str(best[3]),
+                    item_id=best[1],
+                    turn_id=best[2],
+                    seq=int(best[4]) if best[4] is not None else None,
+                    preview=str(best[5] or ""),
+                )
+            )
+        return hits, total
 
     def allocate_seq(self, thread_id: str, count: int = 1) -> int:
         if count < 1:
@@ -872,6 +1525,32 @@ class SqliteConversationStore(ConversationStore):
 
 DEFAULT_TENANT = "local"
 
+#: Postgres column names in ``_THREAD_COLUMNS`` order. The two schemas
+#: differ only in the JSON columns' names (``usage``/``compaction``/
+#: ``metadata`` rather than ``*_json``), and ``_thread_from_row`` decodes
+#: by POSITION, so the orders must be kept identical — this mapping is what
+#: makes one decoder correct for both backends.
+_PG_THREAD_FIELD_NAMES = tuple(
+    {
+        "usage_json": "usage",
+        "compaction_json": "compaction",
+        "metadata_json": "metadata",
+    }.get(column, column)
+    for column in _THREAD_COLUMNS
+)
+
+#: ``ts_headline`` has no way to emit an unmarked fragment, so the markers
+#: are chosen to be unambiguous and stripped here. The wire preview is then
+#: plain text on both backends — a client rendering a SQLite preview and a
+#: Postgres one must not have to know which produced it.
+_HEADLINE_START = "<<"
+_HEADLINE_STOP = ">>"
+
+
+def _strip_headline_markers(text: str) -> str:
+    return text.replace(_HEADLINE_START, "").replace(_HEADLINE_STOP, "")
+
+
 _PG_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS conversation_threads (
     tenant_id             TEXT   NOT NULL,
@@ -962,6 +1641,68 @@ ALTER TABLE conversation_items
 ALTER TABLE conversation_threads
     ADD COLUMN IF NOT EXISTS projected_at DOUBLE PRECISION;
 
+ALTER TABLE conversation_threads
+    ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE conversation_threads
+    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- Full-text search. ``search_text`` is written by the store (the same
+-- derivation SQLite indexes, so a query matches identically on both
+-- backends); the tsvector is GENERATED from it so the index can never
+-- disagree with the column it summarizes — there is no trigger to forget
+-- and no second write path to keep in step.
+--
+-- The 'simple' configuration is deliberate: it does no stemming, which is
+-- what SQLite's default FTS5 tokenizer also does. A stemming config here
+-- would make the same query return different rows on the two backends.
+--
+-- The regexp_replace is the OTHER half of that agreement. Postgres' text
+-- parser recognizes compound tokens — `widgets.py` is one `file` lexeme,
+-- `a@b.com` one `email` — so a search for `widgets` matched on SQLite
+-- (whose unicode61 tokenizer splits on every non-alphanumeric) and missed
+-- on Postgres. Flattening punctuation to whitespace before tokenizing
+-- gives both backends the same token stream, and ``search_terms`` splits
+-- the query the same way.
+ALTER TABLE conversation_items
+    ADD COLUMN IF NOT EXISTS search_text TEXT;
+
+ALTER TABLE conversation_items
+    ADD COLUMN IF NOT EXISTS search_tsv tsvector
+    GENERATED ALWAYS AS (
+        to_tsvector(
+            'simple',
+            regexp_replace(coalesce(search_text, ''), '[^[:alnum:]]+', ' ', 'g')
+        )
+    ) STORED;
+
+ALTER TABLE conversation_threads
+    ADD COLUMN IF NOT EXISTS title_tsv tsvector
+    GENERATED ALWAYS AS (
+        to_tsvector(
+            'simple',
+            regexp_replace(coalesce(title, ''), '[^[:alnum:]]+', ' ', 'g')
+        )
+    ) STORED;
+
+CREATE INDEX IF NOT EXISTS idx_conversation_items_search
+    ON conversation_items USING GIN (search_tsv);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_threads_title_search
+    ON conversation_threads USING GIN (title_tsv);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_threads_listing
+    ON conversation_threads
+       (tenant_id, project_slug, agent_slug, user_id, status,
+        updated_at, thread_id);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_threads_parent
+    ON conversation_threads
+       (tenant_id, project_slug, agent_slug, parent_thread_id);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_turns_model
+    ON conversation_turns (tenant_id, project_slug, agent_slug, model, thread_id);
+
 ALTER TABLE conversation_threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversation_turns   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversation_items   ENABLE ROW LEVEL SECURITY;
@@ -1022,6 +1763,54 @@ class PgConversationStore(ConversationStore):
             with conn.cursor() as cur:
                 cur.execute(_PG_SCHEMA_SQL)
             conn.commit()
+        self._backfill_search_text()
+
+    def _backfill_search_text(self) -> None:
+        """Populate ``search_text`` for rows written before the column existed.
+
+        Without this every transcript a deployment already held — which, on
+        the Postgres/cloud topology, is all of them — indexes as empty and
+        the search box returns nothing for the entire existing history. The
+        SQLite store has always done this; the generated ``tsvector`` made
+        it look unnecessary here, but a GENERATED column can only summarize
+        a column that has been filled in.
+
+        ``NULL`` means "never computed" — an item whose content yields no
+        searchable text stores ``''`` — so this is exactly the pre-upgrade
+        set and re-running it is a no-op. Paged, and guarded by a cheap
+        existence probe so a caught-up deployment pays one indexed lookup
+        per store open, not a scan.
+        """
+        from psycopg.types.json import Jsonb  # noqa: F401 - parity import
+
+        migrated = 0
+        while True:
+            with self._conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT thread_id, item_id, kind, content "
+                        "FROM conversation_items "
+                        f"WHERE {self._SHARD_SCOPE} AND search_text IS NULL "
+                        "LIMIT %s",
+                        (*self._scope, _PG_BACKFILL_BATCH),
+                    )
+                    rows = cur.fetchall()
+                    if not rows:
+                        return
+                    for thread_id, item_id, kind, content in rows:
+                        cur.execute(
+                            "UPDATE conversation_items SET search_text = %s "
+                            f"WHERE {self._THREAD_SCOPE} AND item_id = %s",
+                            (
+                                derive_search_text(kind, _loads(content)),
+                                *self._scope,
+                                thread_id,
+                                item_id,
+                            ),
+                        )
+                conn.commit()
+            migrated += len(rows)
+            logger.info("conversation search backfill: %s item(s) indexed", migrated)
 
     def close(self) -> None:
         try:
@@ -1049,15 +1838,16 @@ class PgConversationStore(ConversationStore):
 
     # -- threads -------------------------------------------------------
 
+    #: The column list, in ``_THREAD_COLUMNS`` order, so ``_thread_from_row``
+    #: decodes a PG row exactly as it decodes a SQLite one.
     _THREAD_SELECT = (
-        "SELECT thread_id, user_id, status, title, created_at, updated_at, "
-        "last_seq, turn_count, item_count, parent_thread_id, "
-        "branched_from_item_id, usage, compaction, source, projected_at, "
-        "schema_version FROM conversation_threads"
+        f"SELECT {', '.join(_PG_THREAD_FIELD_NAMES)} FROM conversation_threads"
     )
     _THREAD_SCOPE = (
         "tenant_id = %s AND project_slug = %s AND agent_slug = %s AND thread_id = %s"
     )
+    #: The shard predicate without the per-thread term, for listings.
+    _SHARD_SCOPE = "tenant_id = %s AND project_slug = %s AND agent_slug = %s"
 
     def get_thread(self, thread_id: str) -> Optional[Thread]:
         with self._conn() as conn:
@@ -1084,10 +1874,10 @@ class PgConversationStore(ConversationStore):
                 tenant_id, project_slug, agent_slug, thread_id, user_id, status,
                 title, created_at, updated_at, last_seq, turn_count, item_count,
                 parent_thread_id, branched_from_item_id, usage, compaction,
-                source, projected_at, schema_version
+                source, projected_at, schema_version, pinned, metadata
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s
+                %s, %s, %s, %s, %s
             )
             ON CONFLICT (tenant_id, project_slug, agent_slug, thread_id)
             DO UPDATE SET
@@ -1109,7 +1899,9 @@ class PgConversationStore(ConversationStore):
                 projected_at = COALESCE(
                     conversation_threads.projected_at, EXCLUDED.projected_at
                 ),
-                schema_version = EXCLUDED.schema_version
+                schema_version = EXCLUDED.schema_version,
+                pinned = EXCLUDED.pinned,
+                metadata = EXCLUDED.metadata
             """,
             (
                 *self._scope,
@@ -1129,6 +1921,8 @@ class PgConversationStore(ConversationStore):
                 thread.source,
                 thread.projected_at,
                 int(thread.schema_version),
+                bool(thread.pinned),
+                Jsonb(thread.metadata),
             ),
         )
 
@@ -1150,6 +1944,333 @@ class PgConversationStore(ConversationStore):
                 deleted = cur.rowcount > 0
             conn.commit()
         return deleted
+
+    def _thread_predicate(
+        self, thread_filter: ThreadFilter
+    ) -> Tuple[List[str], List[Any]]:
+        """The filter as SQL — the Postgres twin of the SQLite version.
+
+        Same contract: every field, ownership scope included, is applied
+        here and nowhere else, so the page and its ``total`` are drawn
+        under one predicate.
+        """
+        clauses: List[str] = [
+            "conversation_threads.tenant_id = %s "
+            "AND conversation_threads.project_slug = %s "
+            "AND conversation_threads.agent_slug = %s"
+        ]
+        params: List[Any] = [*self._scope]
+        if thread_filter.user_id is not UNSCOPED:
+            clauses.append("conversation_threads.user_id = %s")
+            params.append(thread_filter.user_id)
+        if thread_filter.status is not None:
+            clauses.append("conversation_threads.status = %s")
+            params.append(thread_filter.status.value)
+        if thread_filter.pinned is not None:
+            clauses.append("conversation_threads.pinned = %s")
+            params.append(bool(thread_filter.pinned))
+        if thread_filter.source is not None:
+            clauses.append("conversation_threads.source = %s")
+            params.append(thread_filter.source)
+        if thread_filter.parent_thread_id is not None:
+            clauses.append("conversation_threads.parent_thread_id = %s")
+            params.append(thread_filter.parent_thread_id)
+        if thread_filter.created_after is not None:
+            clauses.append("conversation_threads.created_at >= %s")
+            params.append(float(thread_filter.created_after))
+        if thread_filter.created_before is not None:
+            clauses.append("conversation_threads.created_at < %s")
+            params.append(float(thread_filter.created_before))
+        if thread_filter.updated_after is not None:
+            clauses.append("conversation_threads.updated_at >= %s")
+            params.append(float(thread_filter.updated_after))
+        if thread_filter.updated_before is not None:
+            clauses.append("conversation_threads.updated_at < %s")
+            params.append(float(thread_filter.updated_before))
+        if thread_filter.model is not None:
+            clauses.append(
+                "EXISTS (SELECT 1 FROM conversation_turns ct "
+                "WHERE ct.tenant_id = conversation_threads.tenant_id "
+                "AND ct.project_slug = conversation_threads.project_slug "
+                "AND ct.agent_slug = conversation_threads.agent_slug "
+                "AND ct.thread_id = conversation_threads.thread_id "
+                "AND ct.model = %s)"
+            )
+            params.append(thread_filter.model)
+        return clauses, params
+
+    def list_threads(
+        self,
+        thread_filter: ThreadFilter,
+        *,
+        limit: int,
+        after: Optional[Tuple[float, str]] = None,
+        descending: bool = True,
+    ) -> List[Thread]:
+        clauses, params = self._thread_predicate(thread_filter)
+        if after is not None:
+            sort_value, thread_id = after
+            comparison = "<" if descending else ">"
+            clauses.append(
+                f"(conversation_threads.updated_at {comparison} %s OR "
+                f"(conversation_threads.updated_at = %s AND "
+                f"conversation_threads.thread_id {comparison} %s))"
+            )
+            params.extend([float(sort_value), float(sort_value), thread_id])
+        order = "DESC" if descending else "ASC"
+        params.append(limit)
+        columns = ", ".join(
+            f"conversation_threads.{column}" for column in _PG_THREAD_FIELD_NAMES
+        )
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {columns} FROM conversation_threads "
+                    f"WHERE {' AND '.join(clauses)} "
+                    f"ORDER BY conversation_threads.updated_at {order}, "
+                    f"conversation_threads.thread_id {order} LIMIT %s",
+                    params,
+                )
+                rows = cur.fetchall()
+        return [_thread_from_row(row) for row in rows]
+
+    def count_threads(self, thread_filter: ThreadFilter) -> int:
+        clauses, params = self._thread_predicate(thread_filter)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM conversation_threads "
+                    f"WHERE {' AND '.join(clauses)}",
+                    params,
+                )
+                row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def list_descendant_threads(
+        self, root_thread_id: str, *, max_depth: int, limit: int
+    ) -> List[Tuple[Thread, int]]:
+        columns = ", ".join(f"t.{column}" for column in _PG_THREAD_FIELD_NAMES)
+        sql = f"""
+            WITH RECURSIVE subtree(thread_id, depth) AS (
+                SELECT thread_id, 1 FROM conversation_threads
+                 WHERE {self._SHARD_SCOPE}
+                   AND parent_thread_id = %s
+                   AND thread_id <> %s
+                   AND user_id IS NOT DISTINCT FROM %s
+                UNION
+                SELECT c.thread_id, s.depth + 1
+                  FROM conversation_threads c
+                  JOIN subtree s ON c.parent_thread_id = s.thread_id
+                 WHERE c.tenant_id = %s AND c.project_slug = %s
+                   AND c.agent_slug = %s
+                   AND s.depth < %s
+                   AND c.thread_id <> %s
+                   AND c.user_id IS NOT DISTINCT FROM %s
+            )
+            SELECT {columns}, s.depth
+              FROM subtree s
+              JOIN conversation_threads t ON t.thread_id = s.thread_id
+             WHERE t.tenant_id = %s AND t.project_slug = %s AND t.agent_slug = %s
+             ORDER BY s.depth ASC, t.thread_id ASC
+             LIMIT %s
+        """
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT user_id FROM conversation_threads "
+                    f"WHERE {self._THREAD_SCOPE}",
+                    (*self._scope, root_thread_id),
+                )
+                root = cur.fetchone()
+                if root is None:
+                    return []
+                owner = root[0]
+                cur.execute(
+                    sql,
+                    (
+                        *self._scope,
+                        root_thread_id,
+                        root_thread_id,
+                        owner,
+                        *self._scope,
+                        max_depth,
+                        root_thread_id,
+                        owner,
+                        *self._scope,
+                        limit,
+                    ),
+                )
+                rows = cur.fetchall()
+        return [(_thread_from_row(row[:-1]), int(row[-1])) for row in rows]
+
+    def _count_for_threads(
+        self, table: str, thread_ids: Sequence[str]
+    ) -> Dict[str, int]:
+        ids = list(dict.fromkeys(thread_ids))
+        if not ids:
+            return {}
+        counts: Dict[str, int] = {thread_id: 0 for thread_id in ids}
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT thread_id, COUNT(*) FROM {table} "
+                    f"WHERE {self._SHARD_SCOPE} AND thread_id = ANY(%s) "
+                    "GROUP BY thread_id",
+                    (*self._scope, ids),
+                )
+                for thread_id, total in cur.fetchall():
+                    counts[thread_id] = int(total)
+        return counts
+
+    def count_items_for_threads(self, thread_ids: Sequence[str]) -> Dict[str, int]:
+        return self._count_for_threads("conversation_items", thread_ids)
+
+    def count_turns_for_threads(self, thread_ids: Sequence[str]) -> Dict[str, int]:
+        return self._count_for_threads("conversation_turns", thread_ids)
+
+    def descendant_thread_rows(
+        self, root_thread_id: str
+    ) -> List[Tuple[str, Optional[str], Optional[str]]]:
+        sql = f"""
+            WITH RECURSIVE subtree(thread_id) AS (
+                SELECT thread_id FROM conversation_threads
+                 WHERE {self._SHARD_SCOPE}
+                   AND parent_thread_id = %s AND thread_id <> %s
+                UNION
+                SELECT c.thread_id
+                  FROM conversation_threads c
+                  JOIN subtree s ON c.parent_thread_id = s.thread_id
+                 WHERE c.tenant_id = %s AND c.project_slug = %s
+                   AND c.agent_slug = %s AND c.thread_id <> %s
+            )
+            SELECT t.thread_id, t.user_id, t.parent_thread_id
+              FROM subtree s
+              JOIN conversation_threads t ON t.thread_id = s.thread_id
+             WHERE t.tenant_id = %s AND t.project_slug = %s AND t.agent_slug = %s
+             ORDER BY t.thread_id ASC
+        """
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql,
+                    (
+                        *self._scope,
+                        root_thread_id,
+                        root_thread_id,
+                        *self._scope,
+                        root_thread_id,
+                        *self._scope,
+                    ),
+                )
+                rows = cur.fetchall()
+        return [(row[0], row[1], row[2]) for row in rows]
+
+    def search(
+        self,
+        query: str,
+        thread_filter: ThreadFilter,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> Tuple[List[SearchHit], int]:
+        terms = search_terms(query)
+        if not terms:
+            return [], 0
+        # Terms are ANDed as a tsquery built from parameters, never from
+        # interpolated text: ``plainto_tsquery`` escapes whatever it is
+        # given, so no character a user types reaches the tsquery parser.
+        tsquery = " && ".join(["plainto_tsquery('simple', %s)"] * len(terms))
+        clauses, predicate_params = self._thread_predicate(thread_filter)
+        headline_options = (
+            f"StartSel={_HEADLINE_START},StopSel={_HEADLINE_STOP},"
+            "MaxWords=24,MinWords=8,MaxFragments=1"
+        )
+        matches_sql = f"""
+            WITH q AS (SELECT ({tsquery}) AS query),
+            matches AS (
+                SELECT i.thread_id AS thread_id,
+                       i.item_id   AS item_id,
+                       i.turn_id   AS turn_id,
+                       i.kind      AS match_kind,
+                       i.seq       AS seq,
+                       ts_headline('simple', coalesce(i.search_text, ''),
+                                   q.query, %s) AS preview,
+                       -ts_rank_cd(i.search_tsv, q.query) AS rank_value
+                  FROM conversation_items i
+                  JOIN q ON true
+                  JOIN conversation_threads
+                    ON conversation_threads.tenant_id = i.tenant_id
+                   AND conversation_threads.project_slug = i.project_slug
+                   AND conversation_threads.agent_slug = i.agent_slug
+                   AND conversation_threads.thread_id = i.thread_id
+                 WHERE i.search_tsv @@ q.query AND {' AND '.join(clauses)}
+                UNION ALL
+                SELECT conversation_threads.thread_id, NULL, NULL,
+                       'thread_title', NULL,
+                       ts_headline('simple',
+                                   coalesce(conversation_threads.title, ''),
+                                   q.query, %s),
+                       -ts_rank_cd(conversation_threads.title_tsv, q.query)
+                  FROM conversation_threads
+                  JOIN q ON true
+                 WHERE conversation_threads.title_tsv @@ q.query
+                   AND {' AND '.join(clauses)}
+            )
+        """
+        match_params = [
+            *terms,
+            headline_options,
+            *predicate_params,
+            headline_options,
+            *predicate_params,
+        ]
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    matches_sql + "SELECT thread_id, COUNT(*), MIN(rank_value) AS best "
+                    "FROM matches GROUP BY thread_id "
+                    "ORDER BY best ASC, thread_id ASC LIMIT %s OFFSET %s",
+                    [*match_params, limit, max(0, offset)],
+                )
+                grouped = cur.fetchall()
+                cur.execute(
+                    matches_sql + "SELECT COUNT(DISTINCT thread_id) FROM matches",
+                    match_params,
+                )
+                total_row = cur.fetchone()
+                total = int(total_row[0]) if total_row else 0
+                if not grouped:
+                    return [], total
+                thread_ids = [row[0] for row in grouped]
+                cur.execute(
+                    matches_sql
+                    + "SELECT thread_id, item_id, turn_id, match_kind, seq, "
+                    "preview, rank_value FROM matches "
+                    "WHERE thread_id = ANY(%s) "
+                    "ORDER BY thread_id ASC, rank_value ASC",
+                    [*match_params, thread_ids],
+                )
+                best_rows = cur.fetchall()
+        best_by_thread: Dict[str, Sequence[Any]] = {}
+        for row in best_rows:
+            best_by_thread.setdefault(row[0], row)
+        hits: List[SearchHit] = []
+        for thread_id, match_count, _best in grouped:
+            best = best_by_thread.get(thread_id)
+            if best is None:  # pragma: no cover - grouped implies a member
+                continue
+            hits.append(
+                SearchHit(
+                    thread_id=thread_id,
+                    match_count=int(match_count),
+                    match_kind=str(best[3]),
+                    item_id=best[1],
+                    turn_id=best[2],
+                    seq=int(best[4]) if best[4] is not None else None,
+                    preview=_strip_headline_markers(str(best[5] or "")),
+                )
+            )
+        return hits, total
 
     def allocate_seq(self, thread_id: str, count: int = 1) -> int:
         if count < 1:
@@ -1330,10 +2451,11 @@ class PgConversationStore(ConversationStore):
             INSERT INTO conversation_items (
                 tenant_id, project_slug, agent_slug, thread_id, item_id, turn_id,
                 seq, kind, status, role, created_at, updated_at, completed_at,
-                revision, content, source_ref, long_lived, source, schema_version
+                revision, content, source_ref, long_lived, source, schema_version,
+                search_text
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s
+                %s, %s, %s, %s
             )
             ON CONFLICT (tenant_id, project_slug, agent_slug, thread_id, item_id)
             DO UPDATE SET
@@ -1350,7 +2472,8 @@ class PgConversationStore(ConversationStore):
                 source_ref = EXCLUDED.source_ref,
                 long_lived = EXCLUDED.long_lived,
                 source = EXCLUDED.source,
-                schema_version = EXCLUDED.schema_version
+                schema_version = EXCLUDED.schema_version,
+                search_text = EXCLUDED.search_text
             """,
             (
                 *self._scope,
@@ -1370,6 +2493,7 @@ class PgConversationStore(ConversationStore):
                 bool(item.long_lived),
                 item.source,
                 int(item.schema_version),
+                derive_search_text(item.kind, item.content),
             ),
         )
 

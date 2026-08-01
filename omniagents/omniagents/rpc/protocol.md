@@ -1468,9 +1468,15 @@ without a tool registry: `command`, `file`, `search`, `web`, `mcp`, `plan`,
   "last_seq": 8, "turn_count": 2, "item_count": 8,
   "parent_thread_id": null, "branched_from_item_id": null,
   "usage": {"input_tokens": 60}, "compaction": {},
+  "pinned": false, "metadata": {},
   "source": "recorded", "projected_at": 1785479178.6, "schema_version": 1
 }
 ```
+
+`pinned` and `metadata` are organization state; they are written through
+`update_thread` and are described in § Conversation Organization, Search &
+Branching, along with listing, full-text search, fork-from-turn, export
+and retention over these same objects.
 
 `Turn`:
 
@@ -1673,6 +1679,11 @@ four separate sites needed it and a fifth would have been missed.
   returned), never left at `started`.
 - Migration refuses to touch a thread that already holds items, so it is
   safe to re-run against a live deployment.
+- A **fork** may branch from a point *inside* the parent
+  (`fork_session(from_item_id=…)` / `(from_turn_id=…)`); the child then
+  holds exactly the parent's items up to that point and its raw history is
+  truncated to the same turn. See § Conversation Organization, Search &
+  Branching.
 - A **fork** is materialized by copying the parent's domain rows, not by
   re-projecting the copied history — a projection cannot see approvals,
   artifacts or elicitations, which never reach the history table. Child
@@ -1747,7 +1758,9 @@ creation-time projection cannot record the same fact twice.
 
 `delete_session` drops the thread, its turns and its items alongside the
 history and the replay journal; `archive_session` moves `Thread.status` to
-`archived`.
+`archived`. Both now have a **descendant policy** — archive cascades to
+the fork subtree, delete refuses unless `cascade` is set — spelled out with
+its justification in § Conversation Organization, Search & Branching.
 
 Deletion durability: the SQLite store runs with `PRAGMA secure_delete = ON`,
 so freed pages are zeroed rather than left readable in the free list — a
@@ -1755,6 +1768,569 @@ deleted transcript is not recoverable from the file. (This is cheaper than
 `VACUUM`, which would rewrite the whole database under an exclusive lock on
 every delete.) On Postgres, deleted tuples remain until autovacuum reclaims
 them, matching the existing session-history posture.
+
+## Conversation Organization, Search & Branching (`list_threads`, `search_threads`, `update_thread`, `list_thread_descendants`, `export_thread`, `purge_threads`, experimental)
+
+Everything a client needs to live with a large conversation history:
+find it, organize it, branch it, export it, and expire it. Built on the
+same canonical objects as § Conversation Domain Objects — this section
+adds no second model, only the operations over it.
+
+All six requests are **experimental**: clients opt in through
+`initialize.capabilities.experimental_operations`, and un-granted calls
+fail with `-32013`. That follows the `fs_*`/`git_*` precedent for a
+brand-new surface — the filter set and the two cursor shapes have not yet
+been proven by a shipped client. The four *reads* of the previous section
+stay `stable`; nothing here changes them.
+
+`Thread` gains two organization fields, both additive:
+
+| Field | Meaning |
+| --- | --- |
+| `pinned` | client-set "keep this at the top". Independent of `status`, so an archived conversation can still be pinned. |
+| `metadata` | open record of client-owned annotation (labels, colors, a workspace hint). Never interpreted by the server. |
+
+### Listing (`list_threads`)
+
+```
+list_threads(status?, pinned?, source?, model?, parent_thread_id?,
+             created_after?, created_before?, updated_after?, updated_before?,
+             limit?, cursor?, order?)
+  → { threads[], next_cursor, has_more, total }
+```
+
+Keyset, like the rest of this surface, but on a **composite** position:
+`(updated_at, thread_id)`. A timestamp alone is not unique — two threads
+written in the same instant collide, and every adapter-projected thread
+carries `updated_at: 0.0` — so a keyset on it would skip or repeat rows at
+a page boundary. The `thread_id` tiebreaker makes the ordering total.
+
+- `limit` defaults to 50, clamped into `[1, 500]`, exactly as `list_items`.
+- `total` is counted under the **same predicate** the page was drawn with.
+- `order` is `"desc"` (newest first, the default) or `"asc"`.
+- Filters: `status` (`active`/`archived`), `pinned`, `source`
+  (`recorded`/`adapter` — how the thread ORIGINATED), `model` (matched
+  against the thread's turns, so no denormalized field can go stale),
+  `parent_thread_id` (direct children of one thread), and four epoch-float
+  date bounds. Date bounds are half-open: `*_after` is inclusive,
+  `*_before` exclusive.
+- **A legacy conversation is not listed until it has been materialized.**
+  `list_threads` reads the `threads` table; a session written before this
+  model existed has no row there until something projects it — reading it
+  (`get_thread`/`list_items`), resuming it, or forking it. On a deployment
+  upgrading from a pre-#312 build the listing therefore starts EMPTY and
+  fills in as conversations are opened. This is a real upgrade
+  characteristic, not a sort-order quirk: a client that shows only
+  `list_threads` will show nothing after the upgrade.
+
+  The enumeration a client needs meanwhile is `list_sessions`, which reads
+  the `sessions` table directly and lists everything. The intended
+  migration path for a UI is: enumerate with `list_sessions`, then call
+  `get_thread` per session to materialize it (each call projects once and
+  is idempotent), after which `list_threads` is authoritative. A
+  server-side bulk backfill is deliberately not offered here — projecting
+  every session on boot is a downtime window, and #312's lazy-migration
+  contract exists to avoid exactly that.
+- **Adapter-projected threads carry `created_at`/`updated_at` of `0.0`**
+  (see § Backward compatibility). Once materialized they therefore sort
+  last under `desc` and are excluded by any `*_after` bound. That is the
+  honest reading of data that has no timestamps, not a filter bug.
+- Project/agent scoping is **structural, not a filter**: the store is
+  sharded per `(project, agent)` and a connection is served by its own
+  shard, so there is no cross-project listing to scope and no parameter
+  for one.
+
+`item_count` and `turn_count` in a listing entry are **counted at read
+time**, like `get_thread`'s — two grouped statements per page, not two per
+row. The stored counters are maintained by non-transactional
+read-modify-write and drift under concurrent turns, and this listing is
+exactly the sidebar a client sizes its UI from. The same holds for the
+`thread` inside a `search_threads` result, for `list_thread_descendants`,
+and for the `update_thread` result and its `thread_updated` payload.
+
+Each entry additionally carries live state the persisted row cannot know:
+
+```json
+{ "loaded": true, "active": false, "pending_attention": 2,
+  "attention": {"tool_approvals": 1, "mcp_approvals": 0,
+                "elicitations": 1, "client_requests": 0} }
+```
+
+`loaded` = a Session object exists in this process; `active` = a run is in
+flight; the attention counts are the prompts waiting on the user. They are
+computed per request from live state, never persisted, so a sidebar badge
+cannot go stale in the store.
+
+### Search (`search_threads`)
+
+```
+search_threads(query, <same filters as list_threads>, limit?, cursor?)
+  → { query, results[], next_cursor, has_more, total }
+```
+
+Each result identifies a matching conversation and shows why it matched:
+
+```json
+{ "thread_id": "sess-1", "match_count": 4, "match_kind": "tool_call",
+  "item_id": "itm_1f0c…", "turn_id": "run_abc", "seq": 12,
+  "preview": "…rewrote the tokenizer to stream…",
+  "thread": { …the full Thread, with live state… } }
+```
+
+`match_count` is the number of matching rows in that thread; the rest
+describes its **highest-ranked** match. `match_kind` is the matching
+item's `kind`, or `"thread_title"` when the title matched (then
+`item_id`/`turn_id`/`seq` are null). `preview` is a plain-text snippet
+generated by the index — SQLite `snippet()`, Postgres `ts_headline()` —
+with no markup on either backend.
+
+**The index is real, on both backends.** SQLite uses FTS5 over a derived
+`search_text` projection of each item's `content`, kept in step by
+triggers so the bulk projection write and the delete cascade cannot leave
+it stale. Postgres uses a `tsvector` GENERATED from the same projection
+with a GIN index, so the index cannot disagree with its source column.
+Both index with an unstemmed configuration (FTS5 `unicode61`, Postgres
+`'simple'`) so one query returns the same rows on either.
+
+The query is treated as a **bag of terms, ANDed**. It is never handed to
+the backend's query parser: an FTS5 `MATCH` expression and a `tsquery`
+both have operators a user typing an apostrophe or a `*` would trip over.
+Terms are split on whitespace and punctuation, then re-quoted by each
+backend. A query with no terms returns an empty result rather than an
+error.
+
+Search results are ranked, and rank is not a column a keyset can resume
+from, so `search_threads` pages by **offset** — carried inside the same
+opaque cursor token the rest of the surface uses, so a client's paging
+loop is unchanged. The ownership scope is part of the SQL predicate the
+match is drawn under, so a page is never shrunk after the database drew
+it.
+
+**Upgrading an existing deployment.** The indexed projection is a stored
+column, so history written before this surface existed has to be filled in
+before it is searchable. Both backends do it themselves, once: SQLite
+backfills and seeds the index the first time a store is opened after the
+upgrade; Postgres backfills `search_text` in batches on the first
+connection that sees un-indexed rows (`NULL` means "never computed"; an
+item with no searchable text stores `''`). No operator step is required,
+but the first store open after an upgrade does proportional work.
+
+`-32110` (`search_unavailable`) is returned when the deployment's SQLite
+was built without FTS5. The alternative — silently falling back to a
+Python substring scan — would answer the same query differently on
+different machines, which is worse than a typed failure.
+
+**An elicitation's answer is never indexed.** A session-scoped MCP server
+can raise arbitrary form elicitations, and "paste your API key" is a
+supported flow, so `content.value` on an `elicitation` item is excluded
+from the projection — which also keeps it out of the preview snippet a
+listing renders. The prompt (`message`/`title`) is still indexed: that is
+the server's own text and it is what makes the elicitation findable.
+
+`Item.content` is projected into the index from an explicit key list
+(`title`, `text`, `summary`, `message`, `tool`, `server_label`, `input`,
+`arguments`, `output`, `value`, `reason`, `rejection_message`), capped at
+2 000 characters per field and 8 000 per item. `content` is an open
+record; indexing it wholesale would start indexing ids and base64 blobs
+the moment a tool grew a field. **The cap is a search budget only** —
+stored content is never truncated.
+
+### Metadata (`update_thread`)
+
+```
+update_thread(thread_id, title?, pinned?, status?, metadata?)
+  → { thread, changed[], cascaded_thread_ids[] }
+```
+
+- `title` **omitted** leaves it alone; `title: null` clears it. The two
+  are distinguishable because params are validated with `exclude_unset`.
+- `metadata` **merges**: supplied keys are set, a key supplied as `null`
+  is removed, unmentioned keys are untouched. Replace-whole semantics
+  would make two clients editing different labels clobber each other.
+  It is capped at **64 keys and 16 KiB** of encoded JSON, checked against
+  the MERGED record (otherwise a client grows past any cap one small
+  update at a time) and enforced by REFUSING with `-32114`, not by
+  truncating: silently dropping half a client's annotation is data loss.
+  The record is persisted and fanned out on every `thread_updated`, so
+  unbounded it is a storage and broadcast amplifier.
+- `status` is `"active"` or `"archived"` and cascades (below).
+- `changed` lists only fields whose value actually moved, so a client can
+  skip a re-render and the notification carries a real diff.
+- `cascaded_thread_ids` names the descendants that moved and that the
+  caller may read; `inaccessible_descendant_count` reports how many were
+  skipped because they belong to someone else.
+
+`Thread.status` and the legacy `sessions.archived` flag are documented as
+one fact, so `update_thread(status=…)` mirrors it — for the named thread
+and every descendant the cascade touched.
+
+### `thread_updated` (notification, experimental)
+
+```json
+{ "thread_id": "sess-1", "changed": ["title", "pinned"],
+  "thread": { …the updated Thread… }, "cascaded_thread_ids": [] }
+```
+
+Emitted by `update_thread` **and by `archive_session`** — the latter is
+the `stable` path shipped clients call, and an archive that cascaded a
+whole subtree without telling the other columns would satisfy the
+consistency requirement on the experimental path and break it on the one
+in use.
+
+**Metadata changes need a notification, and it has to be
+connection-wide.** The surface that must stay consistent after a rename or
+an archive is the *listing* in every open column, and those columns are
+attached to other sessions or to no session at all — a session-scoped
+broadcast would reach only the one column that already knows. This is the
+`account_changed` mechanism, and like `account_changed` it is **not
+journaled**: thread metadata is current state, not conversation history,
+and replaying a stale rename after a reconnect would be wrong. A
+reconnecting client refetches `list_threads`.
+
+A connection-wide fan-out of per-owner data is a leak unless each
+recipient is checked, and the payload carries a title derived from the
+user's own words. **Every channel is tested against the thread's owner
+with the same policy the request path uses** before the notification is
+delivered.
+
+### Ancestry (`list_thread_descendants`)
+
+```
+list_thread_descendants(thread_id, max_depth?, limit?)
+  → { thread_id, parent_thread_id, branched_from_item_id,
+      descendants[], max_depth, truncated }
+```
+
+Both directions in one read — a client drawing a branch tree needs to know
+where this thread came from as well as what came after it, and two round
+trips to paint one widget is how multi-column navigation drifts between
+columns. Each descendant carries a `depth` (1 = direct child) and the same
+live-state fields the listing adds.
+
+The walk is a recursive CTE (never N round trips), bounded by `max_depth`
+(default and ceiling 32) and `limit` (default and ceiling 500), and
+deduped so a `parent_thread_id` cycle terminates instead of spinning.
+Descendants are restricted to the root thread's own owner: a fork inherits
+its parent's `user_id`, so a differently-owned child is anomalous and is
+not something an ancestry read should surface.
+
+### Branching from a turn (`fork_session`)
+
+```
+fork_session(session_id, new_session_id?, from_item_id?, from_turn_id?)
+  → { session_id, new_session_id, branched_from_item_id }
+```
+
+With neither `from_item_id` nor `from_turn_id` this is the historical
+whole-transcript fork, unchanged. With either, the child contains
+**exactly the parent's items up to and including the branch point, and no
+more**.
+
+- `from_turn_id` resolves to that turn's LAST item — "branch from turn 3"
+  means "the child ends where turn 3 ended", the only reading that makes
+  the child's transcript a prefix of the parent's.
+- A turn that is still `running` is refused with `-32112`
+  (`fork_point_invalid`): its items are still landing, so the position it
+  names is not yet fixed. Terminal turns — completed, failed or cancelled
+  — are all forkable; they are settled.
+- Supplying both parameters is `-32112`. An unknown `from_item_id` is
+  `-32081`; an unknown `from_turn_id` is `-32112`.
+- `branched_from_item_id` in the result is the branch point actually used,
+  and is what `Thread.branched_from_item_id` on the child reports.
+
+Two things are truncated, not one:
+
+* The child's **domain rows**. Turns are clipped to the items that came
+  with them — `item_count`/`first_seq`/`last_seq` are recomputed from what
+  landed, and a turn left with no items is not copied at all, so the child
+  never advertises a keyset window that pages into nothing. The parent's
+  compaction floor is dropped if its checkpoint sits above the branch
+  point, because a checkpoint the child does not contain cannot be its
+  context floor.
+* The child's **raw history**, cut at the same point. This is what the
+  model actually receives when the child resumes. A child whose transcript
+  ends at turn 3 while its context still holds turns 4-9 is not a branch,
+  it is a mislabelled copy.
+
+  The unit of that cut is the **user row**, not the turn.
+  `send_user_message` appends a `role: "user"` history row *inside* a
+  running turn, so a thread can hold more user rows than turns; counting
+  turns and cutting on user rows then lands the knife in the wrong place
+  and the child displays a turn it does not have in context. A user row
+  corresponds one-to-one with a `user_message` ITEM — mid-run ones
+  included — so the cut counts those.
+
+**A branch point must be a position where that cut is exact**, which is
+one of two:
+
+* **a `user_message` item** — the child keeps everything before the
+  question plus the question, and none of the answer ("re-ask from here");
+* **the last item before the next `user_message`** (or the end of the
+  thread) that puts anything into history at all — the whole segment is
+  kept.
+
+**`from_turn_id` usually resolves to the second case, but NOT always.** A
+turn opened by an **assistant-role wakeup** (`prompt_role: "assistant"` —
+routines, `enqueue_notification` batches, resident-agent day sessions)
+records its prompt as an `agent_message`, which is history-bearing. So when
+turn N+1 is a wakeup turn, the tail of the completed turn N is not the end
+of its segment, and `fork_session(from_turn_id=<N>)` is refused with
+`-32112`. That refusal is honest rather than conservative: the cut is a
+count of user rows, and there is no user row between turn N and the wakeup
+to count to. Forking from the wakeup turn itself, or from any turn
+followed by a real question, resolves normally. The error names the
+blocking item and its `next_item_kind`, so a client can tell "the next
+turn was a wakeup" from "the next thing is a tool call" and offer a
+reachable position instead.
+
+Any other position is refused with `-32112`, and the error carries the
+turn, the offending `item_id`, and the `next_item_id`/`next_item_kind`
+that made the cut inexact. The reason is not conservatism: a single
+`tool_call` item is TWO history rows (call + output) and an `approval` or
+`elicitation` item is none, so "cut the history after item k" has no
+answer in between. Keeping the rest of the segment instead would hand the
+child the answer it was forked to regenerate. Items that put nothing into
+history (approvals, elicitations, artifacts) never block a cut.
+
+**The child's `last_seq` is its own highest copied ordinal**, not the
+parent's cursor. Inheriting a truncated view of the parent's cursor would
+hand the next `allocate_seq` an ordinal an existing row already holds, and
+the unique `(thread_id, seq)` index turns that into a lost item.
+
+The fork's branch point travels on the `session_forked` notification as an
+optional `from_item_id`, because that notification is how the child is
+materialized. A branch point known only to the RPC handler would produce a
+child holding the parent's entire transcript — the fork would silently not
+be a branch.
+
+### Export (`export_thread`)
+
+```
+export_thread(thread_id, limit?, cursor?, include_descendants?)
+  → { thread, turns[], items[], next_cursor, has_more,
+      descendant_thread_ids[] }
+```
+
+Exports the **canonical objects**, not the raw history, for the same
+reason a fork copies them: approvals, elicitations and artifacts never
+reach the history table, so a history-based export silently drops the
+parts of a conversation a user is most likely to need to produce later.
+
+The **items** are paged with the same keyset `list_items` uses and are
+never capped: iterate `next_cursor` until it is null and you have every
+one. An export that clipped the transcript and set a flag would be exactly
+the "leaves transcript behind" failure this surface exists to avoid.
+
+Turn **headers** are a convenience rather than the transcript. They ship
+whole on the first page (subsequent pages carry `turns: []`) so a consumer
+can rebuild turn structure without a second paging loop, and that
+convenience has a ceiling of 500. When a thread has more turns than that,
+`turns_truncated` is `true` and `list_turns` pages the rest — the cap is
+declared, not silent.
+
+`include_descendants` returns the ids of every forked descendant so a
+consumer can export the whole branch tree; the descendants' contents are
+fetched by exporting each in turn.
+
+### Retention (`purge_threads`)
+
+```
+purge_threads(retention_days, dry_run?)
+  → { purged_thread_ids[], count, dry_run }
+```
+
+Applies a retention window. `retention_days <= 0` is a no-op. `dry_run`
+reports what the same window would remove without removing it —
+irreversible bulk deletion gets a preview.
+
+**A purge deletes every store's copy.** A conversation lives in three
+places: `history`/`sessions`/`audio_metadata`, the canonical domain rows
+(and their search index), and the durable replay journal — which holds the
+journalled notification payloads, i.e. the same conversation verbatim.
+Retention that clears one of the three is not retention. Sessions under
+legal hold (`set_session_hold`) are never purged; the hold has to win or
+it is not a hold.
+
+The same guarantee now applies to `delete_session`, which previously
+destroyed the replay journal only when the session happened to be loaded
+in the process.
+
+**And it holds at the byte level.** All three SQLite stores run with
+`PRAGMA secure_delete = ON`, so freed pages are zeroed rather than left
+readable in the free list. That is not sufficient on its own for the
+full-text index: FTS5 deletes are tombstones, so the terms of a deleted
+transcript survive in the index's segment blobs — greppable in the
+database file — until a merge rewrites them, and `VACUUM` does not help
+because the pages were never freed. `delete_session` and `purge_threads`
+therefore compact the index once at the end of the operation (never once
+per row: the cost is proportional to the whole index). On Postgres there
+is nothing to reclaim — the index is a column of the row it describes.
+
+### Descendant policy
+
+Forks make a thread graph, and every destructive or hiding operation has
+to say what it does to the branches. The policy is different for the two
+operations, and the difference is reversibility.
+
+**Archive / unarchive: CASCADE.** `archive_session` and
+`update_thread(status=…)` move the named thread *and its whole fork
+subtree*. A fork is a branch of one line of work, so hiding the trunk
+while leaving its branches in the active list defeats the gesture — the
+conversations the user was trying to get out of the way stay in view.
+Cascading is safe here precisely because archive is reversible: the worst
+outcome is a branch that has to be unarchived again. Unarchiving cascades
+for the same reason, with the documented cost that a branch archived on
+its own earlier comes back with its trunk. Archiving a *leaf* never
+touches its ancestors, so a client wanting per-branch control addresses
+the branch directly. Both entry points route through one implementation:
+two methods setting one flag with two descendant semantics is how a client
+ends up with branches that reappear depending on which button was pressed.
+
+**The cascade is scoped to descendants the caller may access, and it SKIPS
+rather than refuses.** It rides the same owner-agnostic walk the delete
+guard does — which is right for asking "does this relationship exist" and
+wrong for acting on the answer. An unscoped cascade writes another
+principal's `Thread.status`, their `sessions.archived` row and their live
+`Session.archived`, and it moves `user_id IS NULL` threads that
+`principal_can_access` denies to everyone. Delete refuses outright in that
+situation because it is irreversible; archive skips, because it is
+reversible and routine — refusing would make a user unable to archive
+their own conversation because somebody else forked it. `update_thread`
+reports the skipped ones as `inaccessible_descendant_count`, a count and
+never ids, and `thread_updated` is not delivered for a thread that did not
+change.
+
+**Delete: REFUSE, unless `cascade` is set.** `delete_session` on a thread
+with descendants fails with `-32111` (`thread_has_descendants`), and the
+error carries `descendant_thread_ids` so the client can show what is in
+the way.
+
+*Why not orphan.* A fork records `parent_thread_id` pointing at its
+parent. Deleting the parent and leaving the children would make every
+child advertise a branch point that no longer resolves: `get_thread` on
+the child reports an ancestor the server cannot produce, and
+`list_thread_descendants` on the missing parent is unanswerable. A
+protocol that documents `parent_thread_id` as a real relationship cannot
+also permit deletes that break it.
+
+*Why not cascade by default.* Delete is irreversible and the branches are
+conversations the caller may not have in view. Silently destroying them
+is the failure mode this policy exists to prevent.
+
+**Operational consequence, stated so it is a decision rather than a
+surprise:** a subtree with mixed ownership makes the trunk undeletable
+through the API. A plain delete answers `-32111` (descendants exist) and a
+cascade answers `-32014` (some are not yours), with no third option. It is
+not attacker-reachable — `fork_session` is resource-scoped, so only the
+owner (or an admin) can create a fork under someone else's thread — but a
+deployment that has produced such a subtree needs an operator to remove
+the foreign branches first. Archive is unaffected: it skips rather than
+refusing.
+
+So the refusal is typed and informative, and `cascade: true` is the
+one-parameter opt-in. A cascade deletes **deepest first**, so an
+interrupted cascade leaves a shorter valid chain rather than a broken one.
+`purge_threads` is not subject to this: a retention window is applied to
+the whole shard, so a parent and its descendants either both fall inside
+it or the survivor's dangling pointer is a thread the window deliberately
+kept.
+
+Three properties of the guard are load-bearing, and each is the opposite
+of the corresponding property of the ancestry *read*:
+
+* **The guard walk is unbounded.** `list_thread_descendants` caps at
+  `max_depth`/`limit` and reports `truncated`; the delete guard does not
+  cap at all. A capped guard answers "these are all the children" when it
+  is not, and the caller then destroys the root and orphans the overflow —
+  the refuse-don't-orphan policy defeated through the back door. The
+  `-32111` payload reports an exact `descendant_count` and marks
+  `truncated: true` when the *id list* is clipped, so a capped enumeration
+  can never be read as a complete one.
+* **The guard is owner-agnostic, but its REPORT is not.** A descendant
+  belonging to another principal — or, on a partially backfilled shard, to
+  nobody (`user_id IS NULL`) — still points here. Whether the relationship
+  exists is not a question about who may read it. But a refusal must not
+  become a side channel for the ids of threads `list_thread_descendants`
+  deliberately hides: `-32111` names only the descendants the caller may
+  read, counts ALL of them in `descendant_count`, and sets `truncated`
+  when the two differ. `-32014` likewise reports how many foreign
+  descendants blocked the cascade without naming any, and its
+  `resource_id` is the thread the caller named. A cascade, which *acts* on
+  the descendants, is refused with `-32014` if any descendant is not the
+  caller's: everything goes, or nothing does.
+* **Legal hold is checked for the whole subtree before anything is
+  deleted.** The history backend refuses to delete a held session, but a
+  cascade only reaches that check after the branches are already gone, so
+  a held parent used to produce a failed call and permanently destroyed
+  data. The pre-flight refuses with `-32113` (`thread_on_legal_hold`)
+  naming the held ids, and a hold lookup that cannot answer counts as
+  held.
+
+### Authorization
+
+| Method | Classification | Why |
+| --- | --- | --- |
+| `list_threads`, `search_threads` | **`GLOBAL_SAFE`** | self-scoped: the caller's `user_id` is part of the SQL predicate the page, its `total` and the search match are all drawn under |
+| `update_thread`, `list_thread_descendants`, `export_thread` | **`RESOURCE_SCOPED`** | each names a `thread_id`; ownership of the session gates the call, `-32014` otherwise |
+| `purge_threads` | **`GLOBAL_MUTATING`** | a deployment-wide, irreversible policy affecting every principal |
+
+The listing pair is the classic authorization trap on this surface, so to
+be explicit about how it is avoided: the ownership scope is **not** a
+filter applied to a page the database already sized. It is a field of the
+`ThreadFilter` object the store methods take *whole*, applied in the same
+`WHERE` as `LIMIT`. Paging first and filtering second under-delivers
+silently — a page of 50 comes back with fewer, or none, of the caller's
+own rows — which is the defect review found in `list_sessions` (#294).
+
+The scope field has **no default**, and "every principal" is a distinct
+`UNSCOPED` sentinel rather than `None`. An optional scope defaulting to
+"no filter" is fail-open: it makes *forgetting* the scope and
+*deliberately* asking for every principal's threads the same expression,
+which no reviewer can tell apart. This is the posture `OWNER_UNKNOWN`
+already holds on the request side. The RPC layer resolves the two legal
+unscoped cases — authorization not enforced, or an `admin` principal — in
+the single constructor both handlers go through, so the sentinel appears
+in exactly one place.
+
+An unowned thread (`user_id IS NULL`) is never matched by a scoped
+listing, because `user_id = ?` does not match NULL — the same rule
+`principal_can_access` applies, arrived at by construction rather than by a
+second check. Admin-role principals and unenforced (single-user)
+deployments scope to nothing, exactly as `list_sessions` does.
+
+`purge_threads` is refused outright for individual principals in enforced
+multi-user mode, following the `write_config`/`disable_tool` precedent. A
+principal who wants to remove their own conversation uses
+`delete_session`, which is ownership-gated. `thread_updated` is filtered
+per recipient channel, as described above.
+
+### Typed errors
+
+| Code | Name | `data.kind` | Raised by |
+| --- | --- | --- | --- |
+| `-32110` | ConversationSearchUnavailable | `search_unavailable` | `search_threads` |
+| `-32111` | ThreadHasDescendants | `thread_has_descendants` | `delete_session` |
+| `-32112` | ConversationForkPointInvalid | `fork_point_invalid` | `fork_session` |
+| `-32113` | ThreadOnLegalHold | `thread_on_legal_hold` | `delete_session` |
+| `-32114` | ThreadMetadataInvalid | `thread_metadata_invalid` | `update_thread` |
+
+`-32111` carries `thread_id`, a `descendant_thread_ids` list restricted to
+what the caller may read, an exact `descendant_count`, and `truncated`
+when the two differ. `-32112` carries `thread_id` and, depending on the
+refusal, `turn_id`, `item_id`, the turn's `status`, and
+`next_item_id`/`next_item_kind` — the first item after the requested
+position that puts something into raw history, i.e. what made the cut
+inexact and what a client needs to pick a reachable position. `-32113`
+carries `held_thread_ids` and `held_count`. `-32114` carries the offending
+`keys`/`size` and the limit it exceeded.
+
+Every field named here is declared in the error's published component AND
+produced by the server: a conformance test validates a raised error's
+`data` against its own schema, and a second fails on a declared field no
+code path emits. The contract cannot drift from the payload again. The existing `-32080`/`-32081`/`-32082` apply here too:
+`thread_not_found` from every thread-scoped method, `item_not_found` from
+`fork_session(from_item_id=…)`, and `cursor_invalid` from every method
+that takes a cursor.
 
 ## Workspace Filesystem Watch & Transfer (`fs_*` methods, experimental)
 

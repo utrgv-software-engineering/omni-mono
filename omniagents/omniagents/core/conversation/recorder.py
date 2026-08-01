@@ -129,7 +129,7 @@ class ConversationRecorder:
         except Exception:
             logger.exception(
                 "legacy history lookup failed; thread will be recorded without it",
-                extra={"thread": thread_id},
+                extra={"thread_id": thread_id},
             )
             return []
         return [row for row in rows if isinstance(row, dict)]
@@ -887,11 +887,37 @@ class ConversationRecorder:
         new_thread_id = payload.get("new_session_id")
         if not isinstance(new_thread_id, str) or not new_thread_id:
             return
-        self.record_fork(thread_id, new_thread_id)
+        # A fork-from-turn carries its branch point on the notification.
+        # It has to: this handler is how a fork is materialized, so a
+        # branch point known only to the RPC handler would produce a child
+        # holding the parent's ENTIRE transcript — the fork would silently
+        # not be a branch. The wire value is the item id (a protocol
+        # concept); the ordinal it resolves to is internal.
+        up_to_seq: int | None = None
+        from_item_id = payload.get("from_item_id")
+        if isinstance(from_item_id, str) and from_item_id:
+            branch_item = self._store.get_item(thread_id, from_item_id)
+            if branch_item is None:
+                logger.warning(
+                    "fork branch point not found; refusing to materialize an "
+                    "untruncated child",
+                    # NOT ``thread``: that is a reserved LogRecord
+                    # attribute and logging raises on the collision.
+                    extra={"thread_id": thread_id, "item_id": from_item_id},
+                )
+                return
+            up_to_seq = branch_item.seq
+        self.record_fork(thread_id, new_thread_id, up_to_seq=up_to_seq)
 
     # -- explicit (non-notification) entry points -------------------------
 
-    def record_fork(self, parent_thread_id: str, new_thread_id: str) -> None:
+    def record_fork(
+        self,
+        parent_thread_id: str,
+        new_thread_id: str,
+        *,
+        up_to_seq: int | None = None,
+    ) -> None:
         """Materialize a forked thread, then stamp the branch point.
 
         ``SessionManager.fork_session`` copies the parent's *history rows*
@@ -908,6 +934,20 @@ class ConversationRecorder:
         ``source_ref``, so the two transcripts are independently addressable
         yet traceable to one another.
 
+        ``up_to_seq`` branches from a point *inside* the parent instead of
+        its tail: only items with ``seq <= up_to_seq`` are copied, turns are
+        clipped to the items that came with them, and a turn left with no
+        items is not copied at all. Two invariants make that safe:
+
+        * ``last_seq`` is set from the HIGHEST COPIED ordinal, not from the
+          parent's cursor. The child's next ``allocate_seq`` therefore
+          returns one past its own last row. Inheriting the parent's cursor
+          would leave a gap (harmless); inheriting a *truncated* view of it
+          would hand out an ordinal an existing row already holds, and the
+          unique ``(thread_id, seq)`` index turns that into a lost item.
+        * ``branched_from_item_id`` is the last copied item, so the branch
+          point a client renders is the one the child actually ends at.
+
         When the parent has no domain rows — a purely legacy session being
         forked — the child is left for the normal creation-time projection
         to materialize from its own copied history; the ancestry stamped
@@ -919,7 +959,13 @@ class ConversationRecorder:
             # Already materialized (duplicate ``session_forked`` delivery).
             return
 
-        source_items = self._store.list_items(parent_thread_id, limit=_FORK_MAX_ITEMS)
+        source_items = self._store.list_items(
+            parent_thread_id,
+            limit=_FORK_MAX_ITEMS,
+            # ``before_seq`` is strict, so the branch point itself is
+            # included by asking for everything below the next ordinal.
+            before_seq=None if up_to_seq is None else up_to_seq + 1,
+        )
         branch_item_id = source_items[-1].item_id if source_items else None
 
         child = self.ensure_thread(
@@ -938,24 +984,56 @@ class ConversationRecorder:
             return
 
         source_turns = self._store.list_turns(parent_thread_id, limit=_FORK_MAX_ITEMS)
+        copied_items = [self._fork_item(new_thread_id, item) for item in source_items]
+        items_by_turn: Dict[str, list[Item]] = {}
+        for item in copied_items:
+            if item.turn_id is not None:
+                items_by_turn.setdefault(item.turn_id, []).append(item)
+        copied_turns = [
+            self._fork_turn(new_thread_id, turn, items_by_turn.get(turn.turn_id, []))
+            for turn in source_turns
+            # A turn whose items all sit above the branch point did not
+            # happen in the child's history; copying its header would show
+            # an empty turn the child never ran.
+            if turn.turn_id in items_by_turn
+        ]
         child.title = parent.title
-        child.last_seq = parent.last_seq
-        child.turn_count = len(source_turns)
-        child.item_count = len(source_items)
+        # The child's ordinal cursor is its OWN high-water mark.
+        child.last_seq = max(item.seq for item in copied_items)
+        child.turn_count = len(copied_turns)
+        child.item_count = len(copied_items)
         child.usage = dict(parent.usage)
-        child.compaction = dict(parent.compaction)
+        child.compaction = self._fork_compaction(parent.compaction, child.last_seq)
         child.source = parent.source
         # The copy IS the child's materialization.
         child.projected_at = _now()
-        self._store.write_projection(
-            child,
-            [self._fork_turn(new_thread_id, turn) for turn in source_turns],
-            [self._fork_item(new_thread_id, item) for item in source_items],
-        )
+        self._store.write_projection(child, copied_turns, copied_items)
 
     @staticmethod
-    def _fork_turn(new_thread_id: str, turn: Turn) -> Turn:
-        """One parent turn, re-addressed under the forked thread."""
+    def _fork_compaction(compaction: Dict[str, Any], last_seq: int) -> Dict[str, Any]:
+        """The parent's compaction floor, dropped if it is above the branch.
+
+        A checkpoint the child does not contain cannot be its context floor;
+        carrying the parent's value would tell a client that items the child
+        *does* hold are outside the model's live context.
+        """
+        checkpoint_seq = compaction.get("checkpoint_seq")
+        if isinstance(checkpoint_seq, int) and checkpoint_seq > last_seq:
+            return {}
+        return dict(compaction)
+
+    @staticmethod
+    def _fork_turn(new_thread_id: str, turn: Turn, items: list[Item]) -> Turn:
+        """One parent turn, re-addressed under the forked thread.
+
+        ``items`` are the turn's COPIED items. On an untruncated fork they
+        are all of them and the counters are unchanged; on a fork-from-turn
+        the trailing ones were cut, so ``item_count``/``first_seq``/
+        ``last_seq`` are recomputed from what actually landed rather than
+        inherited — a turn advertising a ``last_seq`` past the end of the
+        thread is a keyset window a client would page into and find empty.
+        """
+        seqs = [item.seq for item in items]
         return Turn(
             turn_id=turn.turn_id,
             thread_id=new_thread_id,
@@ -971,9 +1049,9 @@ class ConversationRecorder:
             usage=dict(turn.usage),
             model=turn.model,
             model_ref=turn.model_ref,
-            item_count=turn.item_count,
-            first_seq=turn.first_seq,
-            last_seq=turn.last_seq,
+            item_count=len(seqs),
+            first_seq=min(seqs) if seqs else None,
+            last_seq=max(seqs) if seqs else None,
             attempts=turn.attempts,
             source=turn.source,
             schema_version=turn.schema_version,

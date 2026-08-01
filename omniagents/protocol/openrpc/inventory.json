@@ -10,7 +10,8 @@
       "fs_events",
       "fs_rescan_required",
       "fs_transfer_progress",
-      "git_operation_progress"
+      "git_operation_progress",
+      "thread_updated"
     ],
     "stable": [
       "initialized",
@@ -78,7 +79,13 @@
       "git_reset",
       "git_fetch",
       "git_pull",
-      "git_push"
+      "git_push",
+      "list_threads",
+      "search_threads",
+      "update_thread",
+      "list_thread_descendants",
+      "export_thread",
+      "purge_threads"
     ],
     "stable": [
       "initialize",

@@ -32,11 +32,17 @@ from .test_store import (  # noqa: F401 — re-run against the PG backend
     TestItems,
     TestProjectionWrite,
     TestSeqAllocation,
+    TestPageCounts,
+    TestThreadAncestry,
+    TestThreadListing,
+    TestThreadSearch,
+    TestUnboundedDescendantWalk,
     TestThreads,
     TestTurns,
     make_item,
     make_thread,
     make_turn,
+    seed_threads,
 )
 
 PG_URL = os.getenv("OMNIAGENTS_TEST_PG_URL")
@@ -62,11 +68,20 @@ def store(monkeypatch):
     tenant = f"test_{uuid.uuid4().hex[:12]}"
     backend = PgConversationStore(PG_URL, tenant_id=tenant)
     yield backend
-    for thread_id in ("t1", "t2", "sess-1", "legacy-1"):
-        try:
-            backend.delete_thread(thread_id)
-        except Exception:
-            pass
+    # Every thread the test created, whoever owns it: the organization
+    # suites seed hundreds, and a tenant left populated would make the next
+    # run's ``total`` assertions wrong.
+    from omniagents.core.conversation.model import UNSCOPED, ThreadFilter
+
+    try:
+        while True:
+            rows = backend.list_threads(ThreadFilter(UNSCOPED), limit=500)
+            if not rows:
+                break
+            for thread in rows:
+                backend.delete_thread(thread.thread_id)
+    except Exception:
+        pass
     backend.close()
 
 
@@ -290,3 +305,136 @@ def test_a_fork_carries_the_transcript_on_postgres(store):
     assert len(child) == len(parent) == 2
     assert [i.content for i in child] == [i.content for i in parent]
     assert store.get_thread("sess-2").parent_thread_id == "sess-1"
+
+
+def test_a_pre_upgrade_row_is_backfilled_and_becomes_searchable(store):
+    """A deployment that already ran #312 holds items with no
+    ``search_text``. Without a backfill its ENTIRE existing history indexes
+    as empty and the search box returns nothing — the generated tsvector
+    can only summarize a column that has been filled in.
+    """
+    from omniagents.core.conversation.model import (
+        Item,
+        ItemKind,
+        ItemStatus,
+        ThreadFilter,
+    )
+    from omniagents.core.conversation.store import PgConversationStore
+
+    tenant = f"backfill_{uuid.uuid4().hex[:10]}"
+    first = PgConversationStore(PG_URL, tenant_id=tenant)
+    try:
+        first.upsert_thread(make_thread(thread_id="legacy", user_id="u1", title="x"))
+        first.upsert_item(
+            Item(
+                item_id="itm_legacy",
+                thread_id="legacy",
+                turn_id="r1",
+                seq=1,
+                kind=ItemKind.AGENT_MESSAGE,
+                status=ItemStatus.COMPLETED,
+                created_at=1.0,
+                updated_at=1.0,
+                content={"text": "pre-upgrade transcript about marmosets"},
+            )
+        )
+        # Regress the row to its pre-upgrade shape: the column did not
+        # exist, so it is NULL and the generated tsvector is empty.
+        with first._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE conversation_items SET search_text = NULL "
+                    "WHERE tenant_id = %s",
+                    (tenant,),
+                )
+            conn.commit()
+        assert (
+            first.search("marmosets", ThreadFilter(user_id="u1"), limit=5)[1] == 0
+        ), "the regression did not take"
+    finally:
+        first.close()
+
+    # A fresh open is the upgrade: it must backfill.
+    second = PgConversationStore(PG_URL, tenant_id=tenant)
+    try:
+        hits, total = second.search("marmosets", ThreadFilter(user_id="u1"), limit=5)
+        assert total == 1, "pre-upgrade history is permanently unsearchable"
+        assert "marmosets" in hits[0].preview
+        # Idempotent: a caught-up store re-opens without changing anything.
+        third = PgConversationStore(PG_URL, tenant_id=tenant)
+        try:
+            assert (
+                third.search("marmosets", ThreadFilter(user_id="u1"), limit=5)[1] == 1
+            )
+        finally:
+            third.close()
+    finally:
+        second.delete_thread("legacy")
+        second.close()
+
+
+def test_the_generated_tsvector_is_normalized_in_a_FRESH_schema():
+    """Exercise the DDL, not a table that already exists.
+
+    ``ADD COLUMN IF NOT EXISTS`` is a no-op against a deployed table, so a
+    parity check run on a pre-existing database proves nothing about the
+    expression this build would CREATE. This one bootstraps the schema from
+    scratch in a throwaway Postgres schema, which is the only way the
+    generated column's definition is actually under test.
+
+    (The same property is why changing that expression needs a migration —
+    recorded as a follow-up on the PR.)
+    """
+    import psycopg
+
+    from omniagents.core.conversation.model import (
+        Item,
+        ItemKind,
+        ItemStatus,
+        ThreadFilter,
+    )
+    from omniagents.core.conversation.store import PgConversationStore
+
+    schema = f"parity_{uuid.uuid4().hex[:10]}"
+    admin = psycopg.connect(PG_URL, autocommit=True)
+    try:
+        admin.execute(f'CREATE SCHEMA "{schema}"')
+        dsn = f"{PG_URL}?options=-csearch_path%3D{schema}"
+        store = PgConversationStore(dsn, tenant_id=schema)
+        try:
+            store.upsert_thread(make_thread(thread_id="t1", user_id="u1", title="x"))
+            store.upsert_item(
+                Item(
+                    item_id="itm_1",
+                    thread_id="t1",
+                    turn_id=None,
+                    seq=1,
+                    kind=ItemKind.TOOL_CALL,
+                    status=ItemStatus.COMPLETED,
+                    created_at=1.0,
+                    updated_at=1.0,
+                    content={
+                        "text": "edited widgets.py and src/core/thing_two.rs "
+                        "for user@example.com"
+                    },
+                )
+            )
+            scope = ThreadFilter(user_id="u1")
+            for query in (
+                "widgets",
+                "widgets.py",
+                "py",
+                "thing_two",
+                "thing",
+                "example.com",
+                "src/core",
+            ):
+                assert store.search(query, scope, limit=5)[1] == 1, (
+                    f"{query!r} did not match: the freshly created tsvector "
+                    "does not tokenize the way SQLite's index does"
+                )
+        finally:
+            store.close()
+    finally:
+        admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+        admin.close()

@@ -182,6 +182,24 @@ GLOBAL_SAFE_METHODS = frozenset(
         # Self-scoped listings (filtered to the caller server-side)
         "list_sessions",
         "get_user_history",
+        # Conversation listing + full-text search (tkt_eZldW-Gje6kn).
+        # Safe for the SAME reason ``list_sessions`` is, and only for that
+        # reason: the caller's ``user_id`` is part of the SQL predicate the
+        # page and its ``total`` are drawn under, so a principal can never
+        # be handed — or shown a search preview of — a thread they do not
+        # own. Filtering a page in Python after the database applied LIMIT
+        # would NOT be sufficient (it under-delivers, the defect review
+        # found in list_sessions), which is why the scope lives in
+        # ``ThreadFilter`` and the store methods take the whole filter.
+        # ``ThreadFilter.user_id`` has no default and "every principal" is
+        # an explicit UNSCOPED sentinel resolved in one constructor, so an
+        # omitted scope is a type error rather than a silently unscoped
+        # listing (the OWNER_UNKNOWN posture, on the query side).
+        # A thread NAMED by id is resource-scoped instead, automatically:
+        # ``thread_id`` resolution in _resolve_rpc_resource_owner wins over
+        # this list.
+        "list_threads",
+        "search_threads",
         # Per-connection state
         "client_functions",
         "set_client_status",
@@ -268,6 +286,15 @@ GLOBAL_MUTATING_METHODS = frozenset(
         "mcp_auth_start",
         "mcp_auth_complete",
         "mcp_auth_cancel",
+        # Retention purge (tkt_eZldW-Gje6kn). The retention window is a
+        # deployment-wide policy, and applying it deletes conversations
+        # belonging to every principal in the process — irreversibly. That
+        # is the ``write_config``/``disable_tool`` shape exactly: refused
+        # for individual principals in enforced multi-user mode, available
+        # in the single-principal desktop/local topology it exists for.
+        # A principal who wants to remove their OWN conversation uses
+        # ``delete_session``, which is ownership-gated.
+        "purge_threads",
     }
 )
 
@@ -344,6 +371,16 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "list_turns",
         "list_items",
         "get_item",
+        # Conversation organization & branching (tkt_eZldW-Gje6kn). Each
+        # names a ``thread_id`` and inherits the same session-ownership
+        # gate as the reads above — renaming, archiving, exporting or
+        # walking the fork tree of another principal's conversation is
+        # refused with -32014 before the store is touched. ``export_thread``
+        # in particular returns the whole transcript, so it is exactly as
+        # sensitive as ``list_items``.
+        "update_thread",
+        "list_thread_descendants",
+        "export_thread",
         # Typed git operations (tkt_l_l0lUi4A5V2): a repository is
         # addressed relative to a session's workspace/sandbox, so every
         # git_* method names a session_id and is gated on session

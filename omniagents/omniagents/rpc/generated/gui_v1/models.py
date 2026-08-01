@@ -119,6 +119,7 @@ class ArchiveSessionResult(RootModel[bool]):
 class DeleteSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
+    cascade: bool | None = None
 
 
 class DeleteSessionResult(RootModel[bool]):
@@ -551,6 +552,8 @@ class ForkSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
     new_session_id: str | None = None
+    from_item_id: str | None = None
+    from_turn_id: str | None = None
 
 
 class ForkSessionResult(RootModel[dict[str, Any]]):
@@ -1042,6 +1045,92 @@ class GitPushResult(RootModel[dict[str, Any]]):
     pass
 
 
+class ListThreadsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str | None = None
+    pinned: bool | None = None
+    source: str | None = None
+    model: str | None = None
+    parent_thread_id: str | None = None
+    created_after: float | None = None
+    created_before: float | None = None
+    updated_after: float | None = None
+    updated_before: float | None = None
+    limit: int | None = None
+    cursor: str | None = None
+    order: str | None = None
+
+
+class ListThreadsResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class SearchThreadsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str
+    status: str | None = None
+    pinned: bool | None = None
+    source: str | None = None
+    model: str | None = None
+    parent_thread_id: str | None = None
+    created_after: float | None = None
+    created_before: float | None = None
+    updated_after: float | None = None
+    updated_before: float | None = None
+    limit: int | None = None
+    cursor: str | None = None
+
+
+class SearchThreadsResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class UpdateThreadParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    title: str | None = None
+    pinned: bool | None = None
+    status: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class UpdateThreadResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class ListThreadDescendantsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    max_depth: int | None = None
+    limit: int | None = None
+
+
+class ListThreadDescendantsResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class ExportThreadParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    limit: int | None = None
+    cursor: str | None = None
+    include_descendants: bool | None = None
+
+
+class ExportThreadResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class PurgeThreadsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    retention_days: int
+    dry_run: bool | None = None
+
+
+class PurgeThreadsResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class InitializedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pass
@@ -1269,6 +1358,7 @@ class SessionForkedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
     new_session_id: str
+    from_item_id: str | None = None
     seq: int | None = None
     stream_id: str | None = None
 
@@ -1276,7 +1366,7 @@ class SessionForkedParams(BaseModel):
 class SessionVariablesChangedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
-    changed: dict[str, Any]
+    changed: list[Any]
     variables: dict[str, Any]
     seq: int | None = None
     stream_id: str | None = None
@@ -1319,6 +1409,16 @@ class GitOperationProgressParams(BaseModel):
     operation: str
     phase: str
     detail: dict[str, Any] | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
+class ThreadUpdatedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    changed: list[Any]
+    thread: dict[str, Any]
+    cascaded_thread_ids: list[Any] | None = None
     seq: int | None = None
     stream_id: str | None = None
 
@@ -1416,6 +1516,12 @@ CLIENT_REQUEST_MODELS = {
     "git_fetch": GitFetchParams,
     "git_pull": GitPullParams,
     "git_push": GitPushParams,
+    "list_threads": ListThreadsParams,
+    "search_threads": SearchThreadsParams,
+    "update_thread": UpdateThreadParams,
+    "list_thread_descendants": ListThreadDescendantsParams,
+    "export_thread": ExportThreadParams,
+    "purge_threads": PurgeThreadsParams,
 }
 CLIENT_RESULT_MODELS = {
     "initialize": InitializeResult,
@@ -1510,6 +1616,12 @@ CLIENT_RESULT_MODELS = {
     "git_fetch": GitFetchResult,
     "git_pull": GitPullResult,
     "git_push": GitPushResult,
+    "list_threads": ListThreadsResult,
+    "search_threads": SearchThreadsResult,
+    "update_thread": UpdateThreadResult,
+    "list_thread_descendants": ListThreadDescendantsResult,
+    "export_thread": ExportThreadResult,
+    "purge_threads": PurgeThreadsResult,
 }
 CLIENT_NOTIFICATION_MODELS = {"initialized": InitializedParams}
 SERVER_NOTIFICATION_MODELS = {
@@ -1537,6 +1649,7 @@ SERVER_NOTIFICATION_MODELS = {
     "fs_rescan_required": FsRescanRequiredParams,
     "fs_transfer_progress": FsTransferProgressParams,
     "git_operation_progress": GitOperationProgressParams,
+    "thread_updated": ThreadUpdatedParams,
 }
 STABLE_REQUESTS = frozenset(
     [
@@ -1636,6 +1749,12 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "git_fetch",
         "git_pull",
         "git_push",
+        "list_threads",
+        "search_threads",
+        "update_thread",
+        "list_thread_descendants",
+        "export_thread",
+        "purge_threads",
     ]
 )
 STABLE_NOTIFICATIONS = frozenset(
@@ -1669,5 +1788,6 @@ EXPERIMENTAL_NOTIFICATIONS = frozenset(
         "fs_rescan_required",
         "fs_transfer_progress",
         "git_operation_progress",
+        "thread_updated",
     ]
 )

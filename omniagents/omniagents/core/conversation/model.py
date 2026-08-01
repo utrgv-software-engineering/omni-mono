@@ -47,6 +47,7 @@ from typing import Any, Dict, Generic, List, Optional, Sequence, TypeVar
 
 __all__ = [
     "ITEM_SCHEMA_VERSION",
+    "SEARCH_TEXT_MAX_LEN",
     "TERMINAL_ITEM_STATUSES",
     "TERMINAL_TURN_STATUSES",
     "CursorError",
@@ -54,19 +55,26 @@ __all__ = [
     "ItemKind",
     "ItemStatus",
     "Page",
+    "SearchHit",
     "Thread",
     "ThreadStatus",
+    "ThreadFilter",
     "ToolKind",
+    "UNSCOPED",
     "Turn",
     "TurnStatus",
     "classify_tool",
     "TITLE_MAX_LEN",
     "content_key",
+    "derive_search_text",
     "derive_title",
     "decode_cursor",
+    "decode_thread_cursor",
     "derive_item_id",
     "derive_legacy_turn_id",
     "encode_cursor",
+    "encode_thread_cursor",
+    "search_terms",
     "terminal_status_for_end_reason",
 ]
 
@@ -308,6 +316,136 @@ def derive_title(text: str | None) -> str | None:
     return collapsed
 
 
+#: Longest per-item text handed to the full-text index. Tool outputs are
+#: unbounded (a ``read_file`` result can be a megabyte), and an index that
+#: grew with them would cost more than the transcript itself. The cap is a
+#: *search* budget, never a truncation of stored content: ``Item.content``
+#: keeps the whole payload, only the indexed projection is clipped.
+SEARCH_TEXT_MAX_LEN = 8000
+
+#: Longest contribution from any single ``content`` field, so one giant
+#: tool output cannot crowd every other field out of the budget above.
+_SEARCH_FIELD_MAX_LEN = 2000
+
+#: ``Item.content`` keys whose values are indexed for full-text search, in
+#: concatenation order. Keys are listed explicitly rather than "index every
+#: string in the record" because ``content`` is an open record: indexing it
+#: wholesale would silently start indexing ids, base64 blobs and internal
+#: bookkeeping the moment a tool grew a field.
+_SEARCHABLE_CONTENT_KEYS = (
+    "title",
+    "text",
+    "summary",
+    "message",
+    "tool",
+    "server_label",
+    "input",
+    "arguments",
+    "output",
+    "value",
+    "reason",
+    "rejection_message",
+)
+
+
+def _search_fragment(value: object) -> str:
+    """One ``content`` value flattened to indexable text, length-capped."""
+    if value is None or isinstance(value, bool):
+        return ""
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, (int, float)):
+        text = str(value)
+    else:
+        try:
+            text = json.dumps(value, default=str)
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            text = str(value)
+    text = " ".join(text.split())
+    return text[:_SEARCH_FIELD_MAX_LEN]
+
+
+#: ``content`` keys that are NEVER indexed, per item kind.
+#:
+#: An elicitation's ``value`` is the user's ANSWER to a server-raised
+#: prompt, and a session-scoped MCP server may raise arbitrary form
+#: elicitations — "paste your API key" is a supported flow. Indexing it
+#: makes the credential a search term and, worse, puts it verbatim into the
+#: preview snippet a listing renders. This codebase's posture is that
+#: secret-ish material is write-only, so the answer never reaches the
+#: index. The prompt (``message``/``title``) still does: that is what makes
+#: the elicitation findable, and it is the server's own text.
+_UNINDEXED_CONTENT_KEYS: Dict[str, frozenset] = {
+    "elicitation": frozenset({"value"}),
+}
+
+
+def derive_search_text(kind: "ItemKind | str", content: Dict[str, Any]) -> str:
+    """The indexable projection of one item's ``content``.
+
+    Deterministic and pure, so the SQLite and Postgres backends index the
+    *same* bytes for the same item and a search that matches on one backend
+    matches on the other. Both stores call this at their single item-write
+    site; neither has a second derivation of its own.
+
+    ``kind`` selects the per-kind exclusions in
+    :data:`_UNINDEXED_CONTENT_KEYS`.
+    """
+    if not isinstance(content, dict):
+        return ""
+    kind_value = kind.value if isinstance(kind, ItemKind) else str(kind)
+    excluded = _UNINDEXED_CONTENT_KEYS.get(kind_value, frozenset())
+    parts: List[str] = []
+    budget = SEARCH_TEXT_MAX_LEN
+    for key in _SEARCHABLE_CONTENT_KEYS:
+        if budget <= 0:
+            break
+        if key in excluded:
+            continue
+        fragment = _search_fragment(content.get(key))
+        if not fragment:
+            continue
+        parts.append(fragment[:budget])
+        budget -= len(fragment) + 1
+    return " ".join(parts)[:SEARCH_TEXT_MAX_LEN]
+
+
+def search_terms(query: str) -> List[str]:
+    """Split a user query into the terms both backends AND together.
+
+    Two jobs, and the second one is not obvious.
+
+    **Safety.** The query is treated as a bag of terms, never as backend
+    query syntax: an FTS5 ``MATCH`` expression and a Postgres ``tsquery``
+    both have operators that a user typing a quote or a ``*`` would trip
+    over, and a search box that raises a parse error on an apostrophe is
+    broken. Terms are recombined by each backend using its own quoting, so
+    nothing a user types can reach the parser.
+
+    **Cross-backend agreement.** The split is on every non-alphanumeric
+    character, which is exactly what SQLite's ``unicode61`` tokenizer does
+    to the indexed text. Postgres' parser does NOT: it keeps
+    ``widgets.py`` as one ``file`` lexeme, so a search for ``widgets``
+    matched on SQLite and missed on Postgres. Splitting the query the same
+    way the index splits the document — and normalizing the Postgres
+    tsvector to match (see ``_PG_SCHEMA_SQL``) — is what makes one query
+    return one answer on both.
+    """
+    if not isinstance(query, str):
+        return []
+    terms: List[str] = []
+    current: List[str] = []
+    for char in query:
+        if char.isalnum():
+            current.append(char)
+        elif current:
+            terms.append("".join(current))
+            current = []
+    if current:
+        terms.append("".join(current))
+    return terms
+
+
 def content_key(*parts: object) -> str:
     """A short, stable digest of *parts*, for items with no native id.
 
@@ -383,6 +521,57 @@ def decode_cursor(cursor: str) -> Dict[str, Any]:
     return decoded
 
 
+def encode_thread_cursor(sort_value: float, thread_id: str) -> str:
+    """Cursor for the thread listing's ``(sort_value, thread_id)`` keyset.
+
+    A thread listing is ordered by a timestamp, which is **not unique** —
+    two threads created in the same millisecond, and every legacy thread
+    (projected rows carry ``0.0``, documented in protocol.md), collide. A
+    keyset on the timestamp alone would therefore either skip or repeat
+    those rows at a page boundary. The thread id is the tiebreaker that
+    makes the ordering total, which is what makes the keyset sound.
+    """
+    return encode_cursor({"sort": float(sort_value), "id": str(thread_id)})
+
+
+def decode_thread_cursor(cursor: str) -> tuple[float, str]:
+    """Inverse of :func:`encode_thread_cursor`. Raises :class:`CursorError`."""
+    decoded = decode_cursor(cursor)
+    sort_value = decoded.get("sort")
+    thread_id = decoded.get("id")
+    if isinstance(sort_value, bool) or not isinstance(sort_value, (int, float)):
+        raise CursorError(f"Malformed thread cursor: {cursor!r}")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise CursorError(f"Malformed thread cursor: {cursor!r}")
+    return float(sort_value), thread_id
+
+
+class _Unscoped:
+    """Sentinel: this listing deliberately spans every principal.
+
+    Distinct from a ``user_id`` string, and deliberately NOT ``None``. See
+    :class:`ThreadFilter` for why the scope has no default at all: an
+    omitted scope must not be expressible as an unscoped one.
+    """
+
+    _instance: "_Unscoped | None" = None
+
+    def __new__(cls) -> "_Unscoped":
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return "UNSCOPED"
+
+
+#: The only value that widens a thread listing past one principal. Legal
+#: in exactly two situations, both of which the RPC layer resolves before
+#: it builds a filter: authorization is not enforced (single-user), or the
+#: caller holds the ``admin`` role.
+UNSCOPED = _Unscoped()
+
+
 T = TypeVar("T")
 
 
@@ -393,6 +582,70 @@ class Page(Generic[T]):
     entries: Sequence[T]
     next_cursor: Optional[str]
     has_more: bool
+
+
+@dataclass(frozen=True)
+class ThreadFilter:
+    """The predicate a thread listing is drawn under.
+
+    One object rather than eleven keyword arguments threaded through the
+    service, both stores and the RPC layer: the listing and its ``total``
+    MUST be computed under the identical predicate, and passing a single
+    value to both is how that stays true when a filter is added.
+
+    ``user_id`` is the authorization scope and is applied **in SQL**, next
+    to ``LIMIT``. Filtering owned rows out of an already-paginated result
+    in Python silently under-delivers pages — the defect review found in
+    ``list_sessions`` (PR #294) — which is why it is part of the object the
+    store methods take whole rather than a separate argument.
+
+    It has **no default**, and "everything" is spelled :data:`UNSCOPED`
+    rather than ``None``. An optional scope defaulting to "no filter" is
+    fail-OPEN: ``ThreadFilter()`` would have been a legal, fully unscoped
+    predicate, so forgetting the scope and deliberately asking for every
+    principal's threads were the same expression and no reviewer could tell
+    them apart. This is the posture ``rpc.auth.OWNER_UNKNOWN`` exists to
+    hold on the request side; the same rule applies here.
+    """
+
+    user_id: "str | _Unscoped"
+    status: Optional["ThreadStatus"] = None
+    pinned: Optional[bool] = None
+    source: Optional[str] = None
+    model: Optional[str] = None
+    parent_thread_id: Optional[str] = None
+    created_after: Optional[float] = None
+    created_before: Optional[float] = None
+    updated_after: Optional[float] = None
+    updated_before: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class SearchHit:
+    """One thread that matched a full-text query, with its best preview."""
+
+    thread_id: str
+    match_count: int
+    #: ``item`` when the best match was a transcript item, ``thread_title``
+    #: when it was the conversation's title.
+    match_kind: str
+    item_id: Optional[str]
+    turn_id: Optional[str]
+    seq: Optional[int]
+    #: Backend-generated snippet around the match — SQLite ``snippet()``,
+    #: Postgres ``ts_headline()``. Plain text, no markup.
+    preview: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "thread_id": self.thread_id,
+            "match_count": self.match_count,
+            "match_kind": self.match_kind,
+            "item_id": self.item_id,
+            "turn_id": self.turn_id,
+            "seq": self.seq,
+            "preview": self.preview,
+        }
 
 
 # ---------------------------------------------------------------------
@@ -430,6 +683,17 @@ class Thread:
     #: "compacted_below_seq"}``. Items below ``compacted_below_seq`` are
     #: still readable but are no longer part of the model's live context.
     compaction: Dict[str, Any] = field(default_factory=dict)
+    #: Client-set "keep this at the top" flag. Organization state, not
+    #: lifecycle state: a pinned thread is otherwise an ordinary active or
+    #: archived thread, which is why this is a separate field rather than a
+    #: third :class:`ThreadStatus` value — the two axes are independent and
+    #: a user can pin an archived conversation.
+    pinned: bool = False
+    #: Open record of client-owned organization metadata (labels, colors,
+    #: a workspace hint). Deliberately unvalidated and never interpreted by
+    #: the server: the alternative is a protocol break every time a client
+    #: wants to remember one more thing about a conversation.
+    metadata: Dict[str, Any] = field(default_factory=dict)
     #: ``"recorded"`` (written live by the recorder) or ``"adapter"``
     #: (projected from legacy history by the compatibility adapter).
     source: str = "recorded"
@@ -463,6 +727,8 @@ class Thread:
             "branched_from_item_id": self.branched_from_item_id,
             "usage": dict(self.usage),
             "compaction": dict(self.compaction),
+            "pinned": bool(self.pinned),
+            "metadata": dict(self.metadata),
             "source": self.source,
             "projected_at": self.projected_at,
             "schema_version": self.schema_version,

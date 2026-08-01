@@ -164,6 +164,7 @@ class DeleteSession(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    cascade: bool | None = None
     session_id: str
 
 
@@ -259,10 +260,22 @@ class ExportSession(BaseModel):
     session_id: str
 
 
+class ExportThread(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cursor: str | None = None
+    include_descendants: bool | None = None
+    limit: int | None = None
+    thread_id: str
+
+
 class ForkSession(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    from_item_id: str | None = None
+    from_turn_id: str | None = None
     new_session_id: str | None = None
     session_id: str
 
@@ -715,6 +728,33 @@ class ListSessions(BaseModel):
     offset: int | None = None
 
 
+class ListThreadDescendants(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    limit: int | None = None
+    max_depth: int | None = None
+    thread_id: str
+
+
+class ListThreads(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    created_after: float | None = None
+    created_before: float | None = None
+    cursor: str | None = None
+    limit: int | None = None
+    model: str | None = None
+    order: str | None = None
+    parent_thread_id: str | None = None
+    pinned: bool | None = None
+    source: str | None = None
+    status: str | None = None
+    updated_after: float | None = None
+    updated_before: float | None = None
+
+
 class ListTurns(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -898,6 +938,14 @@ class Platform(BaseModel):
     os: str
 
 
+class PurgeThreads(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    dry_run: bool | None = None
+    retention_days: int
+
+
 class QueueChanged(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -984,6 +1032,24 @@ class RunStatus(BaseModel):
     total: int | None = None
 
 
+class SearchThreads(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    created_after: float | None = None
+    created_before: float | None = None
+    cursor: str | None = None
+    limit: int | None = None
+    model: str | None = None
+    parent_thread_id: str | None = None
+    pinned: bool | None = None
+    query: str
+    source: str | None = None
+    status: str | None = None
+    updated_after: float | None = None
+    updated_before: float | None = None
+
+
 class SendUserMessage(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1005,6 +1071,7 @@ class SessionForked(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    from_item_id: str | None = None
     new_session_id: str
     seq: int | None = None
     session_id: str
@@ -1015,7 +1082,7 @@ class SessionVariablesChanged(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    changed: dict[str, Any]
+    changed: list[Any]
     seq: int | None = None
     session_id: str
     stream_id: str | None = None
@@ -1080,6 +1147,18 @@ class StopRun(BaseModel):
         extra="forbid",
     )
     run_id: str
+
+
+class ThreadUpdated(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    cascaded_thread_ids: list[Any] | None = None
+    changed: list[Any]
+    seq: int | None = None
+    stream_id: str | None = None
+    thread: dict[str, Any]
+    thread_id: str
 
 
 class Token(BaseModel):
@@ -1169,6 +1248,17 @@ class UpdateSessionVariables(BaseModel):
     )
     session_id: str
     updates: dict[str, Any]
+
+
+class UpdateThread(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    metadata: dict[str, Any] | None = None
+    pinned: bool | None = None
+    status: str | None = None
+    thread_id: str
+    title: str | None = None
 
 
 class ValidateConfig(BaseModel):
@@ -1299,6 +1389,12 @@ class Model(
         | GitFetch
         | GitPull
         | GitPush
+        | ListThreads
+        | SearchThreads
+        | UpdateThread
+        | ListThreadDescendants
+        | ExportThread
+        | PurgeThreads
         | Initialized
         | RunStarted
         | RunStatus
@@ -1324,6 +1420,7 @@ class Model(
         | FsRescanRequired
         | FsTransferProgress
         | GitOperationProgress
+        | ThreadUpdated
     ]
 ):
     root: (
@@ -1419,6 +1516,12 @@ class Model(
         | GitFetch
         | GitPull
         | GitPush
+        | ListThreads
+        | SearchThreads
+        | UpdateThread
+        | ListThreadDescendants
+        | ExportThread
+        | PurgeThreads
         | Initialized
         | RunStarted
         | RunStatus
@@ -1444,4 +1547,5 @@ class Model(
         | FsRescanRequired
         | FsTransferProgress
         | GitOperationProgress
+        | ThreadUpdated
     )

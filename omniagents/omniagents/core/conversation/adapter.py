@@ -52,7 +52,10 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ProjectedThread",
     "backfill_thread",
+    "is_turn_boundary",
+    "is_user_row",
     "project_thread",
+    "truncate_history_at_user_row",
 ]
 
 #: The OmniAgents-internal marker compaction writes onto its checkpoint
@@ -113,6 +116,80 @@ def _summary_text(item: Dict[str, Any]) -> str:
                 parts.append(entry["text"])
         return "\n".join(parts)
     return ""
+
+
+def is_user_row(raw: Any) -> bool:
+    """Whether a raw history row is a user message.
+
+    Two consumers, and they mean subtly different things by it:
+
+    * The legacy **projection** treats it as a turn boundary — legacy
+      history carries no run correlation, so a user message is the only
+      signal in the rows that a new run began.
+    * The fork **truncation** treats it as what it literally is: one row
+      that corresponds one-to-one with one ``user_message`` item.
+
+    Those coincide for a thread whose every turn has exactly one user
+    message, and diverge the moment ``send_user_message`` appends a
+    mid-run one. The truncation therefore counts USER ROWS against USER
+    MESSAGE ITEMS — never against turns — so the two sequences cannot
+    drift. See ``truncate_history_at_user_row``.
+    """
+    if not isinstance(raw, dict):
+        return False
+    return (raw.get("type") or "message") == "message" and raw.get("role") == "user"
+
+
+#: Retained name for the projection's reading of the same predicate.
+is_turn_boundary = is_user_row
+
+
+def truncate_history_at_user_row(
+    history: Iterable[Dict[str, Any]],
+    user_row_count: int,
+    *,
+    include_next_row: bool = False,
+) -> List[Dict[str, Any]]:
+    """The prefix of *history* holding the first *user_row_count* user rows.
+
+    Used by fork-from-turn: the child's DOMAIN rows are truncated at the
+    branch point, and its raw history — which is what the model actually
+    receives as context on the next run — has to stop at the same place.
+    A child whose transcript ends at turn 3 while its context still holds
+    turns 4-9 is not a branch, it is a mislabelled copy.
+
+    The unit is the **user row**, not the turn, and that distinction is the
+    whole correctness argument. ``send_user_message`` appends a
+    ``role: "user"`` history row *inside* a running turn, so a thread can
+    hold more user rows than turns; counting turns and cutting on user rows
+    then lands the knife in the wrong place and the child displays a turn
+    it does not have in context. A user row corresponds one-to-one with a
+    ``user_message`` ITEM — including the mid-run ones — so counting those
+    is the correspondence that actually holds.
+
+    ``user_row_count <= 0`` with ``include_next_row`` false yields an empty
+    history. Rows before the first user row (a system preamble, or an
+    assistant-role wakeup that opened the conversation) belong to the first
+    segment.
+
+    ``include_next_row`` additionally keeps the single row that OPENS
+    segment ``user_row_count + 1``. That is the exact history for a branch
+    taken AT a user message ("re-ask from here"): the child holds
+    everything before the question, plus the question, and none of the
+    answer.
+    """
+    rows = [row for row in history if isinstance(row, dict)]
+    # No early return for ``user_row_count == 0``: a thread whose turns were
+    # all opened by assistant-role wakeups has NO user rows at all, and for
+    # it "keep everything up to the 1st user row" means keep everything.
+    # Short-circuiting to [] would hand such a fork an empty context.
+    seen = 0
+    for index, row in enumerate(rows):
+        if is_user_row(row):
+            seen += 1
+            if seen > user_row_count:
+                return rows[: index + 1] if include_next_row else rows[:index]
+    return rows
 
 
 def project_thread(
@@ -200,10 +277,12 @@ def project_thread(
         item_type = raw.get("type") or "message"
         role = raw.get("role")
 
-        if item_type == "message" and role == "user":
+        if is_turn_boundary(raw):
             # Turn boundary: legacy history has no run_id, and a user
             # message is the only signal in the raw rows that a new run
-            # began. Documented as inference (source="adapter").
+            # began. Documented as inference (source="adapter"). The
+            # predicate is shared with ``truncate_history_at_user_row`` so a
+            # fork cannot cut somewhere the projection would not.
             open_turn()
             text = _message_text(raw.get("content"))
             if title is None:

@@ -41,6 +41,7 @@ export interface ArchiveSessionParams {
 }
 export interface DeleteSessionParams {
   session_id: string;
+  cascade?: boolean;
 }
 export interface GetUserHistoryParams {
   limit?: number;
@@ -217,6 +218,8 @@ export interface GetItemParams {
 export interface ForkSessionParams {
   session_id: string;
   new_session_id?: string;
+  from_item_id?: string;
+  from_turn_id?: string;
 }
 export interface SetSessionHoldParams {
   session_id: string;
@@ -450,6 +453,56 @@ export interface GitPushParams {
   set_upstream?: boolean;
   confirmation_token?: string;
 }
+export interface ListThreadsParams {
+  status?: string;
+  pinned?: boolean;
+  source?: string;
+  model?: string;
+  parent_thread_id?: string;
+  created_after?: number;
+  created_before?: number;
+  updated_after?: number;
+  updated_before?: number;
+  limit?: number;
+  cursor?: string;
+  order?: string;
+}
+export interface SearchThreadsParams {
+  query: string;
+  status?: string;
+  pinned?: boolean;
+  source?: string;
+  model?: string;
+  parent_thread_id?: string;
+  created_after?: number;
+  created_before?: number;
+  updated_after?: number;
+  updated_before?: number;
+  limit?: number;
+  cursor?: string;
+}
+export interface UpdateThreadParams {
+  thread_id: string;
+  title?: string;
+  pinned?: boolean;
+  status?: string;
+  metadata?: Record<string, unknown>;
+}
+export interface ListThreadDescendantsParams {
+  thread_id: string;
+  max_depth?: number;
+  limit?: number;
+}
+export interface ExportThreadParams {
+  thread_id: string;
+  limit?: number;
+  cursor?: string;
+  include_descendants?: boolean;
+}
+export interface PurgeThreadsParams {
+  retention_days: number;
+  dry_run?: boolean;
+}
 export interface InitializedParams {
 }
 export interface RunStartedParams {
@@ -637,12 +690,13 @@ export interface McpServerStatusChangedParams {
 export interface SessionForkedParams {
   session_id: string;
   new_session_id: string;
+  from_item_id?: string;
   seq?: number;
   stream_id?: string;
 }
 export interface SessionVariablesChangedParams {
   session_id: string;
-  changed: Record<string, unknown>;
+  changed: unknown[];
   variables: Record<string, unknown>;
   seq?: number;
   stream_id?: string;
@@ -677,6 +731,14 @@ export interface GitOperationProgressParams {
   operation: string;
   phase: string;
   detail?: Record<string, unknown>;
+  seq?: number;
+  stream_id?: string;
+}
+export interface ThreadUpdatedParams {
+  thread_id: string;
+  changed: unknown[];
+  thread: Record<string, unknown>;
+  cascaded_thread_ids?: unknown[];
   seq?: number;
   stream_id?: string;
 }
@@ -773,6 +835,12 @@ export interface RpcMethodMap {
   "git_fetch": { params: GitFetchParams; result: Record<string, unknown> };
   "git_pull": { params: GitPullParams; result: Record<string, unknown> };
   "git_push": { params: GitPushParams; result: Record<string, unknown> };
+  "list_threads": { params: ListThreadsParams; result: Record<string, unknown> };
+  "search_threads": { params: SearchThreadsParams; result: Record<string, unknown> };
+  "update_thread": { params: UpdateThreadParams; result: Record<string, unknown> };
+  "list_thread_descendants": { params: ListThreadDescendantsParams; result: Record<string, unknown> };
+  "export_thread": { params: ExportThreadParams; result: Record<string, unknown> };
+  "purge_threads": { params: PurgeThreadsParams; result: Record<string, unknown> };
 }
 export interface RpcNotificationMap {
   "run_started": RunStartedParams;
@@ -799,6 +867,7 @@ export interface RpcNotificationMap {
   "fs_rescan_required": FsRescanRequiredParams;
   "fs_transfer_progress": FsTransferProgressParams;
   "git_operation_progress": GitOperationProgressParams;
+  "thread_updated": ThreadUpdatedParams;
 }
 export interface RpcClientNotificationMap {
   "initialized": InitializedParams;

@@ -269,6 +269,10 @@ class SqliteEventLogStore:
         if directory:
             os.makedirs(directory, exist_ok=True)
         conn = sqlite3.connect(path)
+        # The journal stores replayable notification payloads verbatim —
+        # the same conversation text the history holds — so deleting it has
+        # to zero the pages rather than just unlink the rows.
+        conn.execute("PRAGMA secure_delete = ON")
         conn.execute(
             "CREATE TABLE IF NOT EXISTS event_streams ("
             "session_id TEXT PRIMARY KEY,"

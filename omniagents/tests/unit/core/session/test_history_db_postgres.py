@@ -256,7 +256,9 @@ def test_purge_old_sessions_respects_hold(pg_history_db):
         conn.commit()
 
     purged = history_db.purge_old_sessions(7, project_slug="p", agent_slug="a")
-    assert purged == 1
+    # The purged IDS, not a count: a caller told "1 session was purged"
+    # cannot go and clear that session's domain rows and replay journal.
+    assert purged == [purgeable]
     assert (
         history_db.get_archived(held, project_slug="p", agent_slug="a") is False
     )  # held survives

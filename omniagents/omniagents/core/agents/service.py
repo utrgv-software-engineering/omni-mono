@@ -59,6 +59,8 @@ from omniagents.workspace.base import Workspace
 from omniagents.workspace.host import HostWorkspace
 from omniagents.core.providers.accounts import AccountManager
 from omniagents.core.providers.auth.base import UserIdentity
+from omniagents.core.conversation import service as _conversation_service_module
+from omniagents.core.conversation.model import UNSCOPED, ThreadFilter
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.approval import configure_tool_approval
 from omniagents.core.session import Session, SessionManager
@@ -81,6 +83,43 @@ logger = logging.getLogger("omniagents.service")
 #: enforced but no principal resolved: it matches no row, so the listing is
 #: empty rather than unscoped.
 _NO_PRINCIPAL_SCOPE = "\x00-no-principal"
+
+#: Re-exported so ``update_thread``'s signature can default to it. The
+#: sentinel is what lets an omitted ``title`` mean "leave it alone" while an
+#: explicit ``null`` means "clear it" — the RPC layer dumps params with
+#: ``exclude_unset=True``, so an omitted field never reaches the handler.
+_ConversationUnset = _conversation_service_module._Unset
+_CONVERSATION_UNSET = _conversation_service_module.UNSET
+
+
+def _session_row_epoch(row: dict) -> float:
+    """Epoch seconds for a ``list_sessions`` row's creation time.
+
+    The listing reports ``created_at`` as the storage backend formats it
+    (a SQLite ``TIMESTAMP`` string, a Postgres datetime). Retention has to
+    compare it against a cutoff, and an unparseable value must read as
+    *recent* — a parse failure that read as "epoch 0" would make a dry run
+    propose deleting every session it could not decode.
+    """
+    from datetime import datetime, timezone
+
+    value = row.get("created_at")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    if isinstance(value, datetime):
+        moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return moment.timestamp()
+    if isinstance(value, str):
+        text = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return float("inf")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.timestamp()
+    return float("inf")
+
 
 # Configure file logging if requested
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
@@ -495,16 +534,21 @@ class AgentService(RpcMethodsBase):
             sec = getattr(self.spec, "security_config", None) or {}
             retention_days = (sec.get("sessions") or {}).get("retention_days", 0)
             if retention_days > 0:
-                from omniagents.core.session.history_db import purge_old_sessions
+                # Routed through the retention module, not straight at the
+                # history backend: the domain rows and the replay journal
+                # hold the same transcript, and a sweep that only cleared
+                # ``history`` was retaining exactly what it claimed to purge.
+                from omniagents.core.session.retention import purge_expired_sessions
 
-                purged = purge_old_sessions(
+                purged = purge_expired_sessions(
                     retention_days,
                     project_slug=project_slug,
                     agent_slug=agent_slug,
                 )
                 if purged:
                     print(
-                        f"Security: purged {purged} session(s) older than {retention_days} days"
+                        f"Security: purged {len(purged)} session(s) older than "
+                        f"{retention_days} days"
                     )
         except Exception:
             pass
@@ -3918,29 +3962,538 @@ class AgentService(RpcMethodsBase):
         _debug_rpc("get_item", {"thread_id": thread_id, "item_id": item_id})
         return self._conversation_service().get_item(thread_id, item_id)
 
-    async def fork_session(
-        self, session_id: str, *, new_session_id: str | None = None
+    # ------------------------------------------------------------------
+    #  Conversation organization & branching (tkt_eZldW-Gje6kn).
+    #
+    #  Listing, search, metadata, ancestry, export and retention over the
+    #  same canonical objects. See protocol.md § "Conversation
+    #  Organization, Search & Branching".
+    # ------------------------------------------------------------------
+
+    def _thread_filter(
+        self,
+        *,
+        status: str | None = None,
+        pinned: bool | None = None,
+        source: str | None = None,
+        model: str | None = None,
+        parent_thread_id: str | None = None,
+        created_after: float | None = None,
+        created_before: float | None = None,
+        updated_after: float | None = None,
+        updated_before: float | None = None,
+    ) -> ThreadFilter:
+        """Build the listing predicate, ownership scope already applied.
+
+        The scope is stamped HERE, in the one constructor both the listing
+        and the search go through, rather than being a parameter each
+        handler remembers to pass. A caller cannot ask for an unscoped
+        listing because there is no code path that builds one."""
+        from omniagents.core.conversation.model import ThreadStatus
+
+        parsed_status: ThreadStatus | None = None
+        if status is not None:
+            try:
+                parsed_status = ThreadStatus(status)
+            except ValueError as exc:
+                raise ValueError(f"Unknown thread status: {status}") from exc
+        # ``_listing_scope_user_id`` returns None for "do not scope" — the
+        # single-user and admin cases. Translate that into the explicit
+        # UNSCOPED sentinel HERE, at the one place a filter is built, so a
+        # missing scope can never be mistaken for a deliberate one
+        # downstream (ThreadFilter.user_id has no default).
+        scope = self._listing_scope_user_id()
+        return ThreadFilter(
+            user_id=UNSCOPED if scope is None else scope,
+            status=parsed_status,
+            pinned=pinned,
+            source=source,
+            model=model,
+            parent_thread_id=parent_thread_id,
+            created_after=created_after,
+            created_before=created_before,
+            updated_after=updated_after,
+            updated_before=updated_before,
+        )
+
+    def _descendant_access_predicate(self):
+        """``owner -> bool`` for the principal driving this request.
+
+        Built once, here, because this is the only layer that knows who is
+        calling. Handed to every cascade so acting on a descendant is an
+        ACCESS decision made deliberately, rather than the accident of an
+        integrity walk that is (correctly) owner-agnostic.
+        """
+        policy = self.authorization_policy
+        principal = self._current_principal()
+
+        def can_access(owner: str | None) -> bool:
+            return policy.can_access(principal, owner)
+
+        return can_access
+
+    def _thread_live_state(self, thread_id: str) -> dict:
+        """Runtime state a persisted thread row cannot know.
+
+        ``loaded`` / ``active`` / pending-attention counts live in the
+        process, not the store, and a sidebar that shows a stale "waiting
+        for your approval" badge is worse than one that shows none. Merged
+        into every listing entry so a client never has to correlate a
+        listing against a second live-state call.
+        """
+        sess = self._session_manager.get(thread_id)
+        if sess is None:
+            return {
+                "loaded": False,
+                "active": False,
+                "pending_attention": 0,
+                "attention": {
+                    "tool_approvals": 0,
+                    "mcp_approvals": 0,
+                    "elicitations": 0,
+                    "client_requests": 0,
+                },
+            }
+        attention = {
+            "tool_approvals": len(getattr(sess, "pending_tool_approvals", {}) or {}),
+            "mcp_approvals": len(getattr(sess, "pending_mcp_approvals", {}) or {}),
+            "elicitations": len(getattr(sess, "pending_elicitations", {}) or {}),
+            "client_requests": len(getattr(sess, "pending_client_requests", {}) or {}),
+        }
+        task = getattr(sess, "current_task", None)
+        return {
+            "loaded": True,
+            "active": task is not None and not task.done(),
+            "pending_attention": sum(attention.values()),
+            "attention": attention,
+        }
+
+    async def list_threads(
+        self,
+        status: str | None = None,
+        pinned: bool | None = None,
+        source: str | None = None,
+        model: str | None = None,
+        parent_thread_id: str | None = None,
+        created_after: float | None = None,
+        created_before: float | None = None,
+        updated_after: float | None = None,
+        updated_before: float | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        order: str | None = None,
     ) -> dict:  # noqa: D401
+        """Keyset-paginated thread listing, filtered and self-scoped.
+
+        Authorization: **globally safe** in the ``list_sessions`` sense —
+        the result is scoped to the caller's own threads inside the SQL
+        that applies ``LIMIT``, so it names no resource and leaks none.
+        """
+        _debug_rpc(
+            "list_threads",
+            {
+                "status": status,
+                "pinned": pinned,
+                "source": source,
+                "model": model,
+                "parent_thread_id": parent_thread_id,
+                "limit": limit,
+                "cursor": cursor,
+                "order": order,
+            },
+        )
+        result = self._conversation_service().list_threads(
+            thread_filter=self._thread_filter(
+                status=status,
+                pinned=pinned,
+                source=source,
+                model=model,
+                parent_thread_id=parent_thread_id,
+                created_after=created_after,
+                created_before=created_before,
+                updated_after=updated_after,
+                updated_before=updated_before,
+            ),
+            limit=limit,
+            cursor=cursor,
+            descending=(order != "asc"),
+        )
+        for thread in result["threads"]:
+            thread.update(self._thread_live_state(thread["thread_id"]))
+        return result
+
+    async def search_threads(
+        self,
+        query: str,
+        status: str | None = None,
+        pinned: bool | None = None,
+        source: str | None = None,
+        model: str | None = None,
+        parent_thread_id: str | None = None,
+        created_after: float | None = None,
+        created_before: float | None = None,
+        updated_after: float | None = None,
+        updated_before: float | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict:  # noqa: D401
+        """Full-text search over the caller's own conversations.
+
+        Same authorization posture as ``list_threads``: the ownership scope
+        is part of the SQL predicate the match is drawn under, so a query
+        cannot surface another principal's transcript — not even as a
+        preview snippet.
+        """
+        _debug_rpc("search_threads", {"query": query, "limit": limit})
+        result = self._conversation_service().search_threads(
+            query,
+            thread_filter=self._thread_filter(
+                status=status,
+                pinned=pinned,
+                source=source,
+                model=model,
+                parent_thread_id=parent_thread_id,
+                created_after=created_after,
+                created_before=created_before,
+                updated_after=updated_after,
+                updated_before=updated_before,
+            ),
+            limit=limit,
+            cursor=cursor,
+        )
+        for entry in result["results"]:
+            entry["thread"].update(self._thread_live_state(entry["thread_id"]))
+        return result
+
+    async def list_thread_descendants(
+        self,
+        thread_id: str,
+        max_depth: int | None = None,
+        limit: int | None = None,
+    ) -> dict:  # noqa: D401
+        """The fork subtree below *thread_id*, plus its own branch point."""
+        _debug_rpc(
+            "list_thread_descendants",
+            {"thread_id": thread_id, "max_depth": max_depth, "limit": limit},
+        )
+        result = self._conversation_service().list_descendants(
+            thread_id, max_depth=max_depth, limit=limit
+        )
+        for child in result["descendants"]:
+            child.update(self._thread_live_state(child["thread_id"]))
+        return result
+
+    async def update_thread(
+        self,
+        thread_id: str,
+        title: Any = _CONVERSATION_UNSET,
+        pinned: bool | None = None,
+        status: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict:  # noqa: D401
+        """Rename, pin, archive or annotate a conversation.
+
+        ``title`` distinguishes "absent" from an explicit ``null`` (which
+        clears it); ``metadata`` merges, with a ``null`` value removing a
+        key. Archiving cascades to the fork subtree — see
+        ``ConversationService.set_status`` for why that policy and not
+        another.
+
+        Every change is broadcast as ``thread_updated`` to the connected
+        clients allowed to see it, because the surface that has to stay
+        consistent is the *listing* in every open column, and those columns
+        are attached to other sessions or to none at all.
+        """
+        _debug_rpc(
+            "update_thread",
+            {
+                "thread_id": thread_id,
+                "pinned": pinned,
+                "status": status,
+                "has_title": not isinstance(title, _ConversationUnset),
+                "metadata_keys": sorted(metadata) if metadata else [],
+            },
+        )
+        service = self._conversation_service()
+        result = service.update_thread(
+            thread_id,
+            can_access=self._descendant_access_predicate(),
+            title=title,
+            pinned=pinned,
+            status=status,
+            metadata=metadata,
+        )
+        if "status" in result["changed"]:
+            # The legacy ``sessions.archived`` flag and ``Thread.status``
+            # are documented as one fact. Two writers of one fact drift, so
+            # the RPC layer that owns the session objects mirrors it for the
+            # thread AND every descendant the cascade touched.
+            archived = result["thread"]["status"] == "archived"
+            for target in [thread_id, *result["cascaded_thread_ids"]]:
+                self._mirror_archive_flag(target, archived)
+        if result["changed"]:
+            await self._broadcast_thread_updated(
+                result["thread"], result["changed"], result["cascaded_thread_ids"]
+            )
+        return result
+
+    def _mirror_archive_flag(self, session_id: str, archived: bool) -> None:
+        """Keep ``sessions.archived`` and the live Session in step."""
+        from omniagents.core.session import history_db
+
+        try:
+            history_db.set_archived(
+                session_id,
+                archived,
+                project_slug=getattr(self._session_manager, "_project_slug", None),
+                agent_slug=getattr(self._session_manager, "_agent_slug", None),
+            )
+        except Exception:
+            logger.exception(
+                "session archive flag not mirrored", extra={"session": session_id}
+            )
+        sess = self._session_manager.get(session_id)
+        if sess is not None:
+            sess.archived = archived
+
+    async def _broadcast_thread_updated(
+        self,
+        thread: dict,
+        changed: list[str],
+        cascaded: list[str],
+    ) -> None:
+        """Push a thread-metadata change to every channel entitled to it.
+
+        Connection-wide (the ``account_changed`` mechanism), not
+        session-scoped: a renamed or archived thread has to disappear from
+        the sidebar of columns that are *not* displaying it, and a
+        session-scoped broadcast reaches only the one column that already
+        knows.
+
+        Not journaled, for the same reason ``account_changed`` is not:
+        thread metadata is current state, not conversation history, and
+        replaying a stale rename after a reconnect would be wrong. A
+        reconnecting client refetches ``list_threads``.
+
+        **Per-channel authorization.** A connection-wide fan-out of
+        per-owner data is a leak unless each recipient is checked: the
+        payload carries a title, which is derived from the user's first
+        message. Every channel is tested against the thread's owner with
+        the same policy the request path uses.
+        """
+        payload = {
+            "thread_id": thread["thread_id"],
+            "changed": list(changed),
+            "thread": thread,
+            "cascaded_thread_ids": list(cascaded),
+        }
+        _debug_rpc("thread_updated", {"thread_id": thread["thread_id"]})
+        policy = self.authorization_policy
+        owner = thread.get("user_id")
+        for ch in list(self._connected_channels):
+            if not policy.can_access(getattr(ch, "principal", None), owner):
+                continue
+            try:
+                await ch.async_call("thread_updated", payload)
+            except Exception:
+                logger.debug("thread_updated broadcast failed", exc_info=True)
+
+    async def export_thread(
+        self,
+        thread_id: str,
+        limit: int | None = None,
+        cursor: str | None = None,
+        include_descendants: bool | None = None,
+    ) -> dict:  # noqa: D401
+        """Export a conversation's canonical objects, page by page.
+
+        Exports the domain objects rather than raw history so approvals,
+        elicitations and artifacts — which never reach the history table —
+        are in the export. Iterate ``next_cursor`` until it is null; there
+        is no silent cap.
+        """
+        _debug_rpc(
+            "export_thread",
+            {
+                "thread_id": thread_id,
+                "limit": limit,
+                "include_descendants": include_descendants,
+            },
+        )
+        return self._conversation_service().export_thread(
+            thread_id,
+            limit=limit,
+            cursor=cursor,
+            include_descendants=bool(include_descendants),
+        )
+
+    async def purge_threads(
+        self, retention_days: int, dry_run: bool | None = None
+    ) -> dict:  # noqa: D401
+        """Apply a retention window: delete conversations older than N days.
+
+        Deletes from EVERY store that holds the transcript — history, the
+        canonical domain rows (and their search index) and the durable
+        replay journal. Sessions under legal hold (``set_session_hold``) are
+        never purged.
+
+        ``dry_run`` reports what the same window would remove without
+        removing it. Irreversible bulk deletion gets a preview.
+
+        Authorization: **global-mutating**. The window is a deployment-wide
+        policy, not a per-principal preference, and one principal running it
+        would destroy other principals' conversations — so, following the
+        ``write_config``/``disable_tool`` precedent, it is refused outright
+        in enforced multi-user deployments and available in the single
+        principal (desktop/local) topology it exists for.
+        """
+        _debug_rpc(
+            "purge_threads", {"retention_days": retention_days, "dry_run": dry_run}
+        )
+        project_slug = getattr(self._session_manager, "_project_slug", None)
+        agent_slug = getattr(self._session_manager, "_agent_slug", None)
+        days = int(retention_days)
+        if days <= 0:
+            return {"purged_thread_ids": [], "count": 0, "dry_run": bool(dry_run)}
+        if dry_run:
+            from omniagents.core.session import history_db
+
+            cutoff = time.time() - days * 86400.0
+            # ``list_sessions`` keys the id as "id" (the wire shape), not
+            # "session_id".
+            candidates = [
+                row["id"]
+                for row in history_db.list_sessions(
+                    project_slug=project_slug, agent_slug=agent_slug
+                )
+                if _session_row_epoch(row) < cutoff
+                and not history_db.get_session_hold(
+                    row["id"],
+                    project_slug=project_slug,
+                    agent_slug=agent_slug,
+                )
+            ]
+            return {
+                "purged_thread_ids": candidates,
+                "count": len(candidates),
+                "dry_run": True,
+            }
+        from omniagents.core.session.retention import purge_expired_sessions
+
+        purged = purge_expired_sessions(
+            days, project_slug=project_slug, agent_slug=agent_slug
+        )
+        for session_id in purged:
+            self._session_manager.drop(session_id)
+        return {
+            "purged_thread_ids": purged,
+            "count": len(purged),
+            "dry_run": False,
+        }
+
+    async def fork_session(
+        self,
+        session_id: str,
+        *,
+        new_session_id: str | None = None,
+        from_item_id: str | None = None,
+        from_turn_id: str | None = None,
+    ) -> dict:  # noqa: D401
+        """Branch a conversation, optionally from a point inside it.
+
+        With neither ``from_item_id`` nor ``from_turn_id`` this is the
+        historical whole-transcript fork. With either, the child contains
+        exactly the parent's items **up to and including** the branch point
+        — and its raw history is truncated to the same turn, so the model
+        the child resumes with sees the same conversation the transcript
+        shows. A branch whose context runs past its visible transcript is
+        not a branch.
+
+        ``from_turn_id`` resolves to that turn's last item and refuses a
+        turn that is still running.
+        """
         _debug_rpc(
             "fork_session",
-            {"session_id": session_id, "new_session_id": new_session_id},
+            {
+                "session_id": session_id,
+                "new_session_id": new_session_id,
+                "from_item_id": from_item_id,
+                "from_turn_id": from_turn_id,
+            },
         )
         sess: Session = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
         )
+        service = self._conversation_service()
+        branch_item = None
+        history: list[dict] | None = None
+        if from_item_id or from_turn_id:
+            # Materialize a legacy thread first: without domain rows there
+            # are no item/turn ids to name a branch point with, and
+            # answering "unknown item" for a session that plainly has one
+            # would be a lie about the data rather than about the request.
+            service.ensure_thread(session_id)
+            branch_item = service.resolve_branch_point(
+                session_id, from_item_id=from_item_id, from_turn_id=from_turn_id
+            )
+            if branch_item is not None:
+                from omniagents.core.conversation.adapter import (
+                    truncate_history_at_user_row,
+                )
+
+                # The child's raw history is the model's context, so it is
+                # cut at the SAME point as its transcript. Counted in USER
+                # ROWS — one per user_message item, mid-run ones included —
+                # never in turns: send_user_message appends a user row
+                # inside a running turn, so a turn count and a user-row cut
+                # land in different places.
+                user_rows, include_next = service.history_cut_for(
+                    session_id, branch_item
+                )
+                history = truncate_history_at_user_row(
+                    sess.history,
+                    user_rows,
+                    include_next_row=include_next,
+                )
         new_sess = self._session_manager.fork_session(
-            sess, new_session_id=new_session_id
+            sess, new_session_id=new_session_id, history=history
         )
+        # Materialize the child's domain rows HERE rather than relying on
+        # the notification below. ``_broadcast_session`` is best-effort, so
+        # the recorder hook is a reachable no-op — and a truncated fork that
+        # silently fell back to the whole-history projection would produce a
+        # child holding conversation the user branched away from.
+        # ``record_fork`` is idempotent, so the notification path re-running
+        # it is a no-op.
+        self._record_conversation(
+            sess,
+            lambda rec: rec.record_fork(
+                sess.id,
+                new_sess.id,
+                up_to_seq=branch_item.seq if branch_item is not None else None,
+            ),
+        )
+        payload: dict[str, Any] = {
+            "session_id": sess.id,
+            "new_session_id": new_sess.id,
+        }
+        if branch_item is not None:
+            payload["from_item_id"] = branch_item.item_id
         try:
             await self._broadcast_session(
-                sess,
-                "session_forked",
-                {"session_id": sess.id, "new_session_id": new_sess.id},
-                track_live=True,
+                sess, "session_forked", payload, track_live=True
             )
         except Exception:
-            pass
-        return {"session_id": sess.id, "new_session_id": new_sess.id}
+            logger.exception(
+                "session_forked broadcast failed", extra={"session": sess.id}
+            )
+        return {
+            "session_id": sess.id,
+            "new_session_id": new_sess.id,
+            "branched_from_item_id": (
+                branch_item.item_id if branch_item is not None else None
+            ),
+        }
 
     async def list_sessions(
         self, limit: int | None = None, offset: int = 0
@@ -4761,17 +5314,37 @@ class AgentService(RpcMethodsBase):
             logger.exception("notification flusher failed", extra={"session": sess.id})
 
     async def archive_session(self, session_id: str) -> bool:  # noqa: D401
-        """Archive *session_id* so clients can hide it."""
+        """Archive *session_id* so clients can hide it.
+
+        Archiving **cascades to the fork subtree** — the same policy
+        ``update_thread(status="archived")`` applies, routed through the
+        same code, because two methods that set one flag with two different
+        descendant semantics is how a client ends up with branches that
+        reappear depending on which button was pressed.
+        """
         _debug_rpc("archive_session", {"session_id": session_id})
         ok = self._session_manager.archive_session(session_id)
         if ok:
+            cascaded = self._cascade_archive(session_id, True)
+            for target in cascaded:
+                self._mirror_archive_flag(target, True)
+            # Archive is a metadata change like any other, and this is the
+            # STABLE path shipped clients actually call — so it has to reach
+            # the other columns' listings too. Broadcasting only from
+            # update_thread would have left the acceptance criterion
+            # ("multi-column navigation stays consistent after metadata
+            # changes") satisfied on the experimental path and broken on the
+            # one in use.
+            try:
+                thread = self._conversation_service().get_thread(session_id)
+            except Exception:
+                thread = None
+            if thread is not None:
+                await self._broadcast_thread_updated(
+                    thread, ["status"], [t for t in cascaded if t != session_id]
+                )
             sess = self.get_session(session_id)
             if sess is not None:
-                # Keep Thread.status in step with the session's archive
-                # flag; the mapping is documented, so it has to be live.
-                self._record_conversation(
-                    sess, lambda rec: rec.record_archived(session_id, True)
-                )
                 # Signal MCP lifecycle task to shutdown
                 shutdown_event = getattr(sess, "_mcp_shutdown", None)
                 if shutdown_event:
@@ -4805,23 +5378,191 @@ class AgentService(RpcMethodsBase):
         self.filesystem.cleanup_session(session_id)
         return ok
 
-    async def delete_session(self, session_id: str) -> bool:  # noqa: D401
+    def _cascade_archive(self, session_id: str, archived: bool) -> list[str]:
+        """Move a thread and its fork subtree to the archived/active status.
+
+        Returns every id whose status moved, the named thread included, so
+        the caller can mirror the legacy ``sessions.archived`` flag for all
+        of them. Best-effort: an archive must not fail because the domain
+        store is momentarily unavailable.
+        """
+        from omniagents.core.conversation.model import ThreadStatus
+
+        sess = self.get_session(session_id)
+        if sess is not None:
+            # Goes through the recorder because it MATERIALIZES the thread:
+            # archiving a session that has never been read as a domain
+            # object still has to record the status, and the recorder is the
+            # component that knows how to create the row from the session.
+            self._record_conversation(
+                sess, lambda rec: rec.record_archived(session_id, archived)
+            )
+        status = ThreadStatus.ARCHIVED if archived else ThreadStatus.ACTIVE
+        try:
+            outcome = self._conversation_service().set_status(
+                session_id,
+                status,
+                # archive_session is the STABLE path shipped clients call,
+                # so it needs the same access scoping update_thread got —
+                # otherwise the cascade writes through to another
+                # principal's Thread.status, their sessions.archived row
+                # and their live Session.archived.
+                can_access=self._descendant_access_predicate(),
+            )
+        except Exception:
+            logger.exception(
+                "thread archive status not cascaded", extra={"session": session_id}
+            )
+            return [session_id]
+        if outcome.skipped:
+            logger.info(
+                "archive cascade skipped %s descendant thread(s) the caller "
+                "cannot access",
+                outcome.skipped,
+                extra={"session": session_id},
+            )
+        return [session_id, *outcome.moved]
+
+    async def delete_session(
+        self, session_id: str, cascade: bool | None = None
+    ) -> bool:  # noqa: D401
         """Permanently delete a session and all its data.
 
-        This deletes:
-        - The session record
-        - All message history
+        This deletes, for every session removed:
+        - The session record and all message history
         - All audio metadata
-        - Cleans up any active MCP servers and terminal sessions
+        - The canonical conversation rows and their search index
+        - The durable replay journal
+        - Any active MCP servers and terminal sessions
+
+        **Descendant policy: REFUSE, unless ``cascade`` is set.** A fork
+        records ``parent_thread_id`` pointing at this thread. Deleting the
+        parent while its branches remain leaves every child advertising a
+        branch point that no longer resolves — ``get_thread`` on the child
+        reports an ancestor the server cannot produce, and an ancestry read
+        on the missing parent is unanswerable. Orphaning is therefore not
+        on the table: a protocol that documents ``parent_thread_id`` as a
+        real relationship cannot also permit deletes that break it.
+
+        Cascading is not the default either, because delete is
+        irreversible and the branches are conversations the caller may not
+        have in view. So the refusal is typed (``-32111``) and carries the
+        blocking ids, and ``cascade=true`` is the one-parameter opt-in that
+        removes the whole subtree, children first.
+
+        (Archive takes the opposite default — it cascades — because it is
+        reversible. See ``archive_session``.)
 
         Args:
             session_id: The session ID to delete
+            cascade: Also delete every forked descendant of this session
 
         Returns:
-            True if the session was deleted, False if it didn't exist
+            True if the named session was deleted, False if it didn't exist
         """
-        _debug_rpc("delete_session", {"session_id": session_id})
+        _debug_rpc("delete_session", {"session_id": session_id, "cascade": cascade})
 
+        try:
+            # UNBOUNDED and owner-agnostic. A capped walk used as a delete
+            # guard answers "these are all the children" when it is not, and
+            # the caller then orphans the overflow; an owner-scoped one
+            # cannot see a descendant owned by someone else, or by nobody on
+            # a partially backfilled shard, and lets a plain delete orphan it
+            # with no error at all.
+            descendants = self._conversation_service().descendant_owners(session_id)
+        except Exception:
+            logger.exception(
+                "descendant lookup failed; refusing to delete",
+                extra={"session": session_id},
+            )
+            # Fail closed: an unanswerable descendant lookup must not read
+            # as "no descendants" and silently orphan a subtree.
+            raise
+        descendant_ids = [child for child, _ in descendants]
+        can_access = self._descendant_access_predicate()
+        # The guard COUNTS every descendant (integrity) but only NAMES the
+        # ones the caller may read: the owner-agnostic walk must not become
+        # a side channel for the ids of threads that
+        # ``list_thread_descendants`` deliberately hides.
+        visible = [child for child, owner in descendants if can_access(owner)]
+        if descendant_ids and not cascade:
+            raise _conversation_service_module.ThreadHasDescendants(
+                session_id, len(descendant_ids), visible
+            )
+
+        if descendant_ids:
+            # A cascade ACTS on the descendants, so now ownership matters:
+            # the guard above is an integrity question, this is an access
+            # one. Refusing outright (rather than skipping the foreign ones)
+            # keeps the two possible outcomes honest — everything goes, or
+            # nothing does. Archive takes the other branch and skips,
+            # because it is reversible; see ConversationService.set_status.
+            foreign = len(descendant_ids) - len(visible)
+            if foreign:
+                raise AuthorizationDenied(
+                    f"Cannot cascade-delete {session_id}: "
+                    f"{foreign} descendant thread(s) belong to another "
+                    "principal",
+                    resource="thread",
+                    # The NAMED thread, never a foreign descendant's id.
+                    resource_id=session_id,
+                )
+
+        # Legal hold is checked for the WHOLE subtree before anything is
+        # deleted. The history backend raises on a held session, but a
+        # cascade only reaches it after the branches are already gone — so
+        # a held parent produced a failed call and permanently destroyed
+        # data. A hold that takes effect after the deletion is not a hold.
+        held = self._sessions_on_legal_hold([session_id, *descendant_ids])
+        if held:
+            raise _conversation_service_module.ThreadOnLegalHold(session_id, held)
+
+        # Deepest first, so a parent is never removed before a child that
+        # still points at it — an interrupted cascade then leaves a shorter
+        # valid chain rather than a broken one.
+        for child in descendant_ids:
+            await self._delete_one_session(child)
+        deleted = await self._delete_one_session(session_id)
+        # Once for the whole operation, not once per row: the cost is
+        # proportional to the index, and a 500-thread cascade must not pay
+        # it 500 times.
+        from omniagents.core.session.retention import compact_conversation_index
+
+        compact_conversation_index(
+            project_slug=getattr(self._session_manager, "_project_slug", None),
+            agent_slug=getattr(self._session_manager, "_agent_slug", None),
+        )
+        return deleted
+
+    def _sessions_on_legal_hold(self, session_ids: list[str]) -> list[str]:
+        """Which of *session_ids* are under legal hold. Fails CLOSED.
+
+        A hold lookup that cannot answer reports the session as held: the
+        alternative is deleting data the deployment marked undeletable
+        because a storage read hiccupped.
+        """
+        from omniagents.core.session import history_db
+
+        project_slug = getattr(self._session_manager, "_project_slug", None)
+        agent_slug = getattr(self._session_manager, "_agent_slug", None)
+        held: list[str] = []
+        for session_id in session_ids:
+            try:
+                on_hold = history_db.get_session_hold(
+                    session_id, project_slug=project_slug, agent_slug=agent_slug
+                )
+            except Exception:
+                logger.exception(
+                    "legal hold lookup failed; treating the session as held",
+                    extra={"session": session_id},
+                )
+                on_hold = True
+            if on_hold:
+                held.append(session_id)
+        return held
+
+    async def _delete_one_session(self, session_id: str) -> bool:
+        """Delete exactly one session from every store that holds it."""
         # First, cleanup any active resources (similar to archive)
         sess = self.get_session(session_id)
         if sess is not None:
@@ -4860,24 +5601,22 @@ class AgentService(RpcMethodsBase):
             session_id, project_slug=project_slug, agent_slug=agent_slug
         )
 
-        # Drop the canonical domain rows alongside the history. These hold
-        # the full transcript — the most privacy-sensitive data this
-        # protocol carries — so leaving them behind after an explicit delete
+        # Drop the canonical domain rows (and their search index) and the
+        # durable replay journal alongside the history. All three hold the
+        # full transcript — the most privacy-sensitive data this protocol
+        # carries — so leaving any of them behind after an explicit delete
         # would be a retention defect, not an oversight.
-        try:
-            from omniagents.core.conversation.store import get_conversation_store
+        #
+        # Routed through the retention module rather than reaching for
+        # ``sess.event_log``: the journal was previously destroyed only when
+        # the session happened to be LOADED in this process, so deleting a
+        # session the user had not opened left its journalled notification
+        # payloads — the same conversation, verbatim — on disk.
+        from omniagents.core.session.retention import purge_session_derivatives
 
-            get_conversation_store(project_slug, agent_slug).delete_thread(session_id)
-        except Exception:
-            logger.exception(
-                "conversation domain rows not deleted",
-                extra={"session": session_id},
-            )
-
-        # Delete the durable replay journal alongside the history.
-        event_log = getattr(sess, "event_log", None) if sess is not None else None
-        if event_log is not None:
-            event_log.destroy()
+        purge_session_derivatives(
+            session_id, project_slug=project_slug, agent_slug=agent_slug
+        )
 
         # Remove from in-memory session manager
         if sess is not None:

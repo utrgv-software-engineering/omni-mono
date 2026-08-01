@@ -340,6 +340,9 @@
     "delete_session": {
       "additionalProperties": false,
       "properties": {
+        "cascade": {
+          "type": "boolean"
+        },
         "session_id": {
           "type": "string"
         }
@@ -423,7 +426,10 @@
           "type": "integer"
         },
         "title": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "url": {
           "type": "string"
@@ -569,9 +575,37 @@
       "type": "object",
       "x-omni-stability": "experimental"
     },
+    "export_thread": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "include_descendants": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "fork_session": {
       "additionalProperties": false,
       "properties": {
+        "from_item_id": {
+          "type": "string"
+        },
+        "from_turn_id": {
+          "type": "string"
+        },
         "new_session_id": {
           "type": "string"
         },
@@ -1628,6 +1662,68 @@
       "type": "object",
       "x-omni-stability": "stable"
     },
+    "list_thread_descendants": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "type": "integer"
+        },
+        "max_depth": {
+          "type": "integer"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "list_threads": {
+      "additionalProperties": false,
+      "properties": {
+        "created_after": {
+          "type": "number"
+        },
+        "created_before": {
+          "type": "number"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "order": {
+          "type": "string"
+        },
+        "parent_thread_id": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "updated_after": {
+          "type": "number"
+        },
+        "updated_before": {
+          "type": "number"
+        }
+      },
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "list_turns": {
       "additionalProperties": false,
       "properties": {
@@ -2034,6 +2130,22 @@
       ],
       "type": "object"
     },
+    "purge_threads": {
+      "additionalProperties": false,
+      "properties": {
+        "dry_run": {
+          "type": "boolean"
+        },
+        "retention_days": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "retention_days"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "queue_changed": {
       "additionalProperties": false,
       "properties": {
@@ -2237,6 +2349,52 @@
       "type": "object",
       "x-omni-stability": "stable"
     },
+    "search_threads": {
+      "additionalProperties": false,
+      "properties": {
+        "created_after": {
+          "type": "number"
+        },
+        "created_before": {
+          "type": "number"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "model": {
+          "type": "string"
+        },
+        "parent_thread_id": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "query": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "updated_after": {
+          "type": "number"
+        },
+        "updated_before": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "send_user_message": {
       "additionalProperties": false,
       "properties": {
@@ -2276,6 +2434,9 @@
     "session_forked": {
       "additionalProperties": false,
       "properties": {
+        "from_item_id": {
+          "type": "string"
+        },
         "new_session_id": {
           "type": "string"
         },
@@ -2300,7 +2461,8 @@
       "additionalProperties": false,
       "properties": {
         "changed": {
-          "type": "object"
+          "items": {},
+          "type": "array"
         },
         "seq": {
           "type": "integer"
@@ -2449,6 +2611,38 @@
       ],
       "type": "object",
       "x-omni-stability": "stable"
+    },
+    "thread_updated": {
+      "additionalProperties": false,
+      "properties": {
+        "cascaded_thread_ids": {
+          "items": {},
+          "type": "array"
+        },
+        "changed": {
+          "items": {},
+          "type": "array"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "stream_id": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "object"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id",
+        "changed",
+        "thread"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
     },
     "token": {
       "additionalProperties": false,
@@ -2672,6 +2866,34 @@
       "required": [
         "session_id",
         "updates"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "update_thread": {
+      "additionalProperties": false,
+      "properties": {
+        "metadata": {
+          "type": "object"
+        },
+        "pinned": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "thread_id"
       ],
       "type": "object",
       "x-omni-stability": "experimental"
@@ -2983,6 +3205,24 @@
       "$ref": "#/$defs/git_push"
     },
     {
+      "$ref": "#/$defs/list_threads"
+    },
+    {
+      "$ref": "#/$defs/search_threads"
+    },
+    {
+      "$ref": "#/$defs/update_thread"
+    },
+    {
+      "$ref": "#/$defs/list_thread_descendants"
+    },
+    {
+      "$ref": "#/$defs/export_thread"
+    },
+    {
+      "$ref": "#/$defs/purge_threads"
+    },
+    {
       "$ref": "#/$defs/initialized"
     },
     {
@@ -3056,6 +3296,9 @@
     },
     {
       "$ref": "#/$defs/git_operation_progress"
+    },
+    {
+      "$ref": "#/$defs/thread_updated"
     }
   ]
 }

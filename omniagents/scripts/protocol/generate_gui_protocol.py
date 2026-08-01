@@ -150,6 +150,12 @@ REQUIRED_FIELDS = {
     "list_turns": ("thread_id",),
     "list_items": ("thread_id",),
     "get_item": ("thread_id", "item_id"),
+    "search_threads": ("query",),
+    "update_thread": ("thread_id",),
+    "list_thread_descendants": ("thread_id",),
+    "export_thread": ("thread_id",),
+    "purge_threads": ("retention_days",),
+    "thread_updated": ("thread_id", "changed", "thread"),
     "queue_changed": ("session_id", "depth", "items"),
     "session_forked": ("session_id", "new_session_id"),
     "session_variables_changed": ("session_id", "changed", "variables"),
@@ -188,7 +194,9 @@ OPTIONAL_FIELDS = {
         "safe_tool_overrides",
         "source",
     ),
-    "fork_session": ("new_session_id",),
+    "fork_session": ("new_session_id", "from_item_id", "from_turn_id"),
+    "delete_session": ("cascade",),
+    "session_forked": ("from_item_id",),
     "enqueue_notification": ("source", "safe_tool_overrides"),
     "report_incident": ("disable_tools", "disable_mcp_servers"),
     "export_session": ("redact",),
@@ -263,6 +271,38 @@ OPTIONAL_FIELDS = {
     "fs_upload_open": ("sha256", "overwrite"),
     "list_turns": ("limit", "cursor", "order"),
     "list_items": ("turn_id", "kinds", "limit", "cursor", "order"),
+    "list_threads": (
+        "status",
+        "pinned",
+        "source",
+        "model",
+        "parent_thread_id",
+        "created_after",
+        "created_before",
+        "updated_after",
+        "updated_before",
+        "limit",
+        "cursor",
+        "order",
+    ),
+    "search_threads": (
+        "status",
+        "pinned",
+        "source",
+        "model",
+        "parent_thread_id",
+        "created_after",
+        "created_before",
+        "updated_after",
+        "updated_before",
+        "limit",
+        "cursor",
+    ),
+    "update_thread": ("title", "pinned", "status", "metadata"),
+    "list_thread_descendants": ("max_depth", "limit"),
+    "export_thread": ("limit", "cursor", "include_descendants"),
+    "purge_threads": ("dry_run",),
+    "thread_updated": ("cascaded_thread_ids",),
     "git_list_repositories": ("path", "max_depth"),
     "git_status": ("include_untracked", "include_ignored", "paths"),
     "git_diff": ("mode", "paths", "context_lines", "from_rev", "to_rev"),
@@ -302,6 +342,8 @@ for _operation in OPERATIONS:
         )
 
 ARRAY_FIELDS = {
+    "cascaded_thread_ids",
+    "changed",
     "disable_mcp_servers",
     "disable_tools",
     "events",
@@ -314,6 +356,10 @@ ARRAY_FIELDS = {
 }
 BOOLEAN_FIELDS = {
     "allow_empty",
+    "cascade",
+    "dry_run",
+    "include_descendants",
+    "pinned",
     "always_approve",
     "amend",
     "create",
@@ -341,6 +387,8 @@ BOOLEAN_FIELDS = {
 }
 INTEGER_FIELDS = {
     "after_seq",
+    "max_depth",
+    "retention_days",
     "attempt",
     "context_lines",
     "depth",
@@ -362,8 +410,23 @@ INTEGER_FIELDS = {
     "turn",
     "version",
 }
+#: Request fields whose explicit JSON ``null`` is a MEANINGFUL value, not
+#: an absent one. ``update_thread.title: null`` clears the title (an
+#: omitted title leaves it alone), so the schema has to admit null or a
+#: strict validator rejects the documented clear signal.
+NULLABLE_STRING_FIELDS = {
+    "title",
+}
+NUMBER_FIELDS = {
+    "created_after",
+    "created_before",
+    "updated_after",
+    "updated_before",
+}
 OBJECT_FIELDS = {
     "account",
+    "metadata",
+    "thread",
     "args",
     "changed",
     "context",
@@ -476,6 +539,12 @@ RESULT_TYPES = {
     "git_fetch": ("dict[str, Any]", "Record<string, unknown>"),
     "git_pull": ("dict[str, Any]", "Record<string, unknown>"),
     "git_push": ("dict[str, Any]", "Record<string, unknown>"),
+    "list_threads": ("dict[str, Any]", "Record<string, unknown>"),
+    "search_threads": ("dict[str, Any]", "Record<string, unknown>"),
+    "update_thread": ("dict[str, Any]", "Record<string, unknown>"),
+    "list_thread_descendants": ("dict[str, Any]", "Record<string, unknown>"),
+    "export_thread": ("dict[str, Any]", "Record<string, unknown>"),
+    "purge_threads": ("dict[str, Any]", "Record<string, unknown>"),
 }
 
 IDENTITY_SCHEMA = {
@@ -1050,6 +1119,94 @@ PROTOCOL_ERRORS = {
             },
         },
     },
+    "ConversationSearchUnavailable": {
+        "code": -32110,
+        "message": "Conversation search is unavailable",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind"],
+            "properties": {"kind": {"const": "search_unavailable"}},
+        },
+    },
+    "ThreadHasDescendants": {
+        "code": -32111,
+        "message": "Thread has descendant threads",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": [
+                "kind",
+                "thread_id",
+                "descendant_thread_ids",
+                "descendant_count",
+                "truncated",
+            ],
+            "properties": {
+                "kind": {"const": "thread_has_descendants"},
+                "thread_id": {"type": "string"},
+                "descendant_thread_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "descendant_count": {"type": "integer"},
+                "truncated": {"type": "boolean"},
+            },
+        },
+    },
+    "ConversationForkPointInvalid": {
+        "code": -32112,
+        "message": "Invalid fork point",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind"],
+            "properties": {
+                "kind": {"const": "fork_point_invalid"},
+                "thread_id": {"type": "string"},
+                "turn_id": {"type": "string"},
+                "item_id": {"type": "string"},
+                # The first item AFTER the requested position that puts
+                # something into raw history — i.e. what makes the cut
+                # inexact. This is the field a client needs to retry, so it
+                # has to be in the contract.
+                "next_item_id": {"type": "string"},
+                "next_item_kind": {"type": "string"},
+                "status": {"type": "string"},
+            },
+        },
+    },
+    "ThreadOnLegalHold": {
+        "code": -32113,
+        "message": "Session is under legal hold",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "thread_id", "held_thread_ids", "held_count"],
+            "properties": {
+                "kind": {"const": "thread_on_legal_hold"},
+                "thread_id": {"type": "string"},
+                "held_thread_ids": {"type": "array", "items": {"type": "string"}},
+                "held_count": {"type": "integer"},
+            },
+        },
+    },
+    "ThreadMetadataInvalid": {
+        "code": -32114,
+        "message": "Thread metadata exceeds the permitted size",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind"],
+            "properties": {
+                "kind": {"const": "thread_metadata_invalid"},
+                "keys": {"type": "integer"},
+                "max_keys": {"type": "integer"},
+                "size": {"type": "integer"},
+                "max_size": {"type": "integer"},
+            },
+        },
+    },
     "TransportOverloaded": {
         "code": -32020,
         "message": "Transport overloaded",
@@ -1072,6 +1229,19 @@ PROTOCOL_ERRORS = {
 # The canonical conversation surface (tkt_a-QF2Oc4OAsD): requests that can
 # raise the -32080..-32082 typed errors.
 CONVERSATION_METHODS = frozenset({"get_thread", "list_turns", "list_items", "get_item"})
+
+# Conversation organization & branching (tkt_eZldW-Gje6kn): requests that
+# address ONE thread by id and can therefore raise -32080, plus the
+# organization-specific -32110..-32112 codes wired per method below.
+THREAD_SCOPED_ORGANIZATION_METHODS = frozenset(
+    {"update_thread", "list_thread_descendants", "export_thread"}
+)
+
+# Requests that accept an opaque pagination cursor and reject a malformed
+# one with -32082.
+CURSOR_METHODS = frozenset(
+    {"list_turns", "list_items", "list_threads", "search_threads", "export_thread"}
+)
 
 
 # The MCP management surface (tkt_kVK7F-iaL-OA): requests that can raise
@@ -1207,16 +1377,39 @@ def build_openrpc() -> dict:
                         {"$ref": "#/components/errors/FsWatchInvalid"},
                     ]
                 )
-            if operation.name in CONVERSATION_METHODS:
+            if (
+                operation.name in CONVERSATION_METHODS
+                or operation.name in THREAD_SCOPED_ORGANIZATION_METHODS
+                or operation.name == "fork_session"
+            ):
                 entry["errors"].append({"$ref": "#/components/errors/ThreadNotFound"})
-                if operation.name == "get_item":
-                    entry["errors"].append(
-                        {"$ref": "#/components/errors/ConversationItemNotFound"}
-                    )
-                if operation.name in ("list_turns", "list_items"):
-                    entry["errors"].append(
-                        {"$ref": "#/components/errors/ConversationCursorInvalid"}
-                    )
+            if operation.name in ("get_item", "fork_session"):
+                entry["errors"].append(
+                    {"$ref": "#/components/errors/ConversationItemNotFound"}
+                )
+            if operation.name in CURSOR_METHODS:
+                entry["errors"].append(
+                    {"$ref": "#/components/errors/ConversationCursorInvalid"}
+                )
+            if operation.name == "search_threads":
+                entry["errors"].append(
+                    {"$ref": "#/components/errors/ConversationSearchUnavailable"}
+                )
+            if operation.name == "delete_session":
+                entry["errors"].extend(
+                    [
+                        {"$ref": "#/components/errors/ThreadHasDescendants"},
+                        {"$ref": "#/components/errors/ThreadOnLegalHold"},
+                    ]
+                )
+            if operation.name == "update_thread":
+                entry["errors"].append(
+                    {"$ref": "#/components/errors/ThreadMetadataInvalid"}
+                )
+            if operation.name == "fork_session":
+                entry["errors"].append(
+                    {"$ref": "#/components/errors/ConversationForkPointInvalid"}
+                )
             if operation.name.startswith("git_"):
                 entry["errors"].extend(
                     [
@@ -1303,6 +1496,10 @@ def build_schema() -> dict:
                 properties[field] = {"type": "boolean"}
             elif field in INTEGER_FIELDS:
                 properties[field] = {"type": "integer"}
+            elif field in NUMBER_FIELDS:
+                properties[field] = {"type": "number"}
+            elif field in NULLABLE_STRING_FIELDS:
+                properties[field] = {"type": ["string", "null"]}
             elif field in OBJECT_FIELDS:
                 properties[field] = {"type": "object"}
             else:
@@ -1334,6 +1531,8 @@ def _python_field_type(field: str) -> str:
         return "bool"
     if field in INTEGER_FIELDS:
         return "int"
+    if field in NUMBER_FIELDS:
+        return "float"
     if field in OBJECT_FIELDS:
         return "dict[str, Any]"
     return "str"
@@ -1345,6 +1544,8 @@ def _typescript_field_type(field: str) -> str:
     if field in BOOLEAN_FIELDS:
         return "boolean"
     if field in INTEGER_FIELDS:
+        return "number"
+    if field in NUMBER_FIELDS:
         return "number"
     if field in OBJECT_FIELDS:
         return "Record<string, unknown>"

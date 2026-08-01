@@ -449,7 +449,9 @@ class TestSessionRetention:
         conn.commit()
 
         purged = purge_old_sessions(30, project_slug="proj", agent_slug="agt")
-        assert purged == 2
+        # The purged IDS, not a count: the caller has to finish the job in
+        # the conversation store and the replay journal.
+        assert sorted(purged) == ["old1", "old2"]
 
         remaining = [
             r[0] for r in conn.execute("SELECT session_id FROM sessions").fetchall()
@@ -469,7 +471,7 @@ class TestSessionRetention:
         )
         conn.commit()
 
-        assert purge_old_sessions(0, project_slug="proj", agent_slug="agt") == 0
+        assert purge_old_sessions(0, project_slug="proj", agent_slug="agt") == []
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 1
 
     def test_purge_noop_when_nothing_old(self, tmp_path, monkeypatch):
@@ -485,7 +487,7 @@ class TestSessionRetention:
         )
         conn.commit()
 
-        assert purge_old_sessions(30, project_slug="proj", agent_slug="agt") == 0
+        assert purge_old_sessions(30, project_slug="proj", agent_slug="agt") == []
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1013,7 +1015,7 @@ class TestLegalHold:
         set_session_hold("held1", True, project_slug="proj", agent_slug="agt")
 
         purged = purge_old_sessions(30, project_slug="proj", agent_slug="agt")
-        assert purged == 1
+        assert purged == ["unheld1"]
 
         remaining = [
             r[0] for r in conn.execute("SELECT session_id FROM sessions").fetchall()

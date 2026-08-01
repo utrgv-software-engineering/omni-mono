@@ -91,6 +91,12 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | GitFetch
   | GitPull
   | GitPush
+  | ListThreads
+  | SearchThreads
+  | UpdateThread
+  | ListThreadDescendants
+  | ExportThread
+  | PurgeThreads
   | Initialized
   | RunStarted
   | RunStatus
@@ -115,7 +121,8 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | FsEvents
   | FsRescanRequired
   | FsTransferProgress
-  | GitOperationProgress;
+  | GitOperationProgress
+  | ThreadUpdated;
 
 export interface Initialize {
   capabilities: Capabilities;
@@ -177,6 +184,7 @@ export interface ArchiveSession {
   session_id: string;
 }
 export interface DeleteSession {
+  cascade?: boolean;
   session_id: string;
 }
 export interface GetUserHistory {
@@ -368,6 +376,8 @@ export interface GetItem {
   thread_id: string;
 }
 export interface ForkSession {
+  from_item_id?: string;
+  from_turn_id?: string;
   new_session_id?: string;
   session_id: string;
 }
@@ -614,6 +624,58 @@ export interface GitPush {
   session_id: string;
   set_upstream?: boolean;
 }
+export interface ListThreads {
+  created_after?: number;
+  created_before?: number;
+  cursor?: string;
+  limit?: number;
+  model?: string;
+  order?: string;
+  parent_thread_id?: string;
+  pinned?: boolean;
+  source?: string;
+  status?: string;
+  updated_after?: number;
+  updated_before?: number;
+}
+export interface SearchThreads {
+  created_after?: number;
+  created_before?: number;
+  cursor?: string;
+  limit?: number;
+  model?: string;
+  parent_thread_id?: string;
+  pinned?: boolean;
+  query: string;
+  source?: string;
+  status?: string;
+  updated_after?: number;
+  updated_before?: number;
+}
+export interface UpdateThread {
+  metadata?: {
+    [k: string]: unknown;
+  };
+  pinned?: boolean;
+  status?: string;
+  thread_id: string;
+  title?: string | null;
+}
+export interface ListThreadDescendants {
+  limit?: number;
+  max_depth?: number;
+  thread_id: string;
+}
+export interface ExportThread {
+  cursor?: string;
+  include_descendants?: boolean;
+  limit?: number;
+  thread_id: string;
+}
+export interface PurgeThreads {
+  dry_run?: boolean;
+  retention_days: number;
+}
 export interface Initialized {}
 export interface RunStarted {
   prompt?: string;
@@ -790,7 +852,7 @@ export interface ElicitationRequested {
   source?: string;
   stream_id?: string;
   timeout_ms?: number;
-  title?: string;
+  title?: string | null;
   url?: string;
 }
 export interface ElicitationResolved {
@@ -818,15 +880,14 @@ export interface McpServerStatusChanged {
   stream_id?: string;
 }
 export interface SessionForked {
+  from_item_id?: string;
   new_session_id: string;
   seq?: number;
   session_id: string;
   stream_id?: string;
 }
 export interface SessionVariablesChanged {
-  changed: {
-    [k: string]: unknown;
-  };
+  changed: unknown[];
   seq?: number;
   session_id: string;
   stream_id?: string;
@@ -868,4 +929,14 @@ export interface GitOperationProgress {
   seq?: number;
   session_id: string;
   stream_id?: string;
+}
+export interface ThreadUpdated {
+  cascaded_thread_ids?: unknown[];
+  changed: unknown[];
+  seq?: number;
+  stream_id?: string;
+  thread: {
+    [k: string]: unknown;
+  };
+  thread_id: string;
 }

@@ -258,9 +258,9 @@ def test_inventory_reports_generated_request_allowlist():
     assert inventory["source"] == "omniagents.rpc.protocol_catalog.OPERATIONS"
     assert inventory["router_mode"] == "generated_request_allowlist"
     assert len(inventory["requests"]["stable"]) == 49
-    assert len(inventory["requests"]["experimental"]) == 43
+    assert len(inventory["requests"]["experimental"]) == 49
     assert len(inventory["notifications"]["stable"]) == 19
-    assert len(inventory["notifications"]["experimental"]) == 6
+    assert len(inventory["notifications"]["experimental"]) == 7
 
 
 def test_catalog_requests_exist_on_real_agent_service():
@@ -369,3 +369,80 @@ def test_pinned_tool_outputs_include_optional_fields():
     assert "export interface ServerCall" in typescript_output
     assert "args?:" in typescript_output
     assert "session_id?: string" in typescript_output
+
+
+def _error_component_by_code(document: dict) -> dict:
+    return {
+        entry["code"]: entry
+        for entry in document["components"]["errors"].values()
+        if "code" in entry
+    }
+
+
+def test_raised_typed_errors_validate_against_their_published_schema():
+    """A typed error's ``data`` must satisfy the component that declares it.
+
+    Nothing else in the suite checks this, and it is exactly the gap that
+    let ``fork_point_invalid`` ship emitting ``next_item_id`` while the
+    published component declared ``turn_first_item_id``/``turn_last_item_id``
+    (which no code path produces) and set ``additionalProperties: false`` —
+    so a conformant consumer would have rejected the real payload.
+    """
+    from omniagents.core.conversation.service import (
+        ForkPointInvalid,
+        SearchUnsupported,
+        ThreadHasDescendants,
+        ThreadMetadataInvalid,
+        ThreadOnLegalHold,
+    )
+
+    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    components = _error_component_by_code(document)
+
+    raised = [
+        SearchUnsupported("no FTS5 in this build"),
+        ThreadHasDescendants("t1", 3, ["c1", "c2"]),
+        ForkPointInvalid(
+            "no exact cut",
+            thread_id="t1",
+            turn_id="r1",
+            item_id="itm_1",
+            next_item_id="itm_2",
+            next_item_kind="agent_message",
+        ),
+        ForkPointInvalid(
+            "still running", thread_id="t1", turn_id="r1", status="running"
+        ),
+        ThreadOnLegalHold("t1", ["t1", "c1"]),
+        ThreadMetadataInvalid("too big", size=99, max_size=10),
+    ]
+    for error in raised:
+        component = components.get(error.code)
+        assert component is not None, f"no published component for {error.code}"
+        Draft202012Validator(component["data"]).validate(error.data)
+
+
+def test_every_declared_error_property_is_reachable_from_code():
+    """The other direction: a declared field nothing can emit is a promise
+    the server does not keep."""
+    from omniagents.core.conversation import service as conversation_service
+
+    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    source = (ROOT / "omniagents/core/conversation/service.py").read_text()
+    conversation_codes = {
+        conversation_service.RPC_ERROR_SEARCH_UNAVAILABLE,
+        conversation_service.RPC_ERROR_THREAD_HAS_DESCENDANTS,
+        conversation_service.RPC_ERROR_FORK_POINT_INVALID,
+        conversation_service.RPC_ERROR_THREAD_ON_LEGAL_HOLD,
+        conversation_service.RPC_ERROR_THREAD_METADATA_INVALID,
+    }
+    for entry in _error_component_by_code(document).values():
+        if entry["code"] not in conversation_codes:
+            continue
+        for field in entry["data"]["properties"]:
+            if field == "kind":
+                continue
+            assert field in source, (
+                f"{entry['message']!r} declares {field!r}, which no code "
+                "path in conversation/service.py produces"
+            )

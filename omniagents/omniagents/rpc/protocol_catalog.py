@@ -134,6 +134,19 @@ EXPERIMENTAL_REQUESTS = (
     "git_fetch",
     "git_pull",
     "git_push",
+    # Conversation organization, search & branching (tkt_eZldW-Gje6kn).
+    # Experimental on entry, following the fs_*/git_* precedent for a
+    # brand-new surface: the filter set and the two cursor shapes (keyset
+    # for the listing, rank-offset for search) have not yet been proven by
+    # a shipped client, and unlike the tkt_a-QF2Oc4OAsD READS there is no
+    # deterministic-rendering guarantee that opting in would undermine.
+    # Clients opt in via initialize.capabilities.experimental_operations.
+    "list_threads",
+    "search_threads",
+    "update_thread",
+    "list_thread_descendants",
+    "export_thread",
+    "purge_threads",
 )
 
 STABLE_NOTIFICATIONS = (
@@ -192,6 +205,14 @@ EXPERIMENTAL_NOTIFICATIONS = (
     # journaled: like the fs_* events these are per-connection and
     # derivable — a reconnecting client refetches git_status.
     "git_operation_progress",
+    # Thread metadata changed (tkt_eZldW-Gje6kn). Connection-wide, so a
+    # rename or an archive reaches the sidebar of every open column and not
+    # just the one already displaying the thread. Not journaled: this is
+    # current state, not conversation history, and replaying a stale rename
+    # on reconnect would be wrong — a reconnecting client refetches
+    # list_threads. Delivered only to channels whose principal owns the
+    # thread.
+    "thread_updated",
 )
 
 OPERATIONS = tuple(

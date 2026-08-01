@@ -55,6 +55,12 @@ def _serialize_metadata(value: object) -> str | None:
 
 def _ensure_schema(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
+    # Zero freed pages rather than leaving deleted transcript bytes readable
+    # in the free list. This file holds the raw conversation history, so a
+    # retention purge or a delete_session has to mean "gone", not
+    # "unlinked" — the same posture the conversation domain store adopted.
+    # Cheaper than VACUUM: no whole-file rewrite, no exclusive lock.
+    conn.execute("PRAGMA secure_delete = ON")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS history ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT,"
@@ -215,9 +221,9 @@ class SqliteSessionStorage(SessionStorageBackend):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> int:
+    ) -> list[str]:
         if retention_days <= 0:
-            return 0
+            return []
         conn, lock = self._get_store(project_slug, agent_slug)
         cutoff = (datetime.utcnow() - timedelta(days=retention_days)).strftime(
             "%Y-%m-%d %H:%M:%S"
@@ -229,7 +235,7 @@ class SqliteSessionStorage(SessionStorageBackend):
             )
             old_ids = [row[0] for row in cur.fetchall()]
             if not old_ids:
-                return 0
+                return []
             placeholders = ",".join("?" for _ in old_ids)
             conn.execute(
                 f"DELETE FROM audio_metadata WHERE session_id IN ({placeholders})",
@@ -244,7 +250,7 @@ class SqliteSessionStorage(SessionStorageBackend):
                 old_ids,
             )
             conn.commit()
-        return len(old_ids)
+        return old_ids
 
     def set_session_hold(
         self,

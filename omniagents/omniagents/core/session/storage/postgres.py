@@ -274,9 +274,9 @@ class PgSessionStorage(SessionStorageBackend):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> int:
+    ) -> list[str]:
         if retention_days <= 0:
-            return 0
+            return []
         ps, ags = _slugs(project_slug, agent_slug)
         with self._conn() as conn:
             with conn.cursor() as cur:
@@ -314,7 +314,7 @@ class PgSessionStorage(SessionStorageBackend):
                         (conn.tenant_id, ps, ags, purged_ids),
                     )
             conn.commit()
-        return len(purged_ids)
+        return purged_ids
 
     def set_session_hold(
         self,

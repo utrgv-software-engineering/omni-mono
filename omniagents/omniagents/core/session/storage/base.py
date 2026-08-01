@@ -55,11 +55,19 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
-    ) -> int:
-        """Delete sessions older than *retention_days*. Returns count purged.
+    ) -> list[str]:
+        """Delete sessions older than *retention_days*. Returns the purged ids.
 
         Sessions under legal hold (``hold = 1``) are skipped. ``retention_days
-        <= 0`` is a no-op."""
+        <= 0`` is a no-op.
+
+        The **ids**, not a count: a session's data does not live only in
+        this backend. The canonical conversation rows and the durable replay
+        journal are separate stores, and a caller that is told "7 sessions
+        were purged" cannot go and finish the job. Retention that leaves
+        transcripts behind is a retention failure, so the identity of what
+        was removed is part of the contract — see
+        ``omniagents.core.session.retention.purge_expired_sessions``."""
 
     @abstractmethod
     def set_session_hold(

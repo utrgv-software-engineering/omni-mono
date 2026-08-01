@@ -194,6 +194,40 @@
         },
         "message": "Malformed pagination cursor"
       },
+      "ConversationForkPointInvalid": {
+        "code": -32112,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "item_id": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "fork_point_invalid"
+            },
+            "next_item_id": {
+              "type": "string"
+            },
+            "next_item_kind": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "thread_id": {
+              "type": "string"
+            },
+            "turn_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "Invalid fork point"
+      },
       "ConversationItemNotFound": {
         "code": -32081,
         "data": {
@@ -217,6 +251,22 @@
           "type": "object"
         },
         "message": "Unknown conversation item"
+      },
+      "ConversationSearchUnavailable": {
+        "code": -32110,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "search_unavailable"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "Conversation search is unavailable"
       },
       "ElicitationAlreadyResolved": {
         "code": -32051,
@@ -874,6 +924,69 @@
         },
         "message": "Resync required"
       },
+      "ThreadHasDescendants": {
+        "code": -32111,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "descendant_count": {
+              "type": "integer"
+            },
+            "descendant_thread_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "thread_has_descendants"
+            },
+            "thread_id": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "descendant_thread_ids",
+            "descendant_count",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "message": "Thread has descendant threads"
+      },
+      "ThreadMetadataInvalid": {
+        "code": -32114,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "keys": {
+              "type": "integer"
+            },
+            "kind": {
+              "const": "thread_metadata_invalid"
+            },
+            "max_keys": {
+              "type": "integer"
+            },
+            "max_size": {
+              "type": "integer"
+            },
+            "size": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        "message": "Thread metadata exceeds the permitted size"
+      },
       "ThreadNotFound": {
         "code": -32080,
         "data": {
@@ -893,6 +1006,37 @@
           "type": "object"
         },
         "message": "Unknown thread"
+      },
+      "ThreadOnLegalHold": {
+        "code": -32113,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "held_count": {
+              "type": "integer"
+            },
+            "held_thread_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "thread_on_legal_hold"
+            },
+            "thread_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "held_thread_ids",
+            "held_count"
+          ],
+          "type": "object"
+        },
+        "message": "Session is under legal hold"
       },
       "TransportOverloaded": {
         "code": -32020,
@@ -1382,6 +1526,12 @@
         },
         {
           "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadHasDescendants"
+        },
+        {
+          "$ref": "#/components/errors/ThreadOnLegalHold"
         }
       ],
       "name": "delete_session",
@@ -1392,6 +1542,13 @@
           "required": true,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/delete_session/properties/session_id"
+          }
+        },
+        {
+          "name": "cascade",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/delete_session/properties/cascade"
           }
         }
       ],
@@ -3950,6 +4107,15 @@
         },
         {
           "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ConversationItemNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ConversationForkPointInvalid"
         }
       ],
       "name": "fork_session",
@@ -3967,6 +4133,20 @@
           "required": false,
           "schema": {
             "$ref": "./schemas/gui-v1.schema.json#/$defs/fork_session/properties/new_session_id"
+          }
+        },
+        {
+          "name": "from_item_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fork_session/properties/from_item_id"
+          }
+        },
+        {
+          "name": "from_turn_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/fork_session/properties/from_turn_id"
           }
         }
       ],
@@ -7141,6 +7321,530 @@
       "x-omni-stability": "experimental"
     },
     {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ConversationCursorInvalid"
+        }
+      ],
+      "name": "list_threads",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "status",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/status"
+          }
+        },
+        {
+          "name": "pinned",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/pinned"
+          }
+        },
+        {
+          "name": "source",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/source"
+          }
+        },
+        {
+          "name": "model",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/model"
+          }
+        },
+        {
+          "name": "parent_thread_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/parent_thread_id"
+          }
+        },
+        {
+          "name": "created_after",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/created_after"
+          }
+        },
+        {
+          "name": "created_before",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/created_before"
+          }
+        },
+        {
+          "name": "updated_after",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/updated_after"
+          }
+        },
+        {
+          "name": "updated_before",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/updated_before"
+          }
+        },
+        {
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/limit"
+          }
+        },
+        {
+          "name": "cursor",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/cursor"
+          }
+        },
+        {
+          "name": "order",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads/properties/order"
+          }
+        }
+      ],
+      "result": {
+        "name": "list_threads_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation list_threads",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/list_threads"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ConversationCursorInvalid"
+        },
+        {
+          "$ref": "#/components/errors/ConversationSearchUnavailable"
+        }
+      ],
+      "name": "search_threads",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "query",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/query"
+          }
+        },
+        {
+          "name": "status",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/status"
+          }
+        },
+        {
+          "name": "pinned",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/pinned"
+          }
+        },
+        {
+          "name": "source",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/source"
+          }
+        },
+        {
+          "name": "model",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/model"
+          }
+        },
+        {
+          "name": "parent_thread_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/parent_thread_id"
+          }
+        },
+        {
+          "name": "created_after",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/created_after"
+          }
+        },
+        {
+          "name": "created_before",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/created_before"
+          }
+        },
+        {
+          "name": "updated_after",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/updated_after"
+          }
+        },
+        {
+          "name": "updated_before",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/updated_before"
+          }
+        },
+        {
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/limit"
+          }
+        },
+        {
+          "name": "cursor",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads/properties/cursor"
+          }
+        }
+      ],
+      "result": {
+        "name": "search_threads_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation search_threads",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/search_threads"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ThreadMetadataInvalid"
+        }
+      ],
+      "name": "update_thread",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/update_thread/properties/thread_id"
+          }
+        },
+        {
+          "name": "title",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/update_thread/properties/title"
+          }
+        },
+        {
+          "name": "pinned",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/update_thread/properties/pinned"
+          }
+        },
+        {
+          "name": "status",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/update_thread/properties/status"
+          }
+        },
+        {
+          "name": "metadata",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/update_thread/properties/metadata"
+          }
+        }
+      ],
+      "result": {
+        "name": "update_thread_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation update_thread",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/update_thread"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        }
+      ],
+      "name": "list_thread_descendants",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_thread_descendants/properties/thread_id"
+          }
+        },
+        {
+          "name": "max_depth",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_thread_descendants/properties/max_depth"
+          }
+        },
+        {
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/list_thread_descendants/properties/limit"
+          }
+        }
+      ],
+      "result": {
+        "name": "list_thread_descendants_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation list_thread_descendants",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/list_thread_descendants"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ConversationCursorInvalid"
+        }
+      ],
+      "name": "export_thread",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/export_thread/properties/thread_id"
+          }
+        },
+        {
+          "name": "limit",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/export_thread/properties/limit"
+          }
+        },
+        {
+          "name": "cursor",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/export_thread/properties/cursor"
+          }
+        },
+        {
+          "name": "include_descendants",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/export_thread/properties/include_descendants"
+          }
+        }
+      ],
+      "result": {
+        "name": "export_thread_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation export_thread",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/export_thread"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        }
+      ],
+      "name": "purge_threads",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "retention_days",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/purge_threads/properties/retention_days"
+          }
+        },
+        {
+          "name": "dry_run",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/purge_threads/properties/dry_run"
+          }
+        }
+      ],
+      "result": {
+        "name": "purge_threads_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation purge_threads",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/purge_threads"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
       "name": "initialized",
       "paramStructure": "by-name",
       "params": [],
@@ -8549,6 +9253,13 @@
           }
         },
         {
+          "name": "from_item_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/session_forked/properties/from_item_id"
+          }
+        },
+        {
           "name": "seq",
           "required": false,
           "schema": {
@@ -8879,6 +9590,67 @@
       "x-omni-kind": "notification",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/git_operation_progress"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "name": "thread_updated",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/thread_updated/properties/thread_id"
+          }
+        },
+        {
+          "name": "changed",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/thread_updated/properties/changed"
+          }
+        },
+        {
+          "name": "thread",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/thread_updated/properties/thread"
+          }
+        },
+        {
+          "name": "cascaded_thread_ids",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/thread_updated/properties/cascaded_thread_ids"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/thread_updated/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/thread_updated/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "thread_updated_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation thread_updated",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/thread_updated"
       },
       "x-omni-stability": "experimental"
     }
