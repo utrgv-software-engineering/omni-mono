@@ -13,7 +13,7 @@ import asyncio
 import pytest
 
 from omniagents.core.agents.service import AgentService
-from omniagents.core.session.event_log import ResyncRequiredError
+from omniagents.core.session.event_log import REPLAYABLE_METHODS, ResyncRequiredError
 from omniagents.rpc import JsonRpcEndpoint, RpcMethodsBase
 from omniagents.rpc.agents.remote import _ClientEventMethods
 from omniagents.rpc.replay import ReplayCursor
@@ -627,3 +627,314 @@ async def test_remote_client_reconnect_backfill_requests_missed_tail():
 
     assert _drain_seqs(queue) == [1, 2, 3, 4, 5]
     assert methods.cursor_for("s").last_seq == 5
+
+
+# ---------------------------------------------------------------------------
+# Per-connection notification policy on the replay path (tkt_m3nx8D3Rfngw)
+#
+# ``resume_session`` hands journaled events back in the RPC *result*, so it
+# never passes through ``JsonRpcChannel.async_call``'s gating. These tests pin
+# that the result honours the same policy as the live path, and that a
+# filtered event still advances the cursor.
+# ---------------------------------------------------------------------------
+
+
+class PolicyTransport:
+    """Captures the frames a JsonRpcChannel actually puts on the wire."""
+
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send_json(self, payload: dict) -> None:
+        self.sent.append(payload)
+
+    def methods(self) -> list[str]:
+        return [frame["method"] for frame in self.sent if "method" in frame]
+
+
+def policy_channel(*, disabled=(), grants=(), ready=True) -> JsonRpcChannel:
+    """A negotiated GUI channel with an explicit notification policy."""
+    channel = JsonRpcChannel(PolicyTransport(), enforce_initialization=True)
+    if ready:
+        channel.initialization_state = "ready"
+    channel.disabled_notifications = frozenset(disabled)
+    channel.experimental_grants = frozenset(grants)
+    return channel
+
+
+ALL_EXPERIMENTAL = frozenset(
+    {"item_updated", "session_forked", "session_variables_changed"}
+)
+
+
+async def _emit_mixed_stream(service, sess) -> None:
+    await service._broadcast_session(sess, "run_started", {"run_id": "r1"})
+    await service._broadcast_session(
+        sess, "item_updated", {"thread_id": "t1", "item_id": "i1", "kind": "plan"}
+    )
+    await service._broadcast_session(
+        sess, "session_variables_changed", {"variables": {"a": "1"}}
+    )
+    await service._broadcast_session(
+        sess, "message_output", {"run_id": "r1", "content": "hello"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_session_drops_notifications_the_client_disabled():
+    service = build_service()
+    sess = service.get_or_create_session("sess-policy-disabled")
+    await _emit_mixed_stream(service, sess)
+
+    # Client granted every experimental capability but opted OUT of
+    # item_updated: the disabled set alone must filter the replay.
+    channel = policy_channel(
+        disabled={"item_updated"},
+        grants=ALL_EXPERIMENTAL,
+    )
+    service.channel = channel
+    result = await service.resume_session(sess.id, sess.event_log.stream_id, 0)
+
+    assert [event["method"] for event in result["events"]] == [
+        "run_started",
+        "session_variables_changed",
+        "message_output",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resume_session_drops_experimental_notifications_never_granted():
+    service = build_service()
+    sess = service.get_or_create_session("sess-policy-ungranted")
+    await _emit_mixed_stream(service, sess)
+    await service._broadcast_session(
+        sess, "session_forked", {"session_id": sess.id, "new_session_id": "fork"}
+    )
+
+    # No experimental grants at all: every experimental notification is
+    # filtered, including the two the ticket names as already affected.
+    channel = policy_channel(disabled=(), grants=())
+    service.channel = channel
+    result = await service.resume_session(sess.id, sess.event_log.stream_id, 0)
+
+    assert [event["method"] for event in result["events"]] == [
+        "run_started",
+        "message_output",
+    ]
+
+    # A partial grant only unlocks what was granted.
+    partial = policy_channel(disabled=(), grants={"session_variables_changed"})
+    service.channel = partial
+    partial_result = await service.resume_session(sess.id, sess.event_log.stream_id, 0)
+    assert [event["method"] for event in partial_result["events"]] == [
+        "run_started",
+        "session_variables_changed",
+        "message_output",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resume_session_replays_everything_a_granted_client_asked_for():
+    """The ticket's 'unchanged' criterion: a client that granted the
+    capabilities and disabled nothing still gets the full journal."""
+    service = build_service()
+    sess = service.get_or_create_session("sess-policy-granted")
+    await _emit_mixed_stream(service, sess)
+
+    channel = policy_channel(disabled=(), grants=ALL_EXPERIMENTAL)
+    service.channel = channel
+    result = await service.resume_session(sess.id, sess.event_log.stream_id, 0)
+
+    assert [event["method"] for event in result["events"]] == [
+        "run_started",
+        "item_updated",
+        "session_variables_changed",
+        "message_output",
+    ]
+    assert [event["params"]["seq"] for event in result["events"]] == [1, 2, 3, 4]
+    assert result["last_seq"] == 4
+    # A channel with no policy attached (in-process/test transports) is
+    # unfiltered.
+    service.channel = RecordingChannel()
+    unfiltered = await service.resume_session(sess.id, sess.event_log.stream_id, 0)
+    assert len(unfiltered["events"]) == 4
+
+
+@pytest.mark.asyncio
+async def test_resume_session_cursor_advances_past_filtered_events():
+    """Documented semantics: a filtered event is delivered-and-discarded,
+    exactly like the live path. ``last_seq`` still covers it, and
+    re-enabling the notification later does not resurrect it."""
+    service = build_service()
+    sess = service.get_or_create_session("sess-policy-cursor")
+    await _emit_mixed_stream(service, sess)
+    log = sess.event_log
+
+    channel = policy_channel(disabled={"item_updated"}, grants=ALL_EXPERIMENTAL)
+    service.channel = channel
+    result = await service.resume_session(sess.id, log.stream_id, 0)
+
+    # The filtered seq is absent from ``events`` but NOT from the cursor the
+    # client is told to adopt.
+    assert 2 not in [event["params"]["seq"] for event in result["events"]]
+    assert result["last_seq"] == log.last_seq == 4
+    assert result["first_seq"] == log.first_retained_seq
+
+    # The client adopts last_seq and re-enables item_updated. The event it
+    # skipped is gone for good — there is no catch-up.
+    channel.disabled_notifications = frozenset()
+    catch_up = await service.resume_session(sess.id, log.stream_id, result["last_seq"])
+    assert catch_up["events"] == []
+
+
+@pytest.mark.asyncio
+async def test_pending_events_flush_honors_notification_policy():
+    """The queued-event flush pushes stored payloads through ``_safe_notify``
+    → ``async_call``, so it is gated live; the shared predicate makes that
+    explicit and treats a policy drop as consumed (cursor advances)."""
+    service = build_service()
+    sess = service.get_or_create_session("sess-policy-pending")
+    channel = policy_channel(disabled={"item_updated"}, grants=ALL_EXPERIMENTAL)
+    service.channel = channel
+    sess.channels.append(channel)
+    sess.pending_events = [
+        ("item_updated", {"thread_id": "t1", "item_id": "i1", "kind": "plan"}),
+        ("tool_approval_requested", {"call_id": "c1", "tool_name": "t"}),
+    ]
+
+    await service.get_session_history(sess.id)
+
+    assert channel.transport.methods() == ["tool_approval_requested"]
+    # Consumed, not deferred: the opted-out event does not linger forever.
+    assert sess.pending_events == []
+
+
+class RaisingPolicyChannel(RecordingChannel):
+    """A channel whose notification policy is itself broken."""
+
+    def accepts_notification(self, method: str) -> bool:
+        raise RuntimeError("policy exploded")
+
+
+@pytest.mark.asyncio
+async def test_replay_fails_closed_when_the_policy_raises():
+    """A capability gate must not leak on error. Live delivery fails OPEN
+    (one broken predicate must not silence a session); the replay result
+    fails CLOSED, because there an exception would hand the client a whole
+    result of ungated events rather than drop a single notification."""
+    service = build_service()
+    sess = service.get_or_create_session("sess-policy-raises")
+    await _emit_mixed_stream(service, sess)
+
+    channel = RaisingPolicyChannel()
+    service.channel = channel
+    result = await service.resume_session(sess.id, sess.event_log.stream_id, 0)
+    assert result["events"] == []
+    # …but the cursor still describes the journal, so the client is not
+    # wedged: it adopts last_seq and carries on.
+    assert result["last_seq"] == sess.event_log.last_seq == 4
+
+    # Live path: fail open, the notification is still delivered.
+    assert await service._safe_notify(channel, "message_output", {"content": "hi"})
+    assert channel.calls[-1][0] == "message_output"
+
+
+class DeclaredPolicyChannel(RecordingChannel):
+    """A channel that declares a notification policy but does NOT re-check
+    it inside ``async_call``.
+
+    This is the contract the bridge has to satisfy. With a real
+    ``JsonRpcChannel`` the bridge would look correct either way, because
+    ``async_call`` gates internally — so a test using one proves nothing
+    about the bridge. Honouring the *declared* policy is what stops
+    ``bridge._safe_notify`` from drifting back into a private copy of the
+    rules.
+    """
+
+    def __init__(self, refuse: set[str]):
+        super().__init__()
+        self._refuse = refuse
+
+    def accepts_notification(self, method: str) -> bool:
+        return method not in self._refuse
+
+
+@pytest.mark.asyncio
+async def test_runtime_bridge_broadcast_shares_the_same_policy_predicate():
+    """``bridge._safe_notify`` is a second delivery path into the same
+    session-scoped ``pending_events`` queue. It must consult the shared
+    predicate rather than re-derive (or ignore) the policy."""
+    from omniagents.core.runtime import bridge
+
+    channel = DeclaredPolicyChannel(refuse={"tool_result"})
+
+    # Refused by policy → reported consumed, never handed to async_call.
+    assert await bridge._safe_notify(channel, "tool_result", {"call_id": "c"}) is True
+    assert channel.calls == []
+
+    # Allowed → actually sent.
+    assert await bridge._safe_notify(channel, "message_output", {"content": "hi"})
+    assert [method for method, _ in channel.calls] == ["message_output"]
+
+    # And the service-side helper agrees, which is the point of sharing
+    # one predicate across the two queue feeders.
+    service = build_service()
+    twin = DeclaredPolicyChannel(refuse={"tool_result"})
+    assert await service._safe_notify(twin, "tool_result", {"call_id": "c"}) is True
+    assert twin.calls == []
+
+
+def test_everything_that_can_be_queued_is_replayable():
+    """The invariant that makes a policy drop safe on the flush paths.
+
+    ``pending_events`` is session-scoped: a flush removes an entry once any
+    attached channel consumes it, and a policy refusal counts as consuming.
+    That is only acceptable because every method that can enter the queue is
+    journaled, so a client that missed it can still get it from
+    ``resume_session``. If a new queueable notification is ever added
+    outside ``REPLAYABLE_METHODS``, this fails.
+
+    Sources: ``_broadcast_session(..., queue_if_unseen=True)`` in
+    service.py, and ``bridge._broadcast``'s undelivered-event append, whose
+    methods all come from ``bridge._stream_event_payload``.
+    """
+    queueable = {
+        # service.py queue_if_unseen=True call sites
+        "tool_approval_requested",
+        "mcp_approval_requested",
+        "elicitation_requested",
+        "run_end",
+        "queue_changed",
+        # bridge._stream_event_payload return values
+        "tool_called",
+        "tool_result",
+        "message_output",
+    }
+    assert queueable <= REPLAYABLE_METHODS
+
+
+@pytest.mark.asyncio
+async def test_pending_flush_queue_is_session_scoped_not_per_connection():
+    """Pins the behaviour protocol.md now describes: the queue is shared, so
+    a policy refusal by the first tab to reconnect consumes the entry for
+    every tab. Pre-existing (``async_call`` already returned silently); the
+    journal, not the queue, is what makes it safe."""
+    service = build_service()
+    sess = service.get_or_create_session("sess-queue-shared")
+    opted_out = policy_channel(disabled={"queue_changed"}, grants=ALL_EXPERIMENTAL)
+    service.channel = opted_out
+    sess.channels.append(opted_out)
+    sess.pending_events = [("queue_changed", {"queue": []})]
+
+    await service.get_session_history(sess.id)
+
+    assert opted_out.transport.methods() == []
+    assert sess.pending_events == []
+
+    # A second tab attaching later gets nothing from the queue — but the
+    # method is journaled, so resume_session is its recovery path.
+    await service._broadcast_session(sess, "queue_changed", {"queue": []})
+    late = policy_channel(disabled=(), grants=ALL_EXPERIMENTAL)
+    service.channel = late
+    result = await service.resume_session(sess.id, sess.event_log.stream_id, 0)
+    assert [event["method"] for event in result["events"]] == ["queue_changed"]

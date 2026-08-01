@@ -3107,7 +3107,8 @@ Replayable methods: `run_started`, `run_status`, `message_output`,
 `tool_called`, `tool_result`, `run_end`, `tool_approval_requested`,
 `tool_approval_resolved`, `mcp_approval_requested`,
 `mcp_approval_resolved`, `client_request`, `client_request_resolved`,
-`queue_changed`, `session_forked`, `session_variables_changed`.
+`queue_changed`, `session_forked`, `session_variables_changed`,
+`item_updated`.
 
 `token` is deliberately **not** sequenced or journaled: usage deltas are
 transient, totals are cumulative, and `message_output`/`run_end`
@@ -3158,6 +3159,57 @@ events, so a bare reconnect flow is: connect → `initialize` →
 Acks are per-connection; the journal only compacts below the *minimum*
 cursor across live consumers, so multi-tab clients each receive every
 event and converge on the same authoritative state.
+
+### Notification policy on replay
+
+Replay is not an escape hatch from the handshake. The `events` a
+`resume_session` result carries are filtered through the *calling
+connection's* negotiated notification policy — the same policy the server
+applies to live notifications:
+
+- a method listed in that connection's `disabled_notifications` is
+  omitted from `events`;
+- an experimental notification whose capability the connection did not
+  request in `initialize.capabilities.experimental_operations` is omitted
+  from `events`.
+
+**The cursor advances past filtered events.** `first_seq` and `last_seq`
+always describe the journal, never the filtered subset, so a client
+adopts `last_seq` exactly as it would for an unfiltered replay. This
+makes a replayed policy drop identical to a live policy drop:
+delivered-and-discarded, not deferred. The consequences a client must
+accept:
+
+- `events` is *sparser* than the `[first_seq, last_seq]` span implies.
+  This is not a gap — do not treat a missing `seq` inside a
+  `resume_session` result as loss and do not re-issue `resume_session`
+  for it. (The window was already permitted to be non-contiguous because
+  of snapshot compaction.)
+- A client that later re-enables a notification, or grants its
+  experimental capability on a subsequent `initialize`, will **not**
+  retroactively receive events filtered while it was opted out. There is
+  no catch-up. A client that wants that history must refetch
+  authoritative state (`get_session_history`, `get_plan`, `get_item`, …)
+  rather than rewind its cursor.
+
+The queued-event flushes that `start_run` and `get_session_history`
+perform apply the same policy, but note that the queue they drain is
+**session-scoped, not per-connection**. A flush attempts delivery to
+every channel currently attached to the session and removes the entry
+once any of them consumes it — and a channel that refuses the method by
+policy counts as having consumed it. So with two tabs attached, a
+notification one tab has disabled can leave the queue before the other
+tab reconnects to see it.
+
+That is safe, and it is why the queue is allowed to work this way: every
+method that can enter `pending_events` is in the replayable set above, so
+anything a flush drops is still recoverable from the journal via
+`resume_session`. The three prompt notifications
+(`tool_approval_requested`, `mcp_approval_requested`,
+`elicitation_requested`) are additionally re-pushed per-channel from the
+session's pending-prompt maps on reconnect, so they survive by a third,
+independent path. A client must not treat the queue as a delivery
+guarantee; the journal is the authority.
 
 ### Resync required (error `-32030`)
 

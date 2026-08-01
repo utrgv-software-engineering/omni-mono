@@ -64,7 +64,10 @@ from omniagents.core.conversation.model import UNSCOPED, ThreadFilter
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.agents.approval import configure_tool_approval
 from omniagents.core.session import Session, SessionManager
-from omniagents.core.session.event_log import stamp_session_event
+from omniagents.core.session.event_log import (
+    channel_accepts_notification,
+    stamp_session_event,
+)
 from omniagents.core.session.manager import QueuedItem
 from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
@@ -1979,13 +1982,23 @@ class AgentService(RpcMethodsBase):
 
     # ------------------------------------------------------------------
     #  Helper: best-effort async_call that tolerates disconnected sockets.
-    #  Returns True if the notification was delivered, False if the WebSocket
-    #  had already been closed.
+    #  Returns True if the notification was *consumed* by the channel —
+    #  either put on the wire or dropped by the connection's notification
+    #  policy — and False only if the socket had already been closed.
+    #
+    #  "A policy drop counts as consumed" is long-standing behaviour, not
+    #  something introduced here: ``async_call`` returns silently on a
+    #  gated method, so this helper has always reported True for it. The
+    #  explicit check below only makes that contract visible at the call
+    #  site and independent of ``async_call``'s internals; it is
+    #  behaviour-identical to letting the call through (tkt_m3nx8D3Rfngw).
     # ------------------------------------------------------------------
 
     async def _safe_notify(
         self, channel, method: str, payload: dict
     ) -> bool:  # noqa: D401
+        if not channel_accepts_notification(channel, method):
+            return True
         try:
             await channel.async_call(method, args=payload)
             return True
@@ -3742,6 +3755,14 @@ class AgentService(RpcMethodsBase):
         so ordering relative to subsequent live events is explicit:
         clients apply ``events`` first, adopt ``last_seq``, then process
         live notifications with sequence-based dedup.
+
+        The returned events honour the calling connection's notification
+        policy exactly as the live path does: anything the client disabled
+        at ``initialize``, or whose experimental capability it never
+        granted, is filtered out (tkt_m3nx8D3Rfngw). Filtering does not
+        hold the cursor back — ``last_seq`` still spans the filtered
+        events, so a policy drop on replay is delivered-and-discarded just
+        like a policy drop on the live path. See ``protocol.md``.
         """
         _debug_rpc(
             "resume_session",
@@ -3773,7 +3794,12 @@ class AgentService(RpcMethodsBase):
             "last_seq": log.last_seq,
             "active_run_id": getattr(sess, "active_run_id", None),
             "events": [
-                {"method": method, "params": payload} for method, payload in events
+                {"method": method, "params": payload}
+                for method, payload in events
+                # fail_open=False: a raising policy on the live path costs
+                # one notification, but here it would hand the client a
+                # whole result full of gated events.
+                if channel_accepts_notification(self.channel, method, fail_open=False)
             ],
         }
 

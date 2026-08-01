@@ -136,19 +136,35 @@ class JsonRpcChannel:
         self.experimental_grants: frozenset[str] = frozenset()
         self.client_info: Optional[Dict[str, str]] = None
 
+    def accepts_notification(self, method: str) -> bool:
+        """Per-connection notification policy for *method*.
+
+        The single definition of "may this connection see this
+        notification": handshake state, ``disabled_notifications``, and
+        experimental capability grants. ``async_call`` consults it on the
+        live path; the replay paths consult it through
+        ``omniagents.core.agents.service.channel_accepts_notification`` so
+        journaled events returned in an RPC *result* obey the same policy
+        (tkt_m3nx8D3Rfngw).
+        """
+        if not self.enforce_initialization:
+            return True
+        if self.initialization_state != "ready":
+            return False
+        if method in self.disabled_notifications:
+            return False
+        if (
+            method in GUI_EXPERIMENTAL_NOTIFICATIONS
+            and method not in self.experimental_grants
+        ):
+            return False
+        return True
+
     async def async_call(
         self, method: str, args: Optional[Dict[str, Any]] = None
     ) -> None:
-        if self.enforce_initialization:
-            if self.initialization_state != "ready":
-                return
-            if method in self.disabled_notifications:
-                return
-            if (
-                method in GUI_EXPERIMENTAL_NOTIFICATIONS
-                and method not in self.experimental_grants
-            ):
-                return
+        if not self.accepts_notification(method):
+            return
         model = (
             self.notification_models.get(method)
             if self.notification_models is not None

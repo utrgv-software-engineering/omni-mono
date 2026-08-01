@@ -14,7 +14,10 @@ from omniagents.core.agents import mcp_ui
 from omniagents.core.agents.approval import session_allows_mcp_tool, session_allows_tool
 from omniagents.core.agents.mcp_identity import lookup_identity
 from omniagents.core.debug import Debug
-from omniagents.core.session.event_log import stamp_session_event
+from omniagents.core.session.event_log import (
+    channel_accepts_notification,
+    stamp_session_event,
+)
 from omniagents.core.tools.artifacts import (
     reset_artifact_callback,
     set_artifact_callback,
@@ -41,12 +44,21 @@ if LOG_FILE:
 # ---------------------------------------------------------------------
 # Helper: best-effort notify that swallows disconnect errors so the
 #         streaming task can keep running even when the WebSocket is
-#         already closed.  Returns True if the payload was delivered.
+#         already closed.  Returns True if the payload was *consumed* —
+#         put on the wire, or refused by the connection's notification
+#         policy — and False only when the socket is gone.
+#
+#         This mirrors ``AgentService._safe_notify`` and shares its
+#         predicate rather than re-deriving the policy, because both feed
+#         the same session-scoped ``pending_events`` queue and a drift
+#         between them would be invisible (tkt_m3nx8D3Rfngw).
 # ---------------------------------------------------------------------
 
 
 async def _safe_notify(channel, method: str, payload: dict) -> bool:  # noqa: D401
     """Try to send *payload* via *channel*; return False if socket is gone."""
+    if not channel_accepts_notification(channel, method):
+        return True
     try:
         await channel.async_call(method, args=payload)
         return True

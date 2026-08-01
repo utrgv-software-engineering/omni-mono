@@ -86,6 +86,7 @@ from omniagents.core.paths import get_sessions_db_path
 
 __all__ = [
     "REPLAYABLE_METHODS",
+    "channel_accepts_notification",
     "ResyncRequiredError",
     "SessionEventLog",
     "MemoryEventLogStore",
@@ -126,6 +127,48 @@ REPLAYABLE_METHODS = frozenset(
         "item_updated",
     }
 )
+
+
+def channel_accepts_notification(
+    channel: Any, method: str, *, fail_open: bool = True
+) -> bool:
+    """Would *channel* accept *method* as a live notification?
+
+    The single per-connection notification-policy predicate. Every delivery
+    path consults it: the live broadcast and queued-event flushes in
+    ``omniagents.core.agents.service``, the runtime stream broadcast in
+    ``omniagents.core.runtime.bridge``, and the journaled events
+    ``resume_session`` hands back in its RPC *result*. That last one is why
+    it exists as a shared function: a result never passes through
+    ``JsonRpcChannel.async_call``, so before tkt_m3nx8D3Rfngw it bypassed
+    the policy entirely.
+
+    It lives beside :data:`REPLAYABLE_METHODS` deliberately. A channel that
+    refuses a notification is treated as having consumed it, and that is
+    only safe because everything a flush can drop is journaled here and
+    therefore recoverable via ``resume_session`` — the two facts have to be
+    read together.
+
+    The policy itself lives on the channel
+    (``JsonRpcChannel.accepts_notification``: handshake state,
+    ``disabled_notifications``, experimental grants). Transports carrying no
+    negotiated policy — in-process bridges, test doubles — do not define the
+    hook and accept everything.
+
+    *fail_open* selects the behaviour when the policy itself raises. Live
+    delivery fails open (a broken predicate must not silence a session).
+    The replay path passes ``fail_open=False``: a result is assembled
+    in-process and handed to the client wholesale, so an exception there
+    would leak gated events rather than merely drop one notification.
+    """
+    check = getattr(channel, "accepts_notification", None)
+    if check is None:
+        return True
+    try:
+        return bool(check(method))
+    except Exception:
+        return fail_open
+
 
 # Full-replace snapshot notifications: recording a new one supersedes any
 # retained older instance for the same session.
