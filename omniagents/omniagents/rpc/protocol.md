@@ -1594,10 +1594,16 @@ started ──(0..n updates: revision++, updated_at)──► completed | failed
   that genuinely outlive their turn — a durable plan accumulates steps
   across many runs — and it is a property of the row, not an inference from
   `kind`, so the exemption is always deliberate and inspectable. The owning
-  subsystem is then responsible for landing the item terminally. No
-  first-party producer sets it yet; the flag and `ItemKind.plan` are
-  declared now so durable plans (tkt_FqUypyxF2tzC) are an additive change
-  to a `stable` surface rather than a breaking one.
+  subsystem is then responsible for landing the item terminally. The one
+  producer today is the durable plan (`ItemKind.plan`, tkt_FqUypyxF2tzC),
+  which lands its item when the conversation is archived — see *Durable
+  Structured Plans* below.
+- **`run_diff` items are settled explicitly at `run_end`, before the sweep.**
+  A run's aggregated diff is turn-scoped and stays `started` while further
+  edits revise it; the generic sweep would therefore stamp it `failed` at
+  the end of a perfectly successful run. The recorder lands it `completed`
+  first, which is the same "owning subsystem finalizes its own item"
+  contract `long_lived` signs, executed at a defined moment.
 - **Terminal governs status, not content.** One kind revises after
   completion: re-issuing `ui.add_artifact` with the same `artifact_id`
   means "here is the new version", so the item's `content` is replaced and
@@ -2331,6 +2337,229 @@ code path emits. The contract cannot drift from the payload again. The existing 
 `thread_not_found` from every thread-scoped method, `item_not_found` from
 `fork_session(from_item_id=…)`, and `cursor_invalid` from every method
 that takes a cursor.
+## Durable Structured Plans & Aggregated Run Diffs (`get_plan`, `get_run_diff`, `item_updated` — experimental)
+
+A client must be able to show (a) authoritative plan progress and (b) a
+complete, live view of what a run changed on disk — both without parsing
+assistant prose and both surviving a refresh, a reconnect, or a server
+restart. Two reserved item kinds carry them.
+
+### Plans (`ItemKind.plan`)
+
+A plan is one item per `(thread_id, scope)`, marked `long_lived`.
+
+- **`plan_id` is the item id**, derived as `derive_item_id(thread_id,
+  "plan:<scope>")`. It is thread-scoped by construction, so one session's
+  plan can never address — let alone overwrite — another's, and a client can
+  compute it before the first step exists.
+- **`scope`** separates plans *within one thread*. It is `main` throughout
+  the current topology. It does **not** reach worker sub-agents: a worker is
+  started with its own `session_id` (`WorkerManager._create_worker`), so its
+  plan lives on the worker's own thread and is read by calling `get_plan`
+  with that thread id — `get_plan(parent_thread_id)` never returns it. The
+  dimension exists because `task_scope` is the context key a sub-agent
+  spawner sets, so a future in-thread sub-agent lands beside its parent
+  instead of on top of it.
+- **Generations.** A plan is not immortal: archiving the conversation lands
+  the live plan terminally (`completed` when every step completed, else
+  `cancelled`, with `content.finalized_by`). Because an item's terminal
+  state is authoritative and immutable, a later plan in the same scope gets
+  a new identity — key `plan:<scope>#1`, `#2`, … The server returns the
+  first generation that is absent or still open, so the id is stable for the
+  whole life of one plan.
+
+`content`:
+
+| Field | Meaning |
+| --- | --- |
+| `plan_id` | The item id, echoed for convenience |
+| `scope` | Task scope this plan belongs to |
+| `generation` | 0-based ordinal within the scope |
+| `steps[]` | `id`, `subject`, `description`, `active_form`, `status`, `owner`, `blocks[]`, `blocked_by[]` |
+| `counts` | Per-status tallies; always carries every status key |
+
+`steps[].status` is the closed set `pending | in_progress | completed |
+blocked`. `blocked` is first-class rather than inferred from open dependency
+edges: a step can be blocked by something that is not another step, and a
+client deriving "blocked" from the edge list would disagree with the agent
+about the state of its own plan. Dependency edges are always written on both
+sides, so the persisted content can never hold a half edge.
+
+`get_plan(thread_id, scope?)` returns `{thread_id, scope, plan, plans[]}`.
+`plan` is the live plan (`null` when the conversation has never planned —
+an ordinary state, not an error); `plans` is every plan **this thread** has
+held, across scopes and generations, so a finished conversation still
+exposes the plan it ran under. A terminal plan carries `finalized_by`, so a
+history view can say *why* it ended `cancelled` rather than just that it
+did.
+
+This replaces the previous in-memory task bridge, whose state lived in
+module-level dictionaries keyed only by task scope — a process singleton
+that two concurrent sessions overwrote and a restart erased. The agent-facing
+tools (`task_create` / `task_list` / `task_get` / `task_update`) and the
+`tasks_snapshot` side-channel on tool `ui_metadata` are unchanged, so shipped
+clients keep working while new ones read the item.
+
+### Run diffs (`ItemKind.run_diff`)
+
+One item per turn, holding the **net** workspace change attributable to that
+run.
+
+`content`:
+
+| Field | Meaning |
+| --- | --- |
+| `run_id` | The turn this aggregate belongs to |
+| `diff` | One unified diff covering every changed path |
+| `files[]` | `path`, `change_type` (`added`/`modified`/`deleted`), `additions`, `deletions`, `opaque`, `baseline_unknown` |
+| `stats` | `files_changed`, `additions`, `deletions` — over EVERY changed path, never capped |
+| `truncated` | The rendered `diff` hit the size ceiling |
+| `files_truncated` | The `files` list hit its own ceiling (500 entries) |
+
+**Source.** The aggregate is built from content snapshots taken at the
+`omniagents.workspace` mutation boundary — the pre-image at a path's *first*
+touch in the run, and the post-image after its *latest* touch — not from
+composing the per-edit patches and not from the typed `git_*` surface.
+
+- Composing per-edit patches does not answer the question: two edits to the
+  same file produce overlapping patches whose concatenation is not a valid
+  patch, and a file created then deleted inside one run produces an "add"
+  and a "delete" that must cancel to *nothing*. Snapshotting first/latest
+  gives both for free.
+- `git_diff` reports the working tree against the index or a revision, so a
+  workspace that was already dirty attributes the user's pre-existing edits
+  to the agent. A workspace is also not required to be a git repository, and
+  most sandbox workspaces are not. And `Workspace` path semantics differ
+  between host and sandbox (tkt_z8T1amZ-GUs0), so a host-side git invocation
+  cannot be assumed to see the tree the agent edited — whereas reading back
+  through the *active* workspace sees exactly what the tools wrote.
+- `git_*` remains the right surface for "what is uncommitted in this repo
+  right now", which is a different question with a different consumer.
+
+**Boundary — read this before trusting "net".** The aggregate observes the
+workspace *content* primitives (`write_text`, `write_bytes`, `remove`),
+which is every builtin FILE tool. It does **not** observe `exec` / `spawn`,
+which is how `execute_bash` runs — and that is not an exotic path:
+
+* formatters and codegen the agent runs over its own output (`npm run fix`,
+  `black`, `ruff --fix`, `prettier -w`, a protocol/codegen script);
+* `git checkout` / `git stash` / `git apply`, `mv`, `cp`;
+* dependency installs rewriting a lockfile.
+
+Two consequences, and they are different:
+
+* **Stale content is reconciled.** A file the run wrote through a file tool
+  and then rewrote with a shell command would otherwise keep the API-time
+  post-image, so the persisted diff would *assert content that is not on
+  disk*. Every tracked path is therefore re-read once at the end of the run
+  and the aggregate is re-published, so the settled `run_diff` agrees with
+  the workspace for every path the run touched.
+* **Paths only ever touched by a shell are still invisible.** A run whose
+  only edit was `make generate` produces no `run_diff` entries for the files
+  it generated. So `run_diff` covers the paths the agent's file tools
+  touched, reconciled against the real workspace — not every path the run
+  changed. Instrumenting `exec` with a post-command rescan is the fix and is
+  not done here.
+
+**Other bounds.** Files above 1 MiB, and binary files, are reported with
+their `change_type` and `opaque: true` but carry no hunks. A path whose
+baseline was never observed (the observer bound mid-run, or the pre-image
+read failed) is reported with `baseline_unknown: true` and no hunks — never
+as an invented `added`. A read that *fails* is never recorded as absence, so
+a transient filesystem fault cannot fabricate a deletion. The rendered diff
+is capped at 400,000 characters and truncates on a **file boundary** with
+`truncated: true` — a diff cut mid-hunk is not a unified diff — while
+`files[]` and `stats` stay complete.
+
+`get_run_diff(thread_id, turn_id?)` returns `{thread_id, turn_id,
+run_diff}`, defaulting to the latest turn. `run_diff` is `null` for a turn
+that changed no files — a common, honest answer. An unknown `turn_id` is
+`-32100`.
+
+### `item_updated`
+
+A server→client notification fired whenever a conversation item is revised
+after it was first delivered.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "item_updated",
+  "params": {
+    "session_id": "sess-1", "thread_id": "sess-1", "item_id": "itm_…",
+    "turn_id": "run_…", "kind": "plan", "status": "started",
+    "revision": 4, "item_seq": 12, "updated_at": 1730000000.5,
+    "content": { "...": "kind-specific" },
+    "seq": 41, "stream_id": "…"
+  }
+}
+```
+
+- **Why it exists.** The canonical-objects surface shipped without one on
+  purpose: every kind it recorded either never mutated after creation or
+  mutated exactly once, at a moment the client already saw (`tool_result`,
+  `*_resolved`). Plans and run diffs break that — both revise many times
+  inside a run with no other event marking the change — so without a push a
+  client either polls or renders stale state.
+- **What pushes.** Every revision of a `plan` (each `task_*` call) and of a
+  `run_diff` (each observed edit), **and both terminal landings**: the run
+  diff settling `completed` at `run_end`, and the plan landing
+  `completed`/`cancelled` when the conversation is archived. The terminal
+  transitions have no notification of their own, so without them `status`
+  would be `started` in every push a client ever saw and a finished run's
+  diff would read "in progress" until the client refetched.
+- **What does not push.** Items of other kinds. `approval` and `elicitation`
+  already have their own `*_resolved` notifications and are not routed here
+  yet; the payload is kind-agnostic so they can be, without a protocol
+  change.
+- **Kind-agnostic by design.** It carries an item's identity, lifecycle and
+  content, not a plan- or diff-specific payload, so approvals and
+  elicitations can adopt the same channel later without a second
+  notification or a protocol break.
+- **`item_seq`, not `seq`.** `seq` on any notification is the replay
+  envelope's per-session sequence id. The item's own thread ordinal
+  therefore ships as `item_seq`; sharing the field name would have made one
+  number silently overwrite the other.
+- **`content` is an object here.** Everywhere else on the protocol
+  `content` is message *text*. The generated models carry a per-operation
+  type for this one field rather than re-typing the name globally, which
+  would be a breaking change to three `stable` methods.
+- **Staleness.** `revision` is monotonic per item. A client that receives an
+  update whose `revision` is not greater than the copy it holds must drop it.
+- **Replay.** `item_updated` is journaled, unlike the `fs_*` / `git_*`
+  progress events, because it carries authoritative state that a
+  reconnecting client cannot re-derive from anything else it replays.
+  Retained snapshots are **coalesced per `item_id`**: a newer revision of one
+  item supersedes that item's older snapshots and no others, and coalescing
+  does not raise the compaction floor. Clients must therefore adopt the
+  `last_seq` returned by `resume_session` rather than requiring a contiguous
+  window — the same rule `queue_changed` already imposes.
+
+### Authorization and stability
+
+`get_plan` and `get_run_diff` are **`RESOURCE_SCOPED`**. A plan is the
+agent's working state for one conversation and a run diff is the literal
+content of that conversation's file edits — both at least as sensitive as
+the transcript they belong to. Each names a `thread_id` (== `session_id`),
+so ownership of the session gates the read and a cross-user attempt is
+refused with `-32014` before any store lookup.
+
+There is **no plan or diff write on this surface at all**: plans are mutated
+by the agent's own tools inside its run and run diffs by the workspace
+observer, so no client can author either.
+
+Both methods and the notification are **`experimental`** on entry, matching
+the `fs_*` / `git_*` precedent — the Omni Desktop plan and diff components
+are a follow-up, so no shipped consumer has exercised these payload shapes.
+Clients opt in through `initialize.capabilities.experimental_operations`;
+`item_updated` is withheld from a client that did not.
+
+### Typed errors
+
+| Code | Name | `data.kind` | Raised by |
+| --- | --- | --- | --- |
+| `-32080` | ThreadNotFound | `thread_not_found` | `get_plan`, `get_run_diff` |
+| `-32100` | ConversationTurnNotFound | `turn_not_found` | `get_run_diff` |
 
 ## Workspace Filesystem Watch & Transfer (`fs_*` methods, experimental)
 

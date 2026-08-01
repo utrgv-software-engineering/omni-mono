@@ -503,6 +503,14 @@ export interface PurgeThreadsParams {
   retention_days: number;
   dry_run?: boolean;
 }
+export interface GetPlanParams {
+  thread_id: string;
+  scope?: string;
+}
+export interface GetRunDiffParams {
+  thread_id: string;
+  turn_id?: string;
+}
 export interface InitializedParams {
 }
 export interface RunStartedParams {
@@ -742,6 +750,20 @@ export interface ThreadUpdatedParams {
   seq?: number;
   stream_id?: string;
 }
+export interface ItemUpdatedParams {
+  session_id: string;
+  thread_id: string;
+  item_id: string;
+  kind: string;
+  status: string;
+  revision: number;
+  item_seq: number;
+  content: Record<string, unknown>;
+  turn_id?: string;
+  updated_at?: number;
+  seq?: number;
+  stream_id?: string;
+}
 export interface RpcMethodMap {
   "initialize": { params: InitializeParams; result: InitializeResult };
   "start_run": { params: StartRunParams; result: StartRunResult };
@@ -841,6 +863,8 @@ export interface RpcMethodMap {
   "list_thread_descendants": { params: ListThreadDescendantsParams; result: Record<string, unknown> };
   "export_thread": { params: ExportThreadParams; result: Record<string, unknown> };
   "purge_threads": { params: PurgeThreadsParams; result: Record<string, unknown> };
+  "get_plan": { params: GetPlanParams; result: Record<string, unknown> };
+  "get_run_diff": { params: GetRunDiffParams; result: Record<string, unknown> };
 }
 export interface RpcNotificationMap {
   "run_started": RunStartedParams;
@@ -868,6 +892,7 @@ export interface RpcNotificationMap {
   "fs_transfer_progress": FsTransferProgressParams;
   "git_operation_progress": GitOperationProgressParams;
   "thread_updated": ThreadUpdatedParams;
+  "item_updated": ItemUpdatedParams;
 }
 export interface RpcClientNotificationMap {
   "initialized": InitializedParams;

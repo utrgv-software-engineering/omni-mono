@@ -142,6 +142,37 @@ def test_queue_changed_snapshots_coalesce_without_raising_floor():
     assert [p["seq"] for _, p in log.events_after(0)] == [1, 3, 4]
 
 
+def test_item_updated_snapshots_coalesce_per_item():
+    """A newer revision of ONE item supersedes only that item's older
+    snapshots. Coalescing on the method alone would drop the plan's latest
+    state the moment a run diff was pushed — silent loss on the replay
+    path, not compaction."""
+    log = make_log()
+    log.record("item_updated", {"item_id": "itm_plan", "revision": 0})
+    log.record("item_updated", {"item_id": "itm_diff", "revision": 0})
+    log.record("item_updated", {"item_id": "itm_plan", "revision": 1})
+    log.record("item_updated", {"item_id": "itm_plan", "revision": 2})
+
+    retained = [p for m, p in log.events_after(0) if m == "item_updated"]
+    assert [(p["item_id"], p["revision"]) for p in retained] == [
+        ("itm_diff", 0),
+        ("itm_plan", 2),
+    ]
+    # Supersession is not information loss: old cursors still resume.
+    assert log.compacted_below == 0
+
+
+def test_item_updated_is_replayable():
+    """A plan that gained steps while the client was away is not derivable
+    from anything else it replays."""
+    assert "item_updated" in REPLAYABLE_METHODS
+    log = make_log()
+    log.record("message_output", {"content": "a"})
+    log.record("item_updated", {"item_id": "itm_plan", "revision": 0})
+    replayed = log.events_after(1, stream_id=log.stream_id)
+    assert [method for method, _ in replayed] == ["item_updated"]
+
+
 def test_acknowledge_compacts_only_below_minimum_consumer_cursor():
     log = make_log()
     for index in range(4):

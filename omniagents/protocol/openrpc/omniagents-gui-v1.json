@@ -268,6 +268,30 @@
         },
         "message": "Conversation search is unavailable"
       },
+      "ConversationTurnNotFound": {
+        "code": -32100,
+        "data": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "turn_not_found"
+            },
+            "thread_id": {
+              "type": "string"
+            },
+            "turn_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "thread_id",
+            "turn_id"
+          ],
+          "type": "object"
+        },
+        "message": "Unknown turn"
+      },
       "ElicitationAlreadyResolved": {
         "code": -32051,
         "data": {
@@ -7845,6 +7869,121 @@
       "x-omni-stability": "experimental"
     },
     {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        }
+      ],
+      "name": "get_plan",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/get_plan/properties/thread_id"
+          }
+        },
+        {
+          "name": "scope",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/get_plan/properties/scope"
+          }
+        }
+      ],
+      "result": {
+        "name": "get_plan_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation get_plan",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/get_plan"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        },
+        {
+          "$ref": "#/components/errors/ThreadNotFound"
+        },
+        {
+          "$ref": "#/components/errors/ConversationTurnNotFound"
+        }
+      ],
+      "name": "get_run_diff",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/get_run_diff/properties/thread_id"
+          }
+        },
+        {
+          "name": "turn_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/get_run_diff/properties/turn_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "get_run_diff_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation get_run_diff",
+      "x-omni-direction": "client_to_server",
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/get_run_diff"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
       "name": "initialized",
       "paramStructure": "by-name",
       "params": [],
@@ -9651,6 +9790,109 @@
       "x-omni-kind": "notification",
       "x-omni-params-schema": {
         "$ref": "./schemas/gui-v1.schema.json#/$defs/thread_updated"
+      },
+      "x-omni-stability": "experimental"
+    },
+    {
+      "name": "item_updated",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "session_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/session_id"
+          }
+        },
+        {
+          "name": "thread_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/thread_id"
+          }
+        },
+        {
+          "name": "item_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/item_id"
+          }
+        },
+        {
+          "name": "kind",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/kind"
+          }
+        },
+        {
+          "name": "status",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/status"
+          }
+        },
+        {
+          "name": "revision",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/revision"
+          }
+        },
+        {
+          "name": "item_seq",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/item_seq"
+          }
+        },
+        {
+          "name": "content",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/content"
+          }
+        },
+        {
+          "name": "turn_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/turn_id"
+          }
+        },
+        {
+          "name": "updated_at",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/updated_at"
+          }
+        },
+        {
+          "name": "seq",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/seq"
+          }
+        },
+        {
+          "name": "stream_id",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated/properties/stream_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "item_updated_result",
+        "schema": {
+          "type": "null"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation item_updated",
+      "x-omni-direction": "server_to_client",
+      "x-omni-kind": "notification",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/item_updated"
       },
       "x-omni-stability": "experimental"
     }

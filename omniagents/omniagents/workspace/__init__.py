@@ -31,17 +31,22 @@ The contract:
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Literal, Optional
 
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Sequence
 
 from ._runtime import (
+    WorkspaceMutationObserver,
     clamp_within,
+    current_mutation_observer,
     current_workspace,
     get_requested_cwd,
+    reset_mutation_observer,
     reset_workspace,
     set_default_workspace,
+    set_mutation_observer,
     set_requested_cwd,
     set_workspace,
 )
@@ -56,6 +61,8 @@ from .types import (
     WorkspaceEscapeError,
     WorkspaceFeatureUnavailable,
 )
+
+_logger = logging.getLogger(__name__)
 
 # Pyodide backend is optional — importing the module is cheap (no Node
 # subprocess yet), but we still re-export through __all__ only when the
@@ -100,6 +107,7 @@ __all__ = [
     "WorkspaceError",
     "WorkspaceEscapeError",
     "WorkspaceFeatureUnavailable",
+    "WorkspaceMutationObserver",
     # Backends + routing (advanced use)
     "HostWorkspace",
     "SandboxWorkspace",
@@ -107,13 +115,40 @@ __all__ = [
     "pyodide_worker_available",
     "use_pyodide_workspace",
     "current_workspace",
+    "current_mutation_observer",
     "set_workspace",
     "set_default_workspace",
+    "set_mutation_observer",
     "set_requested_cwd",
     "get_requested_cwd",
     "clamp_within",
+    "reset_mutation_observer",
     "reset_workspace",
 ]
+
+
+# ------------------------ mutation observation --------------------------- #
+
+
+async def _notify_mutation(phase: str, path: str) -> None:
+    """Fire the run's mutation observer, if one is bound.
+
+    Never raises. Diff bookkeeping is derived state: a fault here must not
+    turn a successful file write into a failed tool call. The exception is
+    logged (never swallowed silently) so a broken observer is visible.
+    """
+    observer = current_mutation_observer()
+    if observer is None:
+        return
+    try:
+        if phase == "before":
+            await observer.before_mutation(path)
+        else:
+            await observer.after_mutation(path)
+    except Exception:
+        _logger.exception(
+            "workspace mutation observer failed", extra={"phase": phase, "path": path}
+        )
 
 
 # ---------------------- pyodide convenience wiring ----------------------- #
@@ -188,6 +223,7 @@ async def write_text(
     append: bool = False,
     create_dirs: bool = True,
 ) -> None:
+    await _notify_mutation("before", path)
     await current_workspace().write_text(
         path,
         content,
@@ -195,6 +231,7 @@ async def write_text(
         append=append,
         create_dirs=create_dirs,
     )
+    await _notify_mutation("after", path)
 
 
 async def write_bytes(
@@ -204,9 +241,11 @@ async def write_bytes(
     append: bool = False,
     create_dirs: bool = True,
 ) -> None:
+    await _notify_mutation("before", path)
     await current_workspace().write_bytes(
         path, data, append=append, create_dirs=create_dirs
     )
+    await _notify_mutation("after", path)
 
 
 async def exists(path: str) -> bool:
@@ -226,7 +265,9 @@ async def mkdir(path: str, *, parents: bool = True, exist_ok: bool = True) -> No
 
 
 async def remove(path: str, *, recursive: bool = False) -> None:
+    await _notify_mutation("before", path)
     await current_workspace().remove(path, recursive=recursive)
+    await _notify_mutation("after", path)
 
 
 # --------------------------- discovery ----------------------------------- #

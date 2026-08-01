@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import asyncio
 import logging
+import sys
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import AsyncGenerator, Optional, Any
 
 from agents import RunConfig, ItemHelpers
@@ -114,6 +116,132 @@ def _mcp_label_fields(session, public_name) -> dict:
     if identity is None:
         return {}
     return {"server_label": identity[0], "tool_label": identity[1]}
+
+
+def _install_run_diff_observer(service, session):
+    """Bind this run's :class:`RunDiffObserver`. Returns ``(token, observer)``.
+
+    Every observed mutation persists the run's aggregated diff as a
+    ``run_diff`` item and pushes ``item_updated``, so a client sees the
+    complete, current picture of what the run has changed after each edit —
+    without waiting for ``run_end`` and without stitching together the
+    per-edit diffs on the ``tool_result`` events.
+
+    ``None`` when there is no run to attribute the edits to (rather than
+    accumulating into an item with no turn).
+
+    Callers should use :func:`run_diff_observer_scope`, which owns the
+    teardown ORDER; this is its one implementation detail.
+    """
+    import asyncio as _asyncio
+
+    task = _asyncio.current_task()
+    run_id = task.get_name() if task is not None else None
+    if not run_id:
+        return None
+
+    from omniagents.core.conversation.recorder import recorder_for_session
+    from omniagents.core.conversation.run_diff import RunDiffObserver
+    from omniagents.workspace import set_mutation_observer as _set_mutation_observer
+
+    async def _publish(snapshot: dict) -> None:
+        try:
+            recorder = recorder_for_session(session)
+            if recorder is None:
+                return
+            recorder.ensure_thread(
+                session.id,
+                user_id=getattr(session, "user_id", None),
+                archived=bool(getattr(session, "archived", False)),
+            )
+            item = recorder.record_run_diff(
+                session.id, run_id=run_id, snapshot=snapshot
+            )
+            if item is None:
+                return
+            await service.notify_item_updated(session, item)
+        except Exception:
+            logger.exception(
+                "run diff publication failed",
+                extra={"session": getattr(session, "id", None), "run": run_id},
+            )
+
+    observer = RunDiffObserver(_publish)
+    try:
+        return _set_mutation_observer(observer), observer
+    except Exception:
+        logger.exception("run diff observer could not be installed")
+        return None
+
+
+@asynccontextmanager
+async def run_diff_observer_scope(service, session):
+    """The run-diff observer's whole lifecycle: bind, reconcile, unbind.
+
+    The teardown ORDER is a contract, not a detail:
+
+    1. ``finalize()`` re-reads every tracked path — it MUST run while the
+       run's workspace is still installed, or it reads the wrong tree;
+    2. only then is the contextvar restored.
+
+    That sequence used to be hand-written at each call site, which is
+    exactly how the test harness drifted from ``stream_agent`` when
+    :func:`_install_run_diff_observer` changed shape — and it surfaced only
+    because the new return type happened to raise. A silent divergence
+    would have passed. One context manager, used by every caller, makes the
+    contract impossible to duplicate wrongly.
+
+    Yields the observer (``None`` when none was installed) so a caller can
+    inspect it; nothing is required of the caller but to leave the block.
+    """
+    installed = _install_run_diff_observer(service, session)
+    if installed is None:
+        yield None
+        return
+    token, observer = installed
+    try:
+        yield observer
+    finally:
+        # ``pending`` is the exception this teardown is unwinding, if any.
+        # Captured BEFORE the awaits below, because inside an ``except``
+        # block ``sys.exc_info()`` reports the newly-caught exception.
+        pending = sys.exc_info()[1]
+        try:
+            await observer.finalize()
+        except BaseException as exc:
+            # Deliberately BaseException, not Exception. ``finalize()``
+            # awaits once per tracked path, so a ``task.cancel()`` landing
+            # in that window raises CancelledError — which ``except
+            # Exception`` does not catch. It would then ESCAPE this
+            # ``finally`` and REPLACE the run's own exception, so a run that
+            # died with a RuntimeError would be recorded
+            # ``end_reason="cancelled"`` with ``run_end.error`` dropped. The
+            # window is proportional to the number of files the run touched.
+            logger.exception("run diff finalization failed")
+            if pending is None and not isinstance(exc, Exception):
+                # Nothing was in flight, so swallowing a CancelledError
+                # here would LOSE a genuine cancellation instead of masking
+                # one. Ordinary exceptions still never escape: diff
+                # bookkeeping must not fail a run.
+                #
+                # Known, deliberate: this path skips the unbind below.
+                # Harmless today — the run task's context dies with it, and
+                # contextvar tokens restore correctly when nested — but a
+                # ``try/finally`` around the two steps would make the unbind
+                # unconditional. Recorded as a follow-up rather than done
+                # here, because restructuring the teardown is exactly the
+                # kind of change that wants its own review.
+                raise
+        try:
+            from omniagents.workspace import (
+                reset_mutation_observer as _reset_mutation_observer,
+            )
+
+            _reset_mutation_observer(token)
+        except BaseException as exc:
+            logger.exception("run diff observer could not be unbound")
+            if pending is None and not isinstance(exc, Exception):
+                raise
 
 
 def _stream_event_payload(item, run_id: str, *, session_id: str, session=None):
@@ -305,6 +433,20 @@ async def stream_agent(
         # Workspace setup is best-effort; fall back to default lazy
         # HostWorkspace(cwd) if anything goes wrong here.
         workspace_token = None
+
+    # Aggregate this run's file edits into a run-level unified diff
+    # (tkt_FqUypyxF2tzC). Bound AFTER the workspace so the observer reads
+    # content back through whichever workspace this run actually uses, and
+    # per-run so two concurrent runs never accumulate into one another.
+    # The observer's bind/reconcile/unbind order lives in ONE place
+    # (``run_diff_observer_scope``); an exit stack lets this long function
+    # keep its existing shape while still closing the scope at the right
+    # moment — before the workspace contextvar is restored.
+    run_diff_scope = AsyncExitStack()
+    if service is not None and session is not None:
+        await run_diff_scope.enter_async_context(
+            run_diff_observer_scope(service, session)
+        )
 
     token = None
     if service is not None and session is not None:
@@ -1039,6 +1181,24 @@ async def stream_agent(
         # Re-raise the original exception
         raise
     finally:
+        # The exception this teardown is unwinding, if any. Captured here,
+        # before anything below awaits, because inside an ``except`` block
+        # ``sys.exc_info()`` reports the newly-caught exception instead.
+        # Every await in this block runs while the run's own outcome is
+        # already decided, so nothing here may speak for it.
+        unwinding = sys.exc_info()[1]
+
+        # Close the run-diff scope FIRST. It re-reads every tracked path,
+        # so it must run while the run's workspace is still installed
+        # (restored at the bottom of this block) — and it must run before
+        # any OTHER await here, because an exception escaping one of those
+        # would skip it and leak the mutation-observer contextvar into the
+        # next run.
+        try:
+            await run_diff_scope.aclose()
+        except Exception:
+            logger.exception("run diff scope teardown failed")
+
         session.current_stream_result = None
         # Flush the streamed-items buffer.  In the normal SDK-driven
         # flow, the SDK has already called ``Session.add_items`` for
@@ -1129,7 +1289,26 @@ async def stream_agent(
                     "output": "[Cancelled by user]",
                     "call_id": call_id,
                 }
-                await _broadcast(session, "tool_result", cancelled_payload)
+                try:
+                    await _broadcast(session, "tool_result", cancelled_payload)
+                except BaseException as exc:
+                    # Same exposure as the run-diff teardown, and it needs
+                    # the SAME treatment: this awaits while the run is
+                    # already unwinding, so a fault here would replace the
+                    # run's own outcome. ``except Exception`` covers the
+                    # transport half but NOT a ``CancelledError`` delivered
+                    # during the send — that still escaped and rewrote a
+                    # RuntimeError run as a cancellation. A genuine
+                    # cancellation with nothing in flight still propagates;
+                    # ordinary faults never escape. Pre-existing exposure,
+                    # fixed here because the run-diff work put an await in
+                    # the same teardown.
+                    logger.exception(
+                        "cancelled tool_result broadcast failed",
+                        extra={"call_id": call_id},
+                    )
+                    if unwinding is None and not isinstance(exc, Exception):
+                        raise
 
                 Debug.log(
                     f"[srv]   → tool_result (cancelled) call_id={call_id} tool={tool_name}"

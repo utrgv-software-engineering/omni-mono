@@ -438,3 +438,107 @@ def test_the_generated_tsvector_is_normalized_in_a_FRESH_schema():
     finally:
         admin.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
         admin.close()
+
+
+def test_a_plan_round_trips_and_lands_terminally_on_postgres(store):
+    """Plans are ordinary items with a ``long_lived`` flag and a JSONB
+    payload, so the two behaviours worth proving on the cloud backend are
+    that the flag survives the round trip (a plan swept at run_end would be
+    unwritable afterwards) and that JSONB holds the nested step list."""
+    from omniagents.core.conversation.plans import Plan, PlanStep, PlanStore
+
+    recorder = ConversationRecorder(store)
+    recorder.ensure_thread("sess-1", user_id="u1")
+    plans = PlanStore(store)
+
+    key, generation = plans.current_key("sess-1", "main")
+    plan = Plan(plan_id="", thread_id="sess-1", scope="main", generation=generation)
+    plan.steps = [
+        PlanStep(id="1", subject="write it", status="completed"),
+        PlanStep(id="2", subject="test it", status="blocked", blocked_by=["1"]),
+    ]
+    recorder.record("sess-1", "run_started", {"run_id": "run-1", "prompt": "go"})
+    recorder.record_plan(
+        "sess-1", natural_key=key, content=plan.to_content(), run_id="run-1"
+    )
+    recorder.record("sess-1", "run_end", {"run_id": "run-1", "end_reason": "completed"})
+
+    stored = plans.current("sess-1", "main")
+    assert stored is not None
+    assert stored.status == ItemStatus.STARTED.value  # long_lived: not swept
+    assert [(s.id, s.status) for s in stored.steps] == [
+        ("1", "completed"),
+        ("2", "blocked"),
+    ]
+    assert stored.step("2").blocked_by == ["1"]
+
+    recorder.record_archived("sess-1", True)
+    landed = store.get_item("sess-1", stored.plan_id)
+    assert landed.status is ItemStatus.CANCELLED
+    assert landed.content["finalized_by"] == "thread_archived"
+
+    # A finalized plan is not reopened; the next one gets its own identity.
+    next_key, next_generation = plans.current_key("sess-1", "main")
+    assert next_generation == 1
+    assert next_key != key
+
+
+def test_a_run_diff_round_trips_and_settles_on_postgres(store):
+    recorder = ConversationRecorder(store)
+    recorder.ensure_thread("sess-1", user_id="u1")
+    recorder.record("sess-1", "run_started", {"run_id": "run-1", "prompt": "go"})
+    recorder.record_run_diff(
+        "sess-1",
+        run_id="run-1",
+        snapshot={
+            "diff": "--- a/a.txt\n+++ b/a.txt\n",
+            "files": [{"path": "a.txt", "change_type": "modified"}],
+            "stats": {"files_changed": 1, "additions": 1, "deletions": 1},
+            "truncated": False,
+        },
+    )
+    revised = recorder.record_run_diff(
+        "sess-1",
+        run_id="run-1",
+        snapshot={
+            "diff": "--- a/a.txt\n+++ b/a.txt\n@@\n",
+            "files": [
+                {"path": "a.txt", "change_type": "modified"},
+                {"path": "b.txt", "change_type": "added"},
+            ],
+            "stats": {"files_changed": 2, "additions": 3, "deletions": 1},
+            "truncated": False,
+        },
+    )
+    assert revised.revision == 1
+    recorder.record("sess-1", "run_end", {"run_id": "run-1", "end_reason": "completed"})
+
+    service = ConversationService(store=store)
+    result = service.get_run_diff("sess-1")
+    assert result["turn_id"] == "run-1"
+    assert [f["path"] for f in result["run_diff"]["files"]] == ["a.txt", "b.txt"]
+    assert result["run_diff"]["stats"]["files_changed"] == 2
+    # Settled by run_end rather than swept as a failed orphan.
+    assert result["run_diff"]["status"] == ItemStatus.COMPLETED.value
+
+
+def test_get_plan_reads_history_across_generations_on_postgres(store):
+    from omniagents.core.conversation.plans import Plan, PlanStep, PlanStore
+
+    recorder = ConversationRecorder(store)
+    recorder.ensure_thread("sess-1")
+    plans = PlanStore(store)
+
+    for subject in ("first plan", "second plan"):
+        key, generation = plans.current_key("sess-1", "main")
+        plan = Plan(plan_id="", thread_id="sess-1", scope="main", generation=generation)
+        plan.steps = [PlanStep(id="1", subject=subject)]
+        recorder.record_plan("sess-1", natural_key=key, content=plan.to_content())
+        recorder.record_archived("sess-1", True)
+
+    result = ConversationService(store=store).get_plan("sess-1")
+    assert [p["steps"][0]["subject"] for p in result["plans"]] == [
+        "first plan",
+        "second plan",
+    ]
+    assert result["plan"] is None  # both generations are terminal

@@ -15,6 +15,8 @@ Layout::
     recorder.py   write path — fed from stamp_session_event()
     adapter.py    compatibility projection over legacy history rows
     service.py    read path — paginated reads + lazy backfill
+    plans.py      durable structured plans over ItemKind.PLAN
+    run_diff.py   run-level aggregated unified diffs over ItemKind.RUN_DIFF
 """
 
 from .model import (
@@ -36,7 +38,9 @@ from .model import (
     derive_legacy_turn_id,
     encode_cursor,
 )
+from .plans import Plan, PlanStep, PlanStore
 from .recorder import ConversationRecorder, record_session_event
+from .run_diff import RunDiffAccumulator, RunDiffObserver
 from .service import ConversationService
 from .store import ConversationStore, get_conversation_store, reset_conversation_store
 
@@ -51,6 +55,11 @@ __all__ = [
     "ItemKind",
     "ItemStatus",
     "Page",
+    "Plan",
+    "PlanStep",
+    "PlanStore",
+    "RunDiffAccumulator",
+    "RunDiffObserver",
     "Thread",
     "ThreadStatus",
     "ToolKind",

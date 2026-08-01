@@ -48,6 +48,8 @@ from .store import (
     SearchUnavailable,
     get_conversation_store,
 )
+from .plans import PlanStore
+from .store import ConversationStore, get_conversation_store
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +71,17 @@ __all__ = [
     "ThreadNotFound",
     "ThreadOnLegalHold",
     "UNSET",
+    "TurnNotFound",
 ]
 
 #: JSON-RPC error codes. ``-32010..13``, ``-32020``, ``-32030``,
-#: ``-32040..42``, ``-32050..52``, ``-32060..63`` and ``-32070..76`` are
-#: taken by earlier surfaces; this one opens the ``-3208x`` block.
+#: ``-32040..42``, ``-32050..52``, ``-32060..63``, ``-32070..76``,
+#: ``-32080..82`` and ``-32090..95`` are taken by earlier surfaces; the
+#: plan/diff surface opens the ``-321xx`` block.
 RPC_ERROR_THREAD_NOT_FOUND = -32080
 RPC_ERROR_ITEM_NOT_FOUND = -32081
 RPC_ERROR_CURSOR_INVALID = -32082
+RPC_ERROR_TURN_NOT_FOUND = -32100
 
 #: Conversation organization & branching (tkt_eZldW-Gje6kn). ``-3209x`` is
 #: taken by the git surface and ``-3210x`` by the durable-plan work, so this
@@ -195,6 +200,18 @@ class ItemNotFound(ConversationRpcError):
             f"Unknown item {item_id} in thread {thread_id}",
             thread_id=thread_id,
             item_id=item_id,
+        )
+
+
+class TurnNotFound(ConversationRpcError):
+    code = RPC_ERROR_TURN_NOT_FOUND
+    kind = "turn_not_found"
+
+    def __init__(self, thread_id: str, turn_id: str) -> None:
+        super().__init__(
+            f"Unknown turn {turn_id} in thread {thread_id}",
+            thread_id=thread_id,
+            turn_id=turn_id,
         )
 
 
@@ -1128,6 +1145,72 @@ class ConversationService:
             # Keep everything before this question, plus the question.
             return seen - 1, True
         return seen, False
+
+    # -- plans & run diffs (tkt_FqUypyxF2tzC) ----------------------------
+
+    def get_plan(self, thread_id: str, *, scope: str | None = None) -> Dict[str, Any]:
+        """The live plan for *scope*, plus every plan the thread has held.
+
+        A dedicated read rather than "filter ``list_items`` to ``plan``"
+        because the client question is "what is the plan **now**", and
+        answering it from a page means knowing the scope conventions, the
+        generation scheme, and which of several plan items is still open.
+        Those are server invariants; encoding them in every client is how
+        clients drift apart.
+        """
+        self.ensure_thread(thread_id)
+        plans = PlanStore(self.store)
+        requested_scope = scope if isinstance(scope, str) and scope else "main"
+        current = plans.current(thread_id, requested_scope)
+        history = plans.list_plans(thread_id)
+        return {
+            "thread_id": thread_id,
+            "scope": requested_scope,
+            "plan": current.to_wire() if current is not None else None,
+            "plans": [entry.to_wire() for entry in history],
+        }
+
+    def get_run_diff(
+        self, thread_id: str, *, turn_id: str | None = None
+    ) -> Dict[str, Any]:
+        """The aggregated diff for one turn — the latest turn by default.
+
+        ``run_diff`` is ``None`` for a turn that changed no files. That is a
+        real, common answer (a question-answering turn), so it is not an
+        error; an unknown ``turn_id``, which can only be a client mistake,
+        is (:class:`TurnNotFound`).
+        """
+        self.ensure_thread(thread_id)
+        resolved = turn_id
+        if resolved is not None:
+            if self.store.get_turn(thread_id, resolved) is None:
+                raise TurnNotFound(thread_id, resolved)
+        else:
+            latest = self.store.list_turns(thread_id, limit=1, descending=True)
+            resolved = latest[0].turn_id if latest else None
+        if resolved is None:
+            return {"thread_id": thread_id, "turn_id": None, "run_diff": None}
+        items = self.store.list_items(
+            thread_id,
+            limit=1,
+            turn_id=resolved,
+            kinds=[ItemKind.RUN_DIFF],
+            descending=True,
+        )
+        if not items:
+            return {"thread_id": thread_id, "turn_id": resolved, "run_diff": None}
+        item = items[0]
+        return {
+            "thread_id": thread_id,
+            "turn_id": resolved,
+            "run_diff": {
+                **item.content,
+                "item_id": item.item_id,
+                "status": item.status.value,
+                "revision": item.revision,
+                "updated_at": item.updated_at,
+            },
+        }
 
 
 def _parse_kinds(kinds: Sequence[str] | None) -> Optional[List[ItemKind]]:

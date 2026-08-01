@@ -440,6 +440,22 @@ class GetModel(BaseModel):
     model: str
 
 
+class GetPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    scope: str | None = None
+    thread_id: str
+
+
+class GetRunDiff(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    thread_id: str
+    turn_id: str | None = None
+
+
 class GetSessionHistory(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -669,6 +685,24 @@ class Initialized(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+
+
+class ItemUpdated(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    content: dict[str, Any]
+    item_id: str
+    item_seq: int
+    kind: str
+    revision: int
+    seq: int | None = None
+    session_id: str
+    status: str
+    stream_id: str | None = None
+    thread_id: str
+    turn_id: str | None = None
+    updated_at: float | None = None
 
 
 class JsonRpcError(BaseModel):
@@ -1395,6 +1429,8 @@ class Model(
         | ListThreadDescendants
         | ExportThread
         | PurgeThreads
+        | GetPlan
+        | GetRunDiff
         | Initialized
         | RunStarted
         | RunStatus
@@ -1421,6 +1457,7 @@ class Model(
         | FsTransferProgress
         | GitOperationProgress
         | ThreadUpdated
+        | ItemUpdated
     ]
 ):
     root: (
@@ -1522,6 +1559,8 @@ class Model(
         | ListThreadDescendants
         | ExportThread
         | PurgeThreads
+        | GetPlan
+        | GetRunDiff
         | Initialized
         | RunStarted
         | RunStatus
@@ -1548,4 +1587,5 @@ class Model(
         | FsTransferProgress
         | GitOperationProgress
         | ThreadUpdated
+        | ItemUpdated
     )

@@ -147,6 +147,14 @@ EXPERIMENTAL_REQUESTS = (
     "list_thread_descendants",
     "export_thread",
     "purge_threads",
+    # Durable structured plans & aggregated run diffs (tkt_FqUypyxF2tzC).
+    # Experimental on entry, matching the fs_*/git_* precedent: the Omni
+    # Desktop plan and diff components are an explicit follow-up, so no
+    # shipped consumer has exercised these payload shapes yet. Clients opt
+    # in via initialize.capabilities.experimental_operations. Both name a
+    # ``thread_id`` (== session_id) and are session-owned.
+    "get_plan",
+    "get_run_diff",
 )
 
 STABLE_NOTIFICATIONS = (
@@ -213,6 +221,14 @@ EXPERIMENTAL_NOTIFICATIONS = (
     # list_threads. Delivered only to channels whose principal owns the
     # thread.
     "thread_updated",
+    # A conversation item changed after it was first delivered
+    # (tkt_FqUypyxF2tzC). Deliberately kind-agnostic: today plans and run
+    # diffs revise many times inside a run with no other event marking the
+    # change, and approvals/elicitations can adopt the same channel later
+    # without a second notification. Journaled and coalesced per item_id —
+    # unlike the fs_*/git_* progress events this carries authoritative
+    # state, so a reconnecting client must receive the latest revision.
+    "item_updated",
 )
 
 OPERATIONS = tuple(

@@ -381,6 +381,18 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "update_thread",
         "list_thread_descendants",
         "export_thread",
+        # Durable plans & aggregated run diffs (tkt_FqUypyxF2tzC). A plan
+        # is the agent's working state for one conversation and a run diff
+        # is the literal content of that conversation's file edits — both
+        # are at least as sensitive as the transcript they belong to. Each
+        # method names a ``thread_id`` (== session_id), so ownership of the
+        # session gates the read and a cross-user attempt is refused with
+        # -32014 before any store lookup. There is no plan/diff WRITE on
+        # this surface at all: plans are mutated by the agent's own tools
+        # inside its run, and run diffs by the workspace observer, so no
+        # client can author either.
+        "get_plan",
+        "get_run_diff",
         # Typed git operations (tkt_l_l0lUi4A5V2): a repository is
         # addressed relative to a session's workspace/sandbox, so every
         # git_* method names a session_id and is gated on session

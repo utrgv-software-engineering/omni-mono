@@ -97,6 +97,8 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ListThreadDescendants
   | ExportThread
   | PurgeThreads
+  | GetPlan
+  | GetRunDiff
   | Initialized
   | RunStarted
   | RunStatus
@@ -122,7 +124,8 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | FsRescanRequired
   | FsTransferProgress
   | GitOperationProgress
-  | ThreadUpdated;
+  | ThreadUpdated
+  | ItemUpdated;
 
 export interface Initialize {
   capabilities: Capabilities;
@@ -676,6 +679,14 @@ export interface PurgeThreads {
   dry_run?: boolean;
   retention_days: number;
 }
+export interface GetPlan {
+  scope?: string;
+  thread_id: string;
+}
+export interface GetRunDiff {
+  thread_id: string;
+  turn_id?: string;
+}
 export interface Initialized {}
 export interface RunStarted {
   prompt?: string;
@@ -939,4 +950,20 @@ export interface ThreadUpdated {
     [k: string]: unknown;
   };
   thread_id: string;
+}
+export interface ItemUpdated {
+  content: {
+    [k: string]: unknown;
+  };
+  item_id: string;
+  item_seq: number;
+  kind: string;
+  revision: number;
+  seq?: number;
+  session_id: string;
+  status: string;
+  stream_id?: string;
+  thread_id: string;
+  turn_id?: string;
+  updated_at?: number;
 }

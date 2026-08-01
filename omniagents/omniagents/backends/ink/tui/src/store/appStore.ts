@@ -106,11 +106,20 @@ export interface UsageInfo {
   maxOutputTokens?: number;
 }
 
+/** Closed set, mirroring the server's plan step statuses. ``blocked`` is
+ * set by the agent, never inferred from the ``blockedBy`` edge list — see
+ * protocol.md § Durable Structured Plans. */
+export type TaskStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "blocked";
+
 export interface TaskSummary {
   id: string;
   subject: string;
   activeForm?: string;
-  status: "pending" | "in_progress" | "completed";
+  status: TaskStatus;
   owner?: string;
   blockedBy?: string[];
 }

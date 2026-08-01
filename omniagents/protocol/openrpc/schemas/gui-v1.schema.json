@@ -971,6 +971,38 @@
       "type": "object",
       "x-omni-stability": "stable"
     },
+    "get_plan": {
+      "additionalProperties": false,
+      "properties": {
+        "scope": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
+    "get_run_diff": {
+      "additionalProperties": false,
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "get_session_history": {
       "additionalProperties": false,
       "properties": {
@@ -1561,6 +1593,59 @@
       "properties": {},
       "type": "object",
       "x-omni-stability": "stable"
+    },
+    "item_updated": {
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "object"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "item_seq": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "integer"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stream_id": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "session_id",
+        "thread_id",
+        "item_id",
+        "kind",
+        "status",
+        "revision",
+        "item_seq",
+        "content"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
     },
     "jsonRpcError": {
       "additionalProperties": false,
@@ -3223,6 +3308,12 @@
       "$ref": "#/$defs/purge_threads"
     },
     {
+      "$ref": "#/$defs/get_plan"
+    },
+    {
+      "$ref": "#/$defs/get_run_diff"
+    },
+    {
       "$ref": "#/$defs/initialized"
     },
     {
@@ -3299,6 +3390,9 @@
     },
     {
       "$ref": "#/$defs/thread_updated"
+    },
+    {
+      "$ref": "#/$defs/item_updated"
     }
   ]
 }

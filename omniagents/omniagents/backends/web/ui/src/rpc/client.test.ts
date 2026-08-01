@@ -428,3 +428,103 @@ describe('RPCClient typed git wrappers', () => {
     })
   })
 })
+
+describe('RPCClient plan & run-diff wrappers', () => {
+  async function connectedClient(): Promise<{ client: RPCClient; socket: MockWebSocket }> {
+    const client = new RPCClient('ws://example.test/ws')
+    await client.connect()
+    return { client, socket: MockWebSocket.instances[MockWebSocket.instances.length - 1]! }
+  }
+
+  function lastRequest(socket: MockWebSocket): { method: string; params: unknown } {
+    return JSON.parse(socket.sent[socket.sent.length - 1]!) as {
+      method: string
+      params: unknown
+    }
+  }
+
+  it('omits the optional scope and turn instead of sending nulls', async () => {
+    const { client, socket } = await connectedClient()
+
+    void client.getPlan('thread-1')
+    expect(lastRequest(socket)).toMatchObject({
+      method: 'get_plan',
+      params: { thread_id: 'thread-1' },
+    })
+    expect(Object.keys((lastRequest(socket).params as object) ?? {})).toEqual(['thread_id'])
+
+    void client.getRunDiff('thread-1')
+    expect(Object.keys((lastRequest(socket).params as object) ?? {})).toEqual(['thread_id'])
+  })
+
+  it('addresses a worker scope and a historical turn', async () => {
+    const { client, socket } = await connectedClient()
+
+    void client.getPlan('thread-1', 'worker-3')
+    expect(lastRequest(socket)).toMatchObject({
+      method: 'get_plan',
+      params: { thread_id: 'thread-1', scope: 'worker-3' },
+    })
+
+    void client.getRunDiff('thread-1', 'run_abc')
+    expect(lastRequest(socket)).toMatchObject({
+      method: 'get_run_diff',
+      params: { thread_id: 'thread-1', turn_id: 'run_abc' },
+    })
+  })
+
+  it('returns the structured plan straight through, with no prose parsing', async () => {
+    const { client, socket } = await connectedClient()
+
+    const pending = client.getPlan('thread-1')
+    const id = (JSON.parse(socket.sent[socket.sent.length - 1]!) as { id: number }).id
+    socket.respond(id, {
+      thread_id: 'thread-1',
+      scope: 'main',
+      plan: {
+        plan_id: 'itm_1',
+        item_id: 'itm_1',
+        thread_id: 'thread-1',
+        turn_id: 'run_abc',
+        scope: 'main',
+        generation: 0,
+        steps: [
+          {
+            id: '1',
+            subject: 'write it',
+            description: '',
+            active_form: 'Writing it',
+            status: 'blocked',
+            owner: '',
+            blocks: [],
+            blocked_by: ['2'],
+          },
+        ],
+        counts: { pending: 0, in_progress: 0, completed: 0, blocked: 1 },
+        status: 'started',
+        revision: 4,
+        updated_at: 12.5,
+      },
+      plans: [],
+    })
+
+    const result = await pending
+    expect(result.plan?.steps[0]?.status).toBe('blocked')
+    expect(result.plan?.steps[0]?.blocked_by).toEqual(['2'])
+    expect(result.plan?.counts.blocked).toBe(1)
+  })
+
+  it('carries a null run diff for a turn that changed no files', async () => {
+    const { client, socket } = await connectedClient()
+
+    const pending = client.getRunDiff('thread-1')
+    const id = (JSON.parse(socket.sent[socket.sent.length - 1]!) as { id: number }).id
+    socket.respond(id, { thread_id: 'thread-1', turn_id: 'run_abc', run_diff: null })
+
+    await expect(pending).resolves.toEqual({
+      thread_id: 'thread-1',
+      turn_id: 'run_abc',
+      run_diff: null,
+    })
+  })
+})

@@ -55,6 +55,10 @@ GUI_OPTIONAL_NOTIFICATIONS = frozenset(
         "fs_rescan_required",
         "fs_transfer_progress",
         "git_operation_progress",
+        # Item revisions are a convenience push: everything they carry is
+        # readable via get_plan / get_run_diff / get_item, so a client that
+        # would rather refetch may switch them off.
+        "item_updated",
     }
 )
 # Request params that carry credential material. Redacted from every

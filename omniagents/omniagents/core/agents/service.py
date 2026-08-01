@@ -3873,7 +3873,10 @@ class AgentService(RpcMethodsBase):
         from omniagents.core.conversation.recorder import recorder_for_session
 
         try:
-            recorder = recorder_for_session(session)
+            # ``service=self`` matters: ``current_service()`` is a contextvar
+            # set on a RUN's task tree, so it is None in an RPC handler like
+            # archive_session — the one place a plan lands terminally.
+            recorder = recorder_for_session(session, service=self)
             if recorder is None:
                 return
             recorder.ensure_thread(
@@ -4390,6 +4393,71 @@ class AgentService(RpcMethodsBase):
             "count": len(purged),
             "dry_run": False,
         }
+
+    async def get_plan(
+        self, thread_id: str, scope: str | None = None
+    ) -> dict:  # noqa: D401
+        """The live structured plan for *thread_id*, plus its history.
+
+        ``plan`` is the plan a client should render right now (``None`` when
+        the conversation has never planned); ``plans`` is every plan the
+        thread has held, so a finished run still exposes the plan it ran
+        under. Absence is ``None`` rather than a typed error: "this
+        conversation has no plan" is an ordinary state, not a fault.
+        """
+        _debug_rpc("get_plan", {"thread_id": thread_id, "scope": scope})
+        return self._conversation_service().get_plan(thread_id, scope=scope)
+
+    async def get_run_diff(
+        self, thread_id: str, turn_id: str | None = None
+    ) -> dict:  # noqa: D401
+        """The aggregated unified diff for one turn (default: the latest).
+
+        Raises ``-32100`` when ``turn_id`` names a turn this thread does not
+        have — an unknown address is a client bug worth surfacing, unlike a
+        known turn that simply changed no files (``run_diff: None``).
+        """
+        _debug_rpc("get_run_diff", {"thread_id": thread_id, "turn_id": turn_id})
+        return self._conversation_service().get_run_diff(thread_id, turn_id=turn_id)
+
+    async def notify_item_updated(self, session: Session, item: Any) -> None:
+        """Push ``item_updated`` for a mutated conversation item.
+
+        The canonical-objects PR shipped ``item_updated``-less on purpose:
+        every item kind it recorded either never mutated after creation or
+        mutated exactly once, at a moment the client already saw
+        (``tool_result``, ``*_resolved``). Plans and run diffs break that —
+        both revise many times inside a run with no other event marking the
+        change — so without a push a client either polls or renders stale
+        state.
+
+        Deliberately kind-agnostic: it carries the item's identity, lifecycle
+        and content, so approvals or elicitations can start pushing through
+        it later without a second notification or a protocol break.
+
+        ``item_seq`` (not ``seq``) is the item's thread ordinal: ``seq`` on a
+        notification is already the replay envelope's per-session sequence
+        id, and two different numbers must not share a field name.
+        """
+        payload = {
+            "session_id": session.id,
+            "thread_id": item.thread_id,
+            "item_id": item.item_id,
+            "turn_id": item.turn_id,
+            "kind": item.kind.value,
+            "status": item.status.value,
+            "revision": item.revision,
+            "item_seq": item.seq,
+            "updated_at": item.updated_at,
+            "content": dict(item.content),
+        }
+        try:
+            await self._broadcast_session(session, "item_updated", payload)
+        except Exception:
+            logger.exception(
+                "item_updated broadcast failed",
+                extra={"session": session.id, "item": item.item_id},
+            )
 
     async def fork_session(
         self,

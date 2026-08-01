@@ -45,6 +45,8 @@ import type {
   ConversationItemPage,
   ConversationThread,
   ConversationTurnPage,
+  GetPlanResult,
+  GetRunDiffResult,
 } from "../types/conversation.js";
 
 type InkNotificationMap = {
@@ -1015,6 +1017,39 @@ export class RPCClient extends EventEmitter {
       cursor = page.next_cursor;
     }
     return out;
+  }
+
+  // ----- Durable plans & aggregated run diffs (get_plan / get_run_diff) -----
+
+  /**
+   * The live structured plan for `scope` (default `main`), plus every plan
+   * the thread has held. Render progress from `steps[].status`; there is
+   * never a reason to parse assistant prose for it.
+   */
+  async getPlan(threadId: string, scope?: string): Promise<GetPlanResult> {
+    const params: Record<string, unknown> = { thread_id: threadId };
+    if (scope) params.scope = scope;
+    return this.call(
+      "get_plan",
+      params as unknown as RpcMethodMap["get_plan"]["params"],
+    ) as unknown as Promise<GetPlanResult>;
+  }
+
+  /**
+   * The aggregated unified diff for one turn — the latest turn by default.
+   * The NET change the run is responsible for: repeated edits to one file
+   * collapse, and a file created then deleted inside the run does not appear.
+   */
+  async getRunDiff(
+    threadId: string,
+    turnId?: string,
+  ): Promise<GetRunDiffResult> {
+    const params: Record<string, unknown> = { thread_id: threadId };
+    if (turnId) params.turn_id = turnId;
+    return this.call(
+      "get_run_diff",
+      params as unknown as RpcMethodMap["get_run_diff"]["params"],
+    ) as unknown as Promise<GetRunDiffResult>;
   }
 
   // ----- Workspace filesystem watch & chunked transfer (fs_*, experimental) -----

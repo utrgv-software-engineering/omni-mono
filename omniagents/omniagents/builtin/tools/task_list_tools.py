@@ -1,81 +1,304 @@
-"""In-session task list tools.
+"""Structured plan tools, backed by the durable plan item.
 
-A lightweight todo list scoped per-agent. State lives in module-level
-dicts keyed by ``task_scope`` (a string lifted from the run context via
-:func:`omniagents.core.tools.task_scope_from_ctx`). The main agent uses
-scope ``"main"``; sub-agent spawners inject a per-child scope (e.g. the
-worker id), so each child gets its own private list and doesn't pollute
-the parent's UI.
+These tools used to hold the agent's plan in two module-level dicts keyed
+by ``task_scope`` — whose default value is the constant ``"main"``. That
+made the plan a *process singleton*: every session served by one
+``omniagents serve`` process wrote into the same list, so two concurrent
+conversations clobbered each other, a restart erased the plan, and a
+reconnecting client could only recover whatever ``tasks_snapshot`` still
+happened to be attached to a retained ``tool_result``.
 
-Tasks have a status that walks ``pending → in_progress → completed``,
-optional dependency edges, and an optional ``activeForm`` used by the UI
-spinner while in progress.
+The state now lives in a canonical ``plan`` item keyed on
+``(thread_id, scope)`` (:mod:`omniagents.core.conversation.plans`), where
+``thread_id`` is the session — including for a worker sub-agent, which runs
+under its OWN session and therefore its own thread. ``scope`` separates
+plans within one thread and is ``"main"`` throughout the current topology.
+The
+tool surface — names, arguments, return shapes, and the ``tasks_snapshot``
+side-channel the web UI and Ink TUI already read — is unchanged, so this is
+a replacement of the storage, not a second parallel system and not a client
+break.
+
+Sessionless fallback. Tools invoked outside a session (direct ``Runner``
+use, unit tests) have no thread to persist into. Those runs fall back to a
+process-local dictionary keyed by ``task_scope`` — the old behaviour,
+restricted to the only case where it is not a bug, since a run with no
+session cannot collide with another *session*. Every framework-managed run
+carries ``session_id`` and therefore gets the durable path.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Optional  # noqa: F401
+import logging
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from agents.run_context import RunContextWrapper
+
+from omniagents.core.conversation.recorder import push_item_updated
+from omniagents.core.conversation.plans import (
+    PLAN_STEP_STATUSES,
+    Plan,
+    PlanGenerationsExhausted,
+    PlanStep,
+    PlanStore,
+    link,
+    unlink_all,
+)
 from omniagents.core.tools import (
     RichToolOutput,
     rich_function_tool,
+    session_id_from_ctx,
     task_scope_from_ctx,
 )
 
-# ---------------------------------------------------------------------------
-# Module-level state — keyed by scope
-# ---------------------------------------------------------------------------
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from omniagents.core.conversation.recorder import ConversationRecorder
 
+logger = logging.getLogger(__name__)
 
-_TASKS_BY_SCOPE: dict[str, dict[str, dict[str, Any]]] = {}
-_NEXT_ID_BY_SCOPE: dict[str, int] = {}
+#: Statuses the agent may set, plus the pseudo-status that removes a step.
+_VALID_STATUSES = PLAN_STEP_STATUSES
+_DELETED = "deleted"
 
-_VALID_STATUSES = ("pending", "in_progress", "completed")
-
-
-def _scope_from_ctx(ctx: RunContextWrapper[Any] | None) -> str:
-    return task_scope_from_ctx(ctx)
-
-
-def _store(scope: str) -> dict[str, dict[str, Any]]:
-    return _TASKS_BY_SCOPE.setdefault(scope, {})
-
-
-def _new_id(scope: str) -> str:
-    n = _NEXT_ID_BY_SCOPE.get(scope, 1)
-    _NEXT_ID_BY_SCOPE[scope] = n + 1
-    return str(n)
-
-
-def _summary(task: dict[str, Any], tasks: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """Compact task view used by task_list — drops description for cheap rendering."""
-    blocked_by_open = [
-        bid
-        for bid in task.get("blockedBy", [])
-        if bid in tasks and tasks[bid]["status"] != "completed"
-    ]
-    return {
-        "id": task["id"],
-        "subject": task["subject"],
-        "activeForm": task.get("activeForm") or task["subject"],
-        "status": task["status"],
-        "owner": task.get("owner", ""),
-        "blockedBy": blocked_by_open,
-    }
+#: Sessionless plans, keyed by ``task_scope``. See the module docstring:
+#: this is the pre-existing behaviour kept for runs that have no session,
+#: NOT the path a served agent takes.
+_SESSIONLESS_PLANS: Dict[str, Plan] = {}
 
 
 def _status_emoji(status: str) -> str:
-    return {"pending": "·", "in_progress": "▶", "completed": "✓"}.get(status, "?")
+    return {
+        "pending": "·",
+        "in_progress": "▶",
+        "completed": "✓",
+        "blocked": "⨯",
+    }.get(status, "?")
 
 
-def _snapshot(scope: str) -> list[dict[str, Any]]:
-    """Compact, ordered snapshot of all tasks in a scope. Rides on every
-    task tool's ``ui_metadata`` so the TUI can mirror state via the
-    existing ``tool_result`` event channel — no extra plumbing."""
-    store = _TASKS_BY_SCOPE.get(scope) or {}
-    return [_summary(store[tid], store) for tid in sorted(store, key=int)]
+class _PlanHandle:
+    """Read/write access to one run's plan, durable or sessionless."""
+
+    def __init__(
+        self, thread_id: Optional[str], scope: str, session: Any = None
+    ) -> None:
+        self.thread_id = thread_id
+        self.scope = scope
+        self.session = session
+        self._store: Optional[PlanStore] = None
+        self._recorder: Optional["ConversationRecorder"] = None
+
+    # -- resolution ------------------------------------------------------
+
+    def _durable(self) -> bool:
+        return self.thread_id is not None
+
+    def _bind(self) -> bool:
+        """Attach a store + recorder for the durable path. False on failure.
+
+        A storage fault degrades to the sessionless dict rather than failing
+        the agent's tool call — the same best-effort posture the conversation
+        recorder takes, and the reason is the same: plan bookkeeping must
+        never abort a user's turn.
+        """
+        if self._store is not None:
+            return True
+        if self.thread_id is None:
+            return False
+        try:
+            from omniagents.core.conversation.recorder import (
+                ConversationRecorder,
+                recorder_for_session,
+            )
+            from omniagents.core.conversation.store import get_conversation_store
+
+            # Shard on the session's (project, agent) exactly as the
+            # recorder does. Reading the default shard instead would put a
+            # project-scoped agent's plan in a different database from its
+            # own transcript. Going through ``recorder_for_session`` also
+            # picks up the settlement listener, so a plan landed terminally
+            # from here pushes ``item_updated`` like every other path.
+            recorder = recorder_for_session(self.session) if self.session else None
+            if recorder is None:
+                project_slug = getattr(self.session, "_project_slug", None)
+                agent_slug = getattr(self.session, "_agent_slug", None)
+                recorder = ConversationRecorder(
+                    get_conversation_store(project_slug, agent_slug),
+                    project_slug=project_slug,
+                    agent_slug=agent_slug,
+                )
+            self._recorder = recorder
+            self._store = PlanStore(recorder.store)
+            recorder.ensure_thread(
+                self.thread_id,
+                user_id=getattr(self.session, "user_id", None),
+                archived=bool(getattr(self.session, "archived", False)),
+            )
+            return True
+        except Exception:
+            logger.exception("durable plan unavailable; using sessionless fallback")
+            self._store = None
+            self._recorder = None
+            return False
+
+    # -- reads -----------------------------------------------------------
+
+    def read(self) -> Plan:
+        if self._durable() and self._bind():
+            assert self._store is not None and self.thread_id is not None
+            return self._store.current(self.thread_id, self.scope) or self._store.empty(
+                self.thread_id, self.scope
+            )
+        plan = _SESSIONLESS_PLANS.get(self.scope)
+        if plan is None:
+            plan = Plan(
+                plan_id=f"plan_local_{self.scope}",
+                thread_id="",
+                scope=self.scope,
+                generation=0,
+            )
+            _SESSIONLESS_PLANS[self.scope] = plan
+        return plan
+
+    # -- writes ----------------------------------------------------------
+
+    def write(self, plan: Plan) -> Plan:
+        """Persist *plan* and return the stored view (revision advanced)."""
+        if not (self._durable() and self._bind()):
+            _SESSIONLESS_PLANS[self.scope] = plan
+            return plan
+        assert self._recorder is not None and self._store is not None
+        assert self.thread_id is not None
+        # Re-resolve the generation at write time. The plan read at the top
+        # of the tool call could have been finalized in between (the session
+        # was archived mid-run), and writing to a terminal item is a silent
+        # no-op — the agent would be told its edit landed when it did not.
+        key, generation = self._store.current_key(self.thread_id, self.scope)
+        plan.generation = generation
+        plan.plan_id = self._store.plan_id(self.thread_id, self.scope, generation)
+        item = self._recorder.record_plan(
+            self.thread_id,
+            natural_key=key,
+            content=plan.to_content(),
+            run_id=_current_run_id(),
+        )
+        if item is None:
+            return plan
+        stored = Plan.from_item(item, scope=self.scope, generation=generation)
+        push_item_updated(self.session, item)
+        return stored
+
+
+def _current_run_id() -> Optional[str]:
+    """The run this tool call belongs to, if any.
+
+    The runtime names the run's asyncio task after its ``run_id`` (see
+    ``core/runtime/bridge.py``), which is how every other in-run producer
+    correlates without threading the id through each call site.
+    """
+    import asyncio
+
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        return None
+    return task.get_name() if task is not None else None
+
+
+def _handle(ctx: RunContextWrapper[Any] | None) -> _PlanHandle:
+    from omniagents.core.session.helpers import session_from_ctx
+
+    session = None
+    try:
+        session = session_from_ctx(ctx)
+    except Exception:
+        session = None
+    return _PlanHandle(session_id_from_ctx(ctx), task_scope_from_ctx(ctx), session)
+
+
+def _snapshot(plan: Plan) -> List[Dict[str, Any]]:
+    return plan.to_summaries()
+
+
+def _plan_metadata(plan: Plan) -> Dict[str, Any]:
+    """Identity fields every plan tool result carries.
+
+    A client that wants the authoritative object (rather than the compact
+    snapshot) needs the plan's address, and it must be on every result so a
+    client that joined mid-run can find it from the first event it sees.
+    """
+    return {"plan_id": plan.plan_id, "scope": plan.scope, "revision": plan.revision}
+
+
+def _step_payload(plan: Plan, step: PlanStep) -> Dict[str, Any]:
+    """The step as returned to the model.
+
+    Deliberately the PRE-EXISTING wire shape of these tools — camelCase
+    ``activeForm`` / ``blockedBy``, not the snake_case of the persisted item
+    — plus one additive field. The tools' result JSON is a contract with
+    every agent prompt and transcript that already references it, and with
+    the ``tasks_snapshot`` side-channel next to it in the same payload;
+    renaming half of it while the snapshot kept the old names would have
+    made one tool result internally inconsistent for no gain.
+
+    ``blockedBy`` is the declared edge set; ``openBlockers`` is the subset
+    that is not yet completed. Both are structured — the model (and any
+    client) reads state instead of inferring it from prose.
+    """
+    return {
+        "id": step.id,
+        "subject": step.subject,
+        "description": step.description,
+        "activeForm": step.active_form or step.subject,
+        "status": step.status,
+        "owner": step.owner,
+        "blocks": list(step.blocks),
+        "blockedBy": list(step.blocked_by),
+        "openBlockers": plan.open_blockers(step),
+    }
+
+
+def _exhausted_error(handle: "_PlanHandle", attempted: Plan) -> RichToolOutput:
+    """The plan could not be written because every generation is terminal.
+
+    Returned instead of a success payload: telling the agent an edit landed
+    when the store refused it is the one failure mode a plan tool must never
+    have.
+
+    ``attempted`` is the caller's in-memory plan, already carrying the edit
+    the store refused; it is deliberately NOT what gets rendered.
+    ``tasks_snapshot`` drives the docked task panel, so building it from
+    ``attempted`` would put the step that was never stored into the very
+    payload that reports the failure — the same lie, moved one field over.
+    """
+    plan = handle.read()  # the STORED plan, not `attempted`
+    return _error(
+        plan,
+        summary="Plan could not be updated",
+        preview=(
+            "Every plan generation for this scope has been finalized; the "
+            "edit was not stored."
+        ),
+        payload={"error": "plan_generations_exhausted", "scope": plan.scope},
+    )
+
+
+def _error(
+    plan: Plan, *, summary: str, preview: str, payload: Dict[str, Any]
+) -> RichToolOutput:
+    llm_output = json.dumps(payload)
+    return RichToolOutput(
+        llm_output,
+        {
+            "display_type": "error",
+            "summary": summary,
+            "preview": preview,
+            "truncated": False,
+            "hidden": True,
+            "tasks_snapshot": _snapshot(plan),
+            "metadata": {"success": False, **_plan_metadata(plan), **payload},
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +313,7 @@ async def task_create(
     description: str,
     activeForm: Optional[str] = None,
 ) -> RichToolOutput:
-    """Create a new task in your in-session task list.
+    """Create a new task in your task list.
 
     Use proactively for multi-step work (≥3 non-trivial steps). Skip for
     single trivial actions or purely conversational requests.
@@ -104,35 +327,37 @@ async def task_create(
             task is in_progress, e.g. "Running the test suite".
             Falls back to ``subject`` if omitted.
     """
-    scope = _scope_from_ctx(ctx)
-    tasks = _store(scope)
-    tid = _new_id(scope)
-    task = {
-        "id": tid,
-        "subject": subject,
-        "description": description,
-        "activeForm": activeForm or subject,
-        "status": "pending",
-        "owner": "",
-        "blocks": [],
-        "blockedBy": [],
-    }
-    tasks[tid] = task
+    handle = _handle(ctx)
+    plan = handle.read()
+    step = PlanStep(
+        id=plan.next_step_id(),
+        subject=subject,
+        description=description,
+        active_form=activeForm or subject,
+        status="pending",
+    )
+    plan.steps.append(step)
+    try:
+        plan = handle.write(plan)
+    except PlanGenerationsExhausted:
+        return _exhausted_error(handle, plan)
+    stored = plan.step(step.id) or step
 
-    llm_output = json.dumps({"task": task})
+    llm_output = json.dumps({"task": _step_payload(plan, stored)})
     return RichToolOutput(
         llm_output,
         {
             "display_type": "command",
-            "summary": f"Task #{tid}: {subject[:60]}",
-            "preview": f"#{tid} [pending] {subject}",
+            "summary": f"Task #{stored.id}: {subject[:60]}",
+            "preview": f"#{stored.id} [pending] {subject}",
             "truncated": False,
             "hidden": True,
-            "tasks_snapshot": _snapshot(scope),
+            "tasks_snapshot": _snapshot(plan),
             "metadata": {
                 "success": True,
-                "task_id": tid,
-                "status": "pending",
+                "task_id": stored.id,
+                "status": stored.status,
+                **_plan_metadata(plan),
             },
         },
     )
@@ -144,12 +369,10 @@ async def task_list(ctx: RunContextWrapper[Any]) -> RichToolOutput:
 
     Returns summaries only — call ``task_get`` for full description.
     """
-    scope = _scope_from_ctx(ctx)
-    store = _store(scope)
-    tasks = [_summary(store[tid], store) for tid in sorted(store, key=int)]
-    counts = {"pending": 0, "in_progress": 0, "completed": 0}
-    for t in tasks:
-        counts[t["status"]] = counts.get(t["status"], 0) + 1
+    handle = _handle(ctx)
+    plan = handle.read()
+    tasks = _snapshot(plan)
+    counts = plan.counts()
 
     llm_output = json.dumps({"tasks": tasks, "counts": counts})
 
@@ -173,8 +396,13 @@ async def task_list(ctx: RunContextWrapper[Any]) -> RichToolOutput:
             "preview": preview,
             "truncated": False,
             "hidden": True,
-            "tasks_snapshot": _snapshot(scope),
-            "metadata": {"success": True, **counts, "total": len(tasks)},
+            "tasks_snapshot": tasks,
+            "metadata": {
+                "success": True,
+                **counts,
+                "total": len(tasks),
+                **_plan_metadata(plan),
+            },
         },
     )
 
@@ -186,42 +414,34 @@ async def task_get(ctx: RunContextWrapper[Any], task_id: str) -> RichToolOutput:
     Args:
         task_id: The task id returned by task_create.
     """
-    scope = _scope_from_ctx(ctx)
-    store = _store(scope)
-    task = store.get(task_id)
-    if task is None:
-        llm_output = json.dumps({"task_id": task_id, "error": "not_found"})
-        return RichToolOutput(
-            llm_output,
-            {
-                "display_type": "error",
-                "summary": f"Task #{task_id} not found",
-                "preview": llm_output,
-                "truncated": False,
-                "hidden": True,
-                "tasks_snapshot": _snapshot(scope),
-                "metadata": {"success": False, "task_id": task_id},
-            },
+    handle = _handle(ctx)
+    plan = handle.read()
+    step = plan.step(task_id)
+    if step is None:
+        return _error(
+            plan,
+            summary=f"Task #{task_id} not found",
+            preview=f"Task #{task_id} not found",
+            payload={"task_id": task_id, "error": "not_found"},
         )
 
-    llm_output = json.dumps({"task": task})
-    preview = (
-        f"#{task['id']} [{task['status']}] {task['subject']}\n\n"
-        f"{task['description']}"
-    )
+    payload = _step_payload(plan, step)
+    llm_output = json.dumps({"task": payload})
+    preview = f"#{step.id} [{step.status}] {step.subject}\n\n{step.description}"
     return RichToolOutput(
         llm_output,
         {
             "display_type": "command",
-            "summary": f"Task #{task_id}: {task['subject'][:60]}",
+            "summary": f"Task #{task_id}: {step.subject[:60]}",
             "preview": preview[:1500],
             "truncated": len(preview) > 1500,
             "hidden": True,
-            "tasks_snapshot": _snapshot(scope),
+            "tasks_snapshot": _snapshot(plan),
             "metadata": {
                 "success": True,
                 "task_id": task_id,
-                "status": task["status"],
+                "status": step.status,
+                **_plan_metadata(plan),
             },
         },
     )
@@ -244,13 +464,13 @@ async def task_update(
     Mark a task ``in_progress`` BEFORE starting work and ``completed``
     immediately after finishing — that's what drives the UI status. Only
     one task should be ``in_progress`` at a time. Don't mark completed
-    if the work is partial, blocked, or failing — leave it in_progress
-    and create a new task for the blocker instead.
+    if the work is partial: set ``blocked`` and say what you are waiting
+    on, or leave it in_progress and create a task for the blocker.
 
     Args:
         task_id: The task to update.
-        status: ``pending`` | ``in_progress`` | ``completed``, or
-            ``deleted`` to permanently remove the task.
+        status: ``pending`` | ``in_progress`` | ``completed`` | ``blocked``,
+            or ``deleted`` to permanently remove the task.
         subject: New title.
         description: New description.
         activeForm: New present-continuous form for the spinner.
@@ -262,36 +482,25 @@ async def task_update(
             one starts. Symmetric edge written into the dependency's
             ``blocks`` list.
     """
-    scope = _scope_from_ctx(ctx)
-    store = _store(scope)
-    task = store.get(task_id)
-    if task is None:
-        llm_output = json.dumps({"task_id": task_id, "error": "not_found"})
-        return RichToolOutput(
-            llm_output,
-            {
-                "display_type": "error",
-                "summary": f"Task #{task_id} not found",
-                "preview": llm_output,
-                "truncated": False,
-                "hidden": True,
-                "tasks_snapshot": _snapshot(scope),
-                "metadata": {"success": False, "task_id": task_id},
-            },
+    handle = _handle(ctx)
+    plan = handle.read()
+    step = plan.step(task_id)
+    if step is None:
+        return _error(
+            plan,
+            summary=f"Task #{task_id} not found",
+            preview=f"Task #{task_id} not found",
+            payload={"task_id": task_id, "error": "not_found"},
         )
 
-    if status is not None and status == "deleted":
-        # Symmetrically detach from any neighbours within the same scope.
-        for other_id in task.get("blockedBy", []):
-            other = store.get(other_id)
-            if other and task_id in other.get("blocks", []):
-                other["blocks"].remove(task_id)
-        for other_id in task.get("blocks", []):
-            other = store.get(other_id)
-            if other and task_id in other.get("blockedBy", []):
-                other["blockedBy"].remove(task_id)
-        del store[task_id]
-        llm_output = json.dumps({"task_id": task_id, "status": "deleted"})
+    if status == _DELETED:
+        unlink_all(plan, task_id)
+        plan.steps = [entry for entry in plan.steps if entry.id != task_id]
+        try:
+            plan = handle.write(plan)
+        except PlanGenerationsExhausted:
+            return _exhausted_error(handle, plan)
+        llm_output = json.dumps({"task_id": task_id, "status": _DELETED})
         return RichToolOutput(
             llm_output,
             {
@@ -300,73 +509,74 @@ async def task_update(
                 "preview": llm_output,
                 "truncated": False,
                 "hidden": True,
-                "tasks_snapshot": _snapshot(scope),
-                "metadata": {"success": True, "task_id": task_id, "status": "deleted"},
+                "tasks_snapshot": _snapshot(plan),
+                "metadata": {
+                    "success": True,
+                    "task_id": task_id,
+                    "status": _DELETED,
+                    **_plan_metadata(plan),
+                },
             },
         )
 
     if status is not None and status not in _VALID_STATUSES:
-        llm_output = json.dumps(
-            {"task_id": task_id, "error": f"invalid status: {status}"}
-        )
-        return RichToolOutput(
-            llm_output,
-            {
-                "display_type": "error",
-                "summary": f"Invalid status: {status}",
-                "preview": f"Valid: {', '.join(_VALID_STATUSES)} or 'deleted'",
-                "truncated": False,
-                "hidden": True,
-                "tasks_snapshot": _snapshot(scope),
-                "metadata": {"success": False, "task_id": task_id},
-            },
+        return _error(
+            plan,
+            summary=f"Invalid status: {status}",
+            preview=f"Valid: {', '.join(_VALID_STATUSES)} or '{_DELETED}'",
+            payload={"task_id": task_id, "error": f"invalid status: {status}"},
         )
 
     if status is not None:
-        task["status"] = status
+        step.status = status
     if subject is not None:
-        task["subject"] = subject
+        step.subject = subject
     if description is not None:
-        task["description"] = description
+        step.description = description
     if activeForm is not None:
-        task["activeForm"] = activeForm
+        step.active_form = activeForm
     if owner is not None:
-        task["owner"] = owner
+        step.owner = owner
 
-    if addBlocks:
-        for other_id in addBlocks:
-            if other_id == task_id or other_id not in store:
-                continue
-            if other_id not in task["blocks"]:
-                task["blocks"].append(other_id)
-            other = store[other_id]
-            if task_id not in other["blockedBy"]:
-                other["blockedBy"].append(task_id)
+    for other_id in addBlocks or []:
+        link(plan, task_id, other_id)
+    for other_id in addBlockedBy or []:
+        link(plan, other_id, task_id)
 
-    if addBlockedBy:
-        for other_id in addBlockedBy:
-            if other_id == task_id or other_id not in store:
-                continue
-            if other_id not in task["blockedBy"]:
-                task["blockedBy"].append(other_id)
-            other = store[other_id]
-            if task_id not in other["blocks"]:
-                other["blocks"].append(task_id)
-
-    llm_output = json.dumps({"task": task})
+    try:
+        plan = handle.write(plan)
+    except PlanGenerationsExhausted:
+        return _exhausted_error(handle, plan)
+    stored = plan.step(task_id) or step
+    llm_output = json.dumps({"task": _step_payload(plan, stored)})
     return RichToolOutput(
         llm_output,
         {
             "display_type": "command",
-            "summary": f"Task #{task_id} → {task['status']}",
-            "preview": f"#{task_id} [{task['status']}] {task['subject']}",
+            "summary": f"Task #{task_id} → {stored.status}",
+            "preview": f"#{task_id} [{stored.status}] {stored.subject}",
             "truncated": False,
             "hidden": True,
-            "tasks_snapshot": _snapshot(scope),
+            "tasks_snapshot": _snapshot(plan),
             "metadata": {
                 "success": True,
                 "task_id": task_id,
-                "status": task["status"],
+                "status": stored.status,
+                **_plan_metadata(plan),
             },
         },
     )
+
+
+def reset_sessionless_plans() -> None:
+    """Clear the sessionless fallback. Test-fixture entry point."""
+    _SESSIONLESS_PLANS.clear()
+
+
+__all__ = [
+    "reset_sessionless_plans",
+    "task_create",
+    "task_get",
+    "task_list",
+    "task_update",
+]

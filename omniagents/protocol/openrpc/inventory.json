@@ -11,7 +11,8 @@
       "fs_rescan_required",
       "fs_transfer_progress",
       "git_operation_progress",
-      "thread_updated"
+      "thread_updated",
+      "item_updated"
     ],
     "stable": [
       "initialized",
@@ -85,7 +86,9 @@
       "update_thread",
       "list_thread_descendants",
       "export_thread",
-      "purge_threads"
+      "purge_threads",
+      "get_plan",
+      "get_run_diff"
     ],
     "stable": [
       "initialize",

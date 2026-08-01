@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from .model import (
     Item,
@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ConversationRecorder",
     "ensure_conversation_thread",
+    "push_item_updated",
     "record_session_event",
     "recorder_for_session",
 ]
@@ -94,6 +95,16 @@ _ARTIFACT_FUNCTION = "ui.add_artifact"
 _FORK_MAX_ITEMS = 100_000
 
 
+#: How a turn's terminal status maps onto its run-diff item. Not the
+#: orphan-sweep status: a COMPLETED turn's orphans are ``failed`` (they never
+#: finished), but its diff did finish.
+_RUN_DIFF_TERMINAL = {
+    TurnStatus.COMPLETED: ItemStatus.COMPLETED,
+    TurnStatus.FAILED: ItemStatus.FAILED,
+    TurnStatus.CANCELLED: ItemStatus.CANCELLED,
+}
+
+
 def _now() -> float:
     return time.time()
 
@@ -111,10 +122,35 @@ class ConversationRecorder:
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        on_settled: "Callable[[Item], None] | None" = None,
     ) -> None:
         self._store = store
         self._project_slug = project_slug
         self._agent_slug = agent_slug
+        #: Called with every item this recorder lands TERMINALLY on its own
+        #: initiative — the run diff at ``run_end`` and the plan at archive.
+        #: Those transitions have no notification of their own, so without a
+        #: hook a live client's plan and diff would sit at ``started``
+        #: forever and only converge on a refetch. Never raises: see
+        #: :func:`recorder_for_session`.
+        self._on_settled = on_settled
+
+    @property
+    def store(self) -> ConversationStore:
+        """The shard this recorder writes to. Exposed so a caller that also
+        needs to READ (the plan tools) does not have to re-resolve it and
+        risk landing on a different shard."""
+        return self._store
+
+    def _settled(self, item: Optional[Item]) -> None:
+        if item is None or self._on_settled is None:
+            return
+        try:
+            self._on_settled(item)
+        except Exception:
+            logger.exception(
+                "item settlement listener failed", extra={"item": item.item_id}
+            )
 
     def _legacy_history(self, thread_id: str) -> list:
         """Raw history rows for *thread_id*, or ``[]`` if unavailable."""
@@ -262,6 +298,7 @@ class ConversationRecorder:
         role: str | None = None,
         content: Dict[str, Any] | None = None,
         source_ref: Dict[str, Any] | None = None,
+        long_lived: bool = False,
     ) -> Optional[Item]:
         """Create the item if it is new; otherwise return the existing one.
 
@@ -294,6 +331,7 @@ class ConversationRecorder:
             revision=0,
             content=_as_dict(content),
             source_ref=_as_dict(source_ref),
+            long_lived=long_lived,
         )
         self._store.upsert_item(item)
         self._touch_thread(thread_id, item_delta=1)
@@ -454,6 +492,16 @@ class ConversationRecorder:
         turn = self._store.get_turn(thread_id, turn_id)
         status = terminal_status_for_end_reason(end_reason)
         now = _now()
+        # Settle the run's diff snapshot BEFORE the orphan sweep. The
+        # snapshot is deliberately turn-scoped and stays ``started`` while
+        # further edits revise it, so without this it would be caught by the
+        # sweep below and stamped ``failed`` at the end of every SUCCESSFUL
+        # run. Landing it here — the owning subsystem finalizing its own
+        # item, the same contract ``long_lived`` items sign — makes the
+        # end state honest: the diff of a completed run is completed.
+        self.settle_run_diff(
+            thread_id, turn_id, status=_RUN_DIFF_TERMINAL[status], now=now
+        )
         orphan_status = (
             ItemStatus.CANCELLED
             if status is TurnStatus.CANCELLED
@@ -1058,6 +1106,34 @@ class ConversationRecorder:
         )
 
     @staticmethod
+    def _forked_item_id(new_thread_id: str, item: Item) -> str:
+        """The child's id for a copied parent item.
+
+        Normally a fresh derivation from the parent's id, which keeps the
+        two transcripts independently addressable. A PLAN is the exception:
+        its id is not an opaque handle, it is
+        ``derive_item_id(thread, "plan:<scope>[#gen]")`` and the plan store
+        LOOKS IT UP by that key. Re-addressing a plan the generic way left
+        the child's plan at an id ``get_plan`` could not find — so the child
+        read back "no plan", and its first ``task_create`` minted a SECOND
+        open plan in the same scope which, being ``long_lived``, no sweep
+        would ever close.
+        """
+        if item.kind is ItemKind.PLAN:
+            from .plans import plan_natural_key
+
+            scope = item.content.get("scope")
+            generation = item.content.get("generation")
+            return derive_item_id(
+                new_thread_id,
+                plan_natural_key(
+                    scope if isinstance(scope, str) and scope else "main",
+                    generation if isinstance(generation, int) else 0,
+                ),
+            )
+        return derive_item_id(new_thread_id, f"forked:{item.item_id}")
+
+    @staticmethod
     def _fork_item(new_thread_id: str, item: Item) -> Item:
         """One parent item, re-addressed under the forked thread.
 
@@ -1082,7 +1158,7 @@ class ConversationRecorder:
             completed_at = _now()
             revision += 1
         return Item(
-            item_id=derive_item_id(new_thread_id, f"forked:{item.item_id}"),
+            item_id=ConversationRecorder._forked_item_id(new_thread_id, item),
             thread_id=new_thread_id,
             turn_id=item.turn_id,
             seq=item.seq,
@@ -1258,6 +1334,145 @@ class ConversationRecorder:
         thread.status = ThreadStatus.ARCHIVED if archived else ThreadStatus.ACTIVE
         thread.updated_at = _now()
         self._store.upsert_thread(thread)
+        if archived:
+            # Archiving is the end of the conversation, which is the end of
+            # anything that outlives its turns. Without this the thread's
+            # plan would stay ``started`` forever and the "no in-flight
+            # state once a conversation is done" guarantee would hold for
+            # every item kind except the one that opted out of the sweep.
+            self.finalize_plans(thread_id, reason="thread_archived")
+
+    # -- plans (tkt_FqUypyxF2tzC) -----------------------------------------
+
+    def record_plan(
+        self,
+        thread_id: str,
+        *,
+        natural_key: str,
+        content: Dict[str, Any],
+        run_id: str | None = None,
+    ) -> Optional[Item]:
+        """Create-or-update the durable plan item for one ``(thread, scope)``.
+
+        Created ``long_lived`` because a plan accumulates steps across many
+        turns: without the exemption ``run_end`` would stamp it terminal at
+        the close of the very first run and every later ``task_update``
+        would be silently refused by the terminal-once rule.
+
+        ``turn_id`` is stamped from the run that FIRST wrote the plan and is
+        not moved afterwards, so a turn-scoped read still surfaces the plan
+        where it originated; the plan's own ``updated_at``/``revision`` carry
+        recency.
+        """
+        item_id = derive_item_id(thread_id, natural_key)
+        if self._store.get_item(thread_id, item_id) is None:
+            return self._append_item(
+                thread_id,
+                natural_key=natural_key,
+                kind=ItemKind.PLAN,
+                turn_id=run_id,
+                status=ItemStatus.STARTED,
+                role="assistant",
+                content=content,
+                source_ref={"event": "plan_tool", "run_id": run_id},
+                long_lived=True,
+            )
+        return self._update_item(thread_id, natural_key, content=content)
+
+    def finalize_plans(self, thread_id: str, *, reason: str) -> list[Item]:
+        """Land every open plan on *thread_id* terminally. Returns the items.
+
+        ``completed`` only when the plan actually finished — at least one
+        step and every step ``completed``. Anything else is ``cancelled``:
+        stamping a plan with three pending steps as "completed" because the
+        conversation was archived would make the historical record lie about
+        work that never happened.
+        """
+        now = _now()
+        landed: list[Item] = []
+        for item in self._store.open_items(thread_id):
+            if item.kind is not ItemKind.PLAN:
+                continue
+            steps = item.content.get("steps")
+            steps = steps if isinstance(steps, list) else []
+            finished = bool(steps) and all(
+                isinstance(step, dict) and step.get("status") == "completed"
+                for step in steps
+            )
+            updated = item.with_transition(
+                status=ItemStatus.COMPLETED if finished else ItemStatus.CANCELLED,
+                content={"finalized_by": reason},
+                now=now,
+            )
+            self._store.upsert_item(updated)
+            self._settled(updated)
+            landed.append(updated)
+        return landed
+
+    # -- run diffs (tkt_FqUypyxF2tzC) -------------------------------------
+
+    @staticmethod
+    def run_diff_natural_key(run_id: str) -> str:
+        return f"run_diff:{run_id}"
+
+    def record_run_diff(
+        self, thread_id: str, *, run_id: str, snapshot: Dict[str, Any]
+    ) -> Optional[Item]:
+        """Create-or-revise the aggregated diff snapshot for one run.
+
+        Called after every observed workspace mutation, so the item holds a
+        live view of the run's net change rather than a summary written once
+        at the end — a run that is cancelled halfway still leaves a complete,
+        readable record of what it had done by then.
+        """
+        key = self.run_diff_natural_key(run_id)
+        if self._store.get_item(thread_id, derive_item_id(thread_id, key)) is None:
+            return self._append_item(
+                thread_id,
+                natural_key=key,
+                kind=ItemKind.RUN_DIFF,
+                turn_id=run_id,
+                status=ItemStatus.STARTED,
+                role="assistant",
+                content={"run_id": run_id, **snapshot},
+                source_ref={"event": "workspace_mutation", "run_id": run_id},
+            )
+        updated = self._update_item(thread_id, key, content=snapshot)
+        if updated is not None and updated.is_terminal:
+            # The run already ended (a late mutation, or a tool that wrote
+            # after run_end). ``_update_item`` refuses to move a terminal
+            # item's CONTENT, so revise it explicitly — the diff of a run is
+            # a fact about the workspace, and dropping a real change would
+            # make the aggregate incomplete.
+            return self._revise_item(thread_id, key, content=snapshot)
+        return updated
+
+    def settle_run_diff(
+        self,
+        thread_id: str,
+        turn_id: str,
+        *,
+        status: ItemStatus = ItemStatus.COMPLETED,
+        now: float | None = None,
+    ) -> Optional[Item]:
+        """Land this turn's diff snapshot terminally.
+
+        ``status`` mirrors how the RUN ended, so a cancelled run's diff is
+        ``cancelled`` and a failed run's is ``failed``. Hard-coding
+        ``completed`` made the diff the one item of a cancelled turn claiming
+        it finished — the same lie ``finalize_plans`` refuses to tell about a
+        half-finished plan.
+        """
+        key = self.run_diff_natural_key(turn_id)
+        item = self._store.get_item(thread_id, derive_item_id(thread_id, key))
+        if item is None or item.is_terminal:
+            return item
+        settled = item.with_transition(
+            status=status, now=now if now is not None else _now()
+        )
+        self._store.upsert_item(settled)
+        self._settled(settled)
+        return settled
 
 
 def _merge_usage(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
@@ -1276,8 +1491,45 @@ def _merge_usage(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str
     return merged
 
 
-def recorder_for_session(session: Any) -> Optional[ConversationRecorder]:
-    """Build a recorder bound to *session*'s (project, agent) shard."""
+def push_item_updated(session: Any, item: Item, service: Any = None) -> None:
+    """Schedule an ``item_updated`` push for *item*, best-effort.
+
+    Fire-and-forget by design: the item is already durable when this runs, so
+    a missing push degrades to "the client's next read is authoritative",
+    never to a failed write. Silent when there is no service, no session, or
+    no running loop (the recorder is also driven directly from tests).
+
+    ``service`` is passed explicitly by callers that are NOT inside a run.
+    ``current_service()`` is a contextvar set on the run's task tree, so it
+    resolves during a turn but is ``None`` in an RPC handler like
+    ``archive_session`` — which is exactly where a plan lands terminally.
+    Relying on the contextvar alone made that push silently never happen.
+    """
+    if session is None:
+        return
+    try:
+        import asyncio
+
+        from omniagents.core.agents.service import current_service
+
+        service = service or current_service()
+        if service is None:
+            return
+        asyncio.ensure_future(service.notify_item_updated(session, item))
+    except Exception:
+        logger.debug("item_updated push unavailable", exc_info=True)
+
+
+def recorder_for_session(
+    session: Any, *, service: Any = None
+) -> Optional[ConversationRecorder]:
+    """Build a recorder bound to *session*'s (project, agent) shard.
+
+    The single construction chokepoint for recorders that have a live
+    session, so wiring the settlement listener here is what makes terminal
+    landings push ``item_updated`` from every path — the ``run_end`` sweep,
+    the archive sweep, and the plan tools alike.
+    """
     project_slug = getattr(session, "_project_slug", None)
     agent_slug = getattr(session, "_agent_slug", None)
     try:
@@ -1285,7 +1537,12 @@ def recorder_for_session(session: Any) -> Optional[ConversationRecorder]:
     except Exception:
         logger.exception("conversation store unavailable; domain objects not recorded")
         return None
-    return ConversationRecorder(store, project_slug=project_slug, agent_slug=agent_slug)
+    return ConversationRecorder(
+        store,
+        project_slug=project_slug,
+        agent_slug=agent_slug,
+        on_settled=lambda item: push_item_updated(session, item, service),
+    )
 
 
 def ensure_conversation_thread(session: Any) -> Optional[ConversationRecorder]:

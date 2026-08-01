@@ -6,25 +6,21 @@ import {
   useTasks,
   useThinking,
 } from "../store/appStore.js";
-import type { TaskSummary } from "../store/appStore.js";
+import {
+  STATUS_COLOR,
+  STATUS_GLYPH,
+  orderTasks,
+  taskCounts,
+} from "./tasks.js";
 import { TokyoNightTheme } from "../theme.js";
-
-const STATUS_GLYPH: Record<TaskSummary["status"], string> = {
-  pending: "○",
-  in_progress: "◐",
-  completed: "●",
-};
-
-const STATUS_COLOR: Record<TaskSummary["status"], string> = {
-  pending: TokyoNightTheme.defaultText,
-  in_progress: TokyoNightTheme.info,
-  completed: TokyoNightTheme.success,
-};
 
 const MAX_VISIBLE = 5;
 
 // Docked task list rendered just above the input prompt. Returns null
 // when there are no tasks so the message area reclaims the space.
+//
+// Ordering, counting and the glyph/colour palette live in `./tasks` so they
+// stay exhaustive over the status set and can be tested without a render.
 export const Tasks = React.memo(() => {
   const allTasks = useTasks();
   const dismissed = useDismissedTaskIds();
@@ -42,24 +38,13 @@ export const Tasks = React.memo(() => {
     return null;
   }
 
-  // Show the active work first (in_progress, then pending), drop
-  // completed tasks once the list grows past MAX_VISIBLE so the dock
-  // doesn't pile up. Completed are still kept in the underlying state.
-  const active = tasks.filter((t) => t.status !== "completed");
-  const completed = tasks.filter((t) => t.status === "completed");
-  const ordered = [
-    ...active.filter((t) => t.status === "in_progress"),
-    ...active.filter((t) => t.status === "pending"),
-    ...completed,
-  ];
+  // Show the active work first (in_progress, then blocked, then pending),
+  // completed last so the dock doesn't pile up. Completed are still kept in
+  // the underlying state.
+  const ordered = orderTasks(tasks);
   const visible = ordered.slice(0, MAX_VISIBLE);
   const overflow = ordered.length - visible.length;
-
-  const counts = {
-    pending: tasks.filter((t) => t.status === "pending").length,
-    in_progress: tasks.filter((t) => t.status === "in_progress").length,
-    completed: completed.length,
-  };
+  const counts = taskCounts(tasks);
 
   // First in_progress task drives the live status line above the rows.
   const live = ordered.find((t) => t.status === "in_progress");
@@ -74,6 +59,12 @@ export const Tasks = React.memo(() => {
         <Text color={TokyoNightTheme.defaultText}>Tasks </Text>
         <Text color={TokyoNightTheme.info}>{counts.in_progress}</Text>
         <Text color={TokyoNightTheme.defaultText}> active · </Text>
+        {counts.blocked > 0 && (
+          <>
+            <Text color={TokyoNightTheme.warning}>{counts.blocked}</Text>
+            <Text color={TokyoNightTheme.defaultText}> blocked · </Text>
+          </>
+        )}
         <Text color={TokyoNightTheme.defaultText}>{counts.pending}</Text>
         <Text color={TokyoNightTheme.defaultText}> pending · </Text>
         <Text color={TokyoNightTheme.success}>{counts.completed}</Text>
@@ -91,11 +82,12 @@ export const Tasks = React.memo(() => {
         </Box>
       )}
       {visible.map((t) => {
-        const blocked = (t.blockedBy ?? []).length > 0;
+        const blockers = t.blockedBy ?? [];
+        const blocked = t.status === "blocked" || blockers.length > 0;
         return (
           <Box key={t.id}>
-            <Text color={STATUS_COLOR[t.status]}>
-              {STATUS_GLYPH[t.status]}{" "}
+            <Text color={STATUS_COLOR[t.status] ?? STATUS_COLOR.pending}>
+              {STATUS_GLYPH[t.status] ?? STATUS_GLYPH.pending}{" "}
             </Text>
             <Text color={TokyoNightTheme.defaultText}>#{t.id} </Text>
             <Text
@@ -110,8 +102,9 @@ export const Tasks = React.memo(() => {
             </Text>
             {blocked && (
               <Text color={TokyoNightTheme.warning}>
-                {" "}
-                › blocked by #{t.blockedBy!.join(", #")}
+                {blockers.length > 0
+                  ? ` › blocked by #${blockers.join(", #")}`
+                  : " › blocked"}
               </Text>
             )}
           </Box>

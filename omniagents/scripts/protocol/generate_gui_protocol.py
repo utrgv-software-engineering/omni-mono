@@ -156,6 +156,18 @@ REQUIRED_FIELDS = {
     "export_thread": ("thread_id",),
     "purge_threads": ("retention_days",),
     "thread_updated": ("thread_id", "changed", "thread"),
+    "get_plan": ("thread_id",),
+    "get_run_diff": ("thread_id",),
+    "item_updated": (
+        "session_id",
+        "thread_id",
+        "item_id",
+        "kind",
+        "status",
+        "revision",
+        "item_seq",
+        "content",
+    ),
     "queue_changed": ("session_id", "depth", "items"),
     "session_forked": ("session_id", "new_session_id"),
     "session_variables_changed": ("session_id", "changed", "variables"),
@@ -303,6 +315,9 @@ OPTIONAL_FIELDS = {
     "export_thread": ("limit", "cursor", "include_descendants"),
     "purge_threads": ("dry_run",),
     "thread_updated": ("cascaded_thread_ids",),
+    "get_plan": ("scope",),
+    "get_run_diff": ("turn_id",),
+    "item_updated": ("turn_id", "updated_at"),
     "git_list_repositories": ("path", "max_depth"),
     "git_status": ("include_untracked", "include_ignored", "paths"),
     "git_diff": ("mode", "paths", "context_lines", "from_rev", "to_rev"),
@@ -392,6 +407,7 @@ INTEGER_FIELDS = {
     "attempt",
     "context_lines",
     "depth",
+    "item_seq",
     "length",
     "limit",
     "max_count",
@@ -403,6 +419,7 @@ INTEGER_FIELDS = {
     "poll_interval_ms",
     "seq",
     "size",
+    "revision",
     "skip",
     "timeout_ms",
     "total",
@@ -417,11 +434,16 @@ INTEGER_FIELDS = {
 NULLABLE_STRING_FIELDS = {
     "title",
 }
+#: Fields whose wire value is a real number rather than an integer. Epoch
+#: timestamps carry sub-second precision throughout the domain model, so
+#: typing them as ``integer`` would make the generated validators reject
+#: every value the server actually sends.
 NUMBER_FIELDS = {
     "created_after",
     "created_before",
     "updated_after",
     "updated_before",
+    "updated_at",
 }
 OBJECT_FIELDS = {
     "account",
@@ -445,6 +467,64 @@ OBJECT_FIELDS = {
     "value",
     "variables",
 }
+
+#: Field types are keyed by NAME across the whole protocol, which is what
+#: keeps the generated models coherent — ``session_id`` is a string on every
+#: operation that carries it. A few names are genuinely polymorphic:
+#: ``content`` is message TEXT on ``message_output`` / ``send_user_message``
+#: / ``enqueue_message``, but an item's open content RECORD on
+#: ``item_updated``. Re-typing the name globally would be a breaking change
+#: to three stable methods, so the exception is declared per operation and
+#: stays visible here rather than being smuggled in as a renamed wire field.
+OPERATION_FIELD_TYPES = {
+    ("item_updated", "content"): "object",
+}
+
+
+def _field_kind(operation_name: str, field: str) -> str:
+    """The wire type of *field* on *operation_name*."""
+    override = OPERATION_FIELD_TYPES.get((operation_name, field))
+    if override is not None:
+        return override
+    if field in ARRAY_FIELDS:
+        return "array"
+    if field in BOOLEAN_FIELDS:
+        return "boolean"
+    if field in INTEGER_FIELDS:
+        return "integer"
+    if field in NUMBER_FIELDS:
+        return "number"
+    if field in NULLABLE_STRING_FIELDS:
+        # main's ``update_thread.title: null`` clears the title, so the
+        # schema must admit null. Routed through _field_kind rather than a
+        # parallel elif chain so the per-operation override above still
+        # wins and there is ONE place a field's wire type is decided.
+        return "nullable_string"
+    if field in OBJECT_FIELDS:
+        return "object"
+    return "string"
+
+
+_PYTHON_TYPES = {
+    "array": "list[Any]",
+    "boolean": "bool",
+    "integer": "int",
+    "number": "float",
+    "nullable_string": "str",
+    "object": "dict[str, Any]",
+    "string": "str",
+}
+
+_TYPESCRIPT_TYPES = {
+    "array": "unknown[]",
+    "boolean": "boolean",
+    "integer": "number",
+    "number": "number",
+    "nullable_string": "string",
+    "object": "Record<string, unknown>",
+    "string": "string",
+}
+
 
 RESULT_TYPES = {
     "initialize": ("InitializeResult", "InitializeResult"),
@@ -523,6 +603,8 @@ RESULT_TYPES = {
     "list_turns": ("dict[str, Any]", "Record<string, unknown>"),
     "list_items": ("dict[str, Any]", "Record<string, unknown>"),
     "get_item": ("dict[str, Any]", "Record<string, unknown>"),
+    "get_plan": ("dict[str, Any]", "Record<string, unknown>"),
+    "get_run_diff": ("dict[str, Any]", "Record<string, unknown>"),
     "git_list_repositories": ("dict[str, Any]", "Record<string, unknown>"),
     "git_status": ("dict[str, Any]", "Record<string, unknown>"),
     "git_diff": ("dict[str, Any]", "Record<string, unknown>"),
@@ -1005,6 +1087,20 @@ PROTOCOL_ERRORS = {
             },
         },
     },
+    "ConversationTurnNotFound": {
+        "code": -32100,
+        "message": "Unknown turn",
+        "data": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "thread_id", "turn_id"],
+            "properties": {
+                "kind": {"const": "turn_not_found"},
+                "thread_id": {"type": "string"},
+                "turn_id": {"type": "string"},
+            },
+        },
+    },
     "GitRepositoryNotFound": {
         "code": -32090,
         "message": "Git repository not found",
@@ -1228,7 +1324,19 @@ PROTOCOL_ERRORS = {
 
 # The canonical conversation surface (tkt_a-QF2Oc4OAsD): requests that can
 # raise the -32080..-32082 typed errors.
-CONVERSATION_METHODS = frozenset({"get_thread", "list_turns", "list_items", "get_item"})
+CONVERSATION_METHODS = frozenset(
+    {
+        "get_thread",
+        "list_turns",
+        "list_items",
+        "get_item",
+        # Plans and run diffs are addressed by ``thread_id`` too, so an
+        # unknown thread must raise the SAME typed error rather than a
+        # second, surface-specific one (tkt_FqUypyxF2tzC).
+        "get_plan",
+        "get_run_diff",
+    }
+)
 
 # Conversation organization & branching (tkt_eZldW-Gje6kn): requests that
 # address ONE thread by id and can therefore raise -32080, plus the
@@ -1410,6 +1518,10 @@ def build_openrpc() -> dict:
                 entry["errors"].append(
                     {"$ref": "#/components/errors/ConversationForkPointInvalid"}
                 )
+            if operation.name == "get_run_diff":
+                entry["errors"].append(
+                    {"$ref": "#/components/errors/ConversationTurnNotFound"}
+                )
             if operation.name.startswith("git_"):
                 entry["errors"].extend(
                     [
@@ -1490,20 +1602,14 @@ def build_schema() -> dict:
                 "capabilities",
             }:
                 properties[field] = {"$ref": f"#/$defs/{field}"}
-            elif field in ARRAY_FIELDS:
-                properties[field] = {"type": "array", "items": {}}
-            elif field in BOOLEAN_FIELDS:
-                properties[field] = {"type": "boolean"}
-            elif field in INTEGER_FIELDS:
-                properties[field] = {"type": "integer"}
-            elif field in NUMBER_FIELDS:
-                properties[field] = {"type": "number"}
-            elif field in NULLABLE_STRING_FIELDS:
-                properties[field] = {"type": ["string", "null"]}
-            elif field in OBJECT_FIELDS:
-                properties[field] = {"type": "object"}
             else:
-                properties[field] = {"type": "string"}
+                kind = _field_kind(operation.name, field)
+                if kind == "array":
+                    properties[field] = {"type": "array", "items": {}}
+                elif kind == "nullable_string":
+                    properties[field] = {"type": ["string", "null"]}
+                else:
+                    properties[field] = {"type": kind}
         definitions[operation.name] = {
             "type": "object",
             "additionalProperties": False,
@@ -1524,32 +1630,12 @@ def _class_name(name: str) -> str:
     return "".join(part.capitalize() for part in name.split("_"))
 
 
-def _python_field_type(field: str) -> str:
-    if field in ARRAY_FIELDS:
-        return "list[Any]"
-    if field in BOOLEAN_FIELDS:
-        return "bool"
-    if field in INTEGER_FIELDS:
-        return "int"
-    if field in NUMBER_FIELDS:
-        return "float"
-    if field in OBJECT_FIELDS:
-        return "dict[str, Any]"
-    return "str"
+def _python_field_type(operation_name: str, field: str) -> str:
+    return _PYTHON_TYPES[_field_kind(operation_name, field)]
 
 
-def _typescript_field_type(field: str) -> str:
-    if field in ARRAY_FIELDS:
-        return "unknown[]"
-    if field in BOOLEAN_FIELDS:
-        return "boolean"
-    if field in INTEGER_FIELDS:
-        return "number"
-    if field in NUMBER_FIELDS:
-        return "number"
-    if field in OBJECT_FIELDS:
-        return "Record<string, unknown>"
-    return "string"
+def _typescript_field_type(operation_name: str, field: str) -> str:
+    return _TYPESCRIPT_TYPES[_field_kind(operation_name, field)]
 
 
 def _python_model_map(models: dict[str, str]) -> str:
@@ -1639,10 +1725,11 @@ def build_python() -> bytes:
             )
         elif fields:
             lines.extend(
-                f"    {field}: {_python_field_type(field)}" for field in fields
+                f"    {field}: {_python_field_type(operation.name, field)}"
+                for field in fields
             )
         lines.extend(
-            f"    {field}: {_python_field_type(field)} | None = None"
+            f"    {field}: {_python_field_type(operation.name, field)} | None = None"
             for field in optional_fields
         )
         if not fields and not optional_fields:
@@ -1738,11 +1825,11 @@ def build_typescript() -> bytes:
             )
         else:
             lines.extend(
-                f"  {field}: {_typescript_field_type(field)};"
+                f"  {field}: {_typescript_field_type(operation.name, field)};"
                 for field in REQUIRED_FIELDS.get(operation.name, ())
             )
         lines.extend(
-            f"  {field}?: {_typescript_field_type(field)};"
+            f"  {field}?: {_typescript_field_type(operation.name, field)};"
             for field in OPTIONAL_FIELDS.get(operation.name, ())
         )
         lines.append("}")

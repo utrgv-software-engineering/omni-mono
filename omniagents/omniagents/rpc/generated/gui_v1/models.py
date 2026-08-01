@@ -1131,6 +1131,26 @@ class PurgeThreadsResult(RootModel[dict[str, Any]]):
     pass
 
 
+class GetPlanParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    scope: str | None = None
+
+
+class GetPlanResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GetRunDiffParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    turn_id: str | None = None
+
+
+class GetRunDiffResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class InitializedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     pass
@@ -1423,6 +1443,22 @@ class ThreadUpdatedParams(BaseModel):
     stream_id: str | None = None
 
 
+class ItemUpdatedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    thread_id: str
+    item_id: str
+    kind: str
+    status: str
+    revision: int
+    item_seq: int
+    content: dict[str, Any]
+    turn_id: str | None = None
+    updated_at: float | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
 CLIENT_REQUEST_MODELS = {
     "initialize": InitializeParams,
     "start_run": StartRunParams,
@@ -1522,6 +1558,8 @@ CLIENT_REQUEST_MODELS = {
     "list_thread_descendants": ListThreadDescendantsParams,
     "export_thread": ExportThreadParams,
     "purge_threads": PurgeThreadsParams,
+    "get_plan": GetPlanParams,
+    "get_run_diff": GetRunDiffParams,
 }
 CLIENT_RESULT_MODELS = {
     "initialize": InitializeResult,
@@ -1622,6 +1660,8 @@ CLIENT_RESULT_MODELS = {
     "list_thread_descendants": ListThreadDescendantsResult,
     "export_thread": ExportThreadResult,
     "purge_threads": PurgeThreadsResult,
+    "get_plan": GetPlanResult,
+    "get_run_diff": GetRunDiffResult,
 }
 CLIENT_NOTIFICATION_MODELS = {"initialized": InitializedParams}
 SERVER_NOTIFICATION_MODELS = {
@@ -1650,6 +1690,7 @@ SERVER_NOTIFICATION_MODELS = {
     "fs_transfer_progress": FsTransferProgressParams,
     "git_operation_progress": GitOperationProgressParams,
     "thread_updated": ThreadUpdatedParams,
+    "item_updated": ItemUpdatedParams,
 }
 STABLE_REQUESTS = frozenset(
     [
@@ -1755,6 +1796,8 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "list_thread_descendants",
         "export_thread",
         "purge_threads",
+        "get_plan",
+        "get_run_diff",
     ]
 )
 STABLE_NOTIFICATIONS = frozenset(
@@ -1789,5 +1832,6 @@ EXPERIMENTAL_NOTIFICATIONS = frozenset(
         "fs_transfer_progress",
         "git_operation_progress",
         "thread_updated",
+        "item_updated",
     ]
 )

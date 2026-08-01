@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextvars
 import os
 from pathlib import PurePosixPath
-from typing import Optional
+from typing import Optional, Protocol, runtime_checkable
 
 from .base import Workspace
 from .host import HostWorkspace
@@ -116,3 +116,68 @@ def reset_workspace(token: contextvars.Token[Optional[Workspace]]) -> None:
     """Restore the workspace that was active before ``set_workspace`` was
     called with this token."""
     _workspace_var.reset(token)
+
+
+# ---------------------------------------------------------------------
+# Mutation observation (tkt_FqUypyxF2tzC)
+# ---------------------------------------------------------------------
+
+
+@runtime_checkable
+class WorkspaceMutationObserver(Protocol):
+    """Notified around every content-mutating workspace call.
+
+    Exists so the run-level diff can be built from ONE chokepoint instead of
+    a hook in each of ``write_file`` / ``edit_file`` / ``apply_patch`` /
+    ``edit_notebook`` / ``download_file``: every builtin FILE tool goes
+    through the workspace content primitives, so observing here catches all
+    of them — including file tools added later — and cannot drift out of
+    sync with any one tool's ``ui_metadata``.
+
+    It does NOT cover :func:`~omniagents.workspace.exec` /
+    :func:`~omniagents.workspace.spawn`, which is how ``execute_bash`` runs.
+    A command that rewrites a file (a formatter, ``git checkout``, ``mv``)
+    is invisible here; the run-diff consumer compensates by re-reading every
+    tracked path at the end of the run
+    (:meth:`~omniagents.core.conversation.run_diff.RunDiffObserver.finalize`),
+    which fixes stale content but cannot discover paths the run only ever
+    touched through a shell.
+
+    Both hooks are awaited inside the mutating call, so an implementation
+    must be cheap and must not raise: the caller swallows and logs, because
+    a diff-bookkeeping fault may never fail a user's edit.
+    """
+
+    async def before_mutation(self, path: str) -> None:
+        """Called before the write/removal lands."""
+
+    async def after_mutation(self, path: str) -> None:
+        """Called after the write/removal lands."""
+
+
+_mutation_observer_var: contextvars.ContextVar[Optional[WorkspaceMutationObserver]] = (
+    contextvars.ContextVar("omniagents_workspace_mutation_observer", default=None)
+)
+
+
+def current_mutation_observer() -> Optional[WorkspaceMutationObserver]:
+    """The observer bound to the current run, or ``None``.
+
+    Per-run contextvar, deliberately not a process global: two concurrent
+    runs must never accumulate into one another's diff — the same failure
+    mode the singleton plan bridge had.
+    """
+    return _mutation_observer_var.get()
+
+
+def set_mutation_observer(
+    observer: Optional[WorkspaceMutationObserver],
+) -> contextvars.Token[Optional[WorkspaceMutationObserver]]:
+    """Bind *observer* for the current context. Returns the restore token."""
+    return _mutation_observer_var.set(observer)
+
+
+def reset_mutation_observer(
+    token: contextvars.Token[Optional[WorkspaceMutationObserver]],
+) -> None:
+    _mutation_observer_var.reset(token)

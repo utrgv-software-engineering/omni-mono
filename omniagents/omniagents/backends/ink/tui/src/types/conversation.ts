@@ -16,7 +16,8 @@ export type ConversationItemKind =
   | "elicitation"
   | "artifact"
   | "compaction"
-  /** Reserved, not yet produced — see protocol.md § Conversation Domain Objects. */
+  /** Durable plan / run-level aggregated diff — see protocol.md
+   * § Durable Structured Plans & Aggregated Run Diffs. */
   | "plan"
   | "run_diff";
 
@@ -128,3 +129,90 @@ export interface ConversationItemPage {
   has_more: boolean;
   total: number;
 }
+
+// ----- Durable plans & aggregated run diffs (experimental) -----
+// Convenience projections of the same `plan` / `run_diff` items `listItems`
+// returns: the server owns the scope and generation rules, so "what is the
+// plan NOW" is answered once there rather than re-derived in every client.
+
+/** Closed set. `blocked` is set by the agent, never inferred from edges. */
+export type PlanStepStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "blocked";
+
+export type PlanStep = {
+  id: string;
+  subject: string;
+  description: string;
+  active_form: string;
+  status: PlanStepStatus;
+  owner: string;
+  blocks: string[];
+  blocked_by: string[];
+};
+
+export type ConversationPlan = {
+  plan_id: string;
+  item_id: string;
+  thread_id: string;
+  turn_id: string | null;
+  scope: string;
+  generation: number;
+  steps: PlanStep[];
+  counts: Record<PlanStepStatus, number>;
+  status: ConversationItemStatus;
+  /** Why a terminal plan landed (`thread_archived`); null while live. */
+  finalized_by: string | null;
+  revision: number;
+  updated_at: number;
+};
+
+export type GetPlanResult = {
+  thread_id: string;
+  scope: string;
+  /** `null` when the conversation has never planned — not an error. */
+  plan: ConversationPlan | null;
+  /** Every plan the thread has held, oldest first, across scopes. */
+  plans: ConversationPlan[];
+};
+
+export type RunDiffFile = {
+  path: string;
+  change_type: "added" | "modified" | "deleted";
+  additions: number;
+  deletions: number;
+  /** Binary or oversize: reported, but carries no hunks. */
+  opaque: boolean;
+  /** The run's baseline for this path was never observed (the observer
+   * bound mid-run, or the pre-image read failed). Neither creation nor
+   * deletion is asserted and no hunks are carried. */
+  baseline_unknown: boolean;
+};
+
+export type ConversationRunDiff = {
+  item_id: string;
+  run_id: string;
+  /** One unified diff covering every changed path. Truncated on a FILE
+   * boundary when it exceeds the server cap, so it always parses; `files`
+   * and `stats` stay complete. */
+  diff: string;
+  files: RunDiffFile[];
+  stats: { files_changed: number; additions: number; deletions: number };
+  /** The rendered `diff` hit the size ceiling. `files` and `stats` did not. */
+  truncated: boolean;
+  /** The `files` list itself hit its ceiling (500 entries); `stats` still
+   * reports the true totals. */
+  files_truncated: boolean;
+  status: ConversationItemStatus;
+  revision: number;
+  updated_at: number;
+};
+
+export type GetRunDiffResult = {
+  thread_id: string;
+  turn_id: string | null;
+  /** `null` when the turn changed no files — not an error. */
+  run_diff: ConversationRunDiff | null;
+};

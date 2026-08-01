@@ -116,14 +116,46 @@ REPLAYABLE_METHODS = frozenset(
         "queue_changed",
         "session_forked",
         "session_variables_changed",
+        # A conversation item revised after first delivery
+        # (tkt_FqUypyxF2tzC). Journaled, unlike the fs_*/git_* progress
+        # events, because it carries authoritative state: a plan that
+        # gained three steps while the client was disconnected is not
+        # re-derivable from anything else the client will replay, and the
+        # alternative — "refetch everything on reconnect" — is exactly the
+        # polling this notification exists to remove.
+        "item_updated",
     }
 )
 
 # Full-replace snapshot notifications: recording a new one supersedes any
 # retained older instance for the same session.
-_SNAPSHOT_METHODS = frozenset({"queue_changed"})
+#
+# The value is the payload field that identifies WHICH object the snapshot
+# describes; an empty tuple means the method has a single snapshot per
+# session. ``item_updated`` needs a key because a session has many items:
+# coalescing it on the method alone would drop the newest plan update the
+# moment a run diff was pushed, which is silent data loss on the replay
+# path rather than compaction.
+_SNAPSHOT_KEY_FIELDS: Dict[str, Tuple[str, ...]] = {
+    "queue_changed": (),
+    "item_updated": ("item_id",),
+}
+_SNAPSHOT_METHODS = frozenset(_SNAPSHOT_KEY_FIELDS)
 
 _DEFAULT_MAX_EVENTS = 1024
+
+
+def _snapshot_identity(method: str, payload: Any) -> Tuple[Any, ...]:
+    """Which object a snapshot notification describes.
+
+    Two retained snapshots are interchangeable — and the older one may be
+    dropped — only when they describe the same object. For ``queue_changed``
+    that is the whole session; for ``item_updated`` it is one item.
+    """
+    fields = _SNAPSHOT_KEY_FIELDS.get(method, ())
+    if not fields or not isinstance(payload, dict):
+        return ()
+    return tuple(payload.get(field) for field in fields)
 
 
 class ResyncRequiredError(Exception):
@@ -604,7 +636,11 @@ class SessionEventLog:
         if self._durability_lost and not self._durability_loss_marked:
             self._mark_durability_lost()
         if method in _SNAPSHOT_METHODS:
-            self._coalesce_snapshots(method, keep_seq=self.last_seq)
+            self._coalesce_snapshots(
+                method,
+                keep_seq=self.last_seq,
+                identity=_snapshot_identity(method, payload),
+            )
         self._trim_to_retention()
         return payload
 
@@ -621,9 +657,15 @@ class SessionEventLog:
             return
         self._durability_loss_marked = True
 
-    def _coalesce_snapshots(self, method: str, *, keep_seq: int) -> None:
+    def _coalesce_snapshots(
+        self, method: str, *, keep_seq: int, identity: Tuple[Any, ...]
+    ) -> None:
         superseded = [
-            seq for seq, meth, _ in self._events if meth == method and seq != keep_seq
+            seq
+            for seq, meth, retained in self._events
+            if meth == method
+            and seq != keep_seq
+            and _snapshot_identity(meth, retained) == identity
         ]
         if not superseded:
             return
