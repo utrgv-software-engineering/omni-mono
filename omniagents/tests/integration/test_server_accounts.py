@@ -65,7 +65,9 @@ def _isolated(tmp_path, monkeypatch):
 def client() -> TestClient:
     # No auth token: the single-user (anonymous) topology in which
     # credential mutations are permitted.
-    return TestClient(server_app.build_app(spec=_spec(), default_workspace_root="/tmp"))
+    return TestClient(
+        server_app.build_app(spec=_spec(), default_host_workspace_root="/tmp")
+    )
 
 
 def _call(ws, call_id, method, params=None):
@@ -252,7 +254,7 @@ def test_usage_updates_live_without_restart(client):
 
 def test_enforced_mode_refuses_credential_mutations_but_allows_reads(monkeypatch):
     app = server_app.build_app(
-        spec=_spec(), auth_token="secret", default_workspace_root="/tmp"
+        spec=_spec(), auth_token="secret", default_host_workspace_root="/tmp"
     )
     client = TestClient(app)
     headers = {"Authorization": "Bearer secret"}

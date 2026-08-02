@@ -189,6 +189,9 @@ def test_readiness_payload_shape_byte_match():
         profile=_fake_profile(),
         service_urls={"code_server": "http://127.0.0.1:8080/"},
         resume_tier="reused",
+        agent_host_id="agenthost-1",
+        workspace_id="workspace-1",
+        environment_id="environment-1",
     )
 
     assert payload == {
@@ -200,6 +203,9 @@ def test_readiness_payload_shape_byte_match():
         "ports": {"ui": 43210},
         "container_id": "deadbeefcafe",
         "resume": "reused",
+        "agent_host_id": "agenthost-1",
+        "workspace_id": "workspace-1",
+        "environment_id": "environment-1",
         "_debug": {
             "client": "docker",
             "manifest_root": "/workspace",
@@ -219,6 +225,9 @@ def test_readiness_payload_shape_byte_match():
         "ports",
         "container_id",
         "resume",
+        "agent_host_id",
+        "workspace_id",
+        "environment_id",
         "_debug",
     ]
     # The launcher requires one line containing BOTH sandbox_url and ui_url,
@@ -240,6 +249,9 @@ def test_readiness_payload_auth_token_and_host_target(monkeypatch):
         profile=SimpleNamespace(raw={"client": {"type": "host"}}, sources=[]),
         service_urls={},
         resume_tier=None,
+        agent_host_id="agenthost-1",
+        workspace_id="workspace-1",
+        environment_id="environment-1",
     )
     # The token rides in the dedicated field (Authorization-header /
     # ticket auth); it only appears in ws_url under the legacy flag.

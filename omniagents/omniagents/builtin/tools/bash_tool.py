@@ -74,8 +74,35 @@ def _session_id_from_ctx(ctx: RunContextWrapper[Any]) -> Optional[str]:
     return session_id_from_ctx(ctx)
 
 
+def _environment_identity_from_ctx(
+    ctx: RunContextWrapper[Any],
+) -> tuple[Optional[str], Optional[int]]:
+    context = getattr(ctx, "context", None)
+    if isinstance(context, dict):
+        environment_id = context.get("environment_id")
+        generation = context.get("environment_generation")
+    else:
+        environment_id = getattr(context, "environment_id", None)
+        generation = getattr(context, "environment_generation", None)
+    return (
+        (
+            environment_id
+            if isinstance(environment_id, str) and environment_id.strip()
+            else None
+        ),
+        (
+            generation
+            if isinstance(generation, int) and not isinstance(generation, bool)
+            else None
+        ),
+    )
+
+
 def _snapshot_for(ctx: RunContextWrapper[Any]) -> list[Dict[str, Any]]:
-    return jobs_snapshot(session_id=_session_id_from_ctx(ctx))
+    environment_id, _ = _environment_identity_from_ctx(ctx)
+    return jobs_snapshot(
+        session_id=_session_id_from_ctx(ctx), environment_id=environment_id
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +418,7 @@ async def _execute_bash_background(
     workspace_root = require_workspace_root(ctx, where="execute_bash(background=True)")
     resolved_cwd = _resolve_cwd(ctx, cwd, where="execute_bash(background=True)")
     session_id = _session_id_from_ctx(ctx)
+    environment_id, environment_generation = _environment_identity_from_ctx(ctx)
 
     job_id = new_job_id()
     log_path = log_path_for(workspace_root, job_id)
@@ -455,6 +483,8 @@ async def _execute_bash_background(
         started_at_monotonic=started_at_monotonic,
         handle=handle,
         session_id=session_id,
+        environment_id=environment_id,
+        environment_generation=environment_generation,
     )
     # Kick off the watcher task that observes the handle for natural exit
     # and caches the final exit code on the Job. Held on the Job so the

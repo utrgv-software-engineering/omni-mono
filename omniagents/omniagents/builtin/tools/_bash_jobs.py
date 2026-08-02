@@ -60,6 +60,8 @@ class Job:
     # means "uncategorized" — visible to every session as a backstop for
     # callers (mostly tests) that don't run inside a real session.
     session_id: Optional[str] = None
+    environment_id: Optional[str] = None
+    environment_generation: Optional[int] = None
 
     # Cached final state — populated by the watcher task. Reads are sync.
     exit_code: Optional[int] = None
@@ -242,6 +244,8 @@ def job_state_dict(job: Job) -> Dict[str, Any]:
         "running": rc is None,
         "exit_code": rc,
         "session_id": job.session_id,
+        "environment_id": job.environment_id,
+        "environment_generation": job.environment_generation,
     }
 
 
@@ -255,7 +259,11 @@ def _job_visible_to(job: Job, session_id: Optional[str]) -> bool:
     return job.session_id is None or job.session_id == session_id
 
 
-def jobs_snapshot(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+def jobs_snapshot(
+    session_id: Optional[str] = None,
+    *,
+    environment_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """Stable-ordered snapshot of jobs, optionally filtered to a session.
 
     Passing ``session_id=None`` returns the full process-global view —
@@ -264,7 +272,12 @@ def jobs_snapshot(session_id: Optional[str] = None) -> List[Dict[str, Any]]:
     that belong to the calling session (plus any uncategorized jobs).
     """
     jobs = sorted(get_registry().list_all(), key=lambda j: j.started_at_monotonic)
-    return [job_state_dict(j) for j in jobs if _job_visible_to(j, session_id)]
+    return [
+        job_state_dict(j)
+        for j in jobs
+        if _job_visible_to(j, session_id)
+        and (environment_id is None or j.environment_id == environment_id)
+    ]
 
 
 def session_ids_with_jobs() -> List[Optional[str]]:
@@ -433,7 +446,11 @@ class JobSweeper:
 
 
 async def read_job_log(
-    job: Job, *, lines: int = 200, from_start: bool = False
+    job: Job,
+    *,
+    lines: int = 200,
+    from_start: bool = False,
+    workspace: Any | None = None,
 ) -> Tuple[str, int, int]:
     """Read the job's log file from disk via the workspace contextvar.
 
@@ -452,7 +469,11 @@ async def read_job_log(
     from omniagents.workspace import WorkspaceError
 
     try:
-        raw = await _ws.read_bytes(job.log_path)
+        raw = (
+            await workspace.read_bytes(job.log_path)
+            if workspace is not None
+            else await _ws.read_bytes(job.log_path)
+        )
     except (OSError, WorkspaceError) as exc:
         raw = await _read_local_registered_job_log(job, exc)
     text = raw.decode("utf-8", errors="replace")

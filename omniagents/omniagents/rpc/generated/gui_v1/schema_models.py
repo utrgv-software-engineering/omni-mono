@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
@@ -85,6 +85,15 @@ class AckEvents(BaseModel):
     seq: int
     session_id: str
     stream_id: str
+
+
+class AgentHost(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    agent_host_id: Annotated[str, Field(min_length=1)]
+    default_environment_id: str | None = None
+    default_workspace_id: str | None = None
 
 
 class ArchiveSession(BaseModel):
@@ -284,65 +293,79 @@ class FsDownloadClose(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    session_id: str
+    environment_generation: int | None = None
+    environment_id: str
     transfer_id: str
+    workspace_id: str | None = None
 
 
 class FsDownloadOpen(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     path: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class FsDownloadRead(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     length: int | None = None
     offset: int | None = None
-    session_id: str
     transfer_id: str
+    workspace_id: str | None = None
 
 
 class FsEvents(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     events: list[Any]
     seq: int | None = None
-    session_id: str
     stream_id: str | None = None
     watch_id: str
+    workspace_id: str | None = None
 
 
 class FsList(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     path: str
     recursive: bool | None = None
-    session_id: str
+    workspace_id: str | None = None
 
 
 class FsRescanRequired(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     reason: str
     seq: int | None = None
-    session_id: str
     stream_id: str | None = None
     watch_id: str
+    workspace_id: str | None = None
 
 
 class FsStat(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     path: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class FsTransferProgress(BaseModel):
@@ -350,28 +373,34 @@ class FsTransferProgress(BaseModel):
         extra="forbid",
     )
     direction: str
+    environment_generation: int | None = None
+    environment_id: str
     seq: int | None = None
-    session_id: str
     stream_id: str | None = None
     total: int
     transfer_id: str
     transferred: int
+    workspace_id: str | None = None
 
 
 class FsUnwatch(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    session_id: str
+    environment_generation: int | None = None
+    environment_id: str
     watch_id: str
+    workspace_id: str | None = None
 
 
 class FsUploadAbort(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    session_id: str
+    environment_generation: int | None = None
+    environment_id: str
     transfer_id: str
+    workspace_id: str | None = None
 
 
 class FsUploadChunk(BaseModel):
@@ -379,39 +408,47 @@ class FsUploadChunk(BaseModel):
         extra="forbid",
     )
     data: str
+    environment_generation: int | None = None
+    environment_id: str
     offset: int
-    session_id: str
     transfer_id: str
+    workspace_id: str | None = None
 
 
 class FsUploadCommit(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    session_id: str
+    environment_generation: int | None = None
+    environment_id: str
     transfer_id: str
+    workspace_id: str | None = None
 
 
 class FsUploadOpen(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     expected_sha256: Annotated[str | None, Field(pattern="^[0-9a-fA-F]{64}$")] = None
     overwrite: bool | None = None
     path: str
-    session_id: str
     sha256: Annotated[str | None, Field(pattern="^[0-9a-fA-F]{64}$")] = None
     size: int
+    workspace_id: str | None = None
 
 
 class FsWatch(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     path: str
     poll_interval_ms: int | None = None
     recursive: bool | None = None
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GetAgentInfo(BaseModel):
@@ -488,9 +525,11 @@ class GitCheckout(BaseModel):
     create: bool | None = None
     detach: bool | None = None
     discard_changes: bool | None = None
+    environment_generation: int | None = None
+    environment_id: str
     repo: str
-    session_id: str
     start_point: str | None = None
+    workspace_id: str | None = None
 
 
 class GitCommit(BaseModel):
@@ -501,18 +540,22 @@ class GitCommit(BaseModel):
     amend: bool | None = None
     author: str | None = None
     confirmation_token: str | None = None
+    environment_generation: int | None = None
+    environment_id: str
     message: str
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitConflicts(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     paths: list[Any] | None = None
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitDiff(BaseModel):
@@ -520,12 +563,14 @@ class GitDiff(BaseModel):
         extra="forbid",
     )
     context_lines: int | None = None
+    environment_generation: int | None = None
+    environment_id: str
     from_rev: str | None = None
     mode: str | None = None
     paths: list[Any] | None = None
     repo: str
-    session_id: str
     to_rev: str | None = None
+    workspace_id: str | None = None
 
 
 class GitDiscard(BaseModel):
@@ -534,59 +579,71 @@ class GitDiscard(BaseModel):
     )
     confirmation_token: str | None = None
     context_lines: int | None = None
+    environment_generation: int | None = None
+    environment_id: str
     hunks: list[Any] | None = None
     paths: list[Any] | None = None
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitFetch(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     prune: bool | None = None
     refspec: str | None = None
     remote: str | None = None
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitListBranches(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     include_remote: bool | None = None
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitListRepositories(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     max_depth: int | None = None
     path: str | None = None
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitListWorktrees(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitLog(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     max_count: int | None = None
     paths: list[Any] | None = None
     repo: str
     rev: str | None = None
-    session_id: str
     skip: int | None = None
+    workspace_id: str | None = None
 
 
 class GitOperationProgress(BaseModel):
@@ -594,24 +651,28 @@ class GitOperationProgress(BaseModel):
         extra="forbid",
     )
     detail: dict[str, Any] | None = None
+    environment_generation: int | None = None
+    environment_id: str
     operation: str
     operation_id: str
     phase: str
     repo: str
     seq: int | None = None
-    session_id: str
     stream_id: str | None = None
+    workspace_id: str | None = None
 
 
 class GitPull(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     rebase: bool | None = None
     refspec: str | None = None
     remote: str | None = None
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitPush(BaseModel):
@@ -619,13 +680,15 @@ class GitPush(BaseModel):
         extra="forbid",
     )
     confirmation_token: str | None = None
+    environment_generation: int | None = None
+    environment_id: str
     force: bool | None = None
     force_with_lease: bool | None = None
     refspec: str | None = None
     remote: str | None = None
     repo: str
-    session_id: str
     set_upstream: bool | None = None
+    workspace_id: str | None = None
 
 
 class GitReset(BaseModel):
@@ -633,11 +696,13 @@ class GitReset(BaseModel):
         extra="forbid",
     )
     confirmation_token: str | None = None
+    environment_generation: int | None = None
+    environment_id: str
     mode: str | None = None
     paths: list[Any] | None = None
     repo: str
     rev: str | None = None
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitStage(BaseModel):
@@ -645,22 +710,26 @@ class GitStage(BaseModel):
         extra="forbid",
     )
     context_lines: int | None = None
+    environment_generation: int | None = None
+    environment_id: str
     hunks: list[Any] | None = None
     mode: str | None = None
     paths: list[Any] | None = None
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitStatus(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: int | None = None
+    environment_id: str
     include_ignored: bool | None = None
     include_untracked: bool | None = None
     paths: list[Any] | None = None
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class GitUnstage(BaseModel):
@@ -668,10 +737,12 @@ class GitUnstage(BaseModel):
         extra="forbid",
     )
     context_lines: int | None = None
+    environment_generation: int | None = None
+    environment_id: str
     hunks: list[Any] | None = None
     paths: list[Any] | None = None
     repo: str
-    session_id: str
+    workspace_id: str | None = None
 
 
 class Identity(BaseModel):
@@ -1098,8 +1169,11 @@ class ServerCall(BaseModel):
         extra="forbid",
     )
     args: dict[str, Any] | None = None
+    environment_generation: int | None = None
+    environment_id: str | None = None
     function: str
     session_id: str | None = None
+    workspace_id: str | None = None
 
 
 class SessionForked(BaseModel):
@@ -1162,12 +1236,38 @@ class SetVoiceModel(BaseModel):
     model: str
 
 
+class EnvironmentSelection(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    mode: Literal["inherit"]
+
+
+class EnvironmentSelection1(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    mode: Literal["none"]
+
+
+class EnvironmentSelection2(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_generation: Annotated[int | None, Field(ge=1)] = None
+    environment_id: Annotated[str, Field(min_length=1)]
+    mode: Literal["explicit"]
+
+
 class StartRun(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
     content: str | None = None
     context: dict[str, Any] | None = None
+    environment_selection: (
+        EnvironmentSelection | EnvironmentSelection1 | EnvironmentSelection2
+    )
     group_id: str | None = None
     prompt: str
     prompt_role: str | None = None
@@ -1324,6 +1424,7 @@ class InitializeResult(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    agent_host: AgentHost
     capabilities: Capabilities
     identity: Identity
     platform: Platform

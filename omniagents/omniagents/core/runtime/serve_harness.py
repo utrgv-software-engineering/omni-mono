@@ -862,16 +862,10 @@ def bring_up_host_target(
 ) -> None:
     """Bring up the ``host`` execution target: no sandbox session at all.
 
-    Binds a :class:`~omniagents.workspace.HostWorkspace` rooted at
-    *workspace* as the process-wide default so every run (including
-    workers, which copy the context) routes through it. The profile's
-    ``confine`` key gates the workspace-root boundary (``false`` = true
-    no-sandbox). Publishes the workspace root as the manifest root and
-    the sources (as :func:`bring_up_session` does for sandbox targets) so
-    ``fs_get_workspace_root`` / ``fs_get_sources`` report uniformly.
+    Publishes legacy manifest/source metadata while the explicit host
+    ExecutionEnvironment is registered with the AgentHost after app
+    construction. No process-wide workspace binding is installed.
     """
-    from omniagents.workspace import HostWorkspace, set_default_workspace
-
     from omniagents.core.runtime.serve_state import set_manifest_root, set_sources
 
     # The host target's workspace root IS the host dir. Publish it as the
@@ -882,12 +876,6 @@ def bring_up_host_target(
     # fs_get_sources works under host — the launcher reads it to show the
     # local workspace folder in its pill.
     set_sources(sources_parsed)
-    set_default_workspace(
-        HostWorkspace(
-            root=workspace,
-            confine=bool(profile_raw.get("confine", True)),
-        )
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1014,7 +1002,39 @@ async def _carry_workspace_snapshot(
     await LocalSnapshot(id=session_id, base_path=snapshot_dir).persist(data)
 
 
-async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str, Any]:
+async def _replace_execution_backend(ctx: Any, sandbox_session: Any) -> None:
+    """Publish a switched sandbox as the next generation of one environment."""
+
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    service = getattr(ctx.app.state, "agent_service", None)
+    if service is None:
+        raise RuntimeError("switch context app has no AgentService")
+    root = getattr(
+        getattr(getattr(sandbox_session, "state", None), "manifest", None),
+        "root",
+        None,
+    )
+    if not isinstance(root, str) or not root:
+        from omniagents.core.runtime.serve_state import get_manifest_root
+
+        root = get_manifest_root()
+    if not isinstance(root, str) or not root:
+        raise RuntimeError("switched sandbox has no manifest root")
+    workspace = SandboxWorkspace(
+        session=sandbox_session,
+        root=root,
+        default_user=getattr(ctx.spec, "sandbox_run_as", None),
+    )
+    await service.environment_manager.replace(ctx.environment_id, workspace)
+
+
+async def perform_switch(
+    profile_path: str,
+    *,
+    session: Any = None,
+    switch_context: Any = None,
+) -> Dict[str, Any]:
     """Switch the running server's sandbox to the profile at *profile_path*, in
     place — no process restart. Snapshots the current workspace, brings up the
     new backend from the same snapshot (rehydrate), re-attaches it to the live
@@ -1038,7 +1058,7 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
         set_sandbox_session,
     )
 
-    ctx = get_switch_context()
+    ctx = switch_context or get_switch_context()
     if ctx is None:
         return {
             "ok": False,
@@ -1072,6 +1092,12 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
         ctx.switching = True
         ctx.last_error = None
         ctx.ready_event.clear()
+        from omniagents.execution import EnvironmentState
+
+        environment_manager = ctx.app.state.agent_service.environment_manager
+        await environment_manager.transition(
+            ctx.environment_id, EnvironmentState.REPLACING
+        )
         await _broadcast_sandbox_event(
             service, "ui.sandbox.switching", {"profile": target_name}, session=session
         )
@@ -1120,6 +1146,9 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
             ctx.switching = False
             ctx.ready_event.set()
             if rolled:
+                rolled_back_session = get_sandbox_session()
+                if rolled_back_session is not None:
+                    await _replace_execution_backend(ctx, rolled_back_session)
                 await _broadcast_sandbox_event(
                     service,
                     "ui.sandbox.changed",
@@ -1132,6 +1161,9 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
                     "recovered": "rolled_back",
                     "reason": f"switch failed, rolled back: {e}",
                 }
+            await environment_manager.transition(
+                ctx.environment_id, EnvironmentState.FAILED
+            )
             await _broadcast_sandbox_event(
                 service, "ui.sandbox.lost", {"reason": str(e)}, session=session
             )
@@ -1147,6 +1179,7 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
         _attach_session_to_spec(ctx.spec, brought.session, target.raw)
         set_orchestrator_spec(ctx.spec)
         _install_session_terminal_manager(ctx.app, brought.session, target.terminal)
+        await _replace_execution_backend(ctx, brought.session)
 
         ctx.current_profile_path = profile_path
         ctx.current_profile_name = target_name
@@ -1166,6 +1199,89 @@ async def perform_switch(profile_path: str, *, session: Any = None) -> Dict[str,
 # ---------------------------------------------------------------------------
 # Terminal managers
 # ---------------------------------------------------------------------------
+
+
+class ServeEnvironmentLifecycleController:
+    """Environment-scoped adapter over the legacy serve orchestration.
+
+    The instance is registered on one ExecutionEnvironment. Handlers receive
+    it through an EnvironmentLease, so they cannot accidentally operate on a
+    different process-global sandbox.
+    """
+
+    def __init__(self, switch_context: Any) -> None:
+        self._switch_context = switch_context
+
+    @staticmethod
+    def _backend(lease: Any) -> Any:
+        from omniagents.core.sandbox.lifecycle_session import (
+            resolve_backend_session,
+        )
+        from omniagents.workspace.sandbox import SandboxWorkspace
+
+        workspace = lease.workspace
+        if not isinstance(workspace, SandboxWorkspace):
+            return None
+        return resolve_backend_session(workspace.session)
+
+    async def pause(self, lease: Any) -> Dict[str, Any]:
+        inner = self._backend(lease)
+        if inner is None or not hasattr(inner, "pause"):
+            return {
+                "ok": False,
+                "supported": False,
+                "reason": "environment backend does not implement pause",
+            }
+        try:
+            await inner.pause()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "supported": True, "reason": str(exc)}
+        paused = True
+        if hasattr(inner, "paused"):
+            try:
+                paused = bool(await inner.paused())
+            except Exception:  # noqa: BLE001
+                pass
+        return {"ok": True, "supported": True, "paused": paused}
+
+    async def unpause(self, lease: Any) -> Dict[str, Any]:
+        inner = self._backend(lease)
+        if inner is None or not hasattr(inner, "unpause"):
+            return {
+                "ok": False,
+                "supported": False,
+                "reason": "environment backend does not implement unpause",
+            }
+        try:
+            await inner.unpause()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "supported": True, "reason": str(exc)}
+        paused = False
+        if hasattr(inner, "paused"):
+            try:
+                paused = bool(await inner.paused())
+            except Exception:  # noqa: BLE001
+                pass
+        return {"ok": True, "supported": True, "paused": paused}
+
+    async def notify_activity(self, lease: Any) -> Dict[str, Any]:
+        inner = self._backend(lease)
+        if inner is None or not hasattr(inner, "notify_activity"):
+            return {"ok": False}
+        try:
+            await inner.notify_activity()
+        except Exception:  # noqa: BLE001
+            return {"ok": False}
+        return {"ok": True}
+
+    async def discard_snapshot(self, lease: Any) -> Dict[str, Any]:  # noqa: ARG002
+        self._switch_context.discard_snapshot_on_exit = True
+        return {"ok": True}
+
+    async def switch(self, lease: Any, profile: str) -> Dict[str, Any]:
+        if lease.environment_id != self._switch_context.environment_id:
+            raise RuntimeError("lifecycle controller/environment mismatch")
+        return await perform_switch(profile, switch_context=self._switch_context)
 
 
 class _UnsupportedPtyBackend:
@@ -1256,6 +1372,76 @@ def _install_session_terminal_manager(
         default_cwd=terminal.cwd,
         default_user=terminal.user,
     )
+
+
+async def _register_execution_environment(
+    app: Any,
+    spec: Any,
+    *,
+    environment_id: str,
+    workspace_id: str,
+    owner_user_id: str | None,
+    session: Any | None,
+    root: str,
+    sources: Optional[List[Dict[str, Any]]] = None,
+) -> Any:
+    """Register one explicit host or sandbox execution environment.
+
+    Files and Git resolve this identity through ``ExecutionEnvironmentManager``
+    even when no agent Run is active. No process-global sandbox lookup or host
+    fallback participates in request routing.
+    """
+    service = getattr(app.state, "agent_service", None)
+    if service is None:
+        raise RuntimeError("app has no AgentService")
+
+    from omniagents.execution import (
+        EnvironmentCapability,
+        EnvironmentKind,
+        EnvironmentState,
+        ExecutionEnvironmentDescriptor,
+        WorkspaceResource,
+    )
+    from omniagents.workspace import HostWorkspace
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    workspace = (
+        HostWorkspace(root=root)
+        if session is None
+        else SandboxWorkspace(
+            session=session,
+            root=root,
+            default_user=getattr(spec, "sandbox_run_as", None),
+        )
+    )
+    service.workspace_registry.register(
+        WorkspaceResource(
+            workspace_id,
+            owner_user_id=owner_user_id,
+            sources=tuple(dict(source) for source in (sources or [])),
+        )
+    )
+    descriptor = ExecutionEnvironmentDescriptor(
+        environment_id=environment_id,
+        workspace_id=workspace_id,
+        kind=(EnvironmentKind.HOST if session is None else EnvironmentKind.DEVBOX),
+        state=EnvironmentState.READY,
+        generation=1,
+        capabilities=frozenset(
+            {
+                EnvironmentCapability.WORKSPACE_READ,
+                EnvironmentCapability.WORKSPACE_WRITE,
+                EnvironmentCapability.PROCESS,
+                EnvironmentCapability.NETWORK,
+                EnvironmentCapability.PTY,
+                EnvironmentCapability.HTTP,
+                EnvironmentCapability.SERVICES,
+                EnvironmentCapability.ENVIRONMENT_LIFECYCLE,
+            }
+        ),
+    )
+    await service.environment_manager.register(descriptor, workspace)
+    return descriptor
 
 
 def _install_host_terminal_manager(

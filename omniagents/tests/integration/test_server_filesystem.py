@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 
 from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.execution import AgentHostResources, register_host_environment
 from tests.fixtures.gui_ws import perform_gui_handshake
 
 from agents import Agent
@@ -109,8 +110,16 @@ def workspace(tmp_path):
 
 @pytest.fixture
 def client(workspace) -> TestClient:
+    resources = AgentHostResources.create("fs-test-host")
+    register_host_environment(
+        resources,
+        str(workspace),
+        owner_user_id=None,
+        workspace_id="fs-workspace",
+        environment_id="fs-env",
+    )
     return TestClient(
-        server_app.build_app(spec=_spec(), default_workspace_root=str(workspace))
+        server_app.build_app(spec=_spec(), agent_host_resources=resources)
     )
 
 
@@ -133,7 +142,7 @@ def _ensure_session(ws, session_id, workspace_root, call_id="ensure"):
 def test_fs_methods_require_experimental_grant(client, workspace):
     with client.websocket_connect("/ws") as ws:
         perform_gui_handshake(ws)
-        error = _error(ws, 1, "fs_list", {"session_id": "sess", "path": "."})
+        error = _error(ws, 1, "fs_list", {"environment_id": "fs-env", "path": "."})
         assert error["code"] == -32013
         assert error["data"]["kind"] == "capability_not_negotiated"
 
@@ -146,10 +155,10 @@ def test_watch_pushes_events_without_client_polling(client, workspace):
             ws,
             1,
             "fs_watch",
-            {"session_id": "fs-sess", "path": ".", "poll_interval_ms": 200},
+            {"environment_id": "fs-env", "path": ".", "poll_interval_ms": 200},
         )
         assert watch["mechanism"] == "poll:host"
-        assert watch["session_id"] == "fs-sess"
+        assert watch["environment_id"] == "fs-env"
 
         # Server-side change; the client only blocks on its socket.
         (workspace / "hello.txt").write_text("hello")
@@ -171,7 +180,7 @@ def test_watch_pushes_events_without_client_polling(client, workspace):
             ws,
             3,
             "fs_unwatch",
-            {"session_id": "fs-sess", "watch_id": watch["watch_id"]},
+            {"environment_id": "fs-env", "watch_id": watch["watch_id"]},
         )
         assert result is True
 
@@ -186,7 +195,7 @@ def test_watch_overflow_emits_rescan_required(client, workspace):
             ws,
             1,
             "fs_watch",
-            {"session_id": "fs-sess", "path": ".", "poll_interval_ms": 200},
+            {"environment_id": "fs-env", "path": ".", "poll_interval_ms": 200},
         )
         for index in range(20):
             (workspace / f"burst-{index}.txt").write_text("x")
@@ -196,7 +205,7 @@ def test_watch_overflow_emits_rescan_required(client, workspace):
         # The burst produced the rescan signal instead of an event flood.
         assert not [frame for frame in frames if frame.get("method") == "fs_events"]
         # Recovery is an explicit relist.
-        listing, _ = _ok(ws, 2, "fs_list", {"session_id": "fs-sess", "path": "."})
+        listing, _ = _ok(ws, 2, "fs_list", {"environment_id": "fs-env", "path": "."})
         assert len(listing["entries"]) == 20
 
 
@@ -211,14 +220,14 @@ def test_unauthorized_paths_rejected_consistently(client, workspace):
         _ensure_session(ws, "fs-sess", workspace)
         for path in ("../outside/secret.txt", "/etc/passwd", "sneaky.txt"):
             for call_id, method, params in (
-                ("a", "fs_stat", {"session_id": "fs-sess", "path": path}),
-                ("b", "fs_download_open", {"session_id": "fs-sess", "path": path}),
+                ("a", "fs_stat", {"environment_id": "fs-env", "path": path}),
+                ("b", "fs_download_open", {"environment_id": "fs-env", "path": path}),
                 (
                     "c",
                     "fs_upload_open",
-                    {"session_id": "fs-sess", "path": path, "size": 1},
+                    {"environment_id": "fs-env", "path": path, "size": 1},
                 ),
-                ("d", "fs_watch", {"session_id": "fs-sess", "path": path}),
+                ("d", "fs_watch", {"environment_id": "fs-env", "path": path}),
             ):
                 error = _error(ws, call_id, method, params)
                 assert error["code"] in (-32060, -32061), (path, method, error)
@@ -226,7 +235,7 @@ def test_unauthorized_paths_rejected_consistently(client, workspace):
                     assert error["data"]["kind"] == "fs_path_invalid"
         # And plainly missing files are a distinct, honest error.
         error = _error(
-            ws, 9, "fs_download_open", {"session_id": "fs-sess", "path": "nope.bin"}
+            ws, 9, "fs_download_open", {"environment_id": "fs-env", "path": "nope.bin"}
         )
         assert error["code"] == -32061
         assert error["data"]["kind"] == "fs_not_found"
@@ -244,7 +253,7 @@ def test_chunked_upload_download_round_trip(client, workspace):
             1,
             "fs_upload_open",
             {
-                "session_id": "fs-sess",
+                "environment_id": "fs-env",
                 "path": "artifacts/big.bin",
                 "size": len(payload),
                 "sha256": digest,
@@ -262,7 +271,7 @@ def test_chunked_upload_download_round_trip(client, workspace):
                 f"up-{index}",
                 "fs_upload_chunk",
                 {
-                    "session_id": "fs-sess",
+                    "environment_id": "fs-env",
                     "transfer_id": opened["transfer_id"],
                     "offset": offset,
                     "data": base64.b64encode(chunk).decode(),
@@ -276,7 +285,7 @@ def test_chunked_upload_download_round_trip(client, workspace):
             ws,
             2,
             "fs_upload_commit",
-            {"session_id": "fs-sess", "transfer_id": opened["transfer_id"]},
+            {"environment_id": "fs-env", "transfer_id": opened["transfer_id"]},
         )
         observed_frames.extend(frames)
         assert committed == {
@@ -298,7 +307,7 @@ def test_chunked_upload_download_round_trip(client, workspace):
             ws,
             3,
             "fs_download_open",
-            {"session_id": "fs-sess", "path": "artifacts/big.bin"},
+            {"environment_id": "fs-env", "path": "artifacts/big.bin"},
         )
         assert download["size"] == len(payload)
         assert download["sha256"] == digest
@@ -310,7 +319,7 @@ def test_chunked_upload_download_round_trip(client, workspace):
                 ws,
                 f"down-{index}",
                 "fs_download_read",
-                {"session_id": "fs-sess", "transfer_id": download["transfer_id"]},
+                {"environment_id": "fs-env", "transfer_id": download["transfer_id"]},
             )
             # No single frame ever embeds the full payload.
             assert chunk_result["bytes"] <= chunk_size
@@ -325,7 +334,7 @@ def test_chunked_upload_download_round_trip(client, workspace):
             ws,
             4,
             "fs_download_close",
-            {"session_id": "fs-sess", "transfer_id": download["transfer_id"]},
+            {"environment_id": "fs-env", "transfer_id": download["transfer_id"]},
         )
         assert closed is True
 
@@ -338,14 +347,14 @@ def test_upload_cancellation_mid_transfer(client, workspace):
             ws,
             1,
             "fs_upload_open",
-            {"session_id": "fs-sess", "path": "cancel.bin", "size": 10},
+            {"environment_id": "fs-env", "path": "cancel.bin", "size": 10},
         )
         _ok(
             ws,
             2,
             "fs_upload_chunk",
             {
-                "session_id": "fs-sess",
+                "environment_id": "fs-env",
                 "transfer_id": opened["transfer_id"],
                 "offset": 0,
                 "data": base64.b64encode(b"12345").decode(),
@@ -355,14 +364,14 @@ def test_upload_cancellation_mid_transfer(client, workspace):
             ws,
             3,
             "fs_upload_abort",
-            {"session_id": "fs-sess", "transfer_id": opened["transfer_id"]},
+            {"environment_id": "fs-env", "transfer_id": opened["transfer_id"]},
         )
         assert aborted is True
         error = _error(
             ws,
             4,
             "fs_upload_commit",
-            {"session_id": "fs-sess", "transfer_id": opened["transfer_id"]},
+            {"environment_id": "fs-env", "transfer_id": opened["transfer_id"]},
         )
         assert error["code"] == -32062
         assert error["data"]["kind"] == "fs_transfer_invalid"
@@ -377,7 +386,7 @@ def test_reconnect_requires_resubscribe_and_rescan(client, workspace):
             ws,
             1,
             "fs_watch",
-            {"session_id": "fs-sess", "path": ".", "poll_interval_ms": 200},
+            {"environment_id": "fs-env", "path": ".", "poll_interval_ms": 200},
         )
         watch_id = watch["watch_id"]
 
@@ -389,17 +398,17 @@ def test_reconnect_requires_resubscribe_and_rescan(client, workspace):
         perform_gui_handshake(ws, experimental=FS_EXPERIMENTAL)
         _ensure_session(ws, "fs-sess", workspace)
         error = _error(
-            ws, 1, "fs_unwatch", {"session_id": "fs-sess", "watch_id": watch_id}
+            ws, 1, "fs_unwatch", {"environment_id": "fs-env", "watch_id": watch_id}
         )
         assert error["code"] == -32063
         # Documented recovery: rescan, then re-subscribe.
-        listing, _ = _ok(ws, 2, "fs_list", {"session_id": "fs-sess", "path": "."})
+        listing, _ = _ok(ws, 2, "fs_list", {"environment_id": "fs-env", "path": "."})
         assert any(entry["path"] == "while-offline.txt" for entry in listing["entries"])
         rewatch, _ = _ok(
             ws,
             3,
             "fs_watch",
-            {"session_id": "fs-sess", "path": ".", "poll_interval_ms": 200},
+            {"environment_id": "fs-env", "path": ".", "poll_interval_ms": 200},
         )
         (workspace / "after-reconnect.txt").write_text("y")
         message, _ = _wait_for_method(ws, "fs_events")
@@ -411,7 +420,7 @@ def test_reconnect_requires_resubscribe_and_rescan(client, workspace):
             ws,
             4,
             "fs_unwatch",
-            {"session_id": "fs-sess", "watch_id": rewatch["watch_id"]},
+            {"environment_id": "fs-env", "watch_id": rewatch["watch_id"]},
         )
 
 
@@ -429,9 +438,15 @@ def test_cross_user_workspace_access_denied(tmp_path):
             }
         }
     )
-    client = TestClient(
-        server_app.build_app(spec=spec, default_workspace_root=str(workspace))
+    resources = AgentHostResources.create("fs-auth-test-host")
+    register_host_environment(
+        resources,
+        str(workspace),
+        owner_user_id="alice",
+        workspace_id="alice-workspace",
+        environment_id="alice-env",
     )
+    client = TestClient(server_app.build_app(spec=spec, agent_host_resources=resources))
     alice_headers = {"Authorization": "Bearer alice-token"}
     bob_headers = {"Authorization": "Bearer bob-token"}
     with (
@@ -443,23 +458,25 @@ def test_cross_user_workspace_access_denied(tmp_path):
         _ensure_session(alice, "alice-sess", workspace)
 
         # Alice can use her own workspace.
-        listing, _ = _ok(alice, 1, "fs_list", {"session_id": "alice-sess", "path": "."})
+        listing, _ = _ok(
+            alice, 1, "fs_list", {"environment_id": "alice-env", "path": "."}
+        )
         assert any(entry["path"] == "private.txt" for entry in listing["entries"])
 
         # Bob cannot watch, list, stat, download from, or upload into it.
         for call_id, method, params in (
-            ("w", "fs_watch", {"session_id": "alice-sess", "path": "."}),
-            ("l", "fs_list", {"session_id": "alice-sess", "path": "."}),
-            ("s", "fs_stat", {"session_id": "alice-sess", "path": "private.txt"}),
+            ("w", "fs_watch", {"environment_id": "alice-env", "path": "."}),
+            ("l", "fs_list", {"environment_id": "alice-env", "path": "."}),
+            ("s", "fs_stat", {"environment_id": "alice-env", "path": "private.txt"}),
             (
                 "d",
                 "fs_download_open",
-                {"session_id": "alice-sess", "path": "private.txt"},
+                {"environment_id": "alice-env", "path": "private.txt"},
             ),
             (
                 "u",
                 "fs_upload_open",
-                {"session_id": "alice-sess", "path": "evil.bin", "size": 1},
+                {"environment_id": "alice-env", "path": "evil.bin", "size": 1},
             ),
         ):
             error = _error(bob, call_id, method, params)

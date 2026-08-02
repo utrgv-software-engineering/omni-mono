@@ -3,8 +3,8 @@
 Tool authors that touch workspace state import top-level functions from
 this module. The functions resolve to either :class:`HostWorkspace` or
 :class:`SandboxWorkspace` via a contextvar, which the SDK sandbox runtime
-swaps when a ``SandboxAgent`` run starts. Non-sandbox runs default to
-``HostWorkspace(cwd)`` so the API works without any setup::
+swaps when a ``SandboxAgent`` run starts. Host and sandbox backends are both
+bound explicitly from a Run's execution-environment lease::
 
     from omniagents.workspace import read_text, write_text, exec
 
@@ -45,7 +45,6 @@ from ._runtime import (
     get_requested_cwd,
     reset_mutation_observer,
     reset_workspace,
-    set_default_workspace,
     set_mutation_observer,
     set_requested_cwd,
     set_workspace,
@@ -60,6 +59,7 @@ from .types import (
     WorkspaceError,
     WorkspaceEscapeError,
     WorkspaceFeatureUnavailable,
+    WorkspaceNotBoundError,
 )
 
 _logger = logging.getLogger(__name__)
@@ -107,6 +107,7 @@ __all__ = [
     "WorkspaceError",
     "WorkspaceEscapeError",
     "WorkspaceFeatureUnavailable",
+    "WorkspaceNotBoundError",
     "WorkspaceMutationObserver",
     # Backends + routing (advanced use)
     "HostWorkspace",
@@ -117,7 +118,6 @@ __all__ = [
     "current_workspace",
     "current_mutation_observer",
     "set_workspace",
-    "set_default_workspace",
     "set_mutation_observer",
     "set_requested_cwd",
     "get_requested_cwd",

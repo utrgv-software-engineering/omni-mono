@@ -53,8 +53,22 @@ from omniagents.rpc.auth import (
     AuthorizationPolicy,
 )
 from omniagents.rpc.auth import _OwnerUnknown as _OwnerUnknownType
-from omniagents.rpc.filesystem import FilesystemManager, FsNotFoundError
+from omniagents.rpc.filesystem import FilesystemManager
 from omniagents.rpc.git import GitManager
+from omniagents.rpc.protocol_catalog import (
+    OPERATION_BY_NAME,
+    ExecutionRequirement,
+    ResourceScope,
+)
+from omniagents.execution import (
+    AgentHostResources,
+    EnvironmentLease,
+    ExistingEnvironment,
+    NoEnvironment,
+    OperationExecutionDescriptor,
+    ThreadRuntimeBinding,
+    current_request_context,
+)
 from omniagents.workspace.base import Workspace
 from omniagents.workspace.host import HostWorkspace
 from omniagents.core.providers.accounts import AccountManager
@@ -434,36 +448,24 @@ class AgentService(RpcMethodsBase):
     def __init__(
         self,
         spec: AgentSpec,
-        *,
-        default_workspace_root: str | None = None,
-        workspace_root_resolver: "Callable[[str | None], str | None] | None" = None,
+        agent_host_resources: AgentHostResources,
     ) -> None:
         """Initialize AgentService with an agent specification.
 
         Args:
             spec: The agent specification containing configuration,
                   instructions, tools, and other settings.
-            default_workspace_root: Optional fallback used when ``start_run``
-                is invoked without ``workspace_root`` on either context or
-                variables. CLI-style backends (ink/web) typically pass
-                ``os.getcwd()`` here so an agent author who imports the
-                builtin tools "just works" from a terminal. Production
-                server deployments should leave this ``None`` so a missing
-                ``workspace_root`` raises ``WorkspaceRootRequiredError``
-                rather than anchoring the agent to the server process's
-                cwd.
-            workspace_root_resolver: Maps a *requested* ``workspace_root``
-                (the agent's navigable cwd, from context/variables/payload)
-                to the *effective* one, and is authoritative — it runs at the
-                single point where ``workspace_root`` is written to a session.
-                ``omni serve`` injects one that clamps a sandbox cwd to within
-                the manifest root (so a host path can never root a sandbox
-                run) while still allowing navigation among container
-                subdirectories, and that defaults an empty request to the
-                workspace root. Returning ``None`` falls back to the normal
-                context/variables/``default_workspace_root`` resolution.
+            agent_host_resources: The explicit workspace, environment, Thread
+                binding, and operation-routing registries for this AgentHost.
         """
         super().__init__()
+        if not isinstance(agent_host_resources, AgentHostResources):
+            raise TypeError("agent_host_resources must be an AgentHostResources")
+        self.agent_host_resources = agent_host_resources
+        self.workspace_registry = agent_host_resources.workspaces
+        self.environment_manager = agent_host_resources.environments
+        self.thread_bindings = agent_host_resources.thread_bindings
+        self.operation_router = agent_host_resources.router
         # In-process per-session run_end listeners (autopilot loops,
         # /goal server function, scheduled hooks). Fan-out happens
         # inside _broadcast_session before client channels are touched.
@@ -474,13 +476,6 @@ class AgentService(RpcMethodsBase):
         # this with the policy implied by the configured AuthProvider.
         self._authorization_policy = AuthorizationPolicy(enforced=False)
         self.spec = spec
-        self._default_workspace_root: str | None = (
-            default_workspace_root
-            if isinstance(default_workspace_root, str)
-            and default_workspace_root.strip()
-            else None
-        )
-        self._workspace_root_resolver = workspace_root_resolver
         project_slug = _safe_slug(getattr(self.spec, "project_slug", None), "default")
         agent_slug = _safe_slug(
             getattr(self.spec, "agent_slug", None),
@@ -591,24 +586,21 @@ class AgentService(RpcMethodsBase):
             broadcast=self._broadcast_mcp_server_status,
         )
 
-        # Workspace filesystem watch/transfer state behind the ``fs_*``
-        # RPCs. Products that host the workspace on a non-host substrate
-        # (sandbox containers, remote backends) install ``workspace_factory``
-        # so fs access rides the same session/sandbox boundary the terminal
-        # does; the default resolves the session's workspace_root on the
-        # host filesystem.
-        self.workspace_factory: Callable[[str], Workspace | None] | None = None
+        # Workspace filesystem watch/transfer state behind the ``fs_*`` RPCs.
+        # The resolver accepts an explicit environment identity; there is no
+        # session-derived workspace factory and no host fallback.
         self.filesystem = FilesystemManager(
             workspace_resolver=self._filesystem_workspace,
             source_writability_resolver=self._filesystem_source_writable,
         )
 
         # Typed git operations behind the ``git_*`` RPCs. Shares the
-        # workspace resolver with the filesystem surface, so a product
-        # that installs ``workspace_factory`` gets git inside the sandbox
-        # for free — the manager never assumes a host subprocess in the
-        # server's cwd.
-        self.git = GitManager(workspace_resolver=self._filesystem_workspace)
+        # environment resolver with the filesystem surface, so the manager
+        # never assumes a host subprocess in the server's cwd.
+        self.git = GitManager(
+            workspace_resolver=self._filesystem_workspace,
+            source_provider=self._execution_sources,
+        )
 
         # Register audit backend if enabled in security config
         try:
@@ -705,6 +697,8 @@ class AgentService(RpcMethodsBase):
         self.register_server_function(
             "session.ensure",
             self._sf_session_ensure,
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=ExecutionRequirement.NONE,
             description="Ensure a session exists and persist workspace metadata.",
             params_schema={
                 "type": "object",
@@ -734,6 +728,8 @@ class AgentService(RpcMethodsBase):
         self.register_server_function(
             "mcp.list_resources",
             self._sf_mcp_list_resources,
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=ExecutionRequirement.NONE,
             description=(
                 "List resources exposed by a configured MCP server. "
                 "``server_name`` matches the ``name`` field of an entry in the "
@@ -762,6 +758,8 @@ class AgentService(RpcMethodsBase):
         self.register_server_function(
             "mcp.read_resource",
             self._sf_mcp_read_resource,
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=ExecutionRequirement.NONE,
             description=(
                 "Read a resource (by URI) from a configured MCP server. "
                 "``server_name`` matches the ``name`` field of an entry in the "
@@ -795,6 +793,8 @@ class AgentService(RpcMethodsBase):
         self.register_server_function(
             "mcp.list_tools",
             self._sf_mcp_list_tools,
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=ExecutionRequirement.NONE,
             description=(
                 "List tools exposed by a configured MCP server, including "
                 "``_meta`` (so MCP-Apps hosts can detect ``_meta.ui.resourceUri``). "
@@ -823,6 +823,8 @@ class AgentService(RpcMethodsBase):
         self.register_server_function(
             "mcp.call_tool",
             self._sf_mcp_call_tool,
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=ExecutionRequirement.NONE,
             description=(
                 "Invoke a tool on a configured MCP server out-of-band. The "
                 "agent does NOT observe this call — it is intended for hosts "
@@ -905,6 +907,8 @@ class AgentService(RpcMethodsBase):
                         result_schema=meta.get("result_schema"),
                         on_invoke=meta.get("on_invoke"),
                         strict=meta.get("strict"),
+                        resource_scope=meta.get("resource_scope"),
+                        execution_requirements=meta.get("execution_requirements"),
                     )
                     seen_from_caps.add(name)
                 except Exception as e:
@@ -1354,6 +1358,8 @@ class AgentService(RpcMethodsBase):
         name: str,
         func: Any,
         *,
+        resource_scope: ResourceScope,
+        execution_requirements: ExecutionRequirement,
         description: str | None = None,
         params_schema: dict | None = None,
         result_schema: dict | None = None,
@@ -1366,6 +1372,16 @@ class AgentService(RpcMethodsBase):
             (service, session, args), (session, args), (args), or ()
         where args is a dict.
         """
+        if not isinstance(resource_scope, ResourceScope):
+            raise TypeError(
+                f"Server function '{name}' must declare resource_scope "
+                "as a ResourceScope"
+            )
+        if not isinstance(execution_requirements, ExecutionRequirement):
+            raise TypeError(
+                f"Server function '{name}' must declare execution_requirements "
+                "as an ExecutionRequirement"
+            )
         if on_invoke is None:
             on_invoke = getattr(func, "_server_function_on_invoke", None)
         if strict is None:
@@ -1378,6 +1394,8 @@ class AgentService(RpcMethodsBase):
             "result_schema": result_schema,
             "on_invoke": on_invoke,
             "strict": strict,
+            "resource_scope": resource_scope,
+            "execution_requirements": execution_requirements,
         }
 
     def register_runtime_hook(self, event: str, func: Any) -> None:
@@ -1434,13 +1452,26 @@ class AgentService(RpcMethodsBase):
                     "params_schema": meta.get("params_schema"),
                     "result_schema": meta.get("result_schema"),
                     "strict": meta.get("strict"),
+                    "resource_scope": meta["resource_scope"].value,
+                    "execution_requirements": [
+                        requirement.name.lower()
+                        for requirement in ExecutionRequirement
+                        if requirement.value
+                        and meta["execution_requirements"] & requirement
+                    ],
                 }
             )
         _debug_rpc("list_server_functions", {"count": len(result)})
         return result
 
     async def server_call(
-        self, function: str, args: dict | None = None, session_id: str | None = None
+        self,
+        function: str,
+        args: dict | None = None,
+        session_id: str | None = None,
+        environment_id: str | None = None,
+        workspace_id: str | None = None,
+        environment_generation: int | None = None,
     ) -> Any:  # noqa: D401
         """Invoke a registered server function.
 
@@ -1451,7 +1482,14 @@ class AgentService(RpcMethodsBase):
         """
         _debug_rpc(
             "server_call",
-            {"function": function, "has_args": bool(args), "session_id": session_id},
+            {
+                "function": function,
+                "has_args": bool(args),
+                "session_id": session_id,
+                "environment_id": environment_id,
+                "workspace_id": workspace_id,
+                "environment_generation": environment_generation,
+            },
         )
         entry = self._server_functions.get(function)
         if not entry:
@@ -1524,33 +1562,6 @@ class AgentService(RpcMethodsBase):
         except Exception:
             return []
 
-    @staticmethod
-    def _ws_root_from(d: Any) -> str | None:
-        if isinstance(d, dict):
-            v = d.get("workspace_root")
-            if isinstance(v, str) and v.strip():
-                return v
-        return None
-
-    def _resolve_workspace_root(self, requested: str | None) -> str | None:
-        """Map a requested workspace_root to the effective one.
-
-        Authoritative when a resolver is configured — it runs at the single
-        point workspace_root is written, so e.g. a sandbox cwd is always
-        clamped to within the manifest root (no host-path leak) while
-        navigation among container subdirs is preserved. Without a resolver,
-        the requested value passes through unchanged."""
-        resolver = self._workspace_root_resolver
-        if resolver is None:
-            return requested
-        try:
-            resolved = resolver(requested)
-        except Exception:
-            return requested
-        if isinstance(resolved, str) and resolved.strip():
-            return resolved
-        return None
-
     def _apply_session_metadata(
         self,
         session: Session,
@@ -1559,7 +1570,7 @@ class AgentService(RpcMethodsBase):
         context_provided: bool = False,
         variables: dict | None = None,
         variables_provided: bool = False,
-        workspace_root: str | None = None,
+        environment_lease: EnvironmentLease | None = None,
     ) -> None:
         """Shared helper that applies context/variables to a session.
 
@@ -1567,7 +1578,8 @@ class AgentService(RpcMethodsBase):
         - Merging context and variables onto the session
         - Extracting transient keys (``client_tools``, ``mcp_servers``) before
           they are persisted
-        - Injecting ``workspace_root`` into both context and variables
+        - Rejecting path/id metadata as an execution-selection mechanism
+        - Publishing execution identity only from an immutable lease
         - Persisting metadata when anything changed
         - Registering the current channel on the session
         """
@@ -1581,19 +1593,6 @@ class AgentService(RpcMethodsBase):
             variables if variables_provided else getattr(session, "variables", None)
         )
 
-        # Resolve the effective workspace_root (the agent's navigable cwd).
-        # The requested value is the one passed in, else whatever already sits
-        # on the session. This is the single point where workspace_root is
-        # written, so applying the resolver here is authoritative: a sandbox
-        # cwd is clamped to within the manifest root (a host path can never
-        # leak in) while navigation among container subdirs is preserved.
-        requested_root = workspace_root
-        if requested_root is None:
-            requested_root = self._ws_root_from(context_value) or self._ws_root_from(
-                variables_value
-            )
-        workspace_root = self._resolve_workspace_root(requested_root)
-
         def _ensure_mapping(value):
             if isinstance(value, dict):
                 return dict(value)
@@ -1604,11 +1603,35 @@ class AgentService(RpcMethodsBase):
             return {}
 
         updated = context_provided or variables_provided
-        if workspace_root:
+        execution_keys = {
+            "workspace_root",
+            "workspace_id",
+            "environment_id",
+            "environment_generation",
+        }
+        if isinstance(context_value, dict):
+            context_value = dict(context_value)
+            removed = execution_keys.intersection(context_value)
+            for key in removed:
+                context_value.pop(key, None)
+            updated = updated or bool(removed)
+        if isinstance(variables_value, dict):
+            variables_value = dict(variables_value)
+            removed = execution_keys.intersection(variables_value)
+            for key in removed:
+                variables_value.pop(key, None)
+            updated = updated or bool(removed)
+
+        if environment_lease is not None:
             context_value = _ensure_mapping(context_value)
-            context_value["workspace_root"] = workspace_root
-            variables_value = _ensure_mapping(variables_value)
-            variables_value["workspace_root"] = workspace_root
+            context_value.update(
+                {
+                    "workspace_root": environment_lease.workspace.root,
+                    "workspace_id": environment_lease.workspace_id,
+                    "environment_id": environment_lease.environment_id,
+                    "environment_generation": environment_lease.generation,
+                }
+            )
             updated = True
 
         # Stamp session_id into the run context so tools can scope per-session
@@ -1660,21 +1683,10 @@ class AgentService(RpcMethodsBase):
             context_provided="context" in payload,
             variables=payload.get("variables") if "variables" in payload else None,
             variables_provided="variables" in payload,
-            workspace_root=payload.get("workspace_root"),
         )
-
-        effective_workspace = None
-        ctx = getattr(target_session, "context", None)
-        if isinstance(ctx, dict):
-            effective_workspace = ctx.get("workspace_root")
-        if effective_workspace is None:
-            vrs = getattr(target_session, "variables", None)
-            if isinstance(vrs, dict):
-                effective_workspace = vrs.get("workspace_root")
 
         return {
             "session_id": target_session.id,
-            "workspace_root": effective_workspace,
             "context": target_session.context,
             "variables": target_session.variables,
         }
@@ -3060,6 +3072,7 @@ class AgentService(RpcMethodsBase):
     async def start_run(
         self,
         prompt: str,
+        environment_selection: dict,
         session_id: str | None = None,
         variables: dict | None = None,
         context: Any | None = None,
@@ -3073,6 +3086,41 @@ class AgentService(RpcMethodsBase):
             session_id, user_id=self._current_user_id()
         )
         channel = getattr(self, "channel", None)
+
+        # The endpoint's OperationRouter resolves the run selection before
+        # authorization and binds that immutable lease for this handler. Direct
+        # in-process callers use the same router explicitly; neither path may
+        # infer execution from session metadata or a workspace path.
+        request_context = current_request_context()
+        if request_context is None or request_context.operation.name != "start_run":
+            request_context = await self.operation_router.prepare_protocol(
+                OPERATION_BY_NAME["start_run"],
+                {
+                    "prompt": prompt,
+                    "session_id": sess.id,
+                    "environment_selection": environment_selection,
+                },
+            )
+        environment_lease = request_context.environment_lease
+        selection_mode = environment_selection.get("mode")
+        if selection_mode == "explicit":
+            if environment_lease is None:
+                raise RuntimeError("explicit environment selection produced no lease")
+            await self.thread_bindings.bind(
+                sess.id,
+                ThreadRuntimeBinding(
+                    workspace_id=environment_lease.workspace_id,
+                    environment_selection=ExistingEnvironment(
+                        environment_lease.environment_id
+                    ),
+                ),
+            )
+        elif selection_mode == "none":
+            await self.thread_bindings.bind(sess.id, ThreadRuntimeBinding())
+        elif selection_mode != "inherit":
+            raise TypeError(
+                f"unsupported environment selection mode: {selection_mode!r}"
+            )
 
         sess.cancel_requested = False
         sess.cancel_end_reason = None
@@ -3094,37 +3142,37 @@ class AgentService(RpcMethodsBase):
             else:
                 merged_context = context
 
-        # Workspace root resolution. The framework no longer falls back to
-        # the server process's cwd silently — that anchored sub-agents and
-        # tool subprocesses to whatever directory the server happened to
-        # be running in. Order of preference:
-        #   1. workspace_root already on context (or variables — the web
-        #      UI passes it that way)
-        #   2. default_workspace_root configured on this AgentService
-        #      (set by ink/web bootstrappers from os.getcwd())
-        #   3. raise WorkspaceRootRequiredError
-        # A configured workspace_root_resolver supplies/clamps the value
-        # itself (e.g. defaulting a sandbox cwd to the manifest root), so it
-        # satisfies the requirement on its own — _apply_session_metadata
-        # applies it below.
-        # A workspace_root passed explicitly on THIS call wins over whatever
-        # the session already carries (dict.update semantics) — otherwise the
-        # stale value mirrored onto session.context by an earlier
-        # session.ensure would silently clobber the caller's update.
-        workspace_root: str | None = self._ws_root_from(context) or self._ws_root_from(
-            variables
-        )
-        if workspace_root is None and (
-            self._workspace_root_resolver is None
-            and self._ws_root_from(merged_context) is None
-            and self._ws_root_from(merged_variables) is None
-        ):
-            if self._default_workspace_root is not None:
-                workspace_root = self._default_workspace_root
-            else:
-                from omniagents.core.errors import WorkspaceRootRequiredError
+        # Execution metadata comes only from the resolved lease. Remove any
+        # stale path-derived routing left in persisted session metadata, then
+        # publish the selected environment to the Run context for tools and
+        # background resources that need to tag their ownership.
+        if isinstance(merged_context, dict):
+            merged_context = dict(merged_context)
+            merged_context.pop("workspace_root", None)
+            merged_context.pop("environment_id", None)
+            merged_context.pop("environment_generation", None)
+            merged_context.pop("workspace_id", None)
+        if isinstance(merged_variables, dict):
+            merged_variables = dict(merged_variables)
+            merged_variables.pop("workspace_root", None)
+            merged_variables.pop("environment_id", None)
+            merged_variables.pop("environment_generation", None)
+            merged_variables.pop("workspace_id", None)
 
-                raise WorkspaceRootRequiredError(where="start_run")
+        workspace_root = (
+            environment_lease.workspace.root if environment_lease is not None else None
+        )
+        if environment_lease is not None:
+            if not isinstance(merged_context, dict):
+                merged_context = {}
+            merged_context.update(
+                {
+                    "workspace_root": workspace_root,
+                    "workspace_id": environment_lease.workspace_id,
+                    "environment_id": environment_lease.environment_id,
+                    "environment_generation": environment_lease.generation,
+                }
+            )
 
         self._apply_session_metadata(
             sess,
@@ -3132,7 +3180,7 @@ class AgentService(RpcMethodsBase):
             context_provided=True,
             variables=merged_variables,
             variables_provided=True,
-            workspace_root=workspace_root,
+            environment_lease=environment_lease,
         )
 
         self._apply_safe_tool_overrides(sess, safe_tool_overrides)
@@ -3432,6 +3480,7 @@ class AgentService(RpcMethodsBase):
                             sandbox_run_config=getattr(
                                 self.spec, "sandbox_run_config", None
                             ),
+                            environment_lease=environment_lease,
                         )
                         end_reason = sess.cancel_end_reason or "completed"
                         error_info = None
@@ -4787,6 +4836,31 @@ class AgentService(RpcMethodsBase):
             return OWNER_UNKNOWN, "elicitation", elicitation_id
         return OWNER_UNKNOWN, "method", None
 
+    async def prepare_rpc_context(
+        self, principal: "UserIdentity | None", method: str, params: dict
+    ):
+        """Resolve one typed RPC or dynamic server function centrally."""
+
+        if method == "server_call":
+            function = params.get("function")
+            entry = self._server_functions.get(function)
+            if entry is None:
+                raise ValueError(f"Unknown server function: {function}")
+            descriptor = OperationExecutionDescriptor(
+                name=str(function),
+                resource_scope=entry["resource_scope"],
+                execution_requirements=entry["execution_requirements"],
+            )
+            return await self.operation_router.prepare(
+                descriptor, params, principal=principal
+            )
+        operation = OPERATION_BY_NAME.get(method)
+        if operation is None:
+            raise ValueError(f"Unclassified RPC operation: {method}")
+        return await self.operation_router.prepare_protocol(
+            operation, params, principal=principal
+        )
+
     async def authorize_rpc(
         self, principal: "UserIdentity | None", method: str, params: dict
     ) -> None:
@@ -4807,7 +4881,34 @@ class AgentService(RpcMethodsBase):
         to the client as JSON-RPC error ``-32014``.
         """
         policy = self.authorization_policy
-        owner, resource, resource_id = self._resolve_rpc_resource_owner(method, params)
+        request_context = current_request_context()
+        if request_context is not None and request_context.workspace is not None:
+            owner = request_context.workspace.owner_user_id
+            if request_context.environment is not None:
+                resource = "environment"
+                resource_id = request_context.environment.environment_id
+            else:
+                resource = "workspace"
+                resource_id = request_context.workspace.workspace_id
+        else:
+            environment_id = (params or {}).get("environment_id")
+            if isinstance(environment_id, str) and environment_id:
+                try:
+                    descriptor = await self.environment_manager.describe(environment_id)
+                    workspace = self.workspace_registry.get(descriptor.workspace_id)
+                    owner = workspace.owner_user_id
+                except Exception:
+                    logger.exception(
+                        "environment owner lookup failed; denying access",
+                        extra={"environment": environment_id},
+                    )
+                    owner = OWNER_UNKNOWN
+                resource = "environment"
+                resource_id = environment_id
+            else:
+                owner, resource, resource_id = self._resolve_rpc_resource_owner(
+                    method, params
+                )
 
         if resource == "method":
             if policy.can_call_resourceless(method):
@@ -5203,6 +5304,7 @@ class AgentService(RpcMethodsBase):
                     # a run via the resume-from-history path.
                     await self.start_run(
                         prompt=item.content,
+                        environment_selection={"mode": "inherit"},
                         session_id=sess.id,
                         variables=item.variables,
                         safe_tool_overrides=item.safe_tool_overrides,
@@ -5491,7 +5593,6 @@ class AgentService(RpcMethodsBase):
         manager = getattr(self, "terminal_manager", None)
         if manager is not None:
             await manager.cleanup_session(session_id)
-        self.filesystem.cleanup_session(session_id)
         return ok
 
     def _cascade_archive(self, session_id: str, archived: bool) -> list[str]:
@@ -5708,7 +5809,6 @@ class AgentService(RpcMethodsBase):
         manager = getattr(self, "terminal_manager", None)
         if manager is not None:
             await manager.cleanup_session(session_id)
-        self.filesystem.cleanup_session(session_id)
 
         # Delete from database
         from omniagents.core.session import history_db
@@ -6492,7 +6592,7 @@ class AgentService(RpcMethodsBase):
     #  Thin wrappers over ``self.filesystem`` (FilesystemManager): the
     #  manager owns watches, transfers, canonical-path confinement and
     #  typed -3206x errors; this layer owns workspace resolution and
-    #  channel binding. Authorization: every method names a session_id and
+    #  channel binding. Authorization: every method names a environment_id and
     #  is RESOURCE_SCOPED (see omniagents/rpc/auth.py) — another
     #  principal's workspace is refused with -32014 before any I/O.
     #  Notifications (fs_events/fs_rescan_required/fs_transfer_progress)
@@ -6500,34 +6600,19 @@ class AgentService(RpcMethodsBase):
     #  log: on reconnect, clients re-subscribe and rescan.
     # ------------------------------------------------------------------
 
-    async def _filesystem_workspace(self, session_id: str) -> "Workspace":
-        """Resolve the Workspace behind *session_id* for ``fs_*`` calls.
+    async def _filesystem_workspace(self, environment_id: str) -> "Workspace":
+        """Resolve one explicitly named environment's immutable workspace.
 
-        A configured ``workspace_factory`` wins (products route this at
-        the sandbox/remote substrate); the default anchors a confined
-        ``HostWorkspace`` at the session's resolved ``workspace_root``.
+        The environment manager is the only execution lookup. A missing
+        identity never consults a Thread, a process-global sandbox, the
+        server's cwd, or a host workspace fallback.
         """
-        factory = self.workspace_factory
-        if factory is not None:
-            workspace = factory(session_id)
-            if workspace is not None:
-                return workspace
-        sess = self.get_session(session_id)
-        if sess is None:
-            raise FsNotFoundError("unknown session", session_id=session_id)
-        root = self._ws_root_from(getattr(sess, "context", None)) or self._ws_root_from(
-            getattr(sess, "variables", None)
-        )
-        if not root:
-            root = self._default_workspace_root
-        if not root:
-            raise FsNotFoundError(
-                "session has no workspace root", session_id=session_id
-            )
-        return HostWorkspace(root=root)
+
+        lease = await self.environment_manager.acquire(environment_id)
+        return lease.workspace
 
     async def _filesystem_source_writable(
-        self, session_id: str, workspace: "Workspace", rel: str
+        self, environment_id: str, workspace: "Workspace", rel: str
     ) -> bool:
         """Resolve launcher source policy for a workspace-relative path.
 
@@ -6538,9 +6623,11 @@ class AgentService(RpcMethodsBase):
         mount name and fail closed when any existing path component is a
         symlink whose destination policy cannot be proven.
         """
-        from omniagents.core.runtime.serve_state import get_source_descriptors
-
-        sources = [source for source in get_source_descriptors() if source.mount_name]
+        sources = [
+            source
+            for source in await self._execution_sources(environment_id)
+            if isinstance(source.get("mountName"), str) and source["mountName"].strip()
+        ]
         if not sources or rel == ".":
             return True
 
@@ -6551,9 +6638,13 @@ class AgentService(RpcMethodsBase):
             candidates: list[tuple[int, bool]] = []
             for source in sources:
                 roots: list[tuple[Path, Path]] = []
-                lexical_root = workspace_root / source.mount_name
+                lexical_root = workspace_root / source["mountName"]
                 roots.append((lexical_root, lexical_root.resolve(strict=False)))
-                local_path = source.local_path()
+                local_path = source.get("path")
+                if source.get("kind") not in ("local", "local-git"):
+                    local_path = None
+                if not isinstance(local_path, str) or not local_path.strip():
+                    local_path = None
                 if local_path is not None:
                     local_root = Path(local_path)
                     roots.append((local_root, local_root.resolve(strict=False)))
@@ -6566,7 +6657,13 @@ class AgentService(RpcMethodsBase):
                             target.relative_to(root)
                         except ValueError:
                             continue
-                        candidates.append((len(root.parts), source.writable))
+                        writable = source.get("writable")
+                        candidates.append(
+                            (
+                                len(root.parts),
+                                writable if isinstance(writable, bool) else True,
+                            )
+                        )
             if not candidates:
                 return True
             # Both the path spelling the client chose and its canonical target
@@ -6576,9 +6673,9 @@ class AgentService(RpcMethodsBase):
 
         parts = rel.split("/")
         source = next(
-            (source for source in sources if source.mount_name == parts[0]), None
+            (source for source in sources if source["mountName"] == parts[0]), None
         )
-        if source is not None and not source.writable:
+        if source is not None and source.get("writable") is False:
             return False
 
         # Even an unrecognised first component can be an alias into a declared
@@ -6603,46 +6700,61 @@ class AgentService(RpcMethodsBase):
             parent = entry.path
         return True
 
+    async def _execution_sources(
+        self, environment_id: str
+    ) -> tuple[dict[str, Any], ...]:
+        """Return source metadata for one explicitly identified environment."""
+
+        descriptor = await self.environment_manager.describe(environment_id)
+        workspace_resource = self.workspace_registry.get(descriptor.workspace_id)
+        return tuple(dict(source) for source in workspace_resource.sources)
+
     async def fs_watch(
         self,
-        session_id: str,
+        environment_id: str,
         path: str,
         recursive: bool | None = None,
         poll_interval_ms: int | None = None,
     ) -> dict:  # noqa: D401
         return await self.filesystem.watch(
-            session_id,
+            environment_id,
             path,
             recursive=True if recursive is None else recursive,
             poll_interval_ms=poll_interval_ms,
             channel=self.channel,
         )
 
-    async def fs_unwatch(self, session_id: str, watch_id: str) -> bool:  # noqa: D401
-        return await self.filesystem.unwatch(session_id, watch_id, channel=self.channel)
+    async def fs_unwatch(
+        self, environment_id: str, watch_id: str
+    ) -> bool:  # noqa: D401
+        return await self.filesystem.unwatch(
+            environment_id, watch_id, channel=self.channel
+        )
 
     async def fs_list(
-        self, session_id: str, path: str, recursive: bool = False
+        self, environment_id: str, path: str, recursive: bool = False
     ) -> dict:  # noqa: D401
-        return await self.filesystem.list(session_id, path, recursive=recursive)
+        return await self.filesystem.list(environment_id, path, recursive=recursive)
 
-    async def fs_stat(self, session_id: str, path: str) -> dict:  # noqa: D401
-        return await self.filesystem.stat(session_id, path)
+    async def fs_stat(self, environment_id: str, path: str) -> dict:  # noqa: D401
+        return await self.filesystem.stat(environment_id, path)
 
-    async def fs_download_open(self, session_id: str, path: str) -> dict:  # noqa: D401
+    async def fs_download_open(
+        self, environment_id: str, path: str
+    ) -> dict:  # noqa: D401
         return await self.filesystem.download_open(
-            session_id, path, channel=self.channel
+            environment_id, path, channel=self.channel
         )
 
     async def fs_download_read(
         self,
-        session_id: str,
+        environment_id: str,
         transfer_id: str,
         offset: int | None = None,
         length: int | None = None,
     ) -> dict:  # noqa: D401
         return await self.filesystem.download_read(
-            session_id,
+            environment_id,
             transfer_id,
             offset=offset,
             length=length,
@@ -6650,15 +6762,15 @@ class AgentService(RpcMethodsBase):
         )
 
     async def fs_download_close(
-        self, session_id: str, transfer_id: str
+        self, environment_id: str, transfer_id: str
     ) -> bool:  # noqa: D401
         return await self.filesystem.download_close(
-            session_id, transfer_id, channel=self.channel
+            environment_id, transfer_id, channel=self.channel
         )
 
     async def fs_upload_open(
         self,
-        session_id: str,
+        environment_id: str,
         path: str,
         size: int,
         sha256: str | None = None,
@@ -6666,7 +6778,7 @@ class AgentService(RpcMethodsBase):
         overwrite: bool = False,
     ) -> dict:  # noqa: D401
         return await self.filesystem.upload_open(
-            session_id,
+            environment_id,
             path,
             size,
             sha256=sha256,
@@ -6676,24 +6788,24 @@ class AgentService(RpcMethodsBase):
         )
 
     async def fs_upload_chunk(
-        self, session_id: str, transfer_id: str, offset: int, data: str
+        self, environment_id: str, transfer_id: str, offset: int, data: str
     ) -> dict:  # noqa: D401
         return await self.filesystem.upload_chunk(
-            session_id, transfer_id, offset, data, channel=self.channel
+            environment_id, transfer_id, offset, data, channel=self.channel
         )
 
     async def fs_upload_commit(
-        self, session_id: str, transfer_id: str
+        self, environment_id: str, transfer_id: str
     ) -> dict:  # noqa: D401
         return await self.filesystem.upload_commit(
-            session_id, transfer_id, channel=self.channel
+            environment_id, transfer_id, channel=self.channel
         )
 
     async def fs_upload_abort(
-        self, session_id: str, transfer_id: str
+        self, environment_id: str, transfer_id: str
     ) -> bool:  # noqa: D401
         return await self.filesystem.upload_abort(
-            session_id, transfer_id, channel=self.channel
+            environment_id, transfer_id, channel=self.channel
         )
 
     # ------------------------------------------------------------------
@@ -6703,7 +6815,7 @@ class AgentService(RpcMethodsBase):
     #  repository confinement, machine-format parsing, the hunk model,
     #  index rollback and typed -3209x errors; this layer owns nothing but
     #  argument pass-through and the progress-notification channel.
-    #  Authorization: every method names a session_id and is
+    #  Authorization: every method names a environment_id and is
     #  RESOURCE_SCOPED (see omniagents/rpc/auth.py) — another principal's
     #  repository is refused with -32014 before any git process starts.
     #  ``git_operation_progress`` is per-connection and deliberately NOT
@@ -6722,24 +6834,24 @@ class AgentService(RpcMethodsBase):
 
     async def git_list_repositories(
         self,
-        session_id: str,
+        environment_id: str,
         path: str | None = None,
         max_depth: int | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.list_repositories(
-            session_id, path=path, max_depth=max_depth
+            environment_id, path=path, max_depth=max_depth
         )
 
     async def git_status(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         include_untracked: bool | None = None,
         include_ignored: bool | None = None,
         paths: list | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.status(
-            session_id,
+            environment_id,
             repo,
             include_untracked=include_untracked,
             include_ignored=include_ignored,
@@ -6748,7 +6860,7 @@ class AgentService(RpcMethodsBase):
 
     async def git_diff(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         mode: str | None = None,
         paths: list | None = None,
@@ -6757,7 +6869,7 @@ class AgentService(RpcMethodsBase):
         to_rev: str | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.diff(
-            session_id,
+            environment_id,
             repo,
             mode=mode,
             paths=paths,
@@ -6768,7 +6880,7 @@ class AgentService(RpcMethodsBase):
 
     async def git_log(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         rev: str | None = None,
         max_count: int | None = None,
@@ -6776,29 +6888,29 @@ class AgentService(RpcMethodsBase):
         paths: list | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.log(
-            session_id, repo, rev=rev, max_count=max_count, skip=skip, paths=paths
+            environment_id, repo, rev=rev, max_count=max_count, skip=skip, paths=paths
         )
 
     async def git_list_branches(
-        self, session_id: str, repo: str, include_remote: bool | None = None
+        self, environment_id: str, repo: str, include_remote: bool | None = None
     ) -> dict:  # noqa: D401
         return await self.git.list_branches(
-            session_id, repo, include_remote=include_remote
+            environment_id, repo, include_remote=include_remote
         )
 
     async def git_list_worktrees(
-        self, session_id: str, repo: str
+        self, environment_id: str, repo: str
     ) -> dict:  # noqa: D401
-        return await self.git.list_worktrees(session_id, repo)
+        return await self.git.list_worktrees(environment_id, repo)
 
     async def git_conflicts(
-        self, session_id: str, repo: str, paths: list | None = None
+        self, environment_id: str, repo: str, paths: list | None = None
     ) -> dict:  # noqa: D401
-        return await self.git.conflicts(session_id, repo, paths=paths)
+        return await self.git.conflicts(environment_id, repo, paths=paths)
 
     async def git_stage(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: list | None = None,
         hunks: list | None = None,
@@ -6806,7 +6918,7 @@ class AgentService(RpcMethodsBase):
         mode: str | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.stage(
-            session_id,
+            environment_id,
             repo,
             paths=paths,
             hunks=hunks,
@@ -6816,19 +6928,19 @@ class AgentService(RpcMethodsBase):
 
     async def git_unstage(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: list | None = None,
         hunks: list | None = None,
         context_lines: int | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.unstage(
-            session_id, repo, paths=paths, hunks=hunks, context_lines=context_lines
+            environment_id, repo, paths=paths, hunks=hunks, context_lines=context_lines
         )
 
     async def git_discard(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: list | None = None,
         hunks: list | None = None,
@@ -6836,7 +6948,7 @@ class AgentService(RpcMethodsBase):
         confirmation_token: str | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.discard(
-            session_id,
+            environment_id,
             repo,
             paths=paths,
             hunks=hunks,
@@ -6846,7 +6958,7 @@ class AgentService(RpcMethodsBase):
 
     async def git_commit(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         message: str,
         amend: bool | None = None,
@@ -6855,7 +6967,7 @@ class AgentService(RpcMethodsBase):
         confirmation_token: str | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.commit(
-            session_id,
+            environment_id,
             repo,
             message,
             amend=amend,
@@ -6866,7 +6978,7 @@ class AgentService(RpcMethodsBase):
 
     async def git_checkout(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         branch: str,
         create: bool | None = None,
@@ -6876,7 +6988,7 @@ class AgentService(RpcMethodsBase):
         confirmation_token: str | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.checkout(
-            session_id,
+            environment_id,
             repo,
             branch=branch,
             create=create,
@@ -6888,7 +7000,7 @@ class AgentService(RpcMethodsBase):
 
     async def git_reset(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         mode: str | None = None,
         rev: str | None = None,
@@ -6896,7 +7008,7 @@ class AgentService(RpcMethodsBase):
         confirmation_token: str | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.reset(
-            session_id,
+            environment_id,
             repo,
             mode=mode,
             rev=rev,
@@ -6906,14 +7018,14 @@ class AgentService(RpcMethodsBase):
 
     async def git_fetch(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: str | None = None,
         refspec: str | None = None,
         prune: bool | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.fetch(
-            session_id,
+            environment_id,
             repo,
             remote=remote,
             refspec=refspec,
@@ -6923,14 +7035,14 @@ class AgentService(RpcMethodsBase):
 
     async def git_pull(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: str | None = None,
         refspec: str | None = None,
         rebase: bool | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.pull(
-            session_id,
+            environment_id,
             repo,
             remote=remote,
             refspec=refspec,
@@ -6940,7 +7052,7 @@ class AgentService(RpcMethodsBase):
 
     async def git_push(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: str | None = None,
         refspec: str | None = None,
@@ -6950,7 +7062,7 @@ class AgentService(RpcMethodsBase):
         confirmation_token: str | None = None,
     ) -> dict:  # noqa: D401
         return await self.git.push(
-            session_id,
+            environment_id,
             repo,
             remote=remote,
             refspec=refspec,

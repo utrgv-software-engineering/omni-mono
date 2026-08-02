@@ -96,7 +96,7 @@ def terminal_context(monkeypatch):
         build_agent=mock_build_agent,
     )
 
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
     return SimpleNamespace(client=client, manager=manager)
 

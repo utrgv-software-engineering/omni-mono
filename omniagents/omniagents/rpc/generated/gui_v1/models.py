@@ -35,6 +35,35 @@ class Capabilities(BaseModel):
     disabled_notifications: list[str]
 
 
+class AgentHostDescriptor(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    agent_host_id: str
+    default_workspace_id: str | None = None
+    default_environment_id: str | None = None
+
+
+class InheritEnvironmentSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["inherit"]
+
+
+class NoEnvironmentSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["none"]
+
+
+class ExplicitEnvironmentSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: Literal["explicit"]
+    environment_id: str
+    environment_generation: int | None = None
+
+
+EnvironmentSelection = (
+    InheritEnvironmentSelection | NoEnvironmentSelection | ExplicitEnvironmentSelection
+)
+
+
 class InitializeParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     protocol_version: str
@@ -49,11 +78,13 @@ class InitializeResult(BaseModel):
     identity: Identity
     platform: Platform
     capabilities: Capabilities
+    agent_host: AgentHostDescriptor
 
 
 class StartRunParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     prompt: str
+    environment_selection: EnvironmentSelection
     session_id: str | None = None
     variables: dict[str, Any] | None = None
     context: dict[str, Any] | None = None
@@ -204,6 +235,9 @@ class ServerCallParams(BaseModel):
     function: str
     args: dict[str, Any] | None = None
     session_id: str | None = None
+    environment_id: str | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class ServerCallResult(RootModel[dict[str, Any]]):
@@ -714,10 +748,12 @@ class McpGetPromptResult(RootModel[dict[str, Any]]):
 
 class FsWatchParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     path: str
     recursive: bool | None = None
     poll_interval_ms: int | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsWatchResult(RootModel[dict[str, Any]]):
@@ -726,8 +762,10 @@ class FsWatchResult(RootModel[dict[str, Any]]):
 
 class FsUnwatchParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     watch_id: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsUnwatchResult(RootModel[bool]):
@@ -736,9 +774,11 @@ class FsUnwatchResult(RootModel[bool]):
 
 class FsListParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     path: str
     recursive: bool | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsListResult(RootModel[dict[str, Any]]):
@@ -747,8 +787,10 @@ class FsListResult(RootModel[dict[str, Any]]):
 
 class FsStatParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     path: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsStatResult(RootModel[dict[str, Any]]):
@@ -757,8 +799,10 @@ class FsStatResult(RootModel[dict[str, Any]]):
 
 class FsDownloadOpenParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     path: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsDownloadOpenResult(RootModel[dict[str, Any]]):
@@ -767,10 +811,12 @@ class FsDownloadOpenResult(RootModel[dict[str, Any]]):
 
 class FsDownloadReadParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     transfer_id: str
     offset: int | None = None
     length: int | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsDownloadReadResult(RootModel[dict[str, Any]]):
@@ -779,8 +825,10 @@ class FsDownloadReadResult(RootModel[dict[str, Any]]):
 
 class FsDownloadCloseParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     transfer_id: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsDownloadCloseResult(RootModel[bool]):
@@ -789,12 +837,14 @@ class FsDownloadCloseResult(RootModel[bool]):
 
 class FsUploadOpenParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     path: str
     size: int
     sha256: str | None = None
     expected_sha256: str | None = None
     overwrite: bool | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsUploadOpenResult(RootModel[dict[str, Any]]):
@@ -803,10 +853,12 @@ class FsUploadOpenResult(RootModel[dict[str, Any]]):
 
 class FsUploadChunkParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     transfer_id: str
     offset: int
     data: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsUploadChunkResult(RootModel[dict[str, Any]]):
@@ -815,8 +867,10 @@ class FsUploadChunkResult(RootModel[dict[str, Any]]):
 
 class FsUploadCommitParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     transfer_id: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsUploadCommitResult(RootModel[dict[str, Any]]):
@@ -825,8 +879,10 @@ class FsUploadCommitResult(RootModel[dict[str, Any]]):
 
 class FsUploadAbortParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     transfer_id: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class FsUploadAbortResult(RootModel[bool]):
@@ -835,9 +891,11 @@ class FsUploadAbortResult(RootModel[bool]):
 
 class GitListRepositoriesParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     path: str | None = None
     max_depth: int | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitListRepositoriesResult(RootModel[dict[str, Any]]):
@@ -846,11 +904,13 @@ class GitListRepositoriesResult(RootModel[dict[str, Any]]):
 
 class GitStatusParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     include_untracked: bool | None = None
     include_ignored: bool | None = None
     paths: list[Any] | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitStatusResult(RootModel[dict[str, Any]]):
@@ -859,13 +919,15 @@ class GitStatusResult(RootModel[dict[str, Any]]):
 
 class GitDiffParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     mode: str | None = None
     paths: list[Any] | None = None
     context_lines: int | None = None
     from_rev: str | None = None
     to_rev: str | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitDiffResult(RootModel[dict[str, Any]]):
@@ -874,12 +936,14 @@ class GitDiffResult(RootModel[dict[str, Any]]):
 
 class GitLogParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     rev: str | None = None
     max_count: int | None = None
     skip: int | None = None
     paths: list[Any] | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitLogResult(RootModel[dict[str, Any]]):
@@ -888,9 +952,11 @@ class GitLogResult(RootModel[dict[str, Any]]):
 
 class GitListBranchesParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     include_remote: bool | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitListBranchesResult(RootModel[dict[str, Any]]):
@@ -899,8 +965,10 @@ class GitListBranchesResult(RootModel[dict[str, Any]]):
 
 class GitListWorktreesParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitListWorktreesResult(RootModel[dict[str, Any]]):
@@ -909,9 +977,11 @@ class GitListWorktreesResult(RootModel[dict[str, Any]]):
 
 class GitConflictsParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     paths: list[Any] | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitConflictsResult(RootModel[dict[str, Any]]):
@@ -920,12 +990,14 @@ class GitConflictsResult(RootModel[dict[str, Any]]):
 
 class GitStageParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     paths: list[Any] | None = None
     hunks: list[Any] | None = None
     context_lines: int | None = None
     mode: str | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitStageResult(RootModel[dict[str, Any]]):
@@ -934,11 +1006,13 @@ class GitStageResult(RootModel[dict[str, Any]]):
 
 class GitUnstageParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     paths: list[Any] | None = None
     hunks: list[Any] | None = None
     context_lines: int | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitUnstageResult(RootModel[dict[str, Any]]):
@@ -947,12 +1021,14 @@ class GitUnstageResult(RootModel[dict[str, Any]]):
 
 class GitDiscardParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     paths: list[Any] | None = None
     hunks: list[Any] | None = None
     context_lines: int | None = None
     confirmation_token: str | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitDiscardResult(RootModel[dict[str, Any]]):
@@ -961,13 +1037,15 @@ class GitDiscardResult(RootModel[dict[str, Any]]):
 
 class GitCommitParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     message: str
     amend: bool | None = None
     allow_empty: bool | None = None
     author: str | None = None
     confirmation_token: str | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitCommitResult(RootModel[dict[str, Any]]):
@@ -976,7 +1054,7 @@ class GitCommitResult(RootModel[dict[str, Any]]):
 
 class GitCheckoutParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     branch: str
     create: bool | None = None
@@ -984,6 +1062,8 @@ class GitCheckoutParams(BaseModel):
     detach: bool | None = None
     discard_changes: bool | None = None
     confirmation_token: str | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitCheckoutResult(RootModel[dict[str, Any]]):
@@ -992,12 +1072,14 @@ class GitCheckoutResult(RootModel[dict[str, Any]]):
 
 class GitResetParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     mode: str | None = None
     rev: str | None = None
     paths: list[Any] | None = None
     confirmation_token: str | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitResetResult(RootModel[dict[str, Any]]):
@@ -1006,11 +1088,13 @@ class GitResetResult(RootModel[dict[str, Any]]):
 
 class GitFetchParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     remote: str | None = None
     refspec: str | None = None
     prune: bool | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitFetchResult(RootModel[dict[str, Any]]):
@@ -1019,11 +1103,13 @@ class GitFetchResult(RootModel[dict[str, Any]]):
 
 class GitPullParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     remote: str | None = None
     refspec: str | None = None
     rebase: bool | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitPullResult(RootModel[dict[str, Any]]):
@@ -1032,7 +1118,7 @@ class GitPullResult(RootModel[dict[str, Any]]):
 
 class GitPushParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     repo: str
     remote: str | None = None
     refspec: str | None = None
@@ -1040,6 +1126,8 @@ class GitPushParams(BaseModel):
     force_with_lease: bool | None = None
     set_upstream: bool | None = None
     confirmation_token: str | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
 
 
 class GitPushResult(RootModel[dict[str, Any]]):
@@ -1395,41 +1483,49 @@ class SessionVariablesChangedParams(BaseModel):
 
 class FsEventsParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     watch_id: str
     events: list[Any]
+    workspace_id: str | None = None
+    environment_generation: int | None = None
     seq: int | None = None
     stream_id: str | None = None
 
 
 class FsRescanRequiredParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     watch_id: str
     reason: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
     seq: int | None = None
     stream_id: str | None = None
 
 
 class FsTransferProgressParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     transfer_id: str
     direction: str
     transferred: int
     total: int
+    workspace_id: str | None = None
+    environment_generation: int | None = None
     seq: int | None = None
     stream_id: str | None = None
 
 
 class GitOperationProgressParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    session_id: str
+    environment_id: str
     operation_id: str
     repo: str
     operation: str
     phase: str
     detail: dict[str, Any] | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
     seq: int | None = None
     stream_id: str | None = None
 

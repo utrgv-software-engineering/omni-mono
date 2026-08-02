@@ -22,6 +22,11 @@ const initializeResult = {
     experimental_operations: [],
     disabled_notifications: [],
   },
+  agent_host: {
+    agent_host_id: 'agent-host-1',
+    default_workspace_id: 'workspace-1',
+    default_environment_id: 'environment-1',
+  },
 }
 
 class MockWebSocket {
@@ -133,6 +138,10 @@ describe('RPCClient initialization', () => {
       { jsonrpc: '2.0', method: 'initialized', params: {} },
     ])
     expect(client.initializeResult).toEqual(initializeResult)
+    expect(client.defaultEnvironmentSelection()).toEqual({
+      mode: 'explicit',
+      environment_id: 'environment-1',
+    })
   })
 
   it('preserves structured initialization errors', async () => {
@@ -345,17 +354,17 @@ describe('RPCClient typed git wrappers', () => {
     void client.gitStatus('sess', 'apps/web')
     expect(lastRequest(socket)).toMatchObject({
       method: 'git_status',
-      params: { session_id: 'sess', repo: 'apps/web' },
+      params: { environment_id: 'sess', repo: 'apps/web' },
     })
     expect(Object.keys((lastRequest(socket).params as object) ?? {})).toEqual([
-      'session_id',
+      'environment_id',
       'repo',
     ])
 
     void client.gitDiff('sess', 'apps/web', { mode: 'staged', contextLines: 5 })
     expect(lastRequest(socket)).toMatchObject({
       method: 'git_diff',
-      params: { session_id: 'sess', repo: 'apps/web', mode: 'staged', context_lines: 5 },
+      params: { environment_id: 'sess', repo: 'apps/web', mode: 'staged', context_lines: 5 },
     })
   })
 
@@ -372,7 +381,7 @@ describe('RPCClient typed git wrappers', () => {
       id: expect.any(Number) as unknown as number,
       method: 'git_stage',
       params: {
-        session_id: 'sess',
+        environment_id: 'sess',
         repo: '.',
         paths: ['README.md'],
         hunks: [{ path: 'src/app.ts', hunk_id: 'deadbeefdeadbeef' }],

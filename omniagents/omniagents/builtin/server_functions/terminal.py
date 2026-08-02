@@ -5,16 +5,9 @@ are built against (see ``omniagents/rpc/terminal_backends.py`` and the
 ``terminal:`` block in ``omniagents/core/sandbox/profiles.py``). Activated
 by the ``terminal`` capability pack; lifted from omni-code.
 
-Two binding modes:
-
-* The embedder (a sandboxing launcher like ``omni serve``) installs a
-  configured :class:`~omniagents.rpc.terminal.TerminalManager` on the
-  service (``service.terminal_manager``) whose backend runs the shell
-  inside the user's sandbox. The manager then owns the terminal defaults
-  (shell/cwd/user from the sandbox profile).
-* Standalone (no manager installed), a host-pty
-  :class:`~omniagents.rpc.terminal.TerminalManager` is created lazily and
-  the cwd resolves from the agent's session context.
+The operation router binds an immutable EnvironmentLease before invoking a
+handler.  The terminal backend is selected from that lease; a missing binding
+never falls back to a host shell.
 
 ``TerminalManager`` is imported lazily: pty support is Unix-only, and
 builtin server-function modules load during every project discovery pass.
@@ -25,8 +18,9 @@ from __future__ import annotations
 from typing import Optional
 
 from omniagents import server_function
-from omniagents.core.server_functions.helpers import session_workspace_root
 from omniagents.core.session import Session
+from omniagents.execution import EnvironmentKind, require_environment_lease
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 _terminal_manager = None
 _terminal_import_error: Optional[Exception] = None
@@ -80,10 +74,25 @@ def _coerce_positive_int(value: Optional[int]) -> Optional[int]:
     return ivalue
 
 
-def _resolve_workspace_root(session: Session, override: Optional[str]) -> Optional[str]:
-    if override and override.strip():
-        return override
-    return session_workspace_root(session)
+def _backend_for_lease(lease):
+    if lease.descriptor.kind is EnvironmentKind.HOST:
+        from omniagents.rpc.terminal_backends import HostPtyBackend
+
+        return HostPtyBackend()
+
+    from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
+    from omniagents.rpc.terminal_backends import SessionPtyBackend
+    from omniagents.workspace.sandbox import SandboxWorkspace
+
+    workspace = lease.workspace
+    if not isinstance(workspace, SandboxWorkspace):
+        raise RuntimeError(f"environment {lease.environment_id!r} has no PTY backend")
+    inner = coerce_pty_streaming(workspace.session)
+    if inner is None:
+        raise RuntimeError(
+            f"environment {lease.environment_id!r} does not support interactive PTYs"
+        )
+    return SessionPtyBackend(inner)
 
 
 @server_function(
@@ -113,6 +122,8 @@ def _resolve_workspace_root(session: Session, override: Optional[str]) -> Option
         "required": ["terminal_id", "token"],
     },
     strict=True,
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.PTY,
 )
 async def terminal_create(
     service,
@@ -122,50 +133,31 @@ async def terminal_create(
     cols: Optional[int] = None,
     rows: Optional[int] = None,
 ) -> dict:
+    lease = require_environment_lease()
     width = _coerce_positive_int(cols)
     height = _coerce_positive_int(rows)
-
-    # Two binding modes. When the embedder installs a
-    # ``service.terminal_manager``, it owns the terminal's defaults
-    # (shell/cwd/user from the sandbox profile). We must NOT consult
-    # ``session.context['workspace_root']`` here — that's a *host* path
-    # which doesn't exist inside the sandbox. Only the caller's explicit
-    # cwd is honored; otherwise the manager's ``default_cwd`` wins.
-    #
-    # When no manager is installed (standalone omniagents server, no
-    # sandbox), we fall back to the host-pty manager and resolve cwd
-    # from the agent's session context.
-    manager = getattr(service, "terminal_manager", None)
-    if manager is not None:
-        data = await manager.create_terminal(
-            session.id,
-            shell=shell,
-            cwd=cwd,
-            cols=width,
-            rows=height,
-            owner_user_id=getattr(session, "user_id", None),
-        )
-        data["cwd"] = data.get("cwd")
-    else:
-        manager = _get_terminal_manager()
-        try:
-            setattr(service, "terminal_manager", manager)
-        except Exception:
-            pass
-        resolved_cwd = _resolve_workspace_root(session, cwd)
-        data = await manager.create_terminal(
-            session.id,
-            shell=shell,
-            cwd=resolved_cwd,
-            cols=width,
-            rows=height,
-            owner_user_id=getattr(session, "user_id", None),
-        )
-        data["cwd"] = resolved_cwd
+    manager = getattr(service, "terminal_manager", None) or _get_terminal_manager()
+    if getattr(service, "terminal_manager", None) is None:
+        setattr(service, "terminal_manager", manager)
+    resolved_cwd = cwd if cwd and cwd.strip() else lease.workspace.root
+    data = await manager.create_terminal(
+        session.id,
+        shell=shell,
+        cwd=resolved_cwd,
+        cols=width,
+        rows=height,
+        owner_user_id=getattr(session, "user_id", None),
+        backend=_backend_for_lease(lease),
+        environment_id=lease.environment_id,
+        environment_generation=lease.generation,
+    )
+    data["cwd"] = resolved_cwd
 
     data["path"] = "/ws/terminal"
     data["terminal_token"] = data.get("token")
     data["session_id"] = session.id
+    data["environment_id"] = lease.environment_id
+    data["environment_generation"] = lease.generation
     return data
 
 
@@ -184,15 +176,20 @@ async def terminal_create(
         "required": ["ok"],
     },
     strict=True,
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.PTY,
 )
 async def terminal_close(service, session: Session, terminal_id: str) -> dict:
+    lease = require_environment_lease()
     manager = getattr(service, "terminal_manager", None) or _get_terminal_manager()
     try:
         if getattr(service, "terminal_manager", None) is None:
             setattr(service, "terminal_manager", manager)
     except Exception:
         pass
-    await manager.close_terminal(session.id, terminal_id)
+    await manager.close_terminal(
+        session.id, terminal_id, environment_id=lease.environment_id
+    )
     return {"ok": True}
 
 

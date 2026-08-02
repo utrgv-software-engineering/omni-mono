@@ -274,7 +274,9 @@ def context(monkeypatch, tmp_path):
             }
         },
     )
-    app = server_app.build_app(spec=spec, default_workspace_root=str(workspace_root))
+    app = server_app.build_app(
+        spec=spec, default_host_workspace_root=str(workspace_root)
+    )
     client = TestClient(app)
     yield SimpleNamespace(
         client=client, service=app.state.agent_service, workspace=workspace_root
@@ -293,7 +295,7 @@ def single_user_context(monkeypatch, tmp_path):
     tlt.reset_sessionless_plans()
 
     app = server_app.build_app(
-        spec=_spec("PlanAgentLocal"), default_workspace_root=str(workspace_root)
+        spec=_spec("PlanAgentLocal"), default_host_workspace_root=str(workspace_root)
     )
     client = TestClient(app)
     yield SimpleNamespace(

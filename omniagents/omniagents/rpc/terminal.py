@@ -54,6 +54,8 @@ class TerminalNotFoundError(TerminalError):
 @dataclass
 class TerminalDescriptor:
     session_id: str
+    environment_id: Optional[str]
+    environment_generation: Optional[int]
     terminal_id: str
     token: str
     owner_user_id: Optional[str]
@@ -128,6 +130,9 @@ class TerminalManager:
         rows: Optional[int] = None,
         user: Optional[str] = None,
         owner_user_id: Optional[str] = None,
+        backend: Optional[PtyBackend] = None,
+        environment_id: Optional[str] = None,
+        environment_generation: Optional[int] = None,
     ) -> Dict[str, Any]:
         if not session_id:
             raise TerminalError("session_id required")
@@ -137,8 +142,9 @@ class TerminalManager:
         width = cols if cols and cols > 0 else 80
         height = rows if rows and rows > 0 else 24
 
+        selected_backend = backend or self._backend
         try:
-            handle = await self._backend.start(
+            handle = await selected_backend.start(
                 shell=resolved_shell,
                 cwd=resolved_cwd,
                 cols=width,
@@ -152,10 +158,12 @@ class TerminalManager:
         terminal_id = new_terminal_id()
         descriptor = TerminalDescriptor(
             session_id=session_id,
+            environment_id=environment_id,
+            environment_generation=environment_generation,
             terminal_id=terminal_id,
             token=token,
             owner_user_id=owner_user_id,
-            backend=self._backend,
+            backend=selected_backend,
             handle=handle,
             created_at=datetime.now(timezone.utc),
             cols=width,
@@ -219,7 +227,20 @@ class TerminalManager:
             terminal.consumer_attached = True
             return terminal
 
-    async def close_terminal(self, session_id: str, terminal_id: str) -> None:
+    async def close_terminal(
+        self,
+        session_id: str,
+        terminal_id: str,
+        *,
+        environment_id: Optional[str] = None,
+    ) -> None:
+        if environment_id is not None:
+            async with self._lock:
+                terminal = self._terminals.get(session_id, {}).get(terminal_id)
+                if terminal is not None and terminal.environment_id != environment_id:
+                    raise TerminalAuthorizationError(
+                        "terminal belongs to a different execution environment"
+                    )
         terminal = await self._pop_terminal(session_id, terminal_id)
         if terminal is None:
             return

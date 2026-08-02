@@ -3,13 +3,18 @@ import types
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.service import AgentService
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 from .test_agent_builder import make_spec
 
 
 def build_service() -> AgentService:
-    return AgentService(make_spec(), default_workspace_root="/tmp")
+    return AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agent_service_aux-host"),
+    )
 
 
 @pytest.mark.asyncio
@@ -67,7 +72,7 @@ async def test_stop_run_cancels_active_run(monkeypatch):
         fake_stream,
     )
 
-    response = await service.start_run("prompt")
+    response = await service.start_run("prompt", {"mode": "none"})
     run_id = response["run_id"]
     session = service._session_manager.get_by_run_id(run_id)
     task = session.current_task
@@ -367,13 +372,20 @@ async def test_register_server_function_metadata_and_invocation():
     service.register_server_function(
         "with_on_invoke",
         handler,
+        resource_scope=ResourceScope.THREAD,
+        execution_requirements=ExecutionRequirement.NONE,
         description="desc",
         params_schema={"type": "object"},
         result_schema={"type": "string"},
         on_invoke=on_invoke,
         strict=True,
     )
-    service.register_server_function("direct_handler", handler)
+    service.register_server_function(
+        "direct_handler",
+        handler,
+        resource_scope=ResourceScope.THREAD,
+        execution_requirements=ExecutionRequirement.NONE,
+    )
 
     session = service._session_manager.get_or_create()
 
@@ -423,6 +435,8 @@ async def test_register_server_function_metadata_and_invocation():
             "required": ["session_id"],
         },
         "strict": False,
+        "resource_scope": "thread",
+        "execution_requirements": [],
     }
     assert by_name["with_on_invoke"] == {
         "name": "with_on_invoke",
@@ -430,6 +444,8 @@ async def test_register_server_function_metadata_and_invocation():
         "params_schema": {"type": "object"},
         "result_schema": {"type": "string"},
         "strict": True,
+        "resource_scope": "thread",
+        "execution_requirements": [],
     }
     assert by_name["direct_handler"] == {
         "name": "direct_handler",
@@ -437,6 +453,8 @@ async def test_register_server_function_metadata_and_invocation():
         "params_schema": None,
         "result_schema": None,
         "strict": False,
+        "resource_scope": "thread",
+        "execution_requirements": [],
     }
 
 
@@ -449,23 +467,85 @@ async def test_server_call_unknown_function_raises():
 
 
 @pytest.mark.asyncio
-async def test_session_ensure_sets_workspace_root_and_persists():
+async def test_session_ensure_persists_metadata_but_strips_execution_routing():
     service = build_service()
 
     result = await service.server_call(
         "session.ensure",
-        {"workspace_root": "/workspace"},
+        {
+            "workspace_root": "/attempted/workspace",
+            "context": {"label": "context", "environment_id": "attempted-env"},
+            "variables": {"theme": "dark", "workspace_id": "attempted-workspace"},
+        },
     )
 
     session_id = result["session_id"]
-    assert result["workspace_root"] == "/workspace"
-    assert result["context"]["workspace_root"] == "/workspace"
-    assert result["variables"]["workspace_root"] == "/workspace"
+    assert result["context"] == {"label": "context", "session_id": session_id}
+    assert result["variables"] == {"theme": "dark"}
 
     new_service = build_service()
     restored = new_service._session_manager.get_or_create(session_id)
-    assert restored.context["workspace_root"] == "/workspace"
-    assert restored.variables["workspace_root"] == "/workspace"
+    assert restored.context == {"label": "context", "session_id": session_id}
+    assert restored.variables == {"theme": "dark"}
+
+
+@pytest.mark.asyncio
+async def test_devbox_files_rpc_uses_the_live_sandbox_workspace():
+    from omniagents.core.runtime.serve_harness import (
+        _register_execution_environment,
+    )
+
+    class FakeSandboxSession:
+        def __init__(self):
+            self.exec_users = []
+            self.ls_users = []
+
+        async def exec(self, *args, user=None, **kwargs):
+            self.exec_users.append(user)
+            return types.SimpleNamespace(exit_code=0, stdout=b"", stderr=b"")
+
+        async def ls(self, path, user=None):
+            self.ls_users.append(user)
+            return [
+                types.SimpleNamespace(
+                    path="/workspace/README.md",
+                    kind="file",
+                    size=12,
+                )
+            ]
+
+    service = build_service()
+    sandbox_session = FakeSandboxSession()
+    app = types.SimpleNamespace(state=types.SimpleNamespace(agent_service=service))
+    spec = types.SimpleNamespace(sandbox_run_as="1000:1000")
+    await _register_execution_environment(
+        app,
+        spec,
+        environment_id="environment-1",
+        workspace_id="workspace-1",
+        owner_user_id=None,
+        session=sandbox_session,
+        root="/workspace",
+    )
+    listing = await service.fs_list("environment-1", ".")
+
+    assert listing == {
+        "path": ".",
+        "entries": [
+            {
+                "path": "README.md",
+                "type": "file",
+                "size": 12,
+                "mtime": None,
+                "writable": True,
+            }
+        ],
+        "truncated": False,
+        "writable": True,
+    }
+    assert sandbox_session.exec_users
+    assert set(sandbox_session.exec_users) == {"1000:1000"}
+    assert sandbox_session.ls_users == ["1000:1000"]
 
 
 @pytest.mark.asyncio

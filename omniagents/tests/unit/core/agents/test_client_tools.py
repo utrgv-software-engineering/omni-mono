@@ -11,6 +11,7 @@ import json
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
 
@@ -64,7 +65,10 @@ CLIENT_TOOLS_DEFS = [
 
 class TestSessionEnsureClientTools:
     def test_extracts_client_tools_from_variables(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
 
         variables = {
@@ -81,7 +85,10 @@ class TestSessionEnsureClientTools:
         assert "client_tools" not in session.variables
 
     def test_preserves_other_variables(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
 
         variables = {
@@ -95,7 +102,10 @@ class TestSessionEnsureClientTools:
         assert session.variables.get("additional_instructions") == "do stuff"
 
     def test_no_client_tools_is_fine(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
 
         service._sf_session_ensure(session, {"variables": {"foo": "bar"}})
@@ -103,7 +113,10 @@ class TestSessionEnsureClientTools:
         assert not hasattr(session, "_client_tools") or not session._client_tools
 
     def test_non_list_client_tools_ignored(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
 
         service._sf_session_ensure(
@@ -120,19 +133,28 @@ class TestSessionEnsureClientTools:
 
 class TestBuildClientTools:
     def test_returns_empty_list_when_no_defs(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         # No _client_tools attribute
         assert service._build_client_tools(session) == []
 
     def test_returns_empty_list_for_empty_defs(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = []
         assert service._build_client_tools(session) == []
 
     def test_creates_function_tools_with_correct_metadata(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = CLIENT_TOOLS_DEFS
 
@@ -148,7 +170,10 @@ class TestBuildClientTools:
         assert tools[2].description == "Escalate to human."
 
     def test_creates_function_tools_with_correct_schemas(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = CLIENT_TOOLS_DEFS
 
@@ -168,7 +193,10 @@ class TestBuildClientTools:
         assert schema["required"] == ["message"]
 
     def test_skips_defs_without_name(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [
             {"description": "no name"},
@@ -184,7 +212,10 @@ class TestBuildClientTools:
         assert tools[0].name == "valid"
 
     def test_tools_have_strict_json_schema_false(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = CLIENT_TOOLS_DEFS
 
@@ -194,7 +225,10 @@ class TestBuildClientTools:
 
     @pytest.mark.asyncio
     async def test_safe_client_tool_declares_no_approval_predicate(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [
             {
@@ -219,7 +253,10 @@ class TestBuildClientTools:
 class TestClientToolInvoker:
     @pytest.mark.asyncio
     async def test_invoker_calls_request_client_function(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [CLIENT_TOOLS_DEFS[0]]  # get_ticket only
 
@@ -263,7 +300,10 @@ class TestClientToolInvoker:
 
     @pytest.mark.asyncio
     async def test_invoker_passes_arguments_correctly(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [CLIENT_TOOLS_DEFS[1]]  # move_ticket
 
@@ -310,7 +350,10 @@ class TestClientToolInvoker:
 
     @pytest.mark.asyncio
     async def test_invoker_returns_error_on_timeout(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [CLIENT_TOOLS_DEFS[0]]
 
@@ -347,7 +390,10 @@ class TestClientToolInvoker:
 
     @pytest.mark.asyncio
     async def test_invoker_returns_error_on_failed_response(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [CLIENT_TOOLS_DEFS[2]]  # escalate
 
@@ -377,7 +423,10 @@ class TestClientToolInvoker:
 
     @pytest.mark.asyncio
     async def test_invoker_handles_invalid_json_params(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [CLIENT_TOOLS_DEFS[0]]
 
@@ -408,7 +457,10 @@ class TestClientToolInvoker:
 
     @pytest.mark.asyncio
     async def test_invoker_handles_empty_params(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [CLIENT_TOOLS_DEFS[0]]
 
@@ -446,7 +498,10 @@ class TestClientToolInvoker:
 class TestBuildAgentInjectsClientTools:
     @pytest.mark.asyncio
     async def test_client_tools_appended_to_agent_tools(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = CLIENT_TOOLS_DEFS
 
@@ -459,7 +514,10 @@ class TestBuildAgentInjectsClientTools:
 
     @pytest.mark.asyncio
     async def test_no_client_tools_leaves_agent_unchanged(self):
-        service = AgentService(make_spec())
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         # No _client_tools set
 
@@ -487,7 +545,10 @@ class TestBuildAgentInjectsClientTools:
 
             return Agent(name="custom", tools=[existing_tool])
 
-        service = AgentService(make_spec(build_agent=custom_build))
+        service = AgentService(
+            make_spec(build_agent=custom_build),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
         session = service._session_manager.get_or_create()
         session._client_tools = [CLIENT_TOOLS_DEFS[0]]  # just get_ticket
 

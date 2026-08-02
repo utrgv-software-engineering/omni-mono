@@ -182,7 +182,7 @@ def context(monkeypatch):
             }
         },
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
     yield SimpleNamespace(client=client, service=app.state.agent_service)
 
@@ -201,7 +201,7 @@ def single_user_context(monkeypatch):
         get_agent_instructions=lambda: "Conv",
         build_agent=mock_build_agent,
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
     yield SimpleNamespace(client=client, service=app.state.agent_service)
 

@@ -313,8 +313,12 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
         server_functions_dir / "primary.py",
         """
         from omniagents.core.server_functions.discovery import server_function
+        from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
-        @server_function()
+        @server_function(
+            resource_scope=ResourceScope.AGENT,
+            execution_requirements=ExecutionRequirement.NONE,
+        )
         def register_alpha(value: int) -> int:
             return value + 1
         """,
@@ -323,8 +327,12 @@ def test_loader_discovers_assets_and_applies_config(tmp_path):
         extra_server_functions_dir / "extra.py",
         """
         from omniagents.core.server_functions.discovery import server_function
+        from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
-        @server_function()
+        @server_function(
+            resource_scope=ResourceScope.AGENT,
+            execution_requirements=ExecutionRequirement.NONE,
+        )
         def beta_function(text: str) -> str:
             return text.upper()
         """,

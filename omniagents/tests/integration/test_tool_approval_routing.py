@@ -12,6 +12,7 @@ import contextlib
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
 
@@ -32,7 +33,11 @@ def _make_service() -> AgentService:
         get_agent_instructions=lambda: "",
         build_agent=None,
     )
-    return AgentService(spec, default_workspace_root="/tmp")
+    return AgentService(
+        spec,
+        AgentHostResources.create("test-integration-tool_approval_routing-host"),
+        default_host_workspace_root="/tmp",
+    )
 
 
 @pytest.mark.asyncio

@@ -17,12 +17,15 @@ from omniagents.core.runtime.compaction import (
     run_checkpoint_compaction,
 )
 from omniagents.core.session.manager import Session
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 @server_function(
     description="Compact context by appending a summary marker",
     strict=True,
     name_override="compact",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def compact(service: Any, session: Session) -> str:
     history = list(getattr(session, "history", []) or [])

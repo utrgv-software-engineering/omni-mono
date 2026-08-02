@@ -28,6 +28,8 @@ from contextlib import asynccontextmanager
 import pytest
 import uvicorn
 import websockets
+
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 from agents import Agent
 
 from omniagents.backends.server import app as server_app
@@ -126,13 +128,13 @@ async def proxied_topology():
     os.environ[IDENTITY_SECRET_ENV] = IDENTITY_SECRET
 
     upstream_app = server_app.build_app(
-        spec=_upstream_spec(), default_workspace_root="/tmp"
+        spec=_upstream_spec(), default_host_workspace_root="/tmp"
     )
     upstream_port = _free_port()
     upstream_server, upstream_task = await _serve(upstream_app, upstream_port)
 
     proxy_app = server_app.build_app(
-        spec=_proxy_spec(upstream_port), default_workspace_root="/tmp"
+        spec=_proxy_spec(upstream_port), default_host_workspace_root="/tmp"
     )
     proxy_port = _free_port()
     proxy_server, proxy_task = await _serve(proxy_app, proxy_port)
@@ -424,13 +426,13 @@ def test_multi_user_proxy_refuses_to_start_with_a_shared_upstream_token(monkeypa
         remote_auth_token_key=SHARED_TOKEN_ENV,
     )
     with pytest.raises(ValueError) as excinfo:
-        server_app.build_app(spec=spec, default_workspace_root="/tmp")
+        server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     assert "identity_secret_env" in str(excinfo.value)
 
     # …and also with no upstream credential at all.
     spec = _proxy_spec(9999, remote_identity_secret_key=None)
     with pytest.raises(ValueError):
-        server_app.build_app(spec=spec, default_workspace_root="/tmp")
+        server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
 
 
 def test_single_tenant_proxy_may_still_use_a_shared_upstream_token(monkeypatch):
@@ -445,7 +447,7 @@ def test_single_tenant_proxy_may_still_use_a_shared_upstream_token(monkeypatch):
         remote_auth_token_key=SHARED_TOKEN_ENV,
         security_config=None,
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     credential = app.state.upstream_credential
     assert isinstance(credential, server_app.SharedUpstreamToken)
     assert credential.preserves_identity is False
@@ -458,7 +460,7 @@ def test_proxy_refuses_ambiguous_upstream_credentials(monkeypatch):
 
     spec = _proxy_spec(9999, remote_auth_token_key=SHARED_TOKEN_ENV)
     with pytest.raises(ValueError) as excinfo:
-        server_app.build_app(spec=spec, default_workspace_root="/tmp")
+        server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     assert "exactly one" in str(excinfo.value)
 
 
@@ -468,7 +470,7 @@ def test_proxy_refuses_an_unresolved_identity_secret(monkeypatch):
 
     spec = _proxy_spec(9999)
     with pytest.raises(ValueError) as excinfo:
-        server_app.build_app(spec=spec, default_workspace_root="/tmp")
+        server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     assert "unset or empty" in str(excinfo.value)
 
 
@@ -477,7 +479,7 @@ def test_proxy_refuses_a_weak_signing_secret(monkeypatch):
 
     spec = _proxy_spec(9999)
     with pytest.raises(ValueError) as excinfo:
-        server_app.build_app(spec=spec, default_workspace_root="/tmp")
+        server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     assert "too short" in str(excinfo.value)
 
 
@@ -521,7 +523,7 @@ def test_gateway_provider_may_not_collapse_onto_a_shared_upstream_token(monkeypa
         remote_auth_token_key=SHARED_TOKEN_ENV,
         security_config=None,
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     app.state.connection_authenticator.provider = GatewayHeaderAuthProvider()
 
     with pytest.raises(ValueError) as excinfo:
@@ -540,7 +542,7 @@ def test_assertion_branch_refuses_a_hop_that_identifies_nobody(monkeypatch):
 
     spec = _proxy_spec(9999, security_config=None)
     with pytest.raises(ValueError) as excinfo:
-        server_app.build_app(spec=spec, default_workspace_root="/tmp")
+        server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     message = str(excinfo.value)
     assert "anonymous" in message
 
@@ -561,7 +563,7 @@ def test_signing_secret_may_not_be_a_client_distributed_credential(monkeypatch):
         },
     )
     with pytest.raises(ValueError) as excinfo:
-        server_app.build_app(spec=spec, default_workspace_root="/tmp")
+        server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     assert "credential" in str(excinfo.value).lower()
 
 
@@ -580,7 +582,12 @@ def test_upstream_close_codes_survive_the_proxy(monkeypatch):
         async with proxied_topology() as topo:
             service = topo["upstream_service"]
             service.terminal_manager = TerminalManager(backend=FakePtyBackend())
-            service.register_server_function("terminal.create", terminal_create)
+            service.register_server_function(
+                "terminal.create",
+                terminal_create,
+                resource_scope=ResourceScope.THREAD,
+                execution_requirements=ExecutionRequirement.PTY,
+            )
 
             async with connected(topo["proxy_url"], ALICE) as alice:
                 session_id = (await alice.result("start_run", prompt="terminal"))[
@@ -638,14 +645,14 @@ def test_rejected_assertion_closes_the_client_socket_terminally(monkeypatch):
         # is refused upstream.
         os.environ[IDENTITY_SECRET_ENV] = IDENTITY_SECRET
         upstream_app = server_app.build_app(
-            spec=_upstream_spec(), default_workspace_root="/tmp"
+            spec=_upstream_spec(), default_host_workspace_root="/tmp"
         )
         upstream_port = _free_port()
         upstream_server, upstream_task = await _serve(upstream_app, upstream_port)
 
         os.environ[IDENTITY_SECRET_ENV] = "a-completely-different-signing-secret-9f2c"
         proxy_app = server_app.build_app(
-            spec=_proxy_spec(upstream_port), default_workspace_root="/tmp"
+            spec=_proxy_spec(upstream_port), default_host_workspace_root="/tmp"
         )
         proxy_port = _free_port()
         proxy_server, proxy_task = await _serve(proxy_app, proxy_port)
@@ -676,7 +683,7 @@ def test_upstream_does_not_offer_browser_connect_tickets(monkeypatch):
     os.environ[IDENTITY_SECRET_ENV] = IDENTITY_SECRET
     try:
         upstream = server_app.build_app(
-            spec=_upstream_spec(), default_workspace_root="/tmp"
+            spec=_upstream_spec(), default_host_workspace_root="/tmp"
         )
         from omniagents.core.providers.auth.base import UserIdentity
         from omniagents.rpc.identity_assertion import mint_identity_assertion
@@ -691,7 +698,7 @@ def test_upstream_does_not_offer_browser_connect_tickets(monkeypatch):
 
         # A hop that does authenticate browsers still offers them.
         proxy = server_app.build_app(
-            spec=_proxy_spec(9999), default_workspace_root="/tmp"
+            spec=_proxy_spec(9999), default_host_workspace_root="/tmp"
         )
         assert (
             TestClient(proxy).post("/auth/ws-ticket", headers=ALICE).status_code == 200
@@ -730,13 +737,13 @@ def test_composite_upstream_serves_direct_and_proxied_clients(monkeypatch):
             },
         )
         upstream_app = server_app.build_app(
-            spec=upstream_spec, default_workspace_root="/tmp"
+            spec=upstream_spec, default_host_workspace_root="/tmp"
         )
         upstream_port = _free_port()
         upstream_server, upstream_task = await _serve(upstream_app, upstream_port)
 
         proxy_app = server_app.build_app(
-            spec=_proxy_spec(upstream_port), default_workspace_root="/tmp"
+            spec=_proxy_spec(upstream_port), default_host_workspace_root="/tmp"
         )
         proxy_port = _free_port()
         proxy_server, proxy_task = await _serve(proxy_app, proxy_port)

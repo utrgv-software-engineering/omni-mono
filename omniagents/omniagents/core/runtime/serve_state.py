@@ -284,6 +284,8 @@ class SwitchContext:
     app: Any
     spec: Any
     session_id: str
+    environment_id: str
+    workspace_id: str
     snapshot_dir: Optional[Any]  # pathlib.Path | None
     sources_parsed: List[Dict[str, Any]]
     # Boot-time git/CLI credential descriptors ({url, username, tokenEnv});
@@ -312,6 +314,7 @@ class SwitchContext:
     container_id: Optional[str] = None
     service_urls: Dict[str, Any] = field(default_factory=dict)
     started_services: List[Any] = field(default_factory=list)
+    discard_snapshot_on_exit: bool = False
 
     # --- transition state ---
     switching: bool = False

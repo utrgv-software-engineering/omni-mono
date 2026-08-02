@@ -1,7 +1,7 @@
-"""Session-workspace filesystem watch + chunked transfer manager.
+"""Environment-workspace filesystem watch + chunked transfer manager.
 
 Backs the experimental ``fs_*`` GUI protocol surface (tkt_B5fXOZHf08K1):
-GUI clients keep a live view of a session's workspace (watch/unwatch with
+GUI clients keep a live view of an environment's workspace (watch/unwatch with
 server-pushed change events) and move large files in bounded chunked
 frames instead of one oversized JSON payload.
 
@@ -20,7 +20,7 @@ server-side **polling scanner** with coalesced diffs:
   semantics are exactly what the wire protocol promises.
 * ``poll:workspace`` — any other workspace (sandbox, remote); snapshots
   come from recursive :meth:`Workspace.list_dir` calls through the
-  session's transport. Costlier per scan, so the default poll interval is
+  environment's transport. Costlier per scan, so the default poll interval is
   longer.
 
 Flood control (#292 posture)
@@ -439,7 +439,7 @@ def _diff_snapshots(old: _Snapshot, new: _Snapshot) -> List[Dict[str, Any]]:
 @dataclass
 class _WatchState:
     watch_id: str
-    session_id: str
+    environment_id: str
     channel: Any
     workspace: Workspace
     path: str
@@ -454,7 +454,7 @@ class _WatchState:
 @dataclass
 class _DownloadState:
     transfer_id: str
-    session_id: str
+    environment_id: str
     channel: Any
     path: str
     size: int
@@ -473,7 +473,7 @@ class _DownloadState:
 @dataclass
 class _UploadState:
     transfer_id: str
-    session_id: str
+    environment_id: str
     channel: Any
     workspace: Workspace
     path: str
@@ -495,8 +495,7 @@ class _UploadState:
 class FilesystemManager:
     """Per-connection workspace watches and chunked transfers.
 
-    All entry points take the resource-owning ``session_id`` (already
-    authorized by ``AgentService.authorize_rpc``) plus the calling
+    All entry points take the resource-owning ``environment_id`` plus the calling
     connection's channel; watches and transfers are bound to that channel
     and torn down by :meth:`cleanup_channel` when it disconnects.
     """
@@ -540,7 +539,7 @@ class FilesystemManager:
         self._watches: Dict[str, _WatchState] = {}
         self._downloads: Dict[str, _DownloadState] = {}
         self._uploads: Dict[str, _UploadState] = {}
-        # Same-process RPC commits to one session/workspace/path are serialized
+        # Same-process RPC commits to one environment/workspace/path are serialized
         # so an expected-content precondition and its publish form one critical
         # section. This cannot prevent an out-of-process shell writer from
         # changing a host path between our final read and os.replace; that
@@ -552,31 +551,33 @@ class FilesystemManager:
     #  Shared helpers
     # ------------------------------------------------------------------
 
-    async def _workspace(self, session_id: str) -> Workspace:
-        return await self._workspace_resolver(session_id)
+    async def _workspace(self, environment_id: str) -> Workspace:
+        return await self._workspace_resolver(environment_id)
 
     async def _effective_writability(
-        self, session_id: str, workspace: Workspace, rel: str
+        self, environment_id: str, workspace: Workspace, rel: str
     ) -> Tuple[bool, Optional[str]]:
         """Return the effective GUI mutation policy for one canonical path."""
         resolver = self._source_writability_resolver
-        if resolver is not None and not await resolver(session_id, workspace, rel):
+        if resolver is not None and not await resolver(environment_id, workspace, rel):
             return False, "source_read_only"
         if not await self._backend_writable(workspace, rel):
             return False, "backend_not_writable"
         return True, None
 
     async def _assert_writable(
-        self, session_id: str, workspace: Workspace, rel: str
+        self, environment_id: str, workspace: Workspace, rel: str
     ) -> None:
-        writable, reason = await self._effective_writability(session_id, workspace, rel)
+        writable, reason = await self._effective_writability(
+            environment_id, workspace, rel
+        )
         if not writable:
             raise FsReadOnlyError(
                 "filesystem target is read-only", path=rel, reason=reason
             )
 
     async def _reported_writable(
-        self, session_id: str, workspace: Workspace, rel: str
+        self, environment_id: str, workspace: Workspace, rel: str
     ) -> bool:
         """Report escaped/unprovable listing entries as non-writable.
 
@@ -586,7 +587,9 @@ class FilesystemManager:
         cannot resolve it inside the workspace boundary.
         """
         try:
-            return (await self._effective_writability(session_id, workspace, rel))[0]
+            return (await self._effective_writability(environment_id, workspace, rel))[
+                0
+            ]
         except WorkspaceEscapeError:
             return False
 
@@ -686,7 +689,7 @@ class FilesystemManager:
             state.channel,
             "fs_transfer_progress",
             {
-                "session_id": state.session_id,
+                "environment_id": state.environment_id,
                 "transfer_id": state.transfer_id,
                 "direction": direction,
                 "transferred": transferred,
@@ -762,23 +765,23 @@ class FilesystemManager:
     #  Listings
     # ------------------------------------------------------------------
 
-    async def stat(self, session_id: str, path: str) -> Dict[str, Any]:
+    async def stat(self, environment_id: str, path: str) -> Dict[str, Any]:
         rel = canonical_relpath(path)
-        workspace = await self._workspace(session_id)
+        workspace = await self._workspace(environment_id)
         try:
             info = await self._stat_entry(workspace, rel)
         except WorkspaceEscapeError as exc:
             raise FsPathError(str(exc), path=path) from exc
         if info["type"] == "file":
             info["mime"] = guess_mime(rel)
-        info["writable"] = await self._reported_writable(session_id, workspace, rel)
+        info["writable"] = await self._reported_writable(environment_id, workspace, rel)
         return info
 
     async def list(
-        self, session_id: str, path: str, recursive: bool = False
+        self, environment_id: str, path: str, recursive: bool = False
     ) -> Dict[str, Any]:
         rel = canonical_relpath(path)
-        workspace = await self._workspace(session_id)
+        workspace = await self._workspace(environment_id)
         try:
             if not await self._is_dir(workspace, rel):
                 raise FsNotFoundError("no such directory", path=path)
@@ -794,12 +797,12 @@ class FilesystemManager:
                 "size": None if entry.is_dir else entry.size,
                 "mtime": entry.mtime or None,
                 "writable": await self._reported_writable(
-                    session_id, workspace, entry_path
+                    environment_id, workspace, entry_path
                 ),
             }
             for entry_path, entry in sorted(snapshot.items())
         ]
-        writable = await self._reported_writable(session_id, workspace, rel)
+        writable = await self._reported_writable(environment_id, workspace, rel)
         return {
             "path": rel,
             "entries": entries,
@@ -823,7 +826,7 @@ class FilesystemManager:
 
     async def watch(
         self,
-        session_id: str,
+        environment_id: str,
         path: str,
         *,
         recursive: bool = True,
@@ -838,7 +841,7 @@ class FilesystemManager:
                 reason="watch_limit_exceeded",
             )
         rel = canonical_relpath(path)
-        workspace = await self._workspace(session_id)
+        workspace = await self._workspace(environment_id)
         try:
             if not await self._is_dir(workspace, rel):
                 raise FsNotFoundError("no such directory", path=path)
@@ -865,7 +868,7 @@ class FilesystemManager:
             )
         state = _WatchState(
             watch_id=uuid.uuid4().hex,
-            session_id=session_id,
+            environment_id=environment_id,
             channel=channel,
             workspace=workspace,
             path=rel,
@@ -878,7 +881,7 @@ class FilesystemManager:
         state.task = asyncio.create_task(self._watch_loop(state))
         return {
             "watch_id": state.watch_id,
-            "session_id": session_id,
+            "environment_id": environment_id,
             "path": rel,
             "recursive": recursive,
             "mechanism": state.mechanism,
@@ -915,7 +918,7 @@ class FilesystemManager:
                         state.channel,
                         "fs_rescan_required",
                         {
-                            "session_id": state.session_id,
+                            "environment_id": state.environment_id,
                             "watch_id": state.watch_id,
                             "reason": "scan_limit_exceeded",
                         },
@@ -933,7 +936,7 @@ class FilesystemManager:
                         state.channel,
                         "fs_rescan_required",
                         {
-                            "session_id": state.session_id,
+                            "environment_id": state.environment_id,
                             "watch_id": state.watch_id,
                             "reason": "event_overflow",
                         },
@@ -946,7 +949,7 @@ class FilesystemManager:
                         state.channel,
                         "fs_events",
                         {
-                            "session_id": state.session_id,
+                            "environment_id": state.environment_id,
                             "watch_id": state.watch_id,
                             "events": events[
                                 start : start + self._max_events_per_frame
@@ -959,11 +962,13 @@ class FilesystemManager:
             state.closed = True
             self._watches.pop(state.watch_id, None)
 
-    async def unwatch(self, session_id: str, watch_id: str, *, channel: Any) -> bool:
+    async def unwatch(
+        self, environment_id: str, watch_id: str, *, channel: Any
+    ) -> bool:
         state = self._watches.get(watch_id)
         if (
             state is None
-            or state.session_id != session_id
+            or state.environment_id != environment_id
             or state.channel is not channel
         ):
             raise FsWatchError("unknown watch", watch_id=watch_id)
@@ -981,16 +986,16 @@ class FilesystemManager:
     # ------------------------------------------------------------------
 
     async def download_open(
-        self, session_id: str, path: str, *, channel: Any
+        self, environment_id: str, path: str, *, channel: Any
     ) -> Dict[str, Any]:
         self._check_transfer_budget(channel)
         rel = canonical_relpath(path)
         if rel == ".":
             raise FsPathError("cannot download a directory", path=path)
-        workspace = await self._workspace(session_id)
+        workspace = await self._workspace(environment_id)
         state = _DownloadState(
             transfer_id=uuid.uuid4().hex,
-            session_id=session_id,
+            environment_id=environment_id,
             channel=channel,
             path=rel,
             size=0,
@@ -1068,7 +1073,7 @@ class FilesystemManager:
         self._downloads[state.transfer_id] = state
         return {
             "transfer_id": state.transfer_id,
-            "session_id": session_id,
+            "environment_id": environment_id,
             "path": rel,
             "size": state.size,
             "mime": state.mime,
@@ -1078,12 +1083,12 @@ class FilesystemManager:
         }
 
     def _download_state(
-        self, session_id: str, transfer_id: str, channel: Any
+        self, environment_id: str, transfer_id: str, channel: Any
     ) -> _DownloadState:
         state = self._downloads.get(transfer_id)
         if (
             state is None
-            or state.session_id != session_id
+            or state.environment_id != environment_id
             or state.channel is not channel
         ):
             raise FsTransferError("unknown transfer", transfer_id=transfer_id)
@@ -1091,14 +1096,14 @@ class FilesystemManager:
 
     async def download_read(
         self,
-        session_id: str,
+        environment_id: str,
         transfer_id: str,
         *,
         offset: Optional[int] = None,
         length: Optional[int] = None,
         channel: Any,
     ) -> Dict[str, Any]:
-        state = self._download_state(session_id, transfer_id, channel)
+        state = self._download_state(environment_id, transfer_id, channel)
         start = state.position if offset is None else offset
         if start < 0 or start > state.size:
             raise FsTransferError(
@@ -1146,9 +1151,9 @@ class FilesystemManager:
         }
 
     async def download_close(
-        self, session_id: str, transfer_id: str, *, channel: Any
+        self, environment_id: str, transfer_id: str, *, channel: Any
     ) -> bool:
-        state = self._download_state(session_id, transfer_id, channel)
+        state = self._download_state(environment_id, transfer_id, channel)
         self._close_download(state)
         return True
 
@@ -1194,7 +1199,7 @@ class FilesystemManager:
 
     async def upload_open(
         self,
-        session_id: str,
+        environment_id: str,
         path: str,
         size: int,
         *,
@@ -1225,13 +1230,13 @@ class FilesystemManager:
                     f"{field_name} must be a 64-character hexadecimal digest",
                     reason="invalid_checksum",
                 )
-        workspace = await self._workspace(session_id)
+        workspace = await self._workspace(environment_id)
         try:
             if isinstance(workspace, HostWorkspace):
                 # Resolving the target validates the whole path (symlinked
                 # parents included) against the workspace boundary.
                 workspace.resolve(rel)
-            await self._assert_writable(session_id, workspace, rel)
+            await self._assert_writable(environment_id, workspace, rel)
             if await workspace.is_dir(rel):
                 raise FsTransferError(
                     "target is a directory", reason="target_is_directory"
@@ -1246,7 +1251,7 @@ class FilesystemManager:
             raise FsPathError(str(exc), path=path) from exc
         state = _UploadState(
             transfer_id=uuid.uuid4().hex,
-            session_id=session_id,
+            environment_id=environment_id,
             channel=channel,
             workspace=workspace,
             path=rel,
@@ -1259,18 +1264,18 @@ class FilesystemManager:
         self._uploads[state.transfer_id] = state
         return {
             "transfer_id": state.transfer_id,
-            "session_id": session_id,
+            "environment_id": environment_id,
             "path": rel,
             "chunk_size": self.chunk_size,
         }
 
     def _upload_state(
-        self, session_id: str, transfer_id: str, channel: Any
+        self, environment_id: str, transfer_id: str, channel: Any
     ) -> _UploadState:
         state = self._uploads.get(transfer_id)
         if (
             state is None
-            or state.session_id != session_id
+            or state.environment_id != environment_id
             or state.channel is not channel
         ):
             raise FsTransferError("unknown transfer", transfer_id=transfer_id)
@@ -1278,18 +1283,17 @@ class FilesystemManager:
 
     async def upload_chunk(
         self,
-        session_id: str,
+        environment_id: str,
         transfer_id: str,
         offset: int,
         data: str,
         *,
         channel: Any,
     ) -> Dict[str, Any]:
-        state = self._upload_state(session_id, transfer_id, channel)
+        state = self._upload_state(environment_id, transfer_id, channel)
         if offset != state.received:
             raise FsTransferError(
-                f"chunk offset {offset} does not match received bytes "
-                f"{state.received}",
+                f"chunk offset {offset} does not match received bytes {state.received}",
                 transfer_id=transfer_id,
                 reason="offset_mismatch",
             )
@@ -1330,9 +1334,9 @@ class FilesystemManager:
         }
 
     async def upload_commit(
-        self, session_id: str, transfer_id: str, *, channel: Any
+        self, environment_id: str, transfer_id: str, *, channel: Any
     ) -> Dict[str, Any]:
-        state = self._upload_state(session_id, transfer_id, channel)
+        state = self._upload_state(environment_id, transfer_id, channel)
         if state.received != state.declared_size:
             raise FsTransferError(
                 f"received {state.received} bytes of the declared "
@@ -1347,11 +1351,11 @@ class FilesystemManager:
                 transfer_id=transfer_id,
                 reason="checksum_mismatch",
             )
-        # Resolve the workspace again at commit: session routing and substrate
+        # Resolve the workspace again at commit: environment routing and substrate
         # confinement/policy may have changed while chunks were in flight.
-        workspace = await self._workspace(session_id)
+        workspace = await self._workspace(environment_id)
         lock_key = (
-            session_id,
+            environment_id,
             type(workspace),
             str(workspace.root),
             canonical_relpath(state.path),
@@ -1367,7 +1371,7 @@ class FilesystemManager:
                     # before target existence or expected-content details are
                     # disclosed. It is re-evaluated under the publish lock in
                     # case policy or permissions changed during transfer.
-                    await self._assert_writable(session_id, workspace, state.path)
+                    await self._assert_writable(environment_id, workspace, state.path)
                     if isinstance(workspace, HostWorkspace):
                         # Re-resolve under the commit lock immediately before
                         # checking the target and publishing the staged bytes.
@@ -1475,9 +1479,9 @@ class FilesystemManager:
         return hashlib.sha256(await workspace.read_bytes(path)).hexdigest()
 
     async def upload_abort(
-        self, session_id: str, transfer_id: str, *, channel: Any
+        self, environment_id: str, transfer_id: str, *, channel: Any
     ) -> bool:
-        state = self._upload_state(session_id, transfer_id, channel)
+        state = self._upload_state(environment_id, transfer_id, channel)
         self._close_upload(state)
         return True
 
@@ -1501,15 +1505,19 @@ class FilesystemManager:
         for upload in [u for u in self._uploads.values() if u.channel is channel]:
             self._close_upload(upload)
 
-    def cleanup_session(self, session_id: str) -> None:
-        """Tear down every watch/transfer bound to a deleted session."""
-        for state in [w for w in self._watches.values() if w.session_id == session_id]:
+    def cleanup_environment(self, environment_id: str) -> None:
+        """Tear down every watch/transfer bound to a deleted environment."""
+        for state in [
+            w for w in self._watches.values() if w.environment_id == environment_id
+        ]:
             self._drop_watch(state)
         for download in [
-            d for d in self._downloads.values() if d.session_id == session_id
+            d for d in self._downloads.values() if d.environment_id == environment_id
         ]:
             self._close_download(download)
-        for upload in [u for u in self._uploads.values() if u.session_id == session_id]:
+        for upload in [
+            u for u in self._uploads.values() if u.environment_id == environment_id
+        ]:
             self._close_upload(upload)
 
     def watch_count(self) -> int:

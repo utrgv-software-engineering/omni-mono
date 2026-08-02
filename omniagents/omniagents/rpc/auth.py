@@ -324,8 +324,9 @@ GLOBAL_MUTATING_METHODS = frozenset(
     }
 )
 
-#: Methods that name a resource (``session_id`` / ``run_id`` / ``call_id`` /
-#: ``request_id``) and are therefore authorized by ownership, not by this
+#: Methods that name a resource (``thread_id`` / ``run_id`` /
+#: ``environment_id`` / ``call_id`` / ``request_id``) and are therefore
+#: authorized by ownership, not by this
 #: list. Declared explicitly so every protocol request has a recorded
 #: classification: ``test_every_protocol_request_method_is_classified``
 #: fails when a new method belongs to none of the three sets, forcing the
@@ -367,10 +368,9 @@ RESOURCE_SCOPED_METHODS = frozenset(
         # (MCP-Apps postMessage routing): ``session_id`` is required and
         # its ownership authorizes the call.
         "mcp_call_tool",
-        # Workspace filesystem watch & transfer (tkt_B5fXOZHf08K1): the
-        # workspace belongs to a session's sandbox, so every fs_* method
-        # names a session_id and is gated on session ownership — watching
-        # or transferring another user's workspace is refused (-32014).
+        # Workspace filesystem watch & transfer (tkt_B5fXOZHf08K1): every
+        # fs_* method names an environment_id. The environment resolves to
+        # its durable Workspace owner before any filesystem access.
         # Watch/transfer ids are additionally bound to the creating
         # connection inside FilesystemManager.
         "fs_watch",
@@ -419,14 +419,10 @@ RESOURCE_SCOPED_METHODS = frozenset(
         # client can author either.
         "get_plan",
         "get_run_diff",
-        # Typed git operations (tkt_l_l0lUi4A5V2): a repository is
-        # addressed relative to a session's workspace/sandbox, so every
-        # git_* method names a session_id and is gated on session
-        # ownership — reading or mutating a repository in another
-        # principal's workspace is refused (-32014) before any git
-        # process starts. Confirmation tokens for destructive operations
-        # are additionally bound to the minting session inside
-        # ConfirmationBroker, so a token cannot be replayed across users.
+        # Typed git operations (tkt_l_l0lUi4A5V2): every git_* method names
+        # an environment_id. The environment resolves to its durable
+        # Workspace owner before any process starts. Confirmation tokens are
+        # additionally bound to that environment inside ConfirmationBroker.
         "git_list_repositories",
         "git_status",
         "git_diff",

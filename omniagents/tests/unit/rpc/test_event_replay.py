@@ -12,6 +12,7 @@ import asyncio
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.service import AgentService
 from omniagents.core.session.event_log import REPLAYABLE_METHODS, ResyncRequiredError
 from omniagents.rpc import JsonRpcEndpoint, RpcMethodsBase
@@ -23,7 +24,10 @@ from ..core.test_agent_builder import make_spec
 
 
 def build_service() -> AgentService:
-    return AgentService(make_spec(), default_workspace_root="/tmp")
+    return AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-rpc-event_replay-host"),
+    )
 
 
 class RecordingChannel:

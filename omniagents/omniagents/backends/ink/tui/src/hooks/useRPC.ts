@@ -108,7 +108,11 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
       if (!clientRef.current) {
         throw new Error("RPC client not initialized");
       }
-      return clientRef.current.startRun(content, sessionId);
+      return clientRef.current.startRun(
+        content,
+        clientRef.current.defaultEnvironmentSelection(),
+        sessionId,
+      );
     },
     [],
   );

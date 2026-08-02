@@ -36,6 +36,593 @@
       "mcp_server_status_changed"
     ]
   },
+  "operation_metadata": {
+    "account_changed": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "account_login_cancel": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "account_login_complete": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "account_login_start": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "account_logout": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "account_refresh": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "account_select": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "account_status": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "account_usage": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "ack_events": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "archive_session": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "cancel_queued_message": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "client_functions": {
+      "execution_requirements": [],
+      "resource_scope": "connection"
+    },
+    "client_request": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "client_request_resolved": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "client_response": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "delete_session": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "disable_mcp_server": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "disable_tool": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "elicitation_requested": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "elicitation_resolved": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "elicitation_response": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "enqueue_message": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "enqueue_notification": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "export_session": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "export_thread": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "fork_session": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "fs_download_close": {
+      "execution_requirements": [
+        "workspace_read"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_download_open": {
+      "execution_requirements": [
+        "workspace_read"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_download_read": {
+      "execution_requirements": [
+        "workspace_read"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_events": {
+      "execution_requirements": [],
+      "resource_scope": "workspace"
+    },
+    "fs_list": {
+      "execution_requirements": [
+        "workspace_read"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_rescan_required": {
+      "execution_requirements": [],
+      "resource_scope": "workspace"
+    },
+    "fs_stat": {
+      "execution_requirements": [
+        "workspace_read"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_transfer_progress": {
+      "execution_requirements": [],
+      "resource_scope": "workspace"
+    },
+    "fs_unwatch": {
+      "execution_requirements": [
+        "workspace_read"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_upload_abort": {
+      "execution_requirements": [
+        "workspace_write"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_upload_chunk": {
+      "execution_requirements": [
+        "workspace_write"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_upload_commit": {
+      "execution_requirements": [
+        "workspace_write"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_upload_open": {
+      "execution_requirements": [
+        "workspace_write"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_watch": {
+      "execution_requirements": [
+        "workspace_read"
+      ],
+      "resource_scope": "workspace"
+    },
+    "get_agent_info": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "get_config": {
+      "execution_requirements": [],
+      "resource_scope": "agent_host"
+    },
+    "get_item": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "get_model": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "get_plan": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "get_run_diff": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "get_session_history": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "get_thread": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "get_user_history": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "git_checkout": {
+      "execution_requirements": [
+        "workspace_write",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_commit": {
+      "execution_requirements": [
+        "workspace_write",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_conflicts": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_diff": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_discard": {
+      "execution_requirements": [
+        "workspace_write",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_fetch": {
+      "execution_requirements": [
+        "workspace_write",
+        "process",
+        "network"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_list_branches": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_list_repositories": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_list_worktrees": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_log": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_operation_progress": {
+      "execution_requirements": [],
+      "resource_scope": "workspace"
+    },
+    "git_pull": {
+      "execution_requirements": [
+        "workspace_write",
+        "process",
+        "network"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_push": {
+      "execution_requirements": [
+        "workspace_write",
+        "process",
+        "network"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_reset": {
+      "execution_requirements": [
+        "workspace_write",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_stage": {
+      "execution_requirements": [
+        "workspace_write",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_status": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_unstage": {
+      "execution_requirements": [
+        "workspace_write",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "initialize": {
+      "execution_requirements": [],
+      "resource_scope": "connection"
+    },
+    "initialized": {
+      "execution_requirements": [],
+      "resource_scope": "connection"
+    },
+    "item_updated": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "list_items": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "list_models": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "list_providers": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "list_queue": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "list_server_functions": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "list_sessions": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "list_thread_descendants": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "list_threads": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "list_turns": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "mcp_approval_requested": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "mcp_approval_resolved": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "mcp_approval_response": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "mcp_auth_cancel": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_auth_complete": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_auth_start": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_call_tool": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "mcp_create_server": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_delete_server": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_get_prompt": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_get_server": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_list_servers": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_read_resource": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_reload_server": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_server_status_changed": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "mcp_update_server": {
+      "execution_requirements": [],
+      "resource_scope": "agent"
+    },
+    "message_output": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "purge_threads": {
+      "execution_requirements": [],
+      "resource_scope": "agent_host"
+    },
+    "queue_changed": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "queue_status": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "report_incident": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "resume_session": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "run_end": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "run_started": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "run_status": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "search_threads": {
+      "execution_requirements": [],
+      "resource_scope": "principal"
+    },
+    "send_user_message": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "server_call": {
+      "execution_requirements": [
+        "extension_declared"
+      ],
+      "resource_scope": "extension"
+    },
+    "session_forked": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "session_variables_changed": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "set_client_status": {
+      "execution_requirements": [],
+      "resource_scope": "connection"
+    },
+    "set_session_hold": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "set_session_model": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "set_session_reasoning": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "set_voice_model": {
+      "execution_requirements": [],
+      "resource_scope": "agent_host"
+    },
+    "start_run": {
+      "execution_requirements": [
+        "run_plan"
+      ],
+      "resource_scope": "thread"
+    },
+    "stop_run": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "thread_updated": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "token": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "tool_approval_requested": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "tool_approval_resolved": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "tool_approval_response": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "tool_called": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "tool_result": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
+    "update_session_variables": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "update_thread": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "validate_config": {
+      "execution_requirements": [],
+      "resource_scope": "agent_host"
+    },
+    "write_config": {
+      "execution_requirements": [],
+      "resource_scope": "agent_host"
+    }
+  },
   "requests": {
     "experimental": [
       "fork_session",

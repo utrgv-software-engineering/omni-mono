@@ -14,12 +14,15 @@ from typing import Any
 from omniagents import server_function
 from omniagents.core.runtime.recap import generate_and_broadcast_recap
 from omniagents.core.session.manager import Session
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 @server_function(
     description="Recap the session so far in <=400 words (shown in a panel)",
     strict=True,
     name_override="recap",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def recap(service: Any, session: Session) -> dict:
     await service.set_client_status(

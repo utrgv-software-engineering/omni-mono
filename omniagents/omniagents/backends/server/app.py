@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import asyncio
+import secrets
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from omniagents.core.providers.auth.base import UserIdentity
+    from omniagents.execution import AgentHostResources
 
 from fastapi import FastAPI, WebSocket
 from fastapi import WebSocketDisconnect
@@ -412,8 +414,8 @@ def build_app(
     spec: "AgentSpec" | None = None,
     auth_token: str | None = None,
     *,
-    default_workspace_root: str | None = None,
-    workspace_root_resolver: "Callable[[str | None], str | None] | None" = None,
+    agent_host_resources: "AgentHostResources | None" = None,
+    default_host_workspace_root: str | None = None,
 ) -> FastAPI:  # noqa: D401
     """Return a fully configured FastAPI app exposing the agent via RPC.
 
@@ -428,18 +430,8 @@ def build_app(
             connect ticket. The deprecated ``?token=`` query transport is
             accepted only when ``OMNIAGENTS_LEGACY_QUERY_AUTH=1`` (or
             ``security.legacy_query_auth: true``) is set.
-        default_workspace_root: Optional fallback path passed through to
-            ``AgentService(default_workspace_root=…)``. CLI-style backends
-            (``ink``/``web``) pass ``os.getcwd()`` here so a missing
-            ``workspace_root`` on a run resolves to the user's terminal dir
-            instead of raising. Production server deployments should leave
-            this ``None`` so a missing value fails loudly rather than
-            silently anchoring to the server process's cwd.
-        workspace_root_resolver: Maps a requested ``workspace_root`` to the
-            effective one, forwarded to ``AgentService``. ``omni serve`` passes
-            one that clamps a sandbox cwd to within the manifest root (no host
-            path can reach a sandbox run) while allowing navigation among
-            container subdirectories.
+        default_host_workspace_root: Optional explicit host environment composed at
+            startup and advertised as the AgentHost's default binding.
     """
 
     # ------------------------------------------------------------------
@@ -519,11 +511,23 @@ def build_app(
     # ------------------------------------------------------------------
     # Create AgentService instance and register RPC endpoint
     # ------------------------------------------------------------------
-    service = AgentService(
-        spec,
-        default_workspace_root=default_workspace_root,
-        workspace_root_resolver=workspace_root_resolver,
-    )
+    if agent_host_resources is None:
+        from omniagents.execution import AgentHostResources
+
+        agent_host_resources = AgentHostResources.create(
+            f"standalone-{secrets.token_hex(8)}"
+        )
+    if default_host_workspace_root is not None:
+        from omniagents.execution import register_host_environment
+
+        default_environment = register_host_environment(
+            agent_host_resources,
+            default_host_workspace_root,
+            owner_user_id="token_user" if auth_token else None,
+        )
+        app.state.default_workspace_id = default_environment.workspace_id
+        app.state.default_environment_id = default_environment.environment_id
+    service = AgentService(spec, agent_host_resources)
     app.state.agent_service = service
     # The service authorizes every request against the mode implied by the
     # configured provider: enforced (ownership + global-effect rules) when
@@ -556,6 +560,8 @@ def build_app(
         service,
         allowed_methods=GUI_RPC_METHODS,
         gui_handshake=True,
+        default_workspace_id=getattr(app.state, "default_workspace_id", None),
+        default_environment_id=getattr(app.state, "default_environment_id", None),
         server_capabilities={
             "realtime": realtime_spec is not None,
             "mcp_apps": True,

@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.session.manager import Session
@@ -195,7 +196,10 @@ class TestServiceModelProviderDetermination:
         from omniagents.core.agents.specs import AgentSpec
 
         spec = make_spec()
-        service = AgentService(spec, default_workspace_root="/tmp")
+        service = AgentService(
+            spec,
+            AgentHostResources.create("test-unit-core-session_model_overrides-host"),
+        )
         session = service._session_manager.get_or_create(None)
         session.model_config = {
             "provider": "litellm",
@@ -232,7 +236,10 @@ class TestServiceModelProviderDetermination:
         from omniagents.core.agents.service import AgentService
 
         spec = make_spec()
-        service = AgentService(spec, default_workspace_root="/tmp")
+        service = AgentService(
+            spec,
+            AgentHostResources.create("test-unit-core-session_model_overrides-host"),
+        )
         session = service._session_manager.get_or_create(None)
         session.model_config = {
             "provider": "openai-compatible",

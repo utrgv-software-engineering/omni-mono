@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Optional
 
 from omniagents import server_function
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 from omniagents.core.autonomy.goal import (  # noqa: F401  (re-exported surface)
     DEFAULT_MAX_TURNS,
@@ -49,6 +50,8 @@ _goal_resume_on_invoke = resume_impl
     description="Cancel the running goal loop on this session.",
     strict=True,
     name_override="goal.stop",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def goal_stop(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
@@ -61,6 +64,8 @@ setattr(goal_stop, "_server_function_on_invoke", _goal_stop_on_invoke)
     description="Report the status of the current goal loop on this session.",
     strict=True,
     name_override="goal.status",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def goal_status(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
@@ -73,6 +78,8 @@ setattr(goal_status, "_server_function_on_invoke", _goal_status_on_invoke)
     description="Pause the active goal loop on this session. Cancels the periodic tick but keeps the goal state and run-end listener so /goal.resume can pick it back up.",
     strict=True,
     name_override="goal.pause",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def goal_pause(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
@@ -85,6 +92,8 @@ setattr(goal_pause, "_server_function_on_invoke", _goal_pause_on_invoke)
     description="Resume a paused goal loop on this session. Re-installs the periodic tick.",
     strict=True,
     name_override="goal.resume",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def goal_resume(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
@@ -104,6 +113,8 @@ setattr(goal_resume, "_server_function_on_invoke", _goal_resume_on_invoke)
     description="Start an autonomous goal loop. Slash form: /goal <goal text>.",
     strict=True,
     name_override="goal",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def goal_alias(
     text: Optional[str] = None, _session_id: Optional[str] = None

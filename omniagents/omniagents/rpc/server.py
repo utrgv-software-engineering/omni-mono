@@ -228,6 +228,9 @@ class JsonRpcEndpoint:
         *,
         gui_handshake: bool = False,
         server_capabilities: Optional[Mapping[str, Any]] = None,
+        agent_host_id: str | None = None,
+        default_workspace_id: str | None = None,
+        default_environment_id: str | None = None,
     ) -> None:
         self.methods = methods
         self.allowed_methods = (
@@ -235,6 +238,15 @@ class JsonRpcEndpoint:
         )
         self.gui_handshake = gui_handshake
         self.server_capabilities = dict(server_capabilities or {})
+        resources = getattr(methods, "agent_host_resources", None)
+        resolved_host_id = agent_host_id or getattr(resources, "agent_host_id", None)
+        if gui_handshake and not resolved_host_id:
+            raise ValueError("gui_handshake endpoints require an agent_host_id")
+        self.agent_host = {
+            "agent_host_id": resolved_host_id,
+            "default_workspace_id": default_workspace_id,
+            "default_environment_id": default_environment_id,
+        }
 
     def register_route(self, app: FastAPI, path: str, dependencies=None) -> None:
         dependencies = dependencies or []
@@ -326,6 +338,19 @@ class JsonRpcEndpoint:
         from omniagents.core.session.event_log import ResyncRequiredError
         from omniagents.rpc.filesystem import FilesystemRpcError
         from omniagents.rpc.git import GitRpcError
+        from omniagents.execution.errors import (
+            RPC_ERROR_EXECUTION_RESOLUTION,
+            ExecutionResolutionError,
+        )
+
+        if isinstance(exc, ExecutionResolutionError):
+            await channel.send_error(
+                call_id,
+                RPC_ERROR_EXECUTION_RESOLUTION,
+                str(exc),
+                exc.data,
+            )
+            return
 
         if isinstance(
             exc,
@@ -497,81 +522,112 @@ class JsonRpcEndpoint:
                     )
                 return
 
-        # Central authorization: method containers that expose
-        # ``authorize_rpc`` (AgentService, RealtimeService) get every
-        # request checked against the connection's principal BEFORE
-        # dispatch, so newly added methods inherit enforcement.
-        authorizer = getattr(self.methods, "authorize_rpc", None)
-        if callable(authorizer):
+        # Resolve resource and execution identity before authorization or
+        # handler dispatch. AgentService implements this hook through the
+        # central OperationRouter; transports with no execution model may omit
+        # it. Resolution failures are typed and no handler is invoked.
+        request_context = None
+        preparer = getattr(self.methods, "prepare_rpc_context", None)
+        if callable(preparer):
             try:
-                maybe = authorizer(channel.principal, method, params)
-                if inspect.isawaitable(maybe):
-                    await maybe
-            except AuthorizationDenied as exc:
+                request_context = preparer(channel.principal, method, params)
+                if inspect.isawaitable(request_context):
+                    request_context = await request_context
+            except Exception as exc:
+                await self._handle_internal_error(channel, call_id, exc, method)
+                return
+
+        # Bind the resolved lease for the whole request, including
+        # authorization, handler dispatch, and result validation. Server
+        # functions and tools can therefore consume the same immutable lease
+        # without resolving identity a second time.
+        context_token = None
+        if request_context is not None:
+            from omniagents.execution import bind_request_context
+
+            context_token = bind_request_context(request_context)
+
+        try:
+            # Central authorization: method containers that expose
+            # ``authorize_rpc`` (AgentService, RealtimeService) get every
+            # request checked against the connection's principal BEFORE
+            # dispatch, so newly added methods inherit enforcement.
+            authorizer = getattr(self.methods, "authorize_rpc", None)
+            if callable(authorizer):
+                try:
+                    maybe = authorizer(channel.principal, method, params)
+                    if inspect.isawaitable(maybe):
+                        await maybe
+                except AuthorizationDenied as exc:
+                    if call_id is not None:
+                        await channel.send_error(
+                            call_id,
+                            RPC_ERROR_AUTHORIZATION_DENIED,
+                            str(exc) or "Not authorized",
+                            {"method": method, **exc.error_data()},
+                        )
+                    return
+
+            try:
+                signature = inspect.signature(func)
+                signature.bind(**params)
+            except (TypeError, ValueError) as exc:
                 if call_id is not None:
                     await channel.send_error(
                         call_id,
-                        RPC_ERROR_AUTHORIZATION_DENIED,
-                        str(exc) or "Not authorized",
-                        {"method": method, **exc.error_data()},
+                        -32602,
+                        "Invalid params",
+                        {"message": str(exc), "method": method},
                     )
                 return
 
-        try:
-            signature = inspect.signature(func)
-            signature.bind(**params)
-        except (TypeError, ValueError) as exc:
-            if call_id is not None:
-                await channel.send_error(
-                    call_id,
-                    -32602,
-                    "Invalid params",
-                    {"message": str(exc), "method": method},
-                )
-            return
-
-        t_start = time.perf_counter()
-        try:
+            t_start = time.perf_counter()
             try:
-                self.methods.channel = channel
-            except AttributeError:
+                try:
+                    self.methods.channel = channel
+                except AttributeError:
+                    pass
+                result = func(**params)
+                if inspect.isawaitable(result):
+                    result = await result
+            except Exception as exc:
+                Debug.log(
+                    f"[profile] rpc method={method} id={call_id} "
+                    f"ms={(time.perf_counter() - t_start) * 1000:.1f} error=1"
+                )
+                await self._handle_internal_error(channel, call_id, exc, method)
+                return
+
+            t_handler = time.perf_counter()
+            result_bytes = -1
+            try:
+                result_bytes = len(json.dumps(result, default=str))
+            except Exception:
                 pass
-            result = func(**params)
-            if inspect.isawaitable(result):
-                result = await result
-        except Exception as exc:
             Debug.log(
                 f"[profile] rpc method={method} id={call_id} "
-                f"ms={(time.perf_counter() - t_start) * 1000:.1f} error=1"
+                f"handler_ms={(t_handler - t_start) * 1000:.1f} "
+                f"result_bytes={result_bytes}"
             )
-            await self._handle_internal_error(channel, call_id, exc, method)
-            return
 
-        t_handler = time.perf_counter()
-        result_bytes = -1
-        try:
-            result_bytes = len(json.dumps(result, default=str))
-        except Exception:
-            pass
-        Debug.log(
-            f"[profile] rpc method={method} id={call_id} "
-            f"handler_ms={(t_handler - t_start) * 1000:.1f} "
-            f"result_bytes={result_bytes}"
-        )
+            if call_id is not None:
+                result_model = (
+                    _RESULT_MODELS.get(method)
+                    if self.gui_handshake or self.allowed_methods is not None
+                    else None
+                )
+                if result_model is not None:
+                    try:
+                        result_model.model_validate(result, strict=True)
+                    except ValidationError as exc:
+                        await self._handle_internal_error(channel, call_id, exc, method)
+                        return
+                await channel.send_result(call_id, result)
+        finally:
+            if context_token is not None:
+                from omniagents.execution import reset_request_context
 
-        if call_id is not None:
-            result_model = (
-                _RESULT_MODELS.get(method)
-                if self.gui_handshake or self.allowed_methods is not None
-                else None
-            )
-            if result_model is not None:
-                try:
-                    result_model.model_validate(result, strict=True)
-                except ValidationError as exc:
-                    await self._handle_internal_error(channel, call_id, exc, method)
-                    return
-            await channel.send_result(call_id, result)
+                reset_request_context(context_token)
 
     async def _initialize(
         self, channel: JsonRpcChannel, call_id: Any, params: Dict[str, Any]
@@ -691,6 +747,7 @@ class JsonRpcEndpoint:
                     "arch": platform.machine().lower(),
                 },
                 "capabilities": negotiated,
+                "agent_host": self.agent_host,
             },
             strict=True,
         )

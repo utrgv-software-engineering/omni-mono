@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Optional
 
 from omniagents import server_function
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 from omniagents.core.autonomy.wakeup import (  # noqa: F401  (re-exported surface)
     VAR_KEY,
@@ -35,6 +36,8 @@ from omniagents.core.autonomy.wakeup import (  # noqa: F401  (re-exported surfac
     description="Cancel the running wakeup schedule on this session.",
     strict=True,
     name_override="wakeup.stop",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def wakeup_stop(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
@@ -51,6 +54,8 @@ setattr(wakeup_stop, "_server_function_on_invoke", _wakeup_stop_on_invoke)
     description="Report the status of the current wakeup schedule on this session.",
     strict=True,
     name_override="wakeup.status",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def wakeup_status(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}

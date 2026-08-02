@@ -88,7 +88,7 @@ def test_composite_with_proxy_assertion_offers_no_connect_tickets(monkeypatch):
             }
         }
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
 
     assertion = mint_identity_assertion(UserIdentity(user_id="alice"), secret=SECRET)
@@ -178,7 +178,7 @@ def test_composite_capability_guard_survives_a_registered_none_alike(monkeypatch
             }
         }
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     # The blacklist admitted it; the capability check must still refuse to
     # treat this deployment as identifying principals.
     assert app.state.connection_authenticator.identifies_principals is False
@@ -226,7 +226,7 @@ def test_shared_token_still_enforces_authorization():
     assert anonymous.enforces_authorization is False
 
     app = server_app.build_app(
-        spec=_spec(), auth_token="x" * 40, default_workspace_root="/tmp"
+        spec=_spec(), auth_token="x" * 40, default_host_workspace_root="/tmp"
     )
     authenticator = app.state.connection_authenticator
     assert authenticator.identifies_principals is False
@@ -267,7 +267,7 @@ def test_shared_token_proxy_cannot_claim_per_user_identity(monkeypatch):
     )
     with pytest.raises(ValueError) as excinfo:
         server_app.build_app(
-            spec=spec, auth_token="s" * 40, default_workspace_root="/tmp"
+            spec=spec, auth_token="s" * 40, default_host_workspace_root="/tmp"
         )
     assert "anonymous" in str(excinfo.value) or "distinct principals" in str(
         excinfo.value
@@ -355,7 +355,7 @@ def test_retryable_refusal_closes_the_socket_with_try_again_later(monkeypatch):
                     }
                 }
             ),
-            default_workspace_root="/tmp",
+            default_host_workspace_root="/tmp",
         )
         provider = app.state.connection_authenticator.provider
         # Simulate a full cache without minting 16k assertions.
@@ -407,7 +407,7 @@ def test_signing_secret_may_not_be_the_serve_token(monkeypatch):
     )
     with pytest.raises(ValueError) as excinfo:
         server_app.build_app(
-            spec=spec, auth_token=shared, default_workspace_root="/tmp"
+            spec=spec, auth_token=shared, default_host_workspace_root="/tmp"
         )
     assert "client" in str(excinfo.value).lower()
 
@@ -437,7 +437,7 @@ def test_non_ascii_bearer_does_not_crash_a_token_authenticated_server():
                     }
                 }
             ),
-            default_workspace_root="/tmp",
+            default_host_workspace_root="/tmp",
         )
         port = _free_port()
         server, task = await _serve(app, port)
@@ -670,7 +670,7 @@ def test_composite_capacity_refusal_reaches_the_client_as_retryable(monkeypatch)
                     }
                 }
             ),
-            default_workspace_root="/tmp",
+            default_host_workspace_root="/tmp",
         )
         composite = app.state.connection_authenticator.provider
         assertion_member = composite._members[0]

@@ -43,6 +43,7 @@ from starlette.datastructures import URL
 import yaml
 
 from pydantic import BaseModel, Field
+from omniagents.execution import AgentHostResources
 
 from omniagents.core.paths import (
     get_sessions_db_path,
@@ -1042,7 +1043,7 @@ class PlaygroundSessionStore:
 
     Each session also owns a sandbox tempdir, allocated on first
     ``upsert`` and surfaced as ``config["__playground_workspace_root"]``.
-    The websocket handler passes that path as ``default_workspace_root``
+    The websocket handler passes that path as ``default_host_workspace_root``
     on the per-session ``AgentService``, so playground agents that have
     builtin filesystem tools (file_tools, bash, etc.) resolve relative
     paths against the sandbox instead of:
@@ -8294,13 +8295,10 @@ def create_api_app(
             await websocket.close(code=1011, reason=str(exc))
             return
 
-        # Per-session sandbox allocated by PlaygroundSessionStore. Acts as
-        # the strict-mode default: the playground client doesn't send
-        # workspace_root via session.ensure / start_run, so without this
-        # the framework would raise WorkspaceRootRequiredError on the
-        # first run.
-        ws_root = config.get("__playground_workspace_root")
-        service = AgentService(spec, default_workspace_root=ws_root)
+        service = AgentService(
+            spec,
+            AgentHostResources.create(f"playground-{uuid.uuid4().hex}"),
+        )
         # The playground authorizes under the same policy the deployment's
         # auth provider implies: enforced (ownership + method
         # classification) when principals are distinguishable, permissive

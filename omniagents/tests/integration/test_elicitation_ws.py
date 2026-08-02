@@ -122,7 +122,7 @@ def _make_context(monkeypatch, security_config=None):
         build_agent=mock_build_agent,
         security_config=security_config or {},
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
     _HOLDER["service"] = app.state.agent_service
     return SimpleNamespace(client=client, service=app.state.agent_service)

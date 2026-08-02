@@ -26,6 +26,8 @@ import logging
 from typing import Optional
 
 from omniagents import server_function
+from omniagents.execution import require_environment_lease
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 # The background-job machinery lives in the omniagents builtin tools;
 # importing the same module the ``execute_bash`` tool uses guarantees the
@@ -41,16 +43,17 @@ from omniagents.builtin.tools._bash_jobs import (  # noqa: E402
 )
 
 
-def _job_visible_to_session(job, session_id: Optional[str]) -> bool:
+def _job_visible_to_operation(
+    job, session_id: Optional[str], environment_id: str
+) -> bool:
     """Visibility rule shared by every kill/tail/list path: a session sees
     its own jobs plus any jobs that lack a session tag (test fixtures,
     legacy spawns). Refusing to find a job that exists but belongs to
     another session looks the same to callers as a missing job, which is
     intentional — they have no business knowing it exists.
     """
-    if session_id is None:
-        return True
-    return job.session_id is None or job.session_id == session_id
+    session_visible = session_id is None or job.session_id == session_id
+    return session_visible and job.environment_id == environment_id
 
 
 _log = logging.getLogger(__name__)
@@ -71,9 +74,16 @@ async def _broadcast_snapshot(service, session) -> None:
     if service is None or session is None:
         return
     try:
+        lease = require_environment_lease()
         await service.request_client_function(
             "ui.bash_jobs.update",
-            {"snapshot": jobs_snapshot(session_id=getattr(session, "id", None))},
+            {
+                "environment_id": lease.environment_id,
+                "snapshot": jobs_snapshot(
+                    session_id=getattr(session, "id", None),
+                    environment_id=lease.environment_id,
+                ),
+            },
             session=session,
             expect_result=False,
         )
@@ -153,9 +163,17 @@ def _ensure_sweeper(service) -> None:
     description="List all background bash jobs known to this process.",
     strict=True,
     name_override="bash_jobs.list",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.PROCESS,
 )
 async def bash_jobs_list(_session_id: Optional[str] = None) -> dict:
-    return {"snapshot": jobs_snapshot(session_id=_session_id)}
+    lease = require_environment_lease()
+    return {
+        "environment_id": lease.environment_id,
+        "snapshot": jobs_snapshot(
+            session_id=_session_id, environment_id=lease.environment_id
+        ),
+    }
 
 
 @server_function(
@@ -175,21 +193,28 @@ async def bash_jobs_list(_session_id: Optional[str] = None) -> dict:
     },
     strict=True,
     name_override="bash_jobs.kill",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.PROCESS,
 )
 async def bash_jobs_kill(
     job_id: str,
     grace_seconds: Optional[int] = None,
     _session_id: Optional[str] = None,
 ) -> dict:
+    lease = require_environment_lease()
     grace = _BASH_KILL_DEFAULT_GRACE if grace_seconds is None else int(grace_seconds)
 
     job = get_registry().get(job_id)
-    if job is None or not _job_visible_to_session(job, _session_id):
+    if job is None or not _job_visible_to_operation(
+        job, _session_id, lease.environment_id
+    ):
         return {
             "ok": False,
             "error": "unknown_job",
             "job_id": job_id,
-            "snapshot": jobs_snapshot(session_id=_session_id),
+            "snapshot": jobs_snapshot(
+                session_id=_session_id, environment_id=lease.environment_id
+            ),
         }
 
     signal_sent = await terminate_job(job, grace_seconds=grace)
@@ -199,7 +224,9 @@ async def bash_jobs_kill(
         "ok": True,
         "job": state,
         "signal_sent": signal_sent,
-        "snapshot": jobs_snapshot(session_id=_session_id),
+        "snapshot": jobs_snapshot(
+            session_id=_session_id, environment_id=lease.environment_id
+        ),
     }
 
 
@@ -248,6 +275,10 @@ setattr(bash_jobs_list, "_server_function_on_invoke", _bash_jobs_list_on_invoke)
     },
     strict=True,
     name_override="bash_jobs.tail",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=(
+        ExecutionRequirement.PROCESS | ExecutionRequirement.WORKSPACE_READ
+    ),
 )
 async def bash_jobs_tail(
     job_id: str,
@@ -255,6 +286,7 @@ async def bash_jobs_tail(
     from_start: Optional[bool] = None,
     _session_id: Optional[str] = None,
 ) -> dict:
+    lease = require_environment_lease()
     n = (
         _BASH_TAIL_DEFAULT_LINES
         if lines is None
@@ -263,17 +295,21 @@ async def bash_jobs_tail(
     head = bool(from_start)
 
     job = get_registry().get(job_id)
-    if job is None or not _job_visible_to_session(job, _session_id):
+    if job is None or not _job_visible_to_operation(
+        job, _session_id, lease.environment_id
+    ):
         return {
             "ok": False,
             "error": "unknown_job",
             "job_id": job_id,
-            "snapshot": jobs_snapshot(session_id=_session_id),
+            "snapshot": jobs_snapshot(
+                session_id=_session_id, environment_id=lease.environment_id
+            ),
         }
 
     try:
         body, total_lines, log_size_bytes = await read_job_log(
-            job, lines=n, from_start=head
+            job, lines=n, from_start=head, workspace=lease.workspace
         )
     except OSError as e:
         return {
@@ -281,7 +317,9 @@ async def bash_jobs_tail(
             "error": "log_read_error",
             "job_id": job_id,
             "message": str(e),
-            "snapshot": jobs_snapshot(session_id=_session_id),
+            "snapshot": jobs_snapshot(
+                session_id=_session_id, environment_id=lease.environment_id
+            ),
         }
 
     state = job_state_dict(job)
@@ -292,7 +330,9 @@ async def bash_jobs_tail(
         "total_lines": total_lines,
         "log_size_bytes": log_size_bytes,
         "from_start": head,
-        "snapshot": jobs_snapshot(session_id=_session_id),
+        "snapshot": jobs_snapshot(
+            session_id=_session_id, environment_id=lease.environment_id
+        ),
     }
 
 
@@ -338,9 +378,11 @@ def _format_job_line(j: dict) -> str:
     description="List background bash jobs (Ink slash form: /bj-list).",
     strict=True,
     name_override="bj-list",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.PROCESS,
 )
 async def bj_list(_session_id: Optional[str] = None) -> dict:
-    snap = jobs_snapshot(session_id=_session_id)
+    snap = (await bash_jobs_list(_session_id=_session_id))["snapshot"]
     if not snap:
         return {"message": "No background bash jobs in this process."}
     running = [j for j in snap if j["running"]]
@@ -358,6 +400,8 @@ async def bj_list(_session_id: Optional[str] = None) -> dict:
     ),
     strict=True,
     name_override="bj-kill",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.PROCESS,
 )
 async def bj_kill(
     text: Optional[str] = None, _session_id: Optional[str] = None
@@ -407,6 +451,10 @@ setattr(bj_list, "_server_function_on_invoke", _bj_list_on_invoke)
     ),
     strict=True,
     name_override="bj-logs",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=(
+        ExecutionRequirement.PROCESS | ExecutionRequirement.WORKSPACE_READ
+    ),
 )
 async def bj_logs(
     text: Optional[str] = None, _session_id: Optional[str] = None

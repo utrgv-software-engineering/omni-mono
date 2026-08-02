@@ -5,7 +5,10 @@ import asyncio
 import logging
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import AsyncGenerator, Optional, Any
+from typing import TYPE_CHECKING, AsyncGenerator, Optional, Any
+
+if TYPE_CHECKING:
+    from omniagents.execution import EnvironmentLease
 
 from agents import RunConfig, ItemHelpers
 from agents.run_state import RunState
@@ -398,6 +401,7 @@ async def stream_agent(
     run_hooks: Optional[Any] = None,
     sdk_session: Optional[Any] = None,
     sandbox_run_config: Optional[Any] = None,
+    environment_lease: EnvironmentLease | None = None,
 ) -> dict | None:  # noqa: D401
     """Drive agent.run_streamed and forward events to *rpc_channel*.
 
@@ -406,45 +410,20 @@ async def stream_agent(
     server-to-client notifications.
     """
 
-    # Publish the run's requested cwd (the agent's navigable working dir) and,
-    # for HOST runs, install the HostWorkspace rooted there so
-    # omniagents.workspace.* resolves relative to it. Sandbox runs do NOT get
-    # a HostWorkspace here: their cwd is a *container* path, and
-    # WorkspaceBindingCapability.bind installs the SandboxWorkspace (reading
-    # the same requested cwd via the contextvar, clamped to the manifest
-    # root). Building a HostWorkspace from a container path would mkdir it on
-    # the host — exactly the leak we're avoiding.
-    workspace_token = None
-    try:
-        ws_root: Optional[str] = None
-        if isinstance(context, dict):
-            v = context.get("workspace_root")
-            if isinstance(v, str) and v.strip():
-                ws_root = v
-        else:
-            v = getattr(context, "workspace_root", None)
-            if isinstance(v, str) and v.strip():
-                ws_root = v
+    # Bind exactly the backend captured by the Run's immutable lease. A path
+    # in context is descriptive cwd metadata, never an execution-substrate
+    # selector, and a targetless Run deliberately binds no workspace.
+    from omniagents.workspace import (
+        set_requested_cwd as _set_requested_cwd,
+        set_workspace as _set_workspace,
+    )
 
-        from omniagents.workspace import set_requested_cwd as _set_requested_cwd
-
-        _set_requested_cwd(ws_root)
-
-        is_sandbox_run = sandbox_run_config is not None
-        if ws_root and not is_sandbox_run:
-            from omniagents.workspace import HostWorkspace as _HostWorkspace
-            from omniagents.workspace import current_workspace as _current_workspace
-            from omniagents.workspace import set_workspace as _set_workspace
-
-            active_workspace = _current_workspace()
-            host_confine = getattr(active_workspace, "confine", True)
-            workspace_token = _set_workspace(
-                _HostWorkspace(root=ws_root, confine=host_confine)
-            )
-    except Exception:
-        # Workspace setup is best-effort; fall back to default lazy
-        # HostWorkspace(cwd) if anything goes wrong here.
-        workspace_token = None
+    if environment_lease is not None:
+        _set_requested_cwd(environment_lease.workspace.root)
+        workspace_token = _set_workspace(environment_lease.workspace)
+    else:
+        _set_requested_cwd(None)
+        workspace_token = _set_workspace(None)
 
     # Aggregate this run's file edits into a run-level unified diff
     # (tkt_FqUypyxF2tzC). Bound AFTER the workspace so the observer reads
@@ -1336,13 +1315,12 @@ async def stream_agent(
             except Exception:
                 pass
 
-        if workspace_token is not None:
-            try:
-                from omniagents.workspace import reset_workspace as _reset_workspace
+        try:
+            from omniagents.workspace import reset_workspace as _reset_workspace
 
-                _reset_workspace(workspace_token)
-            except Exception:
-                pass
+            _reset_workspace(workspace_token)
+        except Exception:
+            pass
 
     return {
         "usage": last_usage_totals,

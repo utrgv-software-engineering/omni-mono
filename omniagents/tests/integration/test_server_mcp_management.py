@@ -101,7 +101,7 @@ def _make_context(env, *, mcp_servers=None, security_config=None, auth_token=Non
     spec.project_slug = PRODUCT
     spec.manifest_path = str(env.manifest)
     app = server_app.build_app(
-        spec=spec, default_workspace_root="/tmp", auth_token=auth_token
+        spec=spec, default_host_workspace_root="/tmp", auth_token=auth_token
     )
     return SimpleNamespace(client=TestClient(app), service=app.state.agent_service)
 

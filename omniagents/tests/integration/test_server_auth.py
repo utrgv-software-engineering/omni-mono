@@ -107,7 +107,7 @@ def _build_auth_app(monkeypatch, *, legacy: bool = False) -> SimpleNamespace:
     )
 
     app = server_app.build_app(
-        spec=spec, auth_token="secret", default_workspace_root="/tmp"
+        spec=spec, auth_token="secret", default_host_workspace_root="/tmp"
     )
     client = TestClient(app)
     return SimpleNamespace(client=client, terminal_manager=manager)
@@ -327,6 +327,9 @@ def test_readiness_payload_omits_query_token_by_default(monkeypatch):
         profile=SimpleNamespace(raw={}, sources=[]),
         service_urls={},
         resume_tier=None,
+        agent_host_id="agenthost-1",
+        workspace_id="workspace-1",
+        environment_id="environment-1",
     )
     assert "secret" not in payload["ws_url"]
     assert payload["auth_token"] == "secret"
@@ -341,6 +344,9 @@ def test_readiness_payload_omits_query_token_by_default(monkeypatch):
         profile=SimpleNamespace(raw={}, sources=[]),
         service_urls={},
         resume_tier=None,
+        agent_host_id="agenthost-1",
+        workspace_id="workspace-1",
+        environment_id="environment-1",
     )
     assert legacy_payload["ws_url"].endswith("?token=secret")
 

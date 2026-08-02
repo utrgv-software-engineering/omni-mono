@@ -8,11 +8,40 @@ from typing import Any, Callable, Dict, List, Optional, get_type_hints
 from omniagents.core.debug import Debug
 from omniagents.core.session.manager import Session as _SessionType
 from agents.strict_schema import ensure_strict_json_schema
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
+
+
+def _validate_execution_descriptor(
+    *,
+    function_name: str,
+    resource_scope: Any,
+    execution_requirements: Any,
+) -> tuple[ResourceScope, ExecutionRequirement]:
+    """Validate one server function's mandatory execution descriptor.
+
+    Server functions are dynamically dispatched behind the single
+    ``server_call`` protocol operation, so missing or loosely coerced metadata
+    would bypass the typed protocol catalog's fail-closed classification.
+    Require the actual enum types here rather than accepting their wire values.
+    """
+    if not isinstance(resource_scope, ResourceScope):
+        raise TypeError(
+            f"Server function '{function_name}' must declare resource_scope "
+            "as a ResourceScope"
+        )
+    if not isinstance(execution_requirements, ExecutionRequirement):
+        raise TypeError(
+            f"Server function '{function_name}' must declare "
+            "execution_requirements as an ExecutionRequirement"
+        )
+    return resource_scope, execution_requirements
 
 
 def server_function(
     func: Callable | None = None,
     *,
+    resource_scope: ResourceScope,
+    execution_requirements: ExecutionRequirement,
     name: Optional[str] = None,
     name_override: Optional[str] = None,
     description: Optional[str] = None,
@@ -53,6 +82,11 @@ def server_function(
 
     def decorator(f: Callable) -> Callable:
         fn_name = name_override or name or f.__name__
+        validated_scope, validated_requirements = _validate_execution_descriptor(
+            function_name=str(fn_name),
+            resource_scope=resource_scope,
+            execution_requirements=execution_requirements,
+        )
 
         sig = inspect.signature(f)
         hints = get_type_hints(f)
@@ -192,6 +226,12 @@ def server_function(
             setattr(f, "_server_function_result_schema", auto_result_schema)
         setattr(f, "_server_function_on_invoke", _on_invoke)
         setattr(f, "_server_function_strict", bool(strict))
+        setattr(f, "_server_function_resource_scope", validated_scope)
+        setattr(
+            f,
+            "_server_function_execution_requirements",
+            validated_requirements,
+        )
         return f
 
     if func is None:
@@ -327,7 +367,18 @@ def discover_server_functions_in_dir(
                         ),
                         "on_invoke": getattr(obj, "_server_function_on_invoke", None),
                         "strict": getattr(obj, "_server_function_strict", None),
+                        "resource_scope": getattr(
+                            obj, "_server_function_resource_scope", None
+                        ),
+                        "execution_requirements": getattr(
+                            obj, "_server_function_execution_requirements", None
+                        ),
                     }
+                    _validate_execution_descriptor(
+                        function_name=str(fn_name),
+                        resource_scope=meta["resource_scope"],
+                        execution_requirements=meta["execution_requirements"],
+                    )
                     Debug.log(
                         f"Warning: Duplicate server function name '{fn_name}' in {module_path}; overwriting."
                     )
@@ -353,16 +404,26 @@ def build_server_functions_registrar(
         Optional[dict],
         Optional[Callable],
         Optional[bool],
+        ResourceScope,
+        ExecutionRequirement,
     ]:
         if isinstance(value, dict) and "func" in value:
+            resolved_name = value.get("name") or name_key
+            scope, requirements = _validate_execution_descriptor(
+                function_name=str(resolved_name),
+                resource_scope=value.get("resource_scope"),
+                execution_requirements=value.get("execution_requirements"),
+            )
             return (
-                value.get("name") or name_key,
+                resolved_name,
                 value["func"],
                 value.get("description"),
                 value.get("params_schema"),
                 value.get("result_schema"),
                 value.get("on_invoke"),
                 value.get("strict"),
+                scope,
+                requirements,
             )
         if callable(value):
             n = (
@@ -375,7 +436,14 @@ def build_server_functions_registrar(
             rs = getattr(value, "_server_function_result_schema", None)
             oi = getattr(value, "_server_function_on_invoke", None)
             st = getattr(value, "_server_function_strict", None)
-            return (n, value, desc, ps, rs, oi, st)
+            scope, requirements = _validate_execution_descriptor(
+                function_name=str(n),
+                resource_scope=getattr(value, "_server_function_resource_scope", None),
+                execution_requirements=getattr(
+                    value, "_server_function_execution_requirements", None
+                ),
+            )
+            return (n, value, desc, ps, rs, oi, st, scope, requirements)
         raise TypeError("Unsupported server function value type")
 
     items: List[
@@ -387,6 +455,8 @@ def build_server_functions_registrar(
             Optional[dict],
             Optional[Callable],
             Optional[bool],
+            ResourceScope,
+            ExecutionRequirement,
         ]
     ] = []
     if isinstance(functions, dict):
@@ -397,7 +467,7 @@ def build_server_functions_registrar(
             items.append(_extract("", fn))
 
     def registrar(service: Any) -> None:
-        for name_, fn, desc, ps, rs, oi, st in items:
+        for name_, fn, desc, ps, rs, oi, st, scope, requirements in items:
             try:
                 service.register_server_function(
                     name_,
@@ -407,6 +477,8 @@ def build_server_functions_registrar(
                     result_schema=rs,
                     on_invoke=oi,
                     strict=st,
+                    resource_scope=scope,
+                    execution_requirements=requirements,
                 )
             except Exception as e:
                 print(f"Warning: Failed to register server function '{name_}': {e}")

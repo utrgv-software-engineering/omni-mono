@@ -1,8 +1,8 @@
 """Host-side Workspace implementation.
 
 Wraps ``pathlib`` and ``asyncio.create_subprocess_*`` so synchronous stdlib
-work runs off the event loop via ``asyncio.to_thread``. This is the default
-backend for non-sandbox runs and the fallback if SDK sandbox setup fails.
+work runs off the event loop via ``asyncio.to_thread``. It is selected only by
+an explicit host ExecutionEnvironment lease.
 """
 
 from __future__ import annotations
@@ -41,9 +41,8 @@ class HostWorkspace(Workspace):
         scratch_root: Optional[str] = None,
         confine: bool = True,
     ) -> None:
-        # Default to cwd. Resolved once at construction so later os.chdir
-        # calls don't silently change behavior; callers wanting a specific
-        # root pass it explicitly.
+        # Direct construction may omit root for low-level/tests convenience.
+        # Runtime routing never constructs an implicit HostWorkspace.
         resolved = Path(root or os.getcwd()).resolve()
         if not resolved.is_dir():
             # Allow non-existent root; tools may create files in fresh dirs.

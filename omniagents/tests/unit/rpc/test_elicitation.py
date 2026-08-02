@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.elicitation import (
     ElicitationAlreadyResolved,
     ElicitationInvalidResponse,
@@ -27,7 +28,10 @@ from ..core.test_agent_builder import make_spec
 
 
 def build_service() -> AgentService:
-    return AgentService(make_spec(), default_workspace_root="/tmp")
+    return AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-rpc-elicitation-host"),
+    )
 
 
 class RecordingChannel:

@@ -4,6 +4,7 @@ from agents.tool import function_tool
 
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 @function_tool
@@ -64,8 +65,18 @@ def create_server_rpc_agent_spec() -> AgentSpec:
             )
             return {"ok": True}
 
-        service.register_server_function("session.get_variables", get_variables)
-        service.register_server_function("test.trigger_status", trigger_status)
+        service.register_server_function(
+            "session.get_variables",
+            get_variables,
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=ExecutionRequirement.NONE,
+        )
+        service.register_server_function(
+            "test.trigger_status",
+            trigger_status,
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=ExecutionRequirement.NONE,
+        )
 
     spec.register_server_functions = register
     holder["spec"] = spec

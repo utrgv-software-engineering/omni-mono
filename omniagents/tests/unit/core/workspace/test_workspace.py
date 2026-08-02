@@ -141,17 +141,20 @@ async def test_confine_true_is_default_and_still_rejects(tmp_path: Path):
         confined.resolve("/etc/passwd")
 
 
-def test_set_default_workspace_used_when_no_contextvar(tmp_path: Path):
-    """set_default_workspace installs a process-wide fallback that
-    current_workspace returns when no per-run workspace is bound."""
-    from omniagents.workspace import current_workspace, set_default_workspace
+def test_current_workspace_fails_without_run_binding():
+    from omniagents.workspace import (
+        WorkspaceNotBoundError,
+        current_workspace,
+        reset_workspace,
+        set_workspace,
+    )
 
-    sentinel = HostWorkspace(root=str(tmp_path), confine=False)
-    set_default_workspace(sentinel)
+    token = set_workspace(None)
     try:
-        assert current_workspace() is sentinel
+        with pytest.raises(WorkspaceNotBoundError):
+            current_workspace()
     finally:
-        set_default_workspace(None)
+        reset_workspace(token)
 
 
 # -- Navigable cwd: clamp_within + sandbox binding ------------------------
@@ -194,6 +197,7 @@ def test_binding_roots_sandbox_workspace_at_navigable_cwd(tmp_path: Path):
         _inner = None
 
     cap = WorkspaceBindingCapability()
+    token = set_workspace(None)
     try:
         set_requested_cwd("/workspace/proj/src")
         cap.bind(_Session())
@@ -207,11 +211,8 @@ def test_binding_roots_sandbox_workspace_at_navigable_cwd(tmp_path: Path):
         cap.bind(_Session())
         assert current_workspace().root == "/workspace/proj"
     finally:
-        # bind() left a SandboxWorkspace rooted at a fake container path on
-        # the contextvar; restore a real workspace so later tests in this
-        # task don't try to mkdir it on the host.
         set_requested_cwd(None)
-        set_workspace(HostWorkspace(root=str(tmp_path)))
+        reset_workspace(token)
 
 
 # -- Discovery -------------------------------------------------------------
@@ -537,16 +538,20 @@ async def test_top_level_functions_route_via_contextvar(routed):
 async def test_set_reset_workspace_round_trip(tmp_path):
     """set_workspace returns a token that reset_workspace consumes; previous
     workspace is restored exactly."""
-    initial_root = ws.workspace_root()  # default HostWorkspace(cwd)
+    initial_workspace = HostWorkspace(root=str(tmp_path / "initial"))
+    initial_token = set_workspace(initial_workspace)
 
-    new_workspace = HostWorkspace(root=str(tmp_path))
+    new_workspace = HostWorkspace(root=str(tmp_path / "replacement"))
     token = set_workspace(new_workspace)
     try:
         assert ws.workspace_root() == new_workspace.root
     finally:
         reset_workspace(token)
 
-    assert ws.workspace_root() == initial_root
+    try:
+        assert ws.current_workspace() is initial_workspace
+    finally:
+        reset_workspace(initial_token)
 
 
 @pytest.mark.asyncio
@@ -649,7 +654,7 @@ async def test_top_level_dispatches_to_arbitrary_workspace():
 
 
 @pytest.mark.asyncio
-async def test_workspace_binding_capability_swaps_contextvar():
+async def test_workspace_binding_capability_swaps_contextvar(tmp_path):
     """When the SDK runtime calls bind(session) on WorkspaceBindingCapability,
     the workspace contextvar swaps to a SandboxWorkspace wrapping that
     session. Tool bodies that call omniagents.workspace.* then route via
@@ -677,7 +682,7 @@ async def test_workspace_binding_capability_swaps_contextvar():
     cap = WorkspaceBindingCapability()
     fake_session = _FakeSession()
 
-    initial_root = ws.workspace_root()
+    initial_token = ws.set_workspace(HostWorkspace(root=str(tmp_path)))
     cap.bind(fake_session)
 
     try:
@@ -686,10 +691,4 @@ async def test_workspace_binding_capability_swaps_contextvar():
         assert active.root == "/sandbox-root"
         assert active._session is fake_session
     finally:
-        # Reset back to a fresh HostWorkspace for subsequent tests in this
-        # task. Production runs rely on task scope to clean up; tests run
-        # in the same task so we restore manually.
-        from omniagents.workspace import HostWorkspace
-        from omniagents.workspace._runtime import _workspace_var
-
-        _workspace_var.set(HostWorkspace(root=initial_root))
+        ws.reset_workspace(initial_token)

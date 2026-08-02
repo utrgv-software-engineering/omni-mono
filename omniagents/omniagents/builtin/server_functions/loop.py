@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Optional
 
 from omniagents import server_function
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 from omniagents.core.autonomy import split_loop_interval_and_prompt
 from omniagents.core.autonomy.loop import (  # noqa: F401  (re-exported surface)
@@ -37,6 +38,8 @@ from omniagents.core.autonomy.loop import (  # noqa: F401  (re-exported surface)
     description="Run a prompt on a recurring loop. Slash form: /loop [interval] [prompt].",
     strict=True,
     name_override="loop",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def loop_alias(
     text: Optional[str] = None, _session_id: Optional[str] = None
@@ -76,6 +79,8 @@ setattr(loop_alias, "_server_function_on_invoke", _loop_alias_on_invoke)
     description="List scheduled loop tasks on this session.",
     strict=True,
     name_override="loop.status",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def loop_status(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
@@ -99,6 +104,8 @@ setattr(loop_status, "_server_function_on_invoke", _loop_status_on_invoke)
     description="Cancel a scheduled loop task by id.",
     strict=True,
     name_override="loop.stop",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def loop_stop(
     text: Optional[str] = None, _session_id: Optional[str] = None
@@ -129,6 +136,8 @@ setattr(loop_stop, "_server_function_on_invoke", _loop_stop_on_invoke)
     description="Cancel all scheduled loop tasks on this session.",
     strict=True,
     name_override="loop.clear",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def loop_clear(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
@@ -145,6 +154,8 @@ setattr(loop_clear, "_server_function_on_invoke", _loop_clear_on_invoke)
     description="Create a scheduled prompt from a cron expression.",
     strict=True,
     name_override="cron.create",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def cron_create(
     cron: str, prompt: str, recurring: bool = True, _session_id: Optional[str] = None
@@ -170,6 +181,8 @@ setattr(cron_create, "_server_function_on_invoke", _cron_create_on_invoke)
     description="List scheduled cron/loop tasks on this session.",
     strict=True,
     name_override="cron.list",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def cron_list(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
@@ -182,6 +195,8 @@ setattr(cron_list, "_server_function_on_invoke", _loop_status_on_invoke)
     description="Delete a scheduled cron/loop task by id.",
     strict=True,
     name_override="cron.delete",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def cron_delete(task_id: str, _session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}

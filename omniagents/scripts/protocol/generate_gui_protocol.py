@@ -31,7 +31,7 @@ TYPESCRIPT_GENERATOR_VERSION = "15.0.4"
 
 REQUIRED_FIELDS = {
     "initialize": ("protocol_version", "identity", "platform", "capabilities"),
-    "start_run": ("prompt",),
+    "start_run": ("prompt", "environment_selection"),
     "stop_run": ("run_id",),
     "send_user_message": ("run_id", "content"),
     "get_session_history": ("session_id",),
@@ -70,44 +70,44 @@ REQUIRED_FIELDS = {
     "account_refresh": ("provider",),
     "account_select": ("provider",),
     "account_changed": ("provider", "reason"),
-    "fs_watch": ("session_id", "path"),
-    "fs_unwatch": ("session_id", "watch_id"),
-    "fs_list": ("session_id", "path"),
-    "fs_stat": ("session_id", "path"),
-    "fs_download_open": ("session_id", "path"),
-    "fs_download_read": ("session_id", "transfer_id"),
-    "fs_download_close": ("session_id", "transfer_id"),
-    "fs_upload_open": ("session_id", "path", "size"),
-    "fs_upload_chunk": ("session_id", "transfer_id", "offset", "data"),
-    "fs_upload_commit": ("session_id", "transfer_id"),
-    "fs_upload_abort": ("session_id", "transfer_id"),
-    "fs_events": ("session_id", "watch_id", "events"),
-    "fs_rescan_required": ("session_id", "watch_id", "reason"),
+    "fs_watch": ("environment_id", "path"),
+    "fs_unwatch": ("environment_id", "watch_id"),
+    "fs_list": ("environment_id", "path"),
+    "fs_stat": ("environment_id", "path"),
+    "fs_download_open": ("environment_id", "path"),
+    "fs_download_read": ("environment_id", "transfer_id"),
+    "fs_download_close": ("environment_id", "transfer_id"),
+    "fs_upload_open": ("environment_id", "path", "size"),
+    "fs_upload_chunk": ("environment_id", "transfer_id", "offset", "data"),
+    "fs_upload_commit": ("environment_id", "transfer_id"),
+    "fs_upload_abort": ("environment_id", "transfer_id"),
+    "fs_events": ("environment_id", "watch_id", "events"),
+    "fs_rescan_required": ("environment_id", "watch_id", "reason"),
     "fs_transfer_progress": (
-        "session_id",
+        "environment_id",
         "transfer_id",
         "direction",
         "transferred",
         "total",
     ),
-    "git_list_repositories": ("session_id",),
-    "git_status": ("session_id", "repo"),
-    "git_diff": ("session_id", "repo"),
-    "git_log": ("session_id", "repo"),
-    "git_list_branches": ("session_id", "repo"),
-    "git_list_worktrees": ("session_id", "repo"),
-    "git_conflicts": ("session_id", "repo"),
-    "git_stage": ("session_id", "repo"),
-    "git_unstage": ("session_id", "repo"),
-    "git_discard": ("session_id", "repo"),
-    "git_commit": ("session_id", "repo", "message"),
-    "git_checkout": ("session_id", "repo", "branch"),
-    "git_reset": ("session_id", "repo"),
-    "git_fetch": ("session_id", "repo"),
-    "git_pull": ("session_id", "repo"),
-    "git_push": ("session_id", "repo"),
+    "git_list_repositories": ("environment_id",),
+    "git_status": ("environment_id", "repo"),
+    "git_diff": ("environment_id", "repo"),
+    "git_log": ("environment_id", "repo"),
+    "git_list_branches": ("environment_id", "repo"),
+    "git_list_worktrees": ("environment_id", "repo"),
+    "git_conflicts": ("environment_id", "repo"),
+    "git_stage": ("environment_id", "repo"),
+    "git_unstage": ("environment_id", "repo"),
+    "git_discard": ("environment_id", "repo"),
+    "git_commit": ("environment_id", "repo", "message"),
+    "git_checkout": ("environment_id", "repo", "branch"),
+    "git_reset": ("environment_id", "repo"),
+    "git_fetch": ("environment_id", "repo"),
+    "git_pull": ("environment_id", "repo"),
+    "git_push": ("environment_id", "repo"),
     "git_operation_progress": (
-        "session_id",
+        "environment_id",
         "operation_id",
         "repo",
         "operation",
@@ -198,7 +198,13 @@ OPTIONAL_FIELDS = {
     "mcp_approval_response": ("rejection_message",),
     "client_functions": ("version",),
     "client_response": ("result", "error"),
-    "server_call": ("args", "session_id"),
+    "server_call": (
+        "args",
+        "session_id",
+        "environment_id",
+        "workspace_id",
+        "environment_generation",
+    ),
     "enqueue_message": (
         "role",
         "trigger_run",
@@ -349,6 +355,16 @@ OPTIONAL_FIELDS = {
     "git_operation_progress": ("detail",),
 }
 
+# Filesystem and git operations are addressed to an execution environment,
+# with the workspace identity and lease generation available as optional
+# consistency guards. Applying these fields from the catalog keeps future
+# typed fs_*/git_* operations on the same fail-closed addressing contract.
+for _operation in OPERATIONS:
+    if _operation.name.startswith(("fs_", "git_")):
+        OPTIONAL_FIELDS[_operation.name] = tuple(
+            OPTIONAL_FIELDS.get(_operation.name, ())
+        ) + ("workspace_id", "environment_generation")
+
 # Every server→client notification carries the optional replay envelope.
 for _operation in OPERATIONS:
     if _operation.direction == "server_to_client":
@@ -402,6 +418,7 @@ BOOLEAN_FIELDS = {
 }
 INTEGER_FIELDS = {
     "after_seq",
+    "environment_generation",
     "max_depth",
     "retention_days",
     "attempt",
@@ -469,8 +486,9 @@ OBJECT_FIELDS = {
 }
 
 #: Field types are keyed by NAME across the whole protocol, which is what
-#: keeps the generated models coherent — ``session_id`` is a string on every
-#: operation that carries it. A few names are genuinely polymorphic:
+#: keeps the generated models coherent — identity fields such as
+#: ``session_id`` and ``environment_id`` are strings on every operation that
+#: carries them. A few names are genuinely polymorphic:
 #: ``content`` is message TEXT on ``message_output`` / ``send_user_message``
 #: / ``enqueue_message``, but an item's open content RECORD on
 #: ``item_updated``. Re-typing the name globally would be a breaking change
@@ -478,9 +496,36 @@ OBJECT_FIELDS = {
 #: stays visible here rather than being smuggled in as a renamed wire field.
 OPERATION_FIELD_TYPES = {
     ("item_updated", "content"): "object",
+    ("start_run", "environment_selection"): "environment_selection",
 }
 
 OPERATION_FIELD_SCHEMAS = {
+    ("start_run", "environment_selection"): {
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {"mode": {"const": "inherit"}},
+                "required": ["mode"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {"mode": {"const": "none"}},
+                "required": ["mode"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "mode": {"const": "explicit"},
+                    "environment_id": {"type": "string", "minLength": 1},
+                    "environment_generation": {"type": "integer", "minimum": 1},
+                },
+                "required": ["mode", "environment_id"],
+                "additionalProperties": False,
+            },
+        ]
+    },
     ("fs_upload_open", "sha256"): {
         "type": "string",
         "pattern": "^[0-9a-fA-F]{64}$",
@@ -524,6 +569,7 @@ _PYTHON_TYPES = {
     "nullable_string": "str",
     "object": "dict[str, Any]",
     "string": "str",
+    "environment_selection": "EnvironmentSelection",
 }
 
 _TYPESCRIPT_TYPES = {
@@ -534,6 +580,7 @@ _TYPESCRIPT_TYPES = {
     "nullable_string": "string",
     "object": "Record<string, unknown>",
     "string": "string",
+    "environment_selection": "EnvironmentSelection",
 }
 
 
@@ -689,12 +736,30 @@ CAPABILITIES_SCHEMA = {
 INITIALIZE_RESULT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["protocol_version", "identity", "platform", "capabilities"],
+    "required": [
+        "protocol_version",
+        "identity",
+        "platform",
+        "capabilities",
+        "agent_host",
+    ],
     "properties": {
         "protocol_version": {"type": "string"},
         "identity": {"$ref": "#/$defs/identity"},
         "platform": {"$ref": "#/$defs/platform"},
         "capabilities": {"$ref": "#/$defs/capabilities"},
+        "agent_host": {"$ref": "#/$defs/agentHost"},
+    },
+}
+
+AGENT_HOST_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["agent_host_id"],
+    "properties": {
+        "agent_host_id": {"type": "string", "minLength": 1},
+        "default_workspace_id": {"type": ["string", "null"]},
+        "default_environment_id": {"type": ["string", "null"]},
     },
 }
 
@@ -1409,6 +1474,15 @@ def _operation_schema(name: str) -> dict:
     }
 
 
+def _execution_requirement_names(operation) -> list[str]:
+    requirements = operation.execution_requirements
+    return [
+        requirement.name.lower()
+        for requirement in type(requirements)
+        if requirement.value and requirements & requirement
+    ]
+
+
 def build_openrpc() -> dict:
     methods = []
     for operation in OPERATIONS:
@@ -1462,6 +1536,8 @@ def build_openrpc() -> dict:
             "x-omni-direction": operation.direction,
             "x-omni-kind": operation.kind,
             "x-omni-stability": operation.stability,
+            "x-omni-resource-scope": operation.resource_scope.value,
+            "x-omni-execution-requirements": _execution_requirement_names(operation),
         }
         if operation.kind == "request":
             entry["errors"] = [
@@ -1603,6 +1679,7 @@ def build_schema() -> dict:
         "identity": IDENTITY_SCHEMA,
         "platform": PLATFORM_SCHEMA,
         "capabilities": CAPABILITIES_SCHEMA,
+        "agentHost": AGENT_HOST_SCHEMA,
         "initializeResult": INITIALIZE_RESULT_SCHEMA,
         "jsonRpcError": {
             "type": "object",
@@ -1727,6 +1804,28 @@ def build_python() -> bytes:
         "    experimental_operations: list[str]",
         "    disabled_notifications: list[str]",
         "",
+        "class AgentHostDescriptor(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid")',
+        "    agent_host_id: str",
+        "    default_workspace_id: str | None = None",
+        "    default_environment_id: str | None = None",
+        "",
+        "class InheritEnvironmentSelection(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid")',
+        '    mode: Literal["inherit"]',
+        "",
+        "class NoEnvironmentSelection(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid")',
+        '    mode: Literal["none"]',
+        "",
+        "class ExplicitEnvironmentSelection(BaseModel):",
+        '    model_config = ConfigDict(extra="forbid")',
+        '    mode: Literal["explicit"]',
+        "    environment_id: str",
+        "    environment_generation: int | None = None",
+        "",
+        "EnvironmentSelection = InheritEnvironmentSelection | NoEnvironmentSelection | ExplicitEnvironmentSelection",
+        "",
     ]
     request_models = {}
     result_models = {}
@@ -1776,6 +1875,7 @@ def build_python() -> bytes:
                         "    identity: Identity",
                         "    platform: Platform",
                         "    capabilities: Capabilities",
+                        "    agent_host: AgentHostDescriptor",
                         "",
                     ]
                 )
@@ -1839,6 +1939,8 @@ def build_typescript() -> bytes:
         "export interface Identity { name: string; version: string }",
         "export interface Platform { os: string; arch: string }",
         "export interface Capabilities { realtime: boolean; mcp_apps: boolean; client_functions: boolean; approvals: boolean; artifacts: boolean; replay: boolean; terminal: boolean; experimental_operations: string[]; disabled_notifications: string[] }",
+        "export interface AgentHostDescriptor { agent_host_id: string; default_workspace_id?: string | null; default_environment_id?: string | null }",
+        'export type EnvironmentSelection = { mode: "inherit" } | { mode: "none" } | { mode: "explicit"; environment_id: string; environment_generation?: number };',
     ]
     for operation in OPERATIONS:
         class_name = _class_name(operation.name)
@@ -1864,7 +1966,7 @@ def build_typescript() -> bytes:
         lines.append("}")
         if operation.name == "initialize":
             lines.append(
-                "export interface InitializeResult { protocol_version: string; identity: Identity; platform: Platform; capabilities: Capabilities }"
+                "export interface InitializeResult { protocol_version: string; identity: Identity; platform: Platform; capabilities: Capabilities; agent_host: AgentHostDescriptor }"
             )
         elif operation.name == "start_run":
             lines.append(
@@ -2045,6 +2147,13 @@ def render() -> dict[Path, bytes]:
                 for operation in OPERATIONS
                 if operation.kind != "request" and operation.stability == "experimental"
             ],
+        },
+        "operation_metadata": {
+            operation.name: {
+                "resource_scope": operation.resource_scope.value,
+                "execution_requirements": _execution_requirement_names(operation),
+            }
+            for operation in OPERATIONS
         },
         "excluded_surfaces": ["/ws/realtime", "/ws/terminal"],
     }

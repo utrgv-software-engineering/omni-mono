@@ -14,6 +14,7 @@ from omniagents.core.server_functions.discovery import (
     server_function,
 )
 from omniagents.core.session.manager import Session
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 def _clear_modules(prefix):
@@ -22,12 +23,19 @@ def _clear_modules(prefix):
             sys.modules.pop(mod, None)
 
 
-@server_function
+@server_function(
+    resource_scope=ResourceScope.AGENT,
+    execution_requirements=ExecutionRequirement.NONE,
+)
 def strict_echo(name: str, times: int = 1):
     return {"value": name * times}
 
 
-@server_function(strict=False)
+@server_function(
+    strict=False,
+    resource_scope=ResourceScope.AGENT,
+    execution_requirements=ExecutionRequirement.NONE,
+)
 def relaxed(name: str):
     return name
 
@@ -51,7 +59,10 @@ def test_server_function_allows_extra_when_not_strict():
 
 
 def test_server_function_requires_session_when_annotated():
-    @server_function
+    @server_function(
+        resource_scope=ResourceScope.THREAD,
+        execution_requirements=ExecutionRequirement.NONE,
+    )
     async def needs_session(session: Session, token: str):
         return token
 
@@ -72,17 +83,27 @@ def test_discover_server_functions_in_dir_warns_on_duplicates(tmp_path, capsys):
     (base_dir / "__init__.py").write_text("")
     (base_dir / "alpha.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
+            from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-            @server_function(name="duplicate")
+            @server_function(
+                name="duplicate",
+                resource_scope=ResourceScope.AGENT,
+                execution_requirements=ExecutionRequirement.NONE,
+            )
             def one():
                 return 1
             """))
     (base_dir / "beta.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
+            from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-            @server_function(name="duplicate")
+            @server_function(
+                name="duplicate",
+                resource_scope=ResourceScope.AGENT,
+                execution_requirements=ExecutionRequirement.NONE,
+            )
             def two():
                 return 2
             """))
@@ -93,6 +114,10 @@ def test_discover_server_functions_in_dir_warns_on_duplicates(tmp_path, capsys):
         Debug.set_enabled(previous)
     assert set(discovered) == {"duplicate"}
     assert discovered["duplicate"]["func"].__name__ in {"one", "two"}
+    assert discovered["duplicate"]["resource_scope"] is ResourceScope.AGENT
+    assert (
+        discovered["duplicate"]["execution_requirements"] == ExecutionRequirement.NONE
+    )
     captured = capsys.readouterr()
     assert "Duplicate server function name" in captured.err
 
@@ -117,9 +142,13 @@ def test_discover_server_functions_in_dir_skips_import_errors(tmp_path, capsys):
     (base_dir / "broken.py").write_text("import missing_module")
     (base_dir / "valid.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
+            from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-            @server_function
+            @server_function(
+                resource_scope=ResourceScope.AGENT,
+                execution_requirements=ExecutionRequirement.NONE,
+            )
             def ok():
                 return "ok"
             """))
@@ -142,6 +171,10 @@ def test_build_server_functions_registrar_registers_metadata():
             "result_schema": {"type": "string"},
             "on_invoke": getattr(strict_echo, "_server_function_on_invoke"),
             "strict": True,
+            "resource_scope": ResourceScope.AGENT,
+            "execution_requirements": (
+                ExecutionRequirement.PROCESS | ExecutionRequirement.NETWORK
+            ),
         }
     }
     registrar = build_server_functions_registrar(metadata)
@@ -159,6 +192,8 @@ def test_build_server_functions_registrar_registers_metadata():
             result_schema=None,
             on_invoke=None,
             strict=None,
+            resource_scope=None,
+            execution_requirements=None,
         ):
             self.calls.append(
                 (
@@ -169,15 +204,25 @@ def test_build_server_functions_registrar_registers_metadata():
                     result_schema,
                     on_invoke,
                     strict,
+                    resource_scope,
+                    execution_requirements,
                 )
             )
 
     service = DummyService()
     registrar(service)
     assert len(service.calls) == 1
-    name, func, description, params_schema, result_schema, on_invoke, strict = (
-        service.calls[0]
-    )
+    (
+        name,
+        func,
+        description,
+        params_schema,
+        result_schema,
+        on_invoke,
+        strict,
+        resource_scope,
+        execution_requirements,
+    ) = service.calls[0]
     assert name == "first"
     assert func is strict_echo
     assert description == "desc"
@@ -185,6 +230,38 @@ def test_build_server_functions_registrar_registers_metadata():
     assert result_schema == {"type": "string"}
     assert on_invoke is getattr(strict_echo, "_server_function_on_invoke")
     assert strict is True
+    assert resource_scope is ResourceScope.AGENT
+    assert execution_requirements == (
+        ExecutionRequirement.PROCESS | ExecutionRequirement.NETWORK
+    )
+
+
+def test_server_function_rejects_untyped_execution_descriptor():
+    def handler():
+        return None
+
+    with pytest.raises(TypeError, match="resource_scope"):
+        server_function(
+            resource_scope="thread",
+            execution_requirements=ExecutionRequirement.NONE,
+        )(handler)
+    with pytest.raises(TypeError, match="execution_requirements"):
+        server_function(
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=0,
+        )(handler)
+
+
+def test_build_server_functions_registrar_fails_closed_without_metadata():
+    def undecorated():
+        return None
+
+    with pytest.raises(TypeError, match="resource_scope"):
+        build_server_functions_registrar({"undecorated": undecorated})
+    with pytest.raises(TypeError, match="resource_scope"):
+        build_server_functions_registrar(
+            {"undecorated": {"func": undecorated, "name": "undecorated"}}
+        )
 
 
 def test_build_server_functions_registrar_rejects_invalid_values():
@@ -211,17 +288,25 @@ def test_make_server_functions_registrar_filters_names(tmp_path, capsys):
     (base_dir / "__init__.py").write_text("")
     (base_dir / "alpha.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
+            from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-            @server_function
+            @server_function(
+                resource_scope=ResourceScope.AGENT,
+                execution_requirements=ExecutionRequirement.NONE,
+            )
             def alpha():
                 return "alpha"
             """))
     (base_dir / "beta.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
+            from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-            @server_function
+            @server_function(
+                resource_scope=ResourceScope.AGENT,
+                execution_requirements=ExecutionRequirement.NONE,
+            )
             def beta():
                 return "beta"
             """))
@@ -253,17 +338,25 @@ def test_register_server_functions_from_dir_registers_selected(tmp_path):
     (base_dir / "__init__.py").write_text("")
     (base_dir / "alpha.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
+            from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-            @server_function
+            @server_function(
+                resource_scope=ResourceScope.AGENT,
+                execution_requirements=ExecutionRequirement.NONE,
+            )
             def alpha():
                 return "alpha"
             """))
     (base_dir / "beta.py").write_text(textwrap.dedent("""
             from omniagents.core.server_functions.discovery import server_function
+            from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-            @server_function
+            @server_function(
+                resource_scope=ResourceScope.AGENT,
+                execution_requirements=ExecutionRequirement.NONE,
+            )
             def beta():
                 return "beta"
             """))

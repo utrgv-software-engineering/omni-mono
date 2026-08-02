@@ -18,12 +18,14 @@ import tarfile
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from omniagents.core.runtime import sandbox_lifecycle, serve_harness, serve_state
 from omniagents.core.runtime.serve_harness import (
     _create_or_resume_session,
+    _register_execution_environment,
     _resolve_service_urls,
     _safe_symlink_target,
     _scrub_session_snapshot,
@@ -251,6 +253,39 @@ def test_resolve_service_urls_honors_product_suffix_override():
     assert urls == {"vnc": "http://127.0.0.1:6080"}
 
 
+@pytest.mark.asyncio
+async def test_register_execution_environment_routes_to_named_sandbox():
+    from omniagents.workspace.sandbox import SandboxWorkspace
+    from omniagents.execution import AgentHostResources
+
+    resources = AgentHostResources.create("agent-host-1")
+    service = SimpleNamespace(
+        workspace_registry=resources.workspaces,
+        environment_manager=resources.environments,
+    )
+    app = SimpleNamespace(state=SimpleNamespace(agent_service=service))
+    spec = SimpleNamespace(sandbox_run_as="1000:1000")
+    first_session = SimpleNamespace(name="first")
+
+    descriptor = await _register_execution_environment(
+        app,
+        spec,
+        environment_id="environment-1",
+        workspace_id="workspace-1",
+        owner_user_id="user-1",
+        session=first_session,
+        root="/workspace",
+    )
+
+    lease = await resources.environments.acquire("environment-1")
+    assert descriptor.workspace_id == "workspace-1"
+    assert isinstance(lease.workspace, SandboxWorkspace)
+    assert lease.workspace._session is first_session
+    assert lease.workspace.root == "/workspace"
+    assert lease.workspace._default_user == "1000:1000"
+    assert resources.workspaces.get("workspace-1").owner_user_id == "user-1"
+
+
 # --------------------------------------------------------------------------
 # Switch orchestration through the executor seam
 # --------------------------------------------------------------------------
@@ -280,10 +315,17 @@ class FakeService:
 
 
 def _make_ctx(resolver):
+    environment_manager = SimpleNamespace(transition=AsyncMock())
     ctx = SwitchContext(
-        app=object(),
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                agent_service=SimpleNamespace(environment_manager=environment_manager)
+            )
+        ),
         spec=object(),
         session_id="sess-1",
+        environment_id="environment-1",
+        workspace_id="workspace-1",
         snapshot_dir=None,
         sources_parsed=[],
         credentials_parsed=[],
@@ -351,6 +393,8 @@ def test_switch_executor_seam_end_to_end(monkeypatch, tmp_path):
         "_install_session_terminal_manager",
         lambda app, session, terminal: None,
     )
+    replace_backend = AsyncMock()
+    monkeypatch.setattr(serve_harness, "_replace_execution_backend", replace_backend)
 
     serve_state.set_sandbox_session(old_session)
     serve_state.set_switch_context(_make_ctx(resolver))
@@ -375,6 +419,8 @@ def test_switch_executor_seam_end_to_end(monkeypatch, tmp_path):
     assert ctx.current_profile_name == "devbox"
     assert ctx.container_id == "ctr-new"
     assert ctx.switching is False and ctx.ready_event.is_set()
+    ctx.app.state.agent_service.environment_manager.transition.assert_awaited_once()
+    replace_backend.assert_awaited_once_with(ctx, new_session)
     assert [e[0] for e in service.events] == [
         "ui.sandbox.switching",
         "ui.sandbox.changed",

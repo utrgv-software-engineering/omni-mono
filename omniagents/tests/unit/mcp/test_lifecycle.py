@@ -19,6 +19,7 @@ from typing import Any
 import anyio
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents import service as service_module
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec, MCPServerConfig
@@ -142,11 +143,14 @@ async def test_stdio_mcp_server_preserves_state_across_runs(monkeypatch):
         ],
     )
 
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-mcp-lifecycle-host"),
+    )
     service.channel = object()
 
     # Turn 1: Navigate to google.com
-    r1 = await service.start_run("Navigate to google.com")
+    r1 = await service.start_run("Navigate to google.com", {"mode": "none"})
     session_id = r1["session_id"]
     sess = service._session_manager.get_or_create(session_id)
     await asyncio.wait_for(sess.current_task, timeout=2)
@@ -162,7 +166,9 @@ async def test_stdio_mcp_server_preserves_state_across_runs(monkeypatch):
     assert server.browser_state["current_url"] == "https://google.com"
 
     # Turn 2: Check current page (state must persist!)
-    r2 = await service.start_run("What page am I on?", session_id=session_id)
+    r2 = await service.start_run(
+        "What page am I on?", {"mode": "none"}, session_id=session_id
+    )
     await asyncio.wait_for(sess.current_task, timeout=2)
 
     print(
@@ -185,7 +191,9 @@ async def test_stdio_mcp_server_preserves_state_across_runs(monkeypatch):
     ), f"FAILURE: Browser state lost! current_url={server.browser_state['current_url']}, expected https://google.com"
 
     # Turn 3: Navigate to github
-    r3 = await service.start_run("Navigate to github.com", session_id=session_id)
+    r3 = await service.start_run(
+        "Navigate to github.com", {"mode": "none"}, session_id=session_id
+    )
     await asyncio.wait_for(sess.current_task, timeout=2)
 
     print(
@@ -200,7 +208,9 @@ async def test_stdio_mcp_server_preserves_state_across_runs(monkeypatch):
     ), f"History should have 2 entries, got {len(server.browser_state['history'])}"
 
     # Turn 4: Check history (must persist across all turns)
-    r4 = await service.start_run("Show my history", session_id=session_id)
+    r4 = await service.start_run(
+        "Show my history", {"mode": "none"}, session_id=session_id
+    )
     await asyncio.wait_for(sess.current_task, timeout=2)
 
     print(f"After Turn 4: history={server.browser_state['history']}")
@@ -259,17 +269,20 @@ async def test_stdio_mcp_different_sessions_get_isolated_instances(monkeypatch):
         ],
     )
 
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-mcp-lifecycle-host"),
+    )
     service.channel = object()
 
     # Session A
-    r1 = await service.start_run("https://google.com")
+    r1 = await service.start_run("https://google.com", {"mode": "none"})
     session_a = r1["session_id"]
     sess_a = service._session_manager.get_or_create(session_a)
     await asyncio.wait_for(sess_a.current_task, timeout=2)
 
     # Session B
-    r2 = await service.start_run("https://github.com")
+    r2 = await service.start_run("https://github.com", {"mode": "none"})
     session_b = r2["session_id"]
     sess_b = service._session_manager.get_or_create(session_b)
     await asyncio.wait_for(sess_b.current_task, timeout=2)
@@ -533,12 +546,15 @@ async def test_minimal_reproduction_sequential_runs_with_mcp(monkeypatch):
 
     spec = make_spec()
     spec.mcp_servers = [object()]  # Signal that MCP servers are configured
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-mcp-lifecycle-host"),
+    )
     service.channel = object()
     attach_capture(service)
 
     # First run
-    run_info_1 = await service.start_run("First prompt")
+    run_info_1 = await service.start_run("First prompt", {"mode": "none"})
     sess = service._session_manager.get_or_create(run_info_1["session_id"])
     await asyncio.wait_for(sess.current_task, timeout=2)
 
@@ -548,7 +564,9 @@ async def test_minimal_reproduction_sequential_runs_with_mcp(monkeypatch):
     assert run_count["value"] == 1
 
     # Second run - this should trigger the hang if connection reuse is the issue
-    run_info_2 = await service.start_run("Second prompt", session_id=sess.id)
+    run_info_2 = await service.start_run(
+        "Second prompt", {"mode": "none"}, session_id=sess.id
+    )
     # This wait_for will timeout if there's a hang
     await asyncio.wait_for(sess.current_task, timeout=2)
 
@@ -581,7 +599,10 @@ async def test_hypothesis_1_mcp_without_safeagent(monkeypatch):
 
     spec = make_spec(build_agent=build_agent_without_safe)
     spec.mcp_servers = [object()]
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-mcp-lifecycle-host"),
+    )
     service.channel = object()
 
     # Mock stream_agent to simulate MCP tool call
@@ -602,7 +623,7 @@ async def test_hypothesis_1_mcp_without_safeagent(monkeypatch):
 
     monkeypatch.setattr(service_module, "stream_agent", mock_stream_with_tool_call)
 
-    run_info = await service.start_run("Call MCP tool")
+    run_info = await service.start_run("Call MCP tool", {"mode": "none"})
     sess = service._session_manager.get_or_create(run_info["session_id"])
 
     # If this completes, MCP tools work without SafeAgent
@@ -643,7 +664,10 @@ async def test_hypothesis_3_approval_callback_auto_approve(monkeypatch):
 
     spec = make_spec(build_agent=build_agent_with_auto_approval, use_safe_agent=True)
     spec.mcp_servers = [object()]
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-mcp-lifecycle-host"),
+    )
     service.channel = object()
 
     # Mock stream_agent to simulate requesting approval
@@ -662,7 +686,7 @@ async def test_hypothesis_3_approval_callback_auto_approve(monkeypatch):
 
     monkeypatch.setattr(service_module, "stream_agent", mock_stream_with_approval)
 
-    run_info = await service.start_run("Test approval")
+    run_info = await service.start_run("Test approval", {"mode": "none"})
     sess = service._session_manager.get_or_create(run_info["session_id"])
 
     # Should complete if auto-approval works
@@ -822,11 +846,14 @@ async def test_anyio_mcp_with_connection_reuse_reproduces_hang(monkeypatch):
 
     spec = make_spec()
     spec.mcp_servers = [object()]
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-mcp-lifecycle-host"),
+    )
     service.channel = object()
 
     # First run - creates server with task group in this task
-    run_info_1 = await service.start_run("First prompt")
+    run_info_1 = await service.start_run("First prompt", {"mode": "none"})
     sess = service._session_manager.get_or_create(run_info_1["session_id"])
     await asyncio.wait_for(sess.current_task, timeout=2)
 
@@ -836,7 +863,9 @@ async def test_anyio_mcp_with_connection_reuse_reproduces_hang(monkeypatch):
 
     # Second run - different asyncio task, same server instance
     # This should trigger the bug
-    run_info_2 = await service.start_run("Second prompt", session_id=sess.id)
+    run_info_2 = await service.start_run(
+        "Second prompt", {"mode": "none"}, session_id=sess.id
+    )
 
     # This should raise an error or timeout due to the cross-task violation
     try:

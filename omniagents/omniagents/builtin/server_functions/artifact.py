@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Optional
 
 from omniagents import server_function
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 from omniagents.core.server_functions.helpers import invoke_artifact_bridge
 from omniagents.core.session import Session
 
@@ -35,6 +36,8 @@ from omniagents.core.session import Session
     },
     strict=True,
     name_override="artifact",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def artifact(
     session: Session,

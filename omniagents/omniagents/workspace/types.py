@@ -74,6 +74,16 @@ class WorkspaceError(Exception):
     """Base class for workspace-layer errors."""
 
 
+class WorkspaceNotBoundError(WorkspaceError):
+    """Raised when a workspace operation runs without an environment lease."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "No workspace is bound to this run. Select an execution environment "
+            "before using filesystem or process tools."
+        )
+
+
 class WorkspaceEscapeError(WorkspaceError):
     """Raised when a path resolves outside the workspace root.
 

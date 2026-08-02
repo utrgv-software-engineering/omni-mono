@@ -214,6 +214,11 @@ class WorkerManager:
 
         start_kwargs: dict[str, Any] = {
             "prompt": task_description,
+            # Worker-local AgentServices do not own the parent's environment.
+            # Until workers are sessions on the shared AgentHost, they must be
+            # explicitly targetless instead of reconstructing a host workspace
+            # from the inherited context dictionary.
+            "environment_selection": {"mode": "none"},
             "session_id": session_id,
         }
         if context is not None:

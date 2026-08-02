@@ -22,6 +22,7 @@ import logging
 from typing import Optional
 
 from omniagents import server_function
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 from omniagents.builtin.tools.worker_tools import (
     broadcast_workers_snapshot,
@@ -42,6 +43,8 @@ _log = logging.getLogger(__name__)
     description="List background workers spawned from the current session.",
     strict=True,
     name_override="workers.list",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.PROCESS,
 )
 async def workers_list(_session_id: Optional[str] = None) -> dict:
     return {"snapshot": workers_snapshot(parent_session_id=_session_id)}
@@ -72,6 +75,8 @@ setattr(workers_list, "_server_function_on_invoke", _workers_list_on_invoke)
     },
     strict=True,
     name_override="workers.kill",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.PROCESS,
 )
 async def workers_kill(worker_id: str, _session_id: Optional[str] = None) -> dict:
     handle = manager().workers.get(worker_id)

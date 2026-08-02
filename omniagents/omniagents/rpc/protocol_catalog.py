@@ -1,9 +1,38 @@
 from dataclasses import dataclass
+from enum import IntFlag, StrEnum, auto
 from typing import Literal
 
 Direction = Literal["client_to_server", "server_to_client"]
 Kind = Literal["request", "notification", "correlated_notification"]
 Stability = Literal["stable", "experimental"]
+
+
+class ResourceScope(StrEnum):
+    """Resource whose identity and ownership govern an operation."""
+
+    CONNECTION = "connection"
+    PRINCIPAL = "principal"
+    AGENT_HOST = "agent_host"
+    AGENT = "agent"
+    THREAD = "thread"
+    RUN = "run"
+    WORKSPACE = "workspace"
+    ENVIRONMENT = "environment"
+    EXTENSION = "extension"
+
+
+class ExecutionRequirement(IntFlag):
+    """Capabilities or deferred planning required before an operation runs."""
+
+    NONE = 0
+    RUN_PLAN = auto()
+    WORKSPACE_READ = auto()
+    WORKSPACE_WRITE = auto()
+    PROCESS = auto()
+    NETWORK = auto()
+    PTY = auto()
+    ENVIRONMENT_LIFECYCLE = auto()
+    EXTENSION_DECLARED = auto()
 
 
 @dataclass(frozen=True)
@@ -12,6 +41,8 @@ class ProtocolOperation:
     direction: Direction
     kind: Kind
     stability: Stability
+    resource_scope: ResourceScope
+    execution_requirements: ExecutionRequirement
 
 
 STABLE_REQUESTS = (
@@ -231,21 +262,301 @@ EXPERIMENTAL_NOTIFICATIONS = (
     "item_updated",
 )
 
+
+def _classification_map(
+    groups: tuple[tuple[ResourceScope, ExecutionRequirement, tuple[str, ...]], ...],
+) -> dict[str, tuple[ResourceScope, ExecutionRequirement]]:
+    result: dict[str, tuple[ResourceScope, ExecutionRequirement]] = {}
+    for resource_scope, execution_requirements, names in groups:
+        for name in names:
+            if name in result:
+                raise RuntimeError(f"duplicate protocol classification for {name}")
+            result[name] = (resource_scope, execution_requirements)
+    return result
+
+
+_REQUEST_CLASSIFICATIONS = _classification_map(
+    (
+        (
+            ResourceScope.CONNECTION,
+            ExecutionRequirement.NONE,
+            ("initialize", "client_functions", "set_client_status"),
+        ),
+        (
+            ResourceScope.THREAD,
+            ExecutionRequirement.RUN_PLAN,
+            ("start_run",),
+        ),
+        (
+            ResourceScope.RUN,
+            ExecutionRequirement.NONE,
+            (
+                "stop_run",
+                "send_user_message",
+                "tool_approval_response",
+                "mcp_approval_response",
+                "client_response",
+                "elicitation_response",
+            ),
+        ),
+        (
+            ResourceScope.THREAD,
+            ExecutionRequirement.NONE,
+            (
+                "get_session_history",
+                "archive_session",
+                "delete_session",
+                "enqueue_message",
+                "list_queue",
+                "cancel_queued_message",
+                "resume_session",
+                "ack_events",
+                "set_session_model",
+                "set_session_reasoning",
+                "get_thread",
+                "list_turns",
+                "list_items",
+                "get_item",
+                "fork_session",
+                "set_session_hold",
+                "queue_status",
+                "enqueue_notification",
+                "update_session_variables",
+                "report_incident",
+                "export_session",
+                "mcp_call_tool",
+                "update_thread",
+                "list_thread_descendants",
+                "export_thread",
+                "get_plan",
+                "get_run_diff",
+            ),
+        ),
+        (
+            ResourceScope.PRINCIPAL,
+            ExecutionRequirement.NONE,
+            (
+                "list_sessions",
+                "get_user_history",
+                "account_status",
+                "account_login_start",
+                "account_login_complete",
+                "account_login_cancel",
+                "account_logout",
+                "account_refresh",
+                "account_usage",
+                "account_select",
+                "list_threads",
+                "search_threads",
+            ),
+        ),
+        (
+            ResourceScope.AGENT,
+            ExecutionRequirement.NONE,
+            (
+                "get_agent_info",
+                "list_server_functions",
+                "list_models",
+                "get_model",
+                "list_providers",
+                "mcp_list_servers",
+                "mcp_get_server",
+                "mcp_create_server",
+                "mcp_update_server",
+                "mcp_delete_server",
+                "mcp_reload_server",
+                "mcp_auth_start",
+                "mcp_auth_complete",
+                "mcp_auth_cancel",
+                "disable_tool",
+                "disable_mcp_server",
+                "mcp_read_resource",
+                "mcp_get_prompt",
+            ),
+        ),
+        (
+            ResourceScope.AGENT_HOST,
+            ExecutionRequirement.NONE,
+            (
+                "set_voice_model",
+                "get_config",
+                "validate_config",
+                "write_config",
+                "purge_threads",
+            ),
+        ),
+        (
+            ResourceScope.EXTENSION,
+            ExecutionRequirement.EXTENSION_DECLARED,
+            ("server_call",),
+        ),
+        (
+            ResourceScope.WORKSPACE,
+            ExecutionRequirement.WORKSPACE_READ,
+            (
+                "fs_watch",
+                "fs_unwatch",
+                "fs_list",
+                "fs_stat",
+                "fs_download_open",
+                "fs_download_read",
+                "fs_download_close",
+            ),
+        ),
+        (
+            ResourceScope.WORKSPACE,
+            ExecutionRequirement.WORKSPACE_WRITE,
+            (
+                "fs_upload_open",
+                "fs_upload_chunk",
+                "fs_upload_commit",
+                "fs_upload_abort",
+            ),
+        ),
+        (
+            ResourceScope.WORKSPACE,
+            ExecutionRequirement.WORKSPACE_READ | ExecutionRequirement.PROCESS,
+            (
+                "git_list_repositories",
+                "git_status",
+                "git_diff",
+                "git_log",
+                "git_list_branches",
+                "git_list_worktrees",
+                "git_conflicts",
+            ),
+        ),
+        (
+            ResourceScope.WORKSPACE,
+            ExecutionRequirement.WORKSPACE_WRITE | ExecutionRequirement.PROCESS,
+            (
+                "git_stage",
+                "git_unstage",
+                "git_discard",
+                "git_commit",
+                "git_checkout",
+                "git_reset",
+            ),
+        ),
+        (
+            ResourceScope.WORKSPACE,
+            ExecutionRequirement.WORKSPACE_WRITE
+            | ExecutionRequirement.PROCESS
+            | ExecutionRequirement.NETWORK,
+            ("git_fetch", "git_pull", "git_push"),
+        ),
+    )
+)
+
+_CLIENT_NOTIFICATION_CLASSIFICATIONS = _classification_map(
+    (
+        (
+            ResourceScope.CONNECTION,
+            ExecutionRequirement.NONE,
+            STABLE_CLIENT_NOTIFICATIONS,
+        ),
+    )
+)
+
+_SERVER_NOTIFICATION_CLASSIFICATIONS = _classification_map(
+    (
+        (
+            ResourceScope.RUN,
+            ExecutionRequirement.NONE,
+            (
+                "run_started",
+                "run_status",
+                "tool_called",
+                "tool_result",
+                "message_output",
+                "token",
+                "run_end",
+                "tool_approval_requested",
+                "tool_approval_resolved",
+                "mcp_approval_requested",
+                "mcp_approval_resolved",
+                "client_request",
+                "client_request_resolved",
+                "elicitation_requested",
+                "elicitation_resolved",
+            ),
+        ),
+        (
+            ResourceScope.THREAD,
+            ExecutionRequirement.NONE,
+            (
+                "queue_changed",
+                "session_forked",
+                "session_variables_changed",
+                "thread_updated",
+                "item_updated",
+            ),
+        ),
+        (
+            ResourceScope.PRINCIPAL,
+            ExecutionRequirement.NONE,
+            ("account_changed",),
+        ),
+        (
+            ResourceScope.AGENT,
+            ExecutionRequirement.NONE,
+            ("mcp_server_status_changed",),
+        ),
+        (
+            ResourceScope.WORKSPACE,
+            ExecutionRequirement.NONE,
+            (
+                "fs_events",
+                "fs_rescan_required",
+                "fs_transfer_progress",
+                "git_operation_progress",
+            ),
+        ),
+    )
+)
+
+
+def _operation(
+    name: str,
+    direction: Direction,
+    kind: Kind,
+    stability: Stability,
+) -> ProtocolOperation:
+    if kind == "request":
+        resource_scope, execution_requirements = _REQUEST_CLASSIFICATIONS[name]
+    elif direction == "client_to_server":
+        resource_scope, execution_requirements = _CLIENT_NOTIFICATION_CLASSIFICATIONS[
+            name
+        ]
+    else:
+        resource_scope, execution_requirements = _SERVER_NOTIFICATION_CLASSIFICATIONS[
+            name
+        ]
+    return ProtocolOperation(
+        name=name,
+        direction=direction,
+        kind=kind,
+        stability=stability,
+        resource_scope=resource_scope,
+        execution_requirements=execution_requirements,
+    )
+
+
 OPERATIONS = tuple(
     [
-        ProtocolOperation(name, "client_to_server", "request", "stable")
+        _operation(name, "client_to_server", "request", "stable")
         for name in STABLE_REQUESTS
     ]
     + [
-        ProtocolOperation(name, "client_to_server", "request", "experimental")
+        _operation(name, "client_to_server", "request", "experimental")
         for name in EXPERIMENTAL_REQUESTS
     ]
     + [
-        ProtocolOperation(name, "client_to_server", "notification", "stable")
+        _operation(name, "client_to_server", "notification", "stable")
         for name in STABLE_CLIENT_NOTIFICATIONS
     ]
     + [
-        ProtocolOperation(
+        _operation(
             name,
             "server_to_client",
             (
@@ -258,7 +569,7 @@ OPERATIONS = tuple(
         for name in STABLE_NOTIFICATIONS
     ]
     + [
-        ProtocolOperation(name, "server_to_client", "notification", "experimental")
+        _operation(name, "server_to_client", "notification", "experimental")
         for name in EXPERIMENTAL_NOTIFICATIONS
     ]
 )

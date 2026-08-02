@@ -45,6 +45,29 @@ def test_openrpc_inventory_matches_explicit_catalog():
     assert actual == expected
 
 
+def test_openrpc_publishes_resource_and_execution_metadata():
+    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    actual = {
+        method["name"]: (
+            method["x-omni-resource-scope"],
+            method["x-omni-execution-requirements"],
+        )
+        for method in document["methods"]
+    }
+    expected = {
+        operation.name: (
+            operation.resource_scope.value,
+            [
+                requirement.name.lower()
+                for requirement in type(operation.execution_requirements)
+                if requirement.value and operation.execution_requirements & requirement
+            ],
+        )
+        for operation in OPERATIONS
+    }
+    assert actual == expected
+
+
 def test_json_schema_uses_valid_draft_2020_12():
     schema = _load(ROOT / "protocol/openrpc/schemas/gui-v1.schema.json")
     Draft202012Validator.check_schema(schema)
@@ -107,7 +130,10 @@ def test_malformed_external_reference_fails_validation():
 
 def test_every_nonempty_payload_declares_required_fields():
     schema = _load(ROOT / "protocol/openrpc/schemas/gui-v1.schema.json")
-    assert schema["$defs"]["start_run"]["required"] == ["prompt"]
+    assert schema["$defs"]["start_run"]["required"] == [
+        "prompt",
+        "environment_selection",
+    ]
     assert schema["$defs"]["run_end"]["required"] == [
         "run_id",
         "session_id",
@@ -124,6 +150,37 @@ def test_every_nonempty_payload_declares_required_fields():
         "platform",
         "capabilities",
     ]
+
+
+def test_fs_and_git_operations_are_environment_addressed():
+    schema = _load(ROOT / "protocol/openrpc/schemas/gui-v1.schema.json")
+    environment_operations = [
+        operation
+        for operation in OPERATIONS
+        if operation.name.startswith(("fs_", "git_"))
+    ]
+
+    for operation in environment_operations:
+        definition = schema["$defs"][operation.name]
+        required = definition["required"]
+        properties = definition["properties"]
+
+        assert "environment_id" in required, operation.name
+        assert properties["environment_id"] == {"type": "string"}, operation.name
+        assert "session_id" not in required, operation.name
+        assert "session_id" not in properties, operation.name
+        assert "workspace_id" not in required, operation.name
+        assert properties["workspace_id"] == {"type": "string"}, operation.name
+        assert "environment_generation" not in required, operation.name
+        assert properties["environment_generation"] == {
+            "type": "integer"
+        }, operation.name
+
+        if operation.direction == "server_to_client":
+            assert "seq" not in required, operation.name
+            assert "stream_id" not in required, operation.name
+            assert properties["seq"] == {"type": "integer"}, operation.name
+            assert properties["stream_id"] == {"type": "string"}, operation.name
 
 
 def test_initialize_handshake_has_strict_negotiated_models():
@@ -145,7 +202,15 @@ def test_initialize_handshake_has_strict_negotiated_models():
         },
     }
     assert generated.CLIENT_REQUEST_MODELS["initialize"].model_validate(params)
-    assert generated.CLIENT_RESULT_MODELS["initialize"].model_validate(params)
+    result = {
+        **params,
+        "agent_host": {
+            "agent_host_id": "agent-host-1",
+            "default_workspace_id": None,
+            "default_environment_id": None,
+        },
+    }
+    assert generated.CLIENT_RESULT_MODELS["initialize"].model_validate(result)
     with pytest.raises(ValidationError):
         generated.CLIENT_REQUEST_MODELS["initialize"].model_validate(
             {**params, "identity": {**params["identity"], "extra": True}}
@@ -261,6 +326,19 @@ def test_inventory_reports_generated_request_allowlist():
     assert len(inventory["requests"]["experimental"]) == 51
     assert len(inventory["notifications"]["stable"]) == 19
     assert len(inventory["notifications"]["experimental"]) == 8
+    assert len(inventory["operation_metadata"]) == len(OPERATIONS)
+    assert inventory["operation_metadata"]["start_run"] == {
+        "resource_scope": "thread",
+        "execution_requirements": ["run_plan"],
+    }
+    assert inventory["operation_metadata"]["git_push"] == {
+        "resource_scope": "workspace",
+        "execution_requirements": [
+            "workspace_write",
+            "process",
+            "network",
+        ],
+    }
 
 
 def test_catalog_requests_exist_on_real_agent_service():
@@ -336,10 +414,44 @@ def test_generated_models_reject_missing_required_fields():
         )
     assert (
         generated.CLIENT_REQUEST_MODELS["start_run"]
-        .model_validate({"prompt": "hello"})
+        .model_validate({"prompt": "hello", "environment_selection": {"mode": "none"}})
         .prompt
         == "hello"
     )
+
+
+def test_start_run_environment_selection_is_a_strict_union():
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    model = generated.CLIENT_REQUEST_MODELS["start_run"]
+
+    explicit = model.model_validate(
+        {
+            "prompt": "hello",
+            "environment_selection": {
+                "mode": "explicit",
+                "environment_id": "environment-1",
+                "environment_generation": 3,
+            },
+        }
+    )
+    assert explicit.environment_selection.environment_id == "environment-1"
+    with pytest.raises(ValidationError):
+        model.model_validate(
+            {
+                "prompt": "hello",
+                "environment_selection": {"mode": "explicit"},
+            }
+        )
+    with pytest.raises(ValidationError):
+        model.model_validate(
+            {
+                "prompt": "hello",
+                "environment_selection": {
+                    "mode": "none",
+                    "environment_id": "environment-1",
+                },
+            }
+        )
 
 
 def test_generated_models_type_optional_wire_fields():

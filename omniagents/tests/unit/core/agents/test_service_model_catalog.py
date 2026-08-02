@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core import models as models_pkg
 from omniagents.core.agents import service as service_module
 from omniagents.core.agents.service import AgentService
@@ -75,7 +76,10 @@ def store(tmp_path):
 
 @pytest.fixture
 def service():
-    service = AgentService(make_spec(), default_workspace_root="/tmp")
+    service = AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agents-service_model_catalog-host"),
+    )
     service.channel = object()
     return service
 
@@ -221,7 +225,7 @@ async def test_run_end_references_catalog_identity(monkeypatch, service, store):
     service._broadcast_session = capture_broadcast  # type: ignore[assignment]
 
     await service.set_session_model(session_id="sess-run", model="gpt-5.1")
-    await service.start_run("hello", session_id="sess-run")
+    await service.start_run("hello", {"mode": "none"}, session_id="sess-run")
     sess = service._session_manager.get_or_create("sess-run")
     if sess.current_task is not None:
         await sess.current_task

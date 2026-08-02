@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.service import AgentService, _safe_slug
 from omniagents.core.agents.specs import AgentSpec
 
@@ -15,7 +16,10 @@ async def test_archive_session_triggers_terminal_cleanup(temp_history_db):
         build_agent=None,
     )
 
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
     session = service._session_manager.get_or_create()
     calls = []
 
@@ -42,7 +46,10 @@ async def test_get_run_state_reports_active_run(temp_history_db):
         get_agent_instructions=lambda: "",
         build_agent=None,
     )
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
     session = service._session_manager.get_or_create("sess_probe")
 
     state = await service.get_run_state("sess_probe")
@@ -77,7 +84,10 @@ def make_spec():
 
 @pytest.mark.asyncio
 async def test_request_client_function_returns_envelope():
-    service = AgentService(make_spec())
+    service = AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
 
     class StubChannel:
         def __init__(self):
@@ -113,7 +123,10 @@ async def test_request_client_function_returns_envelope():
 
 @pytest.mark.asyncio
 async def test_request_client_function_timeout():
-    service = AgentService(make_spec())
+    service = AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
 
     class SilentChannel:
         async def async_call(self, method, args):
@@ -135,7 +148,10 @@ async def test_request_tool_approval_queues_and_adds_safe():
     # the tool_approval_response RPC. With no channel attached, the event
     # is queued on session.pending_tool_approvals for replay; "always
     # approve" mutates session.always_allow_tools.
-    service = AgentService(make_spec())
+    service = AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
     session = service._session_manager.get_or_create()
     session.pending_events = []
 
@@ -168,7 +184,10 @@ async def test_request_tool_approval_queues_and_adds_safe():
 
 @pytest.mark.asyncio
 async def test_start_run_applies_safe_mcp_tool_overrides(monkeypatch):
-    service = AgentService(make_spec(), default_workspace_root="/tmp")
+    service = AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
 
     async def fail_build(*args, **kwargs):
         raise RuntimeError("stop before worker")
@@ -178,6 +197,7 @@ async def test_start_run_applies_safe_mcp_tool_overrides(monkeypatch):
     with pytest.raises(RuntimeError, match="stop before worker"):
         await service.start_run(
             "hello",
+            {"mode": "none"},
             session_id="sess_mcp_safe",
             safe_tool_overrides={
                 "safe_tool_names": ["read_file"],
@@ -199,7 +219,10 @@ async def test_start_run_applies_safe_mcp_tool_overrides(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_request_mcp_approval_auto_approves_allowlisted_tool():
-    service = AgentService(make_spec())
+    service = AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
     session = service._session_manager.get_or_create()
     session.always_allow_mcp_tools.add(("github", "search_issues"))
 
@@ -231,7 +254,10 @@ async def test_request_mcp_approval_auto_approves_allowlisted_tool():
 
 @pytest.mark.asyncio
 async def test_request_mcp_approval_still_broadcasts_for_non_allowlisted_tool():
-    service = AgentService(make_spec())
+    service = AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
     session = service._session_manager.get_or_create()
     session.always_allow_mcp_tools.add(("github", "search_issues"))
 
@@ -284,7 +310,10 @@ async def test_request_mcp_approval_still_broadcasts_for_non_allowlisted_tool():
 
 @pytest.mark.asyncio
 async def test_get_session_history_replays_live_state():
-    service = AgentService(make_spec())
+    service = AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agents-agent_service-host"),
+    )
     session = service._session_manager.get_or_create()
     session.history = []
     session.active_run_started_payload = {

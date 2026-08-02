@@ -14,6 +14,7 @@ import type {
 } from "../types/protocol.js";
 import type {
   Capabilities,
+  EnvironmentSelection,
   InitializeParams,
   InitializeResult,
   RpcMethodMap as GeneratedRpcMethodMap,
@@ -348,10 +349,14 @@ export class RPCClient extends EventEmitter {
    */
   async startRun(
     prompt: string,
+    environmentSelection: EnvironmentSelection,
     sessionId?: string,
     variables?: Record<string, unknown>,
   ): Promise<{ run_id: string; session_id: string }> {
-    const params: Record<string, unknown> = { prompt };
+    const params: Record<string, unknown> = {
+      prompt,
+      environment_selection: environmentSelection,
+    };
     if (sessionId) {
       params.session_id = sessionId;
     }
@@ -362,6 +367,14 @@ export class RPCClient extends EventEmitter {
       "start_run",
       params as unknown as RpcMethodMap["start_run"]["params"],
     );
+  }
+
+  defaultEnvironmentSelection(): EnvironmentSelection {
+    const environmentId =
+      this.negotiatedInitialization?.agent_host.default_environment_id;
+    return environmentId
+      ? { mode: "explicit", environment_id: environmentId }
+      : { mode: "none" };
   }
 
   /**
@@ -1055,11 +1068,11 @@ export class RPCClient extends EventEmitter {
   // ----- Workspace filesystem watch & chunked transfer (fs_*, experimental) -----
 
   async fsWatch(
-    sessionId: string,
+    environmentId: string,
     path: string,
     opts?: { recursive?: boolean; pollIntervalMs?: number },
   ): Promise<FsWatchResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, path };
+    const params: Record<string, unknown> = { environment_id: environmentId, path };
     if (opts?.recursive !== undefined) params.recursive = opts.recursive;
     if (opts?.pollIntervalMs !== undefined)
       params.poll_interval_ms = opts.pollIntervalMs;
@@ -1069,49 +1082,49 @@ export class RPCClient extends EventEmitter {
     ) as Promise<FsWatchResult>;
   }
 
-  async fsUnwatch(sessionId: string, watchId: string): Promise<boolean> {
+  async fsUnwatch(environmentId: string, watchId: string): Promise<boolean> {
     return this.call("fs_unwatch", {
-      session_id: sessionId,
+      environment_id: environmentId,
       watch_id: watchId,
     });
   }
 
   async fsList(
-    sessionId: string,
+    environmentId: string,
     path: string,
     recursive = false,
   ): Promise<FsListResult> {
     return this.call("fs_list", {
-      session_id: sessionId,
+      environment_id: environmentId,
       path,
       recursive,
     }) as Promise<FsListResult>;
   }
 
-  async fsStat(sessionId: string, path: string): Promise<FsStatResult> {
+  async fsStat(environmentId: string, path: string): Promise<FsStatResult> {
     return this.call("fs_stat", {
-      session_id: sessionId,
+      environment_id: environmentId,
       path,
     }) as Promise<FsStatResult>;
   }
 
   async fsDownloadOpen(
-    sessionId: string,
+    environmentId: string,
     path: string,
   ): Promise<FsDownloadOpenResult> {
     return this.call("fs_download_open", {
-      session_id: sessionId,
+      environment_id: environmentId,
       path,
     }) as Promise<FsDownloadOpenResult>;
   }
 
   async fsDownloadRead(
-    sessionId: string,
+    environmentId: string,
     transferId: string,
     opts?: { offset?: number; length?: number },
   ): Promise<FsDownloadChunk> {
     const params: Record<string, unknown> = {
-      session_id: sessionId,
+      environment_id: environmentId,
       transfer_id: transferId,
     };
     if (opts?.offset !== undefined) params.offset = opts.offset;
@@ -1123,23 +1136,23 @@ export class RPCClient extends EventEmitter {
   }
 
   async fsDownloadClose(
-    sessionId: string,
+    environmentId: string,
     transferId: string,
   ): Promise<boolean> {
     return this.call("fs_download_close", {
-      session_id: sessionId,
+      environment_id: environmentId,
       transfer_id: transferId,
     });
   }
 
   async fsUploadOpen(
-    sessionId: string,
+    environmentId: string,
     path: string,
     size: number,
     opts?: { sha256?: string; expectedSha256?: string; overwrite?: boolean },
   ): Promise<FsUploadOpenResult> {
     const params: Record<string, unknown> = {
-      session_id: sessionId,
+      environment_id: environmentId,
       path,
       size,
     };
@@ -1154,13 +1167,13 @@ export class RPCClient extends EventEmitter {
   }
 
   async fsUploadChunk(
-    sessionId: string,
+    environmentId: string,
     transferId: string,
     offset: number,
     data: string,
   ): Promise<FsUploadChunkResult> {
     return this.call("fs_upload_chunk", {
-      session_id: sessionId,
+      environment_id: environmentId,
       transfer_id: transferId,
       offset,
       data,
@@ -1168,21 +1181,21 @@ export class RPCClient extends EventEmitter {
   }
 
   async fsUploadCommit(
-    sessionId: string,
+    environmentId: string,
     transferId: string,
   ): Promise<FsUploadCommitResult> {
     return this.call("fs_upload_commit", {
-      session_id: sessionId,
+      environment_id: environmentId,
       transfer_id: transferId,
     }) as Promise<FsUploadCommitResult>;
   }
 
   async fsUploadAbort(
-    sessionId: string,
+    environmentId: string,
     transferId: string,
   ): Promise<boolean> {
     return this.call("fs_upload_abort", {
-      session_id: sessionId,
+      environment_id: environmentId,
       transfer_id: transferId,
     });
   }
@@ -1190,10 +1203,10 @@ export class RPCClient extends EventEmitter {
   // ----- Typed git operations (git_*, experimental) -----
 
   async gitListRepositories(
-    sessionId: string,
+    environmentId: string,
     opts?: { path?: string; maxDepth?: number },
   ): Promise<GitListRepositoriesResult> {
-    const params: Record<string, unknown> = { session_id: sessionId }
+    const params: Record<string, unknown> = { environment_id: environmentId }
     if (opts?.path !== undefined) params.path = opts.path
     if (opts?.maxDepth !== undefined) params.max_depth = opts.maxDepth
     return this.call(
@@ -1203,11 +1216,11 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitStatus(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     opts?: { includeUntracked?: boolean; includeIgnored?: boolean; paths?: string[] },
   ): Promise<GitStatusResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (opts?.includeUntracked !== undefined) params.include_untracked = opts.includeUntracked
     if (opts?.includeIgnored !== undefined) params.include_ignored = opts.includeIgnored
     if (opts?.paths !== undefined) params.paths = opts.paths
@@ -1218,7 +1231,7 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitDiff(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     opts?: {
       mode?: GitDiffMode
@@ -1228,7 +1241,7 @@ export class RPCClient extends EventEmitter {
       toRev?: string
     },
   ): Promise<GitDiffResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (opts?.mode !== undefined) params.mode = opts.mode
     if (opts?.paths !== undefined) params.paths = opts.paths
     if (opts?.contextLines !== undefined) params.context_lines = opts.contextLines
@@ -1241,11 +1254,11 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitLog(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     opts?: { rev?: string; maxCount?: number; skip?: number; paths?: string[] },
   ): Promise<GitLogResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (opts?.rev !== undefined) params.rev = opts.rev
     if (opts?.maxCount !== undefined) params.max_count = opts.maxCount
     if (opts?.skip !== undefined) params.skip = opts.skip
@@ -1257,11 +1270,11 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitListBranches(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     includeRemote?: boolean,
   ): Promise<GitListBranchesResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (includeRemote !== undefined) params.include_remote = includeRemote
     return this.call(
       "git_list_branches",
@@ -1269,19 +1282,19 @@ export class RPCClient extends EventEmitter {
     ) as Promise<GitListBranchesResult>
   }
 
-  async gitListWorktrees(sessionId: string, repo: string): Promise<GitListWorktreesResult> {
+  async gitListWorktrees(environmentId: string, repo: string): Promise<GitListWorktreesResult> {
     return this.call("git_list_worktrees", {
-      session_id: sessionId,
+      environment_id: environmentId,
       repo,
     }) as Promise<GitListWorktreesResult>
   }
 
   async gitConflicts(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     paths?: string[],
   ): Promise<GitConflictsResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (paths !== undefined) params.paths = paths
     return this.call(
       "git_conflicts",
@@ -1290,24 +1303,24 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitStage(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     selection: GitSelection,
   ): Promise<GitStageResult> {
     return this.call(
       "git_stage",
-      gitSelectionParams(sessionId, repo, selection) as unknown as RpcMethodMap["git_stage"]["params"],
+      gitSelectionParams(environmentId, repo, selection) as unknown as RpcMethodMap["git_stage"]["params"],
     ) as Promise<GitStageResult>
   }
 
   async gitUnstage(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     selection: GitSelection,
   ): Promise<GitUnstageResult> {
     return this.call(
       "git_unstage",
-      gitSelectionParams(sessionId, repo, selection) as unknown as RpcMethodMap["git_unstage"]["params"],
+      gitSelectionParams(environmentId, repo, selection) as unknown as RpcMethodMap["git_unstage"]["params"],
     ) as Promise<GitUnstageResult>
   }
 
@@ -1317,11 +1330,11 @@ export class RPCClient extends EventEmitter {
    * single-use token that must be echoed back in `confirmationToken`.
    */
   async gitDiscard(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     selection: GitSelection & { confirmationToken?: string },
   ): Promise<GitDiscardResult> {
-    const params = gitSelectionParams(sessionId, repo, selection)
+    const params = gitSelectionParams(environmentId, repo, selection)
     if (selection.confirmationToken !== undefined) {
       params.confirmation_token = selection.confirmationToken
     }
@@ -1332,12 +1345,12 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitCommit(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     message: string,
     opts?: { amend?: boolean; allowEmpty?: boolean; author?: string; confirmationToken?: string },
   ): Promise<GitCommitResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo, message }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo, message }
     if (opts?.amend !== undefined) params.amend = opts.amend
     if (opts?.allowEmpty !== undefined) params.allow_empty = opts.allowEmpty
     if (opts?.author !== undefined) params.author = opts.author
@@ -1349,7 +1362,7 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitCheckout(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     branch: string,
     opts?: {
@@ -1360,7 +1373,7 @@ export class RPCClient extends EventEmitter {
       confirmationToken?: string
     },
   ): Promise<GitStatusResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo, branch }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo, branch }
     if (opts?.create !== undefined) params.create = opts.create
     if (opts?.startPoint !== undefined) params.start_point = opts.startPoint
     if (opts?.detach !== undefined) params.detach = opts.detach
@@ -1373,11 +1386,11 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitReset(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     opts?: { mode?: GitResetMode; rev?: string; paths?: string[]; confirmationToken?: string },
   ): Promise<GitStatusResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (opts?.mode !== undefined) params.mode = opts.mode
     if (opts?.rev !== undefined) params.rev = opts.rev
     if (opts?.paths !== undefined) params.paths = opts.paths
@@ -1389,11 +1402,11 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitFetch(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     opts?: { remote?: string; refspec?: string; prune?: boolean },
   ): Promise<GitFetchResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (opts?.remote !== undefined) params.remote = opts.remote
     if (opts?.refspec !== undefined) params.refspec = opts.refspec
     if (opts?.prune !== undefined) params.prune = opts.prune
@@ -1404,11 +1417,11 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitPull(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     opts?: { remote?: string; refspec?: string; rebase?: boolean },
   ): Promise<GitPullResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (opts?.remote !== undefined) params.remote = opts.remote
     if (opts?.refspec !== undefined) params.refspec = opts.refspec
     if (opts?.rebase !== undefined) params.rebase = opts.rebase
@@ -1419,7 +1432,7 @@ export class RPCClient extends EventEmitter {
   }
 
   async gitPush(
-    sessionId: string,
+    environmentId: string,
     repo: string,
     opts?: {
       remote?: string
@@ -1430,7 +1443,7 @@ export class RPCClient extends EventEmitter {
       confirmationToken?: string
     },
   ): Promise<GitPushResult> {
-    const params: Record<string, unknown> = { session_id: sessionId, repo }
+    const params: Record<string, unknown> = { environment_id: environmentId, repo }
     if (opts?.remote !== undefined) params.remote = opts.remote
     if (opts?.refspec !== undefined) params.refspec = opts.refspec
     if (opts?.force !== undefined) params.force = opts.force
@@ -1915,7 +1928,7 @@ export type FsEntryType = "file" | "directory";
 
 export type FsWatchResult = {
   watch_id: string;
-  session_id: string;
+  environment_id: string;
   path: string;
   recursive: boolean;
   mechanism: "poll:host" | "poll:workspace";
@@ -1945,7 +1958,7 @@ export type FsStatResult = {
 
 export type FsDownloadOpenResult = {
   transfer_id: string;
-  session_id: string;
+  environment_id: string;
   path: string;
   size: number;
   mime: string;
@@ -1965,7 +1978,7 @@ export type FsDownloadChunk = {
 
 export type FsUploadOpenResult = {
   transfer_id: string;
-  session_id: string;
+  environment_id: string;
   path: string;
   chunk_size: number;
 };
@@ -1984,7 +1997,7 @@ export type FsUploadCommitResult = {
 
 /** Payload of the `fs_events` server notification. */
 export type FsEventsPayload = {
-  session_id: string;
+  environment_id: string;
   watch_id: string;
   events: Array<{
     type: "created" | "modified" | "deleted";
@@ -1995,14 +2008,14 @@ export type FsEventsPayload = {
 
 /** Payload of the `fs_rescan_required` server notification. */
 export type FsRescanRequiredPayload = {
-  session_id: string;
+  environment_id: string;
   watch_id: string;
   reason: "event_overflow" | "scan_limit_exceeded";
 };
 
 /** Payload of the `fs_transfer_progress` server notification. */
 export type FsTransferProgressPayload = {
-  session_id: string;
+  environment_id: string;
   transfer_id: string;
   direction: "download" | "upload";
   transferred: number;
@@ -2024,7 +2037,7 @@ export type GitRepository = {
 }
 
 export type GitListRepositoriesResult = {
-  session_id: string
+  environment_id: string
   path: string
   repositories: GitRepository[]
   truncated: boolean
@@ -2066,7 +2079,7 @@ export type GitStatusEntry = {
 }
 
 export type GitStatusResult = {
-  session_id: string
+  environment_id: string
   repo: string
   head: { detached: boolean; unborn: boolean; branch: string | null; oid: string | null }
   upstream: { name: string; ahead: number; behind: number } | null
@@ -2124,7 +2137,7 @@ export type GitDiffFile = {
 }
 
 export type GitDiffResult = {
-  session_id: string
+  environment_id: string
   repo: string
   mode: GitDiffMode
   context_lines: number
@@ -2146,7 +2159,7 @@ export type GitCommitSummary = {
   body: string
 }
 
-export type GitLogResult = { session_id: string; repo: string; commits: GitCommitSummary[] }
+export type GitLogResult = { environment_id: string; repo: string; commits: GitCommitSummary[] }
 
 export type GitBranch = {
   ref: string
@@ -2160,7 +2173,7 @@ export type GitBranch = {
   category: "branch" | "worker"
 }
 
-export type GitListBranchesResult = { session_id: string; repo: string; branches: GitBranch[] }
+export type GitListBranchesResult = { environment_id: string; repo: string; branches: GitBranch[] }
 
 export type GitWorktree = {
   path: string
@@ -2180,7 +2193,7 @@ export type GitWorktree = {
 }
 
 export type GitListWorktreesResult = {
-  session_id: string
+  environment_id: string
   repo: string
   worktrees: GitWorktree[]
 }
@@ -2205,7 +2218,7 @@ export type GitConflict = {
 }
 
 export type GitConflictsResult = {
-  session_id: string
+  environment_id: string
   repo: string
   state: GitStatusResult["state"]
   conflicts: GitConflict[]
@@ -2223,11 +2236,11 @@ export type GitSelection = {
 }
 
 export function gitSelectionParams(
-  sessionId: string,
+  environmentId: string,
   repo: string,
   selection: GitSelection,
 ): Record<string, unknown> {
-  const params: Record<string, unknown> = { session_id: sessionId, repo }
+  const params: Record<string, unknown> = { environment_id: environmentId, repo }
   if (selection.paths !== undefined) params.paths = selection.paths
   if (selection.hunks !== undefined) params.hunks = selection.hunks
   if (selection.contextLines !== undefined) params.context_lines = selection.contextLines
@@ -2236,28 +2249,28 @@ export function gitSelectionParams(
 }
 
 export type GitStageResult = {
-  session_id: string
+  environment_id: string
   repo: string
   staged_paths: string[]
   staged_hunks: GitHunkRef[]
 }
 
 export type GitUnstageResult = {
-  session_id: string
+  environment_id: string
   repo: string
   unstaged_paths: string[]
   unstaged_hunks: GitHunkRef[]
 }
 
 export type GitDiscardResult = {
-  session_id: string
+  environment_id: string
   repo: string
   discarded_paths: string[]
   discarded_hunks: GitHunkRef[]
 }
 
 export type GitCommitResult = {
-  session_id: string
+  environment_id: string
   repo: string
   oid: string
   amended: boolean
@@ -2271,14 +2284,14 @@ export type GitRefUpdate = {
 }
 
 export type GitFetchResult = {
-  session_id: string
+  environment_id: string
   repo: string
   remote: string | null
   updated_refs: GitRefUpdate[]
 }
 
 export type GitPullResult = {
-  session_id: string
+  environment_id: string
   repo: string
   ok: boolean
   state: GitStatusResult["state"]
@@ -2301,7 +2314,7 @@ export type GitPushUpdate = {
 }
 
 export type GitPushResult = {
-  session_id: string
+  environment_id: string
   repo: string
   ok: boolean
   remote_url: string | null
@@ -2311,7 +2324,7 @@ export type GitPushResult = {
 
 /** Payload of the `git_operation_progress` server notification. */
 export type GitOperationProgressPayload = {
-  session_id: string
+  environment_id: string
   operation_id: string
   repo: string
   operation: "fetch" | "pull" | "push"

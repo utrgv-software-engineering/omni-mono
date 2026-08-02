@@ -15,10 +15,12 @@ from starlette.websockets import WebSocketDisconnect
 from types import SimpleNamespace
 
 from omniagents.backends.server import app as server_app
+from omniagents.execution import register_host_environment
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.runtime import bridge as runner_bridge
 from omniagents.rpc.auth import RPC_ERROR_AUTHORIZATION_DENIED
 from omniagents.rpc.base import RpcMethodsBase
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 from agents import Agent
 
 ALICE = {"Authorization": "Bearer alice-token"}
@@ -61,6 +63,8 @@ class RpcWs:
         self.notifications = []
 
     def call(self, method, **params):
+        if method == "start_run":
+            params.setdefault("environment_selection", {"mode": "none"})
         self.next_id += 1
         call_id = f"c{self.next_id}"
         self.ws.send_json(
@@ -135,7 +139,7 @@ def authz_context(monkeypatch):
         },
     )
 
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
     service = app.state.agent_service
     yield SimpleNamespace(client=client, service=service)
@@ -156,6 +160,38 @@ def test_wrong_token_rejected(authz_context):
             "/ws", headers={"Authorization": "Bearer mallory"}
         ):
             pass
+
+
+def test_start_run_authorizes_nested_explicit_environment(authz_context):
+    descriptor = register_host_environment(
+        authz_context.service.agent_host_resources,
+        "/tmp",
+        owner_user_id="alice",
+        workspace_id="workspace-alice-explicit",
+        environment_id="environment-alice-explicit",
+    )
+    alice_cm, alice = _connect(authz_context, ALICE)
+    bob_cm, bob = _connect(authz_context, BOB)
+    selection = {
+        "mode": "explicit",
+        "environment_id": descriptor.environment_id,
+        "environment_generation": descriptor.generation,
+    }
+    try:
+        started = alice.result(
+            "start_run",
+            prompt="alice explicit environment",
+            environment_selection=selection,
+        )
+        assert started["session_id"]
+        bob.expect_denied(
+            "start_run",
+            prompt="bob environment hijack",
+            environment_selection=selection,
+        )
+    finally:
+        alice_cm.__exit__(None, None, None)
+        bob_cm.__exit__(None, None, None)
 
 
 def test_cross_user_session_access_denied(authz_context):
@@ -300,7 +336,12 @@ def test_cross_user_terminal_attach_denied(authz_context):
 
     manager = TerminalManager(backend=FakePtyBackend())
     authz_context.service.terminal_manager = manager
-    authz_context.service.register_server_function("terminal.create", terminal_create)
+    authz_context.service.register_server_function(
+        "terminal.create",
+        terminal_create,
+        resource_scope=ResourceScope.THREAD,
+        execution_requirements=ExecutionRequirement.PTY,
+    )
 
     alice_cm, alice = _connect(authz_context, ALICE)
     try:
@@ -712,7 +753,7 @@ def test_single_user_mode_keeps_permissive_behavior(monkeypatch):
         get_agent_instructions=lambda: "Single",
         build_agent=mock_build_agent,
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
     from omniagents.core.session.history_db import register_session
 

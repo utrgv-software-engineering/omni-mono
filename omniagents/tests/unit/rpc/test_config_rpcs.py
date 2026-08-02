@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.rpc.auth import (
@@ -51,7 +52,9 @@ def make_service(manifest: Path) -> AgentService:
         security_config={"safety_mode": "recommended"},
         manifest_path=str(manifest),
     )
-    return AgentService(spec)
+    return AgentService(
+        spec, AgentHostResources.create("test-unit-rpc-config_rpcs-host")
+    )
 
 
 @pytest.mark.asyncio

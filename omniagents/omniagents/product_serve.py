@@ -299,6 +299,9 @@ def build_readiness_payload(
     profile: Any,
     service_urls: Dict[str, Any],
     resume_tier: Optional[str],
+    agent_host_id: str,
+    workspace_id: str,
+    environment_id: str,
 ) -> Dict[str, Any]:
     """The launcher's ``SandboxJsonPayload`` readiness dict — the serve
     protocol's handshake, field-for-field (see docs/serve-protocol.md).
@@ -338,6 +341,9 @@ def build_readiness_payload(
         "ports": {"ui": port},
         "container_id": container_id,
         "resume": resume_tier,
+        "agent_host_id": agent_host_id,
+        "workspace_id": workspace_id,
+        "environment_id": environment_id,
         "_debug": {
             "client": (profile.raw.get("client") or {}).get("type"),
             "manifest_root": manifest_root,
@@ -371,11 +377,11 @@ async def _serve(args: argparse.Namespace) -> int:
         _cancel_active_runs,
         _install_host_terminal_manager,
         _install_session_terminal_manager,
+        _register_execution_environment,
         _is_host_profile,
         _profile_display_name,
         bring_up_host_target,
         bring_up_session,
-        perform_switch,
         teardown_session,
     )
     from omniagents.core.sandbox.profiles import resolve_product_profile
@@ -491,33 +497,29 @@ async def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from omniagents.backends.server.app import build_app
-    from omniagents.core.runtime.serve_state import (
-        get_manifest_root,
-        get_sandbox_session,
-    )
-    from omniagents.workspace import clamp_within
+    from omniagents.core.runtime.serve_state import get_manifest_root
 
-    def _resolve_workspace_root(requested: Optional[str]) -> Optional[str]:
-        """Map a requested cwd to the effective one, per the live target.
+    from omniagents.execution import AgentHostResources
 
-        Host target (no live sandbox session): the cwd may be any host dir —
-        return it, or default to the workspace root. Sandbox target: clamp the
-        cwd to within the manifest root, so it can navigate among container
-        subdirectories but a host path can never root a sandbox run. Reads the
-        live state each call, so it stays correct across runtime switches.
-        """
-        root = get_manifest_root()
-        if get_sandbox_session() is None:
-            if isinstance(requested, str) and requested.strip():
-                return requested
-            return root or args.workspace
-        return clamp_within(requested, root) if root else requested
-
+    agent_host_id = f"agenthost_{uuid.uuid4().hex}"
+    workspace_id = f"workspace_{uuid.uuid4().hex}"
+    environment_id = f"environment_{uuid.uuid4().hex}"
+    agent_host_resources = AgentHostResources.create(agent_host_id)
     app = build_app(
         config_path=str(agent_project_path),
         spec=spec,
         auth_token=args.auth_token,
-        workspace_root_resolver=_resolve_workspace_root,
+        agent_host_resources=agent_host_resources,
+    )
+    await _register_execution_environment(
+        app,
+        spec,
+        environment_id=environment_id,
+        workspace_id=workspace_id,
+        owner_user_id="token_user" if args.auth_token else None,
+        session=session,
+        root=(args.workspace if session is None else get_manifest_root()),
+        sources=sources_parsed,
     )
 
     # Install the TerminalManager matching the execution target. Host →
@@ -571,6 +573,9 @@ async def _serve(args: argparse.Namespace) -> int:
         profile=profile,
         service_urls=service_urls,
         resume_tier=resume_tier,
+        agent_host_id=agent_host_id,
+        workspace_id=workspace_id,
+        environment_id=environment_id,
     )
     container_id = payload["container_id"]
     if args.output == "json":
@@ -609,6 +614,8 @@ async def _serve(args: argparse.Namespace) -> int:
         app=app,
         spec=spec,
         session_id=session_id,
+        environment_id=environment_id,
+        workspace_id=workspace_id,
         snapshot_dir=args.snapshot_dir,
         sources_parsed=sources_parsed,
         credentials_parsed=credentials_parsed,
@@ -628,13 +635,14 @@ async def _serve(args: argparse.Namespace) -> int:
     switch_ctx.ready_event.set()
     set_switch_context(switch_ctx)
 
-    # The builtin ``sandbox.switch`` server function (activated by the
-    # ``sandbox`` capability pack) validates the RPC and delegates to this
-    # executor; the orchestration itself lives in the harness's
-    # ``perform_switch``.
-    from omniagents.core.runtime.sandbox_lifecycle import set_switch_executor
+    from omniagents.core.runtime.serve_harness import (
+        ServeEnvironmentLifecycleController,
+    )
 
-    set_switch_executor(perform_switch)
+    await app.state.agent_service.environment_manager.set_lifecycle_controller(
+        environment_id,
+        ServeEnvironmentLifecycleController(switch_ctx),
+    )
 
     # --- Run server + fast signal shutdown ---
     # Any exit signal skips uvicorn's graceful drain (``force_exit``): the
@@ -719,18 +727,16 @@ async def _serve(args: argparse.Namespace) -> int:
         await teardown_session(
             live_session,
             live_services,
-            discard_snapshot=get_discard_snapshot_on_exit(),
+            discard_snapshot=(
+                live_ctx.discard_snapshot_on_exit
+                if live_ctx is not None
+                else get_discard_snapshot_on_exit()
+            ),
         )
         # Clear the published process-global slots on exit (teardown_session
         # deliberately leaves the handle alone so switches can replace it).
         set_sandbox_session(None)
         set_switch_context(None)
-        from omniagents.core.runtime.sandbox_lifecycle import (
-            set_switch_executor as _clear_switch_executor,
-        )
-
-        _clear_switch_executor(None)
-
     return 0
 
 

@@ -15,6 +15,7 @@ import asyncio
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.conversation.model import ItemKind
 from omniagents.core.conversation.service import ConversationService
 from omniagents.core.conversation.store import (
@@ -115,7 +116,9 @@ def service():
         get_agent_instructions=lambda: "hi",
         build_agent=build_agent,
     )
-    return AgentService(spec)
+    return AgentService(
+        spec, AgentHostResources.create("test-unit-core-conversation-call_sites-host")
+    )
 
 
 def test_send_user_message_records_a_user_message_item(store, service):

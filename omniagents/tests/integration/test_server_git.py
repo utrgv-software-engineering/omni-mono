@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.execution import AgentHostResources, register_host_environment
 from omniagents.rpc.auth import RPC_ERROR_AUTHORIZATION_DENIED
 from tests.fixtures.gui_ws import perform_gui_handshake
 
@@ -149,8 +150,16 @@ def repo(workspace: Path) -> Path:
 
 @pytest.fixture
 def client(workspace: Path) -> TestClient:
+    resources = AgentHostResources.create("git-test-host")
+    register_host_environment(
+        resources,
+        str(workspace),
+        owner_user_id=None,
+        workspace_id="git-workspace",
+        environment_id="git-env",
+    )
     return TestClient(
-        server_app.build_app(spec=_spec(), default_workspace_root=str(workspace))
+        server_app.build_app(spec=_spec(), agent_host_resources=resources)
     )
 
 
@@ -180,7 +189,7 @@ def test_git_methods_require_an_experimental_grant(client: TestClient, repo: Pat
     with client.websocket_connect("/ws") as ws:
         perform_gui_handshake(ws)
         rpc = Rpc(ws)
-        error = rpc.error("git_status", session_id="git-sess", repo="app")
+        error = rpc.error("git_status", environment_id="git-env", repo="app")
         assert error["code"] == -32013
         assert error["data"]["kind"] == "capability_not_negotiated"
 
@@ -205,24 +214,24 @@ def test_multi_repository_projects_are_addressed_by_id(
         rpc = Rpc(ws)
         _ensure_session(rpc, "git-sess", workspace)
 
-        listing = rpc.result("git_list_repositories", session_id="git-sess")
+        listing = rpc.result("git_list_repositories", environment_id="git-env")
         assert [item["repo"] for item in listing["repositories"]] == [
             "apps/web",
             "services/api",
         ]
 
-        web = rpc.result("git_status", session_id="git-sess", repo="apps/web")
-        api = rpc.result("git_status", session_id="git-sess", repo="services/api")
+        web = rpc.result("git_status", environment_id="git-env", repo="apps/web")
+        api = rpc.result("git_status", environment_id="git-env", repo="services/api")
         assert web["untracked"] == ["only-web.txt"]
         assert api["untracked"] == []
 
         # An unknown / non-repository id is a typed error, not a guess.
-        error = rpc.error("git_status", session_id="git-sess", repo="apps")
+        error = rpc.error("git_status", environment_id="git-env", repo="apps")
         assert error["code"] == -32090
         assert error["data"]["kind"] == "git_repository_not_found"
 
         # Traversal out of the workspace never reaches git.
-        escape = rpc.error("git_status", session_id="git-sess", repo="../elsewhere")
+        escape = rpc.error("git_status", environment_id="git-env", repo="../elsewhere")
         assert escape["code"] == -32091
         assert escape["data"]["kind"] == "git_path_invalid"
 
@@ -235,7 +244,7 @@ def test_multi_repository_projects_are_addressed_by_id(
 def test_hunk_level_stage_unstage_and_commit_round_trip(session: Rpc, repo: Path):
     (repo / "f.txt").write_text(two_hunk_edit())
 
-    diff = session.result("git_diff", session_id="git-sess", repo="app")
+    diff = session.result("git_diff", environment_id="git-env", repo="app")
     (diff_file,) = diff["files"]
     assert diff_file["hunk_selectable"] is True
     hunks = diff_file["hunks"]
@@ -243,14 +252,14 @@ def test_hunk_level_stage_unstage_and_commit_round_trip(session: Rpc, repo: Path
 
     staged = session.result(
         "git_stage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         hunks=[{"path": "f.txt", "hunk_id": hunks[0]["hunk_id"]}],
     )
     assert staged["staged_hunks"] == [{"path": "f.txt", "hunk_id": hunks[0]["hunk_id"]}]
 
     index_diff = session.result(
-        "git_diff", session_id="git-sess", repo="app", mode="staged"
+        "git_diff", environment_id="git-env", repo="app", mode="staged"
     )
     index_lines = [
         line["content"]
@@ -259,7 +268,7 @@ def test_hunk_level_stage_unstage_and_commit_round_trip(session: Rpc, repo: Path
     ]
     assert index_lines == ["CHANGED-TOP"]
 
-    worktree_diff = session.result("git_diff", session_id="git-sess", repo="app")
+    worktree_diff = session.result("git_diff", environment_id="git-env", repo="app")
     remaining = [
         line["content"]
         for line in worktree_diff["files"][0]["hunks"][0]["lines"]
@@ -268,27 +277,27 @@ def test_hunk_level_stage_unstage_and_commit_round_trip(session: Rpc, repo: Path
     assert remaining == ["CHANGED-BOTTOM"]
 
     commit = session.result(
-        "git_commit", session_id="git-sess", repo="app", message="only the top hunk"
+        "git_commit", environment_id="git-env", repo="app", message="only the top hunk"
     )
     assert commit["oid"] == git(repo, "rev-parse", "HEAD").strip()
-    log = session.result("git_log", session_id="git-sess", repo="app", max_count=1)
+    log = session.result("git_log", environment_id="git-env", repo="app", max_count=1)
     assert log["commits"][0]["subject"] == "only the top hunk"
 
     # And the leftover hunk can be staged and unstaged again.
-    leftover = session.result("git_diff", session_id="git-sess", repo="app")
+    leftover = session.result("git_diff", environment_id="git-env", repo="app")
     hunk_id = leftover["files"][0]["hunks"][0]["hunk_id"]
     session.result(
         "git_stage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         hunks=[{"path": "f.txt", "hunk_id": hunk_id}],
     )
     staged_now = session.result(
-        "git_diff", session_id="git-sess", repo="app", mode="staged"
+        "git_diff", environment_id="git-env", repo="app", mode="staged"
     )
     session.result(
         "git_unstage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         hunks=[
             {
@@ -302,13 +311,13 @@ def test_hunk_level_stage_unstage_and_commit_round_trip(session: Rpc, repo: Path
 
 def test_a_stale_hunk_selection_stages_nothing(session: Rpc, repo: Path):
     (repo / "f.txt").write_text(two_hunk_edit())
-    diff = session.result("git_diff", session_id="git-sess", repo="app")
+    diff = session.result("git_diff", environment_id="git-env", repo="app")
     stale = diff["files"][0]["hunks"][0]["hunk_id"]
     (repo / "f.txt").write_text(NUMBERED.replace("line2", "SOMETHING-ELSE"))
 
     error = session.error(
         "git_stage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         hunks=[{"path": "f.txt", "hunk_id": stale}],
     )
@@ -329,7 +338,7 @@ def test_destructive_actions_require_an_impact_bound_confirmation(
     (repo / "f.txt").write_text(two_hunk_edit())
 
     denied = session.error(
-        "git_discard", session_id="git-sess", repo="app", paths=["f.txt"]
+        "git_discard", environment_id="git-env", repo="app", paths=["f.txt"]
     )
     assert denied["code"] == -32093
     assert denied["data"]["kind"] == "git_confirmation_required"
@@ -339,11 +348,11 @@ def test_destructive_actions_require_an_impact_bound_confirmation(
 
     # A token minted for a different operation does not unlock this one.
     reset_denied = session.error(
-        "git_reset", session_id="git-sess", repo="app", mode="hard"
+        "git_reset", environment_id="git-env", repo="app", mode="hard"
     )
     cross = session.error(
         "git_discard",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         paths=["f.txt"],
         confirmation_token=reset_denied["data"]["confirmation_token"],
@@ -356,7 +365,7 @@ def test_destructive_actions_require_an_impact_bound_confirmation(
     token = cross["data"]["confirmation_token"]
     session.result(
         "git_discard",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         paths=["f.txt"],
         confirmation_token=token,
@@ -365,7 +374,7 @@ def test_destructive_actions_require_an_impact_bound_confirmation(
 
     replay = session.error(
         "git_discard",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         paths=["f.txt"],
         confirmation_token=token,
@@ -375,12 +384,14 @@ def test_destructive_actions_require_an_impact_bound_confirmation(
 
 def test_hard_reset_and_amend_are_gated(session: Rpc, repo: Path):
     (repo / "f.txt").write_text(two_hunk_edit())
-    denied = session.error("git_reset", session_id="git-sess", repo="app", mode="hard")
+    denied = session.error(
+        "git_reset", environment_id="git-env", repo="app", mode="hard"
+    )
     assert denied["data"]["operation"] == "reset_hard"
     assert denied["data"]["impact"]["dirty_paths"] == ["f.txt"]
     session.result(
         "git_reset",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         mode="hard",
         confirmation_token=denied["data"]["confirmation_token"],
@@ -389,7 +400,7 @@ def test_hard_reset_and_amend_are_gated(session: Rpc, repo: Path):
 
     amend = session.error(
         "git_commit",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         message="reworded",
         amend=True,
@@ -397,7 +408,7 @@ def test_hard_reset_and_amend_are_gated(session: Rpc, repo: Path):
     assert amend["data"]["operation"] == "amend_commit"
     session.result(
         "git_commit",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         message="reworded",
         amend=True,
@@ -408,9 +419,9 @@ def test_hard_reset_and_amend_are_gated(session: Rpc, repo: Path):
 
 def test_non_destructive_operations_need_no_confirmation(session: Rpc, repo: Path):
     (repo / "f.txt").write_text(two_hunk_edit())
-    session.result("git_stage", session_id="git-sess", repo="app", paths=["f.txt"])
+    session.result("git_stage", environment_id="git-env", repo="app", paths=["f.txt"])
     status = session.result(
-        "git_reset", session_id="git-sess", repo="app", mode="mixed"
+        "git_reset", environment_id="git-env", repo="app", mode="mixed"
     )
     assert status["entries"][0]["staged"] is False
     assert (repo / "f.txt").read_text() == two_hunk_edit()
@@ -430,14 +441,14 @@ def test_conflicts_and_detached_head_are_structural(session: Rpc, repo: Path):
     git(repo, "commit", "-qam", "main change")
     git(repo, "merge", "feature", check=False)
 
-    status = session.result("git_status", session_id="git-sess", repo="app")
+    status = session.result("git_status", environment_id="git-env", repo="app")
     assert status["state"] == "merging"
     assert status["conflicted"] == ["f.txt"]
     entry = next(item for item in status["entries"] if item["path"] == "f.txt")
     assert entry["xy"] == "UU"
     assert entry["unmerged"]["ours_oid"] != entry["unmerged"]["theirs_oid"]
 
-    conflicts = session.result("git_conflicts", session_id="git-sess", repo="app")
+    conflicts = session.result("git_conflicts", environment_id="git-env", repo="app")
     (conflict,) = conflicts["conflicts"]
     assert set(conflict["stages"]) == {"base", "ours", "theirs"}
     assert conflict["regions"][0]["ours"] == ["MAIN"]
@@ -446,7 +457,7 @@ def test_conflicts_and_detached_head_are_structural(session: Rpc, repo: Path):
     git(repo, "merge", "--abort")
     oid = git(repo, "rev-parse", "HEAD").strip()
     git(repo, "checkout", "-q", "--detach", oid)
-    detached = session.result("git_status", session_id="git-sess", repo="app")
+    detached = session.result("git_status", environment_id="git-env", repo="app")
     assert detached["head"] == {
         "detached": True,
         "unborn": False,
@@ -463,30 +474,34 @@ def test_worktrees_outside_the_workspace_are_reported_but_not_operable(
         repo, "worktree", "add", "-q", "-b", "worker/app-worker-1", str(scratch), "HEAD"
     )
 
-    listing = session.result("git_list_worktrees", session_id="git-sess", repo="app")
+    listing = session.result("git_list_worktrees", environment_id="git-env", repo="app")
     worker = next(item for item in listing["worktrees"] if item["path"] == str(scratch))
     assert worker["accessible"] is False
     assert worker["inaccessible_reason"] == "outside_workspace"
     assert worker["category"] == "worker"
 
-    branches = session.result("git_list_branches", session_id="git-sess", repo="app")
+    branches = session.result("git_list_branches", environment_id="git-env", repo="app")
     worker_branch = next(
         item for item in branches["branches"] if item["name"] == "worker/app-worker-1"
     )
     assert worker_branch["category"] == "worker"
 
     # The worker's own checkout cannot be addressed through this surface.
-    error = session.error("git_status", session_id="git-sess", repo="scratch")
+    error = session.error("git_status", environment_id="git-env", repo="scratch")
     assert error["code"] in (-32090, -32091)
 
 
 def test_checkout_creates_and_switches_branches(session: Rpc, repo: Path):
     status = session.result(
-        "git_checkout", session_id="git-sess", repo="app", branch="topic", create=True
+        "git_checkout",
+        environment_id="git-env",
+        repo="app",
+        branch="topic",
+        create=True,
     )
     assert status["head"]["branch"] == "topic"
     back = session.result(
-        "git_checkout", session_id="git-sess", repo="app", branch="main"
+        "git_checkout", environment_id="git-env", repo="app", branch="main"
     )
     assert back["head"]["branch"] == "main"
 
@@ -509,7 +524,7 @@ def test_push_reports_progress_without_journaling_it(
 
     pushed = session.result(
         "git_push",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         remote="origin",
         refspec="main:main",
@@ -532,7 +547,7 @@ def test_push_reports_progress_without_journaling_it(
 
 def test_a_failing_git_command_answers_a_typed_error(session: Rpc, repo: Path):
     error = session.error(
-        "git_checkout", session_id="git-sess", repo="app", branch="does-not-exist"
+        "git_checkout", environment_id="git-env", repo="app", branch="does-not-exist"
     )
     assert error["code"] == -32092
     assert error["data"]["kind"] == "git_operation_failed"
@@ -568,7 +583,16 @@ def authz(tmp_path: Path):
             }
         }
     )
-    app = server_app.build_app(spec=spec, default_workspace_root=str(root))
+    resources = AgentHostResources.create("git-auth-test-host")
+    for user in ("alice", "bob"):
+        register_host_environment(
+            resources,
+            str(root),
+            owner_user_id=user,
+            workspace_id=f"{user}-workspace",
+            environment_id=f"{user}-env",
+        )
+    app = server_app.build_app(spec=spec, agent_host_resources=resources)
     return SimpleNamespace(client=TestClient(app), workspace=root, repo=target)
 
 
@@ -588,7 +612,7 @@ def test_cross_user_git_access_is_denied(authz):
             function="session.ensure",
             args={"session_id": "alice-git", "workspace_root": str(authz.workspace)},
         )
-        diff = alice.result("git_diff", session_id="alice-git", repo="app")
+        diff = alice.result("git_diff", environment_id="alice-env", repo="app")
         hunk_id = diff["files"][0]["hunks"][0]["hunk_id"]
 
         for method, params in (
@@ -612,7 +636,7 @@ def test_cross_user_git_access_is_denied(authz):
             ("git_pull", {"repo": "app"}),
             ("git_push", {"repo": "app"}),
         ):
-            error = bob.error(method, session_id="alice-git", **params)
+            error = bob.error(method, environment_id="alice-env", **params)
             assert error["code"] == RPC_ERROR_AUTHORIZATION_DENIED, (method, error)
             assert error["data"]["kind"] == "authorization_denied", (method, error)
 
@@ -621,7 +645,7 @@ def test_cross_user_git_access_is_denied(authz):
         assert git(authz.repo, "diff", "--cached").strip() == ""
 
         # And alice can still use her own session.
-        status = alice.result("git_status", session_id="alice-git", repo="app")
+        status = alice.result("git_status", environment_id="alice-env", repo="app")
         assert status["repo"] == "app"
     finally:
         bob_cm.__exit__(None, None, None)
@@ -639,14 +663,14 @@ def test_a_confirmation_token_cannot_be_replayed_by_another_principal(authz):
                 args={"session_id": owner, "workspace_root": str(authz.workspace)},
             )
         denied = alice.error(
-            "git_discard", session_id="alice-git", repo="app", paths=["f.txt"]
+            "git_discard", environment_id="alice-env", repo="app", paths=["f.txt"]
         )
         token = denied["data"]["confirmation_token"]
 
         # Bob owns his own session but the token was minted for alice's.
         replay = bob.error(
             "git_discard",
-            session_id="bob-git",
+            environment_id="bob-env",
             repo="app",
             paths=["f.txt"],
             confirmation_token=token,
@@ -683,11 +707,11 @@ def test_a_real_apply_failure_rolls_the_index_back(session: Rpc, repo: Path):
     before = git(repo, "diff", "--cached", "--name-only")
     assert before.strip() == ""
 
-    diff = session.result("git_diff", session_id="git-sess", repo="app")
+    diff = session.result("git_diff", environment_id="git-env", repo="app")
     target = next(item for item in diff["files"] if item["path"] == "src/b.txt")
     error = session.error(
         "git_stage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         paths=["src/*.txt"],
         hunks=[{"path": "src/b.txt", "hunk_id": target["hunks"][0]["hunk_id"]}],
@@ -704,7 +728,7 @@ def test_a_real_apply_failure_rolls_the_index_back(session: Rpc, repo: Path):
     # And the repository is still perfectly usable afterwards.
     retry = session.result(
         "git_stage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         hunks=[{"path": "src/b.txt", "hunk_id": target["hunks"][0]["hunk_id"]}],
     )
@@ -724,14 +748,14 @@ def test_a_large_patch_stages_over_the_wire(session: Rpc, repo: Path):
     )
 
     diff = session.result(
-        "git_diff", session_id="git-sess", repo="app", context_lines=0
+        "git_diff", environment_id="git-env", repo="app", context_lines=0
     )
     (diff_file,) = diff["files"]
     assert len(diff_file["hunks"]) == 1
     assert len(diff_file["hunks"][0]["lines"]) == 40000
     staged = session.result(
         "git_stage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         context_lines=0,
         hunks=[{"path": "big.txt", "hunk_id": diff_file["hunks"][0]["hunk_id"]}],
@@ -757,7 +781,7 @@ def test_destructive_refspecs_are_gated_over_the_wire(
     git(repo, "remote", "add", "origin", str(remote))
     session.result(
         "git_push",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         remote="origin",
         refspec="main:refs/heads/release",
@@ -766,7 +790,7 @@ def test_destructive_refspecs_are_gated_over_the_wire(
 
     deleting = session.error(
         "git_push",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         remote="origin",
         refspec=":refs/heads/release",
@@ -777,7 +801,7 @@ def test_destructive_refspecs_are_gated_over_the_wire(
 
     forcing = session.error(
         "git_push",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         remote="origin",
         refspec="+main:refs/heads/release",
@@ -795,7 +819,7 @@ def test_a_remote_url_is_refused_over_the_wire(
     git(outside, "commit", "-qm", "outside")
 
     error = session.error(
-        "git_fetch", session_id="git-sess", repo="app", remote=str(outside)
+        "git_fetch", environment_id="git-env", repo="app", remote=str(outside)
     )
     assert error["code"] == -32094
     assert error["data"]["reason"] == "unknown_remote"
@@ -829,10 +853,10 @@ def test_a_git_file_escape_is_refused_over_the_wire(
             ("git_diff", {"repo": "sneaky"}),
             ("git_commit", {"repo": "sneaky", "message": "hijack"}),
         ):
-            error = rpc.error(method, session_id="git-sess", **params)
+            error = rpc.error(method, environment_id="git-env", **params)
             assert error["code"] == -32090, (method, error)
             assert error["data"]["reason"] == "outside_workspace", (method, error)
-        listing = rpc.result("git_list_repositories", session_id="git-sess")
+        listing = rpc.result("git_list_repositories", environment_id="git-env")
         assert listing["repositories"] == []
 
     assert git(outside, "rev-parse", "HEAD").strip() == head
@@ -853,7 +877,7 @@ def test_conflict_stage_contents_reach_the_client(session: Rpc, repo: Path):
     git(repo, "commit", "-qam", "main change")
     git(repo, "merge", "feature", check=False)
 
-    conflicts = session.result("git_conflicts", session_id="git-sess", repo="app")
+    conflicts = session.result("git_conflicts", environment_id="git-env", repo="app")
     (conflict,) = conflicts["conflicts"]
     # Base is absent from the working file under the default merge style;
     # the stage blob supplies it.
@@ -866,13 +890,13 @@ def test_conflict_stage_contents_reach_the_client(session: Rpc, repo: Path):
 def test_head_scope_hunks_are_stageable_over_the_wire(session: Rpc, repo: Path):
     (repo / "f.txt").write_text(two_hunk_edit())
     head_diff = session.result(
-        "git_diff", session_id="git-sess", repo="app", mode="head"
+        "git_diff", environment_id="git-env", repo="app", mode="head"
     )
     hunk_id = head_diff["files"][0]["hunks"][0]["hunk_id"]
 
     mismatched = session.error(
         "git_stage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         hunks=[{"path": "f.txt", "hunk_id": hunk_id}],
     )
@@ -881,7 +905,7 @@ def test_head_scope_hunks_are_stageable_over_the_wire(session: Rpc, repo: Path):
 
     session.result(
         "git_stage",
-        session_id="git-sess",
+        environment_id="git-env",
         repo="app",
         mode="head",
         hunks=[{"path": "f.txt", "hunk_id": hunk_id}],

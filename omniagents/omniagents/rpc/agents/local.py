@@ -1,11 +1,13 @@
 """Local agent implementation using in-memory RPC."""
 
 import asyncio
+import secrets
 from typing import Optional, Any, List, Dict
 from contextlib import suppress
 
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.execution import AgentHostResources
 from omniagents.rpc.transport.inmemory import InMemoryTransport
 from omniagents.rpc.transport import TransportClosedError
 from .remote import RemoteAgent
@@ -128,7 +130,10 @@ class LocalAgent(RemoteAgent):
         )
 
         # Create agent service with custom spec and set channel immediately
-        self._agent_service = AgentService(self.spec)
+        self._agent_service = AgentService(
+            self.spec,
+            AgentHostResources.create(f"local-agent-{secrets.token_hex(8)}"),
+        )
         self._agent_service.channel = channel
 
         # The server app runs these registrars for the orchestrator's

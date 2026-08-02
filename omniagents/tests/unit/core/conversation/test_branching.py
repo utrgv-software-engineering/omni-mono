@@ -12,6 +12,7 @@ import asyncio
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.conversation.model import ItemKind, ThreadStatus
 from omniagents.core.conversation.service import (
     ConversationService,
@@ -51,7 +52,9 @@ def service():
         get_agent_instructions=lambda: "hi",
         build_agent=build_agent,
     )
-    return AgentService(spec)
+    return AgentService(
+        spec, AgentHostResources.create("test-unit-core-conversation-branching-host")
+    )
 
 
 def run_turn(service, session, run_id, prompt, *, tool_output="ok"):

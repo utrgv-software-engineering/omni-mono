@@ -139,9 +139,13 @@ output_policy = OutputGuardrail(_mirror, name="output_policy")
     _write(
         root / "server_functions" / "extras.py",
         """from omniagents.core.server_functions.discovery import server_function
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-@server_function
+@server_function(
+    resource_scope=ResourceScope.AGENT,
+    execution_requirements=ExecutionRequirement.NONE,
+)
 async def ping() -> dict:
     return {"pong": True}
 """,

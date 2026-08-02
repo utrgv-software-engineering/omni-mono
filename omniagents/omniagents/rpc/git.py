@@ -1,4 +1,4 @@
-"""Typed Git operations over a session's workspace (tkt_l_l0lUi4A5V2).
+"""Typed Git operations over an execution environment's workspace.
 
 Backs the experimental ``git_*`` GUI protocol surface: repository
 discovery, status, diff (with a **hunk-level** data model), log, branches,
@@ -10,7 +10,7 @@ Substrate model
 ---------------
 Every git invocation goes through the
 :class:`~omniagents.workspace.base.Workspace` abstraction — the same
-session/sandbox boundary the terminal and the ``fs_*`` surface use — so
+execution-environment boundary the terminal and the ``fs_*`` surface use — so
 the repository may live on the host filesystem, inside a Docker sandbox,
 or on a remote backend without this module caring. Two consequences shape
 the implementation:
@@ -54,7 +54,7 @@ machines.
 
 Scoping
 -------
-Operations are confined to repositories that live *inside* the session
+Operations are confined to repositories that live *inside* the environment
 workspace, on four independent facts checked in :meth:`_resolve_repo` —
 including the **git directory**, not just the worktree, because a plain
 file named ``.git`` can point a perfectly ordinary-looking checkout at
@@ -100,6 +100,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -280,18 +281,10 @@ def canonical_repo_path(path: str, *, allow_root: bool = True) -> str:
     return "/".join(stack)
 
 
-def _published_sources() -> List[Dict[str, Any]]:
-    """The serve session's published ``--source`` descriptors, if any.
+async def _no_sources(_environment_id: str) -> Sequence[Mapping[str, Any]]:
+    """Default source policy for direct library use without an AgentHost."""
 
-    Read lazily and defensively: outside a serve session (tests, direct
-    library use) the slot is simply empty.
-    """
-    try:
-        from omniagents.core.runtime.serve_state import get_source_descriptors
-
-        return [source.to_dict() for source in get_source_descriptors()]
-    except Exception:  # pragma: no cover - serve_state is optional
-        return []
+    return ()
 
 
 def _redacted_source(source: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -1167,7 +1160,7 @@ def impact_digest(payload: Any) -> str:
 
 @dataclass
 class _PendingConfirmation:
-    session_id: str
+    environment_id: str
     repo: str
     operation: str
     digest: str
@@ -1177,7 +1170,7 @@ class _PendingConfirmation:
 class ConfirmationBroker:
     """Mints and redeems single-use, impact-bound confirmation tokens.
 
-    A token is only redeemable for the exact ``(session, repo, operation,
+    A token is only redeemable for the exact ``(environment, repo, operation,
     impact)`` it was minted for. Because the impact is recomputed from
     live repository state at redemption time, a repository that moved
     between the two calls invalidates the token — the client is shown the
@@ -1189,14 +1182,14 @@ class ConfirmationBroker:
         self._max_pending = max_pending
         self._pending: Dict[str, _PendingConfirmation] = {}
 
-    def mint(self, session_id: str, repo: str, operation: str, impact: Any) -> str:
+    def mint(self, environment_id: str, repo: str, operation: str, impact: Any) -> str:
         self._prune()
         if len(self._pending) >= self._max_pending:
             oldest = min(self._pending, key=lambda key: self._pending[key].expires_at)
             self._pending.pop(oldest, None)
         token = secrets.token_urlsafe(24)
         self._pending[token] = _PendingConfirmation(
-            session_id=session_id,
+            environment_id=environment_id,
             repo=repo,
             operation=operation,
             digest=impact_digest(impact),
@@ -1205,7 +1198,7 @@ class ConfirmationBroker:
         return token
 
     def redeem(
-        self, token: str, session_id: str, repo: str, operation: str, impact: Any
+        self, token: str, environment_id: str, repo: str, operation: str, impact: Any
     ) -> bool:
         """Consume *token*. Returns False for unknown/expired/mismatched."""
         self._prune()
@@ -1213,7 +1206,7 @@ class ConfirmationBroker:
         if pending is None:
             return False
         return (
-            pending.session_id == session_id
+            pending.environment_id == environment_id
             and pending.repo == repo
             and pending.operation == operation
             and pending.digest == impact_digest(impact)
@@ -1274,13 +1267,12 @@ _DIFF_SCOPES = {
 
 
 class GitManager:
-    """Typed git operations for one agent service.
+    """Typed git operations for environment-scoped workspaces.
 
-    Entry points take the resource-owning ``session_id`` (already
-    authorized by ``AgentService.authorize_rpc``) and a ``repo`` id from
-    :meth:`list_repositories`. All state is derived from the repository
-    on each call except confirmation tokens, which live in
-    :class:`ConfirmationBroker`.
+    Entry points take the resource-owning ``environment_id`` (resolved and
+    authorized by the caller) and a ``repo`` id from :meth:`list_repositories`.
+    All state is derived from the repository on each call except confirmation
+    tokens, which live in :class:`ConfirmationBroker`.
     """
 
     def __init__(
@@ -1300,7 +1292,9 @@ class GitManager:
         max_conflict_blob_bytes: int = 1024 * 1024,
         max_conflict_content_paths: int = 25,
         confirmation_ttl: float = 300.0,
-        source_provider: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+        source_provider: Optional[
+            Callable[[str], Awaitable[Sequence[Mapping[str, Any]]]]
+        ] = None,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._read_timeout = read_timeout
@@ -1315,11 +1309,11 @@ class GitManager:
         self._max_log_count = max_log_count
         self._max_conflict_blob_bytes = max_conflict_blob_bytes
         self._max_conflict_content_paths = max_conflict_content_paths
-        self._source_provider = source_provider or _published_sources
+        self._source_provider = source_provider or _no_sources
         self.confirmations = ConfirmationBroker(ttl_seconds=confirmation_ttl)
         # One lock per *physical* git directory — the thing that actually
-        # owns ``index.lock``. Keying on (session, repo) instead would give
-        # two sessions sharing one workspace independent locks and let them
+        # owns ``index.lock``. Keying on (environment, repo) instead would give
+        # two environments sharing one workspace independent locks and let them
         # race each other, and it would grow an entry per distinct string a
         # caller passed as ``repo``. The key is therefore taken from the
         # resolved, validated absolute git dir, never from wire input, and
@@ -1330,12 +1324,12 @@ class GitManager:
     #  Plumbing
     # ------------------------------------------------------------------
 
-    async def _workspace(self, session_id: str) -> Workspace:
-        return await self._workspace_resolver(session_id)
+    async def _workspace(self, environment_id: str) -> Workspace:
+        return await self._workspace_resolver(environment_id)
 
     @asynccontextmanager
     async def _serialized(
-        self, session_id: str, repo: str
+        self, environment_id: str, repo: str
     ) -> "AsyncIterator[_ResolvedRepo]":
         """Resolve *repo*, then hold the lock on its physical git directory.
 
@@ -1344,10 +1338,10 @@ class GitManager:
         is the only trustworthy lock key. Locking on the raw ``repo``
         parameter instead would (a) let a caller mint an unbounded number
         of lock objects out of unvalidated strings and (b) hand two
-        sessions that share one workspace two different locks for one
+        environments that share one workspace two different locks for one
         index.
         """
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         lock = self._repo_locks.get(resolved.git_dir_abs)
         if lock is None:
             lock = asyncio.Lock()
@@ -1516,7 +1510,7 @@ class GitManager:
     #  Repository resolution
     # ------------------------------------------------------------------
 
-    async def _resolve_repo(self, session_id: str, repo: str) -> "_ResolvedRepo":
+    async def _resolve_repo(self, environment_id: str, repo: str) -> "_ResolvedRepo":
         """Resolve and confine *repo*.
 
         Confinement rests on four independent facts, every one of them
@@ -1543,7 +1537,7 @@ class GitManager:
         if not isinstance(repo, str) or not repo.strip():
             raise GitPathError("repo is required", reason="missing_repo")
         repo_id = canonical_repo_path(repo)
-        workspace = await self._workspace(session_id)
+        workspace = await self._workspace(environment_id)
         root = workspace.root
         try:
             repo_abs = workspace.resolve(repo_id)
@@ -1551,7 +1545,7 @@ class GitManager:
             raise GitPathError(str(exc), path=repo, reason="escapes_workspace") from exc
         if _relative_to(repo_abs, root) is None:
             raise GitPathError(
-                "the repository path resolves outside the session workspace",
+                "the repository path resolves outside the environment workspace",
                 path=repo,
                 reason="escapes_workspace",
             )
@@ -1590,7 +1584,7 @@ class GitManager:
         toplevel, git_dir, common_dir = lines
         if not _same_path(toplevel, repo_abs):
             raise GitRepositoryNotFound(
-                "the repository root is outside the session workspace",
+                "the repository root is outside the environment workspace",
                 repo=repo_id,
                 reason="outside_workspace",
                 toplevel=toplevel,
@@ -1602,7 +1596,7 @@ class GitManager:
             or _relative_to(common_dir, root) is None
         ):
             raise GitRepositoryNotFound(
-                "the repository's git directory is outside the session workspace",
+                "the repository's git directory is outside the environment workspace",
                 repo=repo_id,
                 reason="outside_workspace",
                 toplevel=git_dir,
@@ -1621,17 +1615,17 @@ class GitManager:
 
     async def list_repositories(
         self,
-        session_id: str,
+        environment_id: str,
         path: Optional[str] = None,
         max_depth: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Enumerate operable repositories inside the session workspace.
+        """Enumerate operable repositories inside the environment workspace.
 
         The returned ``repo`` ids are the only accepted repository
         addresses; a multi-repository project therefore never has to guess
         which repository an operation targets.
         """
-        workspace = await self._workspace(session_id)
+        workspace = await self._workspace(environment_id)
         base = canonical_repo_path(path or ".")
         requested_depth = (
             self._max_discovery_depth if max_depth is None else int(max_depth)
@@ -1689,7 +1683,9 @@ class GitManager:
                     continue
                 queue.append((child, level + 1))
 
-        sources = self._source_provider()
+        sources = [
+            dict(source) for source in await self._source_provider(environment_id)
+        ]
         by_mount = {
             str(source.get("mountName") or ""): source
             for source in sources
@@ -1704,7 +1700,7 @@ class GitManager:
         repositories: List[Dict[str, Any]] = []
         for candidate in sorted(found):
             try:
-                candidate_repo = await self._resolve_repo(session_id, candidate)
+                candidate_repo = await self._resolve_repo(environment_id, candidate)
                 repo_id = candidate_repo.repo_id
                 repo_abs = candidate_repo.root_abs
             except GitRpcError:
@@ -1734,7 +1730,7 @@ class GitManager:
             if str(source.get("mountName") or source.get("path")) not in matched
         ]
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "path": base,
             "repositories": repositories,
             "sources": [_redacted_source(source) for source in sources],
@@ -1794,13 +1790,13 @@ class GitManager:
 
     async def status(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         include_untracked: Optional[bool] = None,
         include_ignored: Optional[bool] = None,
         paths: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         untracked = "all" if include_untracked in (None, True) else "no"
         args = [
@@ -1824,7 +1820,7 @@ class GitManager:
                 reason="status_parse_failed",
             ) from exc
         parsed["repo"] = repo_id
-        parsed["session_id"] = session_id
+        parsed["environment_id"] = environment_id
         parsed["state"] = await self._repository_state(workspace, repo_abs)
         return parsed
 
@@ -1863,7 +1859,7 @@ class GitManager:
 
     async def diff(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         mode: Optional[str] = None,
         paths: Optional[Sequence[str]] = None,
@@ -1871,7 +1867,7 @@ class GitManager:
         from_rev: Optional[str] = None,
         to_rev: Optional[str] = None,
     ) -> Dict[str, Any]:
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         scope = mode or "worktree"
         if scope != "range" and (from_rev or to_rev):
@@ -1892,7 +1888,7 @@ class GitManager:
             to_rev=to_rev,
         )
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "mode": scope,
             "context_lines": self._context(context_lines),
@@ -1988,14 +1984,14 @@ class GitManager:
 
     async def log(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         rev: Optional[str] = None,
         max_count: Optional[int] = None,
         skip: Optional[int] = None,
         paths: Optional[Sequence[str]] = None,
     ) -> Dict[str, Any]:
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         requested_count = (
             self._default_log_count if max_count is None else int(max_count)
@@ -2050,7 +2046,7 @@ class GitManager:
                 }
             )
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "commits": commits,
             "max_count": count,
@@ -2060,9 +2056,9 @@ class GitManager:
         }
 
     async def list_branches(
-        self, session_id: str, repo: str, include_remote: Optional[bool] = None
+        self, environment_id: str, repo: str, include_remote: Optional[bool] = None
     ) -> Dict[str, Any]:
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         refs = ["refs/heads"]
         if include_remote in (None, True):
@@ -2106,19 +2102,19 @@ class GitManager:
                 }
             )
         branches.sort(key=lambda item: (item["remote"], item["ref"]))
-        return {"session_id": session_id, "repo": repo_id, "branches": branches}
+        return {"environment_id": environment_id, "repo": repo_id, "branches": branches}
 
-    async def list_worktrees(self, session_id: str, repo: str) -> Dict[str, Any]:
+    async def list_worktrees(self, environment_id: str, repo: str) -> Dict[str, Any]:
         """Worktree metadata, including ones this surface cannot operate on.
 
         Worker worktrees created by ``WorktreeIsolation`` live under the
-        framework scratch root, i.e. *outside* the session workspace.
+        framework scratch root, i.e. *outside* the environment workspace.
         They are reported (a client should be able to see that a branch is
         checked out elsewhere) but marked ``accessible: false`` with a
         reason — this surface refuses to act outside the workspace rather
         than quietly reaching around the sandbox boundary.
         """
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         result = await self._run(
             workspace,
@@ -2139,10 +2135,14 @@ class GitManager:
             entry["category"] = (
                 "worker" if branch.startswith("refs/heads/worker/") else "worktree"
             )
-        return {"session_id": session_id, "repo": repo_id, "worktrees": worktrees}
+        return {
+            "environment_id": environment_id,
+            "repo": repo_id,
+            "worktrees": worktrees,
+        }
 
     async def conflicts(
-        self, session_id: str, repo: str, paths: Optional[Sequence[str]] = None
+        self, environment_id: str, repo: str, paths: Optional[Sequence[str]] = None
     ) -> Dict[str, Any]:
         """Structured view of every unmerged path.
 
@@ -2163,7 +2163,7 @@ class GitManager:
         than a partial blob. Binary conflicts should be resolved
         file-level — the decode is lossy for them by construction.
         """
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         result = await self._run(
             workspace,
@@ -2230,7 +2230,7 @@ class GitManager:
                     stage["content"] = blob.stdout
         state = await self._repository_state(workspace, repo_abs)
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "state": state,
             "conflicts": [stages[key] for key in ordered],
@@ -2375,7 +2375,7 @@ class GitManager:
 
     async def _stage_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: Optional[Sequence[str]] = None,
         hunks: Optional[Sequence[Any]] = None,
@@ -2392,7 +2392,7 @@ class GitManager:
         the file to be unstaged (its index entry must still match HEAD),
         otherwise ``git apply`` refuses and the typed failure says so.
         """
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         path_list = [
             canonical_repo_path(item, allow_root=False) for item in (paths or [])
@@ -2455,7 +2455,7 @@ class GitManager:
             steps.append(apply_hunks)
         await self._atomic(workspace, repo_abs, steps, operation="stage")
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "staged_paths": path_list,
             "staged_hunks": [
@@ -2467,13 +2467,13 @@ class GitManager:
 
     async def _unstage_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: Optional[Sequence[str]] = None,
         hunks: Optional[Sequence[Any]] = None,
         context_lines: Optional[int] = None,
     ) -> Dict[str, Any]:
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         path_list = [
             canonical_repo_path(item, allow_root=False) for item in (paths or [])
@@ -2540,7 +2540,7 @@ class GitManager:
             steps.append(apply_hunks)
         await self._atomic(workspace, repo_abs, steps, operation="unstage")
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "unstaged_paths": path_list,
             "unstaged_hunks": [
@@ -2650,7 +2650,7 @@ class GitManager:
 
     def _require_confirmation(
         self,
-        session_id: str,
+        environment_id: str,
         repo_id: str,
         operation: str,
         impact: Dict[str, Any],
@@ -2658,10 +2658,10 @@ class GitManager:
     ) -> None:
         """Gate a destructive operation on an impact-bound token."""
         if token and self.confirmations.redeem(
-            token, session_id, repo_id, operation, impact
+            token, environment_id, repo_id, operation, impact
         ):
             return
-        fresh = self.confirmations.mint(session_id, repo_id, operation, impact)
+        fresh = self.confirmations.mint(environment_id, repo_id, operation, impact)
         raise GitConfirmationRequired(
             f"{operation} discards work and must be confirmed explicitly",
             operation=operation,
@@ -2673,7 +2673,7 @@ class GitManager:
 
     async def _discard_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: Optional[Sequence[str]] = None,
         hunks: Optional[Sequence[Any]] = None,
@@ -2687,7 +2687,7 @@ class GitManager:
         confirmed, and the change is then applied as **one** reverse patch
         — there is no window in which half the selection is gone.
         """
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         path_list = [
             canonical_repo_path(item, allow_root=False) for item in (paths or [])
@@ -2755,7 +2755,7 @@ class GitManager:
             "content_digest": impact_digest([whole_file_patch, patch]),
         }
         self._require_confirmation(
-            session_id, repo_id, "discard_changes", impact, confirmation_token
+            environment_id, repo_id, "discard_changes", impact, confirmation_token
         )
 
         combined = whole_file_patch
@@ -2773,7 +2773,7 @@ class GitManager:
                 git_dir_rel=git_dir_rel,
             )
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "discarded_paths": sorted(path_list),
             "discarded_hunks": [
@@ -2785,7 +2785,7 @@ class GitManager:
 
     async def _commit_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         message: str,
         amend: Optional[bool] = None,
@@ -2793,7 +2793,7 @@ class GitManager:
         author: Optional[str] = None,
         confirmation_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         if not isinstance(message, str) or not message.strip():
             raise GitStateInvalid(
@@ -2815,7 +2815,7 @@ class GitManager:
                     repo=repo_id,
                 )
             self._require_confirmation(
-                session_id,
+                environment_id,
                 repo_id,
                 "amend_commit",
                 {"head": oid},
@@ -2838,7 +2838,7 @@ class GitManager:
             config=("-c", "commit.gpgsign=false"),
         )
         if result.exit_code != 0:
-            status = await self.status(session_id, repo_id)
+            status = await self.status(environment_id, repo_id)
             if not status["entries"] and not allow_empty:
                 raise GitStateInvalid(
                     "nothing staged to commit",
@@ -2856,7 +2856,7 @@ class GitManager:
             workspace, repo_abs, ["rev-parse", "HEAD"], operation="commit"
         )
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "oid": head.stdout.strip(),
             "amended": bool(amend),
@@ -2864,7 +2864,7 @@ class GitManager:
 
     async def _checkout_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         branch: Optional[str] = None,
         create: Optional[bool] = None,
@@ -2873,7 +2873,7 @@ class GitManager:
         discard_changes: Optional[bool] = None,
         confirmation_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         if not branch:
             raise GitStateInvalid(
@@ -2896,7 +2896,7 @@ class GitManager:
             )
         target = _checked_revision(branch)
         if discard_changes:
-            status = await self.status(session_id, repo_id)
+            status = await self.status(environment_id, repo_id)
             impact = {
                 "target": target,
                 "dirty_paths": sorted(
@@ -2913,7 +2913,7 @@ class GitManager:
                 "content_digest": await self._worktree_digest(workspace, repo_abs),
             }
             self._require_confirmation(
-                session_id,
+                environment_id,
                 repo_id,
                 "checkout_discard_changes",
                 impact,
@@ -2941,18 +2941,18 @@ class GitManager:
             operation="checkout",
             git_dir_rel=git_dir_rel,
         )
-        return await self.status(session_id, repo_id)
+        return await self.status(environment_id, repo_id)
 
     async def _reset_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         mode: Optional[str] = None,
         rev: Optional[str] = None,
         paths: Optional[Sequence[str]] = None,
         confirmation_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         reset_mode = (mode or "mixed").lower()
         if reset_mode not in ("soft", "mixed", "hard"):
@@ -2972,7 +2972,7 @@ class GitManager:
             )
         target = _checked_revision(rev) if rev else "HEAD"
         if reset_mode == "hard":
-            status = await self.status(session_id, repo_id)
+            status = await self.status(environment_id, repo_id)
             head = await self._run(
                 workspace,
                 repo_abs,
@@ -2998,7 +2998,7 @@ class GitManager:
                 "content_digest": await self._worktree_digest(workspace, repo_abs),
             }
             self._require_confirmation(
-                session_id, repo_id, "reset_hard", impact, confirmation_token
+                environment_id, repo_id, "reset_hard", impact, confirmation_token
             )
         args = ["reset", f"--{reset_mode}", target]
         if path_list:
@@ -3011,7 +3011,7 @@ class GitManager:
             operation="reset",
             git_dir_rel=git_dir_rel,
         )
-        return await self.status(session_id, repo_id)
+        return await self.status(environment_id, repo_id)
 
     # ------------------------------------------------------------------
     #  Network operations
@@ -3034,7 +3034,7 @@ class GitManager:
         ``ext::`` is additionally pinned off in :data:`_GIT_CONFIG_ARGS`.
 
         Name validation alone is not enough, though: repository config
-        lives *inside* the workspace, so a session can add
+        lives *inside* the workspace, so code in the environment can add
         ``git remote add leak /abs/outside`` and then fetch it. A
         **local** remote — a filesystem path or a ``file://`` URL —
         must therefore also resolve inside the workspace root. Network
@@ -3087,7 +3087,7 @@ class GitManager:
             )
             if _relative_to(posixpath.normpath(target), workspace.root) is None:
                 raise GitStateInvalid(
-                    "this remote points at a location outside the session "
+                    "this remote points at a location outside the environment "
                     "workspace, so fetching it would import objects the "
                     "workspace boundary excludes",
                     reason="remote_outside_workspace",
@@ -3113,7 +3113,7 @@ class GitManager:
 
     async def _fetch_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: Optional[str] = None,
         refspec: Optional[str] = None,
@@ -3126,7 +3126,7 @@ class GitManager:
         result describes exactly which refs moved without reading a single
         line of git's progress output.
         """
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         remote_name = await self._resolve_remote(
             workspace, repo_abs, repo_id, remote, refspec
@@ -3140,7 +3140,7 @@ class GitManager:
             args.append(remote_name)
         if refspec:
             args.append(_checked_revision(refspec))
-        async with _ProgressScope(progress, "fetch", repo_id, session_id) as report:
+        async with _ProgressScope(progress, "fetch", repo_id, environment_id) as report:
             await self._run(
                 workspace,
                 repo_abs,
@@ -3152,7 +3152,7 @@ class GitManager:
             updates.extend(_ref_delta(before, after))
             await report({"updated_refs": len(updates)})
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "remote": remote_name,
             "updated_refs": updates,
@@ -3160,7 +3160,7 @@ class GitManager:
 
     async def _pull_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: Optional[str] = None,
         refspec: Optional[str] = None,
@@ -3174,7 +3174,7 @@ class GitManager:
         and the repository state; only a failure that leaves no conflict
         raises.
         """
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         remote_name = await self._resolve_remote(
             workspace, repo_abs, repo_id, remote, refspec
@@ -3185,7 +3185,7 @@ class GitManager:
             args.append(remote_name)
         if refspec:
             args.append(_checked_revision(refspec))
-        async with _ProgressScope(progress, "pull", repo_id, session_id) as report:
+        async with _ProgressScope(progress, "pull", repo_id, environment_id) as report:
             result = await self._run(
                 workspace,
                 repo_abs,
@@ -3194,7 +3194,7 @@ class GitManager:
                 check=False,
                 operation="pull",
             )
-            status = await self.status(session_id, repo_id)
+            status = await self.status(environment_id, repo_id)
             await report({"exit_code": result.exit_code})
         if result.exit_code != 0 and not status["conflicted"]:
             raise GitOperationFailed(
@@ -3205,7 +3205,7 @@ class GitManager:
                 stderr=(result.stderr or "").strip() or None,
             )
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "ok": result.exit_code == 0,
             "state": status["state"],
@@ -3215,7 +3215,7 @@ class GitManager:
 
     async def _push_unlocked(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: Optional[str] = None,
         refspec: Optional[str] = None,
@@ -3229,8 +3229,8 @@ class GitManager:
 
         Destructive intent does not only live in the parameters. It can
         come from the *refspec* (``+main:main`` forces, ``:refs/heads/x``
-        deletes) and, crucially, from **repository configuration** the
-        session itself can write — ``remote.<name>.push = +refs/…`` or
+        deletes) and, crucially, from **repository configuration** code in the
+        environment can write — ``remote.<name>.push = +refs/…`` or
         ``remote.<name>.mirror = true`` both produce forced updates and
         deletions from a request that names neither.
 
@@ -3240,7 +3240,7 @@ class GitManager:
         itself reports (``+`` forced, ``-`` deleted). Whatever configures
         the push — parameter, refspec or config — shows up there.
         """
-        resolved = await self._resolve_repo(session_id, repo)
+        resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
         remote_name = await self._resolve_remote(
             workspace, repo_abs, repo_id, remote, refspec
@@ -3309,9 +3309,9 @@ class GitManager:
                 ],
             }
             self._require_confirmation(
-                session_id, repo_id, operation, impact, confirmation_token
+                environment_id, repo_id, operation, impact, confirmation_token
             )
-        async with _ProgressScope(progress, "push", repo_id, session_id) as report:
+        async with _ProgressScope(progress, "push", repo_id, environment_id) as report:
             result = await self._run(
                 workspace,
                 repo_abs,
@@ -3332,7 +3332,7 @@ class GitManager:
                 stderr=(result.stderr or "").strip() or None,
             )
         return {
-            "session_id": session_id,
+            "environment_id": environment_id,
             "repo": repo_id,
             "ok": result.exit_code == 0,
             "remote_url": redact_remote_url(parsed["remote_url"]),
@@ -3348,23 +3348,23 @@ class GitManager:
     #  the normal condition for a deck of parallel agent columns, or a
     #  user clicking "stage hunk" quickly — would lose to ``index.lock``.
     #  Failing closed is correct but useless; these wrappers serialize per
-    #  (session, repository) so the work actually lands, and classify any
+    #  (environment, repository) so the work actually lands, and classify any
     #  remaining contention (an *external* git process) structurally as
     #  ``reason="index_locked"`` rather than by reading git's prose.
     # ------------------------------------------------------------------
 
     async def stage(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: Optional[Sequence[str]] = None,
         hunks: Optional[Sequence[Any]] = None,
         context_lines: Optional[int] = None,
         mode: Optional[str] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._stage_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 paths=paths,
                 hunks=hunks,
@@ -3374,15 +3374,15 @@ class GitManager:
 
     async def unstage(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: Optional[Sequence[str]] = None,
         hunks: Optional[Sequence[Any]] = None,
         context_lines: Optional[int] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._unstage_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 paths=paths,
                 hunks=hunks,
@@ -3391,16 +3391,16 @@ class GitManager:
 
     async def discard(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         paths: Optional[Sequence[str]] = None,
         hunks: Optional[Sequence[Any]] = None,
         context_lines: Optional[int] = None,
         confirmation_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._discard_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 paths=paths,
                 hunks=hunks,
@@ -3410,7 +3410,7 @@ class GitManager:
 
     async def commit(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         message: str,
         amend: Optional[bool] = None,
@@ -3418,9 +3418,9 @@ class GitManager:
         author: Optional[str] = None,
         confirmation_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._commit_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 message,
                 amend=amend,
@@ -3431,7 +3431,7 @@ class GitManager:
 
     async def checkout(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         branch: Optional[str] = None,
         create: Optional[bool] = None,
@@ -3440,9 +3440,9 @@ class GitManager:
         discard_changes: Optional[bool] = None,
         confirmation_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._checkout_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 branch=branch,
                 create=create,
@@ -3454,16 +3454,16 @@ class GitManager:
 
     async def reset(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         mode: Optional[str] = None,
         rev: Optional[str] = None,
         paths: Optional[Sequence[str]] = None,
         confirmation_token: Optional[str] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._reset_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 mode=mode,
                 rev=rev,
@@ -3473,16 +3473,16 @@ class GitManager:
 
     async def fetch(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: Optional[str] = None,
         refspec: Optional[str] = None,
         prune: Optional[bool] = None,
         progress: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._fetch_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 remote=remote,
                 refspec=refspec,
@@ -3492,16 +3492,16 @@ class GitManager:
 
     async def pull(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: Optional[str] = None,
         refspec: Optional[str] = None,
         rebase: Optional[bool] = None,
         progress: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._pull_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 remote=remote,
                 refspec=refspec,
@@ -3511,7 +3511,7 @@ class GitManager:
 
     async def push(
         self,
-        session_id: str,
+        environment_id: str,
         repo: str,
         remote: Optional[str] = None,
         refspec: Optional[str] = None,
@@ -3521,9 +3521,9 @@ class GitManager:
         confirmation_token: Optional[str] = None,
         progress: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
-        async with self._serialized(session_id, repo):
+        async with self._serialized(environment_id, repo):
             return await self._push_unlocked(
-                session_id,
+                environment_id,
                 repo,
                 remote=remote,
                 refspec=refspec,
@@ -3627,12 +3627,12 @@ class _ProgressScope:
         emit: Optional[Callable[[Dict[str, Any]], Awaitable[None]]],
         operation: str,
         repo: str,
-        session_id: str,
+        environment_id: str,
     ) -> None:
         self._emit = emit
         self._operation = operation
         self._repo = repo
-        self._session_id = session_id
+        self._environment_id = environment_id
         self._operation_id = f"gitop_{secrets.token_hex(8)}"
         self._detail: Dict[str, Any] = {}
 
@@ -3640,7 +3640,7 @@ class _ProgressScope:
         if self._emit is None:
             return
         payload: Dict[str, Any] = {
-            "session_id": self._session_id,
+            "environment_id": self._environment_id,
             "operation_id": self._operation_id,
             "repo": self._repo,
             "operation": self._operation,

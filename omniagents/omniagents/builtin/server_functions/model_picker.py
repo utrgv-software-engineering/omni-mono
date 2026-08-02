@@ -22,6 +22,7 @@ from omniagents.core.server_functions.helpers import (
     notify_session_state,
 )
 from omniagents.core.session import Session
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 def _tokens_suffix(config: dict) -> str:
@@ -45,7 +46,11 @@ def _no_store_result() -> dict:
 
 
 @server_function(
-    description="List available models", strict=True, name_override="models"
+    description="List available models",
+    strict=True,
+    name_override="models",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def list_models(session: Session) -> dict:
     """List all configured models with current session state."""
@@ -107,7 +112,13 @@ async def list_models(session: Session) -> dict:
     }
 
 
-@server_function(description="Switch model", strict=True, name_override="model")
+@server_function(
+    description="Switch model",
+    strict=True,
+    name_override="model",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
+)
 async def switch_model(session: Session, text: str) -> dict:
     """Switch to a different model for this session.
 
@@ -188,7 +199,11 @@ async def switch_model(session: Session, text: str) -> dict:
 
 
 @server_function(
-    description="Set reasoning effort", strict=True, name_override="reasoning"
+    description="Set reasoning effort",
+    strict=True,
+    name_override="reasoning",
+    resource_scope=ResourceScope.THREAD,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def set_reasoning(session: Session, text: str) -> dict:
     """Set reasoning effort level for this session.
@@ -225,7 +240,11 @@ async def set_reasoning(session: Session, text: str) -> dict:
 
 
 @server_function(
-    description="List available voice models", strict=True, name_override="voice-models"
+    description="List available voice models",
+    strict=True,
+    name_override="voice-models",
+    resource_scope=ResourceScope.AGENT,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def list_voice_models(session: Session) -> dict:
     store = model_store()
@@ -258,7 +277,11 @@ async def list_voice_models(session: Session) -> dict:
 
 
 @server_function(
-    description="Switch voice model", strict=True, name_override="voice-model"
+    description="Switch voice model",
+    strict=True,
+    name_override="voice-model",
+    resource_scope=ResourceScope.AGENT,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def switch_voice_model(session: Session, text: str) -> dict:
     store = model_store()

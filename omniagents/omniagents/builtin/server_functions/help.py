@@ -16,10 +16,15 @@ from __future__ import annotations
 from typing import Any
 
 from omniagents import server_function
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 @server_function(
-    description="List available commands", strict=True, name_override="help"
+    description="List available commands",
+    strict=True,
+    name_override="help",
+    resource_scope=ResourceScope.AGENT_HOST,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def help_command(service: Any, session: Any = None) -> dict:
     registered = getattr(service, "_server_functions", {}) or {}

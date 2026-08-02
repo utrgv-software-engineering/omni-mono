@@ -8,9 +8,15 @@ from omniagents.core.server_functions.discovery import (
 
 _SF_SRC = textwrap.dedent("""
     from omniagents.core.server_functions.discovery import server_function
+    from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-    @server_function(description="d", name_override="%(name)s")
+    @server_function(
+        resource_scope=ResourceScope.AGENT,
+        execution_requirements=ExecutionRequirement.NONE,
+        description="d",
+        name_override="%(name)s",
+    )
     async def fn():
         return {"ok": True}
     """)

@@ -142,7 +142,9 @@ class _OmniSingleAgentVoiceWorkflow:
         token = _current_channel.set(cast(Any, self._bridge))
         try:
             result = await self._agent_service.start_run(
-                transcription, self._session_id
+                transcription,
+                {"mode": "inherit"},
+                self._session_id,
             )
             if DEBUG_VOICE:
                 try:

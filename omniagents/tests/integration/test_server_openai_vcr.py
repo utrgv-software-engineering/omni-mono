@@ -84,7 +84,7 @@ class RecordingMethods(RpcMethodsBase):
 @pytest_asyncio.fixture
 async def rpc_server_url(server_rpc_agent_spec):
     app = server_app.build_app(
-        spec=server_rpc_agent_spec, default_workspace_root="/tmp"
+        spec=server_rpc_agent_spec, default_host_workspace_root="/tmp"
     )
     port = _get_free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
@@ -102,7 +102,7 @@ async def rpc_server_url(server_rpc_agent_spec):
 @pytest_asyncio.fixture
 async def safe_rpc_server_url(safe_server_rpc_agent_spec):
     app = server_app.build_app(
-        spec=safe_server_rpc_agent_spec, default_workspace_root="/tmp"
+        spec=safe_server_rpc_agent_spec, default_host_workspace_root="/tmp"
     )
     port = _get_free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")

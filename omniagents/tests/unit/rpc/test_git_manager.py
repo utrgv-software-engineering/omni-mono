@@ -22,6 +22,7 @@ from typing import Any, Dict, List
 import pytest
 
 from omniagents.rpc.git import (
+    _ProgressScope,
     ConfirmationBroker,
     GitCapabilityError,
     GitConfirmationRequired,
@@ -89,7 +90,7 @@ def two_hunk_edit() -> str:
 
 
 def make_manager(workspace, **overrides: Any) -> GitManager:
-    async def resolver(session_id: str):
+    async def resolver(environment_id: str):
         return workspace
 
     return GitManager(workspace_resolver=resolver, **overrides)
@@ -442,42 +443,80 @@ def test_assemble_diff_refuses_to_guess_when_association_breaks():
 def test_confirmation_token_is_single_use_and_impact_bound():
     broker = ConfirmationBroker()
     impact = {"paths": ["a.txt"]}
-    token = broker.mint("s1", "app", "discard_changes", impact)
-    assert broker.redeem(token, "s1", "app", "discard_changes", impact) is True
+    token = broker.mint("environment-1", "app", "discard_changes", impact)
+    assert (
+        broker.redeem(token, "environment-1", "app", "discard_changes", impact) is True
+    )
     # Single use.
-    assert broker.redeem(token, "s1", "app", "discard_changes", impact) is False
+    assert (
+        broker.redeem(token, "environment-1", "app", "discard_changes", impact) is False
+    )
 
 
-def test_confirmation_token_rejects_a_changed_impact_or_foreign_caller():
+def test_confirmation_token_rejects_a_changed_impact_or_foreign_environment():
     broker = ConfirmationBroker()
     impact = {"paths": ["a.txt"]}
-    token = broker.mint("s1", "app", "discard_changes", impact)
+    token = broker.mint("environment-1", "app", "discard_changes", impact)
     assert (
-        broker.redeem(token, "s1", "app", "discard_changes", {"paths": ["b.txt"]})
+        broker.redeem(
+            token,
+            "environment-1",
+            "app",
+            "discard_changes",
+            {"paths": ["b.txt"]},
+        )
         is False
     )
 
-    token = broker.mint("s1", "app", "discard_changes", impact)
+    token = broker.mint("environment-1", "app", "discard_changes", impact)
     assert (
-        broker.redeem(token, "other-session", "app", "discard_changes", impact) is False
+        broker.redeem(token, "other-environment", "app", "discard_changes", impact)
+        is False
     )
 
-    token = broker.mint("s1", "app", "discard_changes", impact)
-    assert broker.redeem(token, "s1", "other-repo", "discard_changes", impact) is False
+    token = broker.mint("environment-1", "app", "discard_changes", impact)
+    assert (
+        broker.redeem(token, "environment-1", "other-repo", "discard_changes", impact)
+        is False
+    )
 
-    token = broker.mint("s1", "app", "discard_changes", impact)
-    assert broker.redeem(token, "s1", "app", "reset_hard", impact) is False
+    token = broker.mint("environment-1", "app", "discard_changes", impact)
+    assert broker.redeem(token, "environment-1", "app", "reset_hard", impact) is False
 
 
 def test_confirmation_token_expires():
     broker = ConfirmationBroker(ttl_seconds=-1.0)
-    token = broker.mint("s1", "app", "reset_hard", {})
-    assert broker.redeem(token, "s1", "app", "reset_hard", {}) is False
+    token = broker.mint("environment-1", "app", "reset_hard", {})
+    assert broker.redeem(token, "environment-1", "app", "reset_hard", {}) is False
 
 
 # ---------------------------------------------------------------------------
 #  Repository discovery & confinement
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_environment_id_resolves_and_addresses_the_workspace(
+    workspace_root: Path,
+):
+    resolved_environment_ids: List[str] = []
+
+    class EmptyWorkspace(NoShellWorkspace):
+        async def list_dir(self, *args, **kwargs):
+            return []
+
+    workspace = EmptyWorkspace(str(workspace_root))
+
+    async def resolver(environment_id: str):
+        resolved_environment_ids.append(environment_id)
+        return workspace
+
+    manager = GitManager(workspace_resolver=resolver)
+    result = await manager.list_repositories("environment-primary")
+
+    assert resolved_environment_ids == ["environment-primary"]
+    assert result["environment_id"] == "environment-primary"
+    assert "session_id" not in result
 
 
 @pytest.mark.asyncio
@@ -1435,9 +1474,17 @@ async def test_progress_notifications_describe_the_server_lifecycle(
     async def emit(payload: Dict[str, Any]) -> None:
         events.append(payload)
 
-    await manager.push("s1", "app", remote="origin", refspec="main:main", progress=emit)
+    await manager.push(
+        "environment-primary",
+        "app",
+        remote="origin",
+        refspec="main:main",
+        progress=emit,
+    )
     assert [item["phase"] for item in events] == ["started", "completed"]
     assert {item["operation"] for item in events} == {"push"}
+    assert {item["environment_id"] for item in events} == {"environment-primary"}
+    assert all("session_id" not in item for item in events)
     assert len({item["operation_id"] for item in events}) == 1
     assert events[1]["detail"]["exit_code"] == 0
 
@@ -1446,9 +1493,29 @@ async def test_progress_notifications_describe_the_server_lifecycle(
     # from git, not from remote-name validation.
     git(repo, "remote", "add", "broken", str(workspace_root / "missing.git"))
     with pytest.raises(GitOperationFailed):
-        await manager.fetch("s1", "app", remote="broken", progress=emit)
+        await manager.fetch(
+            "environment-primary", "app", remote="broken", progress=emit
+        )
     assert [item["phase"] for item in events] == ["started", "failed"]
+    assert {item["environment_id"] for item in events} == {"environment-primary"}
+    assert all("session_id" not in item for item in events)
     assert events[1]["detail"]["error_kind"] == "git_operation_failed"
+
+
+@pytest.mark.asyncio
+async def test_progress_payload_is_addressed_to_the_environment():
+    events: List[Dict[str, Any]] = []
+
+    async def emit(payload: Dict[str, Any]) -> None:
+        events.append(payload)
+
+    async with _ProgressScope(emit, "fetch", "app", "environment-primary") as report:
+        await report({"objects": 3})
+
+    assert [event["phase"] for event in events] == ["started", "completed"]
+    assert events[-1]["detail"] == {"objects": 3}
+    assert {event["environment_id"] for event in events} == {"environment-primary"}
+    assert all("session_id" not in event for event in events)
 
 
 @pytest.mark.asyncio
@@ -2063,7 +2130,7 @@ async def test_ext_urls_stay_blocked_even_with_repo_local_config(
 ):
     """``ext::`` turns a remote URL into a shell command.
 
-    The repository config is writable by the session, so the block has to
+    The repository config is writable by code in the environment, so the block has to
     come from the command line, which outranks it.
     """
     repo, _ = repo_with_remote
@@ -2409,8 +2476,13 @@ async def test_published_sources_are_labelled_and_gaps_are_visible(
         {"kind": "local-git", "mountName": "frontend", "repoUrl": "git@x:/frontend"},
         {"kind": "local-git", "mountName": "elsewhere", "path": "/opt/elsewhere"},
     ]
+
+    async def source_provider(environment_id: str):
+        assert environment_id == "s1"
+        return sources
+
     manager = make_manager(
-        HostWorkspace(root=str(workspace_root)), source_provider=lambda: sources
+        HostWorkspace(root=str(workspace_root)), source_provider=source_provider
     )
     listing = await manager.list_repositories("s1")
     by_repo = {item["repo"]: item for item in listing["repositories"]}
@@ -2453,8 +2525,13 @@ async def test_source_descriptors_never_echo_credentials(workspace_root: Path):
             "repoUrl": "https://ghp_tokenvalue@example.com/other.git",
         },
     ]
+
+    async def source_provider(environment_id: str):
+        assert environment_id == "s1"
+        return sources
+
     manager = make_manager(
-        HostWorkspace(root=str(workspace_root)), source_provider=lambda: sources
+        HostWorkspace(root=str(workspace_root)), source_provider=source_provider
     )
     listing = await manager.list_repositories("s1")
     payload = json.dumps(listing)
@@ -2471,6 +2548,35 @@ async def test_source_descriptors_never_echo_credentials(workspace_root: Path):
     assert sources[0]["repoUrl"] == "https://user:s3cr3t@example.com/frontend.git"
 
 
+@pytest.mark.asyncio
+async def test_source_policy_is_selected_by_explicit_environment():
+    class EmptyWorkspace:
+        root = "/workspace"
+
+        async def list_dir(self, path=".", **kwargs):
+            return []
+
+    sources_by_environment = {
+        "environment-published": [
+            {"kind": "local-git", "mountName": "frontend", "writable": True}
+        ],
+        "environment-unpublished": [],
+    }
+
+    async def source_provider(environment_id: str):
+        return sources_by_environment[environment_id]
+
+    manager = make_manager(EmptyWorkspace(), source_provider=source_provider)
+    published = await manager.list_repositories("environment-published")
+    unpublished = await manager.list_repositories("environment-unpublished")
+
+    assert published["repositories"] == []
+    assert published["sources"][0]["mountName"] == "frontend"
+    assert published["unreachable_sources"][0]["mount_name"] == "frontend"
+    assert unpublished["repositories"] == []
+    assert unpublished["sources"] == []
+
+
 # ---------------------------------------------------------------------------
 #  Review round 2
 # ---------------------------------------------------------------------------
@@ -2482,7 +2588,7 @@ async def test_a_forcing_push_refspec_in_repository_config_is_gated(
 ):
     """``remote.<name>.push`` is a refspec the *parameters* never mention.
 
-    Repository config lives inside the workspace, so a session can write
+    Repository config lives inside the workspace, so the environment can write
     it; predicting git's decision from the request alone let a forced
     update through with no token.
     """
@@ -2604,7 +2710,7 @@ def test_redact_remote_url_drops_userinfo():
 async def test_a_local_remote_outside_the_workspace_is_refused(
     repo_with_remote, tmp_path: Path, manager: GitManager
 ):
-    """Repo config is writable by the session, so the name check is not enough."""
+    """Environment-writable repo config makes the name check insufficient."""
     repo, _ = repo_with_remote
     outside = init_repo(tmp_path / "outside")
     write(outside / "secret.txt", "SECRET-VALUE\n")
@@ -2679,16 +2785,16 @@ async def test_the_lock_registry_does_not_grow_with_wire_input(
 
 
 @pytest.mark.asyncio
-async def test_two_sessions_sharing_one_workspace_do_not_race(
+async def test_two_environments_sharing_one_workspace_do_not_race(
     repo: Path, workspace_root: Path
 ):
-    """Several sessions on one workspace is a supported configuration.
+    """Several environments on one workspace is a supported configuration.
 
-    Keying the lock on ``(session, repo)`` gave them independent locks and
+    Keying the lock on ``(environment, repo)`` gave them independent locks and
     they raced git's ``index.lock``; the key is the physical git dir.
     """
 
-    async def resolver(session_id: str):
+    async def resolver(environment_id: str):
         return HostWorkspace(root=str(workspace_root))
 
     manager = GitManager(workspace_resolver=resolver)
@@ -2705,7 +2811,7 @@ async def test_two_sessions_sharing_one_workspace_do_not_race(
     results = await asyncio.gather(
         *[
             manager.stage(
-                f"session-{index % 6}",
+                f"environment-{index % 6}",
                 "app",
                 hunks=[{"path": name, "hunk_id": by_path[name]["hunks"][0]["hunk_id"]}],
             )
@@ -2714,7 +2820,7 @@ async def test_two_sessions_sharing_one_workspace_do_not_race(
     )
     assert len(results) == len(names)
     assert sorted(git(repo, "diff", "--cached", "--name-only").split()) == sorted(names)
-    # One physical repository, one lock — regardless of how many sessions.
+    # One physical repository, one lock — regardless of how many environments.
     assert manager._repo_locks == {}
 
 

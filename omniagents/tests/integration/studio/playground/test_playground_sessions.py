@@ -26,7 +26,7 @@ def _create_session(client, headers, payload):
 def _start_run(
     ws, request_id, prompt, *, session_id=None, expect_request, response_payload
 ):
-    params = {"prompt": prompt}
+    params = {"prompt": prompt, "environment_selection": {"mode": "none"}}
     if session_id is not None:
         params["session_id"] = session_id
     ws.send_json(

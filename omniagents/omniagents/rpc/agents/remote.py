@@ -160,7 +160,11 @@ class RemoteAgent(UnifiedAgentBase):
             prompt = messages[-1]["content"] if messages else ""
 
             # Prepare start_run parameters
-            start_params = {"prompt": prompt, "session_id": self._session_id}
+            start_params = {
+                "prompt": prompt,
+                "environment_selection": {"mode": "none"},
+                "session_id": self._session_id,
+            }
 
             # Only send variables/context on first run (when we don't have a session_id yet)
             if self._session_id is None:

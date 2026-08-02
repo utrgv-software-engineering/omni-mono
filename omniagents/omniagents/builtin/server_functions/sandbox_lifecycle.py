@@ -18,18 +18,8 @@ observation pair in the same pack (``sandbox_get_state`` /
 ``sandbox_wait_until_ready``,
 ``omniagents.builtin.tools.sandbox_observe``).
 
-Pause/unpause/notify-activity resolve the live session from the
-framework's process-global serve-session state
-(:func:`omniagents.core.runtime.serve_state.get_sandbox_session`) and
-probe its lifecycle surface through
-:mod:`omniagents.core.sandbox.lifecycle_session` — session-agnostic by
-design: pause freezes EVERY process in the container, which is why this
-is a ``sandbox.*`` namespace rather than per-conversation scope.
-
-``sandbox.switch`` validates the request and delegates to the executor
-the serve host installed via :func:`omniagents.core.runtime.
-sandbox_lifecycle.set_switch_executor`; the orchestration itself
-(quiesce, snapshot, rebuild, re-wire, rollback) is serve-host policy.
+The operation router resolves an environment-scoped lifecycle controller into
+an immutable lease. No handler consults process-global serve state.
 """
 
 from __future__ import annotations
@@ -37,24 +27,20 @@ from __future__ import annotations
 from typing import Any
 
 from omniagents import server_function
+from omniagents.execution import require_environment_lease
+from omniagents.execution.errors import CapabilityUnavailableError
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-def _resolve_backend_session() -> Any:
-    """The live session's backend, or ``None`` when no session is bound.
-
-    The serve host publishes the wrapped ``SandboxSession`` via
-    ``serve_state.set_sandbox_session`` after start. Lifecycle methods
-    live on the backend session, so we resolve through the framework's
-    lifecycle helper (which unwraps the SDK proxy; bare sessions pass
-    through unchanged).
-    """
-    from omniagents.core.runtime.serve_state import get_sandbox_session
-    from omniagents.core.sandbox.lifecycle_session import resolve_backend_session
-
-    session = get_sandbox_session()
-    if session is None:
-        return None
-    return resolve_backend_session(session)
+def _lifecycle_binding():
+    lease = require_environment_lease()
+    controller = lease.lifecycle_controller
+    if controller is None:
+        raise CapabilityUnavailableError(
+            lease.environment_id,
+            frozenset({"environment_lifecycle"}),
+        )
+    return lease, controller
 
 
 _PAUSE_SCHEMA = {
@@ -85,31 +71,12 @@ _PAUSE_RESULT_SCHEMA = {
     params_schema=_PAUSE_SCHEMA,
     result_schema=_PAUSE_RESULT_SCHEMA,
     strict=True,
+    resource_scope=ResourceScope.ENVIRONMENT,
+    execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
 )
 async def sandbox_pause(service: Any) -> dict:  # noqa: ARG001
-    inner = _resolve_backend_session()
-    if inner is None:
-        return {"ok": False, "supported": False, "reason": "no live sandbox session"}
-    if not hasattr(inner, "pause"):
-        return {
-            "ok": False,
-            "supported": False,
-            "reason": "backend does not implement pause",
-        }
-    try:
-        await inner.pause()
-    except Exception as exc:
-        return {"ok": False, "supported": True, "reason": str(exc)}
-
-    # Best-effort paused-state report. ``paused()`` is optional; if absent
-    # we trust the pause() call returned cleanly.
-    paused = True
-    if hasattr(inner, "paused"):
-        try:
-            paused = bool(await inner.paused())
-        except Exception:
-            pass
-    return {"ok": True, "supported": True, "paused": paused}
+    lease, controller = _lifecycle_binding()
+    return await controller.pause(lease)
 
 
 @server_function(
@@ -121,29 +88,12 @@ async def sandbox_pause(service: Any) -> dict:  # noqa: ARG001
     params_schema=_PAUSE_SCHEMA,
     result_schema=_PAUSE_RESULT_SCHEMA,
     strict=True,
+    resource_scope=ResourceScope.ENVIRONMENT,
+    execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
 )
 async def sandbox_unpause(service: Any) -> dict:  # noqa: ARG001
-    inner = _resolve_backend_session()
-    if inner is None:
-        return {"ok": False, "supported": False, "reason": "no live sandbox session"}
-    if not hasattr(inner, "unpause"):
-        return {
-            "ok": False,
-            "supported": False,
-            "reason": "backend does not implement unpause",
-        }
-    try:
-        await inner.unpause()
-    except Exception as exc:
-        return {"ok": False, "supported": True, "reason": str(exc)}
-
-    paused = False
-    if hasattr(inner, "paused"):
-        try:
-            paused = bool(await inner.paused())
-        except Exception:
-            pass
-    return {"ok": True, "supported": True, "paused": paused}
+    lease, controller = _lifecycle_binding()
+    return await controller.unpause(lease)
 
 
 @server_function(
@@ -162,16 +112,12 @@ async def sandbox_unpause(service: Any) -> dict:  # noqa: ARG001
         "additionalProperties": False,
     },
     strict=True,
+    resource_scope=ResourceScope.ENVIRONMENT,
+    execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
 )
 async def sandbox_notify_activity(service: Any) -> dict:  # noqa: ARG001
-    inner = _resolve_backend_session()
-    if inner is None or not hasattr(inner, "notify_activity"):
-        return {"ok": False}
-    try:
-        await inner.notify_activity()
-    except Exception:
-        return {"ok": False}
-    return {"ok": True}
+    lease, controller = _lifecycle_binding()
+    return await controller.notify_activity(lease)
 
 
 @server_function(
@@ -192,12 +138,12 @@ async def sandbox_notify_activity(service: Any) -> dict:  # noqa: ARG001
         "additionalProperties": False,
     },
     strict=True,
+    resource_scope=ResourceScope.ENVIRONMENT,
+    execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
 )
 async def sandbox_discard_snapshot(service: Any) -> dict:  # noqa: ARG001
-    from omniagents.core.runtime.serve_state import set_discard_snapshot_on_exit
-
-    set_discard_snapshot_on_exit(True)
-    return {"ok": True}
+    lease, controller = _lifecycle_binding()
+    return await controller.discard_snapshot(lease)
 
 
 _SWITCH_SCHEMA = {
@@ -245,26 +191,14 @@ _SWITCH_RESULT_SCHEMA = {
     # registrar validates the whole module, would drop sibling sandbox.* server
     # functions (pause/unpause) too.
     strict=False,
+    resource_scope=ResourceScope.ENVIRONMENT,
+    execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
 )
 async def sandbox_switch(service: Any, profile: str) -> dict:  # noqa: ARG001
-    # Delegate to the serve host's orchestrator, which holds the published
-    # SwitchContext (app/spec/session_id/snapshot_dir/...) and owns the
-    # quiesce/snapshot/rebuild/re-wire/rollback sequence.
-    from omniagents.core.runtime.sandbox_lifecycle import switch_executor
-
     if not isinstance(profile, str) or not profile.strip():
         return {"ok": False, "reason": "profile must be a non-empty string"}
-    executor = switch_executor()
-    if executor is None:
-        return {
-            "ok": False,
-            "reason": (
-                "no sandbox switch executor installed — the serve host must "
-                "call omniagents.core.runtime.sandbox_lifecycle."
-                "set_switch_executor at startup"
-            ),
-        }
-    return await executor(profile)
+    lease, controller = _lifecycle_binding()
+    return await controller.switch(lease, profile)
 
 
 SANDBOX_SERVER_FUNCTIONS = [

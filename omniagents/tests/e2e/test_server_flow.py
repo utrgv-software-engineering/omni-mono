@@ -7,6 +7,7 @@ import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 from typing import Dict, Any, List
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.core.agents.service import AgentService
 from omniagents.core.session import Session
@@ -109,7 +110,10 @@ class TestServerUnifiedAgent:
         self, mock_spec, mock_channel, mock_session
     ):
         """Service should invoke spec.build_agent with expected arguments."""
-        service = AgentService(mock_spec, default_workspace_root="/tmp")
+        service = AgentService(
+            mock_spec,
+            AgentHostResources.create("test-e2e-server_flow-host"),
+        )
         service.channel = mock_channel
 
         mock_session_manager = Mock()
@@ -122,7 +126,7 @@ class TestServerUnifiedAgent:
             new_callable=AsyncMock,
             return_value={},
         ) as mock_stream:
-            await service.start_run("Hello", session_id="test-123")
+            await service.start_run("Hello", {"mode": "none"}, session_id="test-123")
             await _drain_run_tasks()
 
         mock_spec.build_agent.assert_awaited_once()
@@ -141,7 +145,10 @@ class TestServerUnifiedAgent:
         needs_approval predicates via configure_tool_approval."""
         mock_spec.use_safe_agent = True
 
-        service = AgentService(mock_spec, default_workspace_root="/tmp")
+        service = AgentService(
+            mock_spec,
+            AgentHostResources.create("test-e2e-server_flow-host"),
+        )
         service.channel = mock_channel
 
         service._session_manager = Mock()
@@ -164,7 +171,7 @@ class TestServerUnifiedAgent:
                 return_value={},
             ),
         ):
-            await service.start_run("Hello", session_id="test-123")
+            await service.start_run("Hello", {"mode": "none"}, session_id="test-123")
             await _drain_run_tasks()
 
         mock_spec.build_agent.assert_awaited()
@@ -238,7 +245,10 @@ class TestServerUnifiedAgent:
         self, mock_spec, mock_channel, mock_session
     ):
         """Service should build a fresh agent for each run."""
-        service = AgentService(mock_spec, default_workspace_root="/tmp")
+        service = AgentService(
+            mock_spec,
+            AgentHostResources.create("test-e2e-server_flow-host"),
+        )
         service.channel = mock_channel
 
         service._session_manager = Mock()
@@ -250,9 +260,9 @@ class TestServerUnifiedAgent:
             new_callable=AsyncMock,
             return_value={},
         ):
-            await service.start_run("First", session_id="test-123")
+            await service.start_run("First", {"mode": "none"}, session_id="test-123")
             await _drain_run_tasks()
-            await service.start_run("Second", session_id="test-123")
+            await service.start_run("Second", {"mode": "none"}, session_id="test-123")
             await _drain_run_tasks()
 
         assert mock_spec.build_agent.await_count == 2

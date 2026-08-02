@@ -157,6 +157,18 @@ export interface StartRun {
   context?: {
     [k: string]: unknown;
   };
+  environment_selection:
+    | {
+        mode: "inherit";
+      }
+    | {
+        mode: "none";
+      }
+    | {
+        environment_generation?: number;
+        environment_id: string;
+        mode: "explicit";
+      };
   group_id?: string;
   prompt: string;
   prompt_role?: string;
@@ -225,8 +237,11 @@ export interface ServerCall {
   args?: {
     [k: string]: unknown;
   };
+  environment_generation?: number;
+  environment_id?: string;
   function: string;
   session_id?: string;
+  workspace_id?: string;
 }
 export interface EnqueueMessage {
   content: string;
@@ -457,134 +472,178 @@ export interface McpGetPrompt {
   session_id?: string;
 }
 export interface FsWatch {
+  environment_generation?: number;
+  environment_id: string;
   path: string;
   poll_interval_ms?: number;
   recursive?: boolean;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface FsUnwatch {
-  session_id: string;
+  environment_generation?: number;
+  environment_id: string;
   watch_id: string;
+  workspace_id?: string;
 }
 export interface FsList {
+  environment_generation?: number;
+  environment_id: string;
   path: string;
   recursive?: boolean;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface FsStat {
+  environment_generation?: number;
+  environment_id: string;
   path: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface FsDownloadOpen {
+  environment_generation?: number;
+  environment_id: string;
   path: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface FsDownloadRead {
+  environment_generation?: number;
+  environment_id: string;
   length?: number;
   offset?: number;
-  session_id: string;
   transfer_id: string;
+  workspace_id?: string;
 }
 export interface FsDownloadClose {
-  session_id: string;
+  environment_generation?: number;
+  environment_id: string;
   transfer_id: string;
+  workspace_id?: string;
 }
 export interface FsUploadOpen {
+  environment_generation?: number;
+  environment_id: string;
   expected_sha256?: string;
   overwrite?: boolean;
   path: string;
-  session_id: string;
   sha256?: string;
   size: number;
+  workspace_id?: string;
 }
 export interface FsUploadChunk {
   data: string;
+  environment_generation?: number;
+  environment_id: string;
   offset: number;
-  session_id: string;
   transfer_id: string;
+  workspace_id?: string;
 }
 export interface FsUploadCommit {
-  session_id: string;
+  environment_generation?: number;
+  environment_id: string;
   transfer_id: string;
+  workspace_id?: string;
 }
 export interface FsUploadAbort {
-  session_id: string;
+  environment_generation?: number;
+  environment_id: string;
   transfer_id: string;
+  workspace_id?: string;
 }
 export interface GitListRepositories {
+  environment_generation?: number;
+  environment_id: string;
   max_depth?: number;
   path?: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitStatus {
+  environment_generation?: number;
+  environment_id: string;
   include_ignored?: boolean;
   include_untracked?: boolean;
   paths?: unknown[];
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitDiff {
   context_lines?: number;
+  environment_generation?: number;
+  environment_id: string;
   from_rev?: string;
   mode?: string;
   paths?: unknown[];
   repo: string;
-  session_id: string;
   to_rev?: string;
+  workspace_id?: string;
 }
 export interface GitLog {
+  environment_generation?: number;
+  environment_id: string;
   max_count?: number;
   paths?: unknown[];
   repo: string;
   rev?: string;
-  session_id: string;
   skip?: number;
+  workspace_id?: string;
 }
 export interface GitListBranches {
+  environment_generation?: number;
+  environment_id: string;
   include_remote?: boolean;
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitListWorktrees {
+  environment_generation?: number;
+  environment_id: string;
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitConflicts {
+  environment_generation?: number;
+  environment_id: string;
   paths?: unknown[];
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitStage {
   context_lines?: number;
+  environment_generation?: number;
+  environment_id: string;
   hunks?: unknown[];
   mode?: string;
   paths?: unknown[];
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitUnstage {
   context_lines?: number;
+  environment_generation?: number;
+  environment_id: string;
   hunks?: unknown[];
   paths?: unknown[];
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitDiscard {
   confirmation_token?: string;
   context_lines?: number;
+  environment_generation?: number;
+  environment_id: string;
   hunks?: unknown[];
   paths?: unknown[];
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitCommit {
   allow_empty?: boolean;
   amend?: boolean;
   author?: string;
   confirmation_token?: string;
+  environment_generation?: number;
+  environment_id: string;
   message: string;
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitCheckout {
   branch: string;
@@ -592,41 +651,51 @@ export interface GitCheckout {
   create?: boolean;
   detach?: boolean;
   discard_changes?: boolean;
+  environment_generation?: number;
+  environment_id: string;
   repo: string;
-  session_id: string;
   start_point?: string;
+  workspace_id?: string;
 }
 export interface GitReset {
   confirmation_token?: string;
+  environment_generation?: number;
+  environment_id: string;
   mode?: string;
   paths?: unknown[];
   repo: string;
   rev?: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitFetch {
+  environment_generation?: number;
+  environment_id: string;
   prune?: boolean;
   refspec?: string;
   remote?: string;
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitPull {
+  environment_generation?: number;
+  environment_id: string;
   rebase?: boolean;
   refspec?: string;
   remote?: string;
   repo: string;
-  session_id: string;
+  workspace_id?: string;
 }
 export interface GitPush {
   confirmation_token?: string;
+  environment_generation?: number;
+  environment_id: string;
   force?: boolean;
   force_with_lease?: boolean;
   refspec?: string;
   remote?: string;
   repo: string;
-  session_id: string;
   set_upstream?: boolean;
+  workspace_id?: string;
 }
 export interface ListThreads {
   created_after?: number;
@@ -908,39 +977,47 @@ export interface SessionVariablesChanged {
   };
 }
 export interface FsEvents {
+  environment_generation?: number;
+  environment_id: string;
   events: unknown[];
   seq?: number;
-  session_id: string;
   stream_id?: string;
   watch_id: string;
+  workspace_id?: string;
 }
 export interface FsRescanRequired {
+  environment_generation?: number;
+  environment_id: string;
   reason: string;
   seq?: number;
-  session_id: string;
   stream_id?: string;
   watch_id: string;
+  workspace_id?: string;
 }
 export interface FsTransferProgress {
   direction: string;
+  environment_generation?: number;
+  environment_id: string;
   seq?: number;
-  session_id: string;
   stream_id?: string;
   total: number;
   transfer_id: string;
   transferred: number;
+  workspace_id?: string;
 }
 export interface GitOperationProgress {
   detail?: {
     [k: string]: unknown;
   };
+  environment_generation?: number;
+  environment_id: string;
   operation: string;
   operation_id: string;
   phase: string;
   repo: string;
   seq?: number;
-  session_id: string;
   stream_id?: string;
+  workspace_id?: string;
 }
 export interface ThreadUpdated {
   cascaded_thread_ids?: unknown[];

@@ -2,9 +2,11 @@ from unittest.mock import Mock
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
 from omniagents.core.capabilities import parse_capability_spec
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 async def _fake_sf():
@@ -21,6 +23,8 @@ def _sf_registry(*names):
             "result_schema": None,
             "on_invoke": None,
             "strict": True,
+            "resource_scope": ResourceScope.EXTENSION,
+            "execution_requirements": ExecutionRequirement.NONE,
         }
         for n in names
     }
@@ -39,7 +43,12 @@ def _make_service(caps):
     spec.project_slug = "test_project"
     spec.agent_slug = "test_agent"
     spec.resolved_capabilities = caps
-    return AgentService(spec, default_workspace_root="/tmp")
+    return AgentService(
+        spec,
+        AgentHostResources.create(
+            "test-unit-core-capabilities-capability_server_functions-host"
+        ),
+    )
 
 
 def test_parse_resolves_server_functions():
@@ -122,6 +131,10 @@ def test_later_registration_overwrites_capability_version():
         return {"project": True}
 
     service.register_server_function(
-        "demo.run", _project_version, description="project wins"
+        "demo.run",
+        _project_version,
+        resource_scope=ResourceScope.EXTENSION,
+        execution_requirements=ExecutionRequirement.NONE,
+        description="project wins",
     )
     assert service._server_functions["demo.run"]["description"] == "project wins"

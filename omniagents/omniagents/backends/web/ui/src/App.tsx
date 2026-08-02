@@ -886,7 +886,7 @@ export function App() {
           if ((thinking || queuedMessages.length > 0) && sid) {
             await client.enqueueMessage(sid, text, { triggerRun: true, role: 'user', source: 'ui' })
           } else {
-            await client.startRun(text, sid)
+            await client.startRun(text, client.defaultEnvironmentSelection(), sid)
           }
           return
         }
@@ -985,7 +985,13 @@ export function App() {
 
       // Direct-start path: optimistic user-message push, then start_run.
       setItems(prev => [...prev, { type: 'chat', role: 'user', content: text, attachments }])
-      await client.startRun(text, sessionId, variables, content)
+      await client.startRun(
+        text,
+        client.defaultEnvironmentSelection(),
+        sessionId,
+        variables,
+        content,
+      )
       if (workspaceSupported) setWorkspaceLocked(true)
     } catch (e) {
       startingRunRef.current = false

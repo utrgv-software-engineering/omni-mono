@@ -246,6 +246,16 @@ class SandboxWorkspace(Workspace):
         # to constrain the agent to its uid mapping.
         self._default_user = default_user
 
+    @property
+    def session(self) -> Any:
+        """The explicitly bound sandbox session for environment adapters.
+
+        Server functions must reach it through an EnvironmentLease's workspace,
+        never through process-global serve state.
+        """
+
+        return self._session
+
     # ----------------------------- helpers ----------------------------- #
 
     def resolve(self, path: str) -> str:

@@ -17,6 +17,7 @@ import types
 
 import pytest
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents import service as service_module
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
@@ -79,7 +80,10 @@ def make_service(monkeypatch, stream_result=None, stream_side_effect=None):
 
     monkeypatch.setattr(service_module, "stream_agent", stream)
     spec = make_spec()
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-core-agents-service_enqueue-host"),
+    )
     service.channel = object()
     attach_capture(service)
     return service

@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from omniagents.execution import AgentHostResources
 from omniagents.core.project.runtime import build_spec_from_project, load_project
 from omniagents.studio.server.api import _guardrail_keys, create_api_app
 from omniagents.core.runtime import bridge
@@ -192,7 +193,10 @@ def test_playground_ws_streams_happy_path(monkeypatch, studio_client):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "start_run",
-                "params": {"prompt": "Hello"},
+                "params": {
+                    "environment_selection": {"mode": "none"},
+                    "prompt": "Hello",
+                },
             }
         )
         result = None
@@ -285,7 +289,10 @@ def test_playground_ws_tool_approval_flow(monkeypatch, studio_client):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "start_run",
-                "params": {"prompt": "Needs approval"},
+                "params": {
+                    "environment_selection": {"mode": "none"},
+                    "prompt": "Needs approval",
+                },
             }
         )
         first_result = None
@@ -331,7 +338,11 @@ def test_playground_ws_tool_approval_flow(monkeypatch, studio_client):
                 "jsonrpc": "2.0",
                 "id": 3,
                 "method": "start_run",
-                "params": {"prompt": "Follow up", "session_id": rpc_session_id},
+                "params": {
+                    "environment_selection": {"mode": "none"},
+                    "prompt": "Follow up",
+                    "session_id": rpc_session_id,
+                },
             }
         )
         second_result = None
@@ -382,7 +393,10 @@ def test_playground_ws_surfaces_stream_errors(monkeypatch, studio_client):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "start_run",
-                "params": {"prompt": "Will fail"},
+                "params": {
+                    "environment_selection": {"mode": "none"},
+                    "prompt": "Will fail",
+                },
             }
         )
         result = None
@@ -409,23 +423,15 @@ def test_playground_ws_rejects_missing_session(studio_client):
     assert exc.value.code == 4404
 
 
-def test_playground_ws_passes_per_session_workspace_root_to_stream(
+def test_playground_targetless_run_does_not_infer_tempdir_environment(
     monkeypatch, studio_client
 ):
-    """Strict-mode regression: studio playground client doesn't send
-    workspace_root, but the AgentService for each playground session is
-    constructed with default_workspace_root=<per-session tempdir> from
-    PlaygroundSessionStore. Verify the runtime_context the agent sees
-    matches that tempdir.
-
-    Two sessions get distinct tempdirs (no cross-contamination).
-    """
-    import os as _os
+    """Studio tempdirs are metadata, not implicit execution substrates."""
 
     captured: list = []
 
     async def capturing_stream(agent, prompt, session, rpc_channel, **kwargs):
-        captured.append(kwargs.get("context"))
+        captured.append(kwargs)
         run_id = asyncio.current_task().get_name()
         await rpc_channel.async_call(
             "message_output",
@@ -458,7 +464,10 @@ def test_playground_ws_passes_per_session_workspace_root_to_stream(
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "start_run",
-                    "params": {"prompt": "hi"},
+                    "params": {
+                        "environment_selection": {"mode": "none"},
+                        "prompt": "hi",
+                    },
                 }
             )
             result = None
@@ -476,21 +485,10 @@ def test_playground_ws_passes_per_session_workspace_root_to_stream(
     _drive(s1)
     _drive(s2)
 
-    # Each playground session got its own sandbox tempdir.
     assert len(captured) == 2
-    ctx1, ctx2 = captured
-    assert isinstance(ctx1, dict) and isinstance(ctx2, dict)
-    ws1 = ctx1.get("workspace_root")
-    ws2 = ctx2.get("workspace_root")
-    assert isinstance(ws1, str) and ws1
-    assert isinstance(ws2, str) and ws2
-    assert ws1 != ws2, "two sessions must not share a sandbox tempdir"
-    # The tempdirs follow the studio playground naming convention and
-    # are NOT the studio process cwd (the strict-mode regression).
-    assert "omniagents_studio_playground_" in ws1
-    assert "omniagents_studio_playground_" in ws2
-    assert ws1 != _os.getcwd()
-    assert ws2 != _os.getcwd()
+    for run in captured:
+        assert run["environment_lease"] is None
+        assert "workspace_root" not in (run["context"] or {})
 
 
 # ---------------------------------------------------------------------------
@@ -547,7 +545,8 @@ def test_studio_playground_service_is_not_ownership_enforced(studio_app):
             welcome_text="x",
             get_agent_instructions=lambda: "x",
             build_agent=_build,
-        )
+        ),
+        AgentHostResources.create("test-integration-studio_playground_ws-host"),
     )
     assert service.authorization_policy.enforced is False
     # An unowned session stays reachable for the single playground operator.

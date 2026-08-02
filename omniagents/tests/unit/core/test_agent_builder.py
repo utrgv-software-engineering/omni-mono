@@ -10,6 +10,7 @@ import pytest
 
 from agents import Agent
 from agents.tool import FunctionTool
+from omniagents.execution import AgentHostResources
 from omniagents.core.agents.builder import (
     _build_handoffs_from_configs,
     _default_build_agent,
@@ -311,7 +312,10 @@ async def test_agent_service_configures_needs_approval_when_safe_set(monkeypatch
     )
     monkeypatch.setattr(AgentService, "_clone_agent", lambda self, agent: agent)
 
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-core-agent_builder-host"),
+    )
     session = service._session_manager.get_or_create(None)
     agent = await service._build_agent_for_session(session, None)
 
@@ -354,7 +358,10 @@ async def test_agent_service_skip_approvals_disables_predicate(monkeypatch):
     )
     monkeypatch.setattr(AgentService, "_clone_agent", lambda self, agent: agent)
 
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(
+        spec,
+        AgentHostResources.create("test-unit-core-agent_builder-host"),
+    )
     session = service._session_manager.get_or_create(None)
     await service._build_agent_for_session(session, None)
 

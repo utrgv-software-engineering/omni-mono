@@ -10,6 +10,14 @@ from omniagents.rpc.generated.gui_v1.models import (
 )
 from omniagents.rpc.server import GUI_RPC_METHODS, JsonRpcChannel, JsonRpcEndpoint
 from omniagents.rpc.transport import TransportError, TransportDecodeError
+from omniagents.execution import (
+    EnvironmentRequiredError,
+    OperationExecutionDescriptor,
+    RequestContext,
+    current_request_context,
+)
+from omniagents.execution.errors import RPC_ERROR_EXECUTION_RESOLUTION
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 class DummyMethods(RpcMethodsBase):
@@ -33,7 +41,7 @@ class DummyMethods(RpcMethodsBase):
     async def no_params(self):
         return "ok"
 
-    async def start_run(self, prompt):
+    async def start_run(self, prompt, environment_selection):
         self.calls.append(("start_run", prompt))
         return {"run_id": "run-1", "session_id": "session-1"}
 
@@ -70,6 +78,7 @@ def gui_endpoint(methods=None, **capabilities):
         methods or DummyMethods(),
         allowed_methods=DUMMY_RPC_METHODS,
         gui_handshake=True,
+        agent_host_id="test-agent-host",
         server_capabilities=capabilities,
     )
 
@@ -101,6 +110,62 @@ def initialize_message(call_id=1, **overrides):
 
 def test_gui_rpc_registry_matches_generated_request_models():
     assert GUI_RPC_METHODS == frozenset(CLIENT_REQUEST_MODELS)
+
+
+@pytest.mark.asyncio
+async def test_execution_resolution_failure_prevents_handler_dispatch():
+    class ResolvingMethods(DummyMethods):
+        async def prepare_rpc_context(self, principal, method, params):
+            raise EnvironmentRequiredError(method)
+
+    methods = ResolvingMethods()
+    transport = TransportStub()
+    endpoint = dummy_endpoint(methods)
+
+    await endpoint._process_message(
+        JsonRpcChannel(transport),
+        {"jsonrpc": "2.0", "id": 1, "method": "echo", "params": {"value": 3}},
+    )
+
+    payload = transport.send_json.await_args.args[0]
+    assert payload["error"]["code"] == RPC_ERROR_EXECUTION_RESOLUTION
+    assert payload["error"]["data"] == {
+        "kind": "environment_required",
+        "operation": "echo",
+    }
+    assert methods.calls == []
+
+
+@pytest.mark.asyncio
+async def test_execution_context_is_bound_through_handler_dispatch_and_reset():
+    context = RequestContext(
+        operation=OperationExecutionDescriptor(
+            name="echo",
+            resource_scope=ResourceScope.CONNECTION,
+            execution_requirements=ExecutionRequirement.NONE,
+        ),
+        principal=None,
+        agent_host_id="host-1",
+    )
+
+    class ResolvingMethods(DummyMethods):
+        async def prepare_rpc_context(self, principal, method, params):
+            return context
+
+        async def echo(self, value):
+            assert current_request_context() is context
+            return value
+
+    transport = TransportStub()
+    endpoint = dummy_endpoint(ResolvingMethods())
+
+    await endpoint._process_message(
+        JsonRpcChannel(transport),
+        {"jsonrpc": "2.0", "id": 1, "method": "echo", "params": {"value": 3}},
+    )
+
+    assert transport.send_json.await_args.args[0]["result"] == 3
+    assert current_request_context() is None
 
 
 @pytest.mark.asyncio
@@ -357,7 +422,11 @@ async def test_endpoint_ignores_unknown_fields_for_stable_requests():
             "jsonrpc": "2.0",
             "id": 11,
             "method": "start_run",
-            "params": {"prompt": "hello", "future_optional": True},
+            "params": {
+                "prompt": "hello",
+                "environment_selection": {"mode": "none"},
+                "future_optional": True,
+            },
         },
     )
     payload = transport.send_json.await_args.args[0]
@@ -430,6 +499,11 @@ async def test_initialize_returns_identity_and_capability_intersection():
     assert result["identity"]["version"]
     assert result["platform"]["os"]
     assert result["platform"]["arch"]
+    assert result["agent_host"] == {
+        "agent_host_id": "test-agent-host",
+        "default_workspace_id": None,
+        "default_environment_id": None,
+    }
     assert result["capabilities"] == {
         "realtime": True,
         "mcp_apps": False,

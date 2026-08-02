@@ -226,6 +226,7 @@ async def test_run_streamed_with_variables(monkeypatch):
     assert start_run_params["context"] == {"y": 2}
     assert start_run_params == {
         "prompt": "hi",
+        "environment_selection": {"mode": "none"},
         "session_id": None,
         "variables": {"x": 1},
         "context": {"y": 2},

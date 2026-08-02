@@ -125,7 +125,7 @@ async def _integration_flow():
         build_agent=dummy_build_agent,
     )
 
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
 
     port = _get_free_port()
     server, task = await _run_server(app, port)
@@ -217,7 +217,7 @@ async def _proxy_flow():
     remote_app = server_app.build_app(
         spec=remote_spec,
         auth_token=remote_token_value,
-        default_workspace_root="/tmp",
+        default_host_workspace_root="/tmp",
     )
     remote_port = _get_free_port()
     remote_server, remote_task = await _run_server(remote_app, remote_port)
@@ -238,7 +238,7 @@ async def _proxy_flow():
         )
 
         gateway_app = server_app.build_app(
-            spec=gateway_spec, default_workspace_root="/tmp"
+            spec=gateway_spec, default_host_workspace_root="/tmp"
         )
         gateway_port = _get_free_port()
         gateway_server, gateway_task = await _run_server(gateway_app, gateway_port)

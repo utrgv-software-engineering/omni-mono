@@ -1,7 +1,4 @@
-"""Verify ``stream_agent`` installs a HostWorkspace rooted at the agent's
-``workspace_root`` so omniagents.workspace.* calls inside tool bodies
-resolve relative to the configured root rather than the server cwd.
-"""
+"""Verify ``stream_agent`` binds only its immutable environment lease."""
 
 from __future__ import annotations
 
@@ -11,6 +8,13 @@ import pytest
 
 import omniagents.core.runtime.bridge as bridge
 from omniagents import workspace as ws
+from omniagents.execution import (
+    EnvironmentKind,
+    EnvironmentLease,
+    EnvironmentState,
+    ExecutionEnvironmentDescriptor,
+)
+from omniagents.workspace import HostWorkspace
 
 
 class DummyChannel:
@@ -33,10 +37,9 @@ class DummySession:
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_installs_workspace_root_from_context(monkeypatch, tmp_path):
-    """When ``stream_agent`` is called with ``context={'workspace_root': X}``,
-    the workspace contextvar should resolve to a HostWorkspace rooted at X
-    for the duration of the run."""
+async def test_stream_agent_installs_workspace_from_environment_lease(
+    monkeypatch, tmp_path
+):
 
     monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
     monkeypatch.setattr(
@@ -79,30 +82,42 @@ async def test_stream_agent_installs_workspace_root_from_context(monkeypatch, tm
     session = DummySession()
     channel = DummyChannel()
 
-    before_root = ws.workspace_root()
+    prior_workspace = HostWorkspace(str(tmp_path / "prior"))
+    prior_token = ws.set_workspace(prior_workspace)
     workspace_root = str(tmp_path)
-
-    await bridge.stream_agent(
-        agent,
-        "prompt",
-        session,
-        rpc_channel=channel,
-        max_turns=1,
-        context={"workspace_root": workspace_root},
+    lease = EnvironmentLease(
+        ExecutionEnvironmentDescriptor(
+            environment_id="environment-1",
+            workspace_id="workspace-1",
+            kind=EnvironmentKind.HOST,
+            state=EnvironmentState.READY,
+            generation=1,
+        ),
+        HostWorkspace(workspace_root),
     )
 
-    assert captured_root["root"] == workspace_root
-    # Token should have been reset; the workspace returns to its prior state.
-    assert ws.workspace_root() == before_root
+    try:
+        await bridge.stream_agent(
+            agent,
+            "prompt",
+            session,
+            rpc_channel=channel,
+            max_turns=1,
+            context={"workspace_root": "/must/not/select/a/backend"},
+            environment_lease=lease,
+        )
+
+        assert captured_root["root"] == workspace_root
+        assert ws.current_workspace() is prior_workspace
+    finally:
+        ws.reset_workspace(prior_token)
 
 
 @pytest.mark.asyncio
-async def test_stream_agent_without_workspace_root_leaves_contextvar_untouched(
+async def test_targetless_stream_clears_inherited_workspace_for_the_run(
     monkeypatch,
 ):
-    """When ``context`` carries no workspace_root, the contextvar should
-    not be overwritten — falls back to whatever was set previously (or the
-    lazy default)."""
+    """A targetless run cannot inherit a caller task's workspace binding."""
 
     monkeypatch.setattr(bridge.Debug, "enabled", classmethod(lambda cls: False))
     monkeypatch.setattr(
@@ -115,7 +130,10 @@ async def test_stream_agent_without_workspace_root_leaves_contextvar_untouched(
 
     class FakeRunResult:
         async def stream_events(self):
-            captured_root["root"] = ws.workspace_root()
+            try:
+                ws.workspace_root()
+            except ws.WorkspaceNotBoundError:
+                captured_root["unbound"] = True
             if False:
                 yield None
 
@@ -141,18 +159,21 @@ async def test_stream_agent_without_workspace_root_leaves_contextvar_untouched(
     )
 
     session = DummySession()
-    expected_root = ws.workspace_root()
-
-    await bridge.stream_agent(
-        agent,
-        "prompt",
-        session,
-        rpc_channel=DummyChannel(),
-        max_turns=1,
-        context={"some": "other"},
-    )
-
-    assert captured_root["root"] == expected_root
+    inherited = ws.HostWorkspace(root="/tmp")
+    token = ws.set_workspace(inherited)
+    try:
+        await bridge.stream_agent(
+            agent,
+            "prompt",
+            session,
+            rpc_channel=DummyChannel(),
+            max_turns=1,
+            context={"some": "other"},
+        )
+        assert captured_root == {"unbound": True}
+        assert ws.current_workspace() is inherited
+    finally:
+        ws.reset_workspace(token)
 
 
 @pytest.mark.asyncio
@@ -197,18 +218,25 @@ async def test_stream_agent_preserves_unconfined_host_workspace(monkeypatch, tmp
     )
 
     workspace = ws.HostWorkspace(root=str(tmp_path), confine=False)
-    token = ws.set_workspace(workspace)
-    try:
-        await bridge.stream_agent(
-            agent,
-            "prompt",
-            DummySession(),
-            rpc_channel=DummyChannel(),
-            max_turns=1,
-            context={"workspace_root": str(tmp_path)},
-        )
-    finally:
-        ws.reset_workspace(token)
+    lease = EnvironmentLease(
+        ExecutionEnvironmentDescriptor(
+            environment_id="environment-unconfined",
+            workspace_id="workspace-unconfined",
+            kind=EnvironmentKind.HOST,
+            state=EnvironmentState.READY,
+            generation=1,
+        ),
+        workspace,
+    )
+    await bridge.stream_agent(
+        agent,
+        "prompt",
+        DummySession(),
+        rpc_channel=DummyChannel(),
+        max_turns=1,
+        context={"workspace_root": "/must/not/select/a/backend"},
+        environment_lease=lease,
+    )
 
     assert captured["root"] == str(tmp_path)
     assert captured["confine"] is False

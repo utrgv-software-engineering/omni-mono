@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 from agents import Agent
 
 from tests.fixtures.gui_ws import perform_gui_handshake
@@ -87,6 +88,8 @@ class TestServerIntegration:
             service.register_server_function(
                 "session.describe",
                 _describe_session,
+                resource_scope=ResourceScope.THREAD,
+                execution_requirements=ExecutionRequirement.NONE,
                 description="Return session metadata",
                 params_schema={"type": "object"},
                 result_schema={"type": "object"},
@@ -103,7 +106,7 @@ class TestServerIntegration:
         )
 
         # Build and return the app
-        app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+        app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
         return app
 
     @pytest.fixture
@@ -121,7 +124,10 @@ class TestServerIntegration:
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "start_run",
-                    "params": {"prompt": "Hello"},
+                    "params": {
+                        "environment_selection": {"mode": "none"},
+                        "prompt": "Hello",
+                    },
                 }
             )
             start_resp, _ = _wait_for_run_completion(ws, 1)
@@ -202,7 +208,10 @@ class TestServerIntegration:
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "start_run",
-                    "params": {"prompt": "First"},
+                    "params": {
+                        "environment_selection": {"mode": "none"},
+                        "prompt": "First",
+                    },
                 }
             )
 
@@ -217,7 +226,11 @@ class TestServerIntegration:
                     "jsonrpc": "2.0",
                     "id": 2,
                     "method": "start_run",
-                    "params": {"prompt": "Second", "session_id": session_id},
+                    "params": {
+                        "environment_selection": {"mode": "none"},
+                        "prompt": "Second",
+                        "session_id": session_id,
+                    },
                 }
             )
 
@@ -264,7 +277,10 @@ class TestServerIntegration:
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "start_run",
-                    "params": {"prompt": "Blocking"},
+                    "params": {
+                        "environment_selection": {"mode": "none"},
+                        "prompt": "Blocking",
+                    },
                 }
             )
             start_resp = _wait_for_result(ws, 1)
@@ -309,7 +325,10 @@ class TestServerIntegration:
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "start_run",
-                    "params": {"prompt": "Initial"},
+                    "params": {
+                        "environment_selection": {"mode": "none"},
+                        "prompt": "Initial",
+                    },
                 }
             )
             start_resp = _wait_for_result(ws, 1)
@@ -402,7 +421,10 @@ class TestServerIntegration:
                         "jsonrpc": "2.0",
                         "id": idx,
                         "method": "start_run",
-                        "params": {"prompt": prompt},
+                        "params": {
+                            "environment_selection": {"mode": "none"},
+                            "prompt": prompt,
+                        },
                     }
                 )
                 _wait_for_run_completion(ws, idx)
@@ -438,25 +460,12 @@ class TestServerIntegration:
 
 
 # ---------------------------------------------------------------------------
-# Strict workspace_root regression tests — verify that:
-#   1. A server-mode app (no default_workspace_root) refuses start_run when
-#      the client does not supply workspace_root.
-#   2. A workspace_root supplied via session.ensure context flows all the
-#      way to the agent's runtime context (asymmetric tempdir vs test cwd
-#      proves no silent fallback).
-#   3. workspace_root supplied via variables (the path the web UI uses)
-#      also propagates.
-# These cover the original bug: in server mode, sub-agents and tool
-# subprocesses were anchoring to the server process's cwd because the
-# framework silently fell back to os.getcwd() when the client omitted
-# workspace_root.
+# Execution selection regression tests. A targetless Run is valid, and path
+# strings supplied as session metadata can never select an execution backend.
 # ---------------------------------------------------------------------------
 
 
-class TestStrictWorkspaceRootServerMode:
-    """The server backend (omni --mode server) must refuse to fill in
-    workspace_root from its own cwd. Either the client supplies it, or
-    start_run rejects."""
+class TestExplicitExecutionSelection:
 
     @pytest.fixture
     def captured_contexts(self):
@@ -464,7 +473,7 @@ class TestStrictWorkspaceRootServerMode:
 
     @pytest.fixture
     def strict_client(self, monkeypatch, captured_contexts):
-        """Server-mode app: NO default_workspace_root. Captures the
+        """Server-mode app: NO default_host_workspace_root. Captures the
         runtime_context kwarg that the framework passes into stream_agent
         so tests can assert exactly what the tools would see."""
 
@@ -476,7 +485,7 @@ class TestStrictWorkspaceRootServerMode:
         )
 
         async def capturing_stream(agent, prompt, sess, channel, **kwargs):
-            captured_contexts.append(kwargs.get("context"))
+            captured_contexts.append(kwargs)
             user_msg = {"role": "user", "content": prompt}
             sess.history.append(user_msg)
             from omniagents.core.session import append_message
@@ -490,15 +499,13 @@ class TestStrictWorkspaceRootServerMode:
             "omniagents.core.agents.service.stream_agent", capturing_stream
         )
 
-        # Deliberately NO default_workspace_root.
+        # Deliberately NO default_host_workspace_root.
         app = server_app.build_app(spec=spec)
         return TestClient(app)
 
-    def test_start_run_without_workspace_root_returns_jsonrpc_error(
-        self, strict_client
+    def test_targetless_run_succeeds_without_a_workspace(
+        self, strict_client, captured_contexts
     ):
-        """No default + no client-supplied value → JSON-RPC error, not a
-        silent run anchored to the server process cwd."""
         with strict_client.websocket_connect("/ws") as ws:
             perform_gui_handshake(ws)
             ws.send_json(
@@ -506,20 +513,21 @@ class TestStrictWorkspaceRootServerMode:
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "start_run",
-                    "params": {"prompt": "hi"},
+                    "params": {
+                        "environment_selection": {"mode": "none"},
+                        "prompt": "hi",
+                    },
                 }
             )
-            resp = _wait_for_result(ws, 1)
-            assert "error" in resp
-            err_msg = resp["error"]["message"].lower()
-            assert "workspace_root" in err_msg
+            resp, _ = _wait_for_run_completion(ws, 1)
+            assert "result" in resp
 
-    def test_workspace_root_via_session_ensure_propagates_to_runtime(
+        assert captured_contexts[-1]["environment_lease"] is None
+        assert "workspace_root" not in (captured_contexts[-1]["context"] or {})
+
+    def test_workspace_root_via_session_ensure_cannot_select_execution(
         self, strict_client, captured_contexts, tmp_path
     ):
-        """The tempdir the client supplied — not the test runner's cwd —
-        is what the framework hands to stream_agent (and therefore to
-        every tool's RunContextWrapper)."""
         target = str(tmp_path / "workspace")
         with strict_client.websocket_connect("/ws") as ws:
             perform_gui_handshake(ws)
@@ -542,29 +550,25 @@ class TestStrictWorkspaceRootServerMode:
                     "jsonrpc": "2.0",
                     "id": 2,
                     "method": "start_run",
-                    "params": {"prompt": "hi", "session_id": session_id},
+                    "params": {
+                        "environment_selection": {"mode": "none"},
+                        "prompt": "hi",
+                        "session_id": session_id,
+                    },
                 }
             )
             _wait_for_run_completion(ws, 2)
 
         assert captured_contexts, "stream_agent never invoked"
-        ctx = captured_contexts[-1]
-        # Tools call ctx.context.get("workspace_root") — exactly this path.
+        captured = captured_contexts[-1]
+        ctx = captured["context"]
         assert isinstance(ctx, dict)
-        assert ctx.get("workspace_root") == target
-        # And critically: NOT the test process cwd. This is the asymmetric
-        # check that detects silent-cwd-fallback regressions.
-        import os as _os
+        assert "workspace_root" not in ctx
+        assert captured["environment_lease"] is None
 
-        assert ctx.get("workspace_root") != _os.getcwd()
-
-    def test_workspace_root_via_variables_propagates_to_runtime(
+    def test_workspace_root_via_variables_cannot_select_execution(
         self, strict_client, captured_contexts, tmp_path
     ):
-        """The web UI passes workspace_root via variables (App.tsx). That
-        path must propagate to the runtime context too — otherwise web
-        clients would hit WorkspaceRootRequiredError despite supplying
-        the value."""
         target = str(tmp_path / "via_variables")
         with strict_client.websocket_connect("/ws") as ws:
             perform_gui_handshake(ws)
@@ -574,6 +578,7 @@ class TestStrictWorkspaceRootServerMode:
                     "id": 1,
                     "method": "start_run",
                     "params": {
+                        "environment_selection": {"mode": "none"},
                         "prompt": "hi",
                         "variables": {"workspace_root": target},
                     },
@@ -582,10 +587,8 @@ class TestStrictWorkspaceRootServerMode:
             _wait_for_run_completion(ws, 1)
 
         assert captured_contexts, "stream_agent never invoked"
-        ctx = captured_contexts[-1]
-        # build_coding_context-style factories merge variables into context;
-        # in this minimal spec there is no factory so service.py falls back
-        # to sess.variables for runtime_context. Either way, the value must
-        # be reachable from where tools look.
+        captured = captured_contexts[-1]
+        ctx = captured["context"]
         assert isinstance(ctx, dict)
-        assert ctx.get("workspace_root") == target
+        assert "workspace_root" not in ctx
+        assert captured["environment_lease"] is None

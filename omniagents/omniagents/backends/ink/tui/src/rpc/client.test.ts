@@ -70,6 +70,11 @@ vi.mock("ws", () => {
                   experimental_operations: [],
                   disabled_notifications: [],
                 },
+                agent_host: {
+                  agent_host_id: "agent-host-1",
+                  default_workspace_id: "workspace-1",
+                  default_environment_id: "environment-1",
+                },
               },
             }),
           ),
@@ -154,6 +159,10 @@ describe("RPCClient", () => {
     ]);
     expect(ready).toHaveBeenCalledTimes(1);
     expect(client.initializeResult?.protocol_version).toBe("1.0.0");
+    expect(client.defaultEnvironmentSelection()).toEqual({
+      mode: "explicit",
+      environment_id: "environment-1",
+    });
 
     mockSockets[0]!.emit("close");
     await vi.advanceTimersByTimeAsync(1000);
@@ -371,7 +380,7 @@ describe("RPCClient typed git wrappers", () => {
       jsonrpc: "2.0",
       id: 1,
       method: "git_status",
-      params: { session_id: "sess", repo: "apps/api" },
+      params: { environment_id: "sess", repo: "apps/api" },
     });
   });
 
@@ -385,7 +394,7 @@ describe("RPCClient typed git wrappers", () => {
     expect(JSON.parse(sent[0]!)).toMatchObject({
       method: "git_stage",
       params: {
-        session_id: "sess",
+        environment_id: "sess",
         repo: ".",
         hunks: [{ path: "src/app.ts", hunk_id: "deadbeefdeadbeef" }],
       },

@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import textwrap
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -17,161 +19,132 @@ from omniagents.builtin.server_functions.sandbox_lifecycle import (
     sandbox_switch,
     sandbox_unpause,
 )
-from omniagents.core.runtime import serve_state
-from omniagents.core.runtime.sandbox_lifecycle import (
-    set_switch_executor,
-    switch_executor,
+from omniagents.execution import (
+    EnvironmentCapability,
+    EnvironmentKind,
+    EnvironmentLease,
+    EnvironmentState,
+    ExecutionEnvironmentDescriptor,
+    OperationExecutionDescriptor,
+    RequestContext,
+    bind_request_context,
+    reset_request_context,
 )
+from omniagents.execution.errors import CapabilityUnavailableError
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
+from omniagents.workspace.base import Workspace
 
 
-@pytest.fixture(autouse=True)
-def _reset_state():
-    serve_state.reset()
-    set_switch_executor(None)
-    yield
-    serve_state.reset()
-    set_switch_executor(None)
+class _Controller:
+    def __init__(self):
+        self.calls = []
+
+    async def pause(self, lease):
+        self.calls.append(("pause", lease.environment_id))
+        return {"ok": True, "supported": True, "paused": True}
+
+    async def unpause(self, lease):
+        self.calls.append(("unpause", lease.environment_id))
+        return {"ok": True, "supported": True, "paused": False}
+
+    async def notify_activity(self, lease):
+        self.calls.append(("notify", lease.environment_id))
+        return {"ok": True}
+
+    async def discard_snapshot(self, lease):
+        self.calls.append(("discard", lease.environment_id))
+        return {"ok": True}
+
+    async def switch(self, lease, profile):
+        self.calls.append(("switch", lease.environment_id, profile))
+        return {"ok": True, "profile": "devbox", "backend": "docker"}
 
 
-class _Inner:
-    """Backend session with the docker-extended lifecycle surface."""
-
-    def __init__(self, fail_pause=False):
-        self._paused = False
-        self.pings = 0
-        self._fail_pause = fail_pause
-
-    def set_dependencies(self, dependencies):
-        pass
-
-    async def pause(self):
-        if self._fail_pause:
-            raise RuntimeError("daemon down")
-        self._paused = True
-
-    async def unpause(self):
-        self._paused = False
-
-    async def paused(self):
-        return self._paused
-
-    async def notify_activity(self):
-        self.pings += 1
-
-
-class _NoLifecycle:
-    def set_dependencies(self, dependencies):
-        pass
-
-
-def _publish(inner):
-    from omniagents.core.sandbox.lifecycle_session import LifecycleSandboxSession
-
-    session = LifecycleSandboxSession(inner)
-    serve_state.set_sandbox_session(session)
-    return session
+@contextmanager
+def _routed(controller):
+    descriptor = ExecutionEnvironmentDescriptor(
+        environment_id="env-1",
+        workspace_id="workspace-1",
+        kind=EnvironmentKind.DEVBOX,
+        state=EnvironmentState.READY,
+        generation=4,
+        capabilities=frozenset({EnvironmentCapability.ENVIRONMENT_LIFECYCLE}),
+    )
+    workspace = Mock(spec=Workspace)
+    workspace.root = "/workspace"
+    lease = EnvironmentLease(descriptor, workspace, controller)
+    operation = OperationExecutionDescriptor(
+        name="sandbox.test",
+        resource_scope=ResourceScope.ENVIRONMENT,
+        execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
+    )
+    token = bind_request_context(
+        RequestContext(
+            operation=operation,
+            principal=None,
+            environment=descriptor,
+            environment_lease=lease,
+        )
+    )
+    try:
+        yield
+    finally:
+        reset_request_context(token)
 
 
 # ----------------------------- pause / unpause -------------------------- #
 
 
 def test_pause_unpause_happy_path():
-    inner = _Inner()
-    _publish(inner)
-
-    res = asyncio.run(sandbox_pause(None))
-    assert res == {"ok": True, "supported": True, "paused": True}
-    res = asyncio.run(sandbox_unpause(None))
-    assert res == {"ok": True, "supported": True, "paused": False}
+    controller = _Controller()
+    with _routed(controller):
+        assert asyncio.run(sandbox_pause(None))["paused"] is True
+        assert asyncio.run(sandbox_unpause(None))["paused"] is False
+    assert controller.calls == [("pause", "env-1"), ("unpause", "env-1")]
 
 
-def test_pause_without_session():
-    res = asyncio.run(sandbox_pause(None))
-    assert res["ok"] is False and res["supported"] is False
-    assert "no live sandbox session" in res["reason"]
-
-
-def test_pause_unsupported_backend():
-    _publish(_NoLifecycle())
-    res = asyncio.run(sandbox_pause(None))
-    assert res == {
-        "ok": False,
-        "supported": False,
-        "reason": "backend does not implement pause",
-    }
-    res = asyncio.run(sandbox_unpause(None))
-    assert res["reason"] == "backend does not implement unpause"
-
-
-def test_pause_backend_error_reports_supported():
-    _publish(_Inner(fail_pause=True))
-    res = asyncio.run(sandbox_pause(None))
-    assert res == {"ok": False, "supported": True, "reason": "daemon down"}
-
-
-def test_pause_works_on_bare_backend_session():
-    # Duck-typed semantics: a session published without the SDK wrapper
-    # (test fakes, custom embedders) still works.
-    serve_state.set_sandbox_session(_Inner())
-    assert asyncio.run(sandbox_pause(None))["ok"] is True
+def test_lifecycle_without_controller_is_typed_capability_error():
+    with _routed(None), pytest.raises(CapabilityUnavailableError):
+        asyncio.run(sandbox_pause(None))
 
 
 # ----------------------------- notify_activity -------------------------- #
 
 
 def test_notify_activity():
-    inner = _Inner()
-    _publish(inner)
-    assert asyncio.run(sandbox_notify_activity(None)) == {"ok": True}
-    assert inner.pings == 1
-    _publish(_NoLifecycle())
-    assert asyncio.run(sandbox_notify_activity(None)) == {"ok": False}
-    serve_state.set_sandbox_session(None)
-    assert asyncio.run(sandbox_notify_activity(None)) == {"ok": False}
+    controller = _Controller()
+    with _routed(controller):
+        assert asyncio.run(sandbox_notify_activity(None)) == {"ok": True}
+    assert controller.calls == [("notify", "env-1")]
 
 
 # ----------------------------- discard_snapshot ------------------------- #
 
 
 def test_discard_snapshot_sets_flag():
-    assert serve_state.get_discard_snapshot_on_exit() is False
-    assert asyncio.run(sandbox_discard_snapshot(None)) == {"ok": True}
-    assert serve_state.get_discard_snapshot_on_exit() is True
+    controller = _Controller()
+    with _routed(controller):
+        assert asyncio.run(sandbox_discard_snapshot(None)) == {"ok": True}
+    assert controller.calls == [("discard", "env-1")]
 
 
 # ----------------------------- switch seam ------------------------------ #
 
 
-def test_switch_without_executor_returns_clear_error():
-    assert switch_executor() is None
-    res = asyncio.run(sandbox_switch(None, "/profiles/devbox.yml"))
-    assert res["ok"] is False
-    assert "set_switch_executor" in res["reason"]
-
-
 def test_switch_validates_profile():
-    async def executor(profile):  # pragma: no cover - must not be reached
-        raise AssertionError("called")
-
-    set_switch_executor(executor)
-    res = asyncio.run(sandbox_switch(None, "   "))
+    controller = _Controller()
+    with _routed(controller):
+        res = asyncio.run(sandbox_switch(None, "   "))
     assert res["ok"] is False and "non-empty" in res["reason"]
+    assert controller.calls == []
 
 
-def test_switch_delegates_to_installed_executor():
-    seen = []
-
-    async def executor(profile):
-        seen.append(profile)
-        return {"ok": True, "profile": "devbox", "backend": "docker"}
-
-    set_switch_executor(executor)
-    res = asyncio.run(sandbox_switch(None, "/profiles/devbox.yml"))
+def test_switch_delegates_to_leased_environment_controller():
+    controller = _Controller()
+    with _routed(controller):
+        res = asyncio.run(sandbox_switch(None, "/profiles/devbox.yml"))
     assert res == {"ok": True, "profile": "devbox", "backend": "docker"}
-    assert seen == ["/profiles/devbox.yml"]
-    # Seam is clearable.
-    set_switch_executor(None)
-    assert switch_executor() is None
+    assert controller.calls == [("switch", "env-1", "/profiles/devbox.yml")]
 
 
 # ----------------------- pack surface via load_project ------------------ #

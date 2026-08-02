@@ -45,7 +45,7 @@ def test_rpc_methods(monkeypatch):
     )
 
     monkeypatch.setattr(runner_bridge, "stream_agent", fake_stream_agent)
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
@@ -55,7 +55,10 @@ def test_rpc_methods(monkeypatch):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "start_run",
-                "params": {"prompt": "hello"},
+                "params": {
+                    "environment_selection": {"mode": "none"},
+                    "prompt": "hello",
+                },
             }
         )
         resp = _wait_for_result(ws, 1)
@@ -105,7 +108,7 @@ def test_rpc_methods(monkeypatch):
 
     importlib.reload(sessions_mod)
     importlib.reload(server_app)
-    app2 = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app2 = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client2 = TestClient(app2)
     with client2.websocket_connect("/ws") as ws2:
         perform_gui_handshake(ws2)
@@ -124,7 +127,7 @@ def test_rpc_registry_rejects_helpers_and_keeps_connection_usable():
         get_agent_instructions=lambda: "instr",
         build_agent=dummy_build_agent,
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
@@ -165,7 +168,7 @@ def test_concurrent_websocket_connections(monkeypatch):
     )
 
     monkeypatch.setattr(runner_bridge, "stream_agent", fake_stream_agent)
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
 
     with ExitStack() as stack:
@@ -179,7 +182,10 @@ def test_concurrent_websocket_connections(monkeypatch):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "start_run",
-                "params": {"prompt": "hello one"},
+                "params": {
+                    "environment_selection": {"mode": "none"},
+                    "prompt": "hello one",
+                },
             }
         )
         ws2.send_json(
@@ -187,7 +193,10 @@ def test_concurrent_websocket_connections(monkeypatch):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "start_run",
-                "params": {"prompt": "hello two"},
+                "params": {
+                    "environment_selection": {"mode": "none"},
+                    "prompt": "hello two",
+                },
             }
         )
 
@@ -229,7 +238,7 @@ def test_connection_cleanup_resets_channel(monkeypatch):
     )
 
     monkeypatch.setattr(runner_bridge, "stream_agent", fake_stream_agent)
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
 
     with client.websocket_connect("/ws") as ws:
@@ -239,7 +248,10 @@ def test_connection_cleanup_resets_channel(monkeypatch):
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "start_run",
-                "params": {"prompt": "cleanup"},
+                "params": {
+                    "environment_selection": {"mode": "none"},
+                    "prompt": "cleanup",
+                },
             }
         )
         _wait_for_result(ws, 1)

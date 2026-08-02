@@ -171,7 +171,7 @@ def context(monkeypatch):
             }
         },
     )
-    app = server_app.build_app(spec=spec, default_workspace_root="/tmp")
+    app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
     client = TestClient(app)
     yield SimpleNamespace(client=client, service=app.state.agent_service)
 
@@ -182,7 +182,9 @@ def single_user_context(monkeypatch):
 
     monkeypatch.setattr(runner_bridge, "stream_agent", mock_stream_agent)
     monkeypatch.setattr(service_mod, "stream_agent", mock_stream_agent)
-    app = server_app.build_app(spec=_spec("OrgLocal"), default_workspace_root="/tmp")
+    app = server_app.build_app(
+        spec=_spec("OrgLocal"), default_host_workspace_root="/tmp"
+    )
     client = TestClient(app)
     yield SimpleNamespace(client=client, service=app.state.agent_service)
 

@@ -135,6 +135,8 @@ def _switch_ctx() -> SwitchContext:
         app=object(),
         spec=object(),
         session_id="s1",
+        environment_id="environment-1",
+        workspace_id="workspace-1",
         snapshot_dir=None,
         sources_parsed=[],
         credentials_parsed=[],
