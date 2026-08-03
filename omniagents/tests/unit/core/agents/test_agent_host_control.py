@@ -86,6 +86,20 @@ async def test_host_path_registration_requires_agent_host_admin_in_enforced_mode
 
 
 @pytest.mark.asyncio
+async def test_admin_registration_precedes_execution_resource_routing():
+    service = make_service()
+    principal = UserIdentity(user_id="operator", roles=["admin"])
+
+    context = await service.prepare_rpc_context(
+        principal,
+        "agent_host_register_workspace",
+        {"workspace_id": "workspace-new", "materialization_path": "/repo"},
+    )
+
+    assert context is None
+
+
+@pytest.mark.asyncio
 async def test_admin_registration_can_assign_resources_to_client_owner(tmp_path):
     service = make_service()
     service.authorization_policy = AuthorizationPolicy(enforced=True)

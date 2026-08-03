@@ -4909,6 +4909,16 @@ class AgentService(RpcMethodsBase):
     ):
         """Resolve one typed RPC or dynamic server function centrally."""
 
+        # AgentHost registry administration is the control plane that creates
+        # resources for later routed operations. In particular,
+        # ``agent_host_register_workspace`` necessarily names a Workspace that
+        # is not registered yet, so resolving it through OperationRouter before
+        # dispatch would reject the creation request as ``workspace_not_found``.
+        # These methods are still centrally authorized as admin-only by
+        # ``authorize_rpc``; they simply have no execution-environment context.
+        if method in AGENT_HOST_ADMIN_METHODS:
+            return None
+
         if method == "server_call":
             function = params.get("function")
             entry = self._server_functions.get(function)
