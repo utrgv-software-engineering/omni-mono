@@ -47,6 +47,30 @@ class EnvironmentUnavailableError(ExecutionResolutionError):
         )
 
 
+class EnvironmentProvisioningUnavailableError(ExecutionResolutionError):
+    kind = "environment_provisioning_unavailable"
+
+    def __init__(self, workspace_id: str, profile_id: str) -> None:
+        super().__init__(
+            "this AgentHost cannot provision execution environments",
+            workspace_id=workspace_id,
+            profile_id=profile_id,
+        )
+
+
+class EnvironmentProvisioningFailedError(ExecutionResolutionError):
+    kind = "environment_provisioning_failed"
+
+    def __init__(self, workspace_id: str, profile_id: str, reason: str) -> None:
+        super().__init__(
+            f"failed to provision profile {profile_id!r} for workspace "
+            f"{workspace_id!r}: {reason}",
+            workspace_id=workspace_id,
+            profile_id=profile_id,
+            reason=reason,
+        )
+
+
 class EnvironmentChangedError(ExecutionResolutionError):
     kind = "environment_changed"
 

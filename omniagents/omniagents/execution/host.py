@@ -14,6 +14,7 @@ from .models import (
     ExecutionEnvironmentDescriptor,
     WorkspaceResource,
 )
+from .provisioning import EnvironmentProvisioner
 from .registry import (
     ExecutionEnvironmentManager,
     ThreadRuntimeBindingRegistry,
@@ -38,11 +39,18 @@ class AgentHostResources:
     router: OperationRouter
 
     @classmethod
-    def create(cls, agent_host_id: str) -> AgentHostResources:
+    def create(
+        cls,
+        agent_host_id: str,
+        *,
+        environment_provisioner: EnvironmentProvisioner | None = None,
+    ) -> AgentHostResources:
         if not isinstance(agent_host_id, str) or not agent_host_id.strip():
             raise ValueError("agent_host_id must be a non-empty string")
         workspaces = WorkspaceRegistry()
-        environments = ExecutionEnvironmentManager(workspaces)
+        environments = ExecutionEnvironmentManager(
+            workspaces, provisioner=environment_provisioner
+        )
         thread_bindings = ThreadRuntimeBindingRegistry(workspaces, environments)
         router = OperationRouter(
             workspaces,

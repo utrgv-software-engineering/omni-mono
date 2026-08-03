@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from contextvars import ContextVar, Token
 from typing import Any, Mapping
 
@@ -88,6 +88,7 @@ class RequestContext:
     workspace: WorkspaceResource | None = None
     environment: ExecutionEnvironmentDescriptor | None = None
     environment_lease: EnvironmentLease | None = None
+    automatic_environment: AutomaticEnvironment | None = None
 
     @property
     def resource_owner_user_id(self) -> str | None:
@@ -196,11 +197,12 @@ class OperationRouter:
         requested_workspace_id = self._identifier(params, "workspace_id")
         environment: ExecutionEnvironmentDescriptor | None = None
         lease: EnvironmentLease | None = None
+        run_plan = _RunPlanResolution()
 
         if requirements & ExecutionRequirement.RUN_PLAN:
-            environment_id, expected_generation = await self._resolve_run_plan(
-                operation.name, params
-            )
+            run_plan = await self._resolve_run_plan(operation.name, params)
+            environment_id = run_plan.environment_id
+            expected_generation = run_plan.expected_generation
             if environment_id is not None:
                 lease = await self._environment_manager.acquire(
                     environment_id,
@@ -228,7 +230,9 @@ class OperationRouter:
             )
             environment = lease.descriptor
         resolved_workspace_id = (
-            environment.workspace_id if environment is not None else None
+            environment.workspace_id
+            if environment is not None
+            else run_plan.workspace_id
         )
         if (
             requested_workspace_id is not None
@@ -260,17 +264,53 @@ class OperationRouter:
             workspace=workspace,
             environment=environment,
             environment_lease=lease,
+            automatic_environment=run_plan.automatic_environment,
+        )
+
+    async def materialize(self, context: RequestContext) -> RequestContext:
+        """Provision a resolved automatic Run target after authorization.
+
+        ``prepare`` is intentionally side-effect free because RPC dispatch uses
+        it before authorization. The authorized ``start_run`` handler calls
+        this method to turn an automatic profile/Workspace selection into one
+        immutable environment lease.
+        """
+
+        selection = context.automatic_environment
+        if selection is None:
+            return context
+        workspace = context.workspace
+        if workspace is None:
+            raise RuntimeError("automatic environment has no resolved workspace")
+        descriptor = await self._environment_manager.resolve_automatic(
+            workspace.workspace_id, selection.profile_id
+        )
+        if descriptor.workspace_id != workspace.workspace_id:
+            raise WorkspaceEnvironmentMismatchError(
+                workspace.workspace_id,
+                descriptor.environment_id,
+                descriptor.workspace_id,
+            )
+        lease = await self._environment_manager.acquire(
+            descriptor.environment_id,
+            expected_generation=descriptor.generation,
+        )
+        return replace(
+            context,
+            environment=descriptor,
+            environment_lease=lease,
+            automatic_environment=None,
         )
 
     async def _resolve_run_plan(
         self, operation_name: str, params: Mapping[str, Any]
-    ) -> tuple[str | None, int | None]:
+    ) -> _RunPlanResolution:
         selection = params.get("environment_selection")
         if not isinstance(selection, Mapping):
             raise TypeError("environment_selection must be an object")
         mode = selection.get("mode")
         if mode == "none":
-            return None, None
+            return _RunPlanResolution()
         if mode == "explicit":
             environment_id = self._identifier(selection, "environment_id")
             if environment_id is None:
@@ -282,7 +322,7 @@ class OperationRouter:
                 or generation < 1
             ):
                 raise TypeError("environment_generation must be an integer >= 1")
-            return environment_id, generation
+            return _RunPlanResolution(environment_id, generation)
         if mode == "inherit":
             thread_id = self._identifier(params, "thread_id") or self._identifier(
                 params, "session_id"
@@ -292,12 +332,16 @@ class OperationRouter:
             binding = await self._thread_binding_registry.ensure(thread_id)
             selected = binding.environment_selection
             if isinstance(selected, NoEnvironment):
-                return None, None
+                return _RunPlanResolution(workspace_id=binding.workspace_id)
             if isinstance(selected, ExistingEnvironment):
-                return selected.environment_id, None
+                return _RunPlanResolution(
+                    selected.environment_id,
+                    workspace_id=binding.workspace_id,
+                )
             if isinstance(selected, AutomaticEnvironment):
-                raise RuntimeError(
-                    "automatic environment provisioning is not implemented"
+                return _RunPlanResolution(
+                    workspace_id=binding.workspace_id,
+                    automatic_environment=selected,
                 )
         raise TypeError(f"unsupported environment selection mode: {mode!r}")
 
@@ -309,3 +353,11 @@ class OperationRouter:
         if not isinstance(value, str) or not value.strip():
             raise TypeError(f"{name} must be a non-empty string")
         return value
+
+
+@dataclass(frozen=True, slots=True)
+class _RunPlanResolution:
+    environment_id: str | None = None
+    expected_generation: int | None = None
+    workspace_id: str | None = None
+    automatic_environment: AutomaticEnvironment | None = None

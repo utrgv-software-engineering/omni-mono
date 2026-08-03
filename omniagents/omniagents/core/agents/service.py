@@ -3154,6 +3154,7 @@ class AgentService(RpcMethodsBase):
                     "environment_selection": environment_selection,
                 },
             )
+        request_context = await self.operation_router.materialize(request_context)
         environment_lease = request_context.environment_lease
         selection_mode = environment_selection.get("mode")
         if selection_mode == "explicit":

@@ -1254,6 +1254,21 @@ class ServeEnvironmentLifecycleController:
         self._validate(lease)
         return await perform_switch(profile, switch_context=self._switch_context)
 
+    async def close(self, lease: Any) -> None:
+        """Release this environment's live session and started services."""
+
+        self._validate(lease)
+        ctx = self._switch_context
+        runtime = lease.sandbox_runtime
+        session = runtime.session if runtime is not None else None
+        await teardown_session(
+            session,
+            ctx.started_services,
+            discard_snapshot=ctx.discard_snapshot_on_exit,
+        )
+        ctx.started_services = []
+        ctx.ready_event.clear()
+
 
 async def _register_execution_environment(
     app: Any,

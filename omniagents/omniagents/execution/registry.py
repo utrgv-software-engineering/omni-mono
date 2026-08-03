@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+from functools import partial
+import uuid
 
 from omniagents.workspace.base import Workspace
 
@@ -11,9 +13,16 @@ from .errors import (
     CapabilityUnavailableError,
     EnvironmentChangedError,
     EnvironmentNotFoundError,
+    EnvironmentProvisioningFailedError,
+    EnvironmentProvisioningUnavailableError,
     EnvironmentUnavailableError,
     WorkspaceEnvironmentMismatchError,
     WorkspaceNotFoundError,
+)
+from .provisioning import (
+    EnvironmentProvisioner,
+    EnvironmentProvisionRequest,
+    ProvisionedEnvironment,
 )
 from .models import (
     EnvironmentCapability,
@@ -166,10 +175,131 @@ class ExecutionEnvironmentManager:
     environment names an already-registered durable Workspace.
     """
 
-    def __init__(self, workspace_registry: WorkspaceRegistry) -> None:
+    def __init__(
+        self,
+        workspace_registry: WorkspaceRegistry,
+        provisioner: EnvironmentProvisioner | None = None,
+    ) -> None:
         self._workspace_registry = workspace_registry
+        self._provisioner = provisioner
         self._environments: dict[str, _EnvironmentRecord] = {}
+        self._automatic_environment_ids: dict[tuple[str, str], str] = {}
+        self._provisioning_tasks: dict[
+            tuple[str, str], asyncio.Task[ExecutionEnvironmentDescriptor]
+        ] = {}
         self._lock = asyncio.Lock()
+
+    def set_provisioner(self, provisioner: EnvironmentProvisioner) -> None:
+        """Install the AgentHost's product provisioner during composition."""
+
+        if not callable(getattr(provisioner, "provision", None)):
+            raise TypeError("provisioner must implement provision(request)")
+        if self._provisioner is not None and self._provisioner is not provisioner:
+            raise RuntimeError("environment provisioner is already configured")
+        self._provisioner = provisioner
+
+    async def resolve_automatic(
+        self, workspace_id: str, profile_id: str
+    ) -> ExecutionEnvironmentDescriptor:
+        """Resolve or lazily provision one profile/Workspace environment.
+
+        Concurrent callers share one provisioning task. A stopped or failed
+        runtime is replaced by a new logical environment; ready runtimes are
+        reused across Threads that intentionally select the same pair.
+        """
+
+        workspace = self._workspace_registry.get(workspace_id)
+        if not isinstance(profile_id, str) or not profile_id.strip():
+            raise ValueError("profile_id must be a non-empty string")
+        key = (workspace_id, profile_id)
+        async with self._lock:
+            environment_id = self._automatic_environment_ids.get(key)
+            if environment_id is not None:
+                descriptor = self._record(environment_id).descriptor
+                if descriptor.state not in {
+                    EnvironmentState.STOPPED,
+                    EnvironmentState.FAILED,
+                }:
+                    return descriptor
+                self._automatic_environment_ids.pop(key, None)
+
+            task = self._provisioning_tasks.get(key)
+            if task is None:
+                if self._provisioner is None:
+                    raise EnvironmentProvisioningUnavailableError(
+                        workspace_id, profile_id
+                    )
+                request = EnvironmentProvisionRequest(
+                    environment_id=f"environment_{uuid.uuid4().hex}",
+                    workspace=workspace,
+                    profile_id=profile_id,
+                )
+                task = asyncio.create_task(
+                    self._provision_automatic(key, request),
+                    name=f"provision_{request.environment_id}",
+                )
+                self._provisioning_tasks[key] = task
+                task.add_done_callback(partial(self._provisioning_done, key))
+
+        return await asyncio.shield(task)
+
+    async def _provision_automatic(
+        self,
+        key: tuple[str, str],
+        request: EnvironmentProvisionRequest,
+    ) -> ExecutionEnvironmentDescriptor:
+        assert self._provisioner is not None
+        try:
+            provisioned = await self._provisioner.provision(request)
+            if not isinstance(provisioned, ProvisionedEnvironment):
+                raise TypeError("provisioner must return ProvisionedEnvironment")
+        except Exception as exc:
+            if isinstance(exc, EnvironmentProvisioningFailedError):
+                raise
+            raise EnvironmentProvisioningFailedError(
+                request.workspace.workspace_id,
+                request.profile_id,
+                str(exc),
+            ) from exc
+
+        descriptor = ExecutionEnvironmentDescriptor(
+            environment_id=request.environment_id,
+            workspace_id=request.workspace.workspace_id,
+            kind=provisioned.kind,
+            state=EnvironmentState.READY,
+            generation=1,
+            capabilities=provisioned.capabilities,
+        )
+        async with self._lock:
+            self._register_initial(
+                descriptor,
+                provisioned.workspace,
+                lifecycle_controller=provisioned.lifecycle_controller,
+                sandbox_runtime=provisioned.sandbox_runtime,
+                terminal_defaults=provisioned.terminal_defaults,
+            )
+            self._automatic_environment_ids[key] = descriptor.environment_id
+        return descriptor
+
+    def _provisioning_done(
+        self,
+        key: tuple[str, str],
+        task: asyncio.Task[ExecutionEnvironmentDescriptor],
+    ) -> None:
+        """Consume detached failures and remove completed single-flight tasks."""
+
+        if not task.cancelled():
+            task.exception()
+        asyncio.create_task(self._remove_provisioning_task(key, task))
+
+    async def _remove_provisioning_task(
+        self,
+        key: tuple[str, str],
+        task: asyncio.Task[ExecutionEnvironmentDescriptor],
+    ) -> None:
+        async with self._lock:
+            if self._provisioning_tasks.get(key) is task:
+                self._provisioning_tasks.pop(key, None)
 
     async def register(
         self,
@@ -393,14 +523,53 @@ class ExecutionEnvironmentManager:
             return transitioned
 
     async def stop(self, environment_id: str) -> ExecutionEnvironmentDescriptor:
+        closing_lease: EnvironmentLease
+        async with self._lock:
+            current = self._record(environment_id)
+            descriptor = current.descriptor
+            if descriptor.state is not EnvironmentState.READY:
+                raise EnvironmentUnavailableError(
+                    environment_id, descriptor.state.value
+                )
+            closing_lease = EnvironmentLease(
+                descriptor,
+                current.workspace,
+                current.lifecycle_controller,
+                current.sandbox_runtime,
+                current.terminal_defaults,
+            )
+            stopping = replace(descriptor, state=EnvironmentState.STOPPING)
+            self._environments[environment_id] = _EnvironmentRecord(
+                stopping,
+                current.workspace,
+                current.lifecycle_controller,
+                current.sandbox_runtime,
+                current.terminal_defaults,
+            )
+
+        close = getattr(closing_lease.lifecycle_controller, "close", None)
+        if callable(close):
+            try:
+                await close(closing_lease)
+            except Exception:
+                async with self._lock:
+                    failed_current = self._record(environment_id)
+                    failed = replace(
+                        failed_current.descriptor, state=EnvironmentState.FAILED
+                    )
+                    self._environments[environment_id] = replace(
+                        failed_current, descriptor=failed
+                    )
+                raise
+
         async with self._lock:
             current = self._record(environment_id)
             stopped = replace(current.descriptor, state=EnvironmentState.STOPPED)
             self._environments[environment_id] = _EnvironmentRecord(
                 stopped,
                 current.workspace,
-                current.lifecycle_controller,
-                current.sandbox_runtime,
+                None,
+                None,
                 current.terminal_defaults,
             )
             return stopped

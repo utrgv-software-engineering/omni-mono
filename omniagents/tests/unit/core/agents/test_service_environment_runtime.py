@@ -12,11 +12,15 @@ from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.execution import (
     AgentHostResources,
+    AutomaticEnvironment,
+    EnvironmentCapability,
     EnvironmentKind,
     EnvironmentLease,
     EnvironmentState,
     ExecutionEnvironmentDescriptor,
+    ProvisionedEnvironment,
     SandboxExecutionRuntime,
+    ThreadRuntimeBinding,
     WorkspaceResource,
     current_request_context,
 )
@@ -176,3 +180,57 @@ async def test_start_run_passes_environment_runtime_to_builder_and_runner(monkey
     assert streamed_contexts[0].environment_lease.environment_id == "environment-a"
     assert spec.sandbox_run_config is None
     assert spec.sandbox_use_sandbox_agent is False
+
+
+@pytest.mark.asyncio
+async def test_start_run_materializes_inherited_automatic_environment(monkeypatch):
+    runtime_session = object()
+    provision_requests = []
+    streamed_contexts = []
+
+    class Provisioner:
+        async def provision(self, request):
+            provision_requests.append(request)
+            workspace = Mock(spec=Workspace)
+            workspace.root = "/workspace"
+            return ProvisionedEnvironment(
+                workspace=workspace,
+                kind=EnvironmentKind.DEVBOX,
+                capabilities=frozenset({EnvironmentCapability.WORKSPACE_READ}),
+                sandbox_runtime=SandboxExecutionRuntime(runtime_session),
+            )
+
+    async def build_agent(settings, primary_server, stub_app):
+        return SimpleNamespace(tools=[], mcp_servers=[])
+
+    async def stream_agent(*args, **kwargs):
+        streamed_contexts.append(current_request_context())
+        return {}
+
+    monkeypatch.setattr(service_module, "stream_agent", stream_agent)
+    resources = AgentHostResources.create(
+        "automatic-start-run-host", environment_provisioner=Provisioner()
+    )
+    resources.workspaces.register(WorkspaceResource("workspace-a"))
+    await resources.thread_bindings.bind(
+        "thread-a",
+        ThreadRuntimeBinding(
+            workspace_id="workspace-a",
+            environment_selection=AutomaticEnvironment("devbox"),
+        ),
+    )
+    service = AgentService(_spec(build_agent), resources)
+
+    result = await service.start_run(
+        "prompt",
+        {"mode": "inherit"},
+        session_id="thread-a",
+    )
+    session = service._session_manager.get_or_create(result["session_id"])
+    await asyncio.wait_for(session.current_task, timeout=1)
+
+    assert len(provision_requests) == 1
+    assert provision_requests[0].workspace.workspace_id == "workspace-a"
+    assert streamed_contexts[0].environment_lease.sandbox_runtime.session is (
+        runtime_session
+    )

@@ -10,6 +10,8 @@ from .errors import (
     CapabilityUnavailableError,
     EnvironmentChangedError,
     EnvironmentNotFoundError,
+    EnvironmentProvisioningFailedError,
+    EnvironmentProvisioningUnavailableError,
     EnvironmentRequiredError,
     EnvironmentUnavailableError,
     ExecutionResolutionError,
@@ -38,6 +40,11 @@ from .registry import (
     ThreadRuntimeBindingRegistry,
     WorkspaceRegistry,
 )
+from .provisioning import (
+    EnvironmentProvisioner,
+    EnvironmentProvisionRequest,
+    ProvisionedEnvironment,
+)
 from .routing import (
     OperationExecutionDescriptor,
     OperationRouter,
@@ -59,6 +66,10 @@ __all__ = [
     "EnvironmentLease",
     "EnvironmentLifecycleController",
     "EnvironmentNotFoundError",
+    "EnvironmentProvisioner",
+    "EnvironmentProvisioningFailedError",
+    "EnvironmentProvisioningUnavailableError",
+    "EnvironmentProvisionRequest",
     "EnvironmentRequiredError",
     "EnvironmentState",
     "EnvironmentUnavailableError",
@@ -69,6 +80,7 @@ __all__ = [
     "NoEnvironment",
     "OperationExecutionDescriptor",
     "OperationRouter",
+    "ProvisionedEnvironment",
     "RequestContext",
     "SandboxExecutionRuntime",
     "TerminalExecutionDefaults",
