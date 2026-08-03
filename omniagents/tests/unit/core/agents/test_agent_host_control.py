@@ -130,6 +130,40 @@ async def test_thread_binding_cannot_cross_workspace_ownership(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_new_thread_binding_authorizes_through_owned_workspace(
+    tmp_path, temp_history_db
+):
+    service = make_service()
+    service.authorization_policy = AuthorizationPolicy(enforced=True)
+    service.agent_host_resources.provisioning.register_workspace(
+        workspace_id="workspace-alice",
+        owner_user_id="alice",
+        materialization_path=str(tmp_path),
+    )
+    principal = UserIdentity(user_id="alice")
+    params = {
+        "thread_id": "new-thread",
+        "binding": {
+            "workspace_id": "workspace-alice",
+            "environment_selection": {"mode": "none"},
+        },
+    }
+
+    await service.authorize_rpc(
+        principal,
+        "agent_host_bind_thread",
+        params,
+    )
+
+    with pytest.raises(AuthorizationDenied, match="Workspace"):
+        await service.authorize_rpc(
+            UserIdentity(user_id="bob"),
+            "agent_host_bind_thread",
+            params,
+        )
+
+
+@pytest.mark.asyncio
 async def test_resource_listing_is_scoped_to_current_owner(tmp_path):
     service = make_service()
     service.authorization_policy = AuthorizationPolicy(enforced=True)

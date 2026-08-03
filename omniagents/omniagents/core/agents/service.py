@@ -4959,6 +4959,57 @@ class AgentService(RpcMethodsBase):
                 resource="agent_host",
                 resource_id=self.agent_host_resources.agent_host_id,
             )
+        if method == "agent_host_bind_thread":
+            binding = (params or {}).get("binding")
+            workspace_id = (
+                binding.get("workspace_id") if isinstance(binding, dict) else None
+            )
+            if isinstance(workspace_id, str) and workspace_id:
+                workspace = self.workspace_registry.get(workspace_id)
+                thread_id = (params or {}).get("thread_id")
+                thread_owner = (
+                    self._session_owner(thread_id)
+                    if isinstance(thread_id, str) and thread_id
+                    else OWNER_UNKNOWN
+                )
+                thread_exists = False
+                if isinstance(thread_id, str) and thread_id:
+                    thread_exists = self._session_manager.get(thread_id) is not None
+                    if not thread_exists:
+                        try:
+                            from omniagents.core.session.history_db import (
+                                session_exists,
+                            )
+
+                            thread_exists = session_exists(
+                                thread_id,
+                                project_slug=getattr(
+                                    self._session_manager, "_project_slug", None
+                                ),
+                                agent_slug=getattr(
+                                    self._session_manager, "_agent_slug", None
+                                ),
+                            )
+                        except Exception:
+                            logger.exception(
+                                "thread existence lookup failed; denying rebind",
+                                extra={"thread": thread_id},
+                            )
+                            thread_exists = True
+                            thread_owner = OWNER_UNKNOWN
+                if thread_exists and not policy.can_access(principal, thread_owner):
+                    raise AuthorizationDenied(
+                        "Not authorized to rebind this Thread",
+                        resource="thread",
+                        resource_id=thread_id,
+                    )
+                if policy.can_access(principal, workspace.owner_user_id):
+                    return
+                raise AuthorizationDenied(
+                    "Not authorized to bind this Workspace",
+                    resource="workspace",
+                    resource_id=workspace_id,
+                )
         request_context = current_request_context()
         if request_context is not None and request_context.workspace is not None:
             owner = request_context.workspace.owner_user_id
