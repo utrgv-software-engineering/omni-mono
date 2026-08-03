@@ -29,9 +29,9 @@ def _resolve_invocation_dir() -> Path:
 
 
 # Skill roots need no product wiring: the framework derives omni-code's
-# layout (`<workspace>/.omni_code/skills` + published source mounts +
+# layout (`<workspace>/.omni_code/skills` + routed source mounts +
 # `~/.config/omni_code/skills`) from the installed product identity and
-# the serve session's published state (`omniagents.core.skills.skill_roots`).
+# the current RequestContext (`omniagents.core.skills.skill_roots`).
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +49,8 @@ def _resolve_invocation_dir() -> Path:
 # framework defaults as-is.
 # ---------------------------------------------------------------------------
 
-# Workers: every input the wiring needs — the published --source mounts
-# (worktree isolation), the published ProjectContext (packaged-manifest
+# Workers: every input the wiring needs — the routed Workspace sources
+# (worktree isolation), the current ProjectContext (packaged-manifest
 # fallback via the product identity), the orchestrator's sandbox
 # attachment, the product slug, and the model store (installed from the
 # declared catalog by the product bootstrap, i.e. the omni_code package
@@ -70,10 +70,9 @@ install_project_worker_defaults()
 
 # Workspace info: the framework owns the fs_* picker server functions
 # (builtin `workspace_info` capability pack) and the terminal.* functions
-# (builtin `terminal` pack). `omni serve` publishes the manifest root,
-# --source descriptors, and the live sandbox session into the framework's
-# `omniagents.core.runtime.serve_state`, which those builtins read by
-# default — no providers to install here.
+# (builtin `terminal` pack). Both resolve the current Workspace and immutable
+# EnvironmentLease from the routed RequestContext — no providers or
+# process-global serve state are installed here.
 
 # Slash commands executed by the builtin `dispatch` tool (slash pack):
 # declared, not registered. The manifest's `slash_commands:` section
@@ -148,21 +147,18 @@ def discover_agents_md(start_dir: str) -> List[str]:
     return found
 
 
-def _get_published_sources() -> List[Dict[str, Any]]:
-    """Fetch the source descriptors omni serve published for this session.
+def _get_routed_sources() -> List[Dict[str, Any]]:
+    """Fetch source descriptors from the current routed Workspace.
 
-    Best-effort: returns an empty list if ``serve_state`` isn't
-    importable (e.g. running outside ``omni serve``) or if no sources were
-    declared.
+    Context formatting is also used outside an active Run, where no routed
+    Workspace exists; that path intentionally returns an empty list.
     """
-    try:
-        from omniagents.core.runtime.serve_state import get_sources
-    except Exception:
+    from omniagents.execution import current_request_context
+
+    context = current_request_context()
+    if context is None or context.workspace is None:
         return []
-    try:
-        return get_sources()
-    except Exception:
-        return []
+    return [dict(source) for source in context.workspace.sources]
 
 
 def _source_local_path(source: Dict[str, Any]) -> Optional[str]:
@@ -202,7 +198,7 @@ def format_agents_md_block(variables: Optional[Dict[str, Any]] = None) -> str:
     else:
         base_dir = str(_resolve_invocation_dir())
 
-    sources = _get_published_sources()
+    sources = _get_routed_sources()
 
     walk_dirs: List[str] = [base_dir]
     seen_walk: set[str] = {base_dir}

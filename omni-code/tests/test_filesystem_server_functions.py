@@ -1,26 +1,17 @@
-"""fs_* / terminal.* wiring tests.
+"""fs_* / terminal.* capability-pack wiring tests.
 
 The server functions themselves are framework builtins
 (``omniagents.builtin.server_functions.workspace_info`` and ``.terminal``,
 activated by the builtin ``workspace_info`` / ``terminal`` capability
 packs). What omni-code owns — and what these tests cover — is the omni
-agent's activation of those packs and the serve-session state ``omni
-serve`` publishes into ``omniagents.core.runtime.serve_state``, which the
-``omniagents.core.runtime.workspace_info`` seams read by default (no
-providers installed).
+agent's activation of those framework-owned packs. Runtime workspace and
+environment data is supplied by the framework's routed request context.
 
 The old omni-code ``session_ensure`` shim (a proxy for the framework's own
 builtin ``session.ensure``) was deleted with the migration.
 """
 
 from pathlib import Path
-
-from omniagents.core.runtime import serve_state as aws
-from omniagents.core.runtime import workspace_info as ws_seams
-
-# Importing the omni context module installs the workspace-info providers
-# (module-level wiring, same as the recap/compaction summarizers).
-import omni_code.agents.omni.context  # noqa: F401
 
 
 def _omni_spec():
@@ -89,31 +80,3 @@ def test_terminal_pack_resolves_to_builtins():
     ]
     assert "terminal.create" not in explicit
     assert "terminal.close" not in explicit
-
-
-def test_workspace_info_seams_read_published_serve_state():
-    """The framework seams default to the state ``omni serve`` publishes
-    into ``serve_state`` — omni-code installs no providers (the old lambda
-    installs in the context module are gone)."""
-    assert ws_seams.workspace_sources_provider() is None
-    assert ws_seams.manifest_root_provider() is None
-    assert ws_seams.sandbox_session_provider() is None
-
-    sentinel_session = object()
-    aws.set_manifest_root("/workspace/proj")
-    aws.set_sources([{"kind": "local", "mountName": "proj", "path": "/host/proj"}])
-    aws.set_sandbox_session(sentinel_session)
-    try:
-        assert ws_seams.get_manifest_root() == "/workspace/proj"
-        assert ws_seams.get_workspace_sources() == [
-            {"kind": "local", "mountName": "proj", "path": "/host/proj"}
-        ]
-        assert ws_seams.get_sandbox_session() is sentinel_session
-    finally:
-        aws.set_manifest_root(None)
-        aws.set_sources(None)
-        aws.set_sandbox_session(None)
-
-    assert ws_seams.get_manifest_root() is None
-    assert ws_seams.get_workspace_sources() == []
-    assert ws_seams.get_sandbox_session() is None

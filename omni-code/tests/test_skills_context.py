@@ -1,4 +1,6 @@
-from omniagents.core.runtime import serve_state as aws
+from types import SimpleNamespace
+
+from omniagents.execution import EnvironmentKind
 
 from omni_code.agents.omni.context import build_coding_context
 
@@ -45,7 +47,9 @@ def test_build_coding_context_prefers_pwd_for_skill_discovery(monkeypatch, tmp_p
     assert "pdf-reader" in block
 
 
-def test_build_coding_context_includes_skills_from_sibling_source_mount(tmp_path):
+def test_build_coding_context_includes_skills_from_sibling_source_mount(
+    monkeypatch, tmp_path
+):
     workspace = tmp_path / "workspace"
     primary = workspace / "omni-desktop"
     plugins = workspace / "omni-plugins-official"
@@ -57,22 +61,25 @@ def test_build_coding_context_includes_skills_from_sibling_source_mount(tmp_path
         "---\nname: software-tickets\ndescription: Ticket workflow\n---\n\nBody\n",
         encoding="utf-8",
     )
-    aws.set_sources(
-        [
-            {"kind": "local-git", "mountName": "omni-desktop", "path": str(primary)},
-            {
-                "kind": "local-git",
-                "mountName": "omni-plugins-official",
-                "path": str(plugins),
-            },
-        ]
+    sources = [
+        {"kind": "local-git", "mountName": "omni-desktop", "path": str(primary)},
+        {
+            "kind": "local-git",
+            "mountName": "omni-plugins-official",
+            "path": str(plugins),
+        },
+    ]
+    monkeypatch.setattr(
+        "omniagents.execution.current_request_context",
+        lambda: SimpleNamespace(
+            workspace=SimpleNamespace(sources=sources),
+            environment_lease=SimpleNamespace(
+                descriptor=SimpleNamespace(kind=EnvironmentKind.HOST),
+                workspace=SimpleNamespace(root=str(workspace)),
+            ),
+        ),
     )
-    aws.set_manifest_root(str(workspace))
-    try:
-        context = build_coding_context({"workspace_root": str(primary)})
-    finally:
-        aws.set_sources([])
-        aws.set_manifest_root(None)
+    context = build_coding_context({"workspace_root": str(primary)})
 
     block = context["available_skills_block"]
     assert "software-tickets" in block

@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+from types import SimpleNamespace
 from typing import Any, List, Tuple
 
 import omniagents.builtin.tools.bash_tool as bash_tool
@@ -43,6 +44,7 @@ import omniagents.builtin.tools.notebook_tools as notebook_tools
 import omniagents.core.workers.isolation as worker_isolation
 from omniagents.builtin.tools import _bash_jobs
 from omniagents.core.workers import serve_worker_sources
+from omniagents.execution import EnvironmentKind
 from omniagents.workspace import (
     ExecResult,
     Workspace,
@@ -394,21 +396,31 @@ def test_is_git_dirty_routes_through_workspace():
 
 def _worktree_strategy():
     """omni-code's ``worktree`` strategy: the framework's multi-source
-    isolation over the framework's serve-state sources provider (the same
+    isolation over the framework's routed Workspace sources (the same
     pairing ``install_project_worker_defaults()`` registers)."""
     return worker_isolation.MultiSourceWorktreeIsolation(
         serve_worker_sources, name="worktree"
     )
 
 
+def _route_worker_sources(monkeypatch, workspace, sources):
+    """Install the operation-scoped context consumed by serve_worker_sources."""
+    context = SimpleNamespace(
+        workspace=SimpleNamespace(sources=tuple(sources)),
+        environment_lease=SimpleNamespace(
+            descriptor=SimpleNamespace(kind=EnvironmentKind.HOST),
+            workspace=workspace,
+        ),
+    )
+    monkeypatch.setattr("omniagents.execution.current_request_context", lambda: context)
+
+
 def test_worker_worktree_ready_checks_git_sources_not_manifest_root(monkeypatch):
     fake = _RecordingWorkspace(root="/workspace")
-    monkeypatch.setattr(
-        "omniagents.core.runtime.serve_state.get_manifest_root", lambda: "/workspace"
-    )
-    monkeypatch.setattr(
-        "omniagents.core.runtime.serve_state.get_sources",
-        lambda: [
+    _route_worker_sources(
+        monkeypatch,
+        fake,
+        [
             {"kind": "local-git", "mountName": "api", "path": "/host/api"},
             {
                 "kind": "git-remote",
@@ -445,12 +457,10 @@ def test_create_worker_worktree_for_sources_preserves_mount_layout(monkeypatch):
     fake.exec = exec_with_missing_scratch  # type: ignore[method-assign]
 
     monkeypatch.setattr("omniagents.workspace.scratch_root", lambda: "/scratch")
-    monkeypatch.setattr(
-        "omniagents.core.runtime.serve_state.get_manifest_root", lambda: "/workspace"
-    )
-    monkeypatch.setattr(
-        "omniagents.core.runtime.serve_state.get_sources",
-        lambda: [
+    _route_worker_sources(
+        monkeypatch,
+        fake,
+        [
             {"kind": "local-git", "mountName": "api", "path": "/host/api"},
             {
                 "kind": "git-remote",
