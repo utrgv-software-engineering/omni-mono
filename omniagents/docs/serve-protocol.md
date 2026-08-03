@@ -21,6 +21,8 @@ The launcher spawns the product CLI with:
 
 ```
 <prog> serve --output json
+    --auth-token <client-secret>
+    --agent-host-control-token <control-secret>
     [--source <json>]...
     [--credential <json>]...
     [--project <id>]
@@ -37,6 +39,8 @@ readiness payload. Flag semantics:
 | Flag | Req. | Meaning |
 | --- | --- | --- |
 | `--output json` | yes | Emit the machine-readable readiness line (the only format launchers parse). |
+| `--auth-token <client-secret>` | yes | Authenticate ordinary launcher/renderer RPC clients. This value is reported as `auth_token` in readiness. |
+| `--agent-host-control-token <control-secret>` | yes | Authenticate the launcher main process for privileged AgentHost workspace, profile, environment, and binding operations. It must differ from the client secret and is never reported in readiness. |
 | `--source <json>` | repeatable | One workspace-source descriptor per flag (see below). No flags = empty workspace. |
 | `--credential <json>` | repeatable | One boot-time git/CLI credential descriptor per flag (see below). |
 | `--project <id>` | no | Launcher project id; selects the per-project profile layer (`<config>/projects/<id>/sandbox.yml`). |
@@ -46,9 +50,9 @@ readiness payload. Flag semantics:
 | `--profile <path>` | no | Explicit profile YAML (launcher-written per-session profiles, e.g. cloud `host_bridge`); bypasses the user/project layers. Omitted = the product's packaged default profile chain. |
 | `--workspace <cwd>` | yes | Host directory substituted for `${workspace_dir}` in the resolved profile; also the spawn cwd. |
 
-Additional flags exist (`--host`, `--port`, `--auth-token`,
-`--agent-project`, `--agent`, `--output human`) for tests, scripting and
-terminal users; launchers do not pass them.
+Additional flags exist (`--host`, `--port`, `--agent-project`, `--agent`,
+`--output human`) for tests, scripting and terminal users; launchers do not
+pass them.
 
 #### Source descriptor JSON
 

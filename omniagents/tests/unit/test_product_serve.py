@@ -50,7 +50,14 @@ def _launcher_argv_full() -> list[str]:
     """The launcher's argv, every optional branch taken, in the launcher's
     append order. The leading 'serve' word is consumed by product_cli
     dispatch; the parser sees everything after it."""
-    args: list[str] = ["--output", "json"]
+    args: list[str] = [
+        "--output",
+        "json",
+        "--auth-token",
+        "client-secret",
+        "--agent-host-control-token",
+        "control-secret",
+    ]
     # for (const s of arg.sources) → one --source per source
     args += [
         "--source",
@@ -104,6 +111,8 @@ def test_serve_parser_accepts_launcher_argv_full():
     ns = parser.parse_args(_launcher_argv_full())
 
     assert ns.output == "json"
+    assert ns.auth_token == "client-secret"
+    assert ns.agent_host_control_token == "control-secret"
     assert len(ns.sources) == 3
     assert json.loads(ns.sources[0]) == {
         "kind": "local",
@@ -126,13 +135,18 @@ def test_serve_parser_accepts_launcher_argv_full():
 
 def test_serve_parser_accepts_launcher_argv_minimal():
     """First-ever start: no sources/credentials/project/session/container,
-    builtin-default profile (no --profile). Only --output json,
-    --snapshot-dir, --workspace remain — the launcher's unconditional flags."""
+    builtin-default profile (no --profile). Authentication, --output json,
+    --snapshot-dir, and --workspace remain — the launcher's unconditional
+    flags."""
     parser = build_serve_parser(prog="omni")
     ns = parser.parse_args(
         [
             "--output",
             "json",
+            "--auth-token",
+            "client-secret",
+            "--agent-host-control-token",
+            "control-secret",
             "--snapshot-dir",
             "/home/u/.config/omni/snapshots",
             "--workspace",
@@ -147,7 +161,8 @@ def test_serve_parser_accepts_launcher_argv_minimal():
     assert ns.profile is None
     # Serve picks its own port — the launcher passes no port flag.
     assert ns.port == 0
-    assert ns.agent_host_control_token is None
+    assert ns.auth_token == "client-secret"
+    assert ns.agent_host_control_token == "control-secret"
 
 
 def test_serve_parser_accepts_private_agent_host_control_token():
