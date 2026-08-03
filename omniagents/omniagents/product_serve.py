@@ -625,29 +625,27 @@ async def _serve(args: argparse.Namespace) -> int:
             flush=True,
         )
 
-    # --- Publish the switch context ---
-    # Lets the ``sandbox.switch`` server function rebuild + re-attach the
-    # sandbox in place (no process restart). ``ready_event`` starts set: the
-    # sandbox is up. Cleared in the teardown ``finally`` below.
+    # --- Install the startup environment lifecycle controller ---
+    # Lets environment-scoped lifecycle operations rebuild + re-attach this
+    # sandbox in place. The state is owned only by this environment controller;
+    # there is no process-global "current" sandbox.
     # ``profile_resolver`` is the conventional product resolver (adds the
     # packaged default profile layer) so switches resolve profiles the same
     # way boot did.
-    from omniagents.core.runtime.serve_state import SwitchContext, set_switch_context
+    from omniagents.core.runtime.serve_harness import (
+        ServeEnvironmentLifecycleController,
+        ServeEnvironmentLifecycleState,
+    )
 
-    switch_ctx = SwitchContext(
+    lifecycle_state = ServeEnvironmentLifecycleState(
         app=app,
-        spec=spec,
         session_id=session_id,
         environment_id=environment_id,
-        workspace_id=workspace_id,
         snapshot_dir=args.snapshot_dir,
         sources_parsed=sources_parsed,
         credentials_parsed=credentials_parsed,
         workspace_dir=args.workspace,
         project_id=args.project,
-        host=args.host,
-        port=port,
-        auth_token=args.auth_token,
         profile_resolver=resolve_product_profile,
         current_profile_path=str(args.profile) if args.profile else None,
         current_profile_name=_profile_display_name(args.profile, profile),
@@ -656,16 +654,11 @@ async def _serve(args: argparse.Namespace) -> int:
         service_urls=service_urls,
         started_services=started_services,
     )
-    switch_ctx.ready_event.set()
-    set_switch_context(switch_ctx)
-
-    from omniagents.core.runtime.serve_harness import (
-        ServeEnvironmentLifecycleController,
-    )
+    lifecycle_state.ready_event.set()
 
     await app.state.agent_service.environment_manager.set_lifecycle_controller(
         environment_id,
-        ServeEnvironmentLifecycleController(switch_ctx),
+        ServeEnvironmentLifecycleController(lifecycle_state),
     )
 
     # --- Run server + fast signal shutdown ---
@@ -704,11 +697,6 @@ async def _serve(args: argparse.Namespace) -> int:
     try:
         await server.serve()
     finally:
-        from omniagents.core.runtime.serve_state import (
-            get_switch_context,
-            set_switch_context,
-        )
-
         # Quiesce before teardown: with the drain skipped (force_exit), an
         # in-flight run would otherwise keep mutating the workspace while
         # teardown tars it. Bounded — a hung run must not block the snapshot.
@@ -722,16 +710,13 @@ async def _serve(args: argparse.Namespace) -> int:
 
         # A switch may have replaced the session/services since startup — tear
         # down the LIVE ones, not the first-launch locals.
-        live_ctx = get_switch_context()
         live_runtime = (
             await app.state.agent_service.environment_manager.sandbox_runtime(
                 environment_id
             )
         )
         live_session = live_runtime.session if live_runtime is not None else None
-        live_services = (
-            live_ctx.started_services if live_ctx is not None else started_services
-        )
+        live_services = lifecycle_state.started_services
 
         # Stop the auto-recap watcher (cancels its task + detaches listeners).
         recap_scheduler_to_stop = getattr(app.state, "recap_scheduler", None)
@@ -753,11 +738,8 @@ async def _serve(args: argparse.Namespace) -> int:
         await teardown_session(
             live_session,
             live_services,
-            discard_snapshot=(
-                live_ctx.discard_snapshot_on_exit if live_ctx is not None else False
-            ),
+            discard_snapshot=lifecycle_state.discard_snapshot_on_exit,
         )
-        set_switch_context(None)
     return 0
 
 

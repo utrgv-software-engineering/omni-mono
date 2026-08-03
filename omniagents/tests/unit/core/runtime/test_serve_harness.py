@@ -6,7 +6,7 @@ Covers the moved core with fakes — no docker daemon required:
   fallthrough for non-docker or first-launch calls.
 * snapshot scrub on a crafted tar containing symlink escapes.
 * environment-owned switch orchestration, including the
-  ``SwitchContext.profile_resolver`` product hook.
+  environment-owned lifecycle state's product profile resolver.
 * teardown idempotence / ``None``-safety / snapshot discard.
 """
 
@@ -22,8 +22,9 @@ from unittest.mock import ANY, AsyncMock
 
 import pytest
 
-from omniagents.core.runtime import serve_harness, serve_state
+from omniagents.core.runtime import serve_harness
 from omniagents.core.runtime.serve_harness import (
+    ServeEnvironmentLifecycleState,
     _create_or_resume_session,
     _register_execution_environment,
     _resolve_service_urls,
@@ -32,14 +33,6 @@ from omniagents.core.runtime.serve_harness import (
     perform_switch,
     teardown_session,
 )
-from omniagents.core.runtime.serve_state import SwitchContext
-
-
-@pytest.fixture(autouse=True)
-def _reset_serve_state():
-    serve_state.reset()
-    yield
-    serve_state.reset()
 
 
 # --------------------------------------------------------------------------
@@ -334,24 +327,19 @@ def _make_ctx(resolver, old_session=None):
         ),
         transition=AsyncMock(),
     )
-    ctx = SwitchContext(
+    ctx = ServeEnvironmentLifecycleState(
         app=SimpleNamespace(
             state=SimpleNamespace(
                 agent_service=SimpleNamespace(environment_manager=environment_manager)
             )
         ),
-        spec=object(),
         session_id="sess-1",
         environment_id="environment-1",
-        workspace_id="workspace-1",
         snapshot_dir=None,
         sources_parsed=[],
         credentials_parsed=[],
         workspace_dir=Path("/tmp/ws"),
         project_id=None,
-        host="127.0.0.1",
-        port=3001,
-        auth_token=None,
         profile_resolver=resolver,
         current_profile_path="/profiles/host.yml",
         current_profile_name="host",
@@ -405,7 +393,7 @@ def test_environment_owned_switch_end_to_end(monkeypatch, tmp_path):
     monkeypatch.setattr(serve_harness, "_replace_execution_backend", replace_backend)
 
     ctx = _make_ctx(resolver, old_session)
-    res = asyncio.run(perform_switch("/profiles/devbox.yml", switch_context=ctx))
+    res = asyncio.run(perform_switch("/profiles/devbox.yml", lifecycle_state=ctx))
 
     assert res["ok"] is True
     assert res["profile"] == "devbox"

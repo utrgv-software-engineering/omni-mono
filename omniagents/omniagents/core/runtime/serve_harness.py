@@ -27,18 +27,19 @@ Product knobs, defaulting to the omni-code values they were lifted with:
 * ``DEFAULT_SERVICE_URL_SUFFIXES`` — per-service-name URL suffixes
   applied when resolving exposed-port endpoints (noVNC's client page for
   a service named ``vnc``).
-* ``SwitchContext.profile_resolver`` — the product's layered profile
+* ``ServeEnvironmentLifecycleState.profile_resolver`` — the product's layered profile
   resolver (adds its packaged default layer); the framework resolver is
   the fallback.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 import tarfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import (
     Any,
@@ -59,12 +60,44 @@ from omniagents.core.sandbox.profiles import (
 
 __all__ = [
     "BroughtUpSession",
+    "ServeEnvironmentLifecycleState",
     "bring_up_session",
     "perform_switch",
     "teardown_session",
     "NOOP_SNAPSHOT_CLIENT_TYPES",
     "DEFAULT_SERVICE_URL_SUFFIXES",
 ]
+
+
+@dataclass
+class ServeEnvironmentLifecycleState:
+    """Mutable orchestration state owned by one ExecutionEnvironment.
+
+    The environment lifecycle controller holds the only reference. It is never
+    published as a process-global "current" sandbox.
+    """
+
+    app: Any
+    session_id: str
+    environment_id: str
+    snapshot_dir: Optional[Any]
+    sources_parsed: List[Dict[str, Any]]
+    credentials_parsed: List[Dict[str, Any]]
+    workspace_dir: Any
+    project_id: Optional[str]
+    profile_resolver: Optional[Any] = None
+
+    current_profile_path: Optional[str] = None
+    current_profile_name: Optional[str] = None
+    backend: Optional[str] = None
+    container_id: Optional[str] = None
+    service_urls: Dict[str, Any] = field(default_factory=dict)
+    started_services: List[Any] = field(default_factory=list)
+    discard_snapshot_on_exit: bool = False
+    switching: bool = False
+    last_error: Optional[str] = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    ready_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 # Client types whose lifecycle snapshot is a noop: the workspace IS a
@@ -865,8 +898,8 @@ async def _cancel_active_runs(service: Any) -> None:
 
 def _resolve_switch_profile(ctx: Any, explicit_path: Optional[Path]) -> ResolvedProfile:
     """Resolve a profile for a switch/rollback through the product's layered
-    resolver when the switch context carries one
-    (``SwitchContext.profile_resolver``), else the framework resolver."""
+    resolver when the environment lifecycle state carries one, else the
+    framework resolver."""
     resolver = getattr(ctx, "profile_resolver", None) or resolve_profile
     return resolver(
         workspace_dir=ctx.workspace_dir,
@@ -976,7 +1009,7 @@ async def perform_switch(
     profile_path: str,
     *,
     session: Any = None,
-    switch_context: Any,
+    lifecycle_state: ServeEnvironmentLifecycleState,
 ) -> Dict[str, Any]:
     """Switch the running server's sandbox to the profile at *profile_path*, in
     place — no process restart. Snapshots the current workspace, brings up the
@@ -989,10 +1022,10 @@ async def perform_switch(
     used to route the ``ui.sandbox.*`` broadcasts. Returns
     ``{ok, profile, backend, container_id, services, reason?}``.
 
-    The environment lifecycle controller supplies its own SwitchContext;
-    callers cannot select a process-global current sandbox.
+    The environment lifecycle controller supplies its own state; callers
+    cannot select a process-global current sandbox.
     """
-    ctx = switch_context
+    ctx = lifecycle_state
 
     try:
         from omniagents.core.agents.service import current_service
@@ -1133,24 +1166,24 @@ async def perform_switch(
 
 
 class ServeEnvironmentLifecycleController:
-    """Environment-scoped adapter over the legacy serve orchestration.
+    """Environment-scoped adapter over serve orchestration.
 
     The instance is registered on one ExecutionEnvironment. Handlers receive
     it through an EnvironmentLease, so they cannot accidentally operate on a
     different process-global sandbox.
     """
 
-    def __init__(self, switch_context: Any) -> None:
-        self._switch_context = switch_context
+    def __init__(self, state: ServeEnvironmentLifecycleState) -> None:
+        self._state = state
 
     def _validate(self, lease: Any) -> None:
-        if lease.environment_id != self._switch_context.environment_id:
+        if lease.environment_id != self._state.environment_id:
             raise RuntimeError("lifecycle controller/environment mismatch")
 
     def state(self, lease: Any) -> Dict[str, Any]:
         """Return observable state for this leased environment only."""
         self._validate(lease)
-        ctx = self._switch_context
+        ctx = self._state
         return {
             "available": True,
             "ready": ctx.ready_event.is_set() and not ctx.switching,
@@ -1168,7 +1201,7 @@ class ServeEnvironmentLifecycleController:
         import asyncio
 
         self._validate(lease)
-        ctx = self._switch_context
+        ctx = self._state
         try:
             await asyncio.wait_for(ctx.ready_event.wait(), timeout=timeout_seconds)
         except asyncio.TimeoutError:
@@ -1247,18 +1280,18 @@ class ServeEnvironmentLifecycleController:
         return {"ok": True}
 
     async def discard_snapshot(self, lease: Any) -> Dict[str, Any]:  # noqa: ARG002
-        self._switch_context.discard_snapshot_on_exit = True
+        self._state.discard_snapshot_on_exit = True
         return {"ok": True}
 
     async def switch(self, lease: Any, profile: str) -> Dict[str, Any]:
         self._validate(lease)
-        return await perform_switch(profile, switch_context=self._switch_context)
+        return await perform_switch(profile, lifecycle_state=self._state)
 
     async def close(self, lease: Any) -> None:
         """Release this environment's live session and started services."""
 
         self._validate(lease)
-        ctx = self._switch_context
+        ctx = self._state
         runtime = lease.sandbox_runtime
         session = runtime.session if runtime is not None else None
         await teardown_session(
