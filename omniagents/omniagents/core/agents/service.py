@@ -5142,7 +5142,17 @@ class AgentService(RpcMethodsBase):
         descriptor = await self.environment_manager.resolve_automatic(
             workspace_id, profile_id
         )
-        return self._environment_payload(descriptor)
+        lease = await self.environment_manager.acquire(descriptor.environment_id)
+        payload = self._environment_payload(descriptor)
+        controller = lease.lifecycle_controller
+        payload.update(
+            {
+                "backend": getattr(controller, "backend", None),
+                "container_id": getattr(controller, "container_id", None),
+                "services": dict(getattr(controller, "service_urls", {}) or {}),
+            }
+        )
+        return payload
 
     @staticmethod
     def _workspace_payload(workspace) -> dict:

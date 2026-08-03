@@ -203,3 +203,6 @@ async def test_materialize_environment_resolves_registered_workspace_profile(
     assert environment["kind"] == "host"
     assert environment["state"] == "ready"
     assert environment["capabilities"] == ["workspace_read"]
+    assert environment["backend"] is None
+    assert environment["container_id"] is None
+    assert environment["services"] == {}
