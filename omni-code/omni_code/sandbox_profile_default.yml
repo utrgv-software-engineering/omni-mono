@@ -25,9 +25,10 @@ client:
 confine: false
 
 manifest:
-  # ${workspace_dir} is replaced with `omni serve --workspace <dir>`. Under the
-  # host target this is the agent's working directory (relative paths resolve
-  # here); it is not a security boundary when `confine: false`.
+  # ${workspace_dir} is replaced with the Workspace directory selected during
+  # environment materialization. Under the host target this is the agent's
+  # working directory (relative paths resolve here); it is not a security
+  # boundary when `confine: false`.
   root: ${workspace_dir}
 
 # Defaults for the launcher's Terminal app. Under the host target the shell

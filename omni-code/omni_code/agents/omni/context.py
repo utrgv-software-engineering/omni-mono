@@ -188,10 +188,10 @@ def format_agents_md_block(variables: Optional[Dict[str, Any]] = None) -> str:
     metadata (the in-container layout is ``<manifest_root>/<mountName>/``).
     """
     variables = variables or {}
-    # ``workspace_root`` here is authoritative: ``omni serve`` forces it to the
-    # sandbox manifest root (or the host dir for the host target) via
-    # ``AgentService(workspace_root_override=…)``, so it is the path the
-    # agent's tools actually operate in — never a leaked host path.
+    # ``workspace_root`` here is authoritative: the Run's captured Workspace
+    # and EnvironmentLease supply the sandbox manifest root (or host Workspace
+    # root), so it is the path the agent's tools actually operate in — never a
+    # leaked host path.
     workspace_root = variables.get("workspace_root")
     if isinstance(workspace_root, str) and workspace_root.strip():
         base_dir = str(Path(workspace_root).expanduser().resolve())

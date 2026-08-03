@@ -1,9 +1,9 @@
-"""Behavioral checks against the framework's builtin terminal server
-functions (``omniagents.builtin.server_functions.terminal``) — the module
-the omni agent's ``terminal`` capability pack activates. The standalone
-fallback path (no embedder-installed manager) must keep resolving the cwd
-from the session context, since omni-code relies on it for the host
-execution target."""
+"""Behavioral checks for the framework's builtin terminal server functions.
+
+The omni agent's ``terminal`` capability pack activates these functions. Their
+shell, cwd, backend, and ownership all come from the dispatcher-bound
+EnvironmentLease; session context is not an execution-routing fallback.
+"""
 
 import pytest
 from omniagents.builtin.server_functions import terminal as terminal_mod
@@ -15,7 +15,18 @@ class FakeTerminalManager:
         self.closed = []
 
     async def create_terminal(
-        self, session_id, *, shell=None, cwd=None, cols=None, rows=None
+        self,
+        session_id,
+        *,
+        shell=None,
+        cwd=None,
+        cols=None,
+        rows=None,
+        user=None,
+        owner_user_id=None,
+        backend=None,
+        environment_id=None,
+        environment_generation=None,
     ):
         self.created.append(
             {
@@ -24,6 +35,11 @@ class FakeTerminalManager:
                 "cwd": cwd,
                 "cols": cols,
                 "rows": rows,
+                "user": user,
+                "owner_user_id": owner_user_id,
+                "backend": backend,
+                "environment_id": environment_id,
+                "environment_generation": environment_generation,
             }
         )
         return {
@@ -35,8 +51,14 @@ class FakeTerminalManager:
             "rows": rows or 24,
         }
 
-    async def close_terminal(self, session_id, terminal_id):
-        self.closed.append({"session_id": session_id, "terminal_id": terminal_id})
+    async def close_terminal(self, session_id, terminal_id, *, environment_id=None):
+        self.closed.append(
+            {
+                "session_id": session_id,
+                "terminal_id": terminal_id,
+                "environment_id": environment_id,
+            }
+        )
 
 
 class FakeSession:
@@ -70,21 +92,26 @@ async def test_terminal_create_attaches_manager_and_returns_ws_path(monkeypatch)
     )
 
     assert getattr(svc, "terminal_manager", None) is fake_manager
-    assert fake_manager.created == [
-        {
-            "session_id": "sess-1",
-            "shell": "bash",
-            "cwd": "/tmp/workspace",
-            "cols": 120,
-            "rows": 40,
-        }
-    ]
+    assert len(fake_manager.created) == 1
+    created = fake_manager.created[0]
+    assert created["session_id"] == "sess-1"
+    assert created["shell"] == "bash"
+    assert created["cwd"] == "/"
+    assert created["cols"] == 120
+    assert created["rows"] == 40
+    assert created["user"] is None
+    assert created["owner_user_id"] is None
+    assert created["backend"].__class__.__name__ == "HostPtyBackend"
+    assert created["environment_id"] == "test-host-environment"
+    assert created["environment_generation"] == 1
     assert result["terminal_id"] == "term-1"
     assert result["token"] == "tok-1"
     assert result["terminal_token"] == "tok-1"
     assert result["path"] == "/ws/terminal"
     assert result["session_id"] == "sess-1"
-    assert result["cwd"] == "/tmp/workspace"
+    assert result["cwd"] == "/"
+    assert result["environment_id"] == "test-host-environment"
+    assert result["environment_generation"] == 1
 
 
 @pytest.mark.asyncio
@@ -103,4 +130,10 @@ async def test_terminal_close_uses_attached_manager(monkeypatch):
     result = await handler(svc, sess, {"terminal_id": "term-1"})
 
     assert result == {"ok": True}
-    assert fake_manager.closed == [{"session_id": "sess-1", "terminal_id": "term-1"}]
+    assert fake_manager.closed == [
+        {
+            "session_id": "sess-1",
+            "terminal_id": "term-1",
+            "environment_id": "test-host-environment",
+        }
+    ]

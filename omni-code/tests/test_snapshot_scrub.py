@@ -1,5 +1,4 @@
-"""`_scrub_session_snapshot` / `_safe_symlink_target` — dropping unsafe symlinks
-from a snapshot tar so a resume's hydrate validator doesn't reject it.
+"""Workspace snapshot scrubbing drops unsafe symlinks before hydration.
 
 Reproduces the real failure: a cloned repo with a committed
 `.fvm/flutter_sdk -> /Users/.../fvm/...` absolute symlink lands in the snapshot,
@@ -16,7 +15,7 @@ from types import SimpleNamespace
 
 from omniagents.core.runtime.serve_harness import (
     _safe_symlink_target,
-    _scrub_session_snapshot,
+    _scrub_workspace_snapshot,
 )
 
 
@@ -70,7 +69,7 @@ def test_scrub_drops_unsafe_symlinks_keeps_the_rest(tmp_path: Path):
             snapshot=SimpleNamespace(base_path=str(tmp_path), id="sess")
         )
     )
-    _scrub_session_snapshot(session)
+    _scrub_workspace_snapshot(session)
 
     names = _members(snap)
     assert (
@@ -87,8 +86,8 @@ def test_scrub_drops_unsafe_symlinks_keeps_the_rest(tmp_path: Path):
 
 def test_scrub_is_noop_without_snapshot():
     # NoopSnapshot / unrecognized shape → must not raise.
-    _scrub_session_snapshot(SimpleNamespace(state=SimpleNamespace(snapshot=None)))
-    _scrub_session_snapshot(SimpleNamespace(state=None))
+    _scrub_workspace_snapshot(SimpleNamespace(state=SimpleNamespace(snapshot=None)))
+    _scrub_workspace_snapshot(SimpleNamespace(state=None))
 
 
 def test_scrub_noop_when_tar_missing(tmp_path: Path):
@@ -97,5 +96,5 @@ def test_scrub_noop_when_tar_missing(tmp_path: Path):
             snapshot=SimpleNamespace(base_path=str(tmp_path), id="absent")
         )
     )
-    _scrub_session_snapshot(session)  # no sess tar on disk → no error
+    _scrub_workspace_snapshot(session)  # no snapshot tar on disk → no error
     assert not (tmp_path / "absent.tar").exists()

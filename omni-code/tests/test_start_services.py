@@ -1,10 +1,9 @@
-"""Unit tests for ``serve_cli._start_services`` reuse-awareness.
+"""Unit tests for idempotent ``serve_cli._start_services`` startup.
 
-The launcher reuses warm containers (resumed from idle pause / re-attached).
-A service from the previous boot may still hold its port, so relaunching it
-would bind-clash (e.g. code-server exits 1 with ``EADDRINUSE``). These tests
-exercise the adopt-if-already-listening path, the cold-boot launch path, and
-that a genuine immediate-exit now surfaces the service's own output.
+Profile init or an image entrypoint may already hold a declared service port,
+so relaunching it would bind-clash (e.g. code-server exits 1 with
+``EADDRINUSE``). These tests exercise the adopt-if-already-listening path, the
+normal launch path, and genuine immediate-exit diagnostics.
 """
 
 import re
@@ -26,7 +25,7 @@ VNC = serve_cli.ServiceSpec(
 
 class FakeServiceSession:
     """Records exec/pty calls; ``listening_ports`` simulates ports already
-    bound inside the container (the reused-container case). ``pty_results``
+    bound inside the environment. ``pty_results``
     maps a command substring to a forced ``PtyExecUpdate``-like result."""
 
     def __init__(self, listening_ports=(), pty_results=None):
@@ -66,7 +65,7 @@ async def test_cold_container_launches_all_services():
 
 
 @pytest.mark.asyncio
-async def test_reused_container_adopts_already_listening_service():
+async def test_already_listening_service_is_adopted():
     """code-server already bound on 8080 → adopt it (no relaunch), still
     launch the service whose port is free."""
     s = FakeServiceSession(listening_ports={8080})

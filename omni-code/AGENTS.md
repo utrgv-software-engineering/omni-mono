@@ -160,6 +160,6 @@ omni model list --json   # verify resolution before launching a UI
   root (`variables.workspace_root`, or `server_call` →
   `session.ensure` first); expect `run_started` → `message_output` →
   `run_end` with `end_reason: completed`.
-- **Sandboxed serve**: `omni serve --profile <profile.yml>` runs the
-  agent on the host with shell/fs tools routed into the container;
-  see `docs/sandbox-switch-rpc.md` for the lifecycle pointers.
+- **Sandboxed serve**: `omni serve` starts a targetless AgentHost. A launcher
+  registers Workspace/profile definitions and materializes environments through
+  the control plane; see `docs/sandbox-switch-rpc.md` for lifecycle pointers.

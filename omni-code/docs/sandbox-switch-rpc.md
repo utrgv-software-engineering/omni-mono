@@ -1,38 +1,29 @@
-# Sandbox switching (`sandbox.switch`) — pointer
+# Sandbox lifecycle and environment replacement
 
-In-place sandbox switching was designed here and then lifted wholesale
-into the omniagents framework. omni-code no longer contains any of the
-mechanism; this file only records what the product declares and where
-the real spec lives.
+This historical filename remains as a pointer for older references. In-place
+`sandbox.switch` has been deleted. Omni Code declares sandbox capabilities and
+a default profile; OmniAgents owns environment-scoped lifecycle behavior.
 
-## What omni-code declares
+## What Omni Code declares
 
-- `sandbox` in the `capabilities:` list of `omni_code/agents/omni/agent.yml`
-  — the framework's builtin pack. It contributes the read-only agent
-  tools `sandbox_get_state` / `sandbox_wait_until_ready` and the
-  **operator-only** `sandbox.*` server functions (`pause`, `unpause`,
-  `notify_activity`, `discard_snapshot`, `switch`). Server functions are
-  never part of the model's tool schema: the LLM can observe the
-  sandbox, only the human/launcher can move it.
-- `omni_code/sandbox_profile_default.yml` — the packaged base of the
-  layered profile chain `omni serve` resolves (then
-  `<config>/sandbox/default.yml`, per-project `sandbox.yml`, and an
-  explicit `--profile`).
+- The builtin `sandbox` capability in `omni_code/agents/omni/agent.yml`. It
+  contributes read-only observation tools plus operator-only pause, unpause,
+  activity, and snapshot-discard server functions.
+- `omni_code/sandbox_profile_default.yml`, the packaged base of the profile
+  chain resolved when an execution environment is materialized.
 
-## Where the mechanism lives (omniagents)
+## Replacement model
 
-- Switch orchestration (quiesce → snapshot → rebuild → re-wire →
-  rollback): `omniagents.core.runtime.serve_harness.perform_switch`.
-- Executor seam the serve host installs:
-  `omniagents.core.runtime.sandbox_lifecycle.set_switch_executor`.
-- Builtin pack pieces: `omniagents/builtin/capabilities/sandbox.yml`,
-  `omniagents/builtin/server_functions/sandbox_lifecycle.py`,
-  `omniagents/builtin/tools/sandbox_observe.py`, plus the session
-  lifecycle proxies in `omniagents/core/sandbox/lifecycle_session.py`.
-- The serve CLI itself is the framework's reserved subcommand
-  (`omniagents/product_serve.py`).
+A profile belongs to an immutable live execution environment. Changing profile
+does not mutate a process-global sandbox session:
 
-## Docs
+1. The launcher registers the desired Workspace and profile with AgentHost.
+2. AgentHost materializes a replacement execution environment.
+3. The Thread binding moves atomically to the replacement.
+4. The old environment is stopped after the new binding succeeds.
 
-- Design + lifecycle spec: omniagents `docs-internal/SANDBOX_LIFECYCLE.md`
-- Wire contract (events, RPCs, readiness): omniagents `docs/serve-protocol.md`
+Runs capture an `EnvironmentLease`, so an in-flight Run remains scoped to the
+generation it started with. Failed replacement leaves the prior binding live.
+
+See OmniAgents `docs/serve-protocol.md` and
+`docs-internal/SANDBOX_LIFECYCLE.md` for the authoritative contracts.

@@ -43,11 +43,9 @@ def test_default_profile_is_unconfined_host(tmp_path: Path):
 # --------------------------------------------------------------------------
 #
 # The workspace_root that reaches build_coding_context is guaranteed correct
-# at the source: omni serve forces it to the sandbox manifest root via
-# AgentService(workspace_root_override=…) (see omniagents
-# tests/unit/core/agents/test_workspace_root_override.py). build_coding_context
-# therefore just reflects whatever it is given — no manifest lookup, no
-# fallback.
+# at the source: the Run's captured Workspace and EnvironmentLease select the
+# sandbox manifest root. build_coding_context therefore just reflects whatever
+# it is given — no manifest lookup and no host-derived fallback.
 
 
 def test_instruction_workspace_reflects_given_workspace_root():

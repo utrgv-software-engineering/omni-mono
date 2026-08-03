@@ -83,6 +83,7 @@ def _make_service():
 
     from omniagents.core.agents.service import AgentService
     from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions
+    from omniagents.execution import AgentHostResources
 
     spec = Mock(spec=AgentSpec)
     spec.name = "t"
@@ -95,7 +96,7 @@ def _make_service():
     spec.realtime_mode = False
     spec.project_slug = "test_project"
     spec.agent_slug = "test_agent"
-    service = AgentService(spec, default_workspace_root="/tmp")
+    service = AgentService(spec, AgentHostResources.create("bash-sweeper-test-host"))
 
     for fn in (
         bj.bash_jobs_list,
@@ -109,33 +110,9 @@ def _make_service():
                 else fn._server_function_name
             ),
             fn,
+            resource_scope=fn._server_function_resource_scope,
+            execution_requirements=fn._server_function_execution_requirements,
         )
-    # The decorator sets ``_server_function_name`` to the override; use
-    # the canonical names here so server_call can find them by name.
-    service._server_functions["bash_jobs.list"] = {
-        "func": bj.bash_jobs_list,
-        "description": "",
-        "params_schema": None,
-        "result_schema": None,
-        "on_invoke": getattr(bj.bash_jobs_list, "_server_function_on_invoke", None),
-        "strict": None,
-    }
-    service._server_functions["bash_jobs.kill"] = {
-        "func": bj.bash_jobs_kill,
-        "description": "",
-        "params_schema": None,
-        "result_schema": None,
-        "on_invoke": getattr(bj.bash_jobs_kill, "_server_function_on_invoke", None),
-        "strict": None,
-    }
-    service._server_functions["bash_jobs.tail"] = {
-        "func": bj.bash_jobs_tail,
-        "description": "",
-        "params_schema": None,
-        "result_schema": None,
-        "on_invoke": getattr(bj.bash_jobs_tail, "_server_function_on_invoke", None),
-        "strict": None,
-    }
     return service
 
 
@@ -168,6 +145,8 @@ async def _spawn_quick_job_async(tmp_path: Path, session_id: str | None) -> str:
         started_at_monotonic=time.monotonic(),
         handle=handle,
         session_id=session_id,
+        environment_id="test-host-environment",
+        environment_generation=1,
     )
     job.watcher_task = _asyncio.create_task(
         _watch_job(job), name=f"bash-job-watcher-{job_id}"

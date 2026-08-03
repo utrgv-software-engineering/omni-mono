@@ -63,7 +63,7 @@ def _wait_until(predicate, timeout=5.0, interval=0.05):
 
 def test_list_empty():
     res = asyncio.run(bj.bash_jobs_list())
-    assert res == {"snapshot": []}
+    assert res == {"environment_id": "test-host-environment", "snapshot": []}
 
 
 def test_list_returns_known_jobs(invoke_tool, tmp_path):
