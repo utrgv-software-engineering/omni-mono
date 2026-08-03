@@ -1,5 +1,6 @@
 """WebSocket transport implementations."""
 
+import asyncio
 import json
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
@@ -121,6 +122,7 @@ class ServerWebSocketTransport(BaseTransport):
     def __init__(self, websocket: WebSocket):
         super().__init__()
         self.websocket = websocket
+        self._send_lock = asyncio.Lock()
 
     async def connect(self) -> None:
         """Accept WebSocket connection."""
@@ -149,7 +151,11 @@ class ServerWebSocketTransport(BaseTransport):
         self._ensure_connected()
 
         try:
-            await self.websocket.send_json(data)
+            # Request handlers may complete concurrently. Starlette requires
+            # one writer at a time even though JSON-RPC responses can be sent
+            # in any order.
+            async with self._send_lock:
+                await self.websocket.send_json(data)
         except Exception as e:
             self._connected = False
             raise TransportError(f"Failed to send data: {e}")

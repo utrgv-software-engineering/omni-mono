@@ -11,7 +11,7 @@ mkdir -p "$PY_DIR" "$WEB_DIR" "$INK_DIR"
 cd "$ROOT_DIR"
 rm -f "$PY_DIR/coverage.xml" "$ROOT_DIR/coverage.xml"
 npm ci --prefix omniagents/backends/web/ui
-pytest
+pytest -n "${PYTEST_XDIST_WORKERS:-auto}" --dist loadfile
 if [ -f "$ROOT_DIR/coverage.xml" ]; then
   mv "$ROOT_DIR/coverage.xml" "$PY_DIR/coverage.xml"
 fi

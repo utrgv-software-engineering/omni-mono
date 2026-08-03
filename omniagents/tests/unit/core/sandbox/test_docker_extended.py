@@ -15,6 +15,7 @@ import pytest
 pytest.importorskip("docker")
 
 import asyncio  # noqa: E402
+import threading  # noqa: E402
 import uuid  # noqa: E402
 from typing import Any  # noqa: E402
 from unittest.mock import MagicMock  # noqa: E402
@@ -243,6 +244,48 @@ def test_no_session_labels_without_session_id():
     client, docker = _make_client()
     _create(client)
     assert "labels" not in docker.containers.create_calls[0]
+
+
+@pytest.mark.asyncio
+async def test_container_creation_runs_blocking_docker_calls_off_event_loop():
+    client, docker = _make_client()
+    event_loop_thread = threading.get_ident()
+    observed_threads: list[int] = []
+
+    def create_container(**kwargs: Any) -> Any:
+        observed_threads.append(threading.get_ident())
+        docker.containers.create_calls.append(kwargs)
+        return MagicMock()
+
+    docker._containers.create = create_container
+
+    await client._create_container(image="alpine:3")
+
+    assert observed_threads
+    assert all(thread_id != event_loop_thread for thread_id in observed_threads)
+
+
+@pytest.mark.asyncio
+async def test_container_start_runs_off_event_loop(monkeypatch: pytest.MonkeyPatch):
+    client, _docker = _make_client()
+    event_loop_thread = threading.get_ident()
+    start_threads: list[int] = []
+    container = MagicMock()
+    container.id = "container-id"
+    container.start.side_effect = lambda: start_threads.append(threading.get_ident())
+
+    async def fake_create_container(*_args: Any, **_kwargs: Any) -> Any:
+        return container
+
+    monkeypatch.setattr(client, "_create_container", fake_create_container)
+
+    await client.create(
+        manifest=Manifest(),
+        options=MagicMock(image="alpine:3", exposed_ports=()),
+    )
+
+    assert start_threads
+    assert all(thread_id != event_loop_thread for thread_id in start_threads)
 
 
 def test_resume_ignores_container_with_different_session_label(

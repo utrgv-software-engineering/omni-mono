@@ -5,7 +5,7 @@ Focuses on testing without full async context to avoid hanging issues.
 
 import asyncio
 import json
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch
 import pytest
 from fastapi import WebSocketDisconnect
 
@@ -99,6 +99,20 @@ class RecorderMethods(RpcMethodsBase):
 
     async def notify_async(self, **params):
         self.async_calls.append(params)
+
+
+class ConcurrentRpcMethods(RpcMethodsBase):
+    def __init__(self):
+        super().__init__()
+        self.release_slow = asyncio.Event()
+
+    async def slow(self):
+        await self.release_slow.wait()
+        return "slow"
+
+    async def fast(self):
+        self.release_slow.set()
+        return "fast"
 
 
 class TestJsonRpcEndpoint:
@@ -236,6 +250,47 @@ class TestJsonRpcIntegration:
         assert response["jsonrpc"] == "2.0"
         assert response["id"] == 1
         assert response["result"] == "Echo: hello"
+        assert methods.channel is None
+
+    @pytest.mark.asyncio
+    async def test_endpoint_multiplexes_requests_on_one_connection(self):
+        methods = ConcurrentRpcMethods()
+        endpoint = JsonRpcEndpoint(methods)
+        responses_complete = asyncio.Event()
+        sent = []
+
+        ws = AsyncMock()
+        requests = [
+            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "slow"}),
+            json.dumps({"jsonrpc": "2.0", "id": 2, "method": "fast"}),
+        ]
+
+        async def receive_text():
+            if requests:
+                return requests.pop(0)
+            await responses_complete.wait()
+            raise WebSocketDisconnect()
+
+        async def send_json(payload):
+            sent.append(payload)
+            if len(sent) == 2:
+                responses_complete.set()
+
+        ws.receive_text = AsyncMock(side_effect=receive_text)
+        ws.send_json = AsyncMock(side_effect=send_json)
+        ws.accept = AsyncMock()
+        ws.close = AsyncMock()
+
+        app = Mock()
+        endpoint.register_route(app, "/ws")
+        handler = app.add_api_websocket_route.call_args[0][1]
+
+        await asyncio.wait_for(handler(ws), timeout=TIMEOUT)
+
+        assert {payload["id"]: payload["result"] for payload in sent} == {
+            1: "slow",
+            2: "fast",
+        }
         assert methods.channel is None
 
     @pytest.mark.asyncio

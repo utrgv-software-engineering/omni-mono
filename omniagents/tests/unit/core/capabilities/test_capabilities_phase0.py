@@ -69,6 +69,30 @@ def test_parse_capability_pure_yaml_resolves_tools():
     assert cap.approvals_spec == {"alpha": {"fn": "module.confirm"}}
 
 
+def test_yaml_capability_clone_preserves_cyclic_control_plane_metadata():
+    """Sandbox run cloning must not traverse server-function definitions.
+
+    Discovered server functions can retain cyclic callable/object graphs.
+    They are service-assembly metadata, not run-local sandbox state.
+    """
+
+    from agents.sandbox.runtime_agent_preparation import clone_capabilities
+    from omniagents.core.capabilities.yaml_capability import _YamlCapability
+
+    cyclic_meta: dict[str, Any] = {"name": "status"}
+    cyclic_meta["cycle"] = cyclic_meta
+    cap = _YamlCapability(
+        capability_name="control",
+        server_function_specs=[cyclic_meta],
+    )
+
+    cloned = clone_capabilities([cap])[0]
+
+    assert cloned is not cap
+    assert cloned.server_function_specs is cap.server_function_specs
+    assert cloned.server_functions()[0] is cap.server_function_specs[0]
+
+
 def test_parse_capability_unknown_tool_errors():
     """Tool resolution is eager so typos surface at parse time, not at agent
     build time when the registry is no longer in scope."""

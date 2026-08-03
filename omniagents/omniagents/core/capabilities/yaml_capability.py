@@ -70,6 +70,25 @@ class _YamlCapability(Capability):
     def tools(self) -> List[Any]:
         return list(self.resolved_tools)
 
+    def clone(self) -> "_YamlCapability":
+        """Return a run-local capability without cloning definition graphs.
+
+        The SDK binds ``session`` and ``run_as`` on a per-run clone, so the
+        capability object itself must be distinct.  The remaining fields on a
+        YAML capability are immutable project-definition objects: resolved
+        tools, agent-tool configs, approval policy, and control-plane server
+        functions.  In particular, discovered server-function metadata may
+        contain callable/object graphs with cycles.  The SDK base clone walks
+        every ``__dict__`` recursively and therefore cannot safely clone that
+        metadata.
+
+        A shallow Pydantic copy gives the run its own capability state while
+        preserving the project-owned definitions by reference.  Accessors
+        return fresh lists/dicts where callers need mutable containers.
+        """
+
+        return self.model_copy(deep=False)
+
     def server_functions(self) -> List[Dict[str, Any]]:
         return list(self.server_function_specs)
 

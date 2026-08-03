@@ -4,19 +4,23 @@ Adds debug logging for all calls and notifications when OMNIAGENTS_SERVER_DEBUG
 is set or omniagents.core.debug.Debug is enabled.
 """
 
-from collections.abc import Collection
-from typing import Any, Dict, Mapping, Optional, TYPE_CHECKING, cast
-
-if TYPE_CHECKING:
-    from omniagents.rpc.transport import Transport
+import asyncio
 import inspect
 import json
 import os
 import platform
 import time
+from collections.abc import Collection
+from typing import TYPE_CHECKING, Any, Dict, Mapping, Optional, cast
+
+if TYPE_CHECKING:
+    from omniagents.rpc.transport import Transport
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ValidationError
+
+from omniagents import __version__
+from omniagents.core.debug import Debug
 
 from .auth import RPC_ERROR_AUTHORIZATION_DENIED, AuthorizationDenied
 from .base import RpcMethodsBase
@@ -28,8 +32,6 @@ from .generated.gui_v1.models import (
     InitializeResult,
 )
 from .protocol_catalog import EXPERIMENTAL_NOTIFICATIONS, EXPERIMENTAL_REQUESTS
-from omniagents import __version__
-from omniagents.core.debug import Debug
 
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
 GUI_RPC_METHODS = frozenset(CLIENT_REQUEST_MODELS)
@@ -70,6 +72,20 @@ SENSITIVE_PARAM_KEYS = frozenset({"api_key", "code"})
 # ``headers``/``env`` — the write-only secret model): the whole mapping
 # is masked, matching the ``{name: {is_set}}`` read-path redaction.
 SENSITIVE_CONTAINER_KEYS = frozenset({"headers", "env"})
+
+
+def _trace_agent_host_control(
+    stage: str, method: str, call_id: Any, started_at: float
+) -> None:
+    """Emit a correlation-safe trace for AgentHost control-plane requests."""
+    if not method.startswith("agent_host_"):
+        return
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    print(
+        "[agent-host-control-server] "
+        f"stage={stage} id={call_id} method={method} elapsed_ms={elapsed_ms:.1f}",
+        flush=True,
+    )
 
 
 def redact_params(params: Any) -> Any:
@@ -252,12 +268,12 @@ class JsonRpcEndpoint:
         dependencies = dependencies or []
 
         async def handler(websocket: WebSocket):
-            from .transport.websocket import ServerWebSocketTransport
             from .transport import (
                 TransportClosedError,
                 TransportDecodeError,
                 TransportError,
             )
+            from .transport.websocket import ServerWebSocketTransport
 
             transport = ServerWebSocketTransport(websocket)
             await transport.connect()
@@ -278,6 +294,16 @@ class JsonRpcEndpoint:
             if callable(register_channel):
                 register_channel(channel)
 
+            in_flight: set[asyncio.Task[None]] = set()
+
+            def consume_request_task(task: asyncio.Task[None]) -> None:
+                in_flight.discard(task)
+                if not task.cancelled():
+                    # _process_message translates method failures into JSON-RPC
+                    # errors.  Consume transport-level failures so detached
+                    # tasks never produce "exception was never retrieved".
+                    task.exception()
+
             try:
                 while transport.is_connected():
                     try:
@@ -295,11 +321,35 @@ class JsonRpcEndpoint:
                         await self._handle_internal_error(channel, None, exc)
                         continue
 
-                    try:
-                        await self._process_message(channel, data)
-                    except Exception:
-                        break
+                    # Initialization and notifications remain ordered. Once a
+                    # GUI connection is ready, requests are independent
+                    # JSON-RPC exchanges identified by id and may complete out
+                    # of order. Dispatching them concurrently prevents a slow
+                    # environment provision from blocking unrelated control or
+                    # UI calls on the same connection.
+                    is_request = isinstance(data, dict) and data.get("id") is not None
+                    handshake_pending = (
+                        self.gui_handshake and channel.initialization_state != "ready"
+                    )
+                    if not is_request or handshake_pending:
+                        try:
+                            await self._process_message(channel, data)
+                        except Exception:
+                            break
+                        continue
+
+                    task = asyncio.create_task(self._process_message(channel, data))
+                    in_flight.add(task)
+                    task.add_done_callback(consume_request_task)
+                    # Let a fast request finish before another receive, while a
+                    # genuinely blocking request yields immediately and allows
+                    # the next JSON-RPC envelope to be accepted.
+                    await asyncio.sleep(0)
             finally:
+                for task in in_flight:
+                    task.cancel()
+                if in_flight:
+                    await asyncio.gather(*in_flight, return_exceptions=True)
                 unregister_channel = getattr(self.methods, "unregister_channel", None)
                 if callable(unregister_channel):
                     unregister_channel(channel)
@@ -336,12 +386,12 @@ class JsonRpcEndpoint:
         from omniagents.core.conversation.service import ConversationRpcError
         from omniagents.core.providers.accounts import AccountRpcError
         from omniagents.core.session.event_log import ResyncRequiredError
-        from omniagents.rpc.filesystem import FilesystemRpcError
-        from omniagents.rpc.git import GitRpcError
         from omniagents.execution.errors import (
             RPC_ERROR_EXECUTION_RESOLUTION,
             ExecutionResolutionError,
         )
+        from omniagents.rpc.filesystem import FilesystemRpcError
+        from omniagents.rpc.git import GitRpcError
 
         if isinstance(exc, ExecutionResolutionError):
             await channel.send_error(
@@ -426,6 +476,9 @@ class JsonRpcEndpoint:
                 {"message": "method must be a string"},
             )
             return
+
+        control_started_at = time.perf_counter()
+        _trace_agent_host_control("received", method, call_id, control_started_at)
 
         if params is None:
             params = {}
@@ -587,10 +640,16 @@ class JsonRpcEndpoint:
                     self.methods.channel = channel
                 except AttributeError:
                     pass
+                _trace_agent_host_control(
+                    "handler_start", method, call_id, control_started_at
+                )
                 result = func(**params)
                 if inspect.isawaitable(result):
                     result = await result
             except Exception as exc:
+                _trace_agent_host_control(
+                    "handler_error", method, call_id, control_started_at
+                )
                 Debug.log(
                     f"[profile] rpc method={method} id={call_id} "
                     f"ms={(time.perf_counter() - t_start) * 1000:.1f} error=1"
@@ -623,6 +682,9 @@ class JsonRpcEndpoint:
                         await self._handle_internal_error(channel, call_id, exc, method)
                         return
                 await channel.send_result(call_id, result)
+                _trace_agent_host_control(
+                    "response_sent", method, call_id, control_started_at
+                )
         finally:
             if context_token is not None:
                 from omniagents.execution import reset_request_context

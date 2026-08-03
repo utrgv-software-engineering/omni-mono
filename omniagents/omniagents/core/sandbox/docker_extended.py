@@ -140,7 +140,19 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
         await self._touch_activity()
         if await self.paused():
             await self.unpause()
-        await super()._ensure_backend_started()
+        # docker-py is synchronous.  Calling reload/start directly from this
+        # async hook blocks the AgentHost event loop, which in turn prevents
+        # unrelated RPC requests (including a Host environment launch) from
+        # being received while a Docker daemon is slow or an image is being
+        # pulled.  Keep every daemon round-trip on the shared Docker executor.
+        loop = asyncio.get_running_loop()
+
+        def _ensure_started() -> None:
+            self._container.reload()
+            if str(self._container.status) != "running":
+                self._container.start()
+
+        await loop.run_in_executor(_DOCKER_EXECUTOR, _ensure_started)
 
     async def _after_start(self) -> None:
         # Inherit the parent's bookkeeping (workspace_root_ready flag,
@@ -156,16 +168,21 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
         # every shutdown burns the full grace before the SIGKILL. By the time
         # this runs the container is disposable (the workspace snapshot is
         # already persisted), so use a 1s grace and let docker kill it.
-        try:
-            self._container.reload()
-        except Exception:
-            pass
-        try:
-            if await self.running():
-                self._container.stop(timeout=1)
-        except Exception:
-            # Already gone/stopped — same tolerance as the SDK base.
-            pass
+        loop = asyncio.get_running_loop()
+
+        def _stop() -> None:
+            try:
+                self._container.reload()
+            except Exception:
+                pass
+            try:
+                if str(self._container.status) == "running":
+                    self._container.stop(timeout=1)
+            except Exception:
+                # Already gone/stopped — same tolerance as the SDK base.
+                pass
+
+        await loop.run_in_executor(_DOCKER_EXECUTOR, _stop)
 
     async def notify_activity(self) -> None:
         """External presence ping. Resets the idle timer (and auto-unpauses
@@ -667,10 +684,19 @@ class ExtendedDockerSandboxClient(LifecycleSessionClientMixin, DockerSandboxClie
         # ``containers`` is a property that returns a new collection
         # on every access — the monkey-patched ``create`` would be on
         # a throwaway instance.
-        if not self.image_exists(image):
+        loop = asyncio.get_running_loop()
+        image_exists = await loop.run_in_executor(
+            _DOCKER_EXECUTOR, self.image_exists, image
+        )
+        if not image_exists:
             repo, tag = parse_repository_tag(image)
-            self.docker_client.images.pull(repo, tag=tag or None, all_tags=False)
-        assert self.image_exists(image)
+            await loop.run_in_executor(
+                _DOCKER_EXECUTOR,
+                lambda: self.docker_client.images.pull(
+                    repo, tag=tag or None, all_tags=False
+                ),
+            )
+        assert await loop.run_in_executor(_DOCKER_EXECUTOR, self.image_exists, image)
 
         environment: dict[str, str] | None = None
         if manifest:
@@ -740,7 +766,10 @@ class ExtendedDockerSandboxClient(LifecycleSessionClientMixin, DockerSandboxClie
                 )
             create_kwargs["mounts"] = existing_mounts
 
-        return self.docker_client.containers.create(**create_kwargs)
+        return await loop.run_in_executor(
+            _DOCKER_EXECUTOR,
+            lambda: self.docker_client.containers.create(**create_kwargs),
+        )
 
     async def create(
         self,
@@ -764,7 +793,8 @@ class ExtendedDockerSandboxClient(LifecycleSessionClientMixin, DockerSandboxClie
             exposed_ports=options.exposed_ports,
             session_id=session_id,
         )
-        container.start()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(_DOCKER_EXECUTOR, container.start)
 
         container_id = container.id
         assert container_id is not None

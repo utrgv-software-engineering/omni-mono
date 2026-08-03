@@ -602,6 +602,43 @@ def _remote_hint(error: Exception, url: str, proxy_base: Optional[str]) -> str:
 # --------------------------------------------------------------------------
 
 
+def _complete_python_awaitable(awaitable: Any) -> Any:
+    """Complete top-level-await code from Bashkit's synchronous callback.
+
+    Bashkit's wasm build exposes only ``execute_sync``. Pyodide's stack
+    switching is the supported way for a synchronous Python callback entered
+    through ``runPythonAsync`` to wait for an awaitable. Native Python has no
+    equivalent, so tests and server-side use fall back to asyncio directly or
+    to an isolated thread when an event loop is already running.
+    """
+    import asyncio
+    import sys
+
+    try:
+        from pyodide.ffi import can_run_sync, run_sync
+    except ImportError:
+        pass
+    else:
+        if can_run_sync():
+            return run_sync(awaitable)
+
+    if sys.platform == "emscripten":
+        awaitable.close()
+        raise RuntimeError(
+            "python must be invoked from an asynchronous Pyodide entry point"
+        )
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(asyncio.run, awaitable).result()
+
+
 def make_python_builtin(*, root: str = "/workspace") -> Callable:
     """A ``python3`` that is the interpreter the rest of the page uses.
 
@@ -617,9 +654,10 @@ def make_python_builtin(*, root: str = "/workspace") -> Callable:
     """
 
     def python(ctx: Any):
+        import ast
         import contextlib
+        import inspect
         import io as _io
-        import runpy
         import sys
 
         from bashkit import BuiltinResult
@@ -671,19 +709,49 @@ def make_python_builtin(*, root: str = "/workspace") -> Callable:
             os.chdir(cwd if os.path.isdir(cwd) else root)
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 if target is not None:
-                    runpy.run_path(target, run_name="__main__")
+                    with open(target, encoding="utf-8") as source_file:
+                        source = source_file.read()
+                    namespace = {
+                        "__name__": "__main__",
+                        "__file__": target,
+                        "__cached__": None,
+                        "__package__": None,
+                        "__spec__": None,
+                    }
+                    compiled = compile(
+                        source,
+                        target,
+                        "exec",
+                        flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT,
+                        dont_inherit=True,
+                    )
                 else:
                     # ``target`` is None only when ``script`` is None, and the
                     # both-are-None case returned above — so ``-c code`` was
                     # given. Narrow it for the type checker.
                     assert code is not None
-                    exec(compile(code, "<stdin>", "exec"), {"__name__": "__main__"})
+                    namespace = {"__name__": "__main__"}
+                    compiled = compile(
+                        code,
+                        "<stdin>",
+                        "exec",
+                        flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT,
+                        dont_inherit=True,
+                    )
+
+                result = eval(compiled, namespace)
+                if inspect.isawaitable(result):
+                    _complete_python_awaitable(result)
         except SystemExit as stop:
             exit_code = int(stop.code or 0)
         except BaseException:
             import traceback
 
-            traceback.print_exc(file=err)
+            # Pyodide's synchronous await bridge may already have rendered
+            # the coroutine traceback to the redirected stderr before it
+            # propagates the exception back here. Do not print it twice.
+            if not err.getvalue():
+                traceback.print_exc(file=err)
             exit_code = 1
         finally:
             sys.argv = saved_argv

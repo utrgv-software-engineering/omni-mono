@@ -5163,6 +5163,18 @@ class AgentService(RpcMethodsBase):
                     owner_user_id=workspace.owner_user_id,
                 )
         bound = await self.thread_bindings.bind(thread_id, runtime_binding)
+
+        # A Thread is the conversation Session (thread_id == session_id).
+        # Binding is the control-plane operation that makes a new conversation
+        # routable, so it also establishes the Session's owner before the GUI
+        # performs its first history read.  The SessionManager never rewrites
+        # an existing owner's identity, which keeps rebinds safe.
+        owner_user_id = (
+            workspace.owner_user_id
+            if workspace_id is not None
+            else self._current_user_id()
+        )
+        self._session_manager.get_or_create(thread_id, user_id=owner_user_id)
         return self._thread_binding_payload(thread_id, bound)
 
     async def agent_host_list_resources(self) -> dict:

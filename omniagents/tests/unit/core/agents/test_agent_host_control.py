@@ -169,7 +169,15 @@ async def test_new_thread_binding_authorizes_through_owned_workspace(
         params,
     )
 
-    with pytest.raises(AuthorizationDenied, match="Workspace"):
+    service.channel = SimpleNamespace(principal=principal)
+    await service.agent_host_bind_thread(params["thread_id"], params["binding"])
+
+    session = service.get_session(params["thread_id"])
+    assert session is not None
+    assert session.user_id == "alice"
+    assert await service.get_session_history(params["thread_id"]) == []
+
+    with pytest.raises(AuthorizationDenied, match="Thread"):
         await service.authorize_rpc(
             UserIdentity(user_id="bob"),
             "agent_host_bind_thread",

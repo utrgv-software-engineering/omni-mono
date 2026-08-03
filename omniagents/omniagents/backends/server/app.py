@@ -4,13 +4,14 @@ import os
 import asyncio
 import secrets
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from typing import TYPE_CHECKING, Optional, Dict, Any, Callable
+from typing import TYPE_CHECKING, Dict, Any
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from omniagents.core.providers.auth.base import UserIdentity
     from omniagents.execution import AgentHostResources
 
 from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import WebSocketDisconnect
 from omniagents.rpc import JsonRpcEndpoint
 from omniagents.rpc.auth import (
@@ -449,6 +450,21 @@ def build_app(
         spec = load_agent_spec_from_yaml(config_path)
 
     app = FastAPI()
+    # Browser clients mint a one-time WebSocket connect ticket with an
+    # authenticated HTTP request.  That request is intentionally allowed from
+    # any origin: this surface uses an explicit bearer token (never cookies),
+    # and the resulting ticket is short-lived and single-use.  Keeping this at
+    # the AgentHost boundary also covers dynamic Vite ports, packaged desktop
+    # renderers, and independently hosted web clients without launcher-specific
+    # origin configuration.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["POST"],
+        allow_headers=["Authorization", "Content-Type"],
+        max_age=600,
+    )
 
     # One authenticator guards every surface — /ws, /ws/realtime and
     # /ws/terminal all resolve the same principal through it, and

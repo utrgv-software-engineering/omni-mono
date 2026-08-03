@@ -11,15 +11,17 @@ The unified model (see ``omniagents/rpc/auth.py``):
 * Auth failures close with 4401/4403 — terminal codes, no retry.
 """
 
+from types import SimpleNamespace
+
 import pytest
+from agents import Agent
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
-from types import SimpleNamespace
 
 from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.runtime import bridge as runner_bridge
-from agents import Agent
+from tests.fixtures.gui_ws import perform_gui_handshake
 
 
 async def mock_build_agent(settings, mcp, app):
@@ -84,7 +86,9 @@ class StubTerminalManager:
         self.closed.append((session_id, terminal_id))
 
 
-def _build_auth_app(monkeypatch, *, legacy: bool = False) -> SimpleNamespace:
+def _build_auth_app(
+    monkeypatch, *, legacy: bool = False, agent_host_control_token: str | None = None
+) -> SimpleNamespace:
     manager = StubTerminalManager()
 
     class StubAgentService(server_app.AgentService):
@@ -107,7 +111,10 @@ def _build_auth_app(monkeypatch, *, legacy: bool = False) -> SimpleNamespace:
     )
 
     app = server_app.build_app(
-        spec=spec, auth_token="secret", default_host_workspace_root="/tmp"
+        spec=spec,
+        auth_token="secret",
+        agent_host_control_token=agent_host_control_token,
+        default_host_workspace_root="/tmp",
     )
     client = TestClient(app)
     return SimpleNamespace(client=client, terminal_manager=manager)
@@ -121,6 +128,11 @@ def auth_context(monkeypatch):
 @pytest.fixture
 def legacy_auth_context(monkeypatch):
     return _build_auth_app(monkeypatch, legacy=True)
+
+
+@pytest.fixture
+def agent_host_control_context(monkeypatch):
+    return _build_auth_app(monkeypatch, agent_host_control_token="control-secret")
 
 
 AUTH_HEADER = {"Authorization": "Bearer secret"}
@@ -150,6 +162,89 @@ def test_ws_accepts_authorization_header(auth_context):
         pass
 
 
+def test_agent_host_control_credential_registers_workspace_over_real_ws(
+    agent_host_control_context, tmp_path
+):
+    operation = "agent_host_register_workspace"
+    with agent_host_control_context.client.websocket_connect(
+        "/ws", headers={"Authorization": "Bearer control-secret"}
+    ) as ws:
+        perform_gui_handshake(ws, experimental=(operation,))
+        ws.send_json(
+            {
+                "jsonrpc": "2.0",
+                "id": "register-workspace",
+                "method": operation,
+                "params": {
+                    "workspace_id": "workspace-first-host-message",
+                    "materialization_path": str(tmp_path),
+                    "snapshot_ref": "snapshot-first-host-message",
+                    "sources": [],
+                    "owner_user_id": "token_user",
+                },
+            }
+        )
+        response = ws.receive_json()
+
+    assert response["id"] == "register-workspace"
+    assert response["result"] == {
+        "workspace_id": "workspace-first-host-message",
+        "owner_user_id": "token_user",
+        "snapshot_ref": "snapshot-first-host-message",
+        "sources": [],
+    }
+
+
+def test_control_binding_initializes_owned_session_for_first_history_read(
+    agent_host_control_context,
+):
+    thread_id = "session-first-host-message"
+    operation = "agent_host_bind_thread"
+    with agent_host_control_context.client.websocket_connect(
+        "/ws", headers={"Authorization": "Bearer control-secret"}
+    ) as control_ws:
+        perform_gui_handshake(control_ws, experimental=(operation,))
+        control_ws.send_json(
+            {
+                "jsonrpc": "2.0",
+                "id": "bind-first-message",
+                "method": operation,
+                "params": {
+                    "thread_id": thread_id,
+                    "binding": {
+                        "workspace_id": agent_host_control_context.client.app.state.default_workspace_id,
+                        "environment_selection": {
+                            "mode": "existing",
+                            "environment_id": agent_host_control_context.client.app.state.default_environment_id,
+                        },
+                    },
+                },
+            }
+        )
+        response = control_ws.receive_json()
+        assert response["id"] == "bind-first-message"
+        assert "result" in response
+
+    with agent_host_control_context.client.websocket_connect(
+        "/ws", headers=AUTH_HEADER
+    ) as client_ws:
+        perform_gui_handshake(client_ws)
+        client_ws.send_json(
+            {
+                "jsonrpc": "2.0",
+                "id": "first-history",
+                "method": "get_session_history",
+                "params": {"session_id": thread_id},
+            }
+        )
+        while True:
+            response = client_ws.receive_json()
+            if response.get("id") == "first-history":
+                break
+
+    assert response["result"] == []
+
+
 def test_ws_rejects_query_token_by_default(auth_context):
     """The legacy ?token= transport is off unless explicitly re-enabled."""
     with pytest.raises(WebSocketDisconnect):
@@ -175,6 +270,28 @@ def test_ticket_endpoint_requires_authentication(auth_context):
         ).status_code
         == 401
     )
+
+
+def test_ticket_endpoint_allows_authenticated_browser_origins(auth_context):
+    origin = "http://localhost:5174"
+    preflight = auth_context.client.options(
+        "/auth/ws-ticket",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "*"
+    assert "authorization" in preflight.headers["access-control-allow-headers"].lower()
+
+    response = auth_context.client.post(
+        "/auth/ws-ticket",
+        headers={**AUTH_HEADER, "Origin": origin},
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "*"
 
 
 def test_ticket_flow_dials_all_surfaces(auth_context):

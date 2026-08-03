@@ -118,6 +118,54 @@ async def test_exec_returns_bytes(sandbox):
     assert isinstance(result.stderr, bytes)
 
 
+@pytest.mark.asyncio
+async def test_python_builtin_runs_script_with_top_level_await(sandbox):
+    await sandbox.start()
+    script = Path(sandbox.state.manifest.root, "async_script.py")
+    script.write_text(
+        "import asyncio\n"
+        "await asyncio.sleep(0)\n"
+        "print('top-level await completed')\n"
+    )
+
+    result = await sandbox.exec("python async_script.py")
+
+    assert result.exit_code == 0
+    assert result.stderr == b""
+    assert result.stdout.decode().strip() == "top-level await completed"
+
+
+@pytest.mark.asyncio
+async def test_python_builtin_runs_command_with_top_level_await(sandbox):
+    await sandbox.start()
+
+    result = await sandbox.exec(
+        "python -c \"import asyncio; await asyncio.sleep(0); print('done')\""
+    )
+
+    assert result.exit_code == 0
+    assert result.stderr == b""
+    assert result.stdout.decode().strip() == "done"
+
+
+@pytest.mark.asyncio
+async def test_python_builtin_reports_top_level_await_failure_once(sandbox):
+    await sandbox.start()
+    script = Path(sandbox.state.manifest.root, "failing_async_script.py")
+    script.write_text(
+        "import asyncio\n"
+        "await asyncio.sleep(0)\n"
+        "raise ValueError('one traceback')\n"
+    )
+
+    result = await sandbox.exec("python failing_async_script.py")
+
+    stderr = result.stderr.decode()
+    assert result.exit_code == 1
+    assert stderr.count("Traceback (most recent call last):") == 1
+    assert "ValueError: one traceback" in stderr
+
+
 # -------------------------------- files ---------------------------------- #
 
 
