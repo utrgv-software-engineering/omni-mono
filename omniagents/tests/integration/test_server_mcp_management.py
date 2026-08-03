@@ -121,6 +121,8 @@ class RpcWs:
         return message
 
     def send(self, method, **params):
+        if method == "start_run":
+            params.setdefault("environment_selection", {"mode": "none"})
         self.next_id += 1
         call_id = f"c{self.next_id}"
         self.ws.send_json(

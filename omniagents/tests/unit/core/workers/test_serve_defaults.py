@@ -1,10 +1,23 @@
-"""Serve-state-derived worker defaults (`omniagents.core.workers.serve_defaults`)."""
+"""AgentHost-derived worker defaults (`core.workers.serve_defaults`)."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
-from omniagents.core.runtime import serve_state
+from omniagents.execution import (
+    EnvironmentKind,
+    EnvironmentLease,
+    EnvironmentState,
+    ExecutionEnvironmentDescriptor,
+    OperationExecutionDescriptor,
+    RequestContext,
+    WorkspaceResource,
+    bind_request_context,
+    reset_request_context,
+)
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 from omniagents.core.workers import (
     MultiSourceWorktreeIsolation,
     WorkerSource,
@@ -23,15 +36,13 @@ from omniagents.core.workers import serve_defaults as serve_defaults_mod
 
 @pytest.fixture(autouse=True)
 def _restore_globals():
-    """Restore serve state, worker defaults, the isolation registry entry,
+    """Restore worker defaults, the isolation registry entry,
     and the module's install/caching globals after each test."""
     original_defaults = worker_defaults()
     original_worktree = get_isolation_strategy("worktree")
     original_installed = serve_defaults_mod._installed
     original_fallback = serve_defaults_mod._fallback_project_context
-    serve_state.reset()
     yield
-    serve_state.reset()
     set_worker_defaults(original_defaults)
     register_isolation_strategy(original_worktree)
     serve_defaults_mod._installed = original_installed
@@ -41,9 +52,40 @@ def _restore_globals():
 # -- serve_worker_sources ----------------------------------------------
 
 
+@contextmanager
+def _routed_sources(sources, *, kind=EnvironmentKind.HOST, root="/workspace"):
+    resource = WorkspaceResource("workspace-1", sources=tuple(sources))
+    descriptor = ExecutionEnvironmentDescriptor(
+        environment_id="environment-1",
+        workspace_id=resource.workspace_id,
+        kind=kind,
+        state=EnvironmentState.READY,
+        generation=1,
+    )
+    workspace = Mock()
+    workspace.root = root
+    lease = EnvironmentLease(descriptor, workspace)
+    token = bind_request_context(
+        RequestContext(
+            operation=OperationExecutionDescriptor(
+                name="spawn_worker",
+                resource_scope=ResourceScope.RUN,
+                execution_requirements=ExecutionRequirement.PROCESS,
+            ),
+            principal=None,
+            workspace=resource,
+            environment=descriptor,
+            environment_lease=lease,
+        )
+    )
+    try:
+        yield
+    finally:
+        reset_request_context(token)
+
+
 def test_sources_mapping_kinds_and_paths():
-    serve_state.set_manifest_root("/workspace")
-    serve_state.set_sources(
+    with _routed_sources(
         [
             # local-git with a host path → git worktree at that path
             {"kind": "local-git", "mountName": "api", "path": "/host/api"},
@@ -56,17 +98,16 @@ def test_sources_mapping_kinds_and_paths():
             # plain local → copy
             {"kind": "local", "mountName": "notes", "path": "/host/notes"},
         ]
-    )
-    assert serve_worker_sources() == [
-        WorkerSource(name="api", host_path="/host/api", git=True),
-        WorkerSource(name="web", host_path="/workspace/web", git=True),
-        WorkerSource(name="notes", host_path="/host/notes", git=False),
-    ]
+    ):
+        assert serve_worker_sources() == [
+            WorkerSource(name="api", host_path="/host/api", git=True),
+            WorkerSource(name="web", host_path="/workspace/web", git=True),
+            WorkerSource(name="notes", host_path="/host/notes", git=False),
+        ]
 
 
 def test_sources_mapping_skips_unusable_entries():
-    serve_state.set_manifest_root("/workspace")
-    serve_state.set_sources(
+    with _routed_sources(
         [
             # unknown kind → skipped
             {"kind": "s3", "mountName": "bucket", "path": "/host/bucket"},
@@ -75,35 +116,40 @@ def test_sources_mapping_skips_unusable_entries():
             # empty/junk path with a manifest root → mounted under it
             {"kind": "local", "mountName": "scratch", "path": "   "},
         ]
-    )
-    assert serve_worker_sources() == [
-        WorkerSource(name="scratch", host_path="/workspace/scratch", git=False),
-    ]
+    ):
+        assert serve_worker_sources() == [
+            WorkerSource(name="scratch", host_path="/workspace/scratch", git=False),
+        ]
 
 
-def test_sources_mapping_skips_pathless_without_manifest_root():
-    serve_state.set_sources(
+def test_non_host_sources_always_use_environment_mounts():
+    with _routed_sources(
         [
             {"kind": "git-remote", "mountName": "web", "repoUrl": "https://x/y.git"},
             {"kind": "local-git", "mountName": "api", "path": "/host/api"},
+        ],
+        kind=EnvironmentKind.DEVBOX,
+    ):
+        assert serve_worker_sources() == [
+            WorkerSource(name="web", host_path="/workspace/web", git=True),
+            WorkerSource(name="api", host_path="/workspace/api", git=True),
         ]
-    )
-    assert serve_worker_sources() == [
-        WorkerSource(name="api", host_path="/host/api", git=True),
-    ]
 
 
-def test_sources_mapping_empty_when_nothing_published():
+def test_sources_mapping_empty_without_routed_run():
     assert serve_worker_sources() == []
 
 
 # -- default_worker_project_context ------------------------------------
 
 
-def test_project_context_prefers_published_context(monkeypatch):
-    published = object()
-    serve_state.set_project_context(published)
-    assert default_worker_project_context() is published
+def test_project_context_prefers_current_agent_definition(monkeypatch):
+    project = object()
+    service = SimpleNamespace(spec=SimpleNamespace(project_context=project))
+    monkeypatch.setattr(
+        "omniagents.core.agents.service.current_service", lambda: service
+    )
+    assert default_worker_project_context() is project
 
 
 def test_project_context_falls_back_to_product_manifest_cached(monkeypatch):
@@ -111,6 +157,7 @@ def test_project_context_falls_back_to_product_manifest_cached(monkeypatch):
 
     loaded = object()
     calls = []
+    monkeypatch.setattr("omniagents.core.agents.service.current_service", lambda: None)
 
     monkeypatch.setattr(
         "omniagents.core.product.product_info",
@@ -129,6 +176,7 @@ def test_project_context_falls_back_to_product_manifest_cached(monkeypatch):
 
 
 def test_project_context_raises_without_manifest(monkeypatch):
+    monkeypatch.setattr("omniagents.core.agents.service.current_service", lambda: None)
     monkeypatch.setattr(
         "omniagents.core.product.product_info",
         lambda: SimpleNamespace(manifest_path=None),
@@ -177,9 +225,8 @@ def test_install_registers_worktree_strategy_and_spec_loader(monkeypatch):
 
 
 def test_install_spec_loader_derives_all_inputs(monkeypatch):
-    """The installed loader builds from the published project context,
-    stamps the product slug, forwards the published orchestrator sandbox
-    attachment, and resolves the model over the installed store."""
+    """The installed loader builds from AgentDefinition project context,
+    stamps the product slug, and resolves the model over the installed store."""
     serve_defaults_mod._installed = False
     monkeypatch.setattr(
         "omniagents.core.product.product_info",
@@ -193,13 +240,9 @@ def test_install_spec_loader_derives_all_inputs(monkeypatch):
     monkeypatch.setattr("omniagents.core.models.model_store", lambda: _FakeStore())
 
     project = object()
-    serve_state.set_project_context(project)
-    serve_state.set_orchestrator_spec(
-        SimpleNamespace(
-            sandbox_use_sandbox_agent=True,
-            sandbox_run_as="agent",
-            sandbox_run_config={"image": "devbox"},
-        )
+    service = SimpleNamespace(spec=SimpleNamespace(project_context=project))
+    monkeypatch.setattr(
+        "omniagents.core.agents.service.current_service", lambda: service
     )
 
     from omniagents.core.project import runtime as project_runtime
@@ -226,9 +269,9 @@ def test_install_spec_loader_derives_all_inputs(monkeypatch):
     assert spec.project_slug == "my_product"
     assert spec.model_name == "fast"
     assert runtime_cfg == {"model": "fast", "provider": "openai"}
-    assert spec.sandbox_use_sandbox_agent is True
-    assert spec.sandbox_run_as == "agent"
-    assert spec.sandbox_run_config == {"image": "devbox"}
+    assert spec.sandbox_use_sandbox_agent is False
+    assert spec.sandbox_run_as is None
+    assert spec.sandbox_run_config is None
 
 
 def test_install_honors_product_model_resolver_hook(monkeypatch):
@@ -257,7 +300,10 @@ def test_install_honors_product_model_resolver_hook(monkeypatch):
             sandbox_run_config=None,
         ),
     )
-    serve_state.set_project_context(object())
+    service = SimpleNamespace(spec=SimpleNamespace(project_context=object()))
+    monkeypatch.setattr(
+        "omniagents.core.agents.service.current_service", lambda: service
+    )
 
     spec, runtime_cfg = worker_defaults().spec_loader("requested")
     assert seen == ["requested"]

@@ -2,8 +2,8 @@
 
 Skills live as ``<root>/<name>/SKILL.md`` under the directories returned
 by :func:`omniagents.core.skills.skill_roots` (derived from the product
-identity and serve-session state — ``<workspace>/.{slug}/skills``,
-published source mounts, ``<config dir>/skills`` — unless a product
+identity and routed Run — ``<workspace>/.{slug}/skills``, Workspace source
+mounts, ``<config dir>/skills`` — unless a product
 installs its own via ``set_skill_roots_provider``). Loading a skill is a
 *named action*
 — the agent calls ``load_skill('<name>')`` and the tool returns the full
@@ -18,12 +18,15 @@ Partial loads defeat the discipline.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 from agents.run_context import RunContextWrapper
 from omniagents.core.skills import skill_roots
 from omniagents.core.tools import RichToolOutput, rich_function_tool
+from omniagents.execution import current_request_context
+from omniagents.workspace.types import WorkspaceError
 
 from ._workspace import workspace_root_from_ctx
 
@@ -36,12 +39,44 @@ def _candidate_paths(name: str, workspace_root: str | None) -> list[Path]:
     return candidates
 
 
-def _resolve_skill_path(name: str, workspace_root: str | None) -> Path | None:
-    """Find <name>/SKILL.md across the configured skill roots, in order."""
-    for p in _candidate_paths(name, workspace_root):
-        if p.is_file():
-            return p
-    return None
+def _workspace_relative(path: Path, root: str) -> str | None:
+    """Return a lexical workspace-relative path when *path* is in *root*."""
+    try:
+        return path.relative_to(Path(root)).as_posix()
+    except ValueError:
+        return None
+
+
+async def _read_candidate(path: Path) -> tuple[str, str] | None:
+    """Read one candidate through its owning filesystem.
+
+    Paths inside the routed environment root must go through its Workspace
+    adapter. This is what makes ``/workspace`` mean a container path for a
+    devbox Run instead of accidentally probing the AgentHost filesystem.
+    Product-global/configured roots outside that root intentionally remain
+    control-plane files.
+    """
+    context = current_request_context()
+    lease = context.environment_lease if context is not None else None
+    if lease is not None:
+        relative = _workspace_relative(path, lease.workspace.root)
+        if relative is not None:
+            try:
+                text = await lease.workspace.read_text(relative)
+            except (OSError, ValueError, WorkspaceError):
+                return None
+            try:
+                return text, lease.workspace.resolve(relative)
+            except (ValueError, WorkspaceError):
+                return None
+
+    try:
+        text = await asyncio.to_thread(
+            path.read_text, encoding="utf-8", errors="replace"
+        )
+    except (OSError, ValueError):
+        return None
+    return text, str(path)
 
 
 @rich_function_tool(running_summary="Loading skill...")
@@ -65,8 +100,12 @@ async def load_skill(
             the system prompt.
     """
     workspace = workspace_root_from_ctx(ctx)
-    path = _resolve_skill_path(name, workspace)
-    if path is None:
+    loaded: tuple[str, str] | None = None
+    for path in _candidate_paths(name, workspace):
+        loaded = await _read_candidate(path)
+        if loaded is not None:
+            break
+    if loaded is None:
         searched = [
             str(p) for p in _candidate_paths(name, workspace) if p.name == "SKILL.md"
         ]
@@ -84,19 +123,19 @@ async def load_skill(
             },
         )
 
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text, display_path = loaded
     llm_output = text
     return RichToolOutput(
         llm_output,
         {
             "display_type": "command",
             "summary": f"Loaded skill {name!r}",
-            "preview": f"Loaded {path} ({len(text):,} chars)",
+            "preview": f"Loaded {display_path} ({len(text):,} chars)",
             "truncated": False,
             "metadata": {
                 "success": True,
                 "skill_name": name,
-                "skill_path": str(path),
+                "skill_path": display_path,
                 "char_count": len(text),
             },
         },

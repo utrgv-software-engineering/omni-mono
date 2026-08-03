@@ -64,11 +64,10 @@ def temporary_environ(overrides: Dict[str, Optional[str]]):
 def ephemeral_workspace_root(session: Any = None) -> str:
     """workspace_root for a run that bypasses the AgentService resolver.
 
-    Prefer the caller's session workspace, then the published sandbox
-    manifest root over the host cwd — they differ for container
-    backends, and an unclamped host path would be wrong there. Matches
-    the ``workspace_info`` builtins' fallback chain. Lifted from
-    omni-code.
+    Prefer the caller's explicit session workspace, else the host cwd for a
+    standalone tool-less utility run. Environment-sensitive utility agents
+    must receive ``workspace_root`` explicitly rather than consulting serve
+    process state.
     """
     if session is not None:
         sess_ctx = getattr(session, "context", None)
@@ -76,9 +75,7 @@ def ephemeral_workspace_root(session: Any = None) -> str:
             wr = sess_ctx.get("workspace_root")
             if isinstance(wr, str) and wr.strip():
                 return wr
-    from omniagents.core.runtime.serve_state import get_manifest_root
-
-    return get_manifest_root() or os.getcwd()
+    return os.getcwd()
 
 
 async def run_agent_once(
@@ -111,10 +108,9 @@ async def run_agent_once(
             append to the session.
         workspace_root: Explicit workspace root for the run context.
             Falls back to :func:`ephemeral_workspace_root` —
-            ``session.context["workspace_root"]``, then the published
-            sandbox manifest root, then the process cwd. Runs bypass
-            the AgentService resolver, so pass an explicit value when
-            none of those is the right anchor.
+            ``session.context["workspace_root"]``, then the process cwd.
+            Runs bypass the AgentService resolver, so pass an explicit value
+            for every environment-sensitive utility agent.
         context: Extra run-context entries merged over the workspace_root
             stamp.
         max_turns: Turn budget; utility agents default to a single turn.

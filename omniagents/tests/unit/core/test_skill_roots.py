@@ -1,6 +1,8 @@
-"""Tests for derived skill-root resolution (product identity + serve state)."""
+"""Tests for product- and environment-derived skill-root resolution."""
 
+from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -10,24 +12,64 @@ from omniagents.core.product import (
     reset_product_info,
     set_product_info,
 )
-from omniagents.core.runtime import serve_state
 from omniagents.core.skills import (
     default_skill_roots,
     set_skill_roots_provider,
     skill_roots,
     source_skill_roots,
 )
+from omniagents.execution import (
+    EnvironmentKind,
+    EnvironmentLease,
+    EnvironmentState,
+    ExecutionEnvironmentDescriptor,
+    OperationExecutionDescriptor,
+    RequestContext,
+    WorkspaceResource,
+    bind_request_context,
+    reset_request_context,
+)
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 @pytest.fixture(autouse=True)
 def _reset():
     set_skill_roots_provider(None)
-    serve_state.reset()
     reset_product_info()
     yield
     set_skill_roots_provider(None)
-    serve_state.reset()
     reset_product_info()
+
+
+@contextmanager
+def _routed_sources(sources, *, kind=EnvironmentKind.HOST, root="/workspace"):
+    resource = WorkspaceResource("workspace-1", sources=tuple(sources))
+    descriptor = ExecutionEnvironmentDescriptor(
+        environment_id="environment-1",
+        workspace_id=resource.workspace_id,
+        kind=kind,
+        state=EnvironmentState.READY,
+        generation=1,
+    )
+    workspace = Mock()
+    workspace.root = root
+    token = bind_request_context(
+        RequestContext(
+            operation=OperationExecutionDescriptor(
+                name="load_skill",
+                resource_scope=ResourceScope.RUN,
+                execution_requirements=ExecutionRequirement.WORKSPACE_READ,
+            ),
+            principal=None,
+            workspace=resource,
+            environment=descriptor,
+            environment_lease=EnvironmentLease(descriptor, workspace),
+        )
+    )
+    try:
+        yield
+    finally:
+        reset_request_context(token)
 
 
 # ----------------------------- default derivation ------------------------ #
@@ -76,68 +118,46 @@ def test_failing_provider_degrades_to_derived_default(tmp_path):
 # ----------------------------- source roots ------------------------------ #
 
 
-def test_source_roots_empty_outside_serve_session(tmp_path):
+def test_source_roots_empty_outside_routed_run(tmp_path):
     assert source_skill_roots(str(tmp_path)) == []
 
 
-def test_source_roots_resolve_mounts_against_manifest_root():
-    serve_state.set_manifest_root("/workspace")
-    serve_state.set_sources(
+def test_host_source_roots_use_declared_local_paths_and_workspace_mounts():
+    with _routed_sources(
         [
             {"kind": "local-git", "mountName": "app", "path": "/host/app"},
             {"kind": "git-remote", "mountName": "lib", "repoUrl": "u"},
         ]
-    )
-    # No live sandbox session (host mode): local sources also contribute
-    # their host path.
-    assert source_skill_roots() == [
-        Path("/workspace/app/skills"),
-        Path("/host/app/skills"),
-        Path("/workspace/lib/skills"),
-    ]
+    ):
+        assert source_skill_roots() == [
+            Path("/host/app/skills"),
+            Path("/workspace/lib/skills"),
+        ]
 
 
-def test_source_roots_skip_host_paths_when_sandbox_live():
-    serve_state.set_manifest_root("/workspace")
-    serve_state.set_sandbox_session(object())
-    serve_state.set_sources(
-        [{"kind": "local-git", "mountName": "app", "path": "/host/app"}]
-    )
-    assert source_skill_roots() == [Path("/workspace/app/skills")]
-
-
-def test_source_roots_infer_manifest_root_from_mounted_workspace():
-    serve_state.set_sources(
-        [{"kind": "local", "mountName": "app", "path": "/host/app"}]
-    )
-    # Workspace root IS a mount: the manifest root is its parent.
-    roots = source_skill_roots("/tmp/session/app")
-    assert roots == [
-        Path("/tmp/session/app/skills"),
-        Path("/host/app/skills"),
-    ]
+def test_devbox_source_roots_ignore_host_paths():
+    with _routed_sources(
+        [{"kind": "local-git", "mountName": "app", "path": "/host/app"}],
+        kind=EnvironmentKind.DEVBOX,
+    ):
+        assert source_skill_roots() == [Path("/workspace/app/skills")]
 
 
 def test_source_roots_dedupe():
-    serve_state.set_manifest_root("/workspace")
-    serve_state.set_sources(
+    with _routed_sources(
         [
             {"kind": "local", "mountName": "app", "path": "/host/app"},
             {"kind": "local-git", "mountName": "app", "path": "/host/app"},
         ]
-    )
-    assert source_skill_roots() == [
-        Path("/workspace/app/skills"),
-        Path("/host/app/skills"),
-    ]
+    ):
+        assert source_skill_roots() == [Path("/host/app/skills")]
 
 
 def test_default_roots_include_source_roots_between_workspace_and_global(tmp_path):
-    serve_state.set_manifest_root("/workspace")
-    serve_state.set_sources(
+    with _routed_sources(
         [{"kind": "local-git", "mountName": "app", "path": "/host/app"}]
-    )
-    roots = default_skill_roots(str(tmp_path))
-    assert roots[0] == tmp_path / ".omniagents" / "skills"
-    assert Path("/workspace/app/skills") in roots
-    assert roots[-1] == product_config_dir() / "skills"
+    ):
+        roots = default_skill_roots(str(tmp_path))
+        assert roots[0] == tmp_path / ".omniagents" / "skills"
+        assert Path("/host/app/skills") in roots
+        assert roots[-1] == product_config_dir() / "skills"

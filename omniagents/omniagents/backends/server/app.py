@@ -549,6 +549,18 @@ def build_app(
     except Exception as e:
         print(f"Warning: register_runtime_hooks failed: {e}")
 
+    if "terminal.create" in service._server_functions:
+        try:
+            from omniagents.rpc.terminal import TerminalManager
+
+            service.terminal_manager = TerminalManager(
+                authorization_policy=authenticator.authorization_policy
+            )
+        except ImportError:
+            # PTY support is platform-dependent. The protocol capability below
+            # accurately advertises absence when the manager cannot be imported.
+            pass
+
     realtime_spec = getattr(spec, "voice_spec", None)
     spec_voice_backend = getattr(spec, "voice_backend", "realtime")
     if realtime_spec is None and (

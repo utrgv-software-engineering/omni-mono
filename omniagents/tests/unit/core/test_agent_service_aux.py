@@ -52,7 +52,7 @@ async def test_stop_run_cancels_active_run(monkeypatch):
     channel = RecordingChannel()
     service.channel = channel
 
-    async def fake_builder(self, session_arg, approval_callback):
+    async def fake_builder(self, session_arg, approval_callback, *, spec=None):
         return object()
 
     service._build_agent_for_session = types.MethodType(fake_builder, service)
@@ -517,15 +517,14 @@ async def test_devbox_files_rpc_uses_the_live_sandbox_workspace():
     service = build_service()
     sandbox_session = FakeSandboxSession()
     app = types.SimpleNamespace(state=types.SimpleNamespace(agent_service=service))
-    spec = types.SimpleNamespace(sandbox_run_as="1000:1000")
     await _register_execution_environment(
         app,
-        spec,
         environment_id="environment-1",
         workspace_id="workspace-1",
         owner_user_id=None,
         session=sandbox_session,
         root="/workspace",
+        run_as="1000:1000",
     )
     listing = await service.fs_list("environment-1", ".")
 

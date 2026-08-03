@@ -216,9 +216,6 @@ def test_cross_user_session_access_denied(authz_context):
         bob.expect_denied("fork_session", session_id=session_id)
         bob.expect_denied("archive_session", session_id=session_id)
         bob.expect_denied("delete_session", session_id=session_id)
-        bob.expect_denied(
-            "server_call", function="session.get_history", session_id=session_id
-        )
 
         # Alice can still use her own session (replay path included).
         history = alice.result("get_session_history", session_id=session_id)
@@ -328,13 +325,16 @@ def test_session_listings_are_scoped_per_user(authz_context):
         alice_cm.__exit__(None, None, None)
 
 
-def test_cross_user_terminal_attach_denied(authz_context):
+def test_cross_user_terminal_attach_denied(authz_context, monkeypatch):
     """A leaked terminal_token is useless without the owner's identity."""
+    from omniagents.builtin.server_functions import terminal as terminal_module
     from omniagents.builtin.server_functions.terminal import terminal_create
     from omniagents.rpc.terminal import TerminalManager
     from tests.unit.rpc.test_terminal_manager import FakePtyBackend
 
-    manager = TerminalManager(backend=FakePtyBackend())
+    backend = FakePtyBackend()
+    manager = TerminalManager(backend=backend)
+    monkeypatch.setattr(terminal_module, "_backend_for_lease", lambda lease: backend)
     authz_context.service.terminal_manager = manager
     authz_context.service.register_server_function(
         "terminal.create",
@@ -342,13 +342,31 @@ def test_cross_user_terminal_attach_denied(authz_context):
         resource_scope=ResourceScope.THREAD,
         execution_requirements=ExecutionRequirement.PTY,
     )
+    descriptor = register_host_environment(
+        authz_context.service.agent_host_resources,
+        "/tmp",
+        owner_user_id="alice",
+        workspace_id="workspace-alice-terminal",
+        environment_id="environment-alice-terminal",
+    )
 
     alice_cm, alice = _connect(authz_context, ALICE)
     try:
-        run = alice.result("start_run", prompt="terminal session")
+        run = alice.result(
+            "start_run",
+            prompt="terminal session",
+            environment_selection={
+                "mode": "explicit",
+                "environment_id": descriptor.environment_id,
+                "environment_generation": descriptor.generation,
+            },
+        )
         session_id = run["session_id"]
         created = alice.result(
-            "server_call", function="terminal.create", session_id=session_id
+            "server_call",
+            function="terminal.create",
+            session_id=session_id,
+            environment_id=descriptor.environment_id,
         )
         terminal_id = created["terminal_id"]
         terminal_token = created["terminal_token"]

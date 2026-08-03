@@ -5,8 +5,8 @@ Covers the moved core with fakes — no docker daemon required:
 * 3-tier docker resume (reused / rehydrated / fresh) plus the create
   fallthrough for non-docker or first-launch calls.
 * snapshot scrub on a crafted tar containing symlink escapes.
-* switch orchestration end-to-end through the ``set_switch_executor``
-  seam, including the ``SwitchContext.profile_resolver`` product hook.
+* environment-owned switch orchestration, including the
+  ``SwitchContext.profile_resolver`` product hook.
 * teardown idempotence / ``None``-safety / snapshot discard.
 """
 
@@ -18,11 +18,11 @@ import tarfile
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
-from omniagents.core.runtime import sandbox_lifecycle, serve_harness, serve_state
+from omniagents.core.runtime import serve_harness, serve_state
 from omniagents.core.runtime.serve_harness import (
     _create_or_resume_session,
     _register_execution_environment,
@@ -38,10 +38,8 @@ from omniagents.core.runtime.serve_state import SwitchContext
 @pytest.fixture(autouse=True)
 def _reset_serve_state():
     serve_state.reset()
-    sandbox_lifecycle.set_switch_executor(None)
     yield
     serve_state.reset()
-    sandbox_lifecycle.set_switch_executor(None)
 
 
 # --------------------------------------------------------------------------
@@ -264,17 +262,21 @@ async def test_register_execution_environment_routes_to_named_sandbox():
         environment_manager=resources.environments,
     )
     app = SimpleNamespace(state=SimpleNamespace(agent_service=service))
-    spec = SimpleNamespace(sandbox_run_as="1000:1000")
     first_session = SimpleNamespace(name="first")
 
     descriptor = await _register_execution_environment(
         app,
-        spec,
         environment_id="environment-1",
         workspace_id="workspace-1",
         owner_user_id="user-1",
         session=first_session,
         root="/workspace",
+        run_as="1000:1000",
+        terminal=SimpleNamespace(
+            command="/bin/zsh",
+            cwd="/workspace/project",
+            user="1000:1000",
+        ),
     )
 
     lease = await resources.environments.acquire("environment-1")
@@ -283,6 +285,11 @@ async def test_register_execution_environment_routes_to_named_sandbox():
     assert lease.workspace._session is first_session
     assert lease.workspace.root == "/workspace"
     assert lease.workspace._default_user == "1000:1000"
+    assert lease.sandbox_runtime.session is first_session
+    assert lease.sandbox_runtime.run_as == "1000:1000"
+    assert lease.terminal_defaults.shell == "/bin/zsh"
+    assert lease.terminal_defaults.cwd == "/workspace/project"
+    assert lease.terminal_defaults.user == "1000:1000"
     assert resources.workspaces.get("workspace-1").owner_user_id == "user-1"
 
 
@@ -293,7 +300,7 @@ async def test_register_execution_environment_routes_to_named_sandbox():
 
 class FakeProfile:
     def __init__(self, backend="docker"):
-        self.raw = {"client": {"type": backend}}
+        self.raw = {"client": {"type": backend}, "run_as": "1000:1000"}
         self.terminal = object()
 
 
@@ -314,8 +321,19 @@ class FakeService:
         return None
 
 
-def _make_ctx(resolver):
-    environment_manager = SimpleNamespace(transition=AsyncMock())
+def _make_ctx(resolver, old_session=None):
+    environment_manager = SimpleNamespace(
+        acquire=AsyncMock(
+            return_value=SimpleNamespace(
+                sandbox_runtime=(
+                    SimpleNamespace(session=old_session)
+                    if old_session is not None
+                    else None
+                )
+            )
+        ),
+        transition=AsyncMock(),
+    )
     ctx = SwitchContext(
         app=SimpleNamespace(
             state=SimpleNamespace(
@@ -346,11 +364,9 @@ def _make_ctx(resolver):
     return ctx
 
 
-def test_switch_executor_seam_end_to_end(monkeypatch, tmp_path):
-    """Installing ``perform_switch`` via the seam and invoking it through
-    ``switch_executor()`` swaps the published session, mutates the ctx in
-    place, uses the product's ``profile_resolver``, and broadcasts
-    switching → changed in order."""
+def test_environment_owned_switch_end_to_end(monkeypatch, tmp_path):
+    """The environment context is mutated and switching → changed is
+    broadcast in order."""
     service = FakeService()
     monkeypatch.setattr(
         "omniagents.core.agents.service.current_service", lambda: service
@@ -385,25 +401,11 @@ def test_switch_executor_seam_end_to_end(monkeypatch, tmp_path):
 
     monkeypatch.setattr(serve_harness, "teardown_session", fake_teardown)
     monkeypatch.setattr(serve_harness, "bring_up_session", fake_bring_up)
-    monkeypatch.setattr(
-        serve_harness, "_attach_session_to_spec", lambda spec, session, raw: None
-    )
-    monkeypatch.setattr(
-        serve_harness,
-        "_install_session_terminal_manager",
-        lambda app, session, terminal: None,
-    )
     replace_backend = AsyncMock()
     monkeypatch.setattr(serve_harness, "_replace_execution_backend", replace_backend)
 
-    serve_state.set_sandbox_session(old_session)
-    serve_state.set_switch_context(_make_ctx(resolver))
-    sandbox_lifecycle.set_switch_executor(perform_switch)
-
-    executor = sandbox_lifecycle.switch_executor()
-    assert executor is perform_switch
-
-    res = asyncio.run(executor("/profiles/devbox.yml"))
+    ctx = _make_ctx(resolver, old_session)
+    res = asyncio.run(perform_switch("/profiles/devbox.yml", switch_context=ctx))
 
     assert res["ok"] is True
     assert res["profile"] == "devbox"
@@ -411,26 +413,22 @@ def test_switch_executor_seam_end_to_end(monkeypatch, tmp_path):
     assert res["container_id"] == "ctr-new"
     # The product resolver was consulted (framework fallback untouched).
     assert resolver_calls == [Path("/profiles/devbox.yml")]
-    # Old session torn down; new one published.
+    # Old session torn down; new one published through the environment manager.
     assert teardowns == [(old_session, [("old", 1)])]
-    assert serve_state.get_sandbox_session() is new_session
-    assert serve_state.get_orchestrator_spec() is not None
-    ctx = serve_state.get_switch_context()
     assert ctx.current_profile_name == "devbox"
     assert ctx.container_id == "ctr-new"
     assert ctx.switching is False and ctx.ready_event.is_set()
     ctx.app.state.agent_service.environment_manager.transition.assert_awaited_once()
-    replace_backend.assert_awaited_once_with(ctx, new_session)
+    replace_backend.assert_awaited_once_with(
+        ctx,
+        new_session,
+        run_as="1000:1000",
+        terminal=ANY,
+    )
     assert [e[0] for e in service.events] == [
         "ui.sandbox.switching",
         "ui.sandbox.changed",
     ]
-
-
-def test_switch_without_context_reports_no_server():
-    res = asyncio.run(perform_switch("/profiles/devbox.yml"))
-    assert res["ok"] is False
-    assert "no live sandbox" in res["reason"]
 
 
 # --------------------------------------------------------------------------

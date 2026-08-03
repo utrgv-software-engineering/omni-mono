@@ -139,13 +139,16 @@ async def terminal_create(
     manager = getattr(service, "terminal_manager", None) or _get_terminal_manager()
     if getattr(service, "terminal_manager", None) is None:
         setattr(service, "terminal_manager", manager)
-    resolved_cwd = cwd if cwd and cwd.strip() else lease.workspace.root
+    defaults = lease.terminal_defaults
+    resolved_shell = shell if shell and shell.strip() else defaults.shell
+    resolved_cwd = cwd if cwd and cwd.strip() else defaults.cwd or lease.workspace.root
     data = await manager.create_terminal(
         session.id,
-        shell=shell,
+        shell=resolved_shell,
         cwd=resolved_cwd,
         cols=width,
         rows=height,
+        user=defaults.user,
         owner_user_id=getattr(session, "user_id", None),
         backend=_backend_for_lease(lease),
         environment_id=lease.environment_id,

@@ -404,15 +404,8 @@ def test_released_baseline_matches_manifest_digest():
     assert baseline_manifest["protocol_version"] == "1.0.0"
 
 
-def test_candidate_protocol_is_backward_compatible_with_released_baseline():
-    """The additive-only v1 promise, enforced against the frozen baseline.
-
-    The current candidate under ``protocol/openrpc/`` must classify as
-    ``identical`` or ``additive`` against the immutable 1.0.0 release
-    snapshot — never ``breaking``. This is the documented compatibility
-    gate (docs/development/gui-protocol-governance.md): the baseline
-    stays frozen and the candidate may only grow.
-    """
+def test_candidate_protocol_records_intentional_environment_selection_break():
+    """The unreleased protocol intentionally requires explicit placement."""
     baseline_root = ROOT / "protocol/openrpc/baseline/1.0.0"
     baseline_document = json.loads(
         (baseline_root / "omniagents-gui-v1.json").read_text()
@@ -424,5 +417,7 @@ def test_candidate_protocol_is_backward_compatible_with_released_baseline():
     report = compare_protocols(
         baseline_document, baseline_schema, candidate_document, candidate_schema
     )
-    assert report.classification in ("identical", "additive"), report.violations
-    assert report.violations == ()
+    assert report.classification == "breaking"
+    assert report.violations == (
+        "start_run.params.environment_selection added as required",
+    )

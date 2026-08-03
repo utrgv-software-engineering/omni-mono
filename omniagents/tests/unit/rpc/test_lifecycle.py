@@ -39,6 +39,11 @@ INITIALIZE_RESULT = {
     "protocol_version": "1.0.0",
     "identity": {"name": "omniagents", "version": "0.0.0"},
     "platform": {"os": "linux", "arch": "x86_64"},
+    "agent_host": {
+        "agent_host_id": "test-lifecycle-host",
+        "default_workspace_id": None,
+        "default_environment_id": None,
+    },
     "capabilities": {
         "realtime": False,
         "mcp_apps": False,

@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Awaitable, Optional, Dict, Any, Callable
 from pathlib import Path
 import inspect
+from dataclasses import replace as dataclass_replace
 
 from agents import (
     AgentsException,
@@ -67,7 +68,9 @@ from omniagents.execution import (
     NoEnvironment,
     OperationExecutionDescriptor,
     ThreadRuntimeBinding,
+    bind_request_context,
     current_request_context,
+    reset_request_context,
 )
 from omniagents.workspace.base import Workspace
 from omniagents.workspace.host import HostWorkspace
@@ -466,6 +469,10 @@ class AgentService(RpcMethodsBase):
         self.environment_manager = agent_host_resources.environments
         self.thread_bindings = agent_host_resources.thread_bindings
         self.operation_router = agent_host_resources.router
+        # One AgentHost-level terminal registry authorizes socket attachment
+        # and owns descriptor lifecycle. Per-terminal placement/defaults come
+        # from EnvironmentLease, never from mutable service configuration.
+        self.terminal_manager: Any | None = None
         # In-process per-session run_end listeners (autopilot loops,
         # /goal server function, scheduled hooks). Fan-out happens
         # inside _broadcast_session before client channels are touched.
@@ -1165,11 +1172,57 @@ class AgentService(RpcMethodsBase):
 
         return tools
 
+    def _spec_for_environment(
+        self, environment_lease: EnvironmentLease | None
+    ) -> AgentSpec:
+        """Return a Run-scoped spec adapted to one immutable environment lease.
+
+        ``AgentSpec`` is an agent definition shared by every Thread in an
+        AgentHost.  SDK sandbox sessions are live environment resources, so
+        storing one on that shared object makes concurrent Runs race and makes
+        profile switches retarget already-started Runs.  The shallow copy keeps
+        the declarative definition shared while replacing only the SDK adapter
+        fields for this Run.
+        """
+
+        run_spec = copy.copy(self.spec)
+        run_spec.sandbox_use_sandbox_agent = False
+        run_spec.sandbox_run_as = None
+        run_spec.sandbox_run_config = None
+
+        runtime = (
+            environment_lease.sandbox_runtime if environment_lease is not None else None
+        )
+        if runtime is None:
+            return run_spec
+
+        base_config = getattr(self.spec, "sandbox_run_config", None)
+        if base_config is None:
+            from agents.run_config import SandboxRunConfig
+
+            run_config = SandboxRunConfig(session=runtime.session)
+        else:
+            try:
+                run_config = dataclass_replace(base_config, session=runtime.session)
+            except (TypeError, ValueError):
+                run_config = copy.copy(base_config)
+                run_config.session = runtime.session
+
+        run_spec.sandbox_use_sandbox_agent = True
+        run_spec.sandbox_run_as = runtime.run_as
+        run_spec.sandbox_run_config = run_config
+        return run_spec
+
     async def _build_agent_for_session(
-        self, session: Session, approval_callback
+        self,
+        session: Session,
+        approval_callback,
+        *,
+        spec: AgentSpec | None = None,
     ) -> Any:
+        build_spec = spec or self.spec
         stub_app = SimpleNamespace(
-            spec=self.spec,
+            spec=build_spec,
             _request_tool_approval=approval_callback,
             # Custom builders that want session-scoped settings (model
             # override, provider gates) read it from here — the positional
@@ -1188,14 +1241,14 @@ class AgentService(RpcMethodsBase):
         client_tools = self._build_client_tools(session)
 
         try:
-            if self.spec.build_agent:
+            if build_spec.build_agent:
                 primary_server = active_servers[0] if active_servers else None
-                agent = await self.spec.build_agent(settings, primary_server, stub_app)
+                agent = await build_spec.build_agent(settings, primary_server, stub_app)
             else:
                 agent = await _default_build_agent(
                     settings,
                     active_servers,
-                    self.spec,
+                    build_spec,
                     approval_callback,
                     session=session,
                 )
@@ -1213,12 +1266,12 @@ class AgentService(RpcMethodsBase):
             # Wire tool-approval predicates per session if safety is enabled.
             # The SDK pauses the run with ToolApprovalItem interruptions when
             # any predicate returns True; the bridge handles request/response.
-            opts = self.spec.safe_agent_options
-            _use_safe = self.spec.use_safe_agent
+            opts = build_spec.safe_agent_options
+            _use_safe = build_spec.use_safe_agent
             _skip_approvals = bool(getattr(opts, "skip_approvals", False))
             if (
-                self.spec.security_config
-                and self.spec.security_config.get("safety_mode") == "enforced"
+                build_spec.security_config
+                and build_spec.security_config.get("safety_mode") == "enforced"
             ):
                 _use_safe = True
                 _skip_approvals = False
@@ -3250,7 +3303,8 @@ class AgentService(RpcMethodsBase):
                     still_pending.append((meth, payl))
             sess.pending_events = still_pending
 
-        agent = await self._build_agent_for_session(sess, None)
+        run_spec = self._spec_for_environment(environment_lease)
+        agent = await self._build_agent_for_session(sess, None, spec=run_spec)
 
         # When the caller supplies a non-user prompt role, write the
         # message to history with that role and tell the worker to
@@ -3477,9 +3531,7 @@ class AgentService(RpcMethodsBase):
                             error_handlers=getattr(self.spec, "error_handlers", None),
                             run_hooks=getattr(self.spec, "run_hooks", None),
                             sdk_session=sdk_session,
-                            sandbox_run_config=getattr(
-                                self.spec, "sandbox_run_config", None
-                            ),
+                            sandbox_run_config=run_spec.sandbox_run_config,
                             environment_lease=environment_lease,
                         )
                         end_reason = sess.cancel_end_reason or "completed"
@@ -3670,7 +3722,20 @@ class AgentService(RpcMethodsBase):
                 "run_id": task_name,
             },
         )
-        task = asyncio.create_task(_worker(), name=task_name)
+
+        async def _routed_worker() -> None:
+            # RPC dispatch binds the context while ``start_run`` is executing,
+            # but the Run is its own lifetime and direct in-process callers do
+            # not pass through that dispatch scope. Bind the resolved snapshot
+            # explicitly so tools and child tasks always see the same immutable
+            # Workspace/Environment lease.
+            token = bind_request_context(request_context)
+            try:
+                await _worker()
+            finally:
+                reset_request_context(token)
+
+        task = asyncio.create_task(_routed_worker(), name=task_name)
         self._session_manager.bind_task(task, sess)
         if channel is not None:
             sess.run_channels[task_name] = channel

@@ -1,16 +1,11 @@
-"""Serve-state-derived worker defaults.
+"""AgentHost-derived worker defaults.
 
 Every product that serves a project and wants worker sub-agents repeats
-the same wiring: map the serve session's published ``--source``
-descriptors to :class:`WorkerSource` entries for multi-source worktree
-isolation, build worker specs from the published ``ProjectContext``
-(falling back to the installed product's manifest), forward the running
-orchestrator's sandbox attachment, and resolve worker models over the
-installed model store. All of those inputs already live in framework
-globals (``omniagents.core.runtime.serve_state``,
-``omniagents.core.product``, ``omniagents.core.models``), so the wiring
-itself can be a framework default: :func:`install_project_worker_defaults`
-is the one call a product makes to enable the whole thing.
+the same wiring: map the current Run's Workspace sources to
+:class:`WorkerSource` entries for multi-source worktree isolation, build
+worker specs from the current AgentDefinition's ``ProjectContext`` (falling
+back to the installed product manifest), and resolve worker models over the
+installed model store. Runtime placement stays on the Run/environment path.
 
 Lifted from omni-code's ``omni_code/workers_runtime.py``.
 """
@@ -37,44 +32,52 @@ __all__ = [
 
 
 def serve_worker_sources() -> list[WorkerSource]:
-    """Published serve-session sources → worker source descriptors.
+    """Current Run Workspace sources → worker source descriptors.
 
     Local-kind sources (``local``/``local-git``) and git-remote sources
     become :class:`WorkerSource` entries mounted under their mount name;
-    git-backed kinds (``local-git``/``git-remote``) isolate via git
-    worktree, plain ``local`` via copy; any other kind is skipped. A
-    source's host path is its published ``path``, else its mount under
-    the session's manifest root (the launcher relocates path-less
-    sources there); sources with neither are skipped. Empty when serve
-    published no sources — single-repo worktree behavior applies then.
+    git-backed kinds (``local-git``/``git-remote``) isolate via git worktree,
+    plain ``local`` via copy; any other kind is skipped. Host environments use
+    a local source's declared host path. Non-host environments always use the
+    source mount beneath the leased workspace root.
     """
-    from omniagents.core.runtime.serve_state import (
-        get_manifest_root,
-        get_source_descriptors,
-    )
+    from omniagents.execution import EnvironmentKind, current_request_context
 
-    manifest_root = get_manifest_root()
+    context = current_request_context()
+    if (
+        context is None
+        or context.environment_lease is None
+        or context.workspace is None
+    ):
+        return []
+    lease = context.environment_lease
+    workspace_root = lease.workspace.root
+    host_environment = lease.descriptor.kind is EnvironmentKind.HOST
     out: list[WorkerSource] = []
-    for source in get_source_descriptors():
+    for source in context.workspace.sources:
+        kind = source.get("kind")
+        mount_name = source.get("mountName")
         # local ∪ local-git ∪ git-remote, exactly the kinds the
         # descriptor protocol defines placement for.
-        if not (source.is_local or source.is_git):
+        if kind not in {"local", "local-git", "git-remote"}:
             continue
-        if not source.mount_name:
+        if not isinstance(mount_name, str) or not mount_name.strip():
             continue
-        path = source.path
-        if not path:
-            path = (
-                os.path.join(manifest_root, source.mount_name)
-                if manifest_root
-                else None
-            )
+        raw_path = source.get("path")
+        path = (
+            raw_path.strip()
+            if host_environment
+            and kind in {"local", "local-git"}
+            and isinstance(raw_path, str)
+            and raw_path.strip()
+            else os.path.join(workspace_root, mount_name)
+        )
         if path:
             out.append(
                 WorkerSource(
-                    name=source.mount_name,
+                    name=mount_name,
                     host_path=path,
-                    git=source.is_git,
+                    git=kind in {"local-git", "git-remote"},
                 )
             )
     return out
@@ -84,13 +87,14 @@ _fallback_project_context: Any = None
 
 
 def default_worker_project_context() -> Any:
-    """The serve session's published ``ProjectContext``, else a cached
+    """The current AgentDefinition's ``ProjectContext``, else a cached
     ``load_project`` of the installed product's manifest (tests, direct
     runs). Raises ``RuntimeError`` when neither exists — a worker spec
     cannot be built without a project."""
-    from omniagents.core.runtime.serve_state import get_project_context
+    from omniagents.core.agents.service import current_service
 
-    ctx = get_project_context()
+    service = current_service()
+    ctx = getattr(getattr(service, "spec", None), "project_context", None)
     if ctx is not None:
         return ctx
 
@@ -102,8 +106,8 @@ def default_worker_project_context() -> Any:
         manifest = product_info().manifest_path
         if manifest is None:
             raise RuntimeError(
-                "Cannot build a worker spec: no ProjectContext is published "
-                "(serve_state) and the installed product identity has no "
+                "Cannot build a worker spec: the current AgentDefinition has "
+                "no ProjectContext and the installed product identity has no "
                 "manifest_path to load a project from."
             )
         _fallback_project_context = load_project(str(manifest))
@@ -122,12 +126,6 @@ def default_worker_model_resolver(model: Optional[str] = None) -> Any:
     return store.resolve_model_for_runtime(model)
 
 
-def _orchestrator_spec() -> Any:
-    from omniagents.core.runtime.serve_state import get_orchestrator_spec
-
-    return get_orchestrator_spec()
-
-
 _installed = False
 
 
@@ -138,15 +136,14 @@ def install_project_worker_defaults(
     project_slug: Optional[str] = None,
     default_isolation: str = "none",
 ) -> None:
-    """Install the serve-state-derived worker wiring (idempotent).
+    """Install the AgentHost-derived worker wiring (idempotent).
 
     Registers :class:`MultiSourceWorktreeIsolation` over
     :func:`serve_worker_sources` as the ``worktree`` strategy (replacing
     the single-repo builtin) and installs a
-    :func:`make_project_worker_spec_loader` whose inputs all derive from
-    framework state: the published project context (product-manifest
-    fallback), the published orchestrator spec, the installed product
-    slug, and the installed model store.
+    :func:`make_project_worker_spec_loader` whose inputs derive from the
+    current AgentDefinition's project context (product-manifest fallback), the
+    installed product slug, and the installed model store.
 
     Args:
         model_resolver: Override for the model resolution step;
@@ -177,7 +174,6 @@ def install_project_worker_defaults(
                 agent_key=agent_key,
                 project_slug=project_slug,
                 model_resolver=model_resolver or default_worker_model_resolver,
-                orchestrator_spec_provider=_orchestrator_spec,
             ),
             default_isolation=default_isolation,
         )

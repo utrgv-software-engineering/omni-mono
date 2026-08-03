@@ -21,6 +21,13 @@ from omniagents.core.conversation.store import (
     get_conversation_store,
     reset_conversation_store,
 )
+from omniagents.execution import (
+    EnvironmentKind,
+    EnvironmentLease,
+    EnvironmentState,
+    ExecutionEnvironmentDescriptor,
+)
+from omniagents.workspace.host import HostWorkspace
 
 RUN_ID = "run-diff-1"
 
@@ -119,6 +126,16 @@ async def _drive(monkeypatch, workspace, during_run, service=_DEFAULT, session=N
     task = asyncio.current_task()
     previous_name = task.get_name()
     task.set_name(RUN_ID)
+    environment_lease = EnvironmentLease(
+        ExecutionEnvironmentDescriptor(
+            environment_id="run-diff-environment",
+            workspace_id="run-diff-workspace",
+            kind=EnvironmentKind.HOST,
+            state=EnvironmentState.READY,
+            generation=1,
+        ),
+        HostWorkspace(str(workspace)),
+    )
     try:
         await bridge.stream_agent(
             _agent(),
@@ -128,6 +145,7 @@ async def _drive(monkeypatch, workspace, during_run, service=_DEFAULT, session=N
             service=service,
             max_turns=1,
             context={"workspace_root": str(workspace)},
+            environment_lease=environment_lease,
         )
     finally:
         task.set_name(previous_name)

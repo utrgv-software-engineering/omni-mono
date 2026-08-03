@@ -82,8 +82,8 @@ def terminal_context(monkeypatch):
     manager = StubTerminalManager()
 
     class StubAgentService(server_app.AgentService):
-        def __init__(self, spec, **kwargs):
-            super().__init__(spec, **kwargs)
+        def __init__(self, spec, *args, **kwargs):
+            super().__init__(spec, *args, **kwargs)
             self.terminal_manager = manager
 
     monkeypatch.setattr(server_app, "AgentService", StubAgentService)

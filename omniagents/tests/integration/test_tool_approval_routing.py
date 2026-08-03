@@ -36,7 +36,6 @@ def _make_service() -> AgentService:
     return AgentService(
         spec,
         AgentHostResources.create("test-integration-tool_approval_routing-host"),
-        default_host_workspace_root="/tmp",
     )
 
 

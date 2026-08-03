@@ -1,17 +1,17 @@
-"""Process-global skill-roots resolution.
+"""Skill-root resolution for the current AgentHost Run.
 
 The skills subsystem is deliberately split in two: the framework owns
 discovery, parsing, validation, and prompt rendering; *where skills
-live* is derived from product identity and serve-session state. The
+live* is derived from product identity and the routed Run. The
 default resolution for a workspace is, in order (earlier wins):
 
 1. ``<workspace_root>/.{product slug}/skills`` — the per-workspace
    dot-dir, named after :func:`omniagents.core.product.product_info`'s
    slug (``.omniagents/skills`` when no product is installed).
-2. Each published workspace source's ``skills/`` directory
-   (:func:`source_skill_roots`) — resolved against the serve session's
-   manifest root by mount name, falling back to the source's host path
-   when no sandbox session is live.
+2. Each Workspace source's ``skills/`` directory
+   (:func:`source_skill_roots`) — resolved through the Run's immutable
+   environment lease. Host environments use declared local paths; other
+   environments use source mounts beneath the leased workspace root.
 3. ``<product config dir>/skills`` — the per-user global root
    (``~/.config/<config_dir>/skills`` on Linux).
 
@@ -89,7 +89,7 @@ def _resolve_invocation_dir() -> Path:
 def default_skill_roots(workspace_root: str | None = None) -> List[Path]:
     """The derived default skill roots for ``workspace_root``.
 
-    Workspace dot-dir first, then published-source roots, then the
+    Workspace dot-dir first, then routed source roots, then the
     per-user global root — so workspace-local skills shadow global ones
     under first-wins merging. Falls back to the invocation directory when
     no workspace root is given (direct CLI runs).
@@ -111,71 +111,49 @@ def default_skill_roots(workspace_root: str | None = None) -> List[Path]:
 
 
 # --------------------------------------------------------------------------
-# Published-source roots (serve-session state → skill directories).
+# Workspace-source roots (routed RequestContext → skill directories).
 # --------------------------------------------------------------------------
 
 
-def _published_manifest_root() -> Optional[Path]:
-    from omniagents.core.runtime import serve_state
-
-    try:
-        root = serve_state.get_manifest_root()
-    except Exception:
-        return None
-    if not isinstance(root, str) or not root.strip():
-        return None
-    return Path(root).expanduser()
-
-
-def _inferred_manifest_root(workspace_root: str | None) -> Optional[Path]:
-    """When serve published no manifest root, infer it: a workspace root
-    that *is* one of the source mounts sits one level below the manifest
-    root; otherwise the workspace root is the manifest root itself."""
-    from omniagents.core.runtime import serve_state
-
-    if not workspace_root:
-        return None
-    workspace = Path(workspace_root).expanduser()
-    try:
-        sources = serve_state.get_source_descriptors()
-    except Exception:
-        return workspace
-    source_mounts = {s.mount_name for s in sources if s.mount_name}
-    if workspace.name in source_mounts:
-        return workspace.parent
-    return workspace
-
-
 def source_skill_roots(workspace_root: str | None = None) -> List[Path]:
-    """Map the serve session's published sources to skill directories.
+    """Map the current Run's Workspace sources to skill directories.
 
-    Each source contributes ``<manifest_root>/<mountName>/skills``; when
-    no sandbox session is live (host mode — sources are not relocated),
-    a local source additionally contributes ``<host path>/skills``.
-    Empty outside a serve session.
+    The active :class:`~omniagents.execution.RequestContext` is the only
+    source of placement. A host environment uses a local source's declared
+    path. Every other source/environment pair resolves to
+    ``<lease.workspace.root>/<mountName>/skills``. Empty outside a routed Run.
+
+    ``workspace_root`` remains accepted for the public provider API but does
+    not select an execution substrate.
     """
-    from omniagents.core.runtime import serve_state
+    from omniagents.execution import EnvironmentKind, current_request_context
 
-    try:
-        sources = serve_state.get_source_descriptors()
-    except Exception:
+    del workspace_root
+    context = current_request_context()
+    if (
+        context is None
+        or context.workspace is None
+        or context.environment_lease is None
+    ):
         return []
-    try:
-        sandbox_session_active = serve_state.get_sandbox_session() is not None
-    except Exception:
-        sandbox_session_active = False
 
     roots: List[Path] = []
-    manifest_root = _published_manifest_root() or _inferred_manifest_root(
-        workspace_root
-    )
-    for source in sources:
-        if manifest_root is not None and source.mount_name:
-            roots.append(manifest_root / source.mount_name / "skills")
-            if sandbox_session_active:
-                continue
-        local_path = source.local_path()
-        if local_path is not None:
+    lease = context.environment_lease
+    host_environment = lease.descriptor.kind is EnvironmentKind.HOST
+    for source in context.workspace.sources:
+        mount_name = source.get("mountName")
+        if not isinstance(mount_name, str) or not mount_name.strip():
+            continue
+        kind = source.get("kind")
+        local_path = source.get("path")
+        if (
+            host_environment
+            and kind in {"local", "local-git"}
+            and isinstance(local_path, str)
+            and local_path.strip()
+        ):
             roots.append(Path(local_path).expanduser() / "skills")
+        else:
+            roots.append(Path(lease.workspace.root) / mount_name / "skills")
 
     return dedupe_skill_roots(roots)

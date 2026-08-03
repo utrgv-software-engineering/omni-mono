@@ -241,18 +241,11 @@ def _load_spec(project_path: Path, agent_key: Optional[str]) -> Any:
         build_spec_from_project,
         load_project,
     )
-    from omniagents.core.runtime.serve_state import set_project_context
 
     proj = load_project(str(project_path))
-    # Publish the resolved ProjectContext so worker spec loading (the
-    # framework's serve-state-derived worker defaults) can route the worker
-    # through build_spec_from_project with the same capability/tool/
-    # guardrail registries. Without this, the worker would load its
-    # agent.yml in isolation with capability_registry=None and silently
-    # drop every entry in its `capabilities:` list, leaving it with zero
-    # tools attached.
-    set_project_context(proj)
-    return build_spec_from_project(proj, agent_key=agent_key)
+    spec = build_spec_from_project(proj, agent_key=agent_key)
+    spec.project_context = proj
+    return spec
 
 
 def _register_codex_provider() -> None:
@@ -373,14 +366,11 @@ def _parse_json_flag_list(raw_values: List[str], flag: str) -> List[Dict[str, An
 
 async def _serve(args: argparse.Namespace) -> int:
     from omniagents.core.runtime.serve_harness import (
-        _attach_session_to_spec,
         _cancel_active_runs,
-        _install_host_terminal_manager,
-        _install_session_terminal_manager,
         _register_execution_environment,
         _is_host_profile,
         _profile_display_name,
-        bring_up_host_target,
+        _run_as_exec_user,
         bring_up_session,
         teardown_session,
     )
@@ -432,25 +422,19 @@ async def _serve(args: argparse.Namespace) -> int:
 
     # --- Bring the execution target up ---
     # ``host`` target: no sandbox session at all. Run the agent as a plain
-    # Agent against the host filesystem; the harness binds a HostWorkspace as
-    # the process-wide default so every run (including workers, which copy the
-    # context) routes through it, and publishes manifest-root + sources.
+    # Agent against the explicitly registered host environment.
     #
     # Sandbox targets: ``resume_tier`` is "reused"/"rehydrated"/"fresh"/None;
-    # ``bring_up_session`` also publishes manifest-root, sources, and the
-    # live-session slots, and tears the partial session down if init fails.
+    # ``bring_up_session`` returns all runtime resources for explicit
+    # environment registration and tears the partial session down if init fails.
     is_host = _is_host_profile(profile.raw)
     if is_host:
         session = None
+        execution_root = str(args.workspace)
         resume_tier = None
         started_services = []
         service_urls: Dict[str, Any] = {}
         client_type: Optional[str] = "host"
-        bring_up_host_target(
-            workspace=args.workspace,
-            profile_raw=profile.raw,
-            sources_parsed=sources_parsed,
-        )
     else:
         from omniagents.core.sandbox.permissive_local_dir import (
             PermissiveLocalDirError,
@@ -472,33 +456,22 @@ async def _serve(args: argparse.Namespace) -> int:
             print(json.dumps({"error": f"source: {e}"}), file=sys.stderr)
             return 1
         session = brought.session
+        if brought.manifest.root is None:
+            raise RuntimeError("sandbox manifest has no workspace root")
+        execution_root = str(brought.manifest.root)
         resume_tier = brought.resume_tier
         started_services = brought.started_services
         service_urls = brought.service_urls
         client_type = brought.client_type
 
-    # --- Agent spec + session injection ---
+    # --- Agent definition ---
     agent_project_path = _resolve_agent_project_path(args.agent_project)
     spec = _load_spec(agent_project_path, args.agent)
-    if not is_host:
-        # Flip the spec to a SandboxAgent bound to the live session. The host
-        # target leaves the spec as a plain Agent (no session, no binding).
-        _attach_session_to_spec(spec, session, profile.raw)
-
-    # Publish the now-sandbox-attached orchestrator spec so the worker spec
-    # loader can forward sandbox_use_sandbox_agent / sandbox_run_as /
-    # sandbox_run_config to spawned workers (loaded fresh per spawn, otherwise
-    # their filesystem/shell tools would target the host, not the sandbox).
-    from omniagents.core.runtime.serve_state import set_orchestrator_spec
-
-    set_orchestrator_spec(spec)
 
     # --- FastAPI app + uvicorn ---
     import uvicorn
 
     from omniagents.backends.server.app import build_app
-    from omniagents.core.runtime.serve_state import get_manifest_root
-
     from omniagents.execution import AgentHostResources
 
     agent_host_id = f"agenthost_{uuid.uuid4().hex}"
@@ -513,26 +486,15 @@ async def _serve(args: argparse.Namespace) -> int:
     )
     await _register_execution_environment(
         app,
-        spec,
         environment_id=environment_id,
         workspace_id=workspace_id,
         owner_user_id="token_user" if args.auth_token else None,
         session=session,
-        root=(args.workspace if session is None else get_manifest_root()),
+        root=execution_root,
+        run_as=(None if session is None else _run_as_exec_user(profile.raw)),
+        terminal=profile.terminal,
         sources=sources_parsed,
     )
-
-    # Install the TerminalManager matching the execution target. Host →
-    # HostPtyBackend (a host shell, by design). Sandbox → SessionPtyBackend
-    # so the Terminal runs inside the sandbox (same user/root/network as the
-    # agent's bash tool); a sandbox backend that can't stream a PTY gets a
-    # backend that errors loudly — never a silent host shell.
-    if is_host:
-        _install_host_terminal_manager(
-            app, profile.terminal, default_cwd=args.workspace
-        )
-    else:
-        _install_session_terminal_manager(app, session, profile.terminal)
 
     # Idle auto-recap: fire a session recap once a conversation has gone
     # quiet (>=3min since the last completed turn, >=3 turns deep, never
@@ -681,10 +643,7 @@ async def _serve(args: argparse.Namespace) -> int:
         await server.serve()
     finally:
         from omniagents.core.runtime.serve_state import (
-            get_discard_snapshot_on_exit,
-            get_sandbox_session,
             get_switch_context,
-            set_sandbox_session,
             set_switch_context,
         )
 
@@ -702,7 +661,12 @@ async def _serve(args: argparse.Namespace) -> int:
         # A switch may have replaced the session/services since startup — tear
         # down the LIVE ones, not the first-launch locals.
         live_ctx = get_switch_context()
-        live_session = get_sandbox_session() or session
+        live_runtime = (
+            await app.state.agent_service.environment_manager.sandbox_runtime(
+                environment_id
+            )
+        )
+        live_session = live_runtime.session if live_runtime is not None else None
         live_services = (
             live_ctx.started_services if live_ctx is not None else started_services
         )
@@ -728,14 +692,9 @@ async def _serve(args: argparse.Namespace) -> int:
             live_session,
             live_services,
             discard_snapshot=(
-                live_ctx.discard_snapshot_on_exit
-                if live_ctx is not None
-                else get_discard_snapshot_on_exit()
+                live_ctx.discard_snapshot_on_exit if live_ctx is not None else False
             ),
         )
-        # Clear the published process-global slots on exit (teardown_session
-        # deliberately leaves the handle alone so switches can replace it).
-        set_sandbox_session(None)
         set_switch_context(None)
     return 0
 

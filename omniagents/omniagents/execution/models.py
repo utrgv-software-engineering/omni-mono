@@ -189,12 +189,51 @@ class ExecutionEnvironmentDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class SandboxExecutionRuntime:
+    """Environment-owned SDK sandbox adapter state.
+
+    The mutable SDK session is deliberately carried by an environment lease,
+    never by an :class:`AgentSpec`.  A Run that captures the lease therefore
+    keeps using one environment generation even if the logical environment is
+    replaced while that Run is active.
+    """
+
+    session: Any
+    run_as: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.session is None:
+            raise ValueError("sandbox runtime requires a session")
+        if self.run_as is not None:
+            _require_id(self.run_as, "run_as")
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalExecutionDefaults:
+    """Environment-owned defaults for interactive terminal creation."""
+
+    shell: str | None = None
+    cwd: str | None = None
+    user: str | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in ("shell", "cwd", "user"):
+            value = getattr(self, field_name)
+            if value is not None:
+                _require_id(value, field_name)
+
+
+@dataclass(frozen=True, slots=True)
 class EnvironmentLease:
     """Immutable operation-scoped access to one environment generation."""
 
     descriptor: ExecutionEnvironmentDescriptor
     workspace: Workspace
     lifecycle_controller: Any | None = None
+    sandbox_runtime: SandboxExecutionRuntime | None = None
+    terminal_defaults: TerminalExecutionDefaults = field(
+        default_factory=TerminalExecutionDefaults
+    )
 
     def __post_init__(self) -> None:
         if self.descriptor.state is not EnvironmentState.READY:

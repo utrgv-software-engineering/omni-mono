@@ -13,6 +13,8 @@ from omniagents.execution import (
     ExistingEnvironment,
     ExecutionEnvironmentDescriptor,
     NoEnvironment,
+    SandboxExecutionRuntime,
+    TerminalExecutionDefaults,
     ThreadRuntimeBinding,
     WorkspaceResource,
 )
@@ -85,11 +87,18 @@ def test_explicit_environment_must_belong_to_bound_workspace():
 
 
 def test_environment_lease_requires_ready_generation_and_capabilities():
-    lease = EnvironmentLease(descriptor(), Mock())
+    session = object()
+    lease = EnvironmentLease(
+        descriptor(),
+        Mock(),
+        sandbox_runtime=SandboxExecutionRuntime(session, run_as="1000:1000"),
+    )
 
     assert lease.environment_id == "env-1"
     assert lease.workspace_id == "workspace-1"
     assert lease.generation == 1
+    assert lease.sandbox_runtime.session is session
+    assert lease.sandbox_runtime.run_as == "1000:1000"
     lease.require(EnvironmentCapability.WORKSPACE_READ)
 
     with pytest.raises(ValueError, match="workspace_write"):
@@ -97,6 +106,19 @@ def test_environment_lease_requires_ready_generation_and_capabilities():
 
     with pytest.raises(ValueError, match="ready environment"):
         EnvironmentLease(descriptor(state=EnvironmentState.PROVISIONING), Mock())
+
+
+def test_sandbox_runtime_requires_a_session_and_valid_run_as():
+    with pytest.raises(ValueError, match="requires a session"):
+        SandboxExecutionRuntime(None)
+
+    with pytest.raises(ValueError, match="run_as must be a non-empty string"):
+        SandboxExecutionRuntime(object(), run_as=" ")
+
+
+def test_terminal_defaults_reject_blank_values():
+    with pytest.raises(ValueError, match="shell must be a non-empty string"):
+        TerminalExecutionDefaults(shell="")
 
 
 @pytest.mark.parametrize("identifier", ["", "  "])

@@ -4,11 +4,9 @@ Every product wiring workers to a project registry repeats the same
 recipe: build the worker's AgentSpec through ``build_spec_from_project``
 (so the worker inherits the project's full capability/tool/guardrails/
 server-function registries — loading the worker YAML directly would pass
-``capability_registry=None`` and silently strip every capability),
-forward the running orchestrator's sandbox attachment so worker tools
-route through the same SandboxSession, and stamp the product-resolved
-model onto the spec. :func:`make_project_worker_spec_loader` owns that
-recipe; the product binding shrinks to naming its providers.
+``capability_registry=None`` and silently strip every capability), then
+stamp the product-resolved model onto the spec. Execution placement belongs
+to the worker Run and is never copied through AgentSpec.
 """
 
 from __future__ import annotations
@@ -22,7 +20,6 @@ def make_project_worker_spec_loader(
     agent_key: str = "worker",
     project_slug: Optional[str] = None,
     model_resolver: Optional[Callable[[Optional[str]], Any]] = None,
-    orchestrator_spec_provider: Optional[Callable[[], Any]] = None,
 ) -> Callable[[Optional[str]], Tuple[Any, Any]]:
     """Build a ``WorkerDefaults.spec_loader`` bound to a project registry.
 
@@ -43,13 +40,6 @@ def make_project_worker_spec_loader(
             the result is a dict, its ``model`` / ``model_settings``
             entries are stamped onto the spec and the whole dict is
             exposed via ``spec.resolve_default_model_config``.
-        orchestrator_spec_provider: Returns the running orchestrator's
-            spec (or None). Its sandbox attachment
-            (``sandbox_use_sandbox_agent`` / ``sandbox_run_as`` /
-            ``sandbox_run_config``) is forwarded to the worker spec so
-            sandboxed serve sessions isolate workers in the same sandbox.
-            Skipped silently when unset or not publishing (tests, direct
-            invocation, non-sandbox mode).
     """
 
     def load_worker_spec(model: Optional[str] = None) -> Tuple[Any, Any]:
@@ -60,18 +50,6 @@ def make_project_worker_spec_loader(
         spec = build_spec_from_project(project_provider(), agent_key=agent_key)
         if project_slug:
             spec.project_slug = project_slug
-
-        if orchestrator_spec_provider is not None:
-            orch = orchestrator_spec_provider()
-            if orch is not None:
-                if getattr(orch, "sandbox_use_sandbox_agent", False):
-                    spec.sandbox_use_sandbox_agent = True
-                run_as = getattr(orch, "sandbox_run_as", None)
-                if run_as:
-                    spec.sandbox_run_as = run_as
-                run_cfg = getattr(orch, "sandbox_run_config", None)
-                if run_cfg is not None:
-                    spec.sandbox_run_config = run_cfg
 
         resolved_model = (
             model_runtime.get("model") if isinstance(model_runtime, dict) else None

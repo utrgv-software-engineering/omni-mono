@@ -13,20 +13,12 @@ attached to the running agent":
   the snapshot, run init commands, start services, resolve their URLs.
 * :func:`perform_switch` — swap the running server's sandbox to a new
   profile in place (quiesce, carry, teardown, bring-up, re-wire,
-  broadcast, rollback). Install it via
-  :func:`omniagents.core.runtime.sandbox_lifecycle.set_switch_executor`.
+  broadcast, rollback) through its environment lifecycle controller.
 * :func:`teardown_session` — stop services, persist the workspace
   snapshot, close the session. Idempotent and ``None``-safe.
-* :func:`bring_up_host_target` — the no-sandbox ``host`` execution
-  target: bind a confined :class:`~omniagents.workspace.HostWorkspace`
-  as the process default and publish the workspace root/sources.
-
-The harness publishes into
-:mod:`omniagents.core.runtime.serve_state` itself wherever the state is
-derived from its own inputs (manifest root, sources, live session,
-switch-context mutation) — products publish only what the harness cannot
-know (project context, orchestrator spec at boot, the switch context
-object itself).
+Runtime placement is returned to the AgentHost for explicit environment
+registration. The harness does not publish filesystem or sandbox handles in
+process-global state.
 
 Product knobs, defaulting to the omni-code values they were lifted with:
 
@@ -50,7 +42,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import (
     Any,
-    AsyncIterator,
     Dict,
     List,
     Mapping,
@@ -69,7 +60,6 @@ from omniagents.core.sandbox.profiles import (
 __all__ = [
     "BroughtUpSession",
     "bring_up_session",
-    "bring_up_host_target",
     "perform_switch",
     "teardown_session",
     "NOOP_SNAPSHOT_CLIENT_TYPES",
@@ -484,33 +474,6 @@ def _parse_git_remote_url(url: str) -> Tuple[str, str]:
     raise ValueError(f"unrecognized git URL form: {url!r}")
 
 
-def _attach_session_to_spec(
-    spec: Any, session: Any, profile_raw: Dict[str, Any]
-) -> None:
-    """Wire the long-lived SandboxSession into the spec so every Runner.run
-    reuses it, and flip ``use_sandbox_agent`` so the builder constructs a
-    SandboxAgent with ``WorkspaceBindingCapability`` prepended.
-
-    The profile's top-level ``run_as`` (if set) flows into ``sandbox_run_as``
-    so the builder constructs the workspace binding with a non-root user
-    default — important for in-container security (the bash tool would
-    otherwise run as root and could ``iptables -F`` the network allowlist).
-    """
-    spec.sandbox_use_sandbox_agent = True
-
-    profile_run_as = profile_raw.get("run_as")
-    if isinstance(profile_run_as, str) and profile_run_as:
-        spec.sandbox_run_as = profile_run_as
-
-    existing = getattr(spec, "sandbox_run_config", None)
-    if existing is None:
-        from agents.run_config import SandboxRunConfig
-
-        spec.sandbox_run_config = SandboxRunConfig(session=session)
-    else:
-        existing.session = session
-
-
 # ---------------------------------------------------------------------------
 # Services
 # ---------------------------------------------------------------------------
@@ -767,22 +730,14 @@ async def bring_up_session(
     credentials_parsed: Optional[List[Dict[str, Any]]] = None,
 ) -> BroughtUpSession:
     """Build the sandbox client from *profile*, create-or-resume the session,
-    start it, run init + services, and publish the manifest/sources/live-session
-    slots. Raises ``ValueError`` for a bad profile/source; tears the partial
+    start it, run init + services, and return its runtime resources. Raises
+    ``ValueError`` for a bad profile/source; tears the partial
     session down (re-raising) if init/services fail.
 
     Shared by first launch (the serve host) and ``perform_switch`` so both
     paths bring sessions up identically.
     """
-    from omniagents.core.runtime.serve_state import (
-        set_manifest_root,
-        set_sandbox_session,
-        set_sources,
-    )
-
     client, options, manifest = _build_sandbox(profile, sources=sources_parsed)
-    set_manifest_root(str(manifest.root) if manifest.root is not None else None)
-    set_sources(sources_parsed)
 
     client_type_raw = (profile.raw.get("client") or {}).get("type")
     client_type = client_type_raw if isinstance(client_type_raw, str) else None
@@ -816,9 +771,6 @@ async def bring_up_session(
     _scrub_session_snapshot(session)
 
     await session.start()
-    # Publish so ``sandbox.*`` server functions can reach the inner backend.
-    set_sandbox_session(session)
-
     started_services: List[Tuple[ServiceSpec, int]] = []
     try:
         # Configure git + CLI auth before init/services and before the agent
@@ -852,30 +804,6 @@ def _is_host_profile(profile_raw: Dict[str, Any]) -> bool:
     """True when the profile selects the ``host`` execution target — no
     sandbox session: plain Agent on a HostWorkspace, host PTY terminal."""
     return ((profile_raw.get("client") or {}).get("type")) == "host"
-
-
-def bring_up_host_target(
-    *,
-    workspace: Any,
-    profile_raw: Dict[str, Any],
-    sources_parsed: List[Dict[str, Any]],
-) -> None:
-    """Bring up the ``host`` execution target: no sandbox session at all.
-
-    Publishes legacy manifest/source metadata while the explicit host
-    ExecutionEnvironment is registered with the AgentHost after app
-    construction. No process-wide workspace binding is installed.
-    """
-    from omniagents.core.runtime.serve_state import set_manifest_root, set_sources
-
-    # The host target's workspace root IS the host dir. Publish it as the
-    # manifest root so the authoritative workspace_root override reports it
-    # uniformly with the sandbox path.
-    set_manifest_root(workspace)
-    # Publish the sources too (bring_up_session does this for sandboxes) so
-    # fs_get_sources works under host — the launcher reads it to show the
-    # local workspace folder in its pill.
-    set_sources(sources_parsed)
 
 
 # ---------------------------------------------------------------------------
@@ -951,11 +879,6 @@ async def _attempt_rollback(ctx: Any, prev_profile_path: Optional[str]) -> bool:
     """Bring the previous profile back up from the (intact) snapshot and re-wire
     it. Returns True on success. The workspace tar the failed switch's teardown
     persisted is keyed by session_id, so the rollback rehydrates the same files."""
-    from omniagents.core.runtime.serve_state import (
-        set_orchestrator_spec,
-        set_sandbox_session,
-    )
-
     if not prev_profile_path:
         return False
     try:
@@ -970,10 +893,12 @@ async def _attempt_rollback(ctx: Any, prev_profile_path: Optional[str]) -> bool:
         )
     except Exception:  # noqa: BLE001
         return False
-    set_sandbox_session(brought.session)
-    _attach_session_to_spec(ctx.spec, brought.session, prev.raw)
-    set_orchestrator_spec(ctx.spec)
-    _install_session_terminal_manager(ctx.app, brought.session, prev.terminal)
+    await _replace_execution_backend(
+        ctx,
+        brought.session,
+        run_as=_run_as_exec_user(prev.raw),
+        terminal=prev.terminal,
+    )
     ctx.backend = brought.client_type
     ctx.container_id = brought.container_id
     ctx.service_urls = brought.service_urls
@@ -1002,9 +927,19 @@ async def _carry_workspace_snapshot(
     await LocalSnapshot(id=session_id, base_path=snapshot_dir).persist(data)
 
 
-async def _replace_execution_backend(ctx: Any, sandbox_session: Any) -> None:
+async def _replace_execution_backend(
+    ctx: Any,
+    sandbox_session: Any,
+    *,
+    run_as: str | None,
+    terminal: TerminalSpec,
+) -> None:
     """Publish a switched sandbox as the next generation of one environment."""
 
+    from omniagents.execution import (
+        SandboxExecutionRuntime,
+        TerminalExecutionDefaults,
+    )
     from omniagents.workspace.sandbox import SandboxWorkspace
 
     service = getattr(ctx.app.state, "agent_service", None)
@@ -1016,24 +951,32 @@ async def _replace_execution_backend(ctx: Any, sandbox_session: Any) -> None:
         None,
     )
     if not isinstance(root, str) or not root:
-        from omniagents.core.runtime.serve_state import get_manifest_root
-
-        root = get_manifest_root()
-    if not isinstance(root, str) or not root:
         raise RuntimeError("switched sandbox has no manifest root")
     workspace = SandboxWorkspace(
         session=sandbox_session,
         root=root,
-        default_user=getattr(ctx.spec, "sandbox_run_as", None),
+        default_user=run_as,
     )
-    await service.environment_manager.replace(ctx.environment_id, workspace)
+    await service.environment_manager.replace(
+        ctx.environment_id,
+        workspace,
+        sandbox_runtime=SandboxExecutionRuntime(
+            session=sandbox_session,
+            run_as=run_as,
+        ),
+        terminal_defaults=TerminalExecutionDefaults(
+            shell=terminal.command,
+            cwd=terminal.cwd,
+            user=terminal.user,
+        ),
+    )
 
 
 async def perform_switch(
     profile_path: str,
     *,
     session: Any = None,
-    switch_context: Any = None,
+    switch_context: Any,
 ) -> Dict[str, Any]:
     """Switch the running server's sandbox to the profile at *profile_path*, in
     place — no process restart. Snapshots the current workspace, brings up the
@@ -1046,24 +989,10 @@ async def perform_switch(
     used to route the ``ui.sandbox.*`` broadcasts. Returns
     ``{ok, profile, backend, container_id, services, reason?}``.
 
-    Install this as the switch executor
-    (:func:`omniagents.core.runtime.sandbox_lifecycle.set_switch_executor`)
-    from the serve host after publishing the
-    :class:`~omniagents.core.runtime.serve_state.SwitchContext`.
+    The environment lifecycle controller supplies its own SwitchContext;
+    callers cannot select a process-global current sandbox.
     """
-    from omniagents.core.runtime.serve_state import (
-        get_sandbox_session,
-        get_switch_context,
-        set_orchestrator_spec,
-        set_sandbox_session,
-    )
-
-    ctx = switch_context or get_switch_context()
-    if ctx is None:
-        return {
-            "ok": False,
-            "reason": "no live sandbox server (not running under omni serve)",
-        }
+    ctx = switch_context
 
     try:
         from omniagents.core.agents.service import current_service
@@ -1086,6 +1015,11 @@ async def perform_switch(
         target_name = _profile_display_name(profile_path, target)
         prev_profile_path = ctx.current_profile_path
 
+        environment_manager = ctx.app.state.agent_service.environment_manager
+        old_lease = await environment_manager.acquire(ctx.environment_id)
+        old_runtime = old_lease.sandbox_runtime
+        old_session = old_runtime.session if old_runtime is not None else None
+
         # Quiesce before tearing the old sandbox down.
         await _cancel_active_runs(service)
 
@@ -1094,7 +1028,6 @@ async def perform_switch(
         ctx.ready_event.clear()
         from omniagents.execution import EnvironmentState
 
-        environment_manager = ctx.app.state.agent_service.environment_manager
         await environment_manager.transition(
             ctx.environment_id, EnvironmentState.REPLACING
         )
@@ -1102,7 +1035,6 @@ async def perform_switch(
             service, "ui.sandbox.switching", {"profile": target_name}, session=session
         )
 
-        old_session = get_sandbox_session()
         # Carry the workspace across the switch when the OLD backend uses a noop
         # lifecycle snapshot (host_bridge laptop sandbox / unix_local):
         # teardown_session → session.stop() persists nothing for those, so tar
@@ -1146,9 +1078,6 @@ async def perform_switch(
             ctx.switching = False
             ctx.ready_event.set()
             if rolled:
-                rolled_back_session = get_sandbox_session()
-                if rolled_back_session is not None:
-                    await _replace_execution_backend(ctx, rolled_back_session)
                 await _broadcast_sandbox_event(
                     service,
                     "ui.sandbox.changed",
@@ -1174,12 +1103,14 @@ async def perform_switch(
                 "reason": f"switch failed and rollback failed: {e}",
             }
 
-        # Re-wire the new session into the live agent.
-        set_sandbox_session(brought.session)
-        _attach_session_to_spec(ctx.spec, brought.session, target.raw)
-        set_orchestrator_spec(ctx.spec)
-        _install_session_terminal_manager(ctx.app, brought.session, target.terminal)
-        await _replace_execution_backend(ctx, brought.session)
+        # Publish the new SDK session as the next environment generation. The
+        # shared AgentSpec remains declarative and untouched.
+        await _replace_execution_backend(
+            ctx,
+            brought.session,
+            run_as=_run_as_exec_user(target.raw),
+            terminal=target.terminal,
+        )
 
         ctx.current_profile_path = profile_path
         ctx.current_profile_name = target_name
@@ -1211,6 +1142,47 @@ class ServeEnvironmentLifecycleController:
 
     def __init__(self, switch_context: Any) -> None:
         self._switch_context = switch_context
+
+    def _validate(self, lease: Any) -> None:
+        if lease.environment_id != self._switch_context.environment_id:
+            raise RuntimeError("lifecycle controller/environment mismatch")
+
+    def state(self, lease: Any) -> Dict[str, Any]:
+        """Return observable state for this leased environment only."""
+        self._validate(lease)
+        ctx = self._switch_context
+        return {
+            "available": True,
+            "ready": ctx.ready_event.is_set() and not ctx.switching,
+            "switching": ctx.switching,
+            "profile": ctx.current_profile_name,
+            "backend": ctx.backend,
+            "container_id": ctx.container_id,
+            "last_error": ctx.last_error,
+        }
+
+    async def wait_until_ready(
+        self, lease: Any, timeout_seconds: float
+    ) -> Dict[str, Any]:
+        """Wait for this environment's current replacement to finish."""
+        import asyncio
+
+        self._validate(lease)
+        ctx = self._switch_context
+        try:
+            await asyncio.wait_for(ctx.ready_event.wait(), timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            return {
+                "ready": False,
+                "profile": ctx.current_profile_name,
+                "reason": "timeout",
+            }
+        return {
+            "ready": not ctx.switching,
+            "profile": ctx.current_profile_name,
+            "switching": ctx.switching,
+            "last_error": ctx.last_error,
+        }
 
     @staticmethod
     def _backend(lease: Any) -> Any:
@@ -1279,110 +1251,20 @@ class ServeEnvironmentLifecycleController:
         return {"ok": True}
 
     async def switch(self, lease: Any, profile: str) -> Dict[str, Any]:
-        if lease.environment_id != self._switch_context.environment_id:
-            raise RuntimeError("lifecycle controller/environment mismatch")
+        self._validate(lease)
         return await perform_switch(profile, switch_context=self._switch_context)
-
-
-class _UnsupportedPtyBackend:
-    """A ``PtyBackend`` that refuses to start.
-
-    Installed for sandbox backends that can't stream a PTY (e.g. ACI). It makes
-    ``terminal.create`` fail loudly with a clear message instead of silently
-    falling back to a host shell, which would run outside the sandbox.
-    """
-
-    def __init__(self, backend_label: str) -> None:
-        self._label = backend_label
-
-    async def start(self, **_: Any) -> Any:
-        from omniagents.rpc.terminal_backends import PtyOpenError
-
-        raise PtyOpenError(
-            f"Interactive terminals are not supported on the {self._label} "
-            "sandbox backend."
-        )
-
-    async def write(self, handle: Any, data: bytes) -> None:
-        return None
-
-    async def resize(self, handle: Any, cols: int, rows: int) -> None:
-        return None
-
-    def stream(self, handle: Any) -> AsyncIterator[bytes]:
-        async def _empty() -> AsyncIterator[bytes]:
-            return
-            yield b""  # pragma: no cover - never reached
-
-        return _empty()
-
-    async def close(self, handle: Any) -> None:
-        return None
-
-    async def exit_code(self, handle: Any) -> Optional[int]:
-        return None
-
-
-def _install_session_terminal_manager(
-    app: Any, session: Any, terminal: TerminalSpec
-) -> None:
-    """Attach a session-backed :class:`TerminalManager` to the AgentService.
-
-    Explicit binding, parallel to how
-    :class:`omniagents.workspace.sandbox.SandboxWorkspace` binds a
-    sandbox session to the agent's filesystem/shell surface. The
-    profile's ``terminal:`` block is authoritative for the shell, cwd,
-    and user; ``terminal.create`` callers may override per-call. The
-    legacy ``session.context['workspace_root']`` (a *host* path) is
-    bypassed entirely for this manager — see the explicit-binding
-    branch in :func:`omniagents.builtin.server_functions.terminal.terminal_create`.
-
-    Silent no-op when the session backend can't stream PTY output
-    (e.g. ``e2b``/``modal`` until those backends grow
-    :class:`omniagents.core.sandbox.pty_stream.PtyStreamingSession`
-    support). ``terminal.create`` then falls through to the standalone
-    host-pty path.
-    """
-    try:
-        from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
-        from omniagents.rpc.terminal import TerminalManager
-        from omniagents.rpc.terminal_backends import SessionPtyBackend
-    except Exception:
-        return
-
-    service = getattr(app.state, "agent_service", None)
-    if service is None:
-        return
-
-    inner = coerce_pty_streaming(session)
-    if inner is not None:
-        backend: Any = SessionPtyBackend(inner)
-    else:
-        # Sandbox backend can't stream a PTY. Install a backend
-        # that errors loudly on create rather than letting ``terminal.create``
-        # fall back to a HOST shell — that would break the isolation model by
-        # handing the user a shell on the serve host instead of inside
-        # the sandbox.
-        label = getattr(session, "backend_class_name", None) or type(session).__name__
-        backend = _UnsupportedPtyBackend(label)
-
-    service.terminal_manager = TerminalManager(
-        backend=backend,
-        default_shell=terminal.command,
-        default_cwd=terminal.cwd,
-        default_user=terminal.user,
-    )
 
 
 async def _register_execution_environment(
     app: Any,
-    spec: Any,
     *,
     environment_id: str,
     workspace_id: str,
     owner_user_id: str | None,
     session: Any | None,
     root: str,
+    run_as: str | None = None,
+    terminal: TerminalSpec | None = None,
     sources: Optional[List[Dict[str, Any]]] = None,
 ) -> Any:
     """Register one explicit host or sandbox execution environment.
@@ -1400,6 +1282,7 @@ async def _register_execution_environment(
         EnvironmentKind,
         EnvironmentState,
         ExecutionEnvironmentDescriptor,
+        TerminalExecutionDefaults,
         WorkspaceResource,
     )
     from omniagents.workspace import HostWorkspace
@@ -1411,7 +1294,7 @@ async def _register_execution_environment(
         else SandboxWorkspace(
             session=session,
             root=root,
-            default_user=getattr(spec, "sandbox_run_as", None),
+            default_user=run_as,
         )
     )
     service.workspace_registry.register(
@@ -1440,40 +1323,22 @@ async def _register_execution_environment(
             }
         ),
     )
-    await service.environment_manager.register(descriptor, workspace)
+    sandbox_runtime = None
+    if session is not None:
+        from omniagents.execution import SandboxExecutionRuntime
+
+        sandbox_runtime = SandboxExecutionRuntime(session=session, run_as=run_as)
+    await service.environment_manager.register(
+        descriptor,
+        workspace,
+        sandbox_runtime=sandbox_runtime,
+        terminal_defaults=TerminalExecutionDefaults(
+            shell=terminal.command if terminal is not None else None,
+            cwd=terminal.cwd if terminal is not None else None,
+            user=terminal.user if terminal is not None else None,
+        ),
+    )
     return descriptor
-
-
-def _install_host_terminal_manager(
-    app: Any, terminal: TerminalSpec, *, default_cwd: Optional[Path | str]
-) -> None:
-    """Attach a host-PTY TerminalManager for the ``host`` execution target.
-
-    The shell runs as a child of the serve process (HostPtyBackend) —
-    intended here, since the host target has no sandbox to run inside. On
-    platforms without a host PTY (Windows), ``HostPtyBackend.start`` raises
-    a clear error at create time.
-    """
-    try:
-        from omniagents.rpc.terminal import TerminalManager
-        from omniagents.rpc.terminal_backends import HostPtyBackend
-    except Exception:
-        return
-
-    service = getattr(app.state, "agent_service", None)
-    if service is None:
-        return
-
-    resolved_cwd = terminal.cwd or (
-        str(default_cwd) if default_cwd is not None else None
-    )
-
-    service.terminal_manager = TerminalManager(
-        backend=HostPtyBackend(),
-        default_shell=terminal.command,
-        default_cwd=resolved_cwd,
-        default_user=terminal.user,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1489,10 +1354,8 @@ async def teardown_session(
 ) -> None:
     """Stop services + persist the workspace snapshot + close the session.
 
-    Does NOT clear the published ``set_sandbox_session`` handle — the caller
-    owns that: the serve host nulls it on process exit; ``perform_switch``
-    replaces it with the new session. Safe to call on a partially-started
-    session, or on ``None`` (the host target has no session to tear down).
+    Safe to call on a partially-started session, or on ``None`` (the host
+    target has no session to tear down).
 
     ``discard_snapshot=True`` skips the workspace snapshot persist entirely
     (fingerprint pass + full tar export). Only for terminal shutdowns — the

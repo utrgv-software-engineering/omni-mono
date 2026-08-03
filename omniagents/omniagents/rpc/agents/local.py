@@ -91,10 +91,13 @@ class LocalAgent(RemoteAgent):
         self._original_builder = self.spec.build_agent
 
         async def custom_build_agent(stub_settings, mcp_server, stub_app):
+            runtime_spec = getattr(stub_app, "spec", self.spec)
             # If spec already has a custom builder, use it directly.
             if self._original_builder:
                 return await self._original_builder(
-                    settings, mcp_servers[0] if mcp_servers else mcp_server, self.spec
+                    settings,
+                    mcp_servers[0] if mcp_servers else mcp_server,
+                    stub_app,
                 )
 
             # Otherwise use the default builder — WITH the session the
@@ -108,7 +111,7 @@ class LocalAgent(RemoteAgent):
             return await _default_build_agent(
                 settings,
                 mcp_to_use,
-                self.spec,
+                runtime_spec,
                 None,
                 session=getattr(stub_app, "session", None),
             )

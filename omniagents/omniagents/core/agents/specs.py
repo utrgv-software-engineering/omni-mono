@@ -421,6 +421,11 @@ class AgentSpec:
     # from it; None for bare agent.yml or Python-built specs.
     manifest_path: Optional[str] = None
 
+    # Project registry that produced this AgentDefinition. Worker definitions
+    # resolve it from the current AgentService instead of process-global serve
+    # state, preserving the same capability/tool/guardrail registries.
+    project_context: Optional[Any] = field(default=None, repr=False)
+
     # --- Hidden fields for passing registries to handoff agents ---
     # These are populated when loading from project mode and used to pass
     # the same tool/guardrails/server_functions registries to handoff agents

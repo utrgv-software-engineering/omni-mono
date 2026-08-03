@@ -12,6 +12,8 @@ from omniagents.execution import (
     EnvironmentUnavailableError,
     ExecutionEnvironmentDescriptor,
     ExecutionEnvironmentManager,
+    SandboxExecutionRuntime,
+    TerminalExecutionDefaults,
     WorkspaceEnvironmentMismatchError,
     WorkspaceNotFoundError,
     WorkspaceRegistry,
@@ -119,6 +121,38 @@ async def test_replacement_preserves_old_lease_and_advances_generation():
     )
     with pytest.raises(EnvironmentChangedError):
         await environments.acquire("env-1", expected_generation=1)
+
+
+@pytest.mark.asyncio
+async def test_replacement_publishes_new_runtime_without_retargeting_old_lease():
+    workspaces = WorkspaceRegistry()
+    workspaces.register(WorkspaceResource("workspace-1"))
+    environments = ExecutionEnvironmentManager(workspaces)
+    old_session = object()
+    new_session = object()
+    await environments.register(
+        descriptor("env-1", "workspace-1"),
+        fake_workspace("old"),
+        sandbox_runtime=SandboxExecutionRuntime(old_session, run_as="old-user"),
+        terminal_defaults=TerminalExecutionDefaults(shell="old-shell"),
+    )
+    old_lease = await environments.acquire("env-1")
+
+    await environments.transition("env-1", EnvironmentState.REPLACING)
+    await environments.replace(
+        "env-1",
+        fake_workspace("new"),
+        sandbox_runtime=SandboxExecutionRuntime(new_session, run_as="new-user"),
+        terminal_defaults=TerminalExecutionDefaults(shell="new-shell"),
+    )
+    new_lease = await environments.acquire("env-1")
+
+    assert old_lease.sandbox_runtime.session is old_session
+    assert old_lease.sandbox_runtime.run_as == "old-user"
+    assert new_lease.sandbox_runtime.session is new_session
+    assert new_lease.sandbox_runtime.run_as == "new-user"
+    assert old_lease.terminal_defaults.shell == "old-shell"
+    assert new_lease.terminal_defaults.shell == "new-shell"
 
 
 @pytest.mark.asyncio

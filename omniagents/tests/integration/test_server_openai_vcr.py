@@ -148,7 +148,11 @@ async def test_server_mode_streaming_with_openai(
 
     with recorder.use_cassette(CASSETTE_PATH.name):
         async with JsonRpcClient.from_url(rpc_server_url, methods=methods) as client:
-            result = await client.call("start_run", prompt=_PROMPT_TEXT)
+            result = await client.call(
+                "start_run",
+                prompt=_PROMPT_TEXT,
+                environment_selection={"mode": "none"},
+            )
             run_id = result["run_id"]
             session_id = result["session_id"]
 
@@ -261,6 +265,7 @@ async def test_server_mode_client_status_and_variables(
                 "start_run",
                 prompt="Status check run.",
                 variables={"favorite_number": 42},
+                environment_selection={"mode": "none"},
             )
             run_id = result["run_id"]
             session_id = result["session_id"]
@@ -291,10 +296,7 @@ async def test_server_mode_client_status_and_variables(
                 function="session.get_variables",
                 session_id=session_id,
             )
-            # The framework injects workspace_root into session variables
-            # (strict workspace-root contract), so assert on our key.
-            assert variables["favorite_number"] == 42
-            assert "workspace_root" in variables
+            assert variables == {"favorite_number": 42}
 
             sessions = await client.call("list_sessions")
             assert any(entry["id"] == session_id for entry in sessions)
@@ -345,7 +347,11 @@ async def test_server_mode_tool_approval_flow(
             safe_rpc_server_url, methods=methods
         ) as client:
             methods.set_client(client)
-            result = await client.call("start_run", prompt=_PROMPT_TEXT)
+            result = await client.call(
+                "start_run",
+                prompt=_PROMPT_TEXT,
+                environment_selection={"mode": "none"},
+            )
             run_id = result["run_id"]
             session_id = result["session_id"]
 

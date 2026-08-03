@@ -1,10 +1,24 @@
 import json
 import types
+from contextlib import contextmanager
+from pathlib import PurePosixPath
 
 import pytest
 
 from omniagents.builtin.tools import skill_tool
 from omniagents.core.skills import set_skill_roots_provider
+from omniagents.execution import (
+    EnvironmentKind,
+    EnvironmentLease,
+    EnvironmentState,
+    ExecutionEnvironmentDescriptor,
+    OperationExecutionDescriptor,
+    RequestContext,
+    WorkspaceResource,
+    bind_request_context,
+    reset_request_context,
+)
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +40,53 @@ def _write_skill(root, name, body="Body\n"):
     return p
 
 
+class _MemoryWorkspace:
+    root = "/workspace"
+
+    def __init__(self, files):
+        self.files = dict(files)
+        self.read_paths = []
+
+    async def read_text(self, path, *, encoding="utf-8"):
+        del encoding
+        self.read_paths.append(path)
+        if path not in self.files:
+            raise FileNotFoundError(path)
+        return self.files[path]
+
+    def resolve(self, path):
+        return str(PurePosixPath(self.root) / path)
+
+
+@contextmanager
+def _routed_devbox(workspace, sources):
+    resource = WorkspaceResource("workspace-1", sources=tuple(sources))
+    descriptor = ExecutionEnvironmentDescriptor(
+        environment_id="environment-1",
+        workspace_id=resource.workspace_id,
+        kind=EnvironmentKind.DEVBOX,
+        state=EnvironmentState.READY,
+        generation=1,
+    )
+    token = bind_request_context(
+        RequestContext(
+            operation=OperationExecutionDescriptor(
+                name="load_skill",
+                resource_scope=ResourceScope.RUN,
+                execution_requirements=ExecutionRequirement.WORKSPACE_READ,
+            ),
+            principal=None,
+            workspace=resource,
+            environment=descriptor,
+            environment_lease=EnvironmentLease(descriptor, workspace),
+        )
+    )
+    try:
+        yield
+    finally:
+        reset_request_context(token)
+
+
 @pytest.mark.asyncio
 async def test_load_skill_default_root(tmp_path):
     default_root = tmp_path / ".omniagents" / "skills"
@@ -43,6 +104,39 @@ async def test_load_skill_not_found_lists_searched_paths(tmp_path):
     assert "not found" in text
     assert ".omniagents" in text
     assert out.ui_metadata["metadata"]["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_load_skill_reads_devbox_source_through_environment_workspace(tmp_path):
+    host_source = tmp_path / "host-source"
+    _write_skill(host_source / "skills", "mounted-skill", body="wrong host copy\n")
+    workspace = _MemoryWorkspace(
+        {
+            "repo/skills/mounted-skill/SKILL.md": (
+                "---\nname: mounted-skill\ndescription: test\n---\n\n"
+                "right devbox copy\n"
+            )
+        }
+    )
+    sources = [
+        {
+            "kind": "local-git",
+            "mountName": "repo",
+            "path": str(host_source),
+        }
+    ]
+
+    with _routed_devbox(workspace, sources):
+        out = await skill_tool.load_skill._original_func(
+            _ctx("/workspace"), "mounted-skill"
+        )
+
+    assert "right devbox copy" in str(out)
+    assert "wrong host copy" not in str(out)
+    assert "repo/skills/mounted-skill/SKILL.md" in workspace.read_paths
+    assert out.ui_metadata["metadata"]["skill_path"] == (
+        "/workspace/repo/skills/mounted-skill/SKILL.md"
+    )
 
 
 @pytest.mark.asyncio

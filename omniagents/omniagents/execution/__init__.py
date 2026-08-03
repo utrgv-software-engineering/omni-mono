@@ -28,6 +28,8 @@ from .models import (
     ExistingEnvironment,
     ExecutionEnvironmentDescriptor,
     NoEnvironment,
+    SandboxExecutionRuntime,
+    TerminalExecutionDefaults,
     ThreadRuntimeBinding,
     WorkspaceResource,
 )
@@ -68,6 +70,8 @@ __all__ = [
     "OperationExecutionDescriptor",
     "OperationRouter",
     "RequestContext",
+    "SandboxExecutionRuntime",
+    "TerminalExecutionDefaults",
     "ThreadRuntimeBinding",
     "ThreadRuntimeBindingRegistry",
     "WorkspaceEnvironmentMismatchError",

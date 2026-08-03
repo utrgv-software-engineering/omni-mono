@@ -20,6 +20,7 @@ from omniagents.execution import (
     ExecutionEnvironmentDescriptor,
     OperationExecutionDescriptor,
     RequestContext,
+    TerminalExecutionDefaults,
     bind_request_context,
     reset_request_context,
 )
@@ -75,6 +76,7 @@ class _FakeManager:
         cwd=None,
         cols=None,
         rows=None,
+        user=None,
         owner_user_id=None,
         backend=None,
         environment_id=None,
@@ -87,6 +89,7 @@ class _FakeManager:
                 "cwd": cwd,
                 "cols": cols,
                 "rows": rows,
+                "user": user,
                 "environment_id": environment_id,
                 "environment_generation": environment_generation,
             }
@@ -124,6 +127,7 @@ def test_terminal_uses_leased_workspace_not_session_context():
             "cwd": "/leased/workspace",
             "cols": None,
             "rows": None,
+            "user": None,
             "environment_id": "env-1",
             "environment_generation": 2,
         }
@@ -131,6 +135,50 @@ def test_terminal_uses_leased_workspace_not_session_context():
     assert data["path"] == "/ws/terminal"
     assert data["terminal_token"] == "tok-1"
     assert data["session_id"] == "sess-1"
+
+
+def test_terminal_defaults_are_owned_by_environment_lease():
+    descriptor = ExecutionEnvironmentDescriptor(
+        environment_id="env-profiled",
+        workspace_id="workspace-profiled",
+        kind=EnvironmentKind.HOST,
+        state=EnvironmentState.READY,
+        generation=1,
+        capabilities=frozenset({EnvironmentCapability.PTY}),
+    )
+    workspace = Mock(spec=Workspace)
+    workspace.root = "/workspace-root"
+    lease = EnvironmentLease(
+        descriptor,
+        workspace,
+        terminal_defaults=TerminalExecutionDefaults(
+            shell="/bin/zsh",
+            cwd="/profile/cwd",
+            user="profile-user",
+        ),
+    )
+    token = bind_request_context(
+        RequestContext(
+            operation=OperationExecutionDescriptor(
+                name="terminal.create",
+                resource_scope=ResourceScope.THREAD,
+                execution_requirements=ExecutionRequirement.PTY,
+            ),
+            principal=None,
+            environment=descriptor,
+            environment_lease=lease,
+        )
+    )
+    try:
+        svc = _Service()
+        svc.terminal_manager = _FakeManager()
+        asyncio.run(terminal_create(svc, _FakeSession()))
+        call = svc.terminal_manager.create_calls[0]
+        assert call["shell"] == "/bin/zsh"
+        assert call["cwd"] == "/profile/cwd"
+        assert call["user"] == "profile-user"
+    finally:
+        reset_request_context(token)
 
 
 def test_embedder_manager_honors_explicit_cwd_and_size():

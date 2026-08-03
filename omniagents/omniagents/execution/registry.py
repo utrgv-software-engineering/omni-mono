@@ -21,6 +21,8 @@ from .models import (
     EnvironmentState,
     ExistingEnvironment,
     ExecutionEnvironmentDescriptor,
+    SandboxExecutionRuntime,
+    TerminalExecutionDefaults,
     ThreadRuntimeBinding,
     WorkspaceResource,
 )
@@ -149,6 +151,11 @@ class _EnvironmentRecord:
     descriptor: ExecutionEnvironmentDescriptor
     workspace: Workspace
     lifecycle_controller: object | None = None
+    sandbox_runtime: SandboxExecutionRuntime | None = None
+    terminal_defaults: TerminalExecutionDefaults = TerminalExecutionDefaults()
+
+
+_PRESERVE_RUNTIME = object()
 
 
 class ExecutionEnvironmentManager:
@@ -170,11 +177,17 @@ class ExecutionEnvironmentManager:
         workspace: Workspace,
         *,
         lifecycle_controller: object | None = None,
+        sandbox_runtime: SandboxExecutionRuntime | None = None,
+        terminal_defaults: TerminalExecutionDefaults = TerminalExecutionDefaults(),
     ) -> None:
         self._workspace_registry.get(descriptor.workspace_id)
         async with self._lock:
             self._register_initial(
-                descriptor, workspace, lifecycle_controller=lifecycle_controller
+                descriptor,
+                workspace,
+                lifecycle_controller=lifecycle_controller,
+                sandbox_runtime=sandbox_runtime,
+                terminal_defaults=terminal_defaults,
             )
 
     def register_initial(
@@ -183,6 +196,8 @@ class ExecutionEnvironmentManager:
         workspace: Workspace,
         *,
         lifecycle_controller: object | None = None,
+        sandbox_runtime: SandboxExecutionRuntime | None = None,
+        terminal_defaults: TerminalExecutionDefaults = TerminalExecutionDefaults(),
     ) -> None:
         """Register during single-threaded AgentHost composition.
 
@@ -191,7 +206,11 @@ class ExecutionEnvironmentManager:
 
         self._workspace_registry.get(descriptor.workspace_id)
         self._register_initial(
-            descriptor, workspace, lifecycle_controller=lifecycle_controller
+            descriptor,
+            workspace,
+            lifecycle_controller=lifecycle_controller,
+            sandbox_runtime=sandbox_runtime,
+            terminal_defaults=terminal_defaults,
         )
 
     def _register_initial(
@@ -200,13 +219,25 @@ class ExecutionEnvironmentManager:
         workspace: Workspace,
         *,
         lifecycle_controller: object | None = None,
+        sandbox_runtime: SandboxExecutionRuntime | None = None,
+        terminal_defaults: TerminalExecutionDefaults = TerminalExecutionDefaults(),
     ) -> None:
+        if sandbox_runtime is not None and not isinstance(
+            sandbox_runtime, SandboxExecutionRuntime
+        ):
+            raise TypeError("sandbox_runtime must be a SandboxExecutionRuntime")
+        if not isinstance(terminal_defaults, TerminalExecutionDefaults):
+            raise TypeError("terminal_defaults must be TerminalExecutionDefaults")
         if descriptor.environment_id in self._environments:
             raise ValueError(
                 f"environment {descriptor.environment_id!r} is already registered"
             )
         self._environments[descriptor.environment_id] = _EnvironmentRecord(
-            descriptor, workspace, lifecycle_controller
+            descriptor,
+            workspace,
+            lifecycle_controller,
+            sandbox_runtime,
+            terminal_defaults,
         )
 
     async def describe(self, environment_id: str) -> ExecutionEnvironmentDescriptor:
@@ -216,6 +247,19 @@ class ExecutionEnvironmentManager:
     async def list(self) -> tuple[ExecutionEnvironmentDescriptor, ...]:
         async with self._lock:
             return tuple(record.descriptor for record in self._environments.values())
+
+    async def sandbox_runtime(
+        self, environment_id: str
+    ) -> SandboxExecutionRuntime | None:
+        """Return lifecycle-owned SDK state for control-plane cleanup.
+
+        Run and RPC routing must use :meth:`acquire`; this state-independent
+        accessor exists for shutdown paths that must close a failed or stopped
+        environment whose ready lease can no longer be acquired.
+        """
+
+        async with self._lock:
+            return self._record(environment_id).sandbox_runtime
 
     async def acquire(
         self,
@@ -245,7 +289,11 @@ class ExecutionEnvironmentManager:
                     frozenset(capability.value for capability in missing),
                 )
             return EnvironmentLease(
-                descriptor, record.workspace, record.lifecycle_controller
+                descriptor,
+                record.workspace,
+                record.lifecycle_controller,
+                record.sandbox_runtime,
+                record.terminal_defaults,
             )
 
     async def set_lifecycle_controller(
@@ -262,7 +310,11 @@ class ExecutionEnvironmentManager:
         async with self._lock:
             current = self._record(environment_id)
             self._environments[environment_id] = _EnvironmentRecord(
-                current.descriptor, current.workspace, controller
+                current.descriptor,
+                current.workspace,
+                controller,
+                current.sandbox_runtime,
+                current.terminal_defaults,
             )
 
     async def replace(
@@ -271,8 +323,20 @@ class ExecutionEnvironmentManager:
         workspace: Workspace,
         *,
         capabilities: frozenset[EnvironmentCapability] | None = None,
+        sandbox_runtime: SandboxExecutionRuntime | None | object = _PRESERVE_RUNTIME,
+        terminal_defaults: TerminalExecutionDefaults | object = _PRESERVE_RUNTIME,
     ) -> ExecutionEnvironmentDescriptor:
         """Install a new ready generation without mutating existing leases."""
+
+        if sandbox_runtime is not _PRESERVE_RUNTIME and (
+            sandbox_runtime is not None
+            and not isinstance(sandbox_runtime, SandboxExecutionRuntime)
+        ):
+            raise TypeError("sandbox_runtime must be a SandboxExecutionRuntime")
+        if terminal_defaults is not _PRESERVE_RUNTIME and not isinstance(
+            terminal_defaults, TerminalExecutionDefaults
+        ):
+            raise TypeError("terminal_defaults must be TerminalExecutionDefaults")
 
         async with self._lock:
             current = self._record(environment_id)
@@ -286,8 +350,26 @@ class ExecutionEnvironmentManager:
                     descriptor.capabilities if capabilities is None else capabilities
                 ),
             )
+            resolved_runtime = (
+                current.sandbox_runtime
+                if sandbox_runtime is _PRESERVE_RUNTIME
+                else sandbox_runtime
+            )
+            resolved_terminal_defaults = (
+                current.terminal_defaults
+                if terminal_defaults is _PRESERVE_RUNTIME
+                else terminal_defaults
+            )
+            assert resolved_runtime is None or isinstance(
+                resolved_runtime, SandboxExecutionRuntime
+            )
+            assert isinstance(resolved_terminal_defaults, TerminalExecutionDefaults)
             self._environments[environment_id] = _EnvironmentRecord(
-                next_descriptor, workspace, current.lifecycle_controller
+                next_descriptor,
+                workspace,
+                current.lifecycle_controller,
+                resolved_runtime,
+                resolved_terminal_defaults,
             )
             return next_descriptor
 
@@ -302,7 +384,11 @@ class ExecutionEnvironmentManager:
             current = self._record(environment_id)
             transitioned = replace(current.descriptor, state=state)
             self._environments[environment_id] = _EnvironmentRecord(
-                transitioned, current.workspace, current.lifecycle_controller
+                transitioned,
+                current.workspace,
+                current.lifecycle_controller,
+                current.sandbox_runtime,
+                current.terminal_defaults,
             )
             return transitioned
 
@@ -311,7 +397,11 @@ class ExecutionEnvironmentManager:
             current = self._record(environment_id)
             stopped = replace(current.descriptor, state=EnvironmentState.STOPPED)
             self._environments[environment_id] = _EnvironmentRecord(
-                stopped, current.workspace, current.lifecycle_controller
+                stopped,
+                current.workspace,
+                current.lifecycle_controller,
+                current.sandbox_runtime,
+                current.terminal_defaults,
             )
             return stopped
 

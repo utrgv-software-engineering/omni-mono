@@ -1,54 +1,98 @@
-"""Tests for the builtin read-only sandbox observation tools against a
-seeded ``serve_state.SwitchContext``."""
+"""Tests for environment-routed read-only sandbox observation tools."""
 
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-
-import pytest
+import json
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 from omniagents.builtin.tools.sandbox_observe import (
     _state_dict,
     sandbox_get_state,
     sandbox_wait_until_ready,
 )
-from omniagents.core.runtime import serve_state
+from omniagents.execution import (
+    EnvironmentKind,
+    EnvironmentLease,
+    EnvironmentState,
+    ExecutionEnvironmentDescriptor,
+    OperationExecutionDescriptor,
+    RequestContext,
+    WorkspaceResource,
+    bind_request_context,
+    reset_request_context,
+)
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
-@pytest.fixture(autouse=True)
-def _reset_state():
-    serve_state.reset()
-    yield
-    serve_state.reset()
+class _Controller:
+    def __init__(self, profile="devbox", backend="docker"):
+        self.profile = profile
+        self.backend = backend
+        self.switching = False
+        self.ready = asyncio.Event()
+        self.ready.set()
+
+    def state(self, lease):
+        assert lease.environment_id == "environment-1"
+        return {
+            "available": True,
+            "ready": self.ready.is_set() and not self.switching,
+            "switching": self.switching,
+            "profile": self.profile,
+            "backend": self.backend,
+            "container_id": "ctr-1",
+            "last_error": None,
+        }
+
+    async def wait_until_ready(self, lease, timeout_seconds):
+        assert lease.environment_id == "environment-1"
+        try:
+            await asyncio.wait_for(self.ready.wait(), timeout_seconds)
+        except asyncio.TimeoutError:
+            return {"ready": False, "profile": self.profile, "reason": "timeout"}
+        return {
+            "ready": not self.switching,
+            "profile": self.profile,
+            "switching": self.switching,
+            "last_error": None,
+        }
 
 
-def _make_ctx(profile="devbox", backend="docker"):
-    ctx = serve_state.SwitchContext(
-        app=object(),
-        spec=object(),
-        session_id="sess-1",
+@contextmanager
+def _routed(controller):
+    workspace_resource = WorkspaceResource("workspace-1")
+    descriptor = ExecutionEnvironmentDescriptor(
         environment_id="environment-1",
-        workspace_id="workspace-1",
-        snapshot_dir=None,
-        sources_parsed=[],
-        credentials_parsed=[],
-        workspace_dir=Path("/tmp/ws"),
-        project_id=None,
-        host="127.0.0.1",
-        port=3001,
-        auth_token=None,
-        current_profile_name=profile,
-        backend=backend,
-        container_id="ctr-1",
+        workspace_id=workspace_resource.workspace_id,
+        kind=EnvironmentKind.DEVBOX,
+        state=EnvironmentState.READY,
+        generation=1,
     )
-    ctx.ready_event.set()
-    return ctx
+    workspace = type("Workspace", (), {"root": "/workspace"})()
+    lease = EnvironmentLease(descriptor, workspace, lifecycle_controller=controller)
+    token = bind_request_context(
+        RequestContext(
+            operation=OperationExecutionDescriptor(
+                name="sandbox_get_state",
+                resource_scope=ResourceScope.RUN,
+                execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
+            ),
+            principal=None,
+            workspace=workspace_resource,
+            environment=descriptor,
+            environment_lease=lease,
+        )
+    )
+    try:
+        yield
+    finally:
+        reset_request_context(token)
 
 
-def test_state_dict_standalone_reports_ready():
-    st = _state_dict()
-    assert st == {
+def test_state_dict_without_environment_reports_ready_unavailable():
+    assert _state_dict() == {
         "available": False,
         "ready": True,
         "switching": False,
@@ -59,22 +103,21 @@ def test_state_dict_standalone_reports_ready():
     }
 
 
-def test_state_dict_reads_seeded_context():
-    serve_state.set_switch_context(_make_ctx())
-    st = _state_dict()
-    assert st["available"] is True and st["ready"] is True
-    assert st["profile"] == "devbox" and st["backend"] == "docker"
-    assert st["container_id"] == "ctr-1" and st["switching"] is False
+def test_state_dict_reads_routed_environment_controller():
+    with _routed(_Controller()):
+        state = _state_dict()
+    assert state["available"] is True and state["ready"] is True
+    assert state["profile"] == "devbox" and state["backend"] == "docker"
+    assert state["container_id"] == "ctr-1" and state["switching"] is False
 
 
 def test_state_dict_mid_switch_not_ready():
-    ctx = _make_ctx()
-    ctx.switching = True
-    ctx.ready_event.clear()
-    ctx.last_error = None
-    serve_state.set_switch_context(ctx)
-    st = _state_dict()
-    assert st["ready"] is False and st["switching"] is True
+    controller = _Controller()
+    controller.switching = True
+    controller.ready.clear()
+    with _routed(controller):
+        state = _state_dict()
+    assert state["ready"] is False and state["switching"] is True
 
 
 def test_tools_are_function_tools_with_stable_names():
@@ -82,37 +125,37 @@ def test_tools_are_function_tools_with_stable_names():
     assert sandbox_wait_until_ready.name == "sandbox_wait_until_ready"
 
 
-def test_wait_until_ready_blocks_then_resolves():
-    import json
-
-    ctx = _make_ctx()
-    ctx.switching = True
-    ctx.ready_event.clear()
-    serve_state.set_switch_context(ctx)
-
-    from omniagents.builtin.tools import sandbox_observe as mod
-
-    # Exercise the tool body directly (the FunctionTool wraps it).
+def test_wait_until_ready_uses_routed_controller():
     async def go():
-        async def finish_soon():
-            await asyncio.sleep(0.05)
-            ctx.switching = False
-            ctx.ready_event.set()
+        controller = _Controller()
+        controller.switching = True
+        controller.ready.clear()
+        with _routed(controller):
+            pending = asyncio.create_task(
+                sandbox_wait_until_ready._original_func(
+                    SimpleNamespace(context={}), timeout_seconds=2.0
+                )
+            )
+            await asyncio.sleep(0)
+            controller.switching = False
+            controller.ready.set()
+            return json.loads(await pending)
 
-        task = asyncio.ensure_future(finish_soon())
-        try:
-            sw = serve_state.get_switch_context()
-            await asyncio.wait_for(sw.ready_event.wait(), timeout=2.0)
-        finally:
-            await task
-        return mod._state_dict()
-
-    st = asyncio.run(go())
-    assert st["ready"] is True and st["switching"] is False
+    state = asyncio.run(go())
+    assert state["ready"] is True and state["switching"] is False
 
 
-def test_wait_until_ready_no_context_immediate():
-    # Standalone: no SwitchContext published — degraded "ready" answer.
-    assert serve_state.get_switch_context() is None
-    st = _state_dict()
-    assert st["ready"] is True
+def test_wait_until_ready_without_environment_is_immediate():
+    async def go():
+        return json.loads(
+            await sandbox_wait_until_ready._original_func(
+                SimpleNamespace(context={}), timeout_seconds=2.0
+            )
+        )
+
+    state = asyncio.run(go())
+    assert state == {
+        "ready": True,
+        "profile": None,
+        "reason": "no execution environment",
+    }

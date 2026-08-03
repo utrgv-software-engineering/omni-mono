@@ -256,12 +256,20 @@ def test_proxied_users_reach_upstream_as_distinct_principals(monkeypatch):
         async with proxied_topology() as topo:
             async with connected(topo["proxy_url"], ALICE) as alice:
                 alice_session = (
-                    await alice.result("start_run", prompt="alice via proxy")
+                    await alice.result(
+                        "start_run",
+                        prompt="alice via proxy",
+                        environment_selection={"mode": "none"},
+                    )
                 )["session_id"]
             async with connected(topo["proxy_url"], BOB) as bob:
-                bob_session = (await bob.result("start_run", prompt="bob via proxy"))[
-                    "session_id"
-                ]
+                bob_session = (
+                    await bob.result(
+                        "start_run",
+                        prompt="bob via proxy",
+                        environment_selection={"mode": "none"},
+                    )
+                )["session_id"]
 
             service = topo["upstream_service"]
             # The upstream — the process that actually runs authorize_rpc —
@@ -283,7 +291,11 @@ def test_bob_via_proxy_cannot_touch_alice_resources_upstream(monkeypatch):
             async with connected(
                 topo["proxy_url"], ALICE, experimental=("fork_session",)
             ) as alice:
-                run = await alice.result("start_run", prompt="alice private secret")
+                run = await alice.result(
+                    "start_run",
+                    prompt="alice private secret",
+                    environment_selection={"mode": "none"},
+                )
                 session_id = run["session_id"]
                 run_id = run["run_id"]
 
@@ -294,7 +306,11 @@ def test_bob_via_proxy_cannot_touch_alice_resources_upstream(monkeypatch):
                         ("get_session_history", {"session_id": session_id}),
                         (
                             "start_run",
-                            {"prompt": "hijack", "session_id": session_id},
+                            {
+                                "prompt": "hijack",
+                                "session_id": session_id,
+                                "environment_selection": {"mode": "inherit"},
+                            },
                         ),
                         (
                             "enqueue_message",
@@ -575,26 +591,50 @@ def test_upstream_close_codes_survive_the_proxy(monkeypatch):
     _patch_agent_runtime(monkeypatch)
 
     async def flow():
+        from omniagents.builtin.server_functions import terminal as terminal_module
         from omniagents.builtin.server_functions.terminal import terminal_create
+        from omniagents.execution import register_host_environment
         from omniagents.rpc.terminal import TerminalManager
         from tests.unit.rpc.test_terminal_manager import FakePtyBackend
 
         async with proxied_topology() as topo:
             service = topo["upstream_service"]
-            service.terminal_manager = TerminalManager(backend=FakePtyBackend())
+            backend = FakePtyBackend()
+            service.terminal_manager = TerminalManager(backend=backend)
+            monkeypatch.setattr(
+                terminal_module, "_backend_for_lease", lambda lease: backend
+            )
             service.register_server_function(
                 "terminal.create",
                 terminal_create,
                 resource_scope=ResourceScope.THREAD,
                 execution_requirements=ExecutionRequirement.PTY,
             )
+            descriptor = register_host_environment(
+                service.agent_host_resources,
+                "/tmp",
+                owner_user_id="alice",
+                workspace_id="workspace-proxy-alice-terminal",
+                environment_id="environment-proxy-alice-terminal",
+            )
 
             async with connected(topo["proxy_url"], ALICE) as alice:
-                session_id = (await alice.result("start_run", prompt="terminal"))[
-                    "session_id"
-                ]
+                session_id = (
+                    await alice.result(
+                        "start_run",
+                        prompt="terminal",
+                        environment_selection={
+                            "mode": "explicit",
+                            "environment_id": descriptor.environment_id,
+                            "environment_generation": descriptor.generation,
+                        },
+                    )
+                )["session_id"]
                 created = await alice.result(
-                    "server_call", function="terminal.create", session_id=session_id
+                    "server_call",
+                    function="terminal.create",
+                    session_id=session_id,
+                    environment_id=descriptor.environment_id,
                 )
 
             attach = json.dumps(
@@ -755,14 +795,22 @@ def test_composite_upstream_serves_direct_and_proxied_clients(monkeypatch):
             async with connected(
                 upstream_url, {"Authorization": "Bearer carol-token"}
             ) as carol:
-                carol_session = (await carol.result("start_run", prompt="carol"))[
-                    "session_id"
-                ]
+                carol_session = (
+                    await carol.result(
+                        "start_run",
+                        prompt="carol",
+                        environment_selection={"mode": "none"},
+                    )
+                )["session_id"]
             # …and a proxied client with an assertion, on the same server.
             async with connected(proxy_url, ALICE) as alice:
-                alice_session = (await alice.result("start_run", prompt="alice"))[
-                    "session_id"
-                ]
+                alice_session = (
+                    await alice.result(
+                        "start_run",
+                        prompt="alice",
+                        environment_selection={"mode": "none"},
+                    )
+                )["session_id"]
 
             service = upstream_app.state.agent_service
             assert service.get_session(carol_session).user_id == "carol"

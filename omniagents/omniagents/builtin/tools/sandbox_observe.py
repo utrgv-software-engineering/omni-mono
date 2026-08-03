@@ -5,19 +5,17 @@ to finish — but it cannot change the sandbox. Switching profiles is a
 control-plane operation (the ``sandbox.switch`` server function, invoked by the
 launcher / a slash command), deliberately NOT exposed as an LLM tool: the model
 must not be able to move itself to a less-isolated profile (e.g. out of a
-network-restricted devbox onto the host). See
-:mod:`omniagents.core.runtime.sandbox_lifecycle` for the authority model.
+network-restricted devbox onto the host).
 
-State is read from the process-global ``serve_state.SwitchContext``
-that the serve host publishes; outside a serve process the tools degrade to a
-benign "ready, no switching" answer.
+State is read from the current Run's environment lifecycle controller. A Run
+without an environment (or whose environment has no lifecycle controller)
+degrades to a benign "ready, unavailable" answer.
 
 Bundled by the builtin ``sandbox`` capability pack; lifted from omni-code.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
@@ -26,11 +24,20 @@ from agents.run_context import RunContextWrapper
 from omniagents.core.tools import function_tool
 
 
-def _state_dict() -> dict:
-    from omniagents.core.runtime.serve_state import get_switch_context
+def _lifecycle_binding() -> tuple[Any, Any] | None:
+    from omniagents.execution import current_request_context
 
-    ctx = get_switch_context()
-    if ctx is None:
+    context = current_request_context()
+    lease = context.environment_lease if context is not None else None
+    controller = lease.lifecycle_controller if lease is not None else None
+    if lease is None or controller is None:
+        return None
+    return lease, controller
+
+
+def _state_dict() -> dict:
+    binding = _lifecycle_binding()
+    if binding is None:
         return {
             "available": False,
             "ready": True,
@@ -40,15 +47,8 @@ def _state_dict() -> dict:
             "container_id": None,
             "last_error": None,
         }
-    return {
-        "available": True,
-        "ready": ctx.ready_event.is_set() and not ctx.switching,
-        "switching": ctx.switching,
-        "profile": ctx.current_profile_name,
-        "backend": ctx.backend,
-        "container_id": ctx.container_id,
-        "last_error": ctx.last_error,
-    }
+    lease, controller = binding
+    return controller.state(lease)
 
 
 @function_tool(running_summary="Checking sandbox status...")
@@ -84,24 +84,10 @@ async def sandbox_wait_until_ready(
             On timeout, returns ``ready: false`` — the switch is taking unusually
             long; report that to the user rather than retrying blindly.
     """
-    from omniagents.core.runtime.serve_state import get_switch_context
-
-    sw = get_switch_context()
-    if sw is None:
+    binding = _lifecycle_binding()
+    if binding is None:
         return json.dumps(
-            {"ready": True, "profile": None, "reason": "no live sandbox server"}
+            {"ready": True, "profile": None, "reason": "no execution environment"}
         )
-    try:
-        await asyncio.wait_for(sw.ready_event.wait(), timeout=timeout_seconds)
-    except asyncio.TimeoutError:
-        return json.dumps(
-            {"ready": False, "profile": sw.current_profile_name, "reason": "timeout"}
-        )
-    return json.dumps(
-        {
-            "ready": not sw.switching,
-            "profile": sw.current_profile_name,
-            "switching": sw.switching,
-            "last_error": sw.last_error,
-        }
-    )
+    lease, controller = binding
+    return json.dumps(await controller.wait_until_ready(lease, timeout_seconds))
