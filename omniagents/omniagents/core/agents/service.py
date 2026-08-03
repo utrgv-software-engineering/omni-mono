@@ -47,6 +47,7 @@ except ImportError:
 
 from omniagents.rpc import RpcMethodsBase
 from omniagents.rpc.auth import (
+    AGENT_HOST_ADMIN_METHODS,
     ADMIN_ROLE,
     GLOBAL_MUTATING_METHODS,
     OWNER_UNKNOWN,
@@ -63,6 +64,7 @@ from omniagents.rpc.protocol_catalog import (
 )
 from omniagents.execution import (
     AgentHostResources,
+    AutomaticEnvironment,
     EnvironmentLease,
     ExistingEnvironment,
     NoEnvironment,
@@ -4947,6 +4949,16 @@ class AgentService(RpcMethodsBase):
         to the client as JSON-RPC error ``-32014``.
         """
         policy = self.authorization_policy
+        if method in AGENT_HOST_ADMIN_METHODS:
+            if not policy.enforced:
+                return
+            if principal is not None and ADMIN_ROLE in (principal.roles or []):
+                return
+            raise AuthorizationDenied(
+                f"{method} requires AgentHost administrator authority",
+                resource="agent_host",
+                resource_id=self.agent_host_resources.agent_host_id,
+            )
         request_context = current_request_context()
         if request_context is not None and request_context.workspace is not None:
             owner = request_context.workspace.owner_user_id
@@ -5018,6 +5030,149 @@ class AgentService(RpcMethodsBase):
             pass
         _debug_rpc("get_agent_info", info)
         return info
+
+    async def agent_host_register_workspace(
+        self,
+        workspace_id: str,
+        materialization_path: str,
+        snapshot_ref: str | None = None,
+        sources: list[dict] | None = None,
+        owner_user_id: str | None = None,
+    ) -> dict:
+        effective_owner_user_id = (
+            self._current_user_id() if owner_user_id is None else owner_user_id
+        )
+        resource = self.agent_host_resources.provisioning.register_workspace(
+            workspace_id=workspace_id,
+            owner_user_id=effective_owner_user_id,
+            materialization_path=materialization_path,
+            snapshot_ref=snapshot_ref,
+            sources=sources or (),
+        )
+        return self._workspace_payload(resource)
+
+    async def agent_host_register_profile(
+        self,
+        profile_id: str,
+        definition: dict,
+        owner_user_id: str | None = None,
+    ) -> dict:
+        effective_owner_user_id = (
+            self._current_user_id() if owner_user_id is None else owner_user_id
+        )
+        registered = self.agent_host_resources.provisioning.register_profile(
+            profile_id,
+            definition,
+            owner_user_id=effective_owner_user_id,
+        )
+        return {"profile_id": profile_id, "definition": registered}
+
+    async def agent_host_bind_thread(self, thread_id: str, binding: dict) -> dict:
+        workspace_id = binding.get("workspace_id")
+        raw_selection = binding.get("environment_selection")
+        if not isinstance(raw_selection, dict):
+            raise TypeError("binding.environment_selection must be an object")
+        mode = raw_selection.get("mode")
+        if mode == "none":
+            selection = NoEnvironment()
+        elif mode == "automatic":
+            selection = AutomaticEnvironment(raw_selection.get("profile_id"))
+        elif mode == "existing":
+            selection = ExistingEnvironment(raw_selection.get("environment_id"))
+        else:
+            raise TypeError(f"unsupported environment selection mode: {mode!r}")
+
+        runtime_binding = ThreadRuntimeBinding(
+            workspace_id=workspace_id,
+            environment_selection=selection,
+        )
+        if workspace_id is not None:
+            workspace = self.workspace_registry.get(workspace_id)
+            if not self.authorization_policy.can_access(
+                self._current_principal(), workspace.owner_user_id
+            ):
+                raise AuthorizationDenied(
+                    "Not authorized to bind this Workspace",
+                    resource="workspace",
+                    resource_id=workspace_id,
+                )
+            if isinstance(selection, AutomaticEnvironment):
+                self.agent_host_resources.provisioning.profile(
+                    selection.profile_id,
+                    owner_user_id=workspace.owner_user_id,
+                )
+        bound = await self.thread_bindings.bind(thread_id, runtime_binding)
+        return self._thread_binding_payload(thread_id, bound)
+
+    async def agent_host_list_resources(self) -> dict:
+        principal = self._current_principal()
+        owner_user_id = self._current_user_id()
+        workspaces = [
+            workspace
+            for workspace in self.workspace_registry.list()
+            if self.authorization_policy.can_access(principal, workspace.owner_user_id)
+        ]
+        workspace_ids = {workspace.workspace_id for workspace in workspaces}
+        environments = [
+            descriptor
+            for descriptor in await self.environment_manager.list()
+            if descriptor.workspace_id in workspace_ids
+        ]
+        return {
+            "agent_host_id": self.agent_host_resources.agent_host_id,
+            "workspaces": [self._workspace_payload(item) for item in workspaces],
+            "profiles": self.agent_host_resources.provisioning.list_profiles(
+                owner_user_id=owner_user_id
+            ),
+            "environments": [self._environment_payload(item) for item in environments],
+        }
+
+    async def agent_host_stop_environment(self, environment_id: str) -> dict:
+        descriptor = await self.environment_manager.stop(environment_id)
+        return self._environment_payload(descriptor)
+
+    @staticmethod
+    def _workspace_payload(workspace) -> dict:
+        return {
+            "workspace_id": workspace.workspace_id,
+            "owner_user_id": workspace.owner_user_id,
+            "snapshot_ref": workspace.snapshot_ref,
+            "sources": [dict(source) for source in workspace.sources],
+        }
+
+    @staticmethod
+    def _environment_payload(environment) -> dict:
+        return {
+            "environment_id": environment.environment_id,
+            "workspace_id": environment.workspace_id,
+            "kind": environment.kind.value,
+            "state": environment.state.value,
+            "generation": environment.generation,
+            "capabilities": sorted(
+                capability.value for capability in environment.capabilities
+            ),
+        }
+
+    @staticmethod
+    def _thread_binding_payload(thread_id: str, binding: ThreadRuntimeBinding) -> dict:
+        selection = binding.environment_selection
+        if isinstance(selection, NoEnvironment):
+            serialized_selection = {"mode": "none"}
+        elif isinstance(selection, AutomaticEnvironment):
+            serialized_selection = {
+                "mode": "automatic",
+                "profile_id": selection.profile_id,
+            }
+        else:
+            serialized_selection = {
+                "mode": "existing",
+                "environment_id": selection.environment_id,
+            }
+        return {
+            "thread_id": thread_id,
+            "workspace_id": binding.workspace_id,
+            "environment_selection": serialized_selection,
+        }
 
     # ------------------------------------------------------------------
     #  Model & capability catalog.

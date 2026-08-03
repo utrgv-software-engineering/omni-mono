@@ -582,6 +582,58 @@ class GetItemResult(RootModel[dict[str, Any]]):
     pass
 
 
+class AgentHostRegisterWorkspaceParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_id: str
+    materialization_path: str
+    snapshot_ref: str | None = None
+    sources: list[Any] | None = None
+    owner_user_id: str | None = None
+
+
+class AgentHostRegisterWorkspaceResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AgentHostRegisterProfileParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    profile_id: str
+    definition: dict[str, Any]
+    owner_user_id: str | None = None
+
+
+class AgentHostRegisterProfileResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AgentHostBindThreadParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    thread_id: str
+    binding: dict[str, Any]
+
+
+class AgentHostBindThreadResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AgentHostListResourcesParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pass
+
+
+class AgentHostListResourcesResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class AgentHostStopEnvironmentParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment_id: str
+
+
+class AgentHostStopEnvironmentResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class ForkSessionParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -1606,6 +1658,11 @@ CLIENT_REQUEST_MODELS = {
     "list_turns": ListTurnsParams,
     "list_items": ListItemsParams,
     "get_item": GetItemParams,
+    "agent_host_register_workspace": AgentHostRegisterWorkspaceParams,
+    "agent_host_register_profile": AgentHostRegisterProfileParams,
+    "agent_host_bind_thread": AgentHostBindThreadParams,
+    "agent_host_list_resources": AgentHostListResourcesParams,
+    "agent_host_stop_environment": AgentHostStopEnvironmentParams,
     "fork_session": ForkSessionParams,
     "set_session_hold": SetSessionHoldParams,
     "queue_status": QueueStatusParams,
@@ -1708,6 +1765,11 @@ CLIENT_RESULT_MODELS = {
     "list_turns": ListTurnsResult,
     "list_items": ListItemsResult,
     "get_item": GetItemResult,
+    "agent_host_register_workspace": AgentHostRegisterWorkspaceResult,
+    "agent_host_register_profile": AgentHostRegisterProfileResult,
+    "agent_host_bind_thread": AgentHostBindThreadResult,
+    "agent_host_list_resources": AgentHostListResourcesResult,
+    "agent_host_stop_environment": AgentHostStopEnvironmentResult,
     "fork_session": ForkSessionResult,
     "set_session_hold": SetSessionHoldResult,
     "queue_status": QueueStatusResult,
@@ -1844,6 +1906,11 @@ STABLE_REQUESTS = frozenset(
 )
 EXPERIMENTAL_REQUESTS = frozenset(
     [
+        "agent_host_register_workspace",
+        "agent_host_register_profile",
+        "agent_host_bind_thread",
+        "agent_host_list_resources",
+        "agent_host_stop_environment",
         "fork_session",
         "set_session_hold",
         "queue_status",

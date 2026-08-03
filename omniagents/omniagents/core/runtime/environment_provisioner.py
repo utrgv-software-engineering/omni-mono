@@ -28,7 +28,7 @@ from .serve_harness import (
     teardown_session,
 )
 
-ProfileResolver = Callable[[str, Path], ResolvedProfile]
+ProfileResolver = Callable[[EnvironmentProvisionRequest, Path], ResolvedProfile]
 WorkspaceDirectoryResolver = Callable[[WorkspaceResource], Path]
 
 _FULL_CAPABILITIES = frozenset(
@@ -183,7 +183,7 @@ class ServeEnvironmentProvisioner:
         workspace_dir = Path(
             self._workspace_directory_resolver(request.workspace)
         ).expanduser()
-        profile = self._profile_resolver(request.profile_id, workspace_dir)
+        profile = self._profile_resolver(request, workspace_dir)
         terminal_defaults = TerminalExecutionDefaults(
             shell=profile.terminal.command,
             cwd=profile.terminal.cwd,

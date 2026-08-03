@@ -41,7 +41,7 @@ def request(*, sources=()) -> EnvironmentProvisionRequest:
 @pytest.mark.asyncio
 async def test_host_profile_uses_explicit_workspace_directory(tmp_path):
     provisioner = ServeEnvironmentProvisioner(
-        profile_resolver=lambda profile_id, workspace_dir: profile("host"),
+        profile_resolver=lambda request, workspace_dir: profile("host"),
         workspace_directory_resolver=lambda workspace: tmp_path,
     )
 
@@ -70,7 +70,7 @@ async def test_devbox_profile_provisions_sources_runtime_and_lifecycle(
     bring_up = AsyncMock(return_value=brought)
     monkeypatch.setattr(module, "bring_up_session", bring_up)
     provisioner = ServeEnvironmentProvisioner(
-        profile_resolver=lambda profile_id, workspace_dir: profile("docker"),
+        profile_resolver=lambda request, workspace_dir: profile("docker"),
         workspace_directory_resolver=lambda workspace: tmp_path,
         snapshot_dir=tmp_path / "snapshots",
         credentials=[{"tokenEnv": "GITHUB_TOKEN"}],
@@ -121,7 +121,7 @@ async def test_environment_manager_stop_closes_provisioned_session(
     teardown = AsyncMock()
     monkeypatch.setattr(module, "teardown_session", teardown)
     provisioner = ServeEnvironmentProvisioner(
-        profile_resolver=lambda profile_id, workspace_dir: profile("docker"),
+        profile_resolver=lambda request, workspace_dir: profile("docker"),
         workspace_directory_resolver=lambda workspace: tmp_path,
     )
     resources = AgentHostResources.create(
@@ -155,7 +155,7 @@ async def test_invalid_brought_up_manifest_is_torn_down(monkeypatch, tmp_path):
     teardown = AsyncMock()
     monkeypatch.setattr(module, "teardown_session", teardown)
     provisioner = ServeEnvironmentProvisioner(
-        profile_resolver=lambda profile_id, workspace_dir: profile("docker"),
+        profile_resolver=lambda request, workspace_dir: profile("docker"),
         workspace_directory_resolver=lambda workspace: Path(tmp_path),
     )
 

@@ -77,6 +77,28 @@
       "execution_requirements": [],
       "resource_scope": "thread"
     },
+    "agent_host_bind_thread": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
+    "agent_host_list_resources": {
+      "execution_requirements": [],
+      "resource_scope": "agent_host"
+    },
+    "agent_host_register_profile": {
+      "execution_requirements": [],
+      "resource_scope": "agent_host"
+    },
+    "agent_host_register_workspace": {
+      "execution_requirements": [],
+      "resource_scope": "agent_host"
+    },
+    "agent_host_stop_environment": {
+      "execution_requirements": [
+        "environment_lifecycle"
+      ],
+      "resource_scope": "environment"
+    },
     "archive_session": {
       "execution_requirements": [],
       "resource_scope": "thread"
@@ -625,6 +647,11 @@
   },
   "requests": {
     "experimental": [
+      "agent_host_register_workspace",
+      "agent_host_register_profile",
+      "agent_host_bind_thread",
+      "agent_host_list_resources",
+      "agent_host_stop_environment",
       "fork_session",
       "set_session_hold",
       "queue_status",

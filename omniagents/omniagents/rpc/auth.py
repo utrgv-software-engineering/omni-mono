@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "ANONYMOUS_USER_ID",
+    "AGENT_HOST_ADMIN_METHODS",
     "GLOBAL_MUTATING_METHODS",
     "GLOBAL_SAFE_METHODS",
     "OWNER_UNKNOWN",
@@ -127,6 +128,13 @@ WS_CLOSE_TRY_AGAIN_LATER = 1013
 RPC_ERROR_AUTHORIZATION_DENIED = -32014
 
 ADMIN_ROLE = "admin"
+
+AGENT_HOST_ADMIN_METHODS = frozenset(
+    {
+        "agent_host_register_workspace",
+        "agent_host_register_profile",
+    }
+)
 
 LEGACY_QUERY_AUTH_ENV = "OMNIAGENTS_LEGACY_QUERY_AUTH"
 
@@ -226,6 +234,7 @@ GLOBAL_SAFE_METHODS = frozenset(
         # this list.
         "list_threads",
         "search_threads",
+        "agent_host_list_resources",
         # Per-connection state
         "client_functions",
         "set_client_status",
@@ -275,6 +284,8 @@ GLOBAL_SAFE_METHODS = frozenset(
 #: single-user / no-auth mode where there is only one principal.
 GLOBAL_MUTATING_METHODS = frozenset(
     {
+        "agent_host_register_workspace",
+        "agent_host_register_profile",
         "disable_tool",
         "disable_mcp_server",
         # Writes server-level configuration (the user overlay layer) for
@@ -333,6 +344,8 @@ GLOBAL_MUTATING_METHODS = frozenset(
 #: authorization decision to be made deliberately.
 RESOURCE_SCOPED_METHODS = frozenset(
     {
+        "agent_host_bind_thread",
+        "agent_host_stop_environment",
         "stop_run",
         "send_user_message",
         "get_session_history",
@@ -632,7 +645,11 @@ class ConnectionAuthenticator:
     # ------------------------------------------------------------------
     @classmethod
     def from_spec(
-        cls, spec: Any, *, auth_token: Optional[str] = None
+        cls,
+        spec: Any,
+        *,
+        auth_token: Optional[str] = None,
+        agent_host_control_token: Optional[str] = None,
     ) -> "ConnectionAuthenticator":
         """Build the process-wide authenticator for *spec*.
 
@@ -653,8 +670,40 @@ class ConnectionAuthenticator:
         auth_cfg = (security.get("providers") or {}).get("auth")
         if auth_cfg and auth_cfg.get("type", "none") != "none":
             provider = resolve_provider("auth", auth_cfg)
-        if provider is None and auth_token:
+        if provider is not None and agent_host_control_token:
+            raise ValueError(
+                "agent_host_control_token cannot be combined with a configured "
+                "auth provider; add an admin-role credential to that provider"
+            )
+        if auth_token and agent_host_control_token:
+            if auth_token == agent_host_control_token:
+                raise ValueError(
+                    "agent_host_control_token must differ from the client auth token"
+                )
+            provider = TokenAuthProvider(
+                {
+                    "tokens": {
+                        auth_token: "token_user",
+                        agent_host_control_token: {
+                            "user_id": "agent_host_control",
+                            "roles": [ADMIN_ROLE],
+                        },
+                    }
+                }
+            )
+        elif provider is None and auth_token:
             provider = TokenAuthProvider({"token": auth_token})
+        elif provider is None and agent_host_control_token:
+            provider = TokenAuthProvider(
+                {
+                    "tokens": {
+                        agent_host_control_token: {
+                            "user_id": "agent_host_control",
+                            "roles": [ADMIN_ROLE],
+                        }
+                    }
+                }
+            )
         if provider is None:
             provider = NoneAuthProvider()
         return cls(

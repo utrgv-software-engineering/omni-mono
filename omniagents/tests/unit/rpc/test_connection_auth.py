@@ -190,6 +190,52 @@ def test_from_spec_prefers_configured_provider_and_reads_legacy_flag(monkeypatch
     assert auth.allow_query_token is False  # env wins over config
 
 
+@pytest.mark.asyncio
+async def test_agent_host_control_token_resolves_distinct_admin_principal():
+    class Spec:
+        security_config = {}
+
+    auth = ConnectionAuthenticator.from_spec(
+        Spec(),
+        auth_token="client-secret",
+        agent_host_control_token="control-secret",
+    )
+
+    client = await auth.authenticate_ws(
+        FakeWebSocket(headers={"authorization": "Bearer client-secret"})
+    )
+    controller = await auth.authenticate_ws(
+        FakeWebSocket(headers={"authorization": "Bearer control-secret"})
+    )
+    assert client.user_id == "token_user"
+    assert client.roles == []
+    assert controller.user_id == "agent_host_control"
+    assert controller.roles == ["admin"]
+
+
+def test_agent_host_control_token_must_be_distinct_and_explicitly_composed():
+    class PlainSpec:
+        security_config = {}
+
+    with pytest.raises(ValueError, match="must differ"):
+        ConnectionAuthenticator.from_spec(
+            PlainSpec(),
+            auth_token="same-secret",
+            agent_host_control_token="same-secret",
+        )
+
+    class ConfiguredSpec:
+        security_config = {
+            "providers": {"auth": {"type": "token", "token": "configured"}}
+        }
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        ConnectionAuthenticator.from_spec(
+            ConfiguredSpec(),
+            agent_host_control_token="control-secret",
+        )
+
+
 def test_legacy_query_auth_env_parsing(monkeypatch):
     monkeypatch.delenv("OMNIAGENTS_LEGACY_QUERY_AUTH", raising=False)
     assert legacy_query_auth_enabled(None) is False

@@ -48,6 +48,11 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ListTurns
   | ListItems
   | GetItem
+  | AgentHostRegisterWorkspace
+  | AgentHostRegisterProfile
+  | AgentHostBindThread
+  | AgentHostListResources
+  | AgentHostStopEnvironment
   | ForkSession
   | SetSessionHold
   | QueueStatus
@@ -392,6 +397,50 @@ export interface ListItems {
 export interface GetItem {
   item_id: string;
   thread_id: string;
+}
+export interface AgentHostRegisterWorkspace {
+  materialization_path: string;
+  owner_user_id?: string;
+  snapshot_ref?: string;
+  sources?: {
+    [k: string]: unknown;
+  }[];
+  workspace_id: string;
+}
+export interface AgentHostRegisterProfile {
+  definition:
+    | {
+        kind: "default";
+        project_id?: string;
+      }
+    | {
+        kind: "path";
+        path: string;
+      };
+  owner_user_id?: string;
+  profile_id: string;
+}
+export interface AgentHostBindThread {
+  binding: {
+    environment_selection:
+      | {
+          mode: "none";
+        }
+      | {
+          mode: "automatic";
+          profile_id: string;
+        }
+      | {
+          environment_id: string;
+          mode: "existing";
+        };
+    workspace_id: string | null;
+  };
+  thread_id: string;
+}
+export interface AgentHostListResources {}
+export interface AgentHostStopEnvironment {
+  environment_id: string;
 }
 export interface ForkSession {
   from_item_id?: string;

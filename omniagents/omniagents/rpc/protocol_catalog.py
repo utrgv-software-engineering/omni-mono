@@ -109,6 +109,13 @@ STABLE_REQUESTS = (
 )
 
 EXPERIMENTAL_REQUESTS = (
+    # AgentHost provisioning control plane. These are introduced together so
+    # clients never have to smuggle Workspace/profile identity through a Run.
+    "agent_host_register_workspace",
+    "agent_host_register_profile",
+    "agent_host_bind_thread",
+    "agent_host_list_resources",
+    "agent_host_stop_environment",
     "fork_session",
     "set_session_hold",
     "queue_status",
@@ -330,6 +337,7 @@ _REQUEST_CLASSIFICATIONS = _classification_map(
                 "export_thread",
                 "get_plan",
                 "get_run_diff",
+                "agent_host_bind_thread",
             ),
         ),
         (
@@ -383,7 +391,15 @@ _REQUEST_CLASSIFICATIONS = _classification_map(
                 "validate_config",
                 "write_config",
                 "purge_threads",
+                "agent_host_register_workspace",
+                "agent_host_register_profile",
+                "agent_host_list_resources",
             ),
+        ),
+        (
+            ResourceScope.ENVIRONMENT,
+            ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
+            ("agent_host_stop_environment",),
         ),
         (
             ResourceScope.EXTENSION,

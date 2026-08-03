@@ -30,6 +30,13 @@ PYTHON_GENERATOR_VERSION = "0.71.0"
 TYPESCRIPT_GENERATOR_VERSION = "15.0.4"
 
 REQUIRED_FIELDS = {
+    "agent_host_register_workspace": (
+        "workspace_id",
+        "materialization_path",
+    ),
+    "agent_host_register_profile": ("profile_id", "definition"),
+    "agent_host_bind_thread": ("thread_id", "binding"),
+    "agent_host_stop_environment": ("environment_id",),
     "initialize": ("protocol_version", "identity", "platform", "capabilities"),
     "start_run": ("prompt", "environment_selection"),
     "stop_run": ("run_id",),
@@ -182,6 +189,12 @@ REQUIRED_FIELDS = {
 REPLAY_ENVELOPE_FIELDS = ("seq", "stream_id")
 
 OPTIONAL_FIELDS = {
+    "agent_host_register_workspace": (
+        "snapshot_ref",
+        "sources",
+        "owner_user_id",
+    ),
+    "agent_host_register_profile": ("owner_user_id",),
     "start_run": (
         "session_id",
         "variables",
@@ -384,6 +397,7 @@ ARRAY_FIELDS = {
     "kinds",
     "options",
     "paths",
+    "sources",
 }
 BOOLEAN_FIELDS = {
     "allow_empty",
@@ -483,6 +497,8 @@ OBJECT_FIELDS = {
     "usage",
     "value",
     "variables",
+    "binding",
+    "definition",
 }
 
 #: Field types are keyed by NAME across the whole protocol, which is what
@@ -500,6 +516,71 @@ OPERATION_FIELD_TYPES = {
 }
 
 OPERATION_FIELD_SCHEMAS = {
+    ("agent_host_register_workspace", "sources"): {
+        "type": "array",
+        "items": {"type": "object"},
+    },
+    ("agent_host_register_profile", "definition"): {
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "default"},
+                    "project_id": {"type": "string"},
+                },
+                "required": ["kind"],
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "properties": {
+                    "kind": {"const": "path"},
+                    "path": {"type": "string", "minLength": 1},
+                },
+                "required": ["kind", "path"],
+                "additionalProperties": False,
+            },
+        ]
+    },
+    ("agent_host_bind_thread", "binding"): {
+        "type": "object",
+        "properties": {
+            "workspace_id": {"type": ["string", "null"]},
+            "environment_selection": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {"mode": {"const": "none"}},
+                        "required": ["mode"],
+                        "additionalProperties": False,
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "mode": {"const": "automatic"},
+                            "profile_id": {"type": "string", "minLength": 1},
+                        },
+                        "required": ["mode", "profile_id"],
+                        "additionalProperties": False,
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "mode": {"const": "existing"},
+                            "environment_id": {
+                                "type": "string",
+                                "minLength": 1,
+                            },
+                        },
+                        "required": ["mode", "environment_id"],
+                        "additionalProperties": False,
+                    },
+                ]
+            },
+        },
+        "required": ["workspace_id", "environment_selection"],
+        "additionalProperties": False,
+    },
     ("start_run", "environment_selection"): {
         "oneOf": [
             {
@@ -585,6 +666,20 @@ _TYPESCRIPT_TYPES = {
 
 
 RESULT_TYPES = {
+    "agent_host_register_workspace": (
+        "dict[str, Any]",
+        "Record<string, unknown>",
+    ),
+    "agent_host_register_profile": (
+        "dict[str, Any]",
+        "Record<string, unknown>",
+    ),
+    "agent_host_bind_thread": ("dict[str, Any]", "Record<string, unknown>"),
+    "agent_host_list_resources": ("dict[str, Any]", "Record<string, unknown>"),
+    "agent_host_stop_environment": (
+        "dict[str, Any]",
+        "Record<string, unknown>",
+    ),
     "initialize": ("InitializeResult", "InitializeResult"),
     "start_run": ("dict", "{ run_id: string; session_id: string }"),
     "stop_run": ("bool", "boolean"),

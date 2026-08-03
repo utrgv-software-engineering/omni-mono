@@ -184,6 +184,14 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
         help="Bearer token required from WS clients.",
     )
     p.add_argument(
+        "--agent-host-control-token",
+        default=None,
+        help=(
+            "Distinct admin bearer token for the trusted AgentHost controller. "
+            "It is not included in the readiness payload."
+        ),
+    )
+    p.add_argument(
         "--agent-project",
         default=None,
         type=Path,
@@ -472,6 +480,9 @@ async def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from omniagents.backends.server.app import build_app
+    from omniagents.core.runtime.environment_provisioner import (
+        ServeEnvironmentProvisioner,
+    )
     from omniagents.execution import AgentHostResources
 
     agent_host_id = f"agenthost_{uuid.uuid4().hex}"
@@ -483,6 +494,7 @@ async def _serve(args: argparse.Namespace) -> int:
         spec=spec,
         auth_token=args.auth_token,
         agent_host_resources=agent_host_resources,
+        agent_host_control_token=args.agent_host_control_token,
     )
     await _register_execution_environment(
         app,
@@ -494,6 +506,56 @@ async def _serve(args: argparse.Namespace) -> int:
         run_as=(None if session is None else _run_as_exec_user(profile.raw)),
         terminal=profile.terminal,
         sources=sources_parsed,
+    )
+
+    # The startup environment and every environment materialized later share
+    # one AgentHost-owned catalog. Workspace identity names durable source
+    # state; its host materialization path is control-plane data and is never
+    # inferred from a sandbox-internal path such as /workspace.
+    owner_user_id = "token_user" if args.auth_token else None
+    agent_host_resources.provisioning.register_workspace(
+        workspace_id=workspace_id,
+        owner_user_id=owner_user_id,
+        materialization_path=str(args.workspace),
+        sources=sources_parsed,
+    )
+    startup_profile_id = _profile_display_name(args.profile, profile)
+    startup_profile_definition = (
+        {"kind": "path", "path": str(args.profile)}
+        if args.profile is not None
+        else {
+            "kind": "default",
+            **({"project_id": args.project} if args.project else {}),
+        }
+    )
+    agent_host_resources.provisioning.register_profile(
+        startup_profile_id,
+        startup_profile_definition,
+        owner_user_id=owner_user_id,
+    )
+
+    def _resolve_provisioned_profile(request, workspace_dir):
+        definition = agent_host_resources.provisioning.profile(
+            request.profile_id,
+            owner_user_id=request.workspace.owner_user_id,
+        )
+        return resolve_product_profile(
+            workspace_dir=workspace_dir,
+            project_id=definition.get("project_id"),
+            explicit_path=(
+                Path(definition["path"]) if definition["kind"] == "path" else None
+            ),
+        )
+
+    agent_host_resources.environments.set_provisioner(
+        ServeEnvironmentProvisioner(
+            profile_resolver=_resolve_provisioned_profile,
+            workspace_directory_resolver=(
+                agent_host_resources.provisioning.workspace_directory
+            ),
+            snapshot_dir=args.snapshot_dir,
+            credentials=credentials_parsed,
+        )
     )
 
     # Idle auto-recap: fire a session recap once a conversation has gone

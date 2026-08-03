@@ -147,6 +147,24 @@ def test_serve_parser_accepts_launcher_argv_minimal():
     assert ns.profile is None
     # Serve picks its own port — the launcher passes no port flag.
     assert ns.port == 0
+    assert ns.agent_host_control_token is None
+
+
+def test_serve_parser_accepts_private_agent_host_control_token():
+    parser = build_serve_parser(prog="omni")
+    ns = parser.parse_args(
+        [
+            "--auth-token",
+            "client-secret",
+            "--agent-host-control-token",
+            "control-secret",
+            "--workspace",
+            "/home/u/repo",
+        ]
+    )
+
+    assert ns.auth_token == "client-secret"
+    assert ns.agent_host_control_token == "control-secret"
 
 
 def test_serve_parser_has_no_required_port_flag():

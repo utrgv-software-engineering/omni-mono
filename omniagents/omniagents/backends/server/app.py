@@ -415,6 +415,7 @@ def build_app(
     auth_token: str | None = None,
     *,
     agent_host_resources: "AgentHostResources | None" = None,
+    agent_host_control_token: str | None = None,
     default_host_workspace_root: str | None = None,
 ) -> FastAPI:  # noqa: D401
     """Return a fully configured FastAPI app exposing the agent via RPC.
@@ -430,6 +431,9 @@ def build_app(
             connect ticket. The deprecated ``?token=`` query transport is
             accepted only when ``OMNIAGENTS_LEGACY_QUERY_AUTH=1`` (or
             ``security.legacy_query_auth: true``) is set.
+        agent_host_control_token: Optional distinct bearer credential for the
+            trusted host controller. It resolves to an admin-role principal and
+            is never returned in protocol initialization or readiness payloads.
         default_host_workspace_root: Optional explicit host environment composed at
             startup and advertised as the AgentHost's default binding.
     """
@@ -449,7 +453,11 @@ def build_app(
     # One authenticator guards every surface — /ws, /ws/realtime and
     # /ws/terminal all resolve the same principal through it, and
     # /auth/ws-ticket mints browser connect tickets against it.
-    authenticator = ConnectionAuthenticator.from_spec(spec, auth_token=auth_token)
+    authenticator = ConnectionAuthenticator.from_spec(
+        spec,
+        auth_token=auth_token,
+        agent_host_control_token=agent_host_control_token,
+    )
     app.state.connection_authenticator = authenticator
     auth_dep = build_ws_auth_dependency(authenticator)
     # Connect tickets exist because browsers cannot set WebSocket headers.

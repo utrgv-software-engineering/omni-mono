@@ -7,7 +7,7 @@ from omniagents.rpc.protocol_catalog import (
 
 
 def test_every_protocol_operation_has_explicit_resource_and_execution_metadata():
-    assert len(OPERATIONS) == 127
+    assert len(OPERATIONS) == 132
     assert len(OPERATION_BY_NAME) == len(OPERATIONS)
     assert all(
         isinstance(operation.resource_scope, ResourceScope) for operation in OPERATIONS

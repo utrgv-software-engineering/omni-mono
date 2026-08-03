@@ -7,6 +7,7 @@ import uuid
 
 from omniagents.workspace import HostWorkspace
 
+from .control import AgentHostProvisioningCatalog
 from .models import (
     EnvironmentCapability,
     EnvironmentKind,
@@ -37,6 +38,7 @@ class AgentHostResources:
     environments: ExecutionEnvironmentManager
     thread_bindings: ThreadRuntimeBindingRegistry
     router: OperationRouter
+    provisioning: AgentHostProvisioningCatalog
 
     @classmethod
     def create(
@@ -52,13 +54,21 @@ class AgentHostResources:
             workspaces, provisioner=environment_provisioner
         )
         thread_bindings = ThreadRuntimeBindingRegistry(workspaces, environments)
+        provisioning = AgentHostProvisioningCatalog(workspaces)
         router = OperationRouter(
             workspaces,
             environments,
             thread_bindings,
             agent_host_id=agent_host_id,
         )
-        return cls(agent_host_id, workspaces, environments, thread_bindings, router)
+        return cls(
+            agent_host_id,
+            workspaces,
+            environments,
+            thread_bindings,
+            router,
+            provisioning,
+        )
 
 
 def register_host_environment(

@@ -96,6 +96,96 @@ class AgentHost(BaseModel):
     default_workspace_id: str | None = None
 
 
+class EnvironmentSelection(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    mode: Literal["none"]
+
+
+class EnvironmentSelection1(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    mode: Literal["automatic"]
+    profile_id: Annotated[str, Field(min_length=1)]
+
+
+class EnvironmentSelection2(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_id: Annotated[str, Field(min_length=1)]
+    mode: Literal["existing"]
+
+
+class Binding(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_selection: (
+        EnvironmentSelection | EnvironmentSelection1 | EnvironmentSelection2
+    )
+    workspace_id: str | None
+
+
+class AgentHostBindThread(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    binding: Binding
+    thread_id: str
+
+
+class AgentHostListResources(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+
+class Definition(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    kind: Literal["default"]
+    project_id: str | None = None
+
+
+class Definition1(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    kind: Literal["path"]
+    path: Annotated[str, Field(min_length=1)]
+
+
+class AgentHostRegisterProfile(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    definition: Definition | Definition1
+    owner_user_id: str | None = None
+    profile_id: str
+
+
+class AgentHostRegisterWorkspace(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    materialization_path: str
+    owner_user_id: str | None = None
+    snapshot_ref: str | None = None
+    sources: list[dict[str, Any]] | None = None
+    workspace_id: str
+
+
+class AgentHostStopEnvironment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_id: str
+
+
 class ArchiveSession(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1236,21 +1326,21 @@ class SetVoiceModel(BaseModel):
     model: str
 
 
-class EnvironmentSelection(BaseModel):
+class EnvironmentSelection3(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
     mode: Literal["inherit"]
 
 
-class EnvironmentSelection1(BaseModel):
+class EnvironmentSelection4(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
     mode: Literal["none"]
 
 
-class EnvironmentSelection2(BaseModel):
+class EnvironmentSelection5(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
@@ -1266,7 +1356,7 @@ class StartRun(BaseModel):
     content: str | None = None
     context: dict[str, Any] | None = None
     environment_selection: (
-        EnvironmentSelection | EnvironmentSelection1 | EnvironmentSelection2
+        EnvironmentSelection3 | EnvironmentSelection4 | EnvironmentSelection5
     )
     group_id: str | None = None
     prompt: str
@@ -1482,6 +1572,11 @@ class Model(
         | ListTurns
         | ListItems
         | GetItem
+        | AgentHostRegisterWorkspace
+        | AgentHostRegisterProfile
+        | AgentHostBindThread
+        | AgentHostListResources
+        | AgentHostStopEnvironment
         | ForkSession
         | SetSessionHold
         | QueueStatus
@@ -1612,6 +1707,11 @@ class Model(
         | ListTurns
         | ListItems
         | GetItem
+        | AgentHostRegisterWorkspace
+        | AgentHostRegisterProfile
+        | AgentHostBindThread
+        | AgentHostListResources
+        | AgentHostStopEnvironment
         | ForkSession
         | SetSessionHold
         | QueueStatus

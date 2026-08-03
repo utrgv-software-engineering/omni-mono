@@ -19,6 +19,7 @@ from .errors import (
     WorkspaceNotFoundError,
 )
 from .host import AgentHostResources, register_host_environment
+from .control import AgentHostProvisioningCatalog
 from .lifecycle import EnvironmentLifecycleController
 
 from .models import (
@@ -58,6 +59,7 @@ from .routing import (
 
 __all__ = [
     "AgentHostResources",
+    "AgentHostProvisioningCatalog",
     "AutomaticEnvironment",
     "CapabilityUnavailableError",
     "EnvironmentChangedError",
