@@ -1,5 +1,5 @@
 """Serve-session harness: bring an agent's sandbox session up against a
-profile, keep it healthy, switch it in place, and tear it down.
+profile, keep it healthy, and tear it down.
 
 This is the generic core of a product's ``<cli> serve`` runtime, lifted
 from omni-code's ``serve_cli.py``. The product keeps the CLI surface,
@@ -11,9 +11,6 @@ attached to the running agent":
   :class:`~omniagents.core.sandbox.profiles.ResolvedProfile`,
   create-or-resume the session (3-tier docker resume), scrub + hydrate
   the snapshot, run init commands, start services, resolve their URLs.
-* :func:`perform_switch` — swap the running server's sandbox to a new
-  profile in place (quiesce, carry, teardown, bring-up, re-wire,
-  broadcast, rollback) through its environment lifecycle controller.
 * :func:`teardown_session` — stop services, persist the workspace
   snapshot, close the session. Idempotent and ``None``-safe.
 Runtime placement is returned to the AgentHost for explicit environment
@@ -27,19 +24,14 @@ Product knobs, defaulting to the omni-code values they were lifted with:
 * ``DEFAULT_SERVICE_URL_SUFFIXES`` — per-service-name URL suffixes
   applied when resolving exposed-port endpoints (noVNC's client page for
   a service named ``vnc``).
-* ``ServeEnvironmentLifecycleState.profile_resolver`` — the product's layered profile
-  resolver (adds its packaged default layer); the framework resolver is
-  the fallback.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import sys
 import tarfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import (
     Any,
@@ -55,56 +47,21 @@ from omniagents.core.sandbox.profiles import (
     ResolvedProfile,
     ServiceSpec,
     TerminalSpec,
-    resolve_profile,
 )
 
 __all__ = [
     "BroughtUpSession",
-    "ServeEnvironmentLifecycleState",
     "bring_up_session",
-    "perform_switch",
     "teardown_session",
     "NOOP_SNAPSHOT_CLIENT_TYPES",
     "DEFAULT_SERVICE_URL_SUFFIXES",
 ]
 
 
-@dataclass
-class ServeEnvironmentLifecycleState:
-    """Mutable orchestration state owned by one ExecutionEnvironment.
-
-    The environment lifecycle controller holds the only reference. It is never
-    published as a process-global "current" sandbox.
-    """
-
-    app: Any
-    session_id: str
-    environment_id: str
-    snapshot_dir: Optional[Any]
-    sources_parsed: List[Dict[str, Any]]
-    credentials_parsed: List[Dict[str, Any]]
-    workspace_dir: Any
-    project_id: Optional[str]
-    profile_resolver: Optional[Any] = None
-
-    current_profile_path: Optional[str] = None
-    current_profile_name: Optional[str] = None
-    backend: Optional[str] = None
-    container_id: Optional[str] = None
-    service_urls: Dict[str, Any] = field(default_factory=dict)
-    started_services: List[Any] = field(default_factory=list)
-    discard_snapshot_on_exit: bool = False
-    switching: bool = False
-    last_error: Optional[str] = None
-    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-    ready_event: asyncio.Event = field(default_factory=asyncio.Event)
-
-
 # Client types whose lifecycle snapshot is a noop: the workspace IS a
 # durable directory (on this host for ``unix_local``, on the remote host
 # for ``host_bridge``), so tarring it on stop would be pure overhead —
-# and switching AWAY from them must carry the workspace by hand (see
-# :func:`_carry_workspace_snapshot`).
+# no snapshot archive is needed.
 NOOP_SNAPSHOT_CLIENT_TYPES: Tuple[str, ...] = ("unix_local", "host_bridge")
 
 # Per-service-name URL suffixes applied by :func:`_resolve_service_urls`.
@@ -742,7 +699,7 @@ async def _resolve_service_urls(
 @dataclass
 class BroughtUpSession:
     """Result of bringing a sandbox session up: the live session plus the
-    derived state the serve host and ``perform_switch`` consume afterward."""
+    derived state the serve host consumes afterward."""
 
     session: Any
     started_services: List[Tuple[ServiceSpec, int]]
@@ -767,8 +724,7 @@ async def bring_up_session(
     ``ValueError`` for a bad profile/source; tears the partial
     session down (re-raising) if init/services fail.
 
-    Shared by first launch (the serve host) and ``perform_switch`` so both
-    paths bring sessions up identically.
+    Used by both startup and AgentHost-managed environment provisioning.
     """
     client, options, manifest = _build_sandbox(profile, sources=sources_parsed)
 
@@ -855,30 +811,6 @@ def _profile_display_name(
     return backend if isinstance(backend, str) and backend else "default"
 
 
-def _changed_payload(ctx: Any) -> Dict[str, Any]:
-    return {
-        "profile": ctx.current_profile_name,
-        "backend": ctx.backend,
-        "container_id": ctx.container_id,
-        "services": ctx.service_urls,
-    }
-
-
-async def _broadcast_sandbox_event(
-    service: Any, method: str, payload: Dict[str, Any], session: Any = None
-) -> None:
-    """Best-effort push of a ``ui.sandbox.*`` event to the session's channels.
-    Mirrors ``omniagents.builtin.server_functions.bash_jobs._broadcast_snapshot``."""
-    if service is None:
-        return
-    try:
-        await service.request_client_function(
-            method, payload, session=session, expect_result=False
-        )
-    except Exception as e:  # noqa: BLE001
-        print(f"[sandbox-switch] broadcast {method} failed: {e}", file=sys.stderr)
-
-
 async def _cancel_active_runs(service: Any) -> None:
     """Cancel any in-flight run so the session swap lands between runs (the
     in-flight run holds its own per-run SandboxRuntime bound to the old
@@ -894,413 +826,6 @@ async def _cancel_active_runs(service: Any) -> None:
             await service.stop_run(run_id)
         except Exception:  # noqa: BLE001
             pass
-
-
-def _resolve_switch_profile(ctx: Any, explicit_path: Optional[Path]) -> ResolvedProfile:
-    """Resolve a profile for a switch/rollback through the product's layered
-    resolver when the environment lifecycle state carries one, else the
-    framework resolver."""
-    resolver = getattr(ctx, "profile_resolver", None) or resolve_profile
-    return resolver(
-        workspace_dir=ctx.workspace_dir,
-        project_id=ctx.project_id,
-        explicit_path=explicit_path,
-    )
-
-
-async def _attempt_rollback(ctx: Any, prev_profile_path: Optional[str]) -> bool:
-    """Bring the previous profile back up from the (intact) snapshot and re-wire
-    it. Returns True on success. The workspace tar the failed switch's teardown
-    persisted is keyed by session_id, so the rollback rehydrates the same files."""
-    if not prev_profile_path:
-        return False
-    try:
-        prev = _resolve_switch_profile(ctx, Path(prev_profile_path))
-        brought = await bring_up_session(
-            profile=prev,
-            sources_parsed=ctx.sources_parsed,
-            credentials_parsed=ctx.credentials_parsed,
-            session_id=ctx.session_id,
-            snapshot_dir=ctx.snapshot_dir,
-            prior_container_id=None,
-        )
-    except Exception:  # noqa: BLE001
-        return False
-    await _replace_execution_backend(
-        ctx,
-        brought.session,
-        run_as=_run_as_exec_user(prev.raw),
-        terminal=prev.terminal,
-    )
-    ctx.backend = brought.client_type
-    ctx.container_id = brought.container_id
-    ctx.service_urls = brought.service_urls
-    ctx.started_services = brought.started_services
-    return True
-
-
-async def _carry_workspace_snapshot(
-    *, session: Any, session_id: str, snapshot_dir: Any
-) -> None:
-    """Tar *session*'s workspace into ``<snapshot_dir>/<session_id>.tar`` so the
-    next ``bring_up_session`` rehydrates it into the new backend.
-
-    Needed only when switching AWAY from a backend whose lifecycle snapshot is a
-    noop — ``host_bridge`` (laptop sandbox) and ``unix_local`` (see
-    :func:`_build_snapshot`). Those write no tar on ``session.stop()``, so without
-    this the new backend seeds fresh and silently drops all uncommitted work.
-    Real-snapshot backends (docker/aci) already persist on teardown, so callers
-    skip this for them to avoid tarring the workspace twice. The tar format
-    (``persist_workspace`` → ``hydrate_workspace``) is shared across backends, so
-    a host_bridge-produced tar restores cleanly under aci.
-    """
-    from agents.sandbox.snapshot import LocalSnapshot
-
-    data = await session.persist_workspace()
-    await LocalSnapshot(id=session_id, base_path=snapshot_dir).persist(data)
-
-
-async def _replace_execution_backend(
-    ctx: Any,
-    sandbox_session: Any,
-    *,
-    run_as: str | None,
-    terminal: TerminalSpec,
-) -> None:
-    """Publish a switched sandbox as the next generation of one environment."""
-
-    from omniagents.execution import (
-        SandboxExecutionRuntime,
-        TerminalExecutionDefaults,
-    )
-    from omniagents.workspace.sandbox import SandboxWorkspace
-
-    service = getattr(ctx.app.state, "agent_service", None)
-    if service is None:
-        raise RuntimeError("switch context app has no AgentService")
-    root = getattr(
-        getattr(getattr(sandbox_session, "state", None), "manifest", None),
-        "root",
-        None,
-    )
-    if not isinstance(root, str) or not root:
-        raise RuntimeError("switched sandbox has no manifest root")
-    workspace = SandboxWorkspace(
-        session=sandbox_session,
-        root=root,
-        default_user=run_as,
-    )
-    await service.environment_manager.replace(
-        ctx.environment_id,
-        workspace,
-        sandbox_runtime=SandboxExecutionRuntime(
-            session=sandbox_session,
-            run_as=run_as,
-        ),
-        terminal_defaults=TerminalExecutionDefaults(
-            shell=terminal.command,
-            cwd=terminal.cwd,
-            user=terminal.user,
-        ),
-    )
-
-
-async def perform_switch(
-    profile_path: str,
-    *,
-    session: Any = None,
-    lifecycle_state: ServeEnvironmentLifecycleState,
-) -> Dict[str, Any]:
-    """Switch the running server's sandbox to the profile at *profile_path*, in
-    place — no process restart. Snapshots the current workspace, brings up the
-    new backend from the same snapshot (rehydrate), re-attaches it to the live
-    agent spec, and broadcasts ``ui.sandbox.changed``. Rolls back to the previous
-    profile if bring-up fails.
-
-    Operator command, invoked by the ``sandbox.switch`` server function (the
-    launcher) — never the LLM. *session* is the calling conversation session,
-    used to route the ``ui.sandbox.*`` broadcasts. Returns
-    ``{ok, profile, backend, container_id, services, reason?}``.
-
-    The environment lifecycle controller supplies its own state; callers
-    cannot select a process-global current sandbox.
-    """
-    ctx = lifecycle_state
-
-    try:
-        from omniagents.core.agents.service import current_service
-
-        service = current_service()
-    except Exception:
-        service = None
-
-    async with ctx.lock:
-        try:
-            target = _resolve_switch_profile(ctx, Path(profile_path))
-        except (FileNotFoundError, ValueError) as e:
-            return {"ok": False, "reason": f"profile: {e}"}
-
-        if ctx.current_profile_path and Path(profile_path) == Path(
-            ctx.current_profile_path
-        ):
-            return {"ok": True, **_changed_payload(ctx)}
-
-        target_name = _profile_display_name(profile_path, target)
-        prev_profile_path = ctx.current_profile_path
-
-        environment_manager = ctx.app.state.agent_service.environment_manager
-        old_lease = await environment_manager.acquire(ctx.environment_id)
-        old_runtime = old_lease.sandbox_runtime
-        old_session = old_runtime.session if old_runtime is not None else None
-
-        # Quiesce before tearing the old sandbox down.
-        await _cancel_active_runs(service)
-
-        ctx.switching = True
-        ctx.last_error = None
-        ctx.ready_event.clear()
-        from omniagents.execution import EnvironmentState
-
-        await environment_manager.transition(
-            ctx.environment_id, EnvironmentState.REPLACING
-        )
-        await _broadcast_sandbox_event(
-            service, "ui.sandbox.switching", {"profile": target_name}, session=session
-        )
-
-        # Carry the workspace across the switch when the OLD backend uses a noop
-        # lifecycle snapshot (host_bridge laptop sandbox / unix_local):
-        # teardown_session → session.stop() persists nothing for those, so tar
-        # the workspace into the snapshot dir NOW; bring_up_session below then
-        # rehydrates it into the new backend. Without this, switching off a
-        # laptop sandbox silently drops all uncommitted work. Best-effort: a
-        # flaky carry must not block the switch (the new backend just seeds
-        # fresh, same as today).
-        if (
-            old_session is not None
-            and ctx.snapshot_dir is not None
-            and ctx.backend in NOOP_SNAPSHOT_CLIENT_TYPES
-        ):
-            try:
-                await _carry_workspace_snapshot(
-                    session=old_session,
-                    session_id=ctx.session_id,
-                    snapshot_dir=ctx.snapshot_dir,
-                )
-            except Exception as e:  # noqa: BLE001
-                print(
-                    json.dumps(
-                        {"warning": f"workspace carry failed during switch: {e}"}
-                    ),
-                    file=sys.stderr,
-                )
-        try:
-            if old_session is not None:
-                await teardown_session(old_session, ctx.started_services)
-            brought = await bring_up_session(
-                profile=target,
-                sources_parsed=ctx.sources_parsed,
-                credentials_parsed=ctx.credentials_parsed,
-                session_id=ctx.session_id,
-                snapshot_dir=ctx.snapshot_dir,
-                prior_container_id=None,
-            )
-        except Exception as e:  # noqa: BLE001
-            ctx.last_error = str(e)
-            rolled = await _attempt_rollback(ctx, prev_profile_path)
-            ctx.switching = False
-            ctx.ready_event.set()
-            if rolled:
-                await _broadcast_sandbox_event(
-                    service,
-                    "ui.sandbox.changed",
-                    _changed_payload(ctx),
-                    session=session,
-                )
-                # Old sandbox restored and live — the caller should NOT relaunch.
-                return {
-                    "ok": False,
-                    "recovered": "rolled_back",
-                    "reason": f"switch failed, rolled back: {e}",
-                }
-            await environment_manager.transition(
-                ctx.environment_id, EnvironmentState.FAILED
-            )
-            await _broadcast_sandbox_event(
-                service, "ui.sandbox.lost", {"reason": str(e)}, session=session
-            )
-            # Sandbox is gone — the caller must cold-relaunch to recover.
-            return {
-                "ok": False,
-                "recovered": "lost",
-                "reason": f"switch failed and rollback failed: {e}",
-            }
-
-        # Publish the new SDK session as the next environment generation. The
-        # shared AgentSpec remains declarative and untouched.
-        await _replace_execution_backend(
-            ctx,
-            brought.session,
-            run_as=_run_as_exec_user(target.raw),
-            terminal=target.terminal,
-        )
-
-        ctx.current_profile_path = profile_path
-        ctx.current_profile_name = target_name
-        ctx.backend = brought.client_type
-        ctx.container_id = brought.container_id
-        ctx.service_urls = brought.service_urls
-        ctx.started_services = brought.started_services
-        ctx.switching = False
-        ctx.ready_event.set()
-
-        await _broadcast_sandbox_event(
-            service, "ui.sandbox.changed", _changed_payload(ctx), session=session
-        )
-        return {"ok": True, **_changed_payload(ctx)}
-
-
-# ---------------------------------------------------------------------------
-# Terminal managers
-# ---------------------------------------------------------------------------
-
-
-class ServeEnvironmentLifecycleController:
-    """Environment-scoped adapter over serve orchestration.
-
-    The instance is registered on one ExecutionEnvironment. Handlers receive
-    it through an EnvironmentLease, so they cannot accidentally operate on a
-    different process-global sandbox.
-    """
-
-    def __init__(self, state: ServeEnvironmentLifecycleState) -> None:
-        self._state = state
-
-    def _validate(self, lease: Any) -> None:
-        if lease.environment_id != self._state.environment_id:
-            raise RuntimeError("lifecycle controller/environment mismatch")
-
-    def state(self, lease: Any) -> Dict[str, Any]:
-        """Return observable state for this leased environment only."""
-        self._validate(lease)
-        ctx = self._state
-        return {
-            "available": True,
-            "ready": ctx.ready_event.is_set() and not ctx.switching,
-            "switching": ctx.switching,
-            "profile": ctx.current_profile_name,
-            "backend": ctx.backend,
-            "container_id": ctx.container_id,
-            "last_error": ctx.last_error,
-        }
-
-    async def wait_until_ready(
-        self, lease: Any, timeout_seconds: float
-    ) -> Dict[str, Any]:
-        """Wait for this environment's current replacement to finish."""
-        import asyncio
-
-        self._validate(lease)
-        ctx = self._state
-        try:
-            await asyncio.wait_for(ctx.ready_event.wait(), timeout=timeout_seconds)
-        except asyncio.TimeoutError:
-            return {
-                "ready": False,
-                "profile": ctx.current_profile_name,
-                "reason": "timeout",
-            }
-        return {
-            "ready": not ctx.switching,
-            "profile": ctx.current_profile_name,
-            "switching": ctx.switching,
-            "last_error": ctx.last_error,
-        }
-
-    @staticmethod
-    def _backend(lease: Any) -> Any:
-        from omniagents.core.sandbox.lifecycle_session import (
-            resolve_backend_session,
-        )
-        from omniagents.workspace.sandbox import SandboxWorkspace
-
-        workspace = lease.workspace
-        if not isinstance(workspace, SandboxWorkspace):
-            return None
-        return resolve_backend_session(workspace.session)
-
-    async def pause(self, lease: Any) -> Dict[str, Any]:
-        inner = self._backend(lease)
-        if inner is None or not hasattr(inner, "pause"):
-            return {
-                "ok": False,
-                "supported": False,
-                "reason": "environment backend does not implement pause",
-            }
-        try:
-            await inner.pause()
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "supported": True, "reason": str(exc)}
-        paused = True
-        if hasattr(inner, "paused"):
-            try:
-                paused = bool(await inner.paused())
-            except Exception:  # noqa: BLE001
-                pass
-        return {"ok": True, "supported": True, "paused": paused}
-
-    async def unpause(self, lease: Any) -> Dict[str, Any]:
-        inner = self._backend(lease)
-        if inner is None or not hasattr(inner, "unpause"):
-            return {
-                "ok": False,
-                "supported": False,
-                "reason": "environment backend does not implement unpause",
-            }
-        try:
-            await inner.unpause()
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "supported": True, "reason": str(exc)}
-        paused = False
-        if hasattr(inner, "paused"):
-            try:
-                paused = bool(await inner.paused())
-            except Exception:  # noqa: BLE001
-                pass
-        return {"ok": True, "supported": True, "paused": paused}
-
-    async def notify_activity(self, lease: Any) -> Dict[str, Any]:
-        inner = self._backend(lease)
-        if inner is None or not hasattr(inner, "notify_activity"):
-            return {"ok": False}
-        try:
-            await inner.notify_activity()
-        except Exception:  # noqa: BLE001
-            return {"ok": False}
-        return {"ok": True}
-
-    async def discard_snapshot(self, lease: Any) -> Dict[str, Any]:  # noqa: ARG002
-        self._state.discard_snapshot_on_exit = True
-        return {"ok": True}
-
-    async def switch(self, lease: Any, profile: str) -> Dict[str, Any]:
-        self._validate(lease)
-        return await perform_switch(profile, lifecycle_state=self._state)
-
-    async def close(self, lease: Any) -> None:
-        """Release this environment's live session and started services."""
-
-        self._validate(lease)
-        ctx = self._state
-        runtime = lease.sandbox_runtime
-        session = runtime.session if runtime is not None else None
-        await teardown_session(
-            session,
-            ctx.started_services,
-            discard_snapshot=ctx.discard_snapshot_on_exit,
-        )
-        ctx.started_services = []
-        ctx.ready_event.clear()
 
 
 async def _register_execution_environment(

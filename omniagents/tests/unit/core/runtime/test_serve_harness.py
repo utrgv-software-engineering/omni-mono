@@ -5,8 +5,6 @@ Covers the moved core with fakes — no docker daemon required:
 * 3-tier docker resume (reused / rehydrated / fresh) plus the create
   fallthrough for non-docker or first-launch calls.
 * snapshot scrub on a crafted tar containing symlink escapes.
-* environment-owned switch orchestration, including the
-  environment-owned lifecycle state's product profile resolver.
 * teardown idempotence / ``None``-safety / snapshot discard.
 """
 
@@ -18,19 +16,14 @@ import tarfile
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock
-
 import pytest
 
-from omniagents.core.runtime import serve_harness
 from omniagents.core.runtime.serve_harness import (
-    ServeEnvironmentLifecycleState,
     _create_or_resume_session,
     _register_execution_environment,
     _resolve_service_urls,
     _safe_symlink_target,
     _scrub_session_snapshot,
-    perform_switch,
     teardown_session,
 )
 
@@ -284,139 +277,6 @@ async def test_register_execution_environment_routes_to_named_sandbox():
     assert lease.terminal_defaults.cwd == "/workspace/project"
     assert lease.terminal_defaults.user == "1000:1000"
     assert resources.workspaces.get("workspace-1").owner_user_id == "user-1"
-
-
-# --------------------------------------------------------------------------
-# Switch orchestration through the executor seam
-# --------------------------------------------------------------------------
-
-
-class FakeProfile:
-    def __init__(self, backend="docker"):
-        self.raw = {"client": {"type": backend}, "run_as": "1000:1000"}
-        self.terminal = object()
-
-
-class FakeService:
-    def __init__(self):
-        self.events = []
-
-    def active_run_ids(self):
-        return []
-
-    async def stop_run(self, run_id):  # pragma: no cover - no active runs
-        return True
-
-    async def request_client_function(
-        self, function, args=None, *, session=None, expect_result=False, **kw
-    ):
-        self.events.append((function, args))
-        return None
-
-
-def _make_ctx(resolver, old_session=None):
-    environment_manager = SimpleNamespace(
-        acquire=AsyncMock(
-            return_value=SimpleNamespace(
-                sandbox_runtime=(
-                    SimpleNamespace(session=old_session)
-                    if old_session is not None
-                    else None
-                )
-            )
-        ),
-        transition=AsyncMock(),
-    )
-    ctx = ServeEnvironmentLifecycleState(
-        app=SimpleNamespace(
-            state=SimpleNamespace(
-                agent_service=SimpleNamespace(environment_manager=environment_manager)
-            )
-        ),
-        session_id="sess-1",
-        environment_id="environment-1",
-        snapshot_dir=None,
-        sources_parsed=[],
-        credentials_parsed=[],
-        workspace_dir=Path("/tmp/ws"),
-        project_id=None,
-        profile_resolver=resolver,
-        current_profile_path="/profiles/host.yml",
-        current_profile_name="host",
-        backend="unix_local",
-        container_id=None,
-        service_urls={},
-        started_services=[("old", 1)],
-    )
-    ctx.ready_event.set()
-    return ctx
-
-
-def test_environment_owned_switch_end_to_end(monkeypatch, tmp_path):
-    """The environment context is mutated and switching → changed is
-    broadcast in order."""
-    service = FakeService()
-    monkeypatch.setattr(
-        "omniagents.core.agents.service.current_service", lambda: service
-    )
-
-    resolver_calls = []
-
-    def resolver(*, workspace_dir, project_id, explicit_path):
-        resolver_calls.append(explicit_path)
-        return FakeProfile(backend="docker")
-
-    old_session = SimpleNamespace(name="old")
-    new_session = SimpleNamespace(name="new")
-    brought = SimpleNamespace(
-        session=new_session,
-        started_services=[("svc", 8080)],
-        service_urls={"code_server": "http://x/ctr-new"},
-        resume_tier="rehydrated",
-        manifest=object(),
-        client_type="docker",
-        container_id="ctr-new",
-    )
-
-    teardowns = []
-
-    async def fake_teardown(session, started_services):
-        teardowns.append((session, started_services))
-
-    async def fake_bring_up(**kw):
-        assert kw["prior_container_id"] is None
-        return brought
-
-    monkeypatch.setattr(serve_harness, "teardown_session", fake_teardown)
-    monkeypatch.setattr(serve_harness, "bring_up_session", fake_bring_up)
-    replace_backend = AsyncMock()
-    monkeypatch.setattr(serve_harness, "_replace_execution_backend", replace_backend)
-
-    ctx = _make_ctx(resolver, old_session)
-    res = asyncio.run(perform_switch("/profiles/devbox.yml", lifecycle_state=ctx))
-
-    assert res["ok"] is True
-    assert res["profile"] == "devbox"
-    assert res["backend"] == "docker"
-    assert res["container_id"] == "ctr-new"
-    # The product resolver was consulted (framework fallback untouched).
-    assert resolver_calls == [Path("/profiles/devbox.yml")]
-    # Old session torn down; new one published through the environment manager.
-    assert teardowns == [(old_session, [("old", 1)])]
-    assert ctx.current_profile_name == "devbox"
-    assert ctx.container_id == "ctr-new"
-    assert ctx.switching is False and ctx.ready_event.is_set()
-    ctx.app.state.agent_service.environment_manager.transition.assert_awaited_once()
-    replace_backend.assert_awaited_once_with(
-        ctx,
-        new_session,
-        run_as="1000:1000",
-        terminal=ANY,
-    )
-    assert [e[0] for e in service.events] == [
-        "ui.sandbox.switching",
-        "ui.sandbox.changed",
-    ]
 
 
 # --------------------------------------------------------------------------

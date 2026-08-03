@@ -233,5 +233,5 @@ layer wins on key conflicts:
    per-project);
 4. `--profile <path>` (explicit; skips layers 2-3).
 
-The same resolver is used for in-place `sandbox.switch` calls, so
-product layers apply mid-session too.
+The same resolver is used for AgentHost environment provisioning, so product
+layers apply consistently to replacement environments.

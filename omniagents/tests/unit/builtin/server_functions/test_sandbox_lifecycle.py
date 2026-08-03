@@ -1,5 +1,4 @@
-"""Tests for the builtin ``sandbox.*`` lifecycle server functions, the
-switch-executor seam, and the builtin ``sandbox`` capability pack."""
+"""Tests for builtin ``sandbox.*`` lifecycle functions and capability pack."""
 
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ from omniagents.builtin.server_functions.sandbox_lifecycle import (
     sandbox_discard_snapshot,
     sandbox_notify_activity,
     sandbox_pause,
-    sandbox_switch,
     sandbox_unpause,
 )
 from omniagents.execution import (
@@ -54,10 +52,6 @@ class _Controller:
     async def discard_snapshot(self, lease):
         self.calls.append(("discard", lease.environment_id))
         return {"ok": True}
-
-    async def switch(self, lease, profile):
-        self.calls.append(("switch", lease.environment_id, profile))
-        return {"ok": True, "profile": "devbox", "backend": "docker"}
 
 
 @contextmanager
@@ -128,25 +122,6 @@ def test_discard_snapshot_sets_flag():
     assert controller.calls == [("discard", "env-1")]
 
 
-# ----------------------------- switch seam ------------------------------ #
-
-
-def test_switch_validates_profile():
-    controller = _Controller()
-    with _routed(controller):
-        res = asyncio.run(sandbox_switch(None, "   "))
-    assert res["ok"] is False and "non-empty" in res["reason"]
-    assert controller.calls == []
-
-
-def test_switch_delegates_to_leased_environment_controller():
-    controller = _Controller()
-    with _routed(controller):
-        res = asyncio.run(sandbox_switch(None, "/profiles/devbox.yml"))
-    assert res == {"ok": True, "profile": "devbox", "backend": "docker"}
-    assert controller.calls == [("switch", "env-1", "/profiles/devbox.yml")]
-
-
 # ----------------------- pack surface via load_project ------------------ #
 
 
@@ -182,7 +157,6 @@ def test_sandbox_pack_rpc_surface(tmp_path):
         "sandbox.unpause",
         "sandbox.notify_activity",
         "sandbox.discard_snapshot",
-        "sandbox.switch",
     }
 
     instructions = asyncio.run(cap.instructions())
@@ -190,7 +164,5 @@ def test_sandbox_pack_rpc_surface(tmp_path):
     assert "sandbox_wait_until_ready" in instructions
 
     # The builtin server-function registry carries the RPC names.
-    assert {"sandbox.pause", "sandbox.switch"}.issubset(
-        set(proj.server_functions_registry.keys())
-    )
-    assert len(SANDBOX_SERVER_FUNCTIONS) == 5
+    assert "sandbox.pause" in proj.server_functions_registry
+    assert len(SANDBOX_SERVER_FUNCTIONS) == 4

@@ -2,20 +2,15 @@ name: sandbox
 # Two surfaces with a deliberate authority split (security property):
 #
 # * tools: — the AGENT's surface is read-only observation. It can see
-#   which sandbox its filesystem/shell tools run in and wait out an
-#   in-progress switch, nothing more.
+#   which environment its filesystem/shell tools run in and observe readiness.
 # * server_functions: — the OPERATOR's surface (launcher / slash
 #   commands over the server-function channel). Server functions are
-#   never added to the model's tool schema, so the LLM cannot invoke
-#   sandbox.switch (it must not be able to move itself to a
-#   less-isolated profile) nor the pause/unpause/snapshot lifecycle.
+#   never added to the model's tool schema, so the LLM cannot invoke the
+#   pause/unpause/snapshot lifecycle.
 #
-# The serve host publishes the live session + SwitchContext via
-# omniagents.core.runtime.serve_state and installs its switch
-# orchestrator via omniagents.core.runtime.sandbox_lifecycle.
-# set_switch_executor; standalone servers degrade gracefully (tools
-# answer "ready, no switching"; lifecycle RPCs answer "unsupported" /
-# "no executor installed").
+# Every operation resolves the lifecycle controller from the current
+# environment lease. Profile changes happen through AgentHost materialization
+# and Thread rebind, outside this capability.
 tools:
   - sandbox_get_state
   - sandbox_wait_until_ready
@@ -24,18 +19,11 @@ server_functions:
   - sandbox.unpause
   - sandbox.notify_activity
   - sandbox.discard_snapshot
-  - sandbox.switch
 instructions: |
-  Observe the sandbox your filesystem/shell tools run in. You CANNOT change
-  it — switching the sandbox profile is an operator action the user triggers in
-  the UI (and a security boundary: you must not move yourself to a less-isolated
-  environment). You can only look and wait:
+  Observe the environment your filesystem/shell tools run in. You CANNOT change
+  it — selecting another profile is an operator action the user triggers
+  in the UI and a security boundary. You can only look and wait:
 
-  - `sandbox_get_state()` — the current profile + backend, and whether a switch
-    is in progress. Check this if you need to know which environment a tool will
-    run in.
-  - `sandbox_wait_until_ready(timeout_seconds=120)` — blocks until an
-    in-progress switch finishes. If the user asks you to do something "after
-    switching to X", call this first: tool calls during a switch fail (the old
-    sandbox is torn down while the new one comes up), so wait for ready, then
-    continue. Returns immediately when nothing is switching.
+  - `sandbox_get_state()` — the current profile, backend, and readiness.
+  - `sandbox_wait_until_ready(timeout_seconds=120)` — blocks until the current
+    environment reports ready and returns immediately when it already is.

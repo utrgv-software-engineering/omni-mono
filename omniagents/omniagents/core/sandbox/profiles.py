@@ -240,7 +240,7 @@ def resolve_product_profile(
 
     :func:`resolve_profile` with ``default_profile_path`` bound to
     :func:`product_default_profile_path` — the conventional resolver a
-    product's ``<prog> serve`` (and every ``sandbox.switch``) uses, and
+    product's ``<prog> serve`` and environment provisioner use, and
     the seam a hand-rolled product resolver used to be. Products without
     a packaged default degrade to the user/project layers only.
     """

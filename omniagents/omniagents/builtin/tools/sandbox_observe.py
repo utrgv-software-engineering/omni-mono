@@ -1,11 +1,10 @@
 """Read-only sandbox observation tools for the agent.
 
-The agent can SEE its sandbox state and WAIT for an operator-initiated switch
-to finish — but it cannot change the sandbox. Switching profiles is a
-control-plane operation (the ``sandbox.switch`` server function, invoked by the
-launcher / a slash command), deliberately NOT exposed as an LLM tool: the model
-must not be able to move itself to a less-isolated profile (e.g. out of a
-network-restricted devbox onto the host).
+The agent can SEE its environment state and WAIT for it to become ready, but it
+cannot change placement. Profile changes materialize and rebind another
+environment through the AgentHost control plane, deliberately outside the LLM
+tool surface: the model must not be able to move itself to a less-isolated
+profile (e.g. out of a network-restricted devbox onto the host).
 
 State is read from the current Run's environment lifecycle controller. A Run
 without an environment (or whose environment has no lifecycle controller)

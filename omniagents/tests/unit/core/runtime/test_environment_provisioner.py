@@ -84,7 +84,9 @@ async def test_devbox_profile_provisions_sources_runtime_and_lifecycle(
     assert provisioned.workspace.root == "/workspace"
     assert provisioned.sandbox_runtime.session is session
     assert provisioned.sandbox_runtime.run_as == "agent"
-    assert provisioned.lifecycle_controller.state(None) == {
+    assert provisioned.lifecycle_controller.state(
+        SimpleNamespace(environment_id="environment-1")
+    ) == {
         "available": True,
         "ready": True,
         "switching": False,

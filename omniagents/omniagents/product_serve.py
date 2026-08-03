@@ -625,39 +625,25 @@ async def _serve(args: argparse.Namespace) -> int:
         )
 
     # --- Install the startup environment lifecycle controller ---
-    # Lets environment-scoped lifecycle operations rebuild + re-attach this
-    # sandbox in place. The state is owned only by this environment controller;
-    # there is no process-global "current" sandbox.
-    # ``profile_resolver`` is the conventional product resolver (adds the
-    # packaged default profile layer) so switches resolve profiles the same
-    # way boot did.
-    from omniagents.core.runtime.serve_harness import (
+    # Pause, activity, snapshot-discard, observation, and close behavior are
+    # owned by this explicit environment just like dynamically provisioned
+    # environments. Profile changes materialize/rebind a different environment.
+    from omniagents.core.runtime.environment_provisioner import (
         ServeEnvironmentLifecycleController,
-        ServeEnvironmentLifecycleState,
     )
 
-    lifecycle_state = ServeEnvironmentLifecycleState(
-        app=app,
-        session_id=session_id,
+    lifecycle_controller = ServeEnvironmentLifecycleController(
         environment_id=environment_id,
-        snapshot_dir=args.snapshot_dir,
-        sources_parsed=sources_parsed,
-        credentials_parsed=credentials_parsed,
-        workspace_dir=args.workspace,
-        project_id=args.project,
-        profile_resolver=resolve_product_profile,
-        current_profile_path=str(args.profile) if args.profile else None,
-        current_profile_name=_profile_display_name(args.profile, profile),
+        profile_id=_profile_display_name(args.profile, profile),
         backend=client_type,
         container_id=container_id,
         service_urls=service_urls,
         started_services=started_services,
     )
-    lifecycle_state.ready_event.set()
 
     await app.state.agent_service.environment_manager.set_lifecycle_controller(
         environment_id,
-        ServeEnvironmentLifecycleController(lifecycle_state),
+        lifecycle_controller,
     )
 
     # --- Run server + fast signal shutdown ---

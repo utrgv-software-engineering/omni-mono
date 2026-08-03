@@ -45,18 +45,20 @@ _FULL_CAPABILITIES = frozenset(
 )
 
 
-class ProvisionedEnvironmentLifecycleController:
-    """Lifecycle state owned by one dynamically provisioned environment."""
+class ServeEnvironmentLifecycleController:
+    """Lifecycle behavior owned by one AgentHost execution environment."""
 
     def __init__(
         self,
         *,
+        environment_id: str,
         profile_id: str,
         backend: str | None,
         container_id: str | None,
         service_urls: dict[str, Any],
         started_services: list[tuple[Any, int]],
     ) -> None:
+        self.environment_id = environment_id
         self.profile_id = profile_id
         self.backend = backend
         self.container_id = container_id
@@ -67,7 +69,12 @@ class ProvisionedEnvironmentLifecycleController:
         self._ready.set()
         self._closed = False
 
-    def state(self, lease: EnvironmentLease) -> dict[str, Any]:  # noqa: ARG002
+    def _validate(self, lease: EnvironmentLease) -> None:
+        if lease.environment_id != self.environment_id:
+            raise RuntimeError("lifecycle controller/environment mismatch")
+
+    def state(self, lease: EnvironmentLease) -> dict[str, Any]:
+        self._validate(lease)
         return {
             "available": not self._closed,
             "ready": self._ready.is_set() and not self._closed,
@@ -79,8 +86,9 @@ class ProvisionedEnvironmentLifecycleController:
         }
 
     async def wait_until_ready(
-        self, lease: EnvironmentLease, timeout_seconds: float  # noqa: ARG002
+        self, lease: EnvironmentLease, timeout_seconds: float
     ) -> dict[str, Any]:
+        self._validate(lease)
         try:
             await asyncio.wait_for(self._ready.wait(), timeout=timeout_seconds)
         except TimeoutError:
@@ -99,9 +107,11 @@ class ProvisionedEnvironmentLifecycleController:
         return resolve_backend_session(workspace.session)
 
     async def pause(self, lease: EnvironmentLease) -> dict[str, Any]:
+        self._validate(lease)
         return await self._set_paused(lease, paused=True)
 
     async def unpause(self, lease: EnvironmentLease) -> dict[str, Any]:
+        self._validate(lease)
         return await self._set_paused(lease, paused=False)
 
     async def _set_paused(
@@ -122,6 +132,7 @@ class ProvisionedEnvironmentLifecycleController:
         return {"ok": True, "supported": True, "paused": paused}
 
     async def notify_activity(self, lease: EnvironmentLease) -> dict[str, Any]:
+        self._validate(lease)
         backend = self._backend(lease)
         notify = getattr(backend, "notify_activity", None)
         if not callable(notify):
@@ -132,21 +143,13 @@ class ProvisionedEnvironmentLifecycleController:
             return {"ok": False}
         return {"ok": True}
 
-    async def discard_snapshot(
-        self, lease: EnvironmentLease
-    ) -> dict[str, Any]:  # noqa: ARG002
+    async def discard_snapshot(self, lease: EnvironmentLease) -> dict[str, Any]:
+        self._validate(lease)
         self.discard_snapshot_on_exit = True
         return {"ok": True}
 
-    async def switch(
-        self, lease: EnvironmentLease, profile: str  # noqa: ARG002
-    ) -> dict[str, Any]:
-        return {
-            "ok": False,
-            "reason": "automatic environments change profile by Thread rebind",
-        }
-
     async def close(self, lease: EnvironmentLease) -> None:
+        self._validate(lease)
         if self._closed:
             return
         runtime = lease.sandbox_runtime
@@ -210,7 +213,8 @@ class ServeEnvironmentProvisioner:
             if not isinstance(root, str) or not root:
                 raise RuntimeError("provisioned sandbox manifest has no workspace root")
             run_as = _run_as_exec_user(profile.raw)
-            controller = ProvisionedEnvironmentLifecycleController(
+            controller = ServeEnvironmentLifecycleController(
+                environment_id=request.environment_id,
                 profile_id=request.profile_id,
                 backend=brought.client_type,
                 container_id=brought.container_id,
