@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional
 #: error protocol + sandbox-host handshake) documented in
 #: ``docs/serve-protocol.md``. Reported by ``<prog> describe`` so the
 #: launcher can verify compatibility before spawning.
-SERVE_PROTOCOL_VERSION = 1
+SERVE_PROTOCOL_VERSION = 2
 
 __all__ = [
     "SERVE_PROTOCOL_VERSION",
@@ -69,27 +69,7 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
         prog = product_info().prog
     p = argparse.ArgumentParser(
         prog=f"{prog} serve",
-        description=(
-            "Run the product agent server on the host with a long-lived "
-            "SandboxSession. Sandbox shape is read from the resolved profile "
-            "chain (packaged default ← user-default ← per-project ← --profile). "
-            "Workspace seeding is determined by --source flags."
-        ),
-    )
-    p.add_argument(
-        "--source",
-        dest="sources",
-        action="append",
-        default=[],
-        help=(
-            "Per-source JSON descriptor; repeatable. Each source seeds one "
-            "subdirectory of /workspace/<mountName>. Required JSON keys: "
-            "``kind`` (local|local-git|git-remote), ``mountName`` (slug used "
-            "as the subdir name). Kind-specific keys: "
-            "local/local-git → ``path`` (host dir); "
-            "git-remote → ``repoUrl``, optional ``ref``, optional ``auth`` "
-            "({tokenEnv, username}) for private repos."
-        ),
+        description="Run a targetless AgentHost server.",
     )
     p.add_argument(
         "--credential",
@@ -106,18 +86,6 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
         ),
     )
     p.add_argument(
-        "--workspace",
-        required=True,
-        type=Path,
-        help=(
-            "Host directory the agent edits in-place. Substituted for "
-            "``${workspace_dir}`` in the resolved profile (manifest root, "
-            "env values, service commands, etc.). For unix_local this is "
-            "the literal sandbox root; for clients that mount under "
-            "/workspace it's used only where the profile references it."
-        ),
-    )
-    p.add_argument(
         "--snapshot-dir",
         default=None,
         type=Path,
@@ -126,49 +94,6 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
             "When set, workspace state persists across session restarts "
             "(snapshot is restored on next open instead of re-running the "
             "seed entry). Without this flag, sessions are ephemeral."
-        ),
-    )
-    p.add_argument(
-        "--project",
-        default=None,
-        help=(
-            "Launcher project ID; selects per-project profile layer. "
-            "Snapshot keying is driven by --session-id, not this."
-        ),
-    )
-    p.add_argument(
-        "--session-id",
-        default=None,
-        help=(
-            "Stable id for this resumable workspace. If omitted, a fresh "
-            "uuid is generated and printed in the JSON readiness payload — "
-            "the launcher captures it and passes it back on the next start "
-            "to resume. Used as the snapshot tarball name "
-            "(``{session-id}.tar``)."
-        ),
-    )
-    p.add_argument(
-        "--container-id",
-        default=None,
-        help=(
-            "Docker container id captured from a previous launch's readiness "
-            "payload. When supplied AND the resolved profile uses the docker "
-            "backend, the SDK ``client.resume(state)`` path is taken instead "
-            "of ``client.create(...)``: warm reattach to the original "
-            "container if it still exists (preserves running processes / env "
-            "/ apt+pip installs); silently falls back to fresh container + "
-            "snapshot rehydrate if the container is gone. Ignored for non-"
-            "docker backends. The readiness payload's ``resume`` field tells "
-            "the launcher which tier actually happened."
-        ),
-    )
-    p.add_argument(
-        "--profile",
-        default=None,
-        type=Path,
-        help=(
-            "Explicit profile YAML; bypasses user/project layers (tests, "
-            "scripting, and launcher-written per-session profiles)."
         ),
     )
     p.add_argument("--host", default="127.0.0.1")
@@ -295,22 +220,9 @@ def build_readiness_payload(
     host: str,
     port: int,
     auth_token: Optional[str],
-    session: Any,
-    workspace: Any,
-    profile: Any,
-    service_urls: Dict[str, Any],
-    resume_tier: Optional[str],
     agent_host_id: str,
-    workspace_id: str,
-    environment_id: str,
 ) -> Dict[str, Any]:
-    """The launcher's ``SandboxJsonPayload`` readiness dict — the serve
-    protocol's handshake, field-for-field (see docs/serve-protocol.md).
-
-    *session* is the live sandbox session or ``None`` for the host
-    target; *profile* is the :class:`ResolvedProfile` the session was
-    built from.
-    """
+    """Build the targetless AgentHost readiness handshake."""
     from omniagents.rpc.auth import legacy_query_auth_enabled
 
     base_url = f"http://{host}:{port}"
@@ -321,15 +233,6 @@ def build_readiness_payload(
         # launchers read ``auth_token`` below and send it as an
         # ``Authorization: Bearer`` header (or mint a /auth/ws-ticket).
         ws_url = f"{ws_url}?token={auth_token}"
-    # Pull container_id from session.state when present (docker backends
-    # expose it; unix_local / e2b / etc. don't). The launcher uses this
-    # for ``docker exec``-based operations like PR diff extraction.
-    container_id = (
-        None if session is None else getattr(session.state, "container_id", None)
-    )
-    manifest_root = (
-        workspace if session is None else getattr(session.state.manifest, "root", None)
-    )
     return {
         "sandbox_url": base_url,
         "ws_url": ws_url,
@@ -338,23 +241,13 @@ def build_readiness_payload(
         # ``Authorization: Bearer`` header (or POST /auth/ws-ticket for
         # browser WebSockets) instead of a query-string token.
         "auth_token": auth_token,
-        "services": service_urls,
         "ports": {"ui": port},
-        "container_id": container_id,
-        "resume": resume_tier,
         "agent_host_id": agent_host_id,
-        "workspace_id": workspace_id,
-        "environment_id": environment_id,
-        "_debug": {
-            "client": (profile.raw.get("client") or {}).get("type"),
-            "manifest_root": manifest_root,
-            "profile_sources": [str(s) for s in profile.sources],
-        },
     }
 
 
 def _parse_json_flag_list(raw_values: List[str], flag: str) -> List[Dict[str, Any]]:
-    """Parse a repeated JSON-descriptor flag (``--source`` / ``--credential``)."""
+    """Parse a repeated JSON-descriptor flag such as ``--credential``."""
     parsed_list: List[Dict[str, Any]] = []
     for raw in raw_values:
         try:
@@ -375,27 +268,8 @@ def _parse_json_flag_list(raw_values: List[str], flag: str) -> List[Dict[str, An
 async def _serve(args: argparse.Namespace) -> int:
     from omniagents.core.runtime.serve_harness import (
         _cancel_active_runs,
-        _register_execution_environment,
-        _is_host_profile,
-        _profile_display_name,
-        _run_as_exec_user,
-        bring_up_session,
     )
     from omniagents.core.sandbox.profiles import resolve_product_profile
-
-    # --- Profile resolution ---
-    # The conventional product chain: packaged default (paths.sandbox_profile
-    # or the manifest-sibling sandbox_profile_default.yml) ← user default ←
-    # per-project ← --profile.
-    try:
-        profile = resolve_product_profile(
-            workspace_dir=args.workspace,
-            project_id=args.project,
-            explicit_path=args.profile,
-        )
-    except (FileNotFoundError, ValueError) as e:
-        print(json.dumps({"error": f"profile: {e}"}), file=sys.stderr)
-        return 1
 
     # --- Codex (ChatGPT OAuth) provider ---
     # Register the openai-oauth provider builder so the main agent can use a
@@ -405,71 +279,12 @@ async def _serve(args: argparse.Namespace) -> int:
     # branch. Safe + idempotent regardless of sign-in state.
     _register_codex_provider()
 
-    # --- Sandbox session ---
-    # Parse the repeated --source JSON descriptors. Empty list = no
-    # seeding (container boots with an empty /workspace).
-    try:
-        sources_parsed = _parse_json_flag_list(args.sources, "--source")
-    except ValueError as e:
-        print(json.dumps({"error": f"source: {e}"}), file=sys.stderr)
-        return 1
-
     # Parse the repeated --credential JSON descriptors (boot-time git/CLI auth).
     try:
         credentials_parsed = _parse_json_flag_list(args.credentials, "--credential")
     except ValueError as e:
         print(json.dumps({"error": f"credential: {e}"}), file=sys.stderr)
         return 1
-
-    # --- Session id ---
-    # The stable identifier for this resumable workspace. Caller-supplied via
-    # --session-id (resume) or auto-generated (first start). Emitted in the
-    # readiness payload so the launcher can capture + persist it for next time.
-    session_id = args.session_id or str(uuid.uuid4())
-
-    # --- Bring the execution target up ---
-    # ``host`` target: no sandbox session at all. Run the agent as a plain
-    # Agent against the explicitly registered host environment.
-    #
-    # Sandbox targets: ``resume_tier`` is "reused"/"rehydrated"/"fresh"/None;
-    # ``bring_up_session`` returns all runtime resources for explicit
-    # environment registration and tears the partial session down if init fails.
-    is_host = _is_host_profile(profile.raw)
-    if is_host:
-        session = None
-        execution_root = str(args.workspace)
-        resume_tier = None
-        started_services = []
-        service_urls: Dict[str, Any] = {}
-        client_type: Optional[str] = "host"
-    else:
-        from omniagents.core.sandbox.permissive_local_dir import (
-            PermissiveLocalDirError,
-        )
-
-        try:
-            brought = await bring_up_session(
-                profile=profile,
-                sources_parsed=sources_parsed,
-                session_id=session_id,
-                snapshot_dir=args.snapshot_dir,
-                prior_container_id=args.container_id,
-                credentials_parsed=credentials_parsed,
-            )
-        except (ValueError, PermissiveLocalDirError) as e:
-            # Bad source descriptor (ValueError) or a workspace that failed to
-            # seed — e.g. exceeding the seed-size cap. Emit a structured error
-            # the launcher surfaces cleanly instead of crashing with a traceback.
-            print(json.dumps({"error": f"source: {e}"}), file=sys.stderr)
-            return 1
-        session = brought.session
-        if brought.manifest.root is None:
-            raise RuntimeError("sandbox manifest has no workspace root")
-        execution_root = str(brought.manifest.root)
-        resume_tier = brought.resume_tier
-        started_services = brought.started_services
-        service_urls = brought.service_urls
-        client_type = brought.client_type
 
     # --- Agent definition ---
     agent_project_path = _resolve_agent_project_path(args.agent_project)
@@ -485,8 +300,6 @@ async def _serve(args: argparse.Namespace) -> int:
     from omniagents.execution import AgentHostResources
 
     agent_host_id = f"agenthost_{uuid.uuid4().hex}"
-    workspace_id = f"workspace_{uuid.uuid4().hex}"
-    environment_id = f"environment_{uuid.uuid4().hex}"
     agent_host_resources = AgentHostResources.create(agent_host_id)
     app = build_app(
         config_path=str(agent_project_path),
@@ -494,43 +307,6 @@ async def _serve(args: argparse.Namespace) -> int:
         auth_token=args.auth_token,
         agent_host_resources=agent_host_resources,
         agent_host_control_token=args.agent_host_control_token,
-    )
-    await _register_execution_environment(
-        app,
-        environment_id=environment_id,
-        workspace_id=workspace_id,
-        owner_user_id="token_user" if args.auth_token else None,
-        session=session,
-        root=execution_root,
-        run_as=(None if session is None else _run_as_exec_user(profile.raw)),
-        terminal=profile.terminal,
-        sources=sources_parsed,
-    )
-
-    # The startup environment and every environment materialized later share
-    # one AgentHost-owned catalog. Workspace identity names durable source
-    # state; its host materialization path is control-plane data and is never
-    # inferred from a sandbox-internal path such as /workspace.
-    owner_user_id = "token_user" if args.auth_token else None
-    agent_host_resources.provisioning.register_workspace(
-        workspace_id=workspace_id,
-        owner_user_id=owner_user_id,
-        materialization_path=str(args.workspace),
-        sources=sources_parsed,
-    )
-    startup_profile_id = _profile_display_name(args.profile, profile)
-    startup_profile_definition = (
-        {"kind": "path", "path": str(args.profile)}
-        if args.profile is not None
-        else {
-            "kind": "default",
-            **({"project_id": args.project} if args.project else {}),
-        }
-    )
-    agent_host_resources.provisioning.register_profile(
-        startup_profile_id,
-        startup_profile_definition,
-        owner_user_id=owner_user_id,
     )
 
     def _resolve_provisioned_profile(request, workspace_dir):
@@ -591,16 +367,8 @@ async def _serve(args: argparse.Namespace) -> int:
         host=args.host,
         port=port,
         auth_token=args.auth_token,
-        session=session,
-        workspace=args.workspace,
-        profile=profile,
-        service_urls=service_urls,
-        resume_tier=resume_tier,
         agent_host_id=agent_host_id,
-        workspace_id=workspace_id,
-        environment_id=environment_id,
     )
-    container_id = payload["container_id"]
     if args.output == "json":
         # ``default=str`` coerces any stray non-JSON value (e.g. a PosixPath —
         # manifest.root can arrive as one via pydantic ``model_copy(update=)``,
@@ -610,7 +378,6 @@ async def _serve(args: argparse.Namespace) -> int:
         # so the launcher still receives the value it expects.
         print(json.dumps(payload, default=str), flush=True)
     else:
-        backend = (profile.raw.get("client") or {}).get("type", "?")
         label = None
         try:
             from omniagents.core.product import product_info
@@ -618,33 +385,7 @@ async def _serve(args: argparse.Namespace) -> int:
             label = product_info().label
         except Exception:
             pass
-        print(
-            f"{label or 'Agent server'}: {payload['ui_url']}  "
-            f"(profile backend={backend})",
-            flush=True,
-        )
-
-    # --- Install the startup environment lifecycle controller ---
-    # Pause, activity, snapshot-discard, observation, and close behavior are
-    # owned by this explicit environment just like dynamically provisioned
-    # environments. Profile changes materialize/rebind a different environment.
-    from omniagents.core.runtime.environment_provisioner import (
-        ServeEnvironmentLifecycleController,
-    )
-
-    lifecycle_controller = ServeEnvironmentLifecycleController(
-        environment_id=environment_id,
-        profile_id=_profile_display_name(args.profile, profile),
-        backend=client_type,
-        container_id=container_id,
-        service_urls=service_urls,
-        started_services=started_services,
-    )
-
-    await app.state.agent_service.environment_manager.set_lifecycle_controller(
-        environment_id,
-        lifecycle_controller,
-    )
+        print(f"{label or 'Agent server'}: {payload['ui_url']}", flush=True)
 
     # --- Run server + fast signal shutdown ---
     # Any exit signal skips uvicorn's graceful drain (``force_exit``): the

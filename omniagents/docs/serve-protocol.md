@@ -1,6 +1,6 @@
 # Serve Protocol
 
-**Protocol version: 1** (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`)
+**Protocol version: 2** (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`)
 
 The wire contract between a desktop/cloud **launcher** and a product's
 reserved `serve` / `sandbox-host` subcommands
@@ -23,14 +23,8 @@ The launcher spawns the product CLI with:
 <prog> serve --output json
     --auth-token <client-secret>
     --agent-host-control-token <control-secret>
-    [--source <json>]...
     [--credential <json>]...
-    [--project <id>]
     --snapshot-dir <dir>
-    [--session-id <id>]
-    [--container-id <id>]
-    [--profile <path>]
-    --workspace <cwd>
 ```
 
 There is no port flag: serve picks a free port and reports it in the
@@ -41,36 +35,12 @@ readiness payload. Flag semantics:
 | `--output json` | yes | Emit the machine-readable readiness line (the only format launchers parse). |
 | `--auth-token <client-secret>` | yes | Authenticate ordinary launcher/renderer RPC clients. This value is reported as `auth_token` in readiness. |
 | `--agent-host-control-token <control-secret>` | yes | Authenticate the launcher main process for privileged AgentHost workspace, profile, environment, and binding operations. It must differ from the client secret and is never reported in readiness. |
-| `--source <json>` | repeatable | One workspace-source descriptor per flag (see below). No flags = empty workspace. |
 | `--credential <json>` | repeatable | One boot-time git/CLI credential descriptor per flag (see below). |
-| `--project <id>` | no | Launcher project id; selects the per-project profile layer (`<config>/projects/<id>/sandbox.yml`). |
-| `--snapshot-dir <dir>` | yes (launcher always passes it) | Directory for per-session snapshot tarballs (`<session-id>.tar`); enables resumable workspaces. |
-| `--session-id <id>` | no | Stable id of a resumable workspace. Omitted on first start — serve generates one; the launcher captures it from the payload (`_debug` aside, snapshot naming) and passes it back to resume. |
-| `--container-id <id>` | no | Docker container id from a previous payload; requests a warm reattach (`resume: "reused"`), silently falling back to fresh + snapshot rehydrate. |
-| `--profile <path>` | no | Explicit profile YAML (launcher-written per-session profiles, e.g. cloud `host_bridge`); bypasses the user/project layers. Omitted = the product's packaged default profile chain. |
-| `--workspace <cwd>` | yes | Host directory substituted for `${workspace_dir}` in the resolved profile; also the spawn cwd. |
+| `--snapshot-dir <dir>` | yes (launcher always passes it) | Root directory for Workspace snapshots. Each registered Workspace supplies its own `snapshot_ref`. |
 
 Additional flags exist (`--host`, `--port`, `--agent-project`, `--agent`,
 `--output human`) for tests, scripting and terminal users; launchers do not
 pass them.
-
-#### Source descriptor JSON
-
-Each `--source` value is one JSON object:
-
-```json
-{"kind": "local" | "local-git" | "git-remote",
- "mountName": "<slug>",
- "path": "<host dir>",                       // local | local-git
- "repoUrl": "<url>",                         // git-remote
- "auth": {"tokenEnv": "<ENV>", "username": "<user>"},  // git-remote, optional
- "ref": "<branch/tag/sha>"}                  // local-git | git-remote, optional
-```
-
-Each source seeds one subdirectory of the sandbox workspace
-(`/workspace/<mountName>` on mounting backends). Private-remote tokens
-are passed by env-var *name* (`auth.tokenEnv`); the value rides in the
-spawned process environment, never on argv.
 
 #### Credential descriptor JSON
 
@@ -80,8 +50,13 @@ Each `--credential` value is one JSON object:
 {"url": "<remote url>", "username": "<user>", "tokenEnv": "<ENV>"}
 ```
 
-Configures git + host CLIs (`gh`, `az devops`) inside the sandbox at
-boot for every linked host the project uses — not just cloned remotes.
+Configures git + host CLIs (`gh`, `az devops`) for environments provisioned by
+this AgentHost. AgentHosts with different credential scopes must be separate.
+
+Serve startup is deliberately targetless: workspace sources, materialization
+paths, profiles, sessions, containers, and thread bindings are not spawn
+arguments. The trusted launcher registers those resources after readiness via
+the AgentHost control plane.
 
 ### Readiness
 
@@ -95,13 +70,8 @@ Shape (field-for-field, built by
  "ws_url": "ws://127.0.0.1:<port>/ws",
  "ui_url": "http://127.0.0.1:<port>",
  "auth_token": "<auth>" | null,               // send as "Authorization: Bearer" (or POST /auth/ws-ticket)
- "services": {"<name>": "<url>", ...},        // resolved profile-service endpoints
  "ports": {"ui": <port>},
- "container_id": "<docker id>" | null,        // docker backends only
- "resume": "reused" | "rehydrated" | "fresh" | null,
- "_debug": {"client": "<backend type>",
-            "manifest_root": "<path>",
-            "profile_sources": ["<layer path>", ...]}}
+ "agent_host_id": "<stable host id>"}
 ```
 
 Consumers authenticate WebSocket connections with the `auth_token` value in an
@@ -111,16 +81,14 @@ only when `OMNIAGENTS_LEGACY_QUERY_AUTH=1` is set on the serve process, and
 query-string tokens are only *accepted* under the same flag — see
 `omniagents/rpc/protocol.md` (Authentication).
 
-Optional fields a launcher must tolerate: `container_id`,
-`container_name`, `resume`, `_debug` (the default implementation emits
-`container_id`, `resume` and `_debug` always, `container_name` never).
-The line is serialized with `json.dumps(..., default=str)` so it can
-never fail to serialize.
+The readiness payload contains no Workspace or execution-environment runtime.
+Those values are returned by `agent_host_materialize_environment` and tailored
+to the requesting consumer by the launcher.
 
 ### Launch failure
 
-Structured failures (profile resolution, bad `--source`/`--credential`,
-workspace seeding) exit **non-zero** after printing a JSON line to
+Structured startup failures (for example, a malformed `--credential`) exit
+**non-zero** after printing a JSON line to
 **stderr**:
 
 ```json
@@ -136,10 +104,10 @@ After the readiness line the launcher:
 
 - HTTP-polls `ui_url` and connects `ws_url` (path `/ws`) — the
   framework server backend (`omniagents.backends.server.app`).
-- Calls `server_call` functions over the WS: `sandbox.*` (state,
-  switch, pause lifecycle, discard_snapshot), `session.ensure`,
-  `terminal.create` — all framework builtins activated by the standard
-  capability packs.
+- Uses its control credential to register a Workspace (including sources,
+  `snapshot_ref`, and host materialization path), register a profile,
+  materialize an environment, and bind the thread to that environment.
+- Calls environment-routed operations with the materialized `environment_id`.
 
 Shutdown is signal-driven (SIGTERM/SIGINT/SIGHUP): serve skips the
 graceful drain, quiesces in-flight runs (bounded), and always reaches
@@ -186,7 +154,7 @@ prints one JSON object:
  "config_dir": "<resolved absolute path>",
  "env_prefix": "<ENV_PREFIX>",
  "update": {"index_url": "<pep503 page>", "command_hint": "<prog> update"} | null,
- "serve_protocol": 1}
+ "serve_protocol": 2}
 ```
 
 `serve_protocol` is the version of this document the installation
@@ -221,9 +189,10 @@ it:
 
 ## Profile resolution (context)
 
-`serve` resolves its sandbox profile through the conventional product
-chain (`omniagents.core.sandbox.profiles.resolve_product_profile`), last
-layer wins on key conflicts:
+Each environment materialization resolves its sandbox profile through the
+conventional product chain
+(`omniagents.core.sandbox.profiles.resolve_product_profile`), last layer wins
+on key conflicts:
 
 1. the product's packaged default — `paths.sandbox_profile` in
    `project.yml`, else a `sandbox_profile_default.yml` sibling of the
@@ -231,7 +200,7 @@ layer wins on key conflicts:
 2. `<config>/sandbox/default.yml` (launcher-written global settings);
 3. `<config>/projects/<projectId>/sandbox.yml` (launcher-written
    per-project);
-4. `--profile <path>` (explicit; skips layers 2-3).
+4. a control-plane registered explicit profile path (skips layers 2-3).
 
 The same resolver is used for AgentHost environment provisioning, so product
 layers apply consistently to replacement environments.

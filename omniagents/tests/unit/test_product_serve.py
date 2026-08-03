@@ -1,7 +1,7 @@
 """Contract gate for the reserved serve subcommand (omniagents.product_serve).
 
 Pins the launcher wire contract documented in docs/serve-protocol.md
-(protocol version 1):
+(protocol version 2):
 
 - the serve argparse surface accepts EXACTLY the argv the launcher
   builds (see launcher/src/main/agent-process.ts, spawn block) — argv
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -58,34 +57,6 @@ def _launcher_argv_full() -> list[str]:
         "--agent-host-control-token",
         "control-secret",
     ]
-    # for (const s of arg.sources) → one --source per source
-    args += [
-        "--source",
-        json.dumps({"kind": "local", "mountName": "notes", "path": "/home/u/notes"}),
-    ]
-    args += [
-        "--source",
-        json.dumps(
-            {
-                "kind": "local-git",
-                "mountName": "repo",
-                "path": "/home/u/repo",
-                "ref": "main",
-            }
-        ),
-    ]
-    args += [
-        "--source",
-        json.dumps(
-            {
-                "kind": "git-remote",
-                "mountName": "lib",
-                "repoUrl": "https://github.com/acme/lib.git",
-                "auth": {"tokenEnv": "GIT_TOKEN_0", "username": "x-access-token"},
-                "ref": "v2",
-            }
-        ),
-    ]
     # for (const cred of arg.credentials) → one --credential per host
     args += [
         "--credential",
@@ -97,12 +68,7 @@ def _launcher_argv_full() -> list[str]:
             }
         ),
     ]
-    args += ["--project", "proj-123"]  # if (arg.projectId)
     args += ["--snapshot-dir", "/home/u/.config/omni/snapshots"]  # unconditional
-    args += ["--session-id", "3f2c9a"]  # if (arg.sessionId)
-    args += ["--container-id", "deadbeefcafe"]  # if (arg.containerId)
-    args += ["--profile", "/home/u/.config/omni/profiles/devbox.yml"]  # kind==='file'
-    args += ["--workspace", "/home/u/repo"]  # always last
     return args
 
 
@@ -113,31 +79,13 @@ def test_serve_parser_accepts_launcher_argv_full():
     assert ns.output == "json"
     assert ns.auth_token == "client-secret"
     assert ns.agent_host_control_token == "control-secret"
-    assert len(ns.sources) == 3
-    assert json.loads(ns.sources[0]) == {
-        "kind": "local",
-        "mountName": "notes",
-        "path": "/home/u/notes",
-    }
-    assert json.loads(ns.sources[2])["auth"] == {
-        "tokenEnv": "GIT_TOKEN_0",
-        "username": "x-access-token",
-    }
     assert len(ns.credentials) == 1
     assert json.loads(ns.credentials[0])["tokenEnv"] == "GIT_TOKEN_0"
-    assert ns.project == "proj-123"
     assert ns.snapshot_dir == Path("/home/u/.config/omni/snapshots")
-    assert ns.session_id == "3f2c9a"
-    assert ns.container_id == "deadbeefcafe"
-    assert ns.profile == Path("/home/u/.config/omni/profiles/devbox.yml")
-    assert ns.workspace == Path("/home/u/repo")
 
 
 def test_serve_parser_accepts_launcher_argv_minimal():
-    """First-ever start: no sources/credentials/project/session/container,
-    builtin-default profile (no --profile). Authentication, --output json,
-    --snapshot-dir, and --workspace remain — the launcher's unconditional
-    flags."""
+    """A targetless host starts without workspace or environment placement."""
     parser = build_serve_parser(prog="omni")
     ns = parser.parse_args(
         [
@@ -149,16 +97,9 @@ def test_serve_parser_accepts_launcher_argv_minimal():
             "control-secret",
             "--snapshot-dir",
             "/home/u/.config/omni/snapshots",
-            "--workspace",
-            "/home/u/.config/omni",
         ]
     )
-    assert ns.sources == []
     assert ns.credentials == []
-    assert ns.project is None
-    assert ns.session_id is None
-    assert ns.container_id is None
-    assert ns.profile is None
     # Serve picks its own port — the launcher passes no port flag.
     assert ns.port == 0
     assert ns.auth_token == "client-secret"
@@ -173,8 +114,6 @@ def test_serve_parser_accepts_private_agent_host_control_token():
             "client-secret",
             "--agent-host-control-token",
             "control-secret",
-            "--workspace",
-            "/home/u/repo",
         ]
     )
 
@@ -182,11 +121,10 @@ def test_serve_parser_accepts_private_agent_host_control_token():
     assert ns.agent_host_control_token == "control-secret"
 
 
-def test_serve_parser_has_no_required_port_flag():
+def test_serve_parser_has_no_workspace_or_port_placement_flags():
     parser = build_serve_parser(prog="omni")
-    with pytest.raises(SystemExit):
-        # --workspace is the only launcher-required flag.
-        parser.parse_args(["--output", "json"])
+    ns = parser.parse_args(["--output", "json"])
+    assert ns.port == 0
 
 
 # ---------------------------------------------------------------------------
@@ -194,37 +132,12 @@ def test_serve_parser_has_no_required_port_flag():
 # ---------------------------------------------------------------------------
 
 
-def _fake_session(container_id="deadbeefcafe", root="/workspace"):
-    return SimpleNamespace(
-        state=SimpleNamespace(
-            container_id=container_id, manifest=SimpleNamespace(root=root)
-        )
-    )
-
-
-def _fake_profile():
-    return SimpleNamespace(
-        raw={"client": {"type": "docker"}},
-        sources=[
-            Path("/pkg/sandbox_profile_default.yml"),
-            Path("/cfg/sandbox/default.yml"),
-        ],
-    )
-
-
 def test_readiness_payload_shape_byte_match():
     payload = build_readiness_payload(
         host="127.0.0.1",
         port=43210,
         auth_token=None,
-        session=_fake_session(),
-        workspace=Path("/home/u/repo"),
-        profile=_fake_profile(),
-        service_urls={"code_server": "http://127.0.0.1:8080/"},
-        resume_tier="reused",
         agent_host_id="agenthost-1",
-        workspace_id="workspace-1",
-        environment_id="environment-1",
     )
 
     assert payload == {
@@ -232,21 +145,8 @@ def test_readiness_payload_shape_byte_match():
         "ws_url": "ws://127.0.0.1:43210/ws",
         "ui_url": "http://127.0.0.1:43210",
         "auth_token": None,
-        "services": {"code_server": "http://127.0.0.1:8080/"},
         "ports": {"ui": 43210},
-        "container_id": "deadbeefcafe",
-        "resume": "reused",
         "agent_host_id": "agenthost-1",
-        "workspace_id": "workspace-1",
-        "environment_id": "environment-1",
-        "_debug": {
-            "client": "docker",
-            "manifest_root": "/workspace",
-            "profile_sources": [
-                "/pkg/sandbox_profile_default.yml",
-                "/cfg/sandbox/default.yml",
-            ],
-        },
     }
     # Key order is part of the emitted line; pin it.
     assert list(payload.keys()) == [
@@ -254,14 +154,8 @@ def test_readiness_payload_shape_byte_match():
         "ws_url",
         "ui_url",
         "auth_token",
-        "services",
         "ports",
-        "container_id",
-        "resume",
         "agent_host_id",
-        "workspace_id",
-        "environment_id",
-        "_debug",
     ]
     # The launcher requires one line containing BOTH sandbox_url and ui_url,
     # parseable as JSON. default=str mirrors the emission path.
@@ -271,32 +165,18 @@ def test_readiness_payload_shape_byte_match():
     assert "\n" not in line
 
 
-def test_readiness_payload_auth_token_and_host_target(monkeypatch):
+def test_readiness_payload_auth_token(monkeypatch):
     monkeypatch.delenv("OMNIAGENTS_LEGACY_QUERY_AUTH", raising=False)
     payload = build_readiness_payload(
         host="127.0.0.1",
         port=8123,
         auth_token="s3cret",
-        session=None,  # host target: no sandbox session
-        workspace=Path("/home/u/repo"),
-        profile=SimpleNamespace(raw={"client": {"type": "host"}}, sources=[]),
-        service_urls={},
-        resume_tier=None,
         agent_host_id="agenthost-1",
-        workspace_id="workspace-1",
-        environment_id="environment-1",
     )
     # The token rides in the dedicated field (Authorization-header /
     # ticket auth); it only appears in ws_url under the legacy flag.
     assert payload["ws_url"] == "ws://127.0.0.1:8123/ws"
     assert payload["auth_token"] == "s3cret"
-    assert payload["container_id"] is None
-    assert payload["resume"] is None
-    assert payload["_debug"]["manifest_root"] == Path("/home/u/repo")
-    # PosixPath values must survive the emission path via default=str.
-    assert json.loads(json.dumps(payload, default=str))["_debug"]["manifest_root"] == (
-        "/home/u/repo"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +206,8 @@ def test_describe_reports_identity_and_protocol(tmp_path, capsys, monkeypatch):
     from omniagents.product_cli import run_product_describe_command
 
     manifest = tmp_path / "project.yml"
-    manifest.write_text(dedent("""
+    manifest.write_text(
+        dedent("""
             name: acme_code
             product:
               name: acme-code
@@ -336,7 +217,8 @@ def test_describe_reports_identity_and_protocol(tmp_path, capsys, monkeypatch):
               update:
                 index_url: https://pypi.example.test/acme/acme-code/
                 command_hint: acme update
-            """))
+            """)
+    )
     bootstrap_product(manifest)
 
     rc = run_product_describe_command(["--json"])
@@ -353,7 +235,7 @@ def test_describe_reports_identity_and_protocol(tmp_path, capsys, monkeypatch):
         "index_url": "https://pypi.example.test/acme/acme-code/",
         "command_hint": "acme update",
     }
-    assert out["serve_protocol"] == SERVE_PROTOCOL_VERSION == 1
+    assert out["serve_protocol"] == SERVE_PROTOCOL_VERSION == 2
 
 
 def test_describe_null_update_block(tmp_path, capsys):
@@ -363,11 +245,13 @@ def test_describe_null_update_block(tmp_path, capsys):
     from omniagents.product_cli import run_product_describe_command
 
     manifest = tmp_path / "project.yml"
-    manifest.write_text(dedent("""
+    manifest.write_text(
+        dedent("""
             name: bare
             product:
               slug: bare
-            """))
+            """)
+    )
     bootstrap_product(manifest)
 
     assert run_product_describe_command([]) == 0

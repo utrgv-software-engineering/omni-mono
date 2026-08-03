@@ -322,14 +322,7 @@ def test_readiness_payload_omits_query_token_by_default(monkeypatch):
         host="127.0.0.1",
         port=8123,
         auth_token="secret",
-        session=None,
-        workspace="/tmp",
-        profile=SimpleNamespace(raw={}, sources=[]),
-        service_urls={},
-        resume_tier=None,
         agent_host_id="agenthost-1",
-        workspace_id="workspace-1",
-        environment_id="environment-1",
     )
     assert "secret" not in payload["ws_url"]
     assert payload["auth_token"] == "secret"
@@ -339,14 +332,7 @@ def test_readiness_payload_omits_query_token_by_default(monkeypatch):
         host="127.0.0.1",
         port=8123,
         auth_token="secret",
-        session=None,
-        workspace="/tmp",
-        profile=SimpleNamespace(raw={}, sources=[]),
-        service_urls={},
-        resume_tier=None,
         agent_host_id="agenthost-1",
-        workspace_id="workspace-1",
-        environment_id="environment-1",
     )
     assert legacy_payload["ws_url"].endswith("?token=secret")
 

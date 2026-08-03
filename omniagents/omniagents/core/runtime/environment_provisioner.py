@@ -204,7 +204,7 @@ class ServeEnvironmentProvisioner:
             profile=profile,
             sources_parsed=[dict(source) for source in request.workspace.sources],
             credentials_parsed=self._credentials,
-            session_id=request.environment_id,
+            session_id=request.workspace.snapshot_ref or request.environment_id,
             snapshot_dir=self._snapshot_dir,
             prior_container_id=None,
         )

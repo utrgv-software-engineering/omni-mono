@@ -30,10 +30,12 @@ def profile(client_type: str) -> ResolvedProfile:
     )
 
 
-def request(*, sources=()) -> EnvironmentProvisionRequest:
+def request(*, sources=(), snapshot_ref="snapshot-1") -> EnvironmentProvisionRequest:
     return EnvironmentProvisionRequest(
         environment_id="environment-1",
-        workspace=WorkspaceResource("workspace-1", sources=tuple(sources)),
+        workspace=WorkspaceResource(
+            "workspace-1", snapshot_ref=snapshot_ref, sources=tuple(sources)
+        ),
         profile_id="devbox",
     )
 
@@ -99,7 +101,7 @@ async def test_devbox_profile_provisions_sources_runtime_and_lifecycle(
         profile=profile("docker"),
         sources_parsed=[source],
         credentials_parsed=[{"tokenEnv": "GITHUB_TOKEN"}],
-        session_id="environment-1",
+        session_id="snapshot-1",
         snapshot_dir=tmp_path / "snapshots",
         prior_container_id=None,
     )
