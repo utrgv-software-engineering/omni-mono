@@ -380,7 +380,6 @@ async def _serve(args: argparse.Namespace) -> int:
         _profile_display_name,
         _run_as_exec_user,
         bring_up_session,
-        teardown_session,
     )
     from omniagents.core.sandbox.profiles import resolve_product_profile
 
@@ -708,16 +707,6 @@ async def _serve(args: argparse.Namespace) -> int:
         except Exception:
             pass
 
-        # A switch may have replaced the session/services since startup — tear
-        # down the LIVE ones, not the first-launch locals.
-        live_runtime = (
-            await app.state.agent_service.environment_manager.sandbox_runtime(
-                environment_id
-            )
-        )
-        live_session = live_runtime.session if live_runtime is not None else None
-        live_services = lifecycle_state.started_services
-
         # Stop the auto-recap watcher (cancels its task + detaches listeners).
         recap_scheduler_to_stop = getattr(app.state, "recap_scheduler", None)
         if recap_scheduler_to_stop is not None:
@@ -725,21 +714,16 @@ async def _serve(args: argparse.Namespace) -> int:
                 await recap_scheduler_to_stop.stop()
             except Exception:
                 pass
-        # Stop the idle watcher first so its tick task is cancelled and
-        # any in-flight pause unwinds before teardown does its own
-        # defensive unpause + snapshot persist. First-class proxy; no-ops
-        # on backends without idle machinery.
-        if live_session is not None:
-            try:
-                await live_session.stop_idle_watcher()
-            except Exception:
-                pass
-
-        await teardown_session(
-            live_session,
-            live_services,
-            discard_snapshot=lifecycle_state.discard_snapshot_on_exit,
-        )
+        # The AgentHost owns every execution environment, including any that
+        # were provisioned after startup. Shut them all down through the same
+        # manager/controller boundary used by explicit control-plane stops.
+        try:
+            await app.state.agent_service.environment_manager.shutdown()
+        except Exception as exc:  # shutdown remains best-effort on process exit
+            print(
+                json.dumps({"warning": f"environment shutdown failed: {exc}"}),
+                file=sys.stderr,
+            )
     return 0
 
 

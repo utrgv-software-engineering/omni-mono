@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, ClassVar
 
 RPC_ERROR_EXECUTION_RESOLUTION = -32120
@@ -68,6 +69,18 @@ class EnvironmentProvisioningFailedError(ExecutionResolutionError):
             workspace_id=workspace_id,
             profile_id=profile_id,
             reason=reason,
+        )
+
+
+class EnvironmentShutdownError(RuntimeError):
+    """One or more environments failed to close during AgentHost shutdown."""
+
+    def __init__(self, failures: Mapping[str, Exception]) -> None:
+        self.failures = dict(failures)
+        environment_ids = ", ".join(sorted(self.failures))
+        super().__init__(
+            f"failed to stop {len(self.failures)} execution environment(s): "
+            f"{environment_ids}"
         )
 
 

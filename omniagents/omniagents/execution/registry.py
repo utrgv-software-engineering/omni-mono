@@ -15,6 +15,7 @@ from .errors import (
     EnvironmentNotFoundError,
     EnvironmentProvisioningFailedError,
     EnvironmentProvisioningUnavailableError,
+    EnvironmentShutdownError,
     EnvironmentUnavailableError,
     WorkspaceEnvironmentMismatchError,
     WorkspaceNotFoundError,
@@ -187,6 +188,7 @@ class ExecutionEnvironmentManager:
         self._provisioning_tasks: dict[
             tuple[str, str], asyncio.Task[ExecutionEnvironmentDescriptor]
         ] = {}
+        self._shutting_down = False
         self._lock = asyncio.Lock()
 
     def set_provisioner(self, provisioner: EnvironmentProvisioner) -> None:
@@ -213,6 +215,8 @@ class ExecutionEnvironmentManager:
             raise ValueError("profile_id must be a non-empty string")
         key = (workspace_id, profile_id)
         async with self._lock:
+            if self._shutting_down:
+                raise EnvironmentProvisioningUnavailableError(workspace_id, profile_id)
             environment_id = self._automatic_environment_ids.get(key)
             if environment_id is not None:
                 descriptor = self._record(environment_id).descriptor
@@ -312,6 +316,8 @@ class ExecutionEnvironmentManager:
     ) -> None:
         self._workspace_registry.get(descriptor.workspace_id)
         async with self._lock:
+            if self._shutting_down:
+                raise RuntimeError("execution environment manager is shutting down")
             self._register_initial(
                 descriptor,
                 workspace,
@@ -573,6 +579,41 @@ class ExecutionEnvironmentManager:
                 current.terminal_defaults,
             )
             return stopped
+
+    async def shutdown(self) -> tuple[ExecutionEnvironmentDescriptor, ...]:
+        """Stop every ready environment owned by this AgentHost.
+
+        Provisioning already in flight is allowed to finish first so a backend
+        cannot be created after the shutdown inventory is captured. Every
+        ready environment is then closed even if another close fails. Failures
+        are reported together only after all remaining environments have been
+        attempted.
+        """
+
+        async with self._lock:
+            self._shutting_down = True
+            provisioning_tasks = tuple(self._provisioning_tasks.values())
+        if provisioning_tasks:
+            await asyncio.gather(*provisioning_tasks, return_exceptions=True)
+
+        async with self._lock:
+            environment_ids = tuple(
+                environment_id
+                for environment_id, record in self._environments.items()
+                if record.descriptor.state is EnvironmentState.READY
+            )
+
+        stopped: list[ExecutionEnvironmentDescriptor] = []
+        failures: dict[str, Exception] = {}
+        for environment_id in environment_ids:
+            try:
+                stopped.append(await self.stop(environment_id))
+            except Exception as exc:  # noqa: BLE001 - continue closing peers
+                failures[environment_id] = exc
+
+        if failures:
+            raise EnvironmentShutdownError(failures)
+        return tuple(stopped)
 
     async def validate_workspace(self, workspace_id: str, environment_id: str) -> None:
         self._workspace_registry.get(workspace_id)

@@ -1,3 +1,5 @@
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -8,10 +10,13 @@ from omniagents.execution import (
     EnvironmentChangedError,
     EnvironmentKind,
     EnvironmentNotFoundError,
+    EnvironmentProvisioningUnavailableError,
+    EnvironmentShutdownError,
     EnvironmentState,
     EnvironmentUnavailableError,
     ExecutionEnvironmentDescriptor,
     ExecutionEnvironmentManager,
+    ProvisionedEnvironment,
     SandboxExecutionRuntime,
     TerminalExecutionDefaults,
     WorkspaceEnvironmentMismatchError,
@@ -169,6 +174,107 @@ async def test_stopped_environment_cannot_be_leased():
     with pytest.raises(EnvironmentUnavailableError) as exc_info:
         await environments.acquire("env-1")
     assert exc_info.value.data["state"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_shutdown_closes_every_ready_environment():
+    workspaces = WorkspaceRegistry()
+    environments = ExecutionEnvironmentManager(workspaces)
+    controllers = []
+    for suffix in ("a", "b"):
+        workspace_id = f"workspace-{suffix}"
+        environment_id = f"env-{suffix}"
+        workspaces.register(WorkspaceResource(workspace_id))
+        controller = Mock(close=AsyncMock())
+        controllers.append(controller)
+        await environments.register(
+            descriptor(environment_id, workspace_id),
+            fake_workspace(suffix),
+            lifecycle_controller=controller,
+        )
+
+    stopped = await environments.shutdown()
+
+    assert {item.environment_id for item in stopped} == {"env-a", "env-b"}
+    assert all(item.state is EnvironmentState.STOPPED for item in stopped)
+    for controller in controllers:
+        controller.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_attempts_remaining_environments_after_close_failure():
+    workspaces = WorkspaceRegistry()
+    environments = ExecutionEnvironmentManager(workspaces)
+    for suffix in ("broken", "healthy"):
+        workspace_id = f"workspace-{suffix}"
+        workspaces.register(WorkspaceResource(workspace_id))
+        close = AsyncMock(
+            side_effect=RuntimeError("cannot close") if suffix == "broken" else None
+        )
+        await environments.register(
+            descriptor(f"env-{suffix}", workspace_id),
+            fake_workspace(suffix),
+            lifecycle_controller=Mock(close=close),
+        )
+
+    with pytest.raises(EnvironmentShutdownError) as exc_info:
+        await environments.shutdown()
+
+    assert set(exc_info.value.failures) == {"env-broken"}
+    assert (await environments.describe("env-broken")).state is EnvironmentState.FAILED
+    assert (
+        await environments.describe("env-healthy")
+    ).state is EnvironmentState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_inflight_provisioning_then_stops_result():
+    workspaces = WorkspaceRegistry()
+    workspaces.register(WorkspaceResource("workspace-1"))
+    provision_started = asyncio.Event()
+    release_provision = asyncio.Event()
+
+    async def provision(request):  # noqa: ARG001
+        provision_started.set()
+        await release_provision.wait()
+        return ProvisionedEnvironment(
+            workspace=fake_workspace("provisioned"),
+            kind=EnvironmentKind.DEVBOX,
+            capabilities=frozenset({EnvironmentCapability.WORKSPACE_READ}),
+        )
+
+    environments = ExecutionEnvironmentManager(
+        workspaces, provisioner=SimpleNamespace(provision=provision)
+    )
+    provision_task = asyncio.create_task(
+        environments.resolve_automatic("workspace-1", "devbox")
+    )
+    await provision_started.wait()
+
+    shutdown_task = asyncio.create_task(environments.shutdown())
+    await asyncio.sleep(0)
+    assert not shutdown_task.done()
+
+    release_provision.set()
+    provisioned = await provision_task
+    stopped = await shutdown_task
+
+    assert [item.environment_id for item in stopped] == [provisioned.environment_id]
+    assert stopped[0].state is EnvironmentState.STOPPED
+
+
+@pytest.mark.asyncio
+async def test_shutdown_rejects_new_automatic_environments():
+    workspaces = WorkspaceRegistry()
+    workspaces.register(WorkspaceResource("workspace-1"))
+    provisioner = SimpleNamespace(provision=AsyncMock())
+    environments = ExecutionEnvironmentManager(workspaces, provisioner=provisioner)
+
+    assert await environments.shutdown() == ()
+
+    with pytest.raises(EnvironmentProvisioningUnavailableError):
+        await environments.resolve_automatic("workspace-1", "devbox")
+    provisioner.provision.assert_not_awaited()
 
 
 @pytest.mark.asyncio

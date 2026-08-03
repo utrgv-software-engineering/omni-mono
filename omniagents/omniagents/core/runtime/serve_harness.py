@@ -1420,6 +1420,13 @@ async def teardown_session(
             await session.pty_terminate_all()
         except Exception:
             pass
+    # Idle watchers belong to the environment session, not the product serve
+    # process. Stop them here so every lifecycle-controller close path has the
+    # same complete teardown sequence.
+    try:
+        await session.stop_idle_watcher()
+    except Exception:
+        pass
     # If the container was paused for idle, unpause first — session.stop()
     # → persist_snapshot drives ``session.exec`` to write the fingerprint
     # helper output, which hangs forever on a paused container. First-class
