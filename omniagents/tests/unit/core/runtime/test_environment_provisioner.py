@@ -64,7 +64,6 @@ async def test_devbox_profile_provisions_sources_runtime_and_lifecycle(
         session=session,
         started_services=[(SimpleNamespace(name="code"), 4444)],
         service_urls={"code": "http://sandbox/code"},
-        resume_tier=None,
         manifest=SimpleNamespace(root="/workspace"),
         client_type="docker",
         container_id="container-1",
@@ -101,9 +100,8 @@ async def test_devbox_profile_provisions_sources_runtime_and_lifecycle(
         profile=profile("docker"),
         sources_parsed=[source],
         credentials_parsed=[{"tokenEnv": "GITHUB_TOKEN"}],
-        session_id="snapshot-1",
+        snapshot_ref="snapshot-1",
         snapshot_dir=tmp_path / "snapshots",
-        prior_container_id=None,
     )
 
 
@@ -116,7 +114,6 @@ async def test_environment_manager_stop_closes_provisioned_session(
         session=session,
         started_services=[],
         service_urls={},
-        resume_tier=None,
         manifest=SimpleNamespace(root="/workspace"),
         client_type="docker",
         container_id="container-1",
@@ -150,7 +147,6 @@ async def test_invalid_brought_up_manifest_is_torn_down(monkeypatch, tmp_path):
         session=session,
         started_services=[],
         service_urls={},
-        resume_tier=None,
         manifest=SimpleNamespace(root=None),
         client_type="docker",
         container_id="container-1",

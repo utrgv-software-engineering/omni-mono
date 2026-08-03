@@ -9,8 +9,8 @@ attached to the running agent":
 
 * :func:`bring_up_session` — build the sandbox client from a
   :class:`~omniagents.core.sandbox.profiles.ResolvedProfile`,
-  create-or-resume the session (3-tier docker resume), scrub + hydrate
-  the snapshot, run init commands, start services, resolve their URLs.
+  create the session, scrub + hydrate the Workspace snapshot, run init
+  commands, start services, and resolve their URLs.
 * :func:`teardown_session` — stop services, persist the workspace
   snapshot, close the session. Idempotent and ``None``-safe.
 Runtime placement is returned to the AgentHost for explicit environment
@@ -228,7 +228,7 @@ def _parse_idle_threshold(raw: Optional[Any]) -> float:
 def _build_snapshot(
     *,
     snapshot_dir: Optional[Path],
-    session_id: str,
+    snapshot_ref: str,
     client_type: Optional[str],
     no_snapshot_client_types: Sequence[str] = NOOP_SNAPSHOT_CLIENT_TYPES,
 ) -> Any:
@@ -241,7 +241,7 @@ def _build_snapshot(
     same path on resume — pure overhead, with no state to preserve that
     isn't already sitting on disk. Host mode therefore falls through to
     a noop snapshot regardless of ``--snapshot-dir``, which also sidesteps
-    the unsafe-symlink accumulation that ``_scrub_session_snapshot``
+    the unsafe-symlink accumulation that ``_scrub_workspace_snapshot``
     exists to mop up. ``host_bridge``: the workspace is a durable
     directory on the *remote host* (the user's laptop), reachable only
     via the exec channel. Tarring it back to the serve host's disk would
@@ -249,10 +249,9 @@ def _build_snapshot(
     as ``unix_local``'s host directory. *no_snapshot_client_types* is
     the product knob for that set.
 
-    The snapshot id is the caller-supplied (or auto-generated) session
-    id, which is the stable identifier for this resumable workspace. The
-    next ``client.create()`` with the same session id restores the
-    prior workspace state instead of re-running the seed entry.
+    The snapshot id is the Workspace's durable ``snapshot_ref``. A later
+    environment materialization for that Workspace restores its prior files
+    instead of relying on a container identity.
     """
     if snapshot_dir is None:
         return None
@@ -261,100 +260,7 @@ def _build_snapshot(
     from agents.sandbox.snapshot import LocalSnapshot
 
     snapshot_dir.mkdir(parents=True, exist_ok=True)
-    return LocalSnapshot(id=session_id, base_path=snapshot_dir)
-
-
-async def _create_or_resume_session(
-    *,
-    client: Any,
-    client_type: Optional[str],
-    manifest: Any,
-    options: Any,
-    snapshot: Any,
-    session_id: str,
-    prior_container_id: Optional[str],
-) -> Tuple[Any, Optional[str]]:
-    """Create a new session or resume from a prior container, returning the
-    session plus a tier tag the launcher uses to decide whether to notify the
-    user that runtime state was lost.
-
-    Tier semantics:
-      * ``"reused"`` — warm reattach. The container at ``prior_container_id``
-        was still alive; processes, env, and apt/pip installs all survive.
-      * ``"rehydrated"`` — original container was gone, but the snapshot tar
-        existed. Workspace files restored into a brand-new container; running
-        processes are gone.
-      * ``"fresh"`` — both gone. Manifest-only seed; user lost everything
-        but their on-disk source mounts.
-      * ``None`` — caller did not request resume (first launch / no prior
-        container_id supplied). Treated as the silent baseline.
-
-    Only the docker backend supports the resume path today. For ``unix_local``
-    the host filesystem IS the persistence layer and there's nothing to
-    reattach to. For other backends we conservatively fall through to
-    ``client.create``; future backends can opt into resume.
-    """
-    if prior_container_id and client_type == "docker":
-        # ``DockerSandboxClient.resume(state)`` already handles all three tiers
-        # internally: it tries ``get_container(state.container_id)`` and either
-        # reattaches or creates a replacement with the same session_id and
-        # ``workspace_root_ready=False``. The replacement path triggers
-        # ``_start_workspace`` to restore the snapshot tar (rehydrated) or
-        # apply the manifest from scratch (fresh).
-        import uuid as _uuid
-
-        from agents.sandbox.sandboxes.docker import DockerSandboxSessionState
-        from agents.sandbox.snapshot import resolve_snapshot
-
-        # ``snapshot`` may be ``None`` if --snapshot-dir wasn't set; coerce to
-        # ``NoopSnapshot`` so ``DockerSandboxSessionState`` validates. The
-        # snapshot id is the session_id, matching ``client.create``'s wiring.
-        snapshot_instance = resolve_snapshot(snapshot, session_id)
-        # ``--session-id`` is any stable caller string (the launcher's
-        # residents use readable slugs like ``resident-<id>``); the SDK's
-        # state model types it as UUID. Non-UUID ids map through uuid5 so the
-        # same string resumes to the same UUID every time, while real UUIDs
-        # round-trip unchanged. The snapshot keeps the raw string id above.
-        try:
-            state_session_uuid = _uuid.UUID(session_id)
-        except ValueError:
-            state_session_uuid = _uuid.uuid5(
-                _uuid.NAMESPACE_URL, f"omni-serve:{session_id}"
-            )
-        state = DockerSandboxSessionState(
-            session_id=state_session_uuid,
-            manifest=manifest,
-            image=options.image,
-            snapshot=snapshot_instance,
-            container_id=prior_container_id,
-            exposed_ports=options.exposed_ports,
-        )
-        # Did the underlying tar actually exist? We answer this BEFORE start()
-        # because the SDK clears the tar's restorability state once hydration
-        # runs (cache invalidation, fingerprint resets). Used to distinguish
-        # rehydrate from fresh below.
-        try:
-            snapshot_restorable = await snapshot_instance.restorable(dependencies=None)
-        except Exception:
-            snapshot_restorable = False
-
-        session = await client.resume(state)
-        # ``resume`` mutates state.container_id to the freshly-minted id when
-        # the old container couldn't be found. Comparing identifies the warm
-        # reattach without poking SDK privates.
-        warm_reattach = str(session.state.container_id) == prior_container_id
-        if warm_reattach:
-            return session, "reused"
-        if snapshot_restorable:
-            return session, "rehydrated"
-        return session, "fresh"
-
-    session = await client.create(
-        manifest=manifest,
-        options=options,
-        snapshot=snapshot,
-    )
-    return session, None
+    return LocalSnapshot(id=snapshot_ref, base_path=snapshot_dir)
 
 
 def _safe_symlink_target(rel_path: str, target: str) -> bool:
@@ -382,7 +288,7 @@ def _safe_symlink_target(rel_path: str, target: str) -> bool:
     return True
 
 
-def _scrub_session_snapshot(session: Any) -> None:
+def _scrub_workspace_snapshot(session: Any) -> None:
     """Drop unsafe symlinks from the persisted snapshot tar.
 
     The SDK's ``unix_local.persist_workspace`` does an unfiltered
@@ -573,8 +479,8 @@ async def _run_init(session: Any, commands: List[str]) -> None:
             )
 
 
-# Sentinel process_id for a service we adopted from a warm/reused container
-# rather than launching ourselves. We have no PTY pid for it; ``teardown_session``
+# Sentinel process_id for a service that was already running when the
+# environment materialized. We have no PTY pid for it; ``teardown_session``
 # only checks ``started_services`` truthiness (never the pids) and
 # ``_resolve_service_urls`` keys off ``svc.port``, so this is inert downstream.
 _ADOPTED_SERVICE_PID = -1
@@ -601,22 +507,18 @@ async def _start_services(
 ) -> List[Tuple[ServiceSpec, int]]:
     """Launch each service via ``pty_exec_start``. Hard-fail on immediate exit.
 
-    Reuse-aware: when the session is brought up on a warm/reused container
-    (resumed from idle pause or re-attached), a service from the previous boot
-    may still be running and holding its port. Relaunching it would just bind-
-    clash (e.g. code-server exits 1 with ``EADDRINUSE``), so for a service that
-    declares a port we first probe whether that port is already listening and,
-    if so, adopt the existing instance instead of starting a duplicate. On a
-    cold container nothing is listening, so the probe is a cheap no-op and the
-    launch proceeds normally.
+    Idempotent startup: profile init or an image entrypoint may already have
+    started a declared service. Relaunching it would bind-clash (for example,
+    code-server exits 1 with ``EADDRINUSE``), so a service that declares a port
+    is probed first and an existing listener is adopted instead of duplicated.
     """
     started: List[Tuple[ServiceSpec, int]] = []
     for svc in services:
-        # Adopt an already-running instance on a reused container.
+        # Adopt an already-running instance created by init or the image.
         if svc.port is not None and await _port_is_listening(session, svc.port):
             print(
                 f"[services] {svc.name!r} already listening on port {svc.port}; "
-                "adopting existing instance (reused container)",
+                "adopting existing instance",
                 file=sys.stderr,
             )
             started.append((svc, _ADOPTED_SERVICE_PID))
@@ -704,7 +606,6 @@ class BroughtUpSession:
     session: Any
     started_services: List[Tuple[ServiceSpec, int]]
     service_urls: Dict[str, Any]
-    resume_tier: Optional[str]
     manifest: Any
     client_type: Optional[str]
     container_id: Optional[str]
@@ -714,12 +615,11 @@ async def bring_up_session(
     *,
     profile: ResolvedProfile,
     sources_parsed: List[Dict[str, Any]],
-    session_id: str,
+    snapshot_ref: str,
     snapshot_dir: Optional[Path],
-    prior_container_id: Optional[str],
     credentials_parsed: Optional[List[Dict[str, Any]]] = None,
 ) -> BroughtUpSession:
-    """Build the sandbox client from *profile*, create-or-resume the session,
+    """Build the sandbox client from *profile*, create and hydrate the session,
     start it, run init + services, and return its runtime resources. Raises
     ``ValueError`` for a bad profile/source; tears the partial
     session down (re-raising) if init/services fail.
@@ -731,17 +631,15 @@ async def bring_up_session(
     client_type_raw = (profile.raw.get("client") or {}).get("type")
     client_type = client_type_raw if isinstance(client_type_raw, str) else None
     snapshot = _build_snapshot(
-        snapshot_dir=snapshot_dir, session_id=session_id, client_type=client_type
+        snapshot_dir=snapshot_dir,
+        snapshot_ref=snapshot_ref,
+        client_type=client_type,
     )
 
-    session, resume_tier = await _create_or_resume_session(
-        client=client,
-        client_type=client_type,
+    session = await client.create(
         manifest=manifest,
         options=options,
         snapshot=snapshot,
-        session_id=session_id,
-        prior_container_id=prior_container_id,
     )
 
     # Idle-pause threshold from the profile YAML before start() arms the
@@ -757,7 +655,7 @@ async def bring_up_session(
     # committed `.fvm/flutter_sdk -> /Users/...` absolute symlink in a cloned
     # repo) would make `start()` throw WorkspaceArchiveWriteError and the
     # session would never come up. Best-effort + idempotent.
-    _scrub_session_snapshot(session)
+    _scrub_workspace_snapshot(session)
 
     await session.start()
     started_services: List[Tuple[ServiceSpec, int]] = []
@@ -782,7 +680,6 @@ async def bring_up_session(
         session=session,
         started_services=started_services,
         service_urls=service_urls,
-        resume_tier=resume_tier,
         manifest=manifest,
         client_type=client_type,
         container_id=getattr(session.state, "container_id", None),

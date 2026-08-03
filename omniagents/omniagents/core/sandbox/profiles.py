@@ -38,11 +38,11 @@ Resolution order (last wins on key conflict, dicts merge, lists replace):
     4. --profile <path>                      (explicit CLI override; tests, scripting)
 
 The only host-path interpolation supported is ``${workspace_dir}``,
-substituted from ``omni serve --workspace <dir>`` before the profile is
-handed to the SDK. Everything else host-specific (snapshot storage,
-network allowlist) is passed via dedicated CLI flags / config files and
-threaded into the manifest at runtime — keeps the profile mostly about
-container shape.
+substituted from the Workspace directory selected for environment
+materialization before the profile is handed to the SDK. Everything else
+host-specific (snapshot storage, network allowlist) is passed through dedicated
+provisioning inputs and threaded into the manifest at runtime — keeping the
+profile mostly about container shape.
 """
 
 from __future__ import annotations

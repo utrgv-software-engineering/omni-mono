@@ -26,26 +26,74 @@ import pytest
 from agents.tool import ToolContext
 from agents.usage import Usage
 
+from omniagents.execution import (
+    EnvironmentCapability,
+    EnvironmentKind,
+    EnvironmentLease,
+    EnvironmentState,
+    ExecutionEnvironmentDescriptor,
+    OperationExecutionDescriptor,
+    RequestContext,
+    WorkspaceResource,
+    bind_request_context,
+    reset_request_context,
+)
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 from omniagents.workspace import HostWorkspace, reset_workspace, set_workspace
+
+_TEST_ENVIRONMENT_ID = "test-host-environment"
+_TEST_WORKSPACE_ID = "test-workspace"
+_TEST_ENVIRONMENT_GENERATION = 1
+_TEST_SESSION_ID = "sess-test"
+
+
+def _direct_invocation_context(workspace: HostWorkspace) -> RequestContext:
+    """Build the dispatcher context used by direct test invocations."""
+    descriptor = ExecutionEnvironmentDescriptor(
+        environment_id=_TEST_ENVIRONMENT_ID,
+        workspace_id=_TEST_WORKSPACE_ID,
+        kind=EnvironmentKind.HOST,
+        state=EnvironmentState.READY,
+        generation=_TEST_ENVIRONMENT_GENERATION,
+        capabilities=frozenset(EnvironmentCapability),
+    )
+    return RequestContext(
+        operation=OperationExecutionDescriptor(
+            name="testing.direct_invocation",
+            resource_scope=ResourceScope.ENVIRONMENT,
+            execution_requirements=(
+                ExecutionRequirement.WORKSPACE_READ
+                | ExecutionRequirement.WORKSPACE_WRITE
+                | ExecutionRequirement.PROCESS
+                | ExecutionRequirement.NETWORK
+                | ExecutionRequirement.PTY
+                | ExecutionRequirement.ENVIRONMENT_LIFECYCLE
+            ),
+        ),
+        principal=None,
+        workspace=WorkspaceResource(_TEST_WORKSPACE_ID),
+        environment=descriptor,
+        environment_lease=EnvironmentLease(descriptor, workspace),
+    )
 
 
 @pytest.fixture(autouse=True)
 def _default_permissive_workspace():
-    """Install a permissive ``HostWorkspace(root="/")`` for every test.
+    """Install an explicit permissive host environment for every test.
 
-    The W0 host runtime installs the workspace from the run context in
-    production; tests that go directly through tools or server functions
-    bypass that pathway, so without a default the workspace falls back
-    to ``HostWorkspace(cwd)`` and rejects absolute paths under
-    ``/tmp/pytest-*``. ``invoke_tool`` may swap in a tighter
-    ``HostWorkspace(root=workspace_root)`` for the duration of a single
-    invocation; this fixture is the surrounding default.
+    Direct tool/server-function tests bypass dispatcher routing. Model that
+    boundary with a real ``RequestContext`` and ``EnvironmentLease`` instead
+    of reviving an implicit host fallback. ``invoke_tool`` may still swap in a
+    tighter Workspace adapter for one tool invocation.
     """
-    token = set_workspace(HostWorkspace(root="/"))
+    workspace = HostWorkspace(root="/")
+    workspace_token = set_workspace(workspace)
+    request_token = bind_request_context(_direct_invocation_context(workspace))
     try:
         yield
     finally:
-        reset_workspace(token)
+        reset_request_context(request_token)
+        reset_workspace(workspace_token)
 
 
 @pytest.fixture
@@ -79,10 +127,10 @@ def test_event_loop():
 def invoke_tool(test_event_loop):
     """Invoke a tool on the shared test event loop.
 
-    Mirrors the W0 host-runtime contract: when a ``workspace_root`` is set
-    on the run context, install a matching ``HostWorkspace`` on the
-    workspace contextvar for the duration of the call so workspace-routed
-    tool bodies resolve paths against the agent's configured root.
+    Install a matching ``HostWorkspace`` and explicit ``EnvironmentLease`` for
+    the duration of each call so workspace-routed tool bodies resolve paths
+    against the agent's configured root. The ToolContext also receives the
+    environment identity fields that the production dispatcher supplies.
 
     Also exposes helper methods:
     - ``invoke_tool.run(coro)``: schedule a coroutine on the shared loop.
@@ -92,7 +140,11 @@ def invoke_tool(test_event_loop):
 
     def _invoke(tool, *, workspace_root=None, **params):
         payload = {k: v for k, v in params.items() if v is not None}
-        context_data = {}
+        context_data = {
+            "environment_id": _TEST_ENVIRONMENT_ID,
+            "environment_generation": _TEST_ENVIRONMENT_GENERATION,
+            "session_id": _TEST_SESSION_ID,
+        }
         if workspace_root is not None:
             context_data["workspace_root"] = workspace_root
         ctx = ToolContext(
@@ -102,17 +154,20 @@ def invoke_tool(test_event_loop):
             tool_call_id="test-call",
             tool_arguments=payload,
         )
-        token = set_workspace(
+        workspace = (
             HostWorkspace(root=workspace_root)
             if workspace_root
             else HostWorkspace(root="/")
         )
+        workspace_token = set_workspace(workspace)
+        request_token = bind_request_context(_direct_invocation_context(workspace))
         try:
             return test_event_loop.run_until_complete(
                 tool.on_invoke_tool(ctx, json.dumps(payload))
             )
         finally:
-            reset_workspace(token)
+            reset_request_context(request_token)
+            reset_workspace(workspace_token)
 
     async def _wait_for_exit(job, timeout):
         deadline = test_event_loop.time() + timeout
