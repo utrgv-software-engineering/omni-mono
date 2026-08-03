@@ -115,6 +115,7 @@ EXPERIMENTAL_REQUESTS = (
     "agent_host_register_profile",
     "agent_host_bind_thread",
     "agent_host_list_resources",
+    "agent_host_materialize_environment",
     "agent_host_stop_environment",
     "fork_session",
     "set_session_hold",
@@ -400,6 +401,11 @@ _REQUEST_CLASSIFICATIONS = _classification_map(
             ResourceScope.ENVIRONMENT,
             ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
             ("agent_host_stop_environment",),
+        ),
+        (
+            ResourceScope.WORKSPACE,
+            ExecutionRequirement.NONE,
+            ("agent_host_materialize_environment",),
         ),
         (
             ResourceScope.EXTENSION,

@@ -85,6 +85,10 @@
       "execution_requirements": [],
       "resource_scope": "agent_host"
     },
+    "agent_host_materialize_environment": {
+      "execution_requirements": [],
+      "resource_scope": "workspace"
+    },
     "agent_host_register_profile": {
       "execution_requirements": [],
       "resource_scope": "agent_host"
@@ -651,6 +655,7 @@
       "agent_host_register_profile",
       "agent_host_bind_thread",
       "agent_host_list_resources",
+      "agent_host_materialize_environment",
       "agent_host_stop_environment",
       "fork_session",
       "set_session_hold",

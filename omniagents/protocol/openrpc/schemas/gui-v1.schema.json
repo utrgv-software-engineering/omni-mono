@@ -265,6 +265,23 @@
       "type": "object",
       "x-omni-stability": "experimental"
     },
+    "agent_host_materialize_environment": {
+      "additionalProperties": false,
+      "properties": {
+        "profile_id": {
+          "type": "string"
+        },
+        "workspace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "profile_id"
+      ],
+      "type": "object",
+      "x-omni-stability": "experimental"
+    },
     "agent_host_register_profile": {
       "additionalProperties": false,
       "properties": {
@@ -3631,6 +3648,9 @@
     },
     {
       "$ref": "#/$defs/agent_host_list_resources"
+    },
+    {
+      "$ref": "#/$defs/agent_host_materialize_environment"
     },
     {
       "$ref": "#/$defs/agent_host_stop_environment"

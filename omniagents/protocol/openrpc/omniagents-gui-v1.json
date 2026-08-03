@@ -4522,6 +4522,61 @@
           "$ref": "#/components/errors/InitializationRequired"
         }
       ],
+      "name": "agent_host_materialize_environment",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "workspace_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/agent_host_materialize_environment/properties/workspace_id"
+          }
+        },
+        {
+          "name": "profile_id",
+          "required": true,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/agent_host_materialize_environment/properties/profile_id"
+          }
+        }
+      ],
+      "result": {
+        "name": "agent_host_materialize_environment_result",
+        "schema": {
+          "$ref": "./schemas/gui-v1.schema.json#/$defs/result"
+        }
+      },
+      "summary": "OmniAgents GUI protocol operation agent_host_materialize_environment",
+      "x-omni-direction": "client_to_server",
+      "x-omni-execution-requirements": [],
+      "x-omni-kind": "request",
+      "x-omni-params-schema": {
+        "$ref": "./schemas/gui-v1.schema.json#/$defs/agent_host_materialize_environment"
+      },
+      "x-omni-resource-scope": "workspace",
+      "x-omni-stability": "experimental"
+    },
+    {
+      "errors": [
+        {
+          "$ref": "#/components/errors/InvalidRequest"
+        },
+        {
+          "$ref": "#/components/errors/MethodNotFound"
+        },
+        {
+          "$ref": "#/components/errors/InvalidParams"
+        },
+        {
+          "$ref": "#/components/errors/InternalError"
+        },
+        {
+          "$ref": "#/components/errors/TransportOverloaded"
+        },
+        {
+          "$ref": "#/components/errors/InitializationRequired"
+        }
+      ],
       "name": "agent_host_stop_environment",
       "paramStructure": "by-name",
       "params": [

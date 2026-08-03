@@ -36,6 +36,7 @@ REQUIRED_FIELDS = {
     ),
     "agent_host_register_profile": ("profile_id", "definition"),
     "agent_host_bind_thread": ("thread_id", "binding"),
+    "agent_host_materialize_environment": ("workspace_id", "profile_id"),
     "agent_host_stop_environment": ("environment_id",),
     "initialize": ("protocol_version", "identity", "platform", "capabilities"),
     "start_run": ("prompt", "environment_selection"),
@@ -676,6 +677,10 @@ RESULT_TYPES = {
     ),
     "agent_host_bind_thread": ("dict[str, Any]", "Record<string, unknown>"),
     "agent_host_list_resources": ("dict[str, Any]", "Record<string, unknown>"),
+    "agent_host_materialize_environment": (
+        "dict[str, Any]",
+        "Record<string, unknown>",
+    ),
     "agent_host_stop_environment": (
         "dict[str, Any]",
         "Record<string, unknown>",

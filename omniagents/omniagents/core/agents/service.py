@@ -5131,6 +5131,19 @@ class AgentService(RpcMethodsBase):
         descriptor = await self.environment_manager.stop(environment_id)
         return self._environment_payload(descriptor)
 
+    async def agent_host_materialize_environment(
+        self, workspace_id: str, profile_id: str
+    ) -> dict:
+        workspace = self.workspace_registry.get(workspace_id)
+        self.agent_host_resources.provisioning.profile(
+            profile_id,
+            owner_user_id=workspace.owner_user_id,
+        )
+        descriptor = await self.environment_manager.resolve_automatic(
+            workspace_id, profile_id
+        )
+        return self._environment_payload(descriptor)
+
     @staticmethod
     def _workspace_payload(workspace) -> dict:
         return {

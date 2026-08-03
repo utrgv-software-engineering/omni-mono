@@ -143,6 +143,14 @@ class AgentHostListResources(BaseModel):
     )
 
 
+class AgentHostMaterializeEnvironment(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    profile_id: str
+    workspace_id: str
+
+
 class Definition(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1576,6 +1584,7 @@ class Model(
         | AgentHostRegisterProfile
         | AgentHostBindThread
         | AgentHostListResources
+        | AgentHostMaterializeEnvironment
         | AgentHostStopEnvironment
         | ForkSession
         | SetSessionHold
@@ -1711,6 +1720,7 @@ class Model(
         | AgentHostRegisterProfile
         | AgentHostBindThread
         | AgentHostListResources
+        | AgentHostMaterializeEnvironment
         | AgentHostStopEnvironment
         | ForkSession
         | SetSessionHold

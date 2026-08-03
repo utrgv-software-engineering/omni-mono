@@ -345,6 +345,7 @@ GLOBAL_MUTATING_METHODS = frozenset(
 RESOURCE_SCOPED_METHODS = frozenset(
     {
         "agent_host_bind_thread",
+        "agent_host_materialize_environment",
         "agent_host_stop_environment",
         "stop_run",
         "send_user_message",

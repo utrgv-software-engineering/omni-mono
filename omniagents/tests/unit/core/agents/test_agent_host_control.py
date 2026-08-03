@@ -5,8 +5,15 @@ import pytest
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.providers.auth.base import UserIdentity
-from omniagents.execution import AgentHostResources, AutomaticEnvironment
+from omniagents.execution import (
+    AgentHostResources,
+    AutomaticEnvironment,
+    EnvironmentCapability,
+    EnvironmentKind,
+    ProvisionedEnvironment,
+)
 from omniagents.rpc.auth import AuthorizationDenied, AuthorizationPolicy
+from omniagents.workspace import HostWorkspace
 
 
 def make_service() -> AgentService:
@@ -161,3 +168,38 @@ async def test_automatic_binding_requires_registered_profile(tmp_path):
                 },
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_materialize_environment_resolves_registered_workspace_profile(
+    tmp_path,
+):
+    class HostProvisioner:
+        async def provision(self, request):
+            return ProvisionedEnvironment(
+                workspace=HostWorkspace(root=str(tmp_path)),
+                kind=EnvironmentKind.HOST,
+                capabilities=frozenset({EnvironmentCapability.WORKSPACE_READ}),
+            )
+
+    spec = AgentSpec(
+        name="control",
+        welcome_text="",
+        get_agent_instructions=lambda: "",
+        build_agent=None,
+    )
+    resources = AgentHostResources.create(
+        "control-host", environment_provisioner=HostProvisioner()
+    )
+    service = AgentService(spec, resources)
+    await service.agent_host_register_workspace("workspace-1", str(tmp_path))
+    await service.agent_host_register_profile("host", {"kind": "default"})
+
+    environment = await service.agent_host_materialize_environment(
+        "workspace-1", "host"
+    )
+
+    assert environment["workspace_id"] == "workspace-1"
+    assert environment["kind"] == "host"
+    assert environment["state"] == "ready"
+    assert environment["capabilities"] == ["workspace_read"]

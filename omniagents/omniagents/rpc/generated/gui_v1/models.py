@@ -625,6 +625,16 @@ class AgentHostListResourcesResult(RootModel[dict[str, Any]]):
     pass
 
 
+class AgentHostMaterializeEnvironmentParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_id: str
+    profile_id: str
+
+
+class AgentHostMaterializeEnvironmentResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class AgentHostStopEnvironmentParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     environment_id: str
@@ -1662,6 +1672,7 @@ CLIENT_REQUEST_MODELS = {
     "agent_host_register_profile": AgentHostRegisterProfileParams,
     "agent_host_bind_thread": AgentHostBindThreadParams,
     "agent_host_list_resources": AgentHostListResourcesParams,
+    "agent_host_materialize_environment": AgentHostMaterializeEnvironmentParams,
     "agent_host_stop_environment": AgentHostStopEnvironmentParams,
     "fork_session": ForkSessionParams,
     "set_session_hold": SetSessionHoldParams,
@@ -1769,6 +1780,7 @@ CLIENT_RESULT_MODELS = {
     "agent_host_register_profile": AgentHostRegisterProfileResult,
     "agent_host_bind_thread": AgentHostBindThreadResult,
     "agent_host_list_resources": AgentHostListResourcesResult,
+    "agent_host_materialize_environment": AgentHostMaterializeEnvironmentResult,
     "agent_host_stop_environment": AgentHostStopEnvironmentResult,
     "fork_session": ForkSessionResult,
     "set_session_hold": SetSessionHoldResult,
@@ -1910,6 +1922,7 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "agent_host_register_profile",
         "agent_host_bind_thread",
         "agent_host_list_resources",
+        "agent_host_materialize_environment",
         "agent_host_stop_environment",
         "fork_session",
         "set_session_hold",

@@ -52,6 +52,7 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | AgentHostRegisterProfile
   | AgentHostBindThread
   | AgentHostListResources
+  | AgentHostMaterializeEnvironment
   | AgentHostStopEnvironment
   | ForkSession
   | SetSessionHold
@@ -439,6 +440,10 @@ export interface AgentHostBindThread {
   thread_id: string;
 }
 export interface AgentHostListResources {}
+export interface AgentHostMaterializeEnvironment {
+  profile_id: string;
+  workspace_id: string;
+}
 export interface AgentHostStopEnvironment {
   environment_id: string;
 }

@@ -239,6 +239,10 @@ export interface AgentHostBindThreadParams {
 }
 export interface AgentHostListResourcesParams {
 }
+export interface AgentHostMaterializeEnvironmentParams {
+  workspace_id: string;
+  profile_id: string;
+}
 export interface AgentHostStopEnvironmentParams {
   environment_id: string;
 }
@@ -908,6 +912,7 @@ export interface RpcMethodMap {
   "agent_host_register_profile": { params: AgentHostRegisterProfileParams; result: Record<string, unknown> };
   "agent_host_bind_thread": { params: AgentHostBindThreadParams; result: Record<string, unknown> };
   "agent_host_list_resources": { params: AgentHostListResourcesParams; result: Record<string, unknown> };
+  "agent_host_materialize_environment": { params: AgentHostMaterializeEnvironmentParams; result: Record<string, unknown> };
   "agent_host_stop_environment": { params: AgentHostStopEnvironmentParams; result: Record<string, unknown> };
   "fork_session": { params: ForkSessionParams; result: Record<string, unknown> };
   "set_session_hold": { params: SetSessionHoldParams; result: Record<string, unknown> };
