@@ -9,7 +9,7 @@ import {
   TASK_STATUSES,
   orderTasks,
   taskCounts,
-} from "../tasks.js";
+} from "../task-model.js";
 import type { TaskSummary } from "../../store/appStore.js";
 
 const task = (

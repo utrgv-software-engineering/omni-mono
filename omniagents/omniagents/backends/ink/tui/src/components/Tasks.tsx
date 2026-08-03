@@ -11,7 +11,7 @@ import {
   STATUS_GLYPH,
   orderTasks,
   taskCounts,
-} from "./tasks.js";
+} from "./task-model.js";
 import { TokyoNightTheme } from "../theme.js";
 
 const MAX_VISIBLE = 5;
@@ -19,7 +19,7 @@ const MAX_VISIBLE = 5;
 // Docked task list rendered just above the input prompt. Returns null
 // when there are no tasks so the message area reclaims the space.
 //
-// Ordering, counting and the glyph/colour palette live in `./tasks` so they
+// Ordering, counting and the glyph/colour palette live in `./task-model` so they
 // stay exhaustive over the status set and can be tested without a render.
 export const Tasks = React.memo(() => {
   const allTasks = useTasks();
