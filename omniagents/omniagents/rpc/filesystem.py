@@ -372,7 +372,7 @@ async def _scan_generic(
 async def _scan(
     workspace: Workspace, base_rel: str, recursive: bool, max_entries: int
 ) -> Tuple[_Snapshot, bool]:
-    if isinstance(workspace, HostWorkspace):
+    if bool(getattr(workspace, "supports_direct_host_scan", False)):
         base_abs = workspace.resolve(base_rel)
         return await asyncio.to_thread(
             _scan_host, base_abs, workspace.root, recursive, max_entries
@@ -662,7 +662,11 @@ class FilesystemManager:
 
     @staticmethod
     def _mechanism(workspace: Workspace) -> str:
-        return "poll:host" if isinstance(workspace, HostWorkspace) else "poll:workspace"
+        return (
+            "poll:host"
+            if bool(getattr(workspace, "supports_direct_host_scan", False))
+            else "poll:workspace"
+        )
 
     async def _emit(self, channel: Any, method: str, payload: Dict[str, Any]) -> bool:
         try:
@@ -857,7 +861,7 @@ class FilesystemManager:
             )
         default_interval = (
             self._poll_interval_host
-            if isinstance(workspace, HostWorkspace)
+            if bool(getattr(workspace, "supports_direct_host_scan", False))
             else self._poll_interval_generic
         )
         interval = default_interval

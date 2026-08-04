@@ -33,6 +33,13 @@ class ExecutionRequirement(IntFlag):
     PTY = auto()
     ENVIRONMENT_LIFECYCLE = auto()
     EXTENSION_DECLARED = auto()
+    OPTIONAL_WORKSPACE_READ = auto()
+    """Acquire a workspace-read lease when an environment is explicitly sent.
+
+    Unlike :attr:`WORKSPACE_READ`, the operation remains valid without an
+    environment. This is for control-plane functions with an optional
+    workspace-local override, not for filesystem APIs that require a target.
+    """
 
 
 @dataclass(frozen=True)

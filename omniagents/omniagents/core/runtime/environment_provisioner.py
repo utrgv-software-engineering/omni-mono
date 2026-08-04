@@ -18,7 +18,11 @@ from omniagents.execution import (
     TerminalExecutionDefaults,
     WorkspaceResource,
 )
-from omniagents.workspace import HostWorkspace
+from omniagents.workspace import (
+    GitMetadataHostWorkspace,
+    HostWorkspace,
+    MountedHostWorkspace,
+)
 from omniagents.workspace.sandbox import SandboxWorkspace
 
 from .serve_harness import (
@@ -193,8 +197,51 @@ class ServeEnvironmentProvisioner:
             user=profile.terminal.user,
         )
         if _is_host_profile(profile.raw):
+            sources = [dict(source) for source in request.workspace.sources]
+            remote_sources = [
+                source for source in sources if source.get("kind") == "git-remote"
+            ]
+            if remote_sources:
+                mounts = ", ".join(
+                    str(source.get("mountName") or "unnamed")
+                    for source in remote_sources
+                )
+                raise ValueError(
+                    "Host environments cannot materialize remote Git sources "
+                    f"without an explicit local checkout: {mounts}. Select a "
+                    "Devbox or attach a local folder."
+                )
+            local_sources = [
+                source
+                for source in sources
+                if source.get("kind") in {"local", "local-git"}
+            ]
+            materialization_root = workspace_dir.expanduser().resolve()
+            use_composite = bool(local_sources) and (
+                len(local_sources) > 1
+                or any(
+                    Path(str(source.get("path") or "")).expanduser().resolve()
+                    != materialization_root
+                    for source in local_sources
+                )
+            )
+            workspace: HostWorkspace
+            if use_composite:
+                workspace = MountedHostWorkspace(str(workspace_dir), local_sources)
+            elif any(
+                source.get("gitDir") or source.get("gitCommonDir")
+                for source in local_sources
+            ):
+                workspace = GitMetadataHostWorkspace(str(workspace_dir), local_sources)
+            else:
+                workspace = HostWorkspace(root=str(workspace_dir))
+            terminal_defaults = TerminalExecutionDefaults(
+                shell=profile.terminal.command,
+                cwd=workspace.root,
+                user=profile.terminal.user,
+            )
             return ProvisionedEnvironment(
-                workspace=HostWorkspace(root=str(workspace_dir)),
+                workspace=workspace,
                 kind=EnvironmentKind.HOST,
                 capabilities=_FULL_CAPABILITIES,
                 terminal_defaults=terminal_defaults,

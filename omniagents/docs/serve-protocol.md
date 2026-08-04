@@ -82,8 +82,11 @@ query-string tokens are only *accepted* under the same flag — see
 `omniagents/rpc/protocol.md` (Authentication).
 
 The readiness payload contains no Workspace or execution-environment runtime.
-Those values are returned by `agent_host_materialize_environment` and tailored
-to the requesting consumer by the launcher.
+Those values are returned by `agent_host_materialize_environment`, including
+the environment-owned `workspace_root` and optional `default_cwd`, and tailored
+to the requesting consumer by the launcher. Consumers must use these returned
+paths; reconstructing them from a host source path, mount name, or profile is
+not part of the protocol.
 
 ### Launch failure
 
@@ -108,6 +111,15 @@ After the readiness line the launcher:
   `snapshot_ref`, and host materialization path), register a profile,
   materialize an environment, and bind the thread to that environment.
 - Calls environment-routed operations with the materialized `environment_id`.
+
+Every execution-capable RPC and server function declares its resource scope
+and execution requirements. Mandatory workspace/process operations reject a
+missing `environment_id`; an `OPTIONAL_WORKSPACE_READ` extension remains valid
+without one but receives a centrally resolved read lease when the caller sends
+one. Implementations consume the lease's `Workspace` adapter and return its
+logical environment paths. They must not reinterpret sandbox paths through the
+AgentHost filesystem, derive execution from persisted session paths, or expose
+physical host backing paths for logical source mounts.
 
 Shutdown is signal-driven (SIGTERM/SIGINT/SIGHUP): serve skips the
 graceful drain, quiesces in-flight runs (bounded), and always reaches

@@ -34,6 +34,8 @@ from .types import (
 class HostWorkspace(Workspace):
     """Workspace backed by the local filesystem rooted at ``root``."""
 
+    supports_direct_host_scan = True
+
     def __init__(
         self,
         root: Optional[str] = None,

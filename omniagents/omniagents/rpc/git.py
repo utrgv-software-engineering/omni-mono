@@ -54,11 +54,13 @@ machines.
 
 Scoping
 -------
-Operations are confined to repositories that live *inside* the environment
-workspace, on four independent facts checked in :meth:`_resolve_repo` —
+Operations are confined to repositories authorized by the environment
+Workspace, on four independent facts checked in :meth:`_resolve_repo` —
 including the **git directory**, not just the worktree, because a plain
 file named ``.git`` can point a perfectly ordinary-looking checkout at
-objects, refs and config outside the workspace. ``git_list_repositories`` walks the workspace for ``.git``
+objects, refs and config outside the workspace. A composite host Workspace may
+explicitly authorize the external metadata of a declared linked-worktree
+source without exposing that metadata in the Files tree. ``git_list_repositories`` walks the workspace for ``.git``
 entries; every other method takes the resulting ``repo`` id (the
 workspace-relative POSIX path of the repository root) — there is no
 implicit "the" repository, which is what makes multi-repository projects
@@ -292,6 +294,9 @@ def _redacted_source(source: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any
     if source is None:
         return None
     out = dict(source)
+    out.pop("gitDir", None)
+    out.pop("gitCommonDir", None)
+    out.pop("auth", None)
     if "repoUrl" in out:
         out["repoUrl"] = redact_remote_url(out.get("repoUrl"))
     return out
@@ -1453,9 +1458,10 @@ class GitManager:
 
         :meth:`Workspace.exec` has no stdin, so the patch is written to a
         scratch file and handed to ``git apply`` **as an argument**. The
-        file lives inside the repository's git directory — always within
-        the workspace (:meth:`_resolve_repo` proves it), and a location
-        git never tracks, so it can never show up as a workspace change.
+        file lives inside the repository's git directory — always authorized
+        by the Workspace boundary (:meth:`_resolve_repo` proves it), and a
+        location git never tracks, so it can never show up as a workspace
+        change.
 
         This is deliberately not a shell pipeline: an earlier heredoc
         implementation put the whole patch into one argv string and hit
@@ -1513,23 +1519,21 @@ class GitManager:
     async def _resolve_repo(self, environment_id: str, repo: str) -> "_ResolvedRepo":
         """Resolve and confine *repo*.
 
-        Confinement rests on four independent facts, every one of them
-        compared against the **substrate's own** ``workspace.root`` — a
-        container path inside a sandbox, a host path on the host — rather
-        than on any host-specific assumption:
+        Confinement rests on four independent facts, all authorized by the
+        selected environment's Workspace adapter rather than reconstructed
+        from host paths in the RPC layer:
 
         1. the wire path canonicalizes to a relative POSIX path (no
            ``..``, absolute, drive-letter or backslash paths);
-        2. the resolved directory is inside the workspace root. This is
-           checked *here* rather than delegated to
-           ``HostWorkspace.confine``, which some embedders switch off —
-           the boundary must hold whether or not the workspace enforces
-           one of its own;
+        2. the resolved directory belongs to the workspace boundary. For an
+           ordinary workspace this is a root-prefix check; a composite host
+           workspace maps an explicitly declared source back to its logical
+           mount path;
         3. git's ``--show-toplevel`` is that same directory, so a
            workspace nested inside a larger repository is not operable as
            if it were the project;
         4. git's ``--absolute-git-dir`` **and** ``--git-common-dir`` are
-           inside the workspace root too. Without (4) a plain *file*
+           authorized by that same Workspace too. Without (4) a plain *file*
            named ``.git`` holding ``gitdir: /outside/.git`` satisfies (3)
            while every object, ref, index and config entry is read from —
            and written to — outside the workspace.
@@ -1538,12 +1542,11 @@ class GitManager:
             raise GitPathError("repo is required", reason="missing_repo")
         repo_id = canonical_repo_path(repo)
         workspace = await self._workspace(environment_id)
-        root = workspace.root
         try:
             repo_abs = workspace.resolve(repo_id)
         except WorkspaceEscapeError as exc:
             raise GitPathError(str(exc), path=repo, reason="escapes_workspace") from exc
-        if _relative_to(repo_abs, root) is None:
+        if not workspace.contains_path(repo_abs):
             raise GitPathError(
                 "the repository path resolves outside the environment workspace",
                 path=repo,
@@ -1589,11 +1592,11 @@ class GitManager:
                 reason="outside_workspace",
                 toplevel=toplevel,
             )
-        git_dir_rel = _relative_to(git_dir, root)
+        git_dir_rel = workspace.io_path(git_dir)
         if (
             git_dir_rel is None
             or git_dir_rel == "."
-            or _relative_to(common_dir, root) is None
+            or not workspace.contains_path(common_dir)
         ):
             raise GitRepositoryNotFound(
                 "the repository's git directory is outside the environment workspace",
@@ -1696,7 +1699,6 @@ class GitManager:
             for source in sources
             if source.get("path")
         }
-        matched: set = set()
         repositories: List[Dict[str, Any]] = []
         for candidate in sorted(found):
             try:
@@ -1710,25 +1712,58 @@ class GitManager:
             # ``--source`` mounts is labelled as such, so a client can
             # tell a project source apart from an incidental checkout.
             source = by_mount.get(repo_id) or by_path.get(repo_abs.rstrip("/"))
+            if source is None:
+                source = next(
+                    (
+                        candidate
+                        for mount, candidate in by_mount.items()
+                        if repo_id.startswith(f"{mount}/")
+                    ),
+                    None,
+                )
+            if source is None:
+                source = next(
+                    (
+                        candidate
+                        for source_path, candidate in by_path.items()
+                        if repo_abs.startswith(f"{source_path}/")
+                    ),
+                    None,
+                )
             summary["source"] = _redacted_source(source)
-            if source is not None:
-                matched.add(str(source.get("mountName") or source.get("path")))
             repositories.append(summary)
-        # Published sources that are *not* reachable inside the workspace
-        # are reported rather than silently missing: this surface will not
-        # operate outside the workspace, and a client should be able to
-        # see that, not infer it.
-        unreachable = [
-            {
-                "mount_name": source.get("mountName"),
-                "kind": source.get("kind"),
-                "path": source.get("path"),
-                "repo_url": redact_remote_url(source.get("repoUrl")),
-                "reason": "not_in_workspace",
-            }
-            for source in sources
-            if str(source.get("mountName") or source.get("path")) not in matched
-        ]
+        # Source materialization and repository discovery are different facts.
+        # A plain ``local`` source is allowed to contain no repository at all,
+        # and a repository-capable source may be present even when its Git
+        # metadata is invalid. Only report a source as outside when neither its
+        # environment mount nor its declared host path belongs to this
+        # Workspace. Never infer reachability from whether discovery matched a
+        # repository.
+        unreachable: List[Dict[str, Any]] = []
+        for source in sources:
+            if source.get("kind") not in {"local-git", "git-remote"}:
+                continue
+            mount_name = source.get("mountName")
+            declared_path = source.get("path")
+            mounted = False
+            if isinstance(mount_name, str) and mount_name:
+                try:
+                    mounted = await workspace.is_dir(mount_name)
+                except (OSError, WorkspaceError):
+                    mounted = False
+            if not mounted and isinstance(declared_path, str) and declared_path:
+                mounted = workspace.contains_path(declared_path)
+            if mounted:
+                continue
+            unreachable.append(
+                {
+                    "mount_name": mount_name,
+                    "kind": source.get("kind"),
+                    "path": declared_path,
+                    "repo_url": redact_remote_url(source.get("repoUrl")),
+                    "reason": "not_in_workspace",
+                }
+            )
         return {
             "environment_id": environment_id,
             "path": base,
@@ -2123,9 +2158,8 @@ class GitManager:
             operation="list_worktrees",
         )
         worktrees = parse_worktree_porcelain(result.stdout)
-        root = workspace.root
         for entry in worktrees:
-            relative = _relative_to(entry["path"], root)
+            relative = workspace.relative_path(entry["path"])
             entry["repo"] = relative
             entry["accessible"] = relative is not None
             entry["inaccessible_reason"] = (
@@ -3085,7 +3119,7 @@ class GitManager:
             target = (
                 local if posixpath.isabs(local) else posixpath.join(repo_abs, local)
             )
-            if _relative_to(posixpath.normpath(target), workspace.root) is None:
+            if not workspace.contains_path(posixpath.normpath(target)):
                 raise GitStateInvalid(
                     "this remote points at a location outside the environment "
                     "workspace, so fetching it would import objects the "

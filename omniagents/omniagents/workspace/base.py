@@ -16,7 +16,8 @@ the default.
 from __future__ import annotations
 
 import abc
-from typing import Any, Dict, List, Literal, Optional, Sequence, Union
+import posixpath
+from typing import Dict, List, Literal, Optional, Sequence, Union
 
 from .types import ExecResult, FileEntry, GrepMatch
 
@@ -87,6 +88,60 @@ class Workspace(abc.ABC):
 
     Tools that need their own subtree should ``mkdir`` a named subdir
     under ``scratch_root`` rather than writing directly to it."""
+
+    supports_direct_host_scan: bool = False
+    """Whether the workspace is one ordinary host tree that may be scanned
+    directly below :attr:`root`.
+
+    RPC implementations use this capability instead of guessing from a
+    concrete class. Composite host workspaces intentionally leave it false:
+    their logical directory tree is supplied by the Workspace adapter even
+    though individual operations ultimately target host files.
+    """
+
+    def relative_path(self, absolute_path: str) -> Optional[str]:
+        """Return an environment-local path for an authorized absolute path.
+
+        Ordinary workspaces are one physical tree, so containment is a simple
+        root-prefix check. Composite workspaces override this to map explicitly
+        mounted host sources back to their logical mount paths. Callers such as
+        the Git RPC must ask the Workspace rather than reimplementing physical
+        path containment against ``root``.
+        """
+
+        candidate = posixpath.normpath(str(absolute_path)).rstrip("/")
+        root = posixpath.normpath(str(self.root)).rstrip("/")
+        if candidate == root:
+            return "."
+        prefix = root + "/"
+        return candidate[len(prefix) :] if candidate.startswith(prefix) else None
+
+    def contains_path(self, absolute_path: str) -> bool:
+        """Whether *absolute_path* belongs to this Workspace boundary."""
+
+        return self.relative_path(absolute_path) is not None
+
+    def io_path(self, absolute_path: str) -> Optional[str]:
+        """Return a spelling accepted by Workspace I/O for an authorized path.
+
+        Ordinary and sandbox workspaces use their environment-relative path.
+        A composite host workspace may retain an authorized absolute spelling
+        for framework-internal metadata that must not become a visible mount.
+        """
+
+        return self.relative_path(absolute_path)
+
+    def logical_path(self, path: str) -> str:
+        """Return the environment-visible absolute spelling of *path*.
+
+        :meth:`resolve` answers the physical path used for I/O.  Those are the
+        same thing for ordinary host and sandbox workspaces, but not for a
+        composite workspace whose logical mount is backed by a host directory.
+        RPC responses and process ``cwd`` values must use this method instead
+        of leaking the physical backing path to clients.
+        """
+
+        return self.resolve(path)
 
     # ----------------------------- file I/O ----------------------------- #
 

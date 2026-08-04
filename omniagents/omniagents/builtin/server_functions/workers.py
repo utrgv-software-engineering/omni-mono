@@ -44,7 +44,9 @@ _log = logging.getLogger(__name__)
     strict=True,
     name_override="workers.list",
     resource_scope=ResourceScope.THREAD,
-    execution_requirements=ExecutionRequirement.PROCESS,
+    # This controls separate worker-agent processes; it does not execute a
+    # process in the selected Workspace/Environment.
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def workers_list(_session_id: Optional[str] = None) -> dict:
     return {"snapshot": workers_snapshot(parent_session_id=_session_id)}
@@ -76,7 +78,7 @@ setattr(workers_list, "_server_function_on_invoke", _workers_list_on_invoke)
     strict=True,
     name_override="workers.kill",
     resource_scope=ResourceScope.THREAD,
-    execution_requirements=ExecutionRequirement.PROCESS,
+    execution_requirements=ExecutionRequirement.NONE,
 )
 async def workers_kill(worker_id: str, _session_id: Optional[str] = None) -> dict:
     handle = manager().workers.get(worker_id)

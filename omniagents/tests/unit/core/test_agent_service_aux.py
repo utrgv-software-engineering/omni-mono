@@ -413,12 +413,11 @@ async def test_register_server_function_metadata_and_invocation():
     by_name = {entry["name"]: entry for entry in metadata}
     assert by_name["session.ensure"] == {
         "name": "session.ensure",
-        "description": "Ensure a session exists and persist workspace metadata.",
+        "description": "Ensure a session exists and persist non-execution metadata.",
         "params_schema": {
             "type": "object",
             "properties": {
                 "session_id": {"type": "string"},
-                "workspace_root": {"type": "string"},
                 "context": {"type": "object"},
                 "variables": {"type": "object"},
             },
@@ -428,7 +427,6 @@ async def test_register_server_function_metadata_and_invocation():
             "type": "object",
             "properties": {
                 "session_id": {"type": "string"},
-                "workspace_root": {"type": "string"},
                 "context": {"type": "object"},
                 "variables": {"type": "object"},
             },

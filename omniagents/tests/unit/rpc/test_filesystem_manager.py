@@ -34,6 +34,7 @@ from omniagents.execution import (
     WorkspaceResource,
 )
 from omniagents.workspace.host import HostWorkspace
+from omniagents.workspace.mounted_host import MountedHostWorkspace
 from omniagents.workspace.types import FileEntry
 
 TIMEOUT = 5.0
@@ -91,6 +92,8 @@ class GenericWorkspace:
     generic ``poll:workspace`` / staged-transfer paths that sandbox and
     remote workspaces use, while the underlying I/O still hits tmp_path.
     """
+
+    supports_direct_host_scan = False
 
     def __init__(self, root: str) -> None:
         self._inner = HostWorkspace(root=root)
@@ -526,6 +529,104 @@ async def test_generic_workspace_mechanism_and_events(tmp_path):
         )
     finally:
         await manager.unwatch("s1", result["watch_id"], channel=channel)
+
+
+@pytest.mark.asyncio
+async def test_mounted_host_sources_are_one_logical_files_rpc_tree(tmp_path):
+    layout = tmp_path / "layout"
+    frontend = tmp_path / "frontend"
+    backend = tmp_path / "backend"
+    frontend.mkdir()
+    backend.mkdir()
+    (frontend / "app.ts").write_text("frontend")
+    (backend / "api.py").write_text("backend")
+    workspace = MountedHostWorkspace(
+        str(layout),
+        [
+            {"kind": "local", "mountName": "frontend", "path": str(frontend)},
+            {"kind": "local", "mountName": "backend", "path": str(backend)},
+        ],
+    )
+
+    async def source_writable(environment_id, _workspace, rel):
+        assert environment_id == "host-environment"
+        return not (rel == "frontend" or rel.startswith("frontend/"))
+
+    manager = make_manager(workspace, source_writability_resolver=source_writable)
+    listing = await manager.list("host-environment", ".", recursive=True)
+
+    by_path = {entry["path"]: entry for entry in listing["entries"]}
+    assert set(by_path) == {
+        "backend",
+        "backend/api.py",
+        "frontend",
+        "frontend/app.ts",
+    }
+    assert by_path["frontend/app.ts"]["writable"] is False
+    assert by_path["backend/api.py"]["writable"] is True
+    assert (await manager.stat("host-environment", "frontend/app.ts"))["size"] == 8
+
+    download_channel = FakeChannel()
+    opened_download = await manager.download_open(
+        "host-environment", "frontend/app.ts", channel=download_channel
+    )
+    downloaded = await manager.download_read(
+        "host-environment",
+        opened_download["transfer_id"],
+        channel=download_channel,
+    )
+    assert base64.b64decode(downloaded["data"]) == b"frontend"
+    await manager.download_close(
+        "host-environment",
+        opened_download["transfer_id"],
+        channel=download_channel,
+    )
+
+    upload_channel = FakeChannel()
+    payload = b"updated backend"
+    opened_upload = await manager.upload_open(
+        "host-environment",
+        "backend/api.py",
+        len(payload),
+        overwrite=True,
+        channel=upload_channel,
+    )
+    await manager.upload_chunk(
+        "host-environment",
+        opened_upload["transfer_id"],
+        0,
+        base64.b64encode(payload).decode(),
+        channel=upload_channel,
+    )
+    await manager.upload_commit(
+        "host-environment", opened_upload["transfer_id"], channel=upload_channel
+    )
+    assert (backend / "api.py").read_bytes() == payload
+    with pytest.raises(FsReadOnlyError):
+        await manager.upload_open(
+            "host-environment",
+            "frontend/app.ts",
+            1,
+            overwrite=True,
+            channel=upload_channel,
+        )
+
+    channel = FakeChannel()
+    watched = await manager.watch(
+        "host-environment", ".", recursive=True, channel=channel
+    )
+    try:
+        assert watched["mechanism"] == "poll:workspace"
+        (backend / "created.txt").write_text("created")
+        await wait_for(
+            lambda: any(
+                event["path"] == "backend/created.txt"
+                for frame in channel.by_method("fs_events")
+                for event in frame["events"]
+            )
+        )
+    finally:
+        await manager.unwatch("host-environment", watched["watch_id"], channel=channel)
 
 
 @pytest.mark.asyncio

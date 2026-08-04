@@ -181,6 +181,44 @@ def resolve_default_loop_prompt(workspace_root: Optional[str]) -> Optional[str]:
         return None
 
 
+async def resolve_default_loop_prompt_in_workspace(workspace) -> Optional[str]:
+    """Resolve the loop prompt through an explicitly routed Workspace.
+
+    The synchronous resolver remains the product/config API. Server functions
+    use this adapter-aware form so a sandbox path such as ``/workspace`` is
+    never handed to the AgentHost's own :mod:`pathlib` implementation.
+    """
+
+    if _default_prompt_resolver is not None:
+        return resolve_default_loop_prompt(
+            workspace.root if workspace is not None else None
+        )
+
+    if workspace is not None:
+        try:
+            from omniagents.core.product import product_info
+            from omniagents.core.utils.prompt_files import (
+                DEFAULT_MAX_PROMPT_FILE_BYTES,
+            )
+
+            prog = (product_info().prog or "").strip()
+            if prog:
+                data = await workspace.read_bytes(f".{prog}/loop.md")
+                text = (
+                    data[:DEFAULT_MAX_PROMPT_FILE_BYTES]
+                    .decode("utf-8", errors="replace")
+                    .strip()
+                )
+                if text:
+                    return text
+        except Exception:
+            pass
+
+    # User config and packaged product prompts belong to the AgentHost, so the
+    # existing synchronous resolver is correct for those two fallback layers.
+    return resolve_default_loop_prompt(None)
+
+
 # ---------------------------------------------------------------------------
 # State.
 # ---------------------------------------------------------------------------
@@ -646,17 +684,3 @@ def _format_status(tasks: dict[str, LoopTask]) -> str:
             f"{task.id}: {cadence} · fires={task.fires} · next={next_fire} · {preview}"
         )
     return "\n".join(lines)
-
-
-def workspace_root_from_session(session) -> str | None:
-    """Best-effort workspace root from ``session.variables`` — used by
-    products to resolve a default loop prompt for the bare slash form."""
-    try:
-        variables = getattr(session, "variables", None)
-        if isinstance(variables, dict):
-            value = variables.get("workspace_root") or variables.get("cwd")
-            if isinstance(value, str) and value.strip():
-                return value
-    except Exception:
-        return None
-    return None

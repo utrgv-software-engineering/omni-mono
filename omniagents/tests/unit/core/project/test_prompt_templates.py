@@ -6,6 +6,7 @@ and the conventional default-loop-prompt chain (``loop.md``).
 """
 
 from dataclasses import replace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -196,3 +197,35 @@ def test_loop_chain_without_workspace_root(loop_layers):
         "packaged body\n", encoding="utf-8"
     )
     assert loop_mod.resolve_default_loop_prompt(None) == "packaged body"
+
+
+@pytest.mark.asyncio
+async def test_loop_workspace_override_reads_through_workspace_adapter(loop_layers):
+    (loop_layers["root"] / "prompts" / "loop.md").write_text(
+        "packaged body\n", encoding="utf-8"
+    )
+    workspace = Mock()
+    workspace.root = "/workspace"
+    workspace.read_bytes = AsyncMock(return_value=b"sandbox override\n")
+
+    result = await loop_mod.resolve_default_loop_prompt_in_workspace(workspace)
+
+    assert result == "sandbox override"
+    workspace.read_bytes.assert_awaited_once_with(".acme/loop.md")
+
+
+@pytest.mark.asyncio
+async def test_loop_workspace_override_falls_back_without_host_path_access(
+    loop_layers,
+):
+    (loop_layers["root"] / "prompts" / "loop.md").write_text(
+        "packaged body\n", encoding="utf-8"
+    )
+    workspace = Mock()
+    workspace.root = "/workspace"
+    workspace.read_bytes = AsyncMock(side_effect=FileNotFoundError("missing"))
+
+    result = await loop_mod.resolve_default_loop_prompt_in_workspace(workspace)
+
+    assert result == "packaged body"
+    workspace.read_bytes.assert_awaited_once_with(".acme/loop.md")

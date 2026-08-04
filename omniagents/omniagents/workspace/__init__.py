@@ -51,6 +51,7 @@ from ._runtime import (
 )
 from .base import CommandLike, ProcessHandle, Workspace
 from .host import HostWorkspace
+from .mounted_host import GitMetadataHostWorkspace, MountedHostWorkspace
 from .sandbox import SandboxWorkspace
 from .types import (
     ExecResult,
@@ -111,6 +112,8 @@ __all__ = [
     "WorkspaceMutationObserver",
     # Backends + routing (advanced use)
     "HostWorkspace",
+    "GitMetadataHostWorkspace",
+    "MountedHostWorkspace",
     "SandboxWorkspace",
     "PyodideWorkspace",
     "pyodide_worker_available",

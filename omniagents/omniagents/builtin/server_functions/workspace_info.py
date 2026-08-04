@@ -42,7 +42,7 @@ async def fs_get_workspace_root() -> dict:
 
 
 @server_function(
-    description="Get user home directory",
+    description="Get the browseable home for the selected workspace",
     strict=True,
     resource_scope=ResourceScope.ENVIRONMENT,
     execution_requirements=ExecutionRequirement.PROCESS,
@@ -54,7 +54,15 @@ async def fs_get_home() -> dict:
         raise RuntimeError(
             result.stderr.strip() or "could not resolve environment home"
         )
-    return {"path": result.stdout.strip()}
+    home = result.stdout.strip()
+    try:
+        # ``fs_get_home`` is consumed by the same picker as ``fs_list_dir``.
+        # A sandbox home commonly lives outside the manifest root, so exposing
+        # it would only make the next RPC fail its workspace boundary check.
+        visible = workspace.logical_path(home)
+    except Exception:
+        visible = workspace.logical_path(".")
+    return {"path": visible}
 
 
 @server_function(
@@ -92,7 +100,11 @@ async def fs_list_dir(
     workspace = require_environment_lease().workspace
     requested = path or "."
     try:
-        base = workspace.resolve(requested)
+        # RPC paths are environment-visible logical paths.  A composite host
+        # workspace resolves mounted sources to their physical backing trees
+        # for I/O, but returning those paths here leaks host layout and makes
+        # the next picker request escape the logical workspace boundary.
+        base = workspace.logical_path(requested)
         file_entries = await workspace.list_dir(
             requested, include_hidden=not bool(ignore_hidden)
         )
@@ -103,22 +115,23 @@ async def fs_list_dir(
             entries.append(
                 {
                     "name": entry.name,
-                    "path": workspace.resolve(entry.path),
+                    "path": workspace.logical_path(entry.path),
                     "is_dir": entry.is_dir,
                     "size": entry.size,
                     "modified": entry.mtime.isoformat() if entry.mtime else None,
                 }
             )
         entries.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
-        from pathlib import PurePath
-
-        parent = str(PurePath(base).parent)
-        up = parent if parent != base and parent != str(PurePath(base)) else None
-        if up is not None:
-            try:
-                workspace.resolve(up)
-            except Exception:
+        root = workspace.logical_path(".")
+        if base == root:
+            up = None
+        else:
+            relative = workspace.relative_path(workspace.resolve(base))
+            if relative in (None, "."):
                 up = None
+            else:
+                parent_relative = relative.rsplit("/", 1)[0] if "/" in relative else "."
+                up = workspace.logical_path(parent_relative)
         return {"path": base, "parent": up, "entries": entries}
     except Exception as e:
         raise ValueError(str(e))

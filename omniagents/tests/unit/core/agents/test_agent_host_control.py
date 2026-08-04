@@ -262,3 +262,5 @@ async def test_materialize_environment_resolves_registered_workspace_profile(
     assert environment["backend"] is None
     assert environment["container_id"] is None
     assert environment["services"] == {}
+    assert environment["workspace_root"] == str(tmp_path)
+    assert environment["default_cwd"] is None

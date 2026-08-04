@@ -30,6 +30,7 @@ from omniagents.execution import (
     reset_request_context,
 )
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
+from omniagents.workspace.mounted_host import MountedHostWorkspace
 from omniagents.workspace.sandbox import SandboxWorkspace
 from omniagents.workspace.types import ExecResult, FileEntry
 
@@ -48,6 +49,15 @@ def _workspace(root: str):
         return f"{root}/{path}"
 
     workspace.resolve.side_effect = resolve
+    workspace.logical_path.side_effect = resolve
+
+    def relative_path(path):
+        absolute = resolve(path)
+        if absolute == root:
+            return "."
+        return absolute[len(root.rstrip("/") + "/") :]
+
+    workspace.relative_path.side_effect = relative_path
     workspace.list_dir = AsyncMock(return_value=[])
     workspace.exec = AsyncMock(
         return_value=ExecResult("/environment/home", "", 0, 0.01)
@@ -100,12 +110,19 @@ def test_workspace_identity_comes_from_lease(tmp_path):
         assert asyncio.run(fs_get_workspace_root()) == {"path": str(tmp_path)}
 
 
-def test_home_executes_in_leased_environment(tmp_path):
+def test_home_executes_in_leased_environment_and_stays_browseable(tmp_path):
     workspace = _workspace(str(tmp_path))
     with _routed(workspace):
         result = asyncio.run(fs_get_home())
-    assert result == {"path": "/environment/home"}
+    assert result == {"path": str(tmp_path)}
     workspace.exec.assert_awaited_once()
+
+
+def test_home_returns_environment_home_when_it_is_inside_workspace():
+    workspace = _workspace("/environment")
+    with _routed(workspace):
+        result = asyncio.run(fs_get_home())
+    assert result == {"path": "/environment/home"}
 
 
 def test_sources_come_from_routed_workspace_resource(tmp_path):
@@ -161,6 +178,34 @@ def test_list_dir_host_include_files_and_hidden(tmp_path):
     by_name = {e["name"]: e for e in result["entries"]}
     assert by_name["note.txt"]["is_dir"] is False
     assert by_name["note.txt"]["size"] == 2
+
+
+def test_list_dir_composite_host_returns_logical_mount_paths(tmp_path):
+    layout = tmp_path / "managed"
+    layout.mkdir()
+    source = tmp_path / "physical-source"
+    (source / "child").mkdir(parents=True)
+    workspace = MountedHostWorkspace(
+        str(layout),
+        [{"kind": "local", "mountName": "frontend", "path": str(source)}],
+    )
+
+    with _routed(workspace):
+        root = asyncio.run(fs_list_dir())
+        nested = asyncio.run(fs_list_dir(path=str(layout / "frontend")))
+
+    assert root["path"] == str(layout)
+    assert root["parent"] is None
+    assert [(entry["name"], entry["path"]) for entry in root["entries"]] == [
+        ("frontend", str(layout / "frontend"))
+    ]
+    assert nested["path"] == str(layout / "frontend")
+    assert nested["parent"] == str(layout)
+    assert [(entry["name"], entry["path"]) for entry in nested["entries"]] == [
+        ("child", str(layout / "frontend" / "child"))
+    ]
+    assert str(source) not in repr(root)
+    assert str(source) not in repr(nested)
 
 
 def test_list_dir_propagates_workspace_error(tmp_path):

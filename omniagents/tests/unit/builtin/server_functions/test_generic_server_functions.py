@@ -157,7 +157,7 @@ async def test_models_lists_and_ensures_session(fake_store):
     svc = _FakeService()
     result = await handler(svc, None, {})
 
-    assert svc.server_calls[0] == ("session.ensure", None, "sess-1")
+    assert svc.server_calls == []
     assert result["current"] == "gpt-test"
     assert result["models"][0]["is_current"] is True
 
@@ -170,7 +170,7 @@ async def test_switch_model_sets_session_state(fake_store):
     svc = _FakeService(_FakeSession("sess-2"))
     result = await handler(svc, None, {"text": "gpt-test"})
 
-    assert svc.server_calls[0] == ("session.ensure", None, "sess-2")
+    assert svc.server_calls == []
     assert result["model"] == "gpt-test"
     assert svc._session.active_model == "gpt-test"
     # UI notified of the session-state change.

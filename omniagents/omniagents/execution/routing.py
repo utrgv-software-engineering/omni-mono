@@ -55,6 +55,10 @@ _CAPABILITY_BY_REQUIREMENT = {
     ),
 }
 
+_OPTIONAL_CAPABILITY_BY_REQUIREMENT = {
+    ExecutionRequirement.OPTIONAL_WORKSPACE_READ: EnvironmentCapability.WORKSPACE_READ,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class OperationExecutionDescriptor:
@@ -229,6 +233,30 @@ class OperationRouter:
                 required_capabilities=required_capabilities,
             )
             environment = lease.descriptor
+        elif requirements & ExecutionRequirement.OPTIONAL_WORKSPACE_READ:
+            # Some extension operations are control-plane valid without an
+            # environment but may consume a workspace-local override when the
+            # caller explicitly supplies one. Resolve that optional binding in
+            # the same router as every mandatory lease; handlers never inspect
+            # session paths or reconstruct an execution backend themselves.
+            if environment_id is not None:
+                expected_generation = params.get("environment_generation")
+                if expected_generation is not None and (
+                    not isinstance(expected_generation, int)
+                    or isinstance(expected_generation, bool)
+                ):
+                    raise TypeError("environment_generation must be an integer")
+                required_capabilities = frozenset(
+                    capability
+                    for requirement, capability in _OPTIONAL_CAPABILITY_BY_REQUIREMENT.items()
+                    if requirements & requirement
+                )
+                lease = await self._environment_manager.acquire(
+                    environment_id,
+                    expected_generation=expected_generation,
+                    required_capabilities=required_capabilities,
+                )
+                environment = lease.descriptor
         resolved_workspace_id = (
             environment.workspace_id
             if environment is not None

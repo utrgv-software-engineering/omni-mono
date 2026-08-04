@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Optional
 
 from omniagents import server_function
+from omniagents.execution import require_request_context
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 from omniagents.core.autonomy import split_loop_interval_and_prompt
@@ -28,8 +29,7 @@ from omniagents.core.autonomy.loop import (  # noqa: F401  (re-exported surface)
     delete_impl,
     loop_snapshot_dict,
     maybe_rehydrate,
-    resolve_default_loop_prompt,
-    workspace_root_from_session,
+    resolve_default_loop_prompt_in_workspace,
     _format_status,
 )
 
@@ -39,7 +39,7 @@ from omniagents.core.autonomy.loop import (  # noqa: F401  (re-exported surface)
     strict=True,
     name_override="loop",
     resource_scope=ResourceScope.THREAD,
-    execution_requirements=ExecutionRequirement.NONE,
+    execution_requirements=ExecutionRequirement.OPTIONAL_WORKSPACE_READ,
 )
 async def loop_alias(
     text: Optional[str] = None, _session_id: Optional[str] = None
@@ -52,7 +52,13 @@ async def _loop_alias_on_invoke(service, session, args=None):
     text = str(args.get("text") or args.get("prompt") or "")
     interval_seconds, prompt, _token = split_loop_interval_and_prompt(text)
     if not prompt:
-        prompt = resolve_default_loop_prompt(workspace_root_from_session(session)) or ""
+        lease = require_request_context().environment_lease
+        prompt = (
+            await resolve_default_loop_prompt_in_workspace(
+                lease.workspace if lease is not None else None
+            )
+            or ""
+        )
     if not prompt:
         return {
             "ok": False,

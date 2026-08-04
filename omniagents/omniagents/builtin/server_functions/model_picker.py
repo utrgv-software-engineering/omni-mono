@@ -18,7 +18,7 @@ from omniagents.core.models.catalog_api import (
     set_voice_default_model,
 )
 from omniagents.core.server_functions.helpers import (
-    ensure_session_with_workspace,
+    ensure_server_session,
     notify_session_state,
 )
 from omniagents.core.session import Session
@@ -340,14 +340,14 @@ async def switch_voice_model(session: Session, text: str) -> dict:
 
 
 async def _list_models_on_invoke(service, session, args=None):
-    ensured = await ensure_session_with_workspace(service, session)
+    ensured = await ensure_server_session(service, session)
     if ensured is None:
         raise ValueError("No session available")
     return await list_models(ensured)
 
 
 async def _switch_model_on_invoke(service, session, args=None):
-    ensured = await ensure_session_with_workspace(service, session)
+    ensured = await ensure_server_session(service, session)
     if ensured is None:
         raise ValueError("No session available")
     text = (args or {}).get("text", "")
@@ -359,7 +359,7 @@ async def _switch_model_on_invoke(service, session, args=None):
 
 
 async def _set_reasoning_on_invoke(service, session, args=None):
-    ensured = await ensure_session_with_workspace(service, session)
+    ensured = await ensure_server_session(service, session)
     if ensured is None:
         raise ValueError("No session available")
     text = (args or {}).get("text", "")
@@ -370,14 +370,14 @@ async def _set_reasoning_on_invoke(service, session, args=None):
 
 
 async def _list_voice_models_on_invoke(service, session, args=None):
-    ensured = await ensure_session_with_workspace(service, session)
+    ensured = await ensure_server_session(service, session)
     if ensured is None:
         return {"error": "No session"}
     return await list_voice_models(ensured)
 
 
 async def _switch_voice_model_on_invoke(service, session, args=None):
-    ensured = await ensure_session_with_workspace(service, session)
+    ensured = await ensure_server_session(service, session)
     if ensured is None:
         return {"error": "No session"}
     text = ""

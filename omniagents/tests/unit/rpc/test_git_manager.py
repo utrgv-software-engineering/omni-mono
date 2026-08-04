@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 from typing import Any, Dict, List
 
 import pytest
@@ -46,6 +47,7 @@ from omniagents.rpc.git import (
     parse_worktree_porcelain,
 )
 from omniagents.workspace.host import HostWorkspace
+from omniagents.workspace.mounted_host import MountedHostWorkspace
 
 # ---------------------------------------------------------------------------
 #  Fixtures / helpers
@@ -130,6 +132,15 @@ class NoShellWorkspace:
 
     def resolve(self, path: str) -> str:
         return self.root if path in ("", ".") else os.path.join(self.root, path)
+
+    def relative_path(self, absolute_path: str):
+        try:
+            return Path(absolute_path).relative_to(self.root).as_posix() or "."
+        except ValueError:
+            return None
+
+    def contains_path(self, absolute_path: str) -> bool:
+        return self.relative_path(absolute_path) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -2502,6 +2513,166 @@ async def test_published_sources_are_labelled_and_gaps_are_visible(
 
 
 @pytest.mark.asyncio
+async def test_plain_local_source_is_not_misreported_as_outside_workspace(
+    workspace_root: Path,
+):
+    sources = [
+        {
+            "id": "scratch-source",
+            "kind": "local",
+            "mountName": "scratch",
+            "path": str(workspace_root),
+        }
+    ]
+
+    async def source_provider(_environment_id: str):
+        return sources
+
+    listing = await make_manager(
+        HostWorkspace(root=str(workspace_root)), source_provider=source_provider
+    ).list_repositories("host-chat")
+
+    assert listing["repositories"] == []
+    assert listing["unreachable_sources"] == []
+    assert listing["sources"][0]["id"] == "scratch-source"
+
+
+@pytest.mark.asyncio
+async def test_materialized_devbox_source_is_not_inferred_unreachable_from_git_discovery():
+    class DevboxWorkspace:
+        root = "/workspace"
+
+        async def list_dir(self, path=".", **_kwargs):
+            if path == ".":
+                return [
+                    SimpleNamespace(
+                        name="frontend",
+                        path="frontend",
+                        is_dir=True,
+                        is_symlink=False,
+                    )
+                ]
+            return []
+
+        async def is_dir(self, path):
+            return path in {".", "frontend"}
+
+        def contains_path(self, path):
+            return path == "/workspace" or path.startswith("/workspace/")
+
+    source = {
+        "id": "source-frontend",
+        "kind": "git-remote",
+        "mountName": "frontend",
+        "repoUrl": "https://example.com/frontend.git",
+    }
+
+    async def source_provider(_environment_id: str):
+        return [source]
+
+    listing = await make_manager(
+        DevboxWorkspace(), source_provider=source_provider
+    ).list_repositories("devbox-environment")
+
+    assert listing["repositories"] == []
+    assert listing["unreachable_sources"] == []
+
+
+@pytest.mark.asyncio
+async def test_mounted_host_sources_are_discovered_by_logical_repo_id(tmp_path: Path):
+    layout = tmp_path / "layout"
+    sources = []
+    for name in ("frontend", "backend"):
+        target = init_repo(tmp_path / name)
+        write(target / "identity.txt", name)
+        git(target, "add", "-A")
+        git(target, "commit", "-qm", "init")
+        sources.append(
+            {
+                "id": f"source-{name}",
+                "kind": "local-git",
+                "mountName": name,
+                "path": str(target),
+                "gitDir": git(target, "rev-parse", "--absolute-git-dir").strip(),
+                "gitCommonDir": git(
+                    target, "rev-parse", "--path-format=absolute", "--git-common-dir"
+                ).strip(),
+            }
+        )
+    workspace = MountedHostWorkspace(str(layout), sources)
+
+    async def source_provider(_environment_id: str):
+        return sources
+
+    listing = await make_manager(
+        workspace, source_provider=source_provider
+    ).list_repositories("host-environment")
+
+    assert [repository["repo"] for repository in listing["repositories"]] == [
+        "backend",
+        "frontend",
+    ]
+    assert listing["unreachable_sources"] == []
+    assert {repository["source"]["id"] for repository in listing["repositories"]} == {
+        "source-backend",
+        "source-frontend",
+    }
+    assert all(
+        "gitDir" not in repository["source"]
+        and "gitCommonDir" not in repository["source"]
+        for repository in listing["repositories"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_mounted_host_git_worktree_authorizes_declared_external_metadata(
+    tmp_path: Path,
+):
+    primary = init_repo(tmp_path / "primary")
+    write(primary / "tracked.txt", "primary\n")
+    git(primary, "add", "-A")
+    git(primary, "commit", "-qm", "init")
+    checkout = tmp_path / "checkout"
+    git(primary, "worktree", "add", "-q", "-b", "feature", str(checkout))
+    source = {
+        "id": "source-checkout",
+        "kind": "local-git",
+        "mountName": "checkout",
+        "path": str(checkout),
+        "gitDir": git(checkout, "rev-parse", "--absolute-git-dir").strip(),
+        "gitCommonDir": git(
+            checkout, "rev-parse", "--path-format=absolute", "--git-common-dir"
+        ).strip(),
+    }
+    workspace = MountedHostWorkspace(str(tmp_path / "layout"), [source])
+
+    async def source_provider(_environment_id: str):
+        return [source]
+
+    manager = make_manager(workspace, source_provider=source_provider)
+    listing = await manager.list_repositories("host-environment")
+
+    assert [repository["repo"] for repository in listing["repositories"]] == [
+        "checkout"
+    ]
+    assert listing["unreachable_sources"] == []
+    assert (await manager.status("host-environment", "checkout"))["head"][
+        "branch"
+    ] == "feature"
+    assert not await workspace.exists(".omni-git/checkout/git-dir/config")
+
+    write(checkout / "tracked.txt", "changed in worktree\n")
+    diff = await manager.diff("host-environment", "checkout", mode="worktree")
+    hunk = diff["files"][0]["hunks"][0]
+    await manager.stage(
+        "host-environment",
+        "checkout",
+        hunks=[{"path": "tracked.txt", "hunk_id": hunk["hunk_id"]}],
+    )
+    assert "changed in worktree" in git(checkout, "diff", "--cached")
+
+
+@pytest.mark.asyncio
 async def test_source_descriptors_never_echo_credentials(workspace_root: Path):
     """A launcher may publish a credential-bearing repoUrl.
 
@@ -2555,6 +2726,12 @@ async def test_source_policy_is_selected_by_explicit_environment():
 
         async def list_dir(self, path=".", **kwargs):
             return []
+
+        async def is_dir(self, path):
+            return False
+
+        def contains_path(self, path):
+            return False
 
     sources_by_environment = {
         "environment-published": [

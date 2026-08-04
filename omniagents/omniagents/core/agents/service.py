@@ -708,12 +708,11 @@ class AgentService(RpcMethodsBase):
             self._sf_session_ensure,
             resource_scope=ResourceScope.THREAD,
             execution_requirements=ExecutionRequirement.NONE,
-            description="Ensure a session exists and persist workspace metadata.",
+            description="Ensure a session exists and persist non-execution metadata.",
             params_schema={
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "workspace_root": {"type": "string"},
                     "context": {"type": "object"},
                     "variables": {"type": "object"},
                 },
@@ -723,7 +722,6 @@ class AgentService(RpcMethodsBase):
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
-                    "workspace_root": {"type": "string"},
                     "context": {"type": "object"},
                     "variables": {"type": "object"},
                 },
@@ -5223,6 +5221,8 @@ class AgentService(RpcMethodsBase):
                 "backend": getattr(controller, "backend", None),
                 "container_id": getattr(controller, "container_id", None),
                 "services": dict(getattr(controller, "service_urls", {}) or {}),
+                "workspace_root": lease.workspace.root,
+                "default_cwd": lease.terminal_defaults.cwd,
             }
         )
         return payload

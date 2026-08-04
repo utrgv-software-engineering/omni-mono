@@ -174,6 +174,40 @@ async def test_workspace_operation_resolves_immutable_lease():
 
 
 @pytest.mark.asyncio
+async def test_optional_workspace_operation_remains_targetless_without_environment():
+    router = await make_router(frozenset({EnvironmentCapability.WORKSPACE_READ}))
+    operation = OperationExecutionDescriptor(
+        name="loop",
+        resource_scope=ResourceScope.THREAD,
+        execution_requirements=ExecutionRequirement.OPTIONAL_WORKSPACE_READ,
+    )
+
+    context = await router.prepare(operation, {})
+
+    assert context.environment is None
+    assert context.environment_lease is None
+
+
+@pytest.mark.asyncio
+async def test_optional_workspace_operation_uses_explicit_environment_when_present():
+    router = await make_router(frozenset({EnvironmentCapability.WORKSPACE_READ}))
+    operation = OperationExecutionDescriptor(
+        name="loop",
+        resource_scope=ResourceScope.THREAD,
+        execution_requirements=ExecutionRequirement.OPTIONAL_WORKSPACE_READ,
+    )
+
+    context = await router.prepare(
+        operation, {"environment_id": "env-1", "environment_generation": 3}
+    )
+
+    assert context.environment_lease is not None
+    assert context.environment_lease.environment_id == "env-1"
+    assert context.workspace is not None
+    assert context.workspace.workspace_id == "workspace-1"
+
+
+@pytest.mark.asyncio
 async def test_git_push_requires_all_declared_capabilities():
     router = await make_router(
         frozenset(

@@ -61,7 +61,9 @@ EXPECTED_BUILTIN_CLASSIFICATIONS: dict[str, Classification] = {
     "goal.resume": _classification(ResourceScope.THREAD),
     "goal": _classification(ResourceScope.THREAD),
     "help": _classification(ResourceScope.AGENT_HOST),
-    "loop": _classification(ResourceScope.THREAD),
+    "loop": _classification(
+        ResourceScope.THREAD, ExecutionRequirement.OPTIONAL_WORKSPACE_READ
+    ),
     "loop.status": _classification(ResourceScope.THREAD),
     "loop.stop": _classification(ResourceScope.THREAD),
     "loop.clear": _classification(ResourceScope.THREAD),
@@ -90,8 +92,8 @@ EXPECTED_BUILTIN_CLASSIFICATIONS: dict[str, Classification] = {
     "terminal.close": _classification(ResourceScope.THREAD, ExecutionRequirement.PTY),
     "wakeup.stop": _classification(ResourceScope.THREAD),
     "wakeup.status": _classification(ResourceScope.THREAD),
-    "workers.list": _classification(ResourceScope.THREAD, ExecutionRequirement.PROCESS),
-    "workers.kill": _classification(ResourceScope.THREAD, ExecutionRequirement.PROCESS),
+    "workers.list": _classification(ResourceScope.THREAD),
+    "workers.kill": _classification(ResourceScope.THREAD),
     "fs_get_cwd": _classification(
         ResourceScope.WORKSPACE, ExecutionRequirement.WORKSPACE_READ
     ),
@@ -275,9 +277,9 @@ def test_all_46_decorated_builtins_have_the_expected_execution_metadata():
     by_name = {declaration.published_name: declaration for declaration in declarations}
 
     assert len(declarations) == 46
-    assert len(by_name) == len(declarations), (
-        "published server-function names must be unique"
-    )
+    assert len(by_name) == len(
+        declarations
+    ), "published server-function names must be unique"
     assert set(by_name) == set(EXPECTED_BUILTIN_CLASSIFICATIONS)
 
     actual = {
@@ -354,3 +356,57 @@ def test_capability_registration_forwards_decorator_execution_metadata():
             and isinstance(expression.args[0], ast.Constant)
             and expression.args[0].value == field
         )
+
+
+def test_environment_backed_server_function_modules_have_no_host_path_fallbacks():
+    """Keep execution adapters—not AgentHost paths—as the filesystem seam.
+
+    This is intentionally static and module-wide. A new environment-backed
+    server function may call Workspace/lease APIs, but importing host path or
+    subprocess primitives into the same RPC implementation is an architecture
+    review failure rather than something a Devbox E2E test should discover.
+    """
+
+    environment_requirements = (
+        ExecutionRequirement.WORKSPACE_READ
+        | ExecutionRequirement.WORKSPACE_WRITE
+        | ExecutionRequirement.PROCESS
+        | ExecutionRequirement.NETWORK
+        | ExecutionRequirement.PTY
+        | ExecutionRequirement.ENVIRONMENT_LIFECYCLE
+        | ExecutionRequirement.OPTIONAL_WORKSPACE_READ
+    )
+    sensitive_paths = {
+        declaration.path
+        for declaration in _decorated_builtins()
+        if _declared_classification(declaration)[1] & environment_requirements
+    }
+    violations: list[str] = []
+    for path in sorted(sensitive_paths):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".", 1)[0] in {"os", "pathlib", "subprocess"}:
+                        violations.append(
+                            f"{path.relative_to(REPO_ROOT)}:{node.lineno}: import {alias.name}"
+                        )
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".", 1)[
+                0
+            ] in {"os", "pathlib", "subprocess"}:
+                violations.append(
+                    f"{path.relative_to(REPO_ROOT)}:{node.lineno}: from {node.module} import ..."
+                )
+            elif isinstance(node, ast.Call):
+                name = _call_name(node.func)
+                if name in {
+                    "open",
+                    "Path",
+                    "workspace_root_from_session",
+                    "session_workspace_root",
+                }:
+                    violations.append(
+                        f"{path.relative_to(REPO_ROOT)}:{node.lineno}: call {name}()"
+                    )
+
+    assert not violations, "\n".join(violations)

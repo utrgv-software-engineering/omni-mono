@@ -16,7 +16,11 @@ from omniagents.execution import (
     EnvironmentProvisionRequest,
     WorkspaceResource,
 )
-from omniagents.workspace import HostWorkspace
+from omniagents.workspace import (
+    GitMetadataHostWorkspace,
+    HostWorkspace,
+    MountedHostWorkspace,
+)
 from omniagents.workspace.sandbox import SandboxWorkspace
 
 
@@ -53,6 +57,101 @@ async def test_host_profile_uses_explicit_workspace_directory(tmp_path):
     assert isinstance(provisioned.workspace, HostWorkspace)
     assert provisioned.workspace.root == str(tmp_path)
     assert provisioned.sandbox_runtime is None
+
+
+@pytest.mark.asyncio
+async def test_host_profile_mounts_multiple_local_sources_under_one_logical_root(
+    tmp_path,
+):
+    layout = tmp_path / "layout"
+    frontend = tmp_path / "frontend"
+    backend = tmp_path / "backend"
+    frontend.mkdir()
+    backend.mkdir()
+    (frontend / "identity.txt").write_text("frontend")
+    (backend / "identity.txt").write_text("backend")
+    provisioner = ServeEnvironmentProvisioner(
+        profile_resolver=lambda request, workspace_dir: profile("host"),
+        workspace_directory_resolver=lambda workspace: layout,
+    )
+
+    provisioned = await provisioner.provision(
+        request(
+            sources=[
+                {"kind": "local", "mountName": "frontend", "path": str(frontend)},
+                {"kind": "local", "mountName": "backend", "path": str(backend)},
+            ]
+        )
+    )
+
+    assert isinstance(provisioned.workspace, MountedHostWorkspace)
+    assert provisioned.terminal_defaults.cwd == str(layout)
+    assert [entry.name for entry in await provisioned.workspace.list_dir()] == [
+        "backend",
+        "frontend",
+    ]
+    assert await provisioned.workspace.read_text("frontend/identity.txt") == "frontend"
+    assert await provisioned.workspace.read_text("backend/identity.txt") == "backend"
+
+
+@pytest.mark.asyncio
+async def test_host_profile_rejects_remote_source_instead_of_using_config_root(
+    tmp_path,
+):
+    provisioner = ServeEnvironmentProvisioner(
+        profile_resolver=lambda request, workspace_dir: profile("host"),
+        workspace_directory_resolver=lambda workspace: tmp_path / "layout",
+    )
+
+    with pytest.raises(ValueError, match="cannot materialize remote Git sources"):
+        await provisioner.provision(
+            request(
+                sources=[
+                    {
+                        "kind": "git-remote",
+                        "mountName": "remote",
+                        "repoUrl": "https://example.com/repo.git",
+                    }
+                ]
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_host_profile_keeps_a_direct_source_root_with_declared_git_metadata(
+    tmp_path,
+):
+    source = tmp_path / "checkout"
+    metadata = tmp_path / "primary" / ".git"
+    source.mkdir()
+    (metadata / "worktrees" / "checkout").mkdir(parents=True)
+    provisioner = ServeEnvironmentProvisioner(
+        profile_resolver=lambda request, workspace_dir: profile("host"),
+        workspace_directory_resolver=lambda workspace: source,
+    )
+
+    provisioned = await provisioner.provision(
+        request(
+            sources=[
+                {
+                    "kind": "local-git",
+                    "mountName": "checkout",
+                    "path": str(source),
+                    "gitDir": str(metadata / "worktrees" / "checkout"),
+                    "gitCommonDir": str(metadata),
+                }
+            ]
+        )
+    )
+
+    assert isinstance(provisioned.workspace, GitMetadataHostWorkspace)
+    assert provisioned.workspace.root == str(source)
+    assert provisioned.terminal_defaults.cwd == str(source)
+    assert provisioned.workspace.contains_path(str(metadata / "config"))
+    assert provisioned.workspace.relative_path(str(metadata / "config")) is None
+    assert provisioned.workspace.io_path(str(metadata / "config")) == str(
+        metadata / "config"
+    )
 
 
 @pytest.mark.asyncio
