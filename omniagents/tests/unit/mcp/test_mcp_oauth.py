@@ -92,7 +92,7 @@ def test_full_browser_flow_to_completion(oauth_env):
 
     assert broker.state_of("github") == "authenticated"
     assert state["registered"]["token_endpoint_auth_method"] == "none"
-    token_file = tmp_path / "mcp-auth" / "github.json"
+    token_file = broker.storage_for("github").path
     assert token_file.is_file()
     if os.name != "nt":
         assert stat.S_IMODE(token_file.stat().st_mode) == 0o600
@@ -101,15 +101,64 @@ def test_full_browser_flow_to_completion(oauth_env):
 
 
 def test_completed_credentials_short_circuit_next_start(oauth_env):
-    broker, state, _ = oauth_env
+    broker, state, tmp_path = oauth_env
 
     async def scenario():
         start = await broker.start("github", SERVER_URL)
         await broker.complete(start["auth_id"], AUTH_CODE)
-        # Second start: stored token satisfies the server without a browser.
-        second = await broker.start("github", SERVER_URL)
+        # A reconstructed broker (the AgentHost-restart boundary) reads the
+        # completed token store and satisfies the server without a browser.
+        restarted = McpOAuthBroker(
+            token_dir=tmp_path / "mcp-auth",
+            http_factory=lambda **kwargs: httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=_fake_oauth_app(state)),
+                base_url=BASE,
+                **kwargs,
+            ),
+        )
+        assert restarted.state_of("github") == "authenticated"
+        second = await restarted.start("github", SERVER_URL)
         assert second["state"] == "completed"
         assert "auth_url" not in second
+
+    asyncio.run(scenario())
+
+
+def test_colliding_server_names_never_share_oauth_storage(oauth_env):
+    broker, _, _ = oauth_env
+    first = broker.storage_for("foo-bar")
+    second = broker.storage_for("foo/bar")
+    assert first.path != second.path
+
+    first.path.parent.mkdir(parents=True, exist_ok=True)
+    first.path.write_text(
+        json.dumps(
+            {
+                "tokens": {
+                    "access_token": ACCESS_SECRET,
+                    "token_type": "Bearer",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert first.has_tokens() is True
+    assert second.has_tokens() is False
+
+
+def test_pending_auth_does_not_survive_broker_reconstruction(oauth_env):
+    broker, _, tmp_path = oauth_env
+
+    async def scenario():
+        started = await broker.start("github", SERVER_URL)
+        assert broker.state_of("github") == "pending"
+
+        restarted = McpOAuthBroker(token_dir=tmp_path / "mcp-auth")
+        assert restarted.state_of("github") == "none"
+        with pytest.raises(McpAuthStateInvalid) as excinfo:
+            await restarted.complete(started["auth_id"], AUTH_CODE)
+        assert excinfo.value.data["reason"] == "unknown_auth"
+        broker.cancel(started["auth_id"])
 
     asyncio.run(scenario())
 
@@ -146,7 +195,7 @@ def test_bad_code_fails_typed_without_echoing(oauth_env):
 def test_noninteractive_expired_tokens_raise_reauth_signal(oauth_env):
     """Expired stored credentials must surface as the typed reauth cue."""
     broker, state, tmp_path = oauth_env
-    token_file = tmp_path / "mcp-auth" / "github.json"
+    token_file = broker.storage_for("github").path
     token_file.parent.mkdir(parents=True, exist_ok=True)
     token_file.write_text(
         json.dumps(

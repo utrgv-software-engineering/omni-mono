@@ -18,15 +18,22 @@ from __future__ import annotations
 import json
 
 import pytest
+from agents import Agent
 from fastapi.testclient import TestClient
 
 import omniagents.core.providers.codex as codex
 from omniagents.backends.server import app as server_app
+from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.debug import Debug
+from omniagents.core.providers.accounts import (
+    CHATGPT_PROVIDER_ID,
+    CODEX_STORE_DURABILITY_ENV,
+)
+from omniagents.core.providers.auth.base import UserIdentity
+from omniagents.execution import AgentHostResources
+from omniagents.rpc.auth import AuthorizationDenied, AuthorizationPolicy
 from tests.fixtures.gui_ws import perform_gui_handshake
-
-from agents import Agent
 
 API_KEY_SECRET = "sk-INTEGRATION-SECRET-000111"
 REFRESH_SECRET = "rt-INTEGRATION-SECRET-222333"
@@ -48,6 +55,7 @@ def _spec() -> AgentSpec:
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     codex.set_token_store_dir(tmp_path)
+    monkeypatch.delenv(CODEX_STORE_DURABILITY_ENV, raising=False)
     for var in (
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -277,3 +285,47 @@ def test_enforced_mode_refuses_credential_mutations_but_allows_reads(monkeypatch
         _call(ws, 3, "account_logout", {"provider": "openai"})
         denied_logout, _ = _result(ws, 3)
         assert denied_logout["error"]["code"] == -32014
+
+
+@pytest.mark.asyncio
+async def test_admin_can_mutate_accounts_but_ordinary_principals_cannot():
+    service = AgentService(
+        _spec(), AgentHostResources.create("test-server-accounts-host")
+    )
+    service._authorization_policy = AuthorizationPolicy(enforced=True)
+
+    await service.authorize_rpc(UserIdentity(user_id="alice"), "account_status", {})
+    with pytest.raises(AuthorizationDenied):
+        await service.authorize_rpc(
+            UserIdentity(user_id="alice"),
+            "account_logout",
+            {"provider": CHATGPT_PROVIDER_ID},
+        )
+
+    await service.authorize_rpc(
+        UserIdentity(user_id="agent_host_control", roles=["admin"]),
+        "account_logout",
+        {"provider": CHATGPT_PROVIDER_ID},
+    )
+
+
+@pytest.mark.asyncio
+async def test_account_status_rpc_exposes_only_redacted_durability_capability(
+    monkeypatch,
+):
+    codex.save_tokens({"refresh": REFRESH_SECRET, "access": "access-secret"})
+    monkeypatch.setenv(CODEX_STORE_DURABILITY_ENV, "host")
+    service = AgentService(
+        _spec(), AgentHostResources.create("test-server-account-capability-host")
+    )
+
+    result = await service.account_status()
+
+    assert result["mutation_persistence"] == {
+        "codex_oauth": {"durable": True, "scope": "host"},
+        "pending_logins": {"durable": False, "scope": "process"},
+    }
+    serialized = json.dumps(result)
+    assert REFRESH_SECRET not in serialized
+    assert "access-secret" not in serialized
+    assert "codex.json" not in serialized

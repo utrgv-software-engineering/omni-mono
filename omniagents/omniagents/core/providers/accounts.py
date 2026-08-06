@@ -45,6 +45,7 @@ __all__ = [
     "AccountRpcError",
     "AccountStateInvalid",
     "CHATGPT_PROVIDER_ID",
+    "CODEX_STORE_DURABILITY_ENV",
     "RPC_ERROR_ACCOUNT_AUTH_FAILED",
     "RPC_ERROR_ACCOUNT_CAPABILITY_UNSUPPORTED",
     "RPC_ERROR_ACCOUNT_STATE_INVALID",
@@ -57,6 +58,12 @@ RPC_ERROR_ACCOUNT_STATE_INVALID = -32041
 RPC_ERROR_ACCOUNT_AUTH_FAILED = -32042
 
 CHATGPT_PROVIDER_ID = "openai-chatgpt"
+
+#: Host attestation for deployments that mount the existing ``codex.json``
+#: token store on storage that survives AgentHost process restarts.  Merely
+#: being able to write the store is insufficient proof of durability, so the
+#: capability is fail-closed unless the host explicitly supplies ``host``.
+CODEX_STORE_DURABILITY_ENV = "OMNIAGENTS_CODEX_STORE_DURABILITY"
 
 #: How long a pending login may sit before ``login_complete`` refuses it.
 LOGIN_TTL_SECONDS = 15 * 60
@@ -341,9 +348,20 @@ class AccountManager:
         return snapshot
 
     def status(self) -> Dict[str, Any]:
+        codex_store_is_host_durable = os.getenv(CODEX_STORE_DURABILITY_ENV) == "host"
         return {
             "providers": [self.provider_snapshot(name) for name in PROVIDERS],
             "selected_provider": self._selected,
+            "mutation_persistence": {
+                "codex_oauth": {
+                    "durable": codex_store_is_host_durable,
+                    "scope": "host" if codex_store_is_host_durable else None,
+                },
+                # Login ids, device codes, and PKCE verifiers intentionally
+                # stay in this manager.  A restarted process must begin a
+                # fresh OAuth exchange even when completed tokens are durable.
+                "pending_logins": {"durable": False, "scope": "process"},
+            },
         }
 
     # ------------------------------------------------------------------

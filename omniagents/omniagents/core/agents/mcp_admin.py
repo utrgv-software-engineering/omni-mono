@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -45,6 +46,8 @@ from omniagents.core.agents.specs import MCPServerConfig
 
 __all__ = [
     "MCP_SERVER_TYPES",
+    "MCP_STORE_DURABILITY_ENV",
+    "MANAGED_MCP_SERVERS_ENV",
     "McpAuthFailed",
     "McpAuthStateInvalid",
     "McpConfigInvalid",
@@ -83,6 +86,14 @@ SOURCE_PROJECT = "project"
 SOURCE_USER = "user"
 SOURCE_PROJECT_LOCAL = "project_local"
 SOURCE_SESSION = "session"
+SOURCE_HOST_MANAGED = "host_managed"
+
+#: Host attestations for the product-scoped MCP configuration and OAuth
+#: stores.  Durability is never inferred from writability, and server names
+#: are deliberately the only managed-store metadata exposed to clients.
+MCP_STORE_DURABILITY_ENV = "OMNIAGENTS_MCP_STORE_DURABILITY"
+MANAGED_MCP_SERVERS_ENV = "OMNIAGENTS_MANAGED_MCP_SERVERS"
+_MANAGED_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 #: Startup states (``configured → starting → ready | failed``).
 STATUS_CONFIGURED = "configured"
@@ -98,6 +109,22 @@ _OPTION_KEYS = (
     "use_structured_content",
     "name",
 )
+
+
+def _managed_server_names() -> set[str]:
+    """Strict, redacted host-managed server-name attestation.
+
+    Invalid/empty comma-separated entries are ignored.  A malformed host
+    value must never widen the set of configurations protected as managed.
+    """
+    raw = os.getenv(MANAGED_MCP_SERVERS_ENV) or ""
+    return {
+        item
+        for candidate in raw.split(",")
+        if (item := candidate.strip())
+        and item == candidate
+        and _MANAGED_SERVER_NAME_RE.fullmatch(item)
+    }
 
 
 class McpRpcError(Exception):
@@ -791,6 +818,11 @@ class McpServerManager:
     def source_of(self, server_name: str) -> str | None:
         """Effective config source of a server (highest precedence wins)."""
         user_global, project_local = self._load_user_configs()
+        managed = _managed_server_names()
+        if server_name in managed and any(
+            cfg.name == server_name for cfg in user_global
+        ):
+            return SOURCE_HOST_MANAGED
         if any(cfg.name == server_name for cfg in project_local):
             return SOURCE_PROJECT_LOCAL
         if any(cfg.name == server_name for cfg in user_global):
@@ -804,11 +836,24 @@ class McpServerManager:
         merged: Dict[str, Tuple[MCPServerConfig, str]] = {
             cfg.name: (cfg, SOURCE_PROJECT) for cfg in self._project_configs
         }
-        if self.user_mcp_allowed():
-            user_global, project_local = self._load_user_configs()
-            for cfg in user_global:
+        managed = _managed_server_names()
+        user_global, project_local = self._load_user_configs()
+        user_mcp_allowed = self.user_mcp_allowed()
+        for cfg in user_global:
+            if cfg.name in managed:
+                # Host-managed user-file entries remain active even when the
+                # ordinary user MCP layer is disabled, and cannot be shadowed
+                # by a hand-managed project-local entry of the same name.
+                merged[cfg.name] = (cfg, SOURCE_HOST_MANAGED)
+            elif user_mcp_allowed:
                 merged[cfg.name] = (cfg, SOURCE_USER)
+        if user_mcp_allowed:
             for cfg in project_local:
+                if (
+                    cfg.name in managed
+                    and merged.get(cfg.name, (None, None))[1] == SOURCE_HOST_MANAGED
+                ):
+                    continue
                 merged[cfg.name] = (cfg, SOURCE_PROJECT_LOCAL)
         return merged
 
@@ -1013,6 +1058,7 @@ class McpServerManager:
                 SOURCE_PROJECT_LOCAL: "project_local_file",
                 SOURCE_SESSION: "session_scoped",
                 SOURCE_USER: "user_mcp_disabled",
+                SOURCE_HOST_MANAGED: "host_managed",
             }.get(source, "read_only")
         snapshot: Dict[str, Any] = {
             "server_name": cfg.name,
@@ -1068,6 +1114,18 @@ class McpServerManager:
             "servers": servers,
             "user_mcp_allowed": self.user_mcp_allowed(),
             "write_target": str(self._user_mcp_path()),
+            "mutation_persistence": self.mutation_persistence(),
+        }
+
+    def mutation_persistence(self) -> Dict[str, Any]:
+        """Redacted deployment guarantees for Desktop-owned mutations."""
+        durable = os.getenv(MCP_STORE_DURABILITY_ENV) == "host"
+        host_scope = "host" if durable else None
+        return {
+            "user_config": {"durable": durable, "scope": host_scope},
+            "oauth_tokens": {"durable": durable, "scope": host_scope},
+            "pending_auth": {"durable": False, "scope": "process"},
+            "managed_servers": sorted(_managed_server_names()),
         }
 
     def session_server_snapshot(self, dyn_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -1102,6 +1160,15 @@ class McpServerManager:
     # -- CRUD ------------------------------------------------------------
 
     def _require_writable(self, server_name: str, *, creating: bool) -> None:
+        if server_name in _managed_server_names():
+            raise McpServerReadOnly(
+                server_name,
+                reason="host_managed",
+                message=(
+                    f"MCP server {server_name!r} is managed by the host and "
+                    "cannot be changed through this API"
+                ),
+            )
         if not self.user_mcp_allowed():
             raise McpServerReadOnly(
                 server_name,

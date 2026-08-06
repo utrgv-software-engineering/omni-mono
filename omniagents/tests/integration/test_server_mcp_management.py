@@ -31,6 +31,8 @@ from fastapi.testclient import TestClient
 from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec, MCPServerConfig
 from omniagents.core.debug import Debug
+from omniagents.core.providers.auth.base import UserIdentity
+from omniagents.rpc.auth import AuthorizationDenied, AuthorizationPolicy
 from tests.fixtures.gui_ws import perform_gui_handshake
 from tests.fixtures.mcp_oauth_app import (
     ACCESS_SECRET,
@@ -77,6 +79,8 @@ def env(tmp_path, monkeypatch):
     """Isolated product config dir + manifest enabling user MCP servers."""
     config_home = tmp_path / "xdg"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.delenv("OMNIAGENTS_MCP_STORE_DURABILITY", raising=False)
+    monkeypatch.delenv("OMNIAGENTS_MANAGED_MCP_SERVERS", raising=False)
     project_root = tmp_path / "project"
     project_root.mkdir()
     manifest = project_root / "project.yml"
@@ -672,6 +676,31 @@ def test_enforced_mode_refuses_mutations_but_allows_reads(env):
             assert denied["data"]["kind"] == "authorization_denied", method
     finally:
         cm.__exit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_admin_can_mutate_mcp_but_ordinary_principals_cannot(env):
+    service = _make_context(env).service
+    service._authorization_policy = AuthorizationPolicy(enforced=True)
+    ordinary = UserIdentity(user_id="alice")
+    admin = UserIdentity(user_id="agent_host_control", roles=["admin"])
+
+    await service.authorize_rpc(ordinary, "mcp_list_servers", {})
+    for method, params in (
+        (
+            "mcp_create_server",
+            {"server_name": "x", "type": "stdio", "params": {"command": "echo"}},
+        ),
+        ("mcp_update_server", {"server_name": "x"}),
+        ("mcp_delete_server", {"server_name": "x"}),
+        ("mcp_reload_server", {}),
+        ("mcp_auth_start", {"server_name": "x"}),
+        ("mcp_auth_complete", {"auth_id": "a", "code": "c"}),
+        ("mcp_auth_cancel", {"auth_id": "a"}),
+    ):
+        with pytest.raises(AuthorizationDenied):
+            await service.authorize_rpc(ordinary, method, params)
+        await service.authorize_rpc(admin, method, params)
 
 
 def test_cross_user_scoping_and_session_id_cannot_rescope_auth(env, monkeypatch):

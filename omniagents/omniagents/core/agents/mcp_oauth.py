@@ -27,6 +27,7 @@ personalities:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -61,6 +62,17 @@ _SLUG_RE = re.compile(r"[^a-z0-9._-]+")
 def _server_slug(server_name: str) -> str:
     slug = _SLUG_RE.sub("-", server_name.strip().lower()).strip("-")
     return slug or "server"
+
+
+def _server_storage_filename(server_name: str) -> str:
+    """Collision-resistant credential filename without exposing the name.
+
+    The earlier slug-only filename could alias distinct names such as
+    ``foo/bar`` and ``foo-bar``.  A digest suffix makes the token boundary
+    one-to-one for practical purposes while retaining a useful opaque prefix.
+    """
+    digest = hashlib.sha256(server_name.encode("utf-8")).hexdigest()[:16]
+    return f"{_server_slug(server_name)}-{digest}.json"
 
 
 class McpInteractiveAuthRequired(RuntimeError):
@@ -249,7 +261,15 @@ class McpOAuthBroker:
         self._noninteractive_failures: Dict[str, bool] = {}
 
     def storage_for(self, server_name: str) -> _FileTokenStorage:
-        return _FileTokenStorage(self._token_dir / f"{_server_slug(server_name)}.json")
+        primary = self._token_dir / _server_storage_filename(server_name)
+        legacy = self._token_dir / f"{_server_slug(server_name)}.json"
+        # Legacy migration is safe only when normalization did not change the
+        # name.  A differently-spelled colliding name must never inherit that
+        # credential. New writes always use the collision-resistant path.
+        if not primary.exists() and server_name == _server_slug(server_name):
+            if legacy.exists():
+                return _FileTokenStorage(legacy)
+        return _FileTokenStorage(primary)
 
     # -- state (never credential material) -------------------------------
 
@@ -283,6 +303,12 @@ class McpOAuthBroker:
 
     def forget(self, server_name: str) -> None:
         self.storage_for(server_name).clear()
+        # Remove the unambiguous legacy location too, preventing a deleted
+        # primary file from revealing an older credential on reconstruction.
+        if server_name == _server_slug(server_name):
+            _FileTokenStorage(
+                self._token_dir / f"{_server_slug(server_name)}.json"
+            ).clear()
 
     # -- interactive flow ------------------------------------------------
 

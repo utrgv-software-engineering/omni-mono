@@ -16,11 +16,12 @@ import pytest
 
 import omniagents.core.providers.codex as codex
 from omniagents.core.providers.accounts import (
+    CHATGPT_PROVIDER_ID,
+    CODEX_STORE_DURABILITY_ENV,
     AccountAuthFailed,
     AccountCapabilityUnsupported,
     AccountManager,
     AccountStateInvalid,
-    CHATGPT_PROVIDER_ID,
 )
 
 REFRESH_SECRET = "rt-REFRESH-SECRET-abc123"
@@ -56,6 +57,7 @@ def _access_token_with_claims() -> str:
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     codex.set_token_store_dir(tmp_path)
+    monkeypatch.delenv(CODEX_STORE_DURABILITY_ENV, raising=False)
     for var in PROVIDER_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     codex._rate_limit_snapshot.clear()
@@ -103,6 +105,38 @@ def test_status_lists_normalized_capability_matrix():
     }
     assert {"anthropic", "google", "azure-openai"} <= set(by_id)
     assert status["selected_provider"] is None
+
+
+def test_status_fails_closed_without_host_durability_attestation():
+    # The test store exists and is writable, but that alone is not proof it
+    # survives an AgentHost restart in the current deployment.
+    _sign_in_codex()
+    persistence = AccountManager().status()["mutation_persistence"]
+    assert persistence == {
+        "codex_oauth": {"durable": False, "scope": None},
+        "pending_logins": {"durable": False, "scope": "process"},
+    }
+    _assert_no_secrets(persistence)
+
+
+@pytest.mark.parametrize("value", ["HOST", " host", "host ", "volume", "1"])
+def test_status_rejects_unknown_durability_attestations(monkeypatch, value):
+    monkeypatch.setenv(CODEX_STORE_DURABILITY_ENV, value)
+    assert AccountManager().status()["mutation_persistence"]["codex_oauth"] == {
+        "durable": False,
+        "scope": None,
+    }
+
+
+def test_status_reports_exact_host_durability_attestation(monkeypatch):
+    monkeypatch.setenv(CODEX_STORE_DURABILITY_ENV, "host")
+    status = AccountManager().status()
+    assert status["mutation_persistence"] == {
+        "codex_oauth": {"durable": True, "scope": "host"},
+        "pending_logins": {"durable": False, "scope": "process"},
+    }
+    assert "path" not in json.dumps(status["mutation_persistence"])
+    _assert_no_secrets(status)
 
 
 @pytest.mark.asyncio
@@ -243,6 +277,53 @@ async def test_device_flow_start_poll_complete(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_completed_device_login_survives_manager_restart(monkeypatch):
+    _patch_device_start(monkeypatch)
+
+    async def fake_poll(device_auth_id, user_code):
+        _sign_in_codex()
+        return codex.load_tokens()
+
+    monkeypatch.setattr(codex, "device_auth_poll", fake_poll)
+    monkeypatch.setenv(CODEX_STORE_DURABILITY_ENV, "host")
+
+    before_restart = AccountManager()
+    started = await before_restart.login_start(CHATGPT_PROVIDER_ID, "device_code")
+    completed = await before_restart.login_complete(started["login_id"])
+    assert completed["account"]["state"] == "signed_in"
+
+    after_restart = AccountManager()
+    status = after_restart.status()
+    provider = next(
+        item for item in status["providers"] if item["id"] == CHATGPT_PROVIDER_ID
+    )
+    assert provider["state"] == "signed_in"
+    assert status["mutation_persistence"]["codex_oauth"] == {
+        "durable": True,
+        "scope": "host",
+    }
+    _assert_no_secrets(status)
+
+
+@pytest.mark.asyncio
+async def test_pending_device_login_does_not_survive_manager_restart(monkeypatch):
+    _patch_device_start(monkeypatch)
+    monkeypatch.setenv(CODEX_STORE_DURABILITY_ENV, "host")
+
+    before_restart = AccountManager()
+    started = await before_restart.login_start(CHATGPT_PROVIDER_ID, "device_code")
+    after_restart = AccountManager()
+
+    assert after_restart.status()["mutation_persistence"]["pending_logins"] == {
+        "durable": False,
+        "scope": "process",
+    }
+    with pytest.raises(AccountStateInvalid) as excinfo:
+        await after_restart.login_complete(started["login_id"])
+    assert excinfo.value.data["reason"] == "unknown_login"
+
+
+@pytest.mark.asyncio
 async def test_device_flow_cancellation_mid_login(monkeypatch):
     _patch_device_start(monkeypatch)
 
@@ -374,6 +455,19 @@ def test_oauth_logout_clears_tokens():
     assert result["account"]["state"] == "signed_out"
     assert codex.load_tokens() is None
     _assert_no_secrets(result)
+
+
+def test_oauth_logout_does_not_resurrect_after_manager_restart(monkeypatch):
+    monkeypatch.setenv(CODEX_STORE_DURABILITY_ENV, "host")
+    _sign_in_codex()
+    before_restart = AccountManager()
+    assert before_restart.logout(CHATGPT_PROVIDER_ID)["ok"] is True
+
+    after_restart = AccountManager()
+    snapshot = after_restart.provider_snapshot(CHATGPT_PROVIDER_ID)
+    assert snapshot["state"] == "signed_out"
+    assert codex.load_tokens() is None
+    _assert_no_secrets(after_restart.status())
 
 
 @pytest.mark.asyncio

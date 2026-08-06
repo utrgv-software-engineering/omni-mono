@@ -170,6 +170,17 @@ async def test_write_config_denied_for_principals_in_enforced_mode(project):
 
 
 @pytest.mark.asyncio
+async def test_write_config_allowed_for_admin_principal_in_enforced_mode(project):
+    service = make_service(project)
+    service._authorization_policy = AuthorizationPolicy(enforced=True)
+    principal = UserIdentity(user_id="agent_host_control", roles=["admin"])
+
+    await service.authorize_rpc(
+        principal, "write_config", {"updates": {"tracing.provider": "x"}}
+    )
+
+
+@pytest.mark.asyncio
 async def test_write_config_allowed_in_single_user_mode(project):
     service = make_service(project)
     service._authorization_policy = AuthorizationPolicy(enforced=False)
