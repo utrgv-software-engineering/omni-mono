@@ -28,6 +28,7 @@
   "author": "OmniAgents",
   "license": "MIT",
   "dependencies": {
+    "@xterm/headless": "^6.0.0",
     "chalk": "^5.3.0",
     "figures": "^6.1.0",
     "immer": "^10.2.0",
@@ -37,8 +38,8 @@
     "ink-text-input": "^6.0.0",
     "meow": "^13.2.0",
     "react": "^19.0.0",
-    "ws": "^8.18.0",
     "wrap-ansi": "^9.0.0",
+    "ws": "^8.18.0",
     "zustand": "^5.0.8"
   },
   "devDependencies": {

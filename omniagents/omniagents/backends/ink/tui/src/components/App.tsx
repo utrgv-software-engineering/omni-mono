@@ -57,6 +57,7 @@ import { FilesScreen } from "./FilesScreen.js";
 import { StatusBar, type Screen } from "./StatusBar.js";
 import { TopTabs } from "./TopTabs.js";
 import { GitPanel } from "./GitPanel.js";
+import { TerminalPanel } from "./TerminalPanel.js";
 import { ModelPickerPanel } from "./ModelPickerPanel.js";
 import { EscalationBanner } from "./EscalationBanner.js";
 import { ElicitationBanner } from "./ElicitationBanner.js";
@@ -274,6 +275,7 @@ type ActivePanel =
   | "jobs"
   | "notifications"
   | "git"
+  | "terminal"
   | "models"
   | null;
 
@@ -1124,6 +1126,10 @@ export const App: React.FC<AppProps> = ({
         }
         // Panel chords — each toggles its own panel; opening one closes
         // whatever else was open (single-owner rule).
+        if (key.ctrl && input === "]") {
+          setActivePanel((prev) => (prev === "terminal" ? null : prev));
+          return;
+        }
         if (key.ctrl && input === "b") {
           setActivePanel((prev) => (prev === "jobs" ? null : "jobs"));
           return;
@@ -1417,6 +1423,12 @@ export const App: React.FC<AppProps> = ({
               focused={activePanel === "git"}
               onUnfocus={() => setActivePanel(null)}
               client={client}
+            />
+            <TerminalPanel
+              open={activePanel === "terminal"}
+              focused={activePanel === "terminal"}
+              client={client}
+              sessionId={sessionId ?? null}
             />
             <ModelPickerPanel
               open={activePanel === "models"}

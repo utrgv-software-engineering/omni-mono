@@ -109,6 +109,7 @@ describe("buildPanelMenuRows", () => {
       "jobs",
       "notifications",
       "git",
+      "terminal",
       "models",
     ]);
     const keys = rows.map((r) => r.key);

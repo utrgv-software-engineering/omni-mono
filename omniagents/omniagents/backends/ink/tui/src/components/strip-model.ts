@@ -128,6 +128,7 @@ export type MenuPanelId =
   | "jobs"
   | "notifications"
   | "git"
+  | "terminal"
   | "models";
 
 export type PanelMenuRow = {
@@ -225,6 +226,13 @@ export function buildPanelMenuRows(state: StripState): PanelMenuRow[] {
       summary: state.runDiff
         ? `${plural(state.runDiff.stats.files_changed, "file")} edited +${state.runDiff.stats.additions} −${state.runDiff.stats.deletions}`
         : null,
+      warn: false,
+    },
+    {
+      key: "s",
+      panel: "terminal",
+      label: "shell",
+      summary: null,
       warn: false,
     },
     { key: "m", panel: "models", label: "models", summary: null, warn: false },

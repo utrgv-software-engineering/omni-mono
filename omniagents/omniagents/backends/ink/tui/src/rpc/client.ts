@@ -756,6 +756,16 @@ export class RPCClient extends EventEmitter {
    * environment — pass `environmentId` (typically `defaultEnvironmentId()`)
    * for functions that read the workspace.
    */
+  /** The RPC endpoint URL (for same-origin side sockets like /ws/terminal). */
+  getUrl(): string {
+    return this.url;
+  }
+
+  /** The bearer token, if this connection authenticates with one. */
+  getToken(): string | undefined {
+    return this.token;
+  }
+
   async serverCall(
     func: string,
     args?: Record<string, unknown>,
