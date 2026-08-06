@@ -16,6 +16,7 @@ import { windowStart } from "./model-picker-model.js";
 import { clampScroll } from "./git-model.js";
 import { wrapPlain, wrapStyled } from "./agents-model.js";
 import { highlight, supportsLanguage } from "cli-highlight";
+import sliceAnsi from "slice-ansi";
 import {
   baseName,
   buildTree,
@@ -97,6 +98,14 @@ export const FilesScreen = ({
   const [edit, setEdit] = useState<EditState | null>(null);
   // First Esc on a dirty buffer arms the discard; the second discards.
   const [discardArm, setDiscardArm] = useState(false);
+  // Async syntax colors for the editor: typing repaints plain
+  // instantly, colors land after a short idle (highlighting a whole
+  // medium file costs ~tens of ms — too slow for the keystroke path).
+  const [editColored, setEditColored] = useState<{
+    version: number;
+    lines: string[];
+  } | null>(null);
+  const editVersionRef = useRef(0);
   // dir -> watch_id for every expanded directory (plus the root).
   const watchesRef = useRef<Record<string, string>>({});
 
@@ -340,6 +349,37 @@ export const FilesScreen = ({
       );
     }
   }, [client, environmentId, edit]);
+
+  useEffect(() => {
+    if (!edit) {
+      setEditColored(null);
+      return;
+    }
+    const language = languageForPath(edit.path);
+    if (!language || !supportsLanguage(language)) {
+      setEditColored(null);
+      return;
+    }
+    const version = ++editVersionRef.current;
+    const text = toText(edit.buffer);
+    if (text.length > 200_000) {
+      setEditColored(null);
+      return;
+    }
+    const id = setTimeout(() => {
+      try {
+        setEditColored({
+          version,
+          lines: highlight(text, { language, ignoreIllegals: true }).split(
+            "\n",
+          ),
+        });
+      } catch {
+        setEditColored(null);
+      }
+    }, 120);
+    return () => clearTimeout(id);
+  }, [edit?.buffer.lines, edit?.path, edit]);
 
   const openPreview = useCallback(
     async (row: TreeRow) => {
@@ -726,21 +766,36 @@ export const FilesScreen = ({
             .slice(edit.buffer.top, edit.buffer.top + editRows)
             .map((line, i) => {
               const row = edit.buffer.top + i;
+              // Colors apply only when they match the CURRENT text —
+              // a stale async result must never desync with the cursor.
+              const colored =
+                editColored &&
+                editColored.version === editVersionRef.current &&
+                editColored.lines.length === edit.buffer.lines.length
+                  ? editColored.lines[row]
+                  : null;
               if (row !== edit.buffer.row) {
+                const shown = colored ?? line;
                 return (
                   <Text
                     key={row}
                     color={Theme.textSecondary}
                     wrap="truncate-end"
                   >
-                    {line.length > 0 ? line : " "}
+                    {shown.length > 0 ? shown : " "}
                   </Text>
                 );
               }
               const col = edit.buffer.col;
-              const pre = line.slice(0, col);
               const at = line.slice(col, col + 1) || " ";
-              const post = line.slice(col + 1);
+              const pre =
+                colored !== null
+                  ? sliceAnsi(colored, 0, col)
+                  : line.slice(0, col);
+              const post =
+                colored !== null
+                  ? sliceAnsi(colored, col + 1)
+                  : line.slice(col + 1);
               return (
                 <Text key={row} color={Theme.textPrimary} wrap="truncate-end">
                   {pre}
