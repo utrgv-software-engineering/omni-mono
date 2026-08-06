@@ -5,6 +5,7 @@
 
 import WebSocket from "ws";
 import type { RPCClient } from "../rpc/client.js";
+import { debugLog } from "../utils/debugLog.js";
 import { XtermTerminalState, type TerminalState } from "./state.js";
 
 export type TerminalPhase =
@@ -27,6 +28,9 @@ class TerminalSession {
   phase: TerminalPhase = "idle";
   exitCode: number | null = null;
   error: string | null = null;
+  /** Diagnostics: PTY output received since open. */
+  outputBytes = 0;
+  framesReceived = 0;
 
   private socket: WebSocket | null = null;
   private version = 0;
@@ -59,6 +63,8 @@ class TerminalSession {
     this.phase = "connecting";
     this.exitCode = null;
     this.error = null;
+    this.outputBytes = 0;
+    this.framesReceived = 0;
     this.bump();
 
     try {
@@ -67,6 +73,9 @@ class TerminalSession {
         { cols, rows },
         sessionId,
       )) as CreateResult;
+      debugLog(
+        `[term] created: keys=${Object.keys(created ?? {}).join(",")} id=${created?.terminal_id} path=${created?.path}`,
+      );
       const terminalId = String(created?.terminal_id ?? "").trim();
       const token = String(
         created?.terminal_token ?? created?.token ?? "",
@@ -82,6 +91,7 @@ class TerminalSession {
       url.pathname = path;
       url.search = "";
       const authToken = client.getToken();
+      debugLog(`[term] connecting ${url.toString()} bearer=${!!authToken}`);
       const socket = new WebSocket(
         url.toString(),
         authToken
@@ -90,7 +100,20 @@ class TerminalSession {
       );
       this.socket = socket;
 
+      // HTTP-level rejections (404 route, 401 auth) surface here, not
+      // as normal close frames.
+      socket.on(
+        "unexpected-response",
+        (_req: unknown, res: { statusCode?: number }) => {
+          this.error = `terminal socket rejected: HTTP ${res?.statusCode ?? "?"}`;
+          debugLog(`[term] ${this.error}`);
+          this.phase = "error";
+          this.bump();
+        },
+      );
+
       socket.on("open", () => {
+        debugLog("[term] socket open, sending attach+resize");
         socket.send(
           JSON.stringify({
             type: "attach",
@@ -111,26 +134,39 @@ class TerminalSession {
         } catch {
           return;
         }
+        this.framesReceived += 1;
         if (frame.type === "output" && typeof frame.data === "string") {
-          this.state?.feed(Buffer.from(frame.data, "base64"));
+          const bytes = Buffer.from(frame.data, "base64");
+          this.outputBytes += bytes.length;
+          if (this.framesReceived <= 3) {
+            debugLog(`[term] output frame ${bytes.length}B`);
+          }
+          this.state?.feed(bytes);
         } else if (frame.type === "exit") {
+          debugLog(`[term] exit frame code=${frame.code}`);
           this.exitCode = typeof frame.code === "number" ? frame.code : null;
           this.phase = "exited";
           this.bump();
         }
       });
 
-      socket.on("close", () => {
+      socket.on("close", (code: number, reason: Buffer) => {
+        debugLog(`[term] socket close code=${code} reason=${String(reason)}`);
         if (this.phase === "running" || this.phase === "connecting") {
+          this.error = code === 1000 ? null : `socket closed (${code})`;
           this.phase = "exited";
           this.bump();
         }
       });
 
       socket.on("error", (err: Error) => {
-        this.error = err.message;
-        this.phase = "error";
-        this.bump();
+        debugLog(`[term] socket error: ${err.message}`);
+        // unexpected-response already classified HTTP rejects.
+        if (this.phase !== "error") {
+          this.error = err.message;
+          this.phase = "error";
+          this.bump();
+        }
       });
     } catch (e) {
       this.error = (e as Error).message ?? String(e);

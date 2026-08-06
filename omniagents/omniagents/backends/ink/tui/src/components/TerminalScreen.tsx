@@ -159,8 +159,10 @@ export const TerminalScreen = ({
         )}
         <Text color={Theme.textChrome}>
           {phase === "exited"
-            ? `exited${terminalSession.exitCode !== null ? ` ${terminalSession.exitCode}` : ""} · enter restart · ctrl+] chat`
-            : "keys → shell (tab too) · ctrl+] chat · alt+1..4 screens · PgUp/PgDn scroll"}
+            ? `exited${terminalSession.exitCode !== null ? ` ${terminalSession.exitCode}` : ""}${terminalSession.error ? ` (${terminalSession.error})` : ""} · enter restart · ctrl+] chat`
+            : phase === "running" && terminalSession.outputBytes === 0
+              ? "attached · no output yet — is the shell alive? · ctrl+] chat"
+              : "keys → shell (tab too) · ctrl+] chat · alt+1..4 screens · PgUp/PgDn scroll"}
         </Text>
       </Box>
     </Box>
