@@ -4,6 +4,7 @@ import pytest
 
 from omniagents.execution import (
     AgentHostResources,
+    EnvironmentChangedError,
     ExistingEnvironment,
     ThreadRuntimeBinding,
     WorkspaceEnvironmentMismatchError,
@@ -83,3 +84,40 @@ async def test_binding_rejects_unknown_workspace():
         await resources.thread_bindings.register(
             "thread-1", ThreadRuntimeBinding(workspace_id="missing")
         )
+
+
+@pytest.mark.asyncio
+async def test_existing_binding_generation_mismatch_fails_closed(tmp_path):
+    resources = AgentHostResources.create("host-1")
+    environment = register_host_environment(
+        resources,
+        str(tmp_path),
+        owner_user_id=None,
+        workspace_id="workspace-1",
+        environment_id="environment-1",
+    )
+    pinned = ThreadRuntimeBinding(
+        workspace_id=environment.workspace_id,
+        environment_selection=ExistingEnvironment(
+            environment.environment_id, environment.generation
+        ),
+    )
+    await resources.thread_bindings.bind("thread-1", pinned)
+
+    lease = await resources.environments.acquire(environment.environment_id)
+    replaced = await resources.environments.replace(
+        environment.environment_id, lease.workspace
+    )
+
+    with pytest.raises(EnvironmentChangedError):
+        await resources.thread_bindings.bind("thread-1", pinned)
+
+    rebound = ThreadRuntimeBinding(
+        workspace_id=environment.workspace_id,
+        environment_selection=ExistingEnvironment(
+            environment.environment_id, replaced.generation
+        ),
+    )
+    await resources.thread_bindings.bind("thread-1", rebound)
+
+    assert await resources.thread_bindings.get("thread-1") == rebound

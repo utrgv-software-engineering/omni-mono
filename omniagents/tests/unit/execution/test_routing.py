@@ -6,6 +6,7 @@ from omniagents.execution import (
     AgentHostResources,
     CapabilityUnavailableError,
     EnvironmentCapability,
+    EnvironmentChangedError,
     EnvironmentKind,
     EnvironmentRequiredError,
     EnvironmentState,
@@ -262,3 +263,42 @@ async def test_outer_extension_marker_cannot_reach_a_handler():
         await router.prepare_protocol(
             OPERATION_BY_NAME["server_call"], {"environment_id": "env-1"}
         )
+
+
+@pytest.mark.asyncio
+async def test_inherit_enforces_pinned_binding_generation(tmp_path):
+    resources = AgentHostResources.create("host-1")
+    descriptor = register_host_environment(
+        resources,
+        str(tmp_path),
+        owner_user_id=None,
+        workspace_id="workspace-1",
+        environment_id="environment-1",
+    )
+    await resources.thread_bindings.bind(
+        "thread-1",
+        ThreadRuntimeBinding(
+            workspace_id=descriptor.workspace_id,
+            environment_selection=ExistingEnvironment(
+                descriptor.environment_id, descriptor.generation
+            ),
+        ),
+    )
+    params = {
+        "prompt": "continue",
+        "session_id": "thread-1",
+        "environment_selection": {"mode": "inherit"},
+    }
+
+    context = await resources.router.prepare_protocol(
+        OPERATION_BY_NAME["start_run"], params
+    )
+    assert context.environment_lease is not None
+    assert context.environment_lease.generation == descriptor.generation
+
+    await resources.environments.replace(
+        descriptor.environment_id, context.environment_lease.workspace
+    )
+
+    with pytest.raises(EnvironmentChangedError):
+        await resources.router.prepare_protocol(OPERATION_BY_NAME["start_run"], params)

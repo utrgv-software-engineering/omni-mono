@@ -115,6 +115,7 @@ class EnvironmentSelection2(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    environment_generation: Annotated[int | None, Field(ge=1)] = None
     environment_id: Annotated[str, Field(min_length=1)]
     mode: Literal["existing"]
 

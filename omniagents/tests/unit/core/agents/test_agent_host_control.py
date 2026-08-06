@@ -9,8 +9,10 @@ from omniagents.execution import (
     AgentHostResources,
     AutomaticEnvironment,
     EnvironmentCapability,
+    EnvironmentChangedError,
     EnvironmentKind,
     ProvisionedEnvironment,
+    register_host_environment,
 )
 from omniagents.rpc.auth import AuthorizationDenied, AuthorizationPolicy
 from omniagents.workspace import HostWorkspace
@@ -264,3 +266,87 @@ async def test_materialize_environment_resolves_registered_workspace_profile(
     assert environment["services"] == {}
     assert environment["workspace_root"] == str(tmp_path)
     assert environment["default_cwd"] is None
+
+
+@pytest.mark.asyncio
+async def test_existing_binding_pins_and_validates_environment_generation(tmp_path):
+    service = make_service()
+    descriptor = register_host_environment(
+        service.agent_host_resources,
+        str(tmp_path),
+        owner_user_id=None,
+        workspace_id="workspace-1",
+        environment_id="environment-1",
+    )
+
+    with pytest.raises(EnvironmentChangedError):
+        await service.agent_host_bind_thread(
+            "thread-1",
+            {
+                "workspace_id": "workspace-1",
+                "environment_selection": {
+                    "mode": "existing",
+                    "environment_id": "environment-1",
+                    "environment_generation": descriptor.generation + 1,
+                },
+            },
+        )
+
+    binding = await service.agent_host_bind_thread(
+        "thread-1",
+        {
+            "workspace_id": "workspace-1",
+            "environment_selection": {
+                "mode": "existing",
+                "environment_id": "environment-1",
+                "environment_generation": descriptor.generation,
+            },
+        },
+    )
+
+    assert binding["environment_selection"] == {
+        "mode": "existing",
+        "environment_id": "environment-1",
+        "environment_generation": descriptor.generation,
+    }
+
+
+@pytest.mark.asyncio
+async def test_resource_listing_attributes_profiles_by_owner():
+    service = make_service()
+    service.authorization_policy = AuthorizationPolicy(enforced=True)
+    for owner in ("alice", "bob"):
+        service.agent_host_resources.provisioning.register_profile(
+            "default", {"kind": "default"}, owner_user_id=owner
+        )
+
+    service.channel = SimpleNamespace(principal=UserIdentity(user_id="alice"))
+    scoped = await service.agent_host_list_resources()
+    assert scoped["profiles_by_owner"] == [
+        {
+            "owner_user_id": "alice",
+            "profile_id": "default",
+            "definition": {"kind": "default"},
+        }
+    ]
+
+    service.channel = SimpleNamespace(
+        principal=UserIdentity(user_id="operator", roles=["admin"])
+    )
+    admin_view = await service.agent_host_list_resources()
+
+    # The caller-scoped map stays empty for the admin principal; the
+    # owner-attributed view is what makes token-user profiles inspectable.
+    assert admin_view["profiles"] == {}
+    assert admin_view["profiles_by_owner"] == [
+        {
+            "owner_user_id": "alice",
+            "profile_id": "default",
+            "definition": {"kind": "default"},
+        },
+        {
+            "owner_user_id": "bob",
+            "profile_id": "default",
+            "definition": {"kind": "default"},
+        },
+    ]

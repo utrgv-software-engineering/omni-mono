@@ -364,6 +364,7 @@ class OperationRouter:
             if isinstance(selected, ExistingEnvironment):
                 return _RunPlanResolution(
                     selected.environment_id,
+                    selected.environment_generation,
                     workspace_id=binding.workspace_id,
                 )
             if isinstance(selected, AutomaticEnvironment):

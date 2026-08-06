@@ -114,6 +114,21 @@ class AgentHostProvisioningCatalog:
             if owner == owner_user_id
         }
 
+    def profiles_by_owner(self) -> list[tuple[str | None, str, dict[str, Any]]]:
+        """Every registered profile with its owner attribution.
+
+        The caller applies authorization; the catalog itself has no
+        principal. Ordered by owner then profile id so inventory payloads
+        are stable across calls.
+        """
+        return [
+            (owner, profile_id, deepcopy(definition))
+            for (owner, profile_id), definition in sorted(
+                self._profiles.items(),
+                key=lambda item: (item[0][0] or "", item[0][1]),
+            )
+        ]
+
     @staticmethod
     def _path(value: Any) -> Path:
         if not isinstance(value, str) or not value.strip():

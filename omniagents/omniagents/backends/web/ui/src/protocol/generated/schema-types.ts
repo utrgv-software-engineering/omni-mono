@@ -432,6 +432,7 @@ export interface AgentHostBindThread {
           profile_id: string;
         }
       | {
+          environment_generation?: number;
           environment_id: string;
           mode: "existing";
         };

@@ -93,13 +93,28 @@ class AutomaticEnvironment:
 
 @dataclass(frozen=True, slots=True)
 class ExistingEnvironment:
-    """Select one existing logical environment explicitly."""
+    """Select one existing logical environment explicitly.
+
+    ``environment_generation`` pins the selection to one materialization of
+    the environment. A bound generation that no longer matches the live
+    environment fails closed at bind validation and at run resolution, so a
+    rebuilt environment cannot silently serve a binding made against its
+    predecessor.
+    """
 
     environment_id: str
+    environment_generation: int | None = None
     mode: str = field(default="existing", init=False)
 
     def __post_init__(self) -> None:
         _require_id(self.environment_id, "environment_id")
+        generation = self.environment_generation
+        if generation is not None and (
+            not isinstance(generation, int)
+            or isinstance(generation, bool)
+            or generation < 1
+        ):
+            raise ValueError("environment_generation must be an integer >= 1")
 
 
 EnvironmentSelection: TypeAlias = (

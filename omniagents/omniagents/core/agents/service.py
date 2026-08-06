@@ -3165,7 +3165,8 @@ class AgentService(RpcMethodsBase):
                 ThreadRuntimeBinding(
                     workspace_id=environment_lease.workspace_id,
                     environment_selection=ExistingEnvironment(
-                        environment_lease.environment_id
+                        environment_lease.environment_id,
+                        environment_lease.generation,
                     ),
                 ),
             )
@@ -5139,7 +5140,10 @@ class AgentService(RpcMethodsBase):
         elif mode == "automatic":
             selection = AutomaticEnvironment(raw_selection.get("profile_id"))
         elif mode == "existing":
-            selection = ExistingEnvironment(raw_selection.get("environment_id"))
+            selection = ExistingEnvironment(
+                raw_selection.get("environment_id"),
+                raw_selection.get("environment_generation"),
+            )
         else:
             raise TypeError(f"unsupported environment selection mode: {mode!r}")
 
@@ -5197,6 +5201,21 @@ class AgentService(RpcMethodsBase):
             "profiles": self.agent_host_resources.provisioning.list_profiles(
                 owner_user_id=owner_user_id
             ),
+            # Owner-attributed view spanning every owner the caller may
+            # access, so an admin/control principal can authoritatively
+            # inspect token-user profile definitions. The legacy "profiles"
+            # map above stays caller-scoped for existing consumers.
+            "profiles_by_owner": [
+                {
+                    "owner_user_id": owner,
+                    "profile_id": profile_id,
+                    "definition": definition,
+                }
+                for owner, profile_id, definition in (
+                    self.agent_host_resources.provisioning.profiles_by_owner()
+                )
+                if self.authorization_policy.can_access(principal, owner)
+            ],
             "environments": [self._environment_payload(item) for item in environments],
         }
 
@@ -5266,6 +5285,10 @@ class AgentService(RpcMethodsBase):
                 "mode": "existing",
                 "environment_id": selection.environment_id,
             }
+            if selection.environment_generation is not None:
+                serialized_selection["environment_generation"] = (
+                    selection.environment_generation
+                )
         return {
             "thread_id": thread_id,
             "workspace_id": binding.workspace_id,

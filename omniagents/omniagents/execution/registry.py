@@ -149,6 +149,16 @@ class ThreadRuntimeBindingRegistry:
                     environment.environment_id,
                     environment.workspace_id,
                 )
+            expected_generation = selection.environment_generation
+            if (
+                expected_generation is not None
+                and environment.generation != expected_generation
+            ):
+                raise EnvironmentChangedError(
+                    environment.environment_id,
+                    expected_generation,
+                    environment.generation,
+                )
 
     @staticmethod
     def _require_thread_id(thread_id: str) -> None:
