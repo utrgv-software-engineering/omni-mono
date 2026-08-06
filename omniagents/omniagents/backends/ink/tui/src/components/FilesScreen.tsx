@@ -527,7 +527,16 @@ export const FilesScreen = ({
           ? {
               ...prev,
               notice: null,
-              buffer: applyEdit(prev.buffer, input, key, editRows),
+              // Ink names the 0x7f byte — what Backspace actually
+              // sends — "delete" (and the forward-Delete CSI too, so
+              // the two are indistinguishable here). Users pressing
+              // that key mean backward-delete.
+              buffer: applyEdit(
+                prev.buffer,
+                input,
+                { ...key, backspace: key.backspace || key.delete, delete: false },
+                editRows,
+              ),
             }
           : prev,
       );
