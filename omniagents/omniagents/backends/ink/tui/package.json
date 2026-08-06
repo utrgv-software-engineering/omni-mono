@@ -38,6 +38,7 @@
     "meow": "^13.2.0",
     "react": "^19.0.0",
     "ws": "^8.18.0",
+    "wrap-ansi": "^9.0.0",
     "zustand": "^5.0.8"
   },
   "devDependencies": {

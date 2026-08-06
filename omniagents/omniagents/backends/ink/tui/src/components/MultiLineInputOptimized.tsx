@@ -13,7 +13,7 @@ import { Box, Text } from "ink";
 import chalk from "chalk";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 interface InputState {
   lines: string[];
@@ -58,6 +58,11 @@ interface MultiLineInputProps {
   maxHeight?: number;
   history?: string[];
   disableSubmit?: boolean;
+  /** External one-shot insertion (e.g. the Files screen's @path
+   * mention). Consumed at the cursor; the owner clears it via
+   * onInsertConsumed. */
+  pendingInsert?: string | null;
+  onInsertConsumed?: () => void;
 }
 
 /**
@@ -293,6 +298,8 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     maxHeight = 20,
     history = [],
     disableSubmit = false,
+    pendingInsert = null,
+    onInsertConsumed,
   }) => {
     const [state, dispatch] = useReducer(inputReducer, {
       lines: [""],
@@ -302,6 +309,16 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       historyIndex: history.length,
       draft: "",
     });
+
+    // One-shot external insertion (Files screen mention bridge): text
+    // arrives via props, lands at the cursor, and is acknowledged so
+    // the owner clears it — re-renders can't double-insert.
+    useEffect(() => {
+      if (pendingInsert) {
+        dispatch({ type: "INSERT_TEXT", text: pendingInsert });
+        onInsertConsumed?.();
+      }
+    }, [pendingInsert]);
     const stateRef = React.useRef(state);
 
     // Update history index when history changes
@@ -399,6 +416,12 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       (input, key) => {
         const current = stateRef.current;
 
+        // Tab belongs to the global screen switcher — never a literal
+        // character in the composer.
+        if (key.tab) {
+          return false;
+        }
+
         if (key.escape) {
           onEscape?.();
           return;
@@ -480,6 +503,7 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
             insertText(clean);
           }
         }
+        return;
       },
       { isActive: !disabled, priority: KeypressPriority.Normal },
     );
@@ -504,7 +528,7 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     return (
       <Box
         borderStyle="single"
-        borderColor={TokyoNightTheme.border}
+        borderColor={Theme.borderAmbient}
         paddingX={1}
         flexDirection="column"
         minHeight={1}
@@ -516,7 +540,7 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
           const showPrompt = actualIdx === 0;
 
           const prompt = showPrompt ? "> " : "  ";
-          const textColor = chalk.hex(TokyoNightTheme.inputText);
+          const textColor = chalk.hex(Theme.textPrimary);
 
           let lineDisplay: string;
           if (isCurrentRow) {
@@ -541,7 +565,7 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
 
           return (
             <Box key={actualIdx}>
-              <Text color={TokyoNightTheme.inputPrompt}>{prompt}</Text>
+              <Text color={Theme.accentUser}>{prompt}</Text>
               <Text>{lineDisplay}</Text>
             </Box>
           );

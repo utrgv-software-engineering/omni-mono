@@ -8,7 +8,7 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 import { DialogShell } from "./shared/DialogShell.js";
 import {
   BaseSelectionList,
@@ -54,15 +54,15 @@ export const McpApprovalDialog = React.memo<McpApprovalDialogProps>(
         footer="Use ↑↓ to navigate, Enter to select, ESC to deny"
       >
         <Box>
-          <Text color={TokyoNightTheme.defaultText}>
+          <Text color={Theme.textChrome}>
             Server:{" "}
-            <Text color={TokyoNightTheme.toolResult}>{serverLabel}</Text>
+            <Text color={Theme.textSecondary}>{serverLabel}</Text>
           </Text>
         </Box>
 
         <Box flexDirection="column">
-          <Text color={TokyoNightTheme.defaultText}>Arguments:</Text>
-          <Text color={TokyoNightTheme.toolResult}>
+          <Text color={Theme.textChrome}>Arguments:</Text>
+          <Text color={Theme.textSecondary}>
             {argsDisplay.length > 200
               ? argsDisplay.slice(0, 200) + "..."
               : argsDisplay}

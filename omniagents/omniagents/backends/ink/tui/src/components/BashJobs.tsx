@@ -2,17 +2,16 @@ import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import Spinner from "ink-spinner";
 import {
   useBashJobs,
   useDismissedJobIds,
   useThinking,
 } from "../store/appStore.js";
 import type { BashJobSummary } from "../store/appStore.js";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 const RUNNING_GLYPH = "◐";
-const SUCCESS_GLYPH = "●";
+const SUCCESS_GLYPH = "✔";
 const FAILURE_GLYPH = "✗";
 
 const MAX_VISIBLE = 5;
@@ -27,8 +26,8 @@ function statusGlyph(job: BashJobSummary): string {
 }
 
 function statusColor(job: BashJobSummary): string {
-  if (job.running) return TokyoNightTheme.info;
-  return job.exit_code === 0 ? TokyoNightTheme.success : TokyoNightTheme.error;
+  if (job.running) return Theme.stateActive;
+  return job.exit_code === 0 ? Theme.stateDone : Theme.stateFailed;
 }
 
 function shortCommand(command: string, max: number): string {
@@ -168,6 +167,10 @@ export const BashJobs = React.memo(
     //      Enter is an alias for l, Esc unfocuses the panel entirely.
     useKeypress(
       (_input, key) => {
+        // Chords and Tab belong to the global layer — the log preview
+        // must never swallow Ctrl+C or screen switching.
+        if (key.ctrl || (key.meta && !key.escape)) return false;
+        if (key.tab) return false;
         if (key.escape) {
           setLogsForJobId(null);
           setLogsError(null);
@@ -186,6 +189,10 @@ export const BashJobs = React.memo(
 
     useKeypress(
       (input, key) => {
+      // Modified keys are chords for the global layer (quit, panel
+      // switching) — never mistake Ctrl+X for the letter x.
+      if (key.ctrl || (key.meta && !key.escape)) return false;
+      if (key.tab) return false; // tab always cycles screens
         if (key.escape) {
           onUnfocus();
           return true;
@@ -230,31 +237,15 @@ export const BashJobs = React.memo(
       },
     );
 
-    if (!jobs || jobs.length === 0) {
+    // Drawer model: ambient presence (running count, failed-job warning)
+    // is the ActivityStrip's job; the body renders only while focused.
+    if (!focused) {
       return null;
     }
-
-    // Collapsed form — only surfaced when something is actively running.
-    // Mirrors StatusIndicator's "Thinking…" structure exactly so the spinner
-    // glyph lands in the same column and the text picks up where the status
-    // row's text would. Done/failed counts intentionally omitted: they're
-    // history, not ambient signal. Ctrl+B opens the full panel for review.
-    if (!focused) {
-      if (running.length === 0) return null;
-      const noun = running.length === 1 ? "background job" : "background jobs";
+    if (!jobs || jobs.length === 0) {
       return (
-        // Borderless single-line panel — aligns with the InlineStatus
-        // spinner and the other borderless dock items above. Parent
-        // owns vertical spacing via gap={1}.
-        <Box>
-          <Text>
-            <Text color={TokyoNightTheme.info}>
-              <Spinner type="dots" />
-            </Text>{" "}
-            <Text color={TokyoNightTheme.info}>{running.length}</Text>
-            <Text color={TokyoNightTheme.defaultText}> {noun} running</Text>
-            <Text color={TokyoNightTheme.help}> Ctrl+B to manage</Text>
-          </Text>
+        <Box paddingX={1} borderStyle="round" borderColor={Theme.borderAmbient}>
+          <Text color={Theme.textChrome}>no background jobs</Text>
         </Box>
       );
     }
@@ -264,19 +255,20 @@ export const BashJobs = React.memo(
     return (
       <Box
         flexDirection="column"
+        paddingX={1}
         borderStyle="round"
-        borderColor={TokyoNightTheme.info}
+        borderColor={Theme.stateActive}
       >
         <Box>
-          <Text color={TokyoNightTheme.defaultText}>Bash jobs </Text>
-          <Text color={TokyoNightTheme.info}>{running.length}</Text>
-          <Text color={TokyoNightTheme.defaultText}> running · </Text>
-          <Text color={TokyoNightTheme.success}>
+          <Text color={Theme.textChrome}>Bash jobs </Text>
+          <Text color={Theme.stateActive}>{running.length}</Text>
+          <Text color={Theme.textChrome}> running · </Text>
+          <Text color={Theme.stateDone}>
             {exited.length - failed.length}
           </Text>
-          <Text color={TokyoNightTheme.defaultText}> done · </Text>
-          <Text color={TokyoNightTheme.error}>{failed.length}</Text>
-          <Text color={TokyoNightTheme.defaultText}> failed</Text>
+          <Text color={Theme.textChrome}> done · </Text>
+          <Text color={Theme.stateFailed}>{failed.length}</Text>
+          <Text color={Theme.textChrome}> failed</Text>
         </Box>
 
         {visible.map((j, idx) => {
@@ -288,33 +280,33 @@ export const BashJobs = React.memo(
             : COMMAND_TRUNCATE_UNFOCUSED;
           return (
             <Box key={j.job_id}>
-              <Text color={TokyoNightTheme.info}>
+              <Text color={Theme.focus}>
                 {isSelected ? "▶ " : "  "}
               </Text>
               <Text color={statusColor(j)}>{statusGlyph(j)} </Text>
-              <Text color={TokyoNightTheme.defaultText}>{j.job_id} </Text>
+              <Text color={Theme.textChrome}>{j.job_id} </Text>
               <Text
                 color={
                   j.running
-                    ? TokyoNightTheme.inputText
-                    : TokyoNightTheme.toolResult
+                    ? Theme.textPrimary
+                    : Theme.textSecondary
                 }
                 strikethrough={!j.running}
               >
                 {shortCommand(j.command, max)}
               </Text>
-              <Text color={TokyoNightTheme.defaultText}> {tail}</Text>
+              <Text color={Theme.textChrome}> {tail}</Text>
             </Box>
           );
         })}
 
         {overflow > 0 && (
-          <Text color={TokyoNightTheme.defaultText}>… +{overflow} more</Text>
+          <Text color={Theme.textChrome}>… +{overflow} more</Text>
         )}
 
         {logsForJobId === null && (
           <Box>
-            <Text color={TokyoNightTheme.help}>
+            <Text color={Theme.textChrome}>
               ↑↓ select · x kill · l logs · esc exit
             </Text>
           </Box>
@@ -322,7 +314,7 @@ export const BashJobs = React.memo(
 
         {statusLine && (
           <Box>
-            <Text color={TokyoNightTheme.warning} italic>
+            <Text color={Theme.stateBlocked} italic>
               {statusLine}
             </Text>
           </Box>
@@ -331,10 +323,10 @@ export const BashJobs = React.memo(
         {logsForJobId && (
           <Box flexDirection="column" marginTop={1}>
             <Box>
-              <Text color={TokyoNightTheme.info} bold>
+              <Text color={Theme.stateActive} bold>
                 {logsForJobId}
               </Text>
-              <Text color={TokyoNightTheme.defaultText}>
+              <Text color={Theme.textChrome}>
                 {"  "}
                 {logsLoading
                   ? "loading…"
@@ -344,9 +336,9 @@ export const BashJobs = React.memo(
               </Text>
             </Box>
             {logsError ? (
-              <Text color={TokyoNightTheme.error}>{logsError}</Text>
+              <Text color={Theme.stateFailed}>{logsError}</Text>
             ) : logsLoading ? (
-              <Text color={TokyoNightTheme.help} italic>
+              <Text color={Theme.textChrome} italic>
                 fetching tail…
               </Text>
             ) : logsText ? (
@@ -355,18 +347,18 @@ export const BashJobs = React.memo(
                   .split("\n")
                   .slice(-LOGS_PREVIEW_LINES)
                   .map((line, i) => (
-                    <Text key={i} color={TokyoNightTheme.toolResult}>
+                    <Text key={i} color={Theme.textSecondary}>
                       {line}
                     </Text>
                   ))}
               </Box>
             ) : (
-              <Text color={TokyoNightTheme.help} italic>
+              <Text color={Theme.textChrome} italic>
                 (no log output)
               </Text>
             )}
             <Box>
-              <Text color={TokyoNightTheme.help}>
+              <Text color={Theme.textChrome}>
                 any key to close · esc returns to list
               </Text>
             </Box>

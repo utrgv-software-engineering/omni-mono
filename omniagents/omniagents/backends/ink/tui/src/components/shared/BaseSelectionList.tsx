@@ -12,7 +12,7 @@ import React, { useState } from "react";
 import { Box, Text } from "ink";
 import { useKeypress } from "../../hooks/useKeypress.js";
 import { KeypressPriority } from "../../contexts/KeypressContext.js";
-import { TokyoNightTheme } from "../../theme.js";
+import { Theme } from "../../theme.js";
 
 export interface SelectionOption<V extends string> {
   title: string;
@@ -45,6 +45,10 @@ export function BaseSelectionList<V extends string>({
 
   useKeypress(
     (input, key) => {
+      // Modified keys are chords for the global layer (quit, panel
+      // switching) — never mistake Ctrl+X for the letter x.
+      if (key.ctrl || (key.meta && !key.escape)) return false;
+      if (key.tab) return false; // tab always cycles screens
       if (key.shift && (key.upArrow || key.downArrow)) return false;
       if (key.upArrow) {
         setUncontrolledIndex((prev) => (prev > 0 ? prev - 1 : prev));
@@ -76,11 +80,11 @@ export function BaseSelectionList<V extends string>({
       {options.map((option, index) => (
         <Box key={option.value}>
           {index === selectedIndex ? (
-            <Text bold color={TokyoNightTheme.approvalSelected}>
+            <Text bold color={Theme.focus}>
               ▶ {option.title} - {option.description}
             </Text>
           ) : (
-            <Text color={TokyoNightTheme.approvalUnselected}>
+            <Text color={Theme.textChrome}>
               {option.title} - {option.description}
             </Text>
           )}

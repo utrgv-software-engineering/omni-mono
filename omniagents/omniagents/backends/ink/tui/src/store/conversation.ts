@@ -49,6 +49,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 function toolCallInfo(item: ConversationItem): ToolCallInfo {
   return {
     tool: text(item.content.tool) || "tool",
+    kind: toolKind(item),
     input: asText(item.content.input),
     call_id:
       typeof item.content.call_id === "string"

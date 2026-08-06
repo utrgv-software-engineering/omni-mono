@@ -3,7 +3,7 @@ import { Box, Text } from "ink";
 import { useActions, useNotifications } from "../store/appStore.js";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 const MAX_VISIBLE = 5;
 const MESSAGE_TRUNCATE_UNFOCUSED = 70;
@@ -48,6 +48,10 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
 
   useKeypress(
     (input, key) => {
+      // Modified keys are chords for the global layer (quit, panel
+      // switching) — never mistake Ctrl+X for the letter x.
+      if (key.ctrl || (key.meta && !key.escape)) return false;
+      if (key.tab) return false; // tab always cycles screens
       if (key.escape) {
         onUnfocus();
         return true;
@@ -77,26 +81,33 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
     { isActive: focused, priority: KeypressPriority.High },
   );
 
-  if (notifications.length === 0) return null;
+  // Drawer model: ambient presence is the ActivityStrip's "N notes"
+  // token; the body renders only while focused.
+  if (!focused) return null;
+  if (notifications.length === 0) {
+    return (
+      <Box paddingX={1} borderStyle="round" borderColor={Theme.borderAmbient}>
+        <Text color={Theme.textChrome}>no notifications</Text>
+      </Box>
+    );
+  }
 
   const noun = notifications.length === 1 ? "notification" : "notifications";
 
   return (
     <Box
       flexDirection="column"
+      paddingX={1}
       borderStyle="round"
-      borderColor={focused ? TokyoNightTheme.info : TokyoNightTheme.toolResult}
+      borderColor={Theme.stateActive}
     >
       <Box>
-        <Text color={TokyoNightTheme.defaultText}>Notifications </Text>
-        <Text color={TokyoNightTheme.info}>{notifications.length}</Text>
-        <Text color={TokyoNightTheme.defaultText} dimColor>
+        <Text color={Theme.textChrome}>Notifications </Text>
+        <Text color={Theme.stateActive}>{notifications.length}</Text>
+        <Text color={Theme.textChrome} dimColor>
           {" "}
           {noun}
         </Text>
-        {!focused && (
-          <Text color={TokyoNightTheme.help}> Ctrl+N to manage</Text>
-        )}
       </Box>
 
       {visible.map((n, idx) => {
@@ -106,10 +117,10 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
           : MESSAGE_TRUNCATE_UNFOCUSED;
         return (
           <Box key={n.id}>
-            <Text color={TokyoNightTheme.info}>
+            <Text color={Theme.focus}>
               {focused ? (isSelected ? "▶ " : "  ") : "· "}
             </Text>
-            <Text color={TokyoNightTheme.defaultText}>
+            <Text color={Theme.textChrome}>
               {shortMessage(n.message, max)}
             </Text>
           </Box>
@@ -117,14 +128,14 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
       })}
 
       {overflow > 0 && (
-        <Text color={TokyoNightTheme.defaultText} dimColor>
+        <Text color={Theme.textChrome} dimColor>
           … +{overflow} more
         </Text>
       )}
 
       {focused && (
         <Box>
-          <Text color={TokyoNightTheme.help}>
+          <Text color={Theme.textChrome}>
             ↑↓ select · d dismiss · D dismiss all · esc exit
           </Text>
         </Box>

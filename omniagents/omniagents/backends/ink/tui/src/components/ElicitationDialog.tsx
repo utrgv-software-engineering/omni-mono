@@ -20,7 +20,7 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 import type { ElicitationInfo } from "../store/appStore.js";
 import { DialogShell } from "./shared/DialogShell.js";
 import {
@@ -142,9 +142,9 @@ export const ElicitationDialog = React.memo<ElicitationDialogProps>(
 
     const body = (
       <Box flexDirection="column">
-        <Text color={TokyoNightTheme.defaultText}>{elicitation.message}</Text>
+        <Text color={Theme.textChrome}>{elicitation.message}</Text>
         {elicitation.expires_at ? (
-          <Text color={TokyoNightTheme.toolResult}>
+          <Text color={Theme.textSecondary}>
             Expires {elicitation.expires_at}
           </Text>
         ) : null}
@@ -158,7 +158,7 @@ export const ElicitationDialog = React.memo<ElicitationDialogProps>(
           footer="This terminal can't render this request — decline it or answer from the web UI."
         >
           {body}
-          <Text color={TokyoNightTheme.warning}>({support.reason})</Text>
+          <Text color={Theme.stateBlocked}>({support.reason})</Text>
           <BaseSelectionList
             options={DECLINE_OPTIONS}
             onSelect={() =>
@@ -198,7 +198,7 @@ export const ElicitationDialog = React.memo<ElicitationDialogProps>(
           footer="Open the link in your browser, then select an option"
         >
           {body}
-          <Text color={TokyoNightTheme.approvalSelected}>
+          <Text color={Theme.focus}>
             {elicitation.url}
           </Text>
           <BaseSelectionList

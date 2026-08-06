@@ -5,7 +5,7 @@
 
 import React, { useMemo } from "react";
 import { Box, Text, useStdout } from "ink";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 export interface Session {
   id: string;
@@ -108,7 +108,7 @@ export const SessionList = React.memo<SessionListProps>(
     if (sessions.length === 0) {
       return (
         <Box flexDirection="column" paddingX={1}>
-          <Text color={TokyoNightTheme.defaultText}>
+          <Text color={Theme.textChrome}>
             No sessions found. Press Tab to create a new session.
           </Text>
         </Box>
@@ -118,7 +118,7 @@ export const SessionList = React.memo<SessionListProps>(
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box marginBottom={1}>
-          <Text bold color={TokyoNightTheme.sessionTitle}>
+          <Text bold color={Theme.textPrimary}>
             Select a session or press Tab to create new:
           </Text>
         </Box>
@@ -127,7 +127,7 @@ export const SessionList = React.memo<SessionListProps>(
           // Calculate the actual index in the full sessions array
           const actualIndex = currentPage * maxVisibleSessions + visibleIdx;
           const isSelected = actualIndex === selectedIndex;
-          const cursor = isSelected ? "> " : "  ";
+          const cursor = isSelected ? "▶ " : "  ";
 
           // Format session ID (truncate if needed)
           const sid =
@@ -162,8 +162,8 @@ export const SessionList = React.memo<SessionListProps>(
           }
 
           const textColor = isSelected
-            ? TokyoNightTheme.sessionTitle
-            : TokyoNightTheme.help;
+            ? Theme.textPrimary
+            : Theme.textChrome;
 
           return (
             <Box key={session.id}>
@@ -175,7 +175,7 @@ export const SessionList = React.memo<SessionListProps>(
         })}
 
         <Box marginTop={1}>
-          <Text color={TokyoNightTheme.help}>
+          <Text color={Theme.textChrome}>
             ↑↓ navigate • Enter select • Tab new session • Ctrl+C quit
             {totalPages > 1 && ` • Page ${currentPage + 1}/${totalPages}`}
           </Text>

@@ -4,7 +4,7 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 import { parseRichMetadata } from "../types/richMetadata.js";
 import {
   DiffApproval,
@@ -100,8 +100,8 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
         footer="Use ↑↓ to navigate, Enter to select, ESC to deny"
       >
         <Box flexDirection="column">
-          <Text color={TokyoNightTheme.defaultText}>Arguments:</Text>
-          <Text color={TokyoNightTheme.toolResult}>
+          <Text color={Theme.textChrome}>Arguments:</Text>
+          <Text color={Theme.textSecondary}>
             {argsDisplay.length > 200
               ? argsDisplay.slice(0, 200) + "..."
               : argsDisplay}

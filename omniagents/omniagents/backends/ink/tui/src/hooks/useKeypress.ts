@@ -6,7 +6,7 @@
  * directly so the hook is safe to use in tests or in isolated component trees.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useInput } from "ink";
 import {
   useKeypressContext,
@@ -62,14 +62,24 @@ export function useKeypress(
 ) {
   const ctx = useKeypressContext();
 
+  // The live callback rides in a ref so the subscription survives
+  // re-renders. Subscribing per-render (the old shape, with onKeypress in
+  // the effect deps) re-inserted the handler at the END of the dispatch
+  // map on every render — same-priority ordering became "whoever
+  // re-rendered last", i.e. nondeterministic. With the ref, subscription
+  // order is mount order, stable for the component's lifetime.
+  const handlerRef = useRef(onKeypress);
+  handlerRef.current = onKeypress;
+
   useEffect(() => {
     if (!ctx || !isActive) return;
-    const handler = (input: string, key: Key) => onKeypress(input, key);
+    const handler = (input: string, key: Key) =>
+      handlerRef.current(input, key);
     ctx.subscribe(handler, priority);
     return () => {
       ctx.unsubscribe(handler);
     };
-  }, [ctx, isActive, priority, onKeypress]);
+  }, [ctx, isActive, priority]);
 
   // Fallback path when no provider is mounted (tests, partial trees).
   // Re-uses ink's useInput which is a no-op when isActive is false.

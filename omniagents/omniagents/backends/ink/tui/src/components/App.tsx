@@ -24,13 +24,12 @@ import {
   useMcpApproval,
   useEscalation,
   useElicitation,
-  useNotifications,
-  useUsage,
-  useSessionModel,
   useSessionId,
   useCurrentRunId,
   usePreamble,
   useBashJobs,
+  useRunDiff,
+  useSubagents,
   useActions,
 } from "../store/appStore.js";
 import type {
@@ -46,17 +45,19 @@ import { MultiLineInputOptimized } from "./MultiLineInputOptimized.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";
 import { McpApprovalDialog } from "./McpApprovalDialog.js";
 import { Preamble } from "./Preamble.js";
-import { Help } from "./Help.js";
 import { SessionList } from "./SessionList.js";
 import { Scrollable } from "./Scrollable.js";
 import { Tasks } from "./Tasks.js";
-import { Workers } from "./Workers.js";
 import { BashJobs } from "./BashJobs.js";
 import { QueuedMessages } from "./QueuedMessages.js";
-import { Goal } from "./Goal.js";
-import { Wakeup } from "./Wakeup.js";
-import { Loop } from "./Loop.js";
-import { Recap } from "./Recap.js";
+import { PanelMenu } from "./PanelMenu.js";
+import { ReviewScreen } from "./ReviewScreen.js";
+import { AgentsScreen } from "./AgentsScreen.js";
+import { FilesScreen } from "./FilesScreen.js";
+import { StatusBar, type Screen } from "./StatusBar.js";
+import { TopTabs } from "./TopTabs.js";
+import { GitPanel } from "./GitPanel.js";
+import { ModelPickerPanel } from "./ModelPickerPanel.js";
 import { EscalationBanner } from "./EscalationBanner.js";
 import { ElicitationBanner } from "./ElicitationBanner.js";
 import {
@@ -67,7 +68,7 @@ import { Notifications } from "./Notifications.js";
 import { resolveEscalation } from "../hooks/escalationBridge.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
 import { ScrollProvider } from "../contexts/ScrollProvider.js";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 /**
  * Wrapper to keep ApprovalDialog mounted to prevent flicker
@@ -215,8 +216,9 @@ const ScrollableMessageList: React.FC<{
           Preamble, the panel group, and approvals. Inner gap={0} on
           the panel-group wrapper lets bordered panels stack with
           their borders touching (no empty row between them). Children
-          must not carry their own marginTop / marginBottom. */}
-      <Box flexDirection="column" gap={1}>
+          must not carry their own marginTop / marginBottom.
+          paddingTop separates the first message from the tab bar. */}
+      <Box flexDirection="column" gap={1} paddingTop={1}>
         <MessageListOptimized />
 
         <InlineStatusIndicator />
@@ -249,50 +251,6 @@ const ScrollableMessageList: React.FC<{
   );
 };
 
-/**
- * Isolate Help subscription to prevent parent re-renders
- */
-const HelpWrapper = React.memo<{
-  connected: boolean;
-  thinking: boolean;
-  approval: ApprovalInfo | null;
-  usage: ReturnType<typeof useUsage>;
-  sessionModel: string | null;
-  waitingForSecondCtrlC: boolean;
-}>(
-  ({
-    connected,
-    thinking,
-    approval,
-    usage,
-    sessionModel,
-    waitingForSecondCtrlC,
-  }) => {
-    return (
-      <Box paddingX={1} paddingBottom={1}>
-        <Help
-          isThinking={thinking}
-          isPendingApproval={!!approval}
-          connected={connected}
-          usage={usage}
-          sessionModel={sessionModel}
-          waitingForSecondCtrlC={waitingForSecondCtrlC}
-        />
-      </Box>
-    );
-  },
-  (prev, next) => {
-    return (
-      prev.connected === next.connected &&
-      prev.thinking === next.thinking &&
-      prev.approval === next.approval &&
-      prev.usage === next.usage &&
-      prev.sessionModel === next.sessionModel &&
-      prev.waitingForSecondCtrlC === next.waitingForSecondCtrlC
-    );
-  },
-);
-
 export interface AppProps {
   serverUrl: string;
   agentName: string;
@@ -307,6 +265,17 @@ export interface AppProps {
 
 // UI state machine for proper flow control
 type UIState = "connecting" | "session_select" | "chat" | "error";
+
+/** The single panel drawer that owns the keyboard, or null for the prompt. */
+type ActivePanel =
+  | "tasks"
+  | "workers"
+  | "queue"
+  | "jobs"
+  | "notifications"
+  | "git"
+  | "models"
+  | null;
 
 export const App: React.FC<AppProps> = ({
   serverUrl,
@@ -352,9 +321,6 @@ export const App: React.FC<AppProps> = ({
   const mcpApproval = useMcpApproval();
   const escalation = useEscalation();
   const elicitation = useElicitation();
-  const notifications = useNotifications();
-  const usage = useUsage();
-  const sessionModel = useSessionModel();
   const sessionId = useSessionId();
   const currentRunId = useCurrentRunId();
   const bashJobs = useBashJobs();
@@ -364,16 +330,69 @@ export const App: React.FC<AppProps> = ({
   const controlsRef = useRef<any>(null);
   const [controlsHeight, setControlsHeight] = useState(0);
 
-  // Notifications panel focus: Ctrl+N toggles the panel and lets the
-  // user dismiss individual / all queued notifications. Mirrors the
-  // Ctrl+B bash-jobs chord.
-  const [notificationsPanelFocused, setNotificationsPanelFocused] =
-    useState(false);
+  // Exactly one panel drawer may own the keyboard at a time. Chords
+  // toggle their panel (ctrl+b jobs, ctrl+n notifications, ctrl+g git,
+  // /model models) and ctrl+a cycles the strip drawers
+  // (tasks → workers → queue); opening one closes whatever was open, so
+  // panels can never stack two live cursors.
+  const [activePanel, setActivePanel] = useState<ActivePanel>(null);
+  // Which-key popup (ctrl+a): pick a panel by mnemonic instead of
+  // cycling blind. Selecting sets activePanel and closes the menu.
+  const [panelMenuOpen, setPanelMenuOpen] = useState(false);
+  // Screen router: full-screen scenes switched with alt+1/2. Chat is
+  // the conversation (composer, transcript, decisions inline); review
+  // is the full-height diff screen. Drawer overlays live on chat.
+  const [screen, setScreen] = useState<Screen>("chat");
+  // Text queued for the composer (the Files screen's @path mention
+  // bridge): consumed by MultiLineInputOptimized on the next render.
+  const [pendingInsert, setPendingInsert] = useState<string | null>(null);
 
-  // Bash-jobs panel focus: Ctrl+B toggles a "panel mode" that hijacks
-  // arrow keys / x / l for navigation + kill + log preview. Esc inside the
-  // panel returns to normal typing.
-  const [bashPanelFocused, setBashPanelFocused] = useState(false);
+  // Unread stars per tab — "changed since you last looked", the
+  // browser/IDE modified-dot. Distinct from ⚠ (needs a decision).
+  // Watching a signal while its screen is inactive sets the star;
+  // visiting the screen clears it.
+  const [unread, setUnread] = useState<Record<Screen, boolean>>({
+    chat: false,
+    review: false,
+    agents: false,
+    files: false,
+  });
+  const runDiffForBadge = useRunDiff();
+  const workersForBadge = useSubagents();
+  const workersSignature = workersForBadge
+    .map((w) => `${w.subagent_id}:${w.status}`)
+    .join(",");
+  const prevSignals = useRef<{
+    messages: number;
+    runDiff: unknown;
+    subagents: string;
+  } | null>(null);
+  useEffect(() => {
+    const prev = prevSignals.current;
+    prevSignals.current = {
+      messages: messages.length,
+      runDiff: runDiffForBadge,
+      subagents: workersSignature,
+    };
+    if (!prev) return;
+    setUnread((current) => {
+      let next = current;
+      const mark = (target: Screen) => {
+        if (screen !== target && !next[target]) {
+          next = { ...next, [target]: true };
+        }
+      };
+      if (messages.length > prev.messages) mark("chat");
+      if (runDiffForBadge && runDiffForBadge !== prev.runDiff) mark("review");
+      if (workersSignature !== prev.subagents) mark("agents");
+      return next;
+    });
+  }, [messages.length, runDiffForBadge, workersSignature, screen]);
+  useEffect(() => {
+    setUnread((current) =>
+      current[screen] ? { ...current, [screen]: false } : current,
+    );
+  }, [screen]);
 
   // Warm up the server-side bash-jobs sweeper as soon as a running job
   // appears in the panel. Without this, a job spawned by the agent that
@@ -478,9 +497,9 @@ export const App: React.FC<AppProps> = ({
       .then((res) => {
         const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
         if (Array.isArray(snap)) {
-          actions.setWorkers(snap as any);
+          actions.setSubagents(snap as any);
         } else {
-          actions.setWorkers([]);
+          actions.setSubagents([]);
         }
       })
       .catch(() => {
@@ -497,17 +516,30 @@ export const App: React.FC<AppProps> = ({
 
   useLayoutEffect(() => {
     if (controlsRef.current) {
-      const measurement = measureElement(controlsRef.current);
-      if (measurement.height > 0) {
-        setControlsHeight(measurement.height);
-      }
+      // Zero is a REAL measurement on screens without a composer
+      // (review/agents with no drawer open) — skipping it would keep
+      // subtracting the stale chat-controls height and strand rows of
+      // blank space under those screens.
+      setControlsHeight(measureElement(controlsRef.current).height);
     }
-  }, [terminalHeight, approval, mcpApproval, thinking]);
+    // `screen` changes the controls column contents (the composer only
+    // exists on chat), and the drawer region grows/shrinks with
+    // activePanel / the menu — all of them must re-measure.
+  }, [
+    terminalHeight,
+    approval,
+    mcpApproval,
+    thinking,
+    screen,
+    activePanel,
+    panelMenuOpen,
+  ]);
 
-  // Calculate available height for messages (gemini-cli approach)
+  // Calculate available height for messages (gemini-cli approach).
+  // The extra -1 is the TopTabs row, which sits outside controlsRef.
   const availableTerminalHeight = Math.max(
     5,
-    terminalHeight - controlsHeight - 2,
+    terminalHeight - controlsHeight - 2 - 1,
   );
 
   // Ctrl+C handling - require double tap to quit
@@ -620,6 +652,26 @@ export const App: React.FC<AppProps> = ({
     }
   }, [client, rpcReady, resumeMode, initialSessionId, debug]);
 
+  // Keep the session picker current: thread_updated fires when another
+  // client renames/pins/archives a thread (experimental; delivered only
+  // when granted). A wholesale refetch is fine — the picker is a startup
+  // surface and the list is small.
+  useEffect(() => {
+    if (!client || uiState !== "session_select") return;
+    const handleThreadUpdated = () => {
+      client
+        .listSessions()
+        .then((sessions) => {
+          if (sessions) setAvailableSessions(sessions);
+        })
+        .catch(() => {});
+    };
+    client.on("thread_updated", handleThreadUpdated);
+    return () => {
+      client.off("thread_updated", handleThreadUpdated);
+    };
+  }, [client, uiState]);
+
   // Reflect connection status into status indicator like bubbletea
   useEffect(() => {
     if (uiState !== "chat") return;
@@ -713,6 +765,14 @@ export const App: React.FC<AppProps> = ({
       // Built-in: /exit
       if (name === "/exit") {
         exit();
+        return { sendToLLM: false };
+      }
+
+      // Built-in: /model — open the catalog picker panel. Client-side on
+      // purpose: model switching is a stable GUI RPC pair, not a server
+      // function.
+      if (name === "/model" || name === "/models") {
+        setActivePanel("models");
         return { sendToLLM: false };
       }
 
@@ -962,6 +1022,9 @@ export const App: React.FC<AppProps> = ({
         });
       }
       if (uiState === "session_select") {
+        // Consume only what the list actually handles — Ctrl+C (and any
+        // other chord) must fall through to the global quit handler.
+        if (key.ctrl || (key.meta && !key.escape)) return false;
         handleSessionListInput(input, key);
         return true;
       }
@@ -973,37 +1036,134 @@ export const App: React.FC<AppProps> = ({
     },
   );
 
-  // Handle Ctrl+C - double tap to quit (like bubbletea).
-  // Only active in chat mode to avoid conflicts with session selection.
-  // Low priority: this is the global fallback handler that runs after panels
-  // (High) and modals (Critical) have had their chance to consume.
+  // Global Ctrl+C — double tap to quit (like bubbletea). Critical and
+  // active in EVERY uiState (including connecting/error, where nothing
+  // else subscribes): the user must always be able to exit. Panels
+  // return false for modified keys, so this always receives the chord.
   useKeypress(
     useCallback(
       (input, key) => {
-        // Ctrl+B: enter the bash-jobs panel for keyboard management. Only
-        // toggles on when there's at least one job; otherwise it's a no-op
-        // so the chord doesn't feel broken when the panel is hidden.
-        if (key.ctrl && input === "b") {
-          if (!bashPanelFocused && bashJobs.length > 0) {
-            setBashPanelFocused(true);
-          } else if (bashPanelFocused) {
-            setBashPanelFocused(false);
+        if (!(key.ctrl && input === "c")) return false;
+        ctrlCCount.current++;
+
+        if (ctrlCTimer.current) {
+          clearTimeout(ctrlCTimer.current);
+        }
+
+        if (ctrlCCount.current === 1) {
+          // First Ctrl+C: cancel the current run / deny a pending
+          // approval, then arm the quit window.
+          if (thinking && currentRunId) {
+            cancelRun(currentRunId);
+          } else if (approval) {
+            handleApproval("no");
+          } else if (mcpApproval) {
+            handleMcpApproval("no");
           }
+          setWaitingForSecondCtrlC(true);
+          ctrlCTimer.current = setTimeout(() => {
+            ctrlCCount.current = 0;
+            setWaitingForSecondCtrlC(false);
+          }, 1000);
+        } else if (ctrlCCount.current >= 2) {
+          setWaitingForSecondCtrlC(false);
+          exit();
+        }
+        return true;
+      },
+      [
+        thinking,
+        currentRunId,
+        approval,
+        mcpApproval,
+        cancelRun,
+        handleApproval,
+        handleMcpApproval,
+        exit,
+      ],
+    ),
+    { isActive: true, priority: KeypressPriority.Critical },
+  );
+
+  // Chat-mode fallback handler for panel chords and Esc.
+  // Low priority: runs after panels (High) and modals (Critical) have
+  // had their chance to consume.
+  useKeypress(
+    useCallback(
+      (input, key) => {
+        // Tab cycles screens — from anywhere, always. Overlays close so
+        // the switch is never invisible. Shift+Tab reverses.
+        if (key.tab && !key.ctrl && !key.meta) {
+          const order: Screen[] = ["chat", "review", "agents", "files"];
+          setScreen((prev) => {
+            const index = order.indexOf(prev);
+            const step = key.shift ? order.length - 1 : 1;
+            return order[(index + step) % order.length]!;
+          });
+          setPanelMenuOpen(false);
           return;
         }
-        // Ctrl+N: enter the notifications panel. Same pattern — only
-        // toggles on when there's at least one notification to manage.
-        if (key.ctrl && input === "n") {
-          if (!notificationsPanelFocused && notifications.length > 0) {
-            setNotificationsPanelFocused(true);
-          } else if (notificationsPanelFocused) {
-            setNotificationsPanelFocused(false);
+        // Alt+digit jumps stay as direct accelerators.
+        if (key.meta && !key.ctrl) {
+          if (input === "1") {
+            setScreen("chat");
+            return;
           }
+          if (input === "2") {
+            setScreen("review");
+            return;
+          }
+          if (input === "3") {
+            setScreen("agents");
+            return;
+          }
+          if (input === "4") {
+            setScreen("files");
+            return;
+          }
+        }
+        // Panel chords — each toggles its own panel; opening one closes
+        // whatever else was open (single-owner rule).
+        if (key.ctrl && input === "b") {
+          setActivePanel((prev) => (prev === "jobs" ? null : "jobs"));
+          return;
+        }
+        if (key.ctrl && input === "n") {
+          setActivePanel((prev) =>
+            prev === "notifications" ? null : "notifications",
+          );
+          return;
+        }
+        if (key.ctrl && input === "g") {
+          setActivePanel((prev) => (prev === "git" ? null : "git"));
+          return;
+        }
+        // Ctrl+A: toggle the which-key panel menu — one mnemonic
+        // keypress to any panel, with live summaries.
+        if (key.ctrl && input === "a") {
+          setPanelMenuOpen((prev) => !prev);
+          return;
+        }
+        // Ctrl+O: toggle the transcript between semantic activity beats
+        // and the mechanical per-tool view.
+        if (key.ctrl && input === "o") {
+          actions.toggleTranscriptDetail();
+          return;
+        }
+        // Esc closes the display-only drawers (tasks/workers/queue).
+        // Interactive panels handle their own Esc at High priority.
+        if (
+          key.escape &&
+          (activePanel === "tasks" ||
+            activePanel === "workers" ||
+            activePanel === "queue")
+        ) {
+          setActivePanel(null);
           return;
         }
         // While a panel owns input, swallow other keys here so they
         // don't double-handle (the panel registers its own useInput).
-        if (bashPanelFocused || notificationsPanelFocused) {
+        if (activePanel !== null) {
           return;
         }
         if (key.escape) {
@@ -1016,38 +1176,6 @@ export const App: React.FC<AppProps> = ({
           }
           return;
         }
-        if (key.ctrl && input === "c") {
-          ctrlCCount.current++;
-
-          // Clear existing timer
-          if (ctrlCTimer.current) {
-            clearTimeout(ctrlCTimer.current);
-          }
-
-          if (ctrlCCount.current === 1) {
-            // First Ctrl+C: Cancel current run if active
-            if (thinking && currentRunId) {
-              cancelRun(currentRunId);
-            } else if (approval) {
-              handleApproval("no");
-            } else if (mcpApproval) {
-              handleMcpApproval("no");
-            }
-
-            // Show warning message
-            setWaitingForSecondCtrlC(true);
-
-            // Reset counter and hide warning after 1 second
-            ctrlCTimer.current = setTimeout(() => {
-              ctrlCCount.current = 0;
-              setWaitingForSecondCtrlC(false);
-            }, 1000);
-          } else if (ctrlCCount.current >= 2) {
-            // Second Ctrl+C within 1 second: Exit
-            setWaitingForSecondCtrlC(false);
-            exit();
-          }
-        }
       },
       [
         thinking,
@@ -1057,11 +1185,8 @@ export const App: React.FC<AppProps> = ({
         cancelRun,
         handleApproval,
         handleMcpApproval,
-        exit,
-        bashPanelFocused,
-        bashJobs.length,
-        notificationsPanelFocused,
-        notifications.length,
+        activePanel,
+        actions,
       ],
     ),
     {
@@ -1069,22 +1194,6 @@ export const App: React.FC<AppProps> = ({
       priority: KeypressPriority.Low,
     },
   );
-
-  // If every job vanishes (cleared, archived) while the panel is focused,
-  // fall back to normal typing — there's nothing to manage.
-  useEffect(() => {
-    if (bashPanelFocused && bashJobs.length === 0) {
-      setBashPanelFocused(false);
-    }
-  }, [bashPanelFocused, bashJobs.length]);
-
-  // Same fallback for notifications — user dismissed the last one while
-  // the panel was focused, drop focus back to the prompt.
-  useEffect(() => {
-    if (notificationsPanelFocused && notifications.length === 0) {
-      setNotificationsPanelFocused(false);
-    }
-  }, [notificationsPanelFocused, notifications.length]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -1106,7 +1215,7 @@ export const App: React.FC<AppProps> = ({
   if (uiState === "connecting") {
     return (
       <Box flexDirection="column">
-        <Text color={TokyoNightTheme.defaultText}>
+        <Text color={Theme.textChrome}>
           Connecting to {agentName}...
         </Text>
       </Box>
@@ -1116,8 +1225,8 @@ export const App: React.FC<AppProps> = ({
   if (uiState === "error" || (error && !connected)) {
     return (
       <Box flexDirection="column">
-        <Text color={TokyoNightTheme.error}>Failed to connect to server:</Text>
-        <Text color={TokyoNightTheme.defaultText}>
+        <Text color={Theme.stateFailed}>Failed to connect to server:</Text>
+        <Text color={Theme.textChrome}>
           {error?.message || "Unknown error"}
         </Text>
       </Box>
@@ -1143,7 +1252,7 @@ export const App: React.FC<AppProps> = ({
         </Box>
         {debug && (
           <Box paddingX={1} marginTop={1}>
-            <Text color={TokyoNightTheme.defaultText}>
+            <Text color={Theme.textChrome}>
               DEBUG: State={uiState}, Selected={selectedSessionIndex}/
               {availableSessions.length}
             </Text>
@@ -1157,19 +1266,16 @@ export const App: React.FC<AppProps> = ({
   return (
     <MouseProvider mouseEventsEnabled={!!enableMouse}>
       <ScrollProvider>
-        {/* Outer chat column. gap={0} so the scroll region butts up
-            directly against the input below; the input carries its own
-            top border, which provides enough visual separation without
-            an extra blank row. Header carries its own internal paddingY
-            (in Header.tsx / Logo.tsx) so it still has breathing room
-            when visible. */}
-        <Box flexDirection="column" gap={0}>
+        {/* Outer chat column, pinned to the terminal height so the app
+            always fills the screen: tabs at the top, content stretching
+            between, composer/status at the bottom — regardless of how
+            short the transcript is. (-1 avoids ink's trailing-newline
+            scroll jitter.) gap={0}: the input carries its own top
+            border for separation. */}
+        <Box flexDirection="column" gap={0} height={terminalHeight - 1}>
           {/* Header with logo and welcome message - visible only before first message */}
-          <Header
-            agentName={agentName}
-            welcomeText={welcomeText}
-            visible={messages.length === 0}
-          />
+          {/* Browser-style tabs on the top row: where you are. */}
+          <TopTabs screen={screen} unread={unread} />
 
           {/* Message history + dock panels - all scrollable together.
               Goal/Tasks/Workers/QueuedMessages/Notifications/BashJobs/
@@ -1180,48 +1286,55 @@ export const App: React.FC<AppProps> = ({
               and the input's paddingRight (added below) keeps its right
               border aligned with the panels' right border. */}
           <Box flexGrow={1}>
-            <ScrollableMessageList
-              availableHeight={availableTerminalHeight}
-              onApprove={handleApproval}
-              onMcpApprove={handleMcpApproval}
-              onElicit={handleElicitation}
-            >
-              <Goal />
-              <Wakeup />
-              <Loop />
-              <Recap />
-              <Tasks />
-              <Workers />
-              <QueuedMessages />
-              <Notifications
-                focused={notificationsPanelFocused}
-                onUnfocus={() => setNotificationsPanelFocused(false)}
+            {screen === "review" ? (
+              <ReviewScreen
+                active={screen === "review"}
+                height={availableTerminalHeight}
+                client={client}
+                onExit={() => setScreen("chat")}
               />
-              <BashJobs
-                focused={bashPanelFocused}
-                onUnfocus={() => setBashPanelFocused(false)}
-                onKill={async (job_id) => {
-                  if (!client) return {};
-                  return await client.serverCall(
-                    "bash_jobs.kill",
-                    { job_id },
-                    sessionId || undefined,
-                  );
-                }}
-                onTail={async (job_id, lines) => {
-                  if (!client) return { ok: false, error: "no client" };
-                  const args: Record<string, unknown> = { job_id };
-                  if (typeof lines === "number") args.lines = lines;
-                  return (await client.serverCall(
-                    "bash_jobs.tail",
-                    args,
-                    sessionId || undefined,
-                  )) as any;
+            ) : screen === "agents" ? (
+              <AgentsScreen
+                active={screen === "agents"}
+                height={availableTerminalHeight}
+                onExit={() => setScreen("chat")}
+              />
+            ) : screen === "files" ? (
+              <FilesScreen
+                active={screen === "files"}
+                height={availableTerminalHeight}
+                client={client}
+                onExit={() => setScreen("chat")}
+                onMention={(path) => {
+                  setPendingInsert(`@${path} `);
+                  setScreen("chat");
                 }}
               />
-              <EscalationBanner />
-              <ElicitationBanner />
-            </ScrollableMessageList>
+            ) : messages.length === 0 ? (
+              /* Fresh session: the dashboard IS the body, vertically
+                 centered in the full content region, LazyVim-style. The
+                 first message replaces it with the transcript. */
+              <Box
+                height={availableTerminalHeight}
+                width="100%"
+                flexDirection="column"
+                justifyContent="center"
+                alignItems="center"
+              >
+                <Header
+                  agentName={agentName}
+                  welcomeText={welcomeText}
+                  visible={true}
+                />
+              </Box>
+            ) : (
+              <ScrollableMessageList
+                availableHeight={availableTerminalHeight}
+                onApprove={handleApproval}
+                onMcpApprove={handleMcpApproval}
+                onElicit={handleElicitation}
+              />
+            )}
           </Box>
 
           {/* Controls/footer section - measured for dynamic height
@@ -1240,29 +1353,95 @@ export const App: React.FC<AppProps> = ({
                 paddingRight={1} mirrors the scrollbar lane above so the
                 input border's right edge aligns with the panels' right
                 border. */}
-            <Box paddingRight={1}>
-              <MultiLineInputOptimized
-                onSubmit={handleSubmit}
-                disabled={
-                  !connected ||
-                  !!approval ||
-                  !!mcpApproval ||
-                  bashPanelFocused ||
-                  notificationsPanelFocused
-                }
-                history={messageHistory}
-              />
-            </Box>
+            {/* Composer only exists on the chat screen; review is
+                keyboard-driven and reclaims the rows. */}
+            {screen === "chat" && (
+              <Box paddingRight={1}>
+                <MultiLineInputOptimized
+                  onSubmit={handleSubmit}
+                  disabled={
+                    !connected ||
+                    !!approval ||
+                    !!mcpApproval ||
+                    activePanel !== null ||
+                    panelMenuOpen
+                  }
+                  history={messageHistory}
+                  pendingInsert={pendingInsert}
+                  onInsertConsumed={() => setPendingInsert(null)}
+                />
+              </Box>
+            )}
 
-            {/* Help text below input - isolated subscription */}
-            <HelpWrapper
-              connected={connected}
-              thinking={thinking}
-              approval={approval}
-              usage={usage}
-              sessionModel={sessionModel}
-              waitingForSecondCtrlC={waitingForSecondCtrlC}
+            {/* Blocking prompts render BELOW the input — they are the
+                thing the next submit answers, so they sit at the point
+                of composition instead of scrolling away with history.
+                Rendered on every screen so a decision is never hidden. */}
+            <EscalationBanner />
+            <ElicitationBanner />
+
+            {/* IDE bottom-panel region: drawers are FIXED chrome between
+                content and the status bar — like VS Code's terminal
+                panel. They exist on every screen and never scroll with
+                history. The measured controls height grows when one
+                opens, so the content region shrinks to make room. */}
+            <Tasks focused={activePanel === "tasks"} />
+            <QueuedMessages focused={activePanel === "queue"} />
+            <Notifications
+              focused={activePanel === "notifications"}
+              onUnfocus={() => setActivePanel(null)}
             />
+            <BashJobs
+              focused={activePanel === "jobs"}
+              onUnfocus={() => setActivePanel(null)}
+              onKill={async (job_id) => {
+                if (!client) return {};
+                return await client.serverCall(
+                  "bash_jobs.kill",
+                  { job_id },
+                  sessionId || undefined,
+                );
+              }}
+              onTail={async (job_id, lines) => {
+                if (!client) return { ok: false, error: "no client" };
+                const args: Record<string, unknown> = { job_id };
+                if (typeof lines === "number") args.lines = lines;
+                return (await client.serverCall(
+                  "bash_jobs.tail",
+                  args,
+                  sessionId || undefined,
+                )) as any;
+              }}
+            />
+            <GitPanel
+              focused={activePanel === "git"}
+              onUnfocus={() => setActivePanel(null)}
+              client={client}
+            />
+            <ModelPickerPanel
+              open={activePanel === "models"}
+              onClose={() => setActivePanel(null)}
+              client={client}
+              sessionId={sessionId}
+            />
+
+            {/* Which-key panel picker — works from any screen. Workers
+                graduated to the agents screen; its row routes there. */}
+            <PanelMenu
+              open={panelMenuOpen}
+              onSelect={(panel) => {
+                if (panel === "workers") {
+                  setScreen("agents");
+                } else {
+                  setActivePanel(panel);
+                }
+                setPanelMenuOpen(false);
+              }}
+              onClose={() => setPanelMenuOpen(false)}
+            />
+
+            {/* Bottom bar: what's happening (mission tokens + usage). */}
+            <StatusBar waitingForSecondCtrlC={waitingForSecondCtrlC} />
           </Box>
         </Box>
       </ScrollProvider>

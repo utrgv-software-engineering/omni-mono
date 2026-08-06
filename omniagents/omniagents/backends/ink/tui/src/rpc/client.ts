@@ -40,6 +40,7 @@ import type {
   SetVoiceModelResult,
 } from "../protocol/catalog.js";
 import { SessionReplayCoordinator, type ResumeResult } from "./replay.js";
+import { REQUESTED_EXPERIMENTAL_OPERATIONS } from "../protocol/experimental.js";
 import type {
   ConversationItem,
   ConversationItemKind,
@@ -68,9 +69,63 @@ const CLIENT_CAPABILITIES: Capabilities = {
   artifacts: false,
   replay: true,
   terminal: true,
-  experimental_operations: [],
+  experimental_operations: [...REQUESTED_EXPERIMENTAL_OPERATIONS],
   disabled_notifications: [],
 };
+
+/**
+ * When `initialize` is rejected because the server predates some of the
+ * experimental operations we request, the typed error names exactly the
+ * unsupported subset. Returns that subset, or null for any other error —
+ * only this precise shape is safe to retry against.
+ */
+function unsupportedCapabilitiesOf(error: unknown): Set<string> | null {
+  if (!(error instanceof JSONRPCError) || error.code !== -32013) return null;
+  const data = error.data as
+    | { kind?: string; unsupported_capabilities?: unknown }
+    | undefined;
+  if (data?.kind !== "capability_not_negotiated") return null;
+  if (!Array.isArray(data.unsupported_capabilities)) return null;
+  return new Set(data.unsupported_capabilities.filter(
+    (name): name is string => typeof name === "string",
+  ));
+}
+
+/**
+ * Every server→client notification in the GUI protocol, re-emitted by the
+ * client under its own method name. `satisfies Record<keyof …, true>`
+ * makes the record exhaustive: a protocol regen that adds a notification
+ * fails type-check until it is added (and, if experimental, opted into in
+ * ../protocol/experimental.ts).
+ */
+const SERVER_NOTIFICATION_METHODS = {
+  run_started: true,
+  run_status: true,
+  tool_called: true,
+  tool_result: true,
+  message_output: true,
+  token: true,
+  run_end: true,
+  tool_approval_requested: true,
+  tool_approval_resolved: true,
+  mcp_approval_requested: true,
+  mcp_approval_resolved: true,
+  client_request: true,
+  client_request_resolved: true,
+  queue_changed: true,
+  account_changed: true,
+  elicitation_requested: true,
+  elicitation_resolved: true,
+  mcp_server_status_changed: true,
+  session_forked: true,
+  session_variables_changed: true,
+  fs_events: true,
+  fs_rescan_required: true,
+  fs_transfer_progress: true,
+  git_operation_progress: true,
+  thread_updated: true,
+  item_updated: true,
+} as const satisfies Record<keyof GeneratedRpcNotificationMap, true>;
 
 export class JSONRPCError extends Error {
   readonly code: number;
@@ -126,6 +181,13 @@ export class RPCClient extends EventEmitter {
   private closedByUser = false;
   private handshakeRejected = false;
   private negotiatedInitialization: InitializeResult | null = null;
+  // The experimental operations to request at the next handshake. Starts
+  // at the full manifest; when an older server names an unsupported
+  // subset in its typed rejection, that subset is stripped here so
+  // reconnects don't re-trip the same rejection.
+  private experimentalToRequest: string[] = [
+    ...REQUESTED_EXPERIMENTAL_OPERATIONS,
+  ];
   private replay: SessionReplayCoordinator;
   private ackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -160,6 +222,60 @@ export class RPCClient extends EventEmitter {
 
   get initializeResult(): InitializeResult | null {
     return this.negotiatedInitialization;
+  }
+
+  /**
+   * Whether the server granted `operation` at the handshake. Stable
+   * operations are always available and never appear in the grant list;
+   * this answers for experimental requests AND notifications — UIs
+   * feature-detect panels with it instead of try/catching -32013.
+   */
+  isGranted(operation: string): boolean {
+    const granted =
+      this.negotiatedInitialization?.capabilities.experimental_operations;
+    return granted ? granted.includes(operation) : false;
+  }
+
+  /** The experimental operations the server granted (empty until ready). */
+  get grantedExperimentalOperations(): readonly string[] {
+    return (
+      this.negotiatedInitialization?.capabilities.experimental_operations ?? []
+    );
+  }
+
+  /**
+   * Run the initialize handshake. If the server predates part of our
+   * experimental manifest it rejects the whole call naming the
+   * unsupported subset; strip exactly that subset and retry once. The
+   * reduction is remembered on the client so later reconnects negotiate
+   * cleanly on the first attempt.
+   */
+  private async performInitialize(): Promise<InitializeResult> {
+    const attempt = (operations: string[]): Promise<InitializeResult> => {
+      const initialize: InitializeParams = {
+        protocol_version: "1.0.0",
+        identity: { name: "omniagents-ink", version: "0.1.0" },
+        platform: { os: process.platform, arch: process.arch },
+        capabilities: {
+          ...CLIENT_CAPABILITIES,
+          experimental_operations: operations,
+        },
+      };
+      return this.sendRequest<InitializeResult>("initialize", initialize, {
+        timeoutMs: null,
+      });
+    };
+    try {
+      return await attempt(this.experimentalToRequest);
+    } catch (error) {
+      const unsupported = unsupportedCapabilitiesOf(error);
+      if (!unsupported) throw error;
+      this.log("Server rejected experimental capabilities:", [...unsupported]);
+      this.experimentalToRequest = this.experimentalToRequest.filter(
+        (name) => !unsupported.has(name),
+      );
+      return attempt(this.experimentalToRequest);
+    }
   }
 
   override on<Event extends keyof RpcNotificationMap>(
@@ -246,17 +362,8 @@ export class RPCClient extends EventEmitter {
           this.emit("connected");
 
           try {
-            const initialize: InitializeParams = {
-              protocol_version: "1.0.0",
-              identity: { name: "omniagents-ink", version: "0.1.0" },
-              platform: { os: process.platform, arch: process.arch },
-              capabilities: CLIENT_CAPABILITIES,
-            };
             // The connect timer bounds the whole attempt.
-            this.negotiatedInitialization =
-              await this.sendRequest<InitializeResult>("initialize", initialize, {
-                timeoutMs: null,
-              });
+            this.negotiatedInitialization = await this.performInitialize();
             this.sendNotification("initialized", {});
             ready = true;
             clearTimeout(connectTimer);
@@ -370,11 +477,21 @@ export class RPCClient extends EventEmitter {
   }
 
   defaultEnvironmentSelection(): EnvironmentSelection {
-    const environmentId =
-      this.negotiatedInitialization?.agent_host.default_environment_id;
+    const environmentId = this.defaultEnvironmentId();
     return environmentId
       ? { mode: "explicit", environment_id: environmentId }
       : { mode: "none" };
+  }
+
+  /**
+   * The AgentHost's default execution environment, from the handshake.
+   * The id to route environment-scoped operations (fs_*, git_*,
+   * server_call read leases) through when the UI has not chosen another.
+   */
+  defaultEnvironmentId(): string | null {
+    return (
+      this.negotiatedInitialization?.agent_host.default_environment_id ?? null
+    );
   }
 
   /**
@@ -382,6 +499,14 @@ export class RPCClient extends EventEmitter {
    */
   async stopRun(runId: string): Promise<void> {
     await this.call("stop_run", { run_id: runId });
+  }
+
+  /**
+   * Inject a user message into an active run (mid-run steering). The
+   * server delivers it to the model at the run's next turn boundary.
+   */
+  async sendUserMessage(runId: string, content: string): Promise<void> {
+    await this.call("send_user_message", { run_id: runId, content });
   }
 
   /**
@@ -442,6 +567,24 @@ export class RPCClient extends EventEmitter {
    */
   async archiveSession(sessionId: string): Promise<void> {
     await this.call("archive_session", { session_id: sessionId });
+  }
+
+  /**
+   * Delete a session permanently (archive is the recoverable variant).
+   * `cascade` also deletes the session's forked descendants.
+   */
+  async deleteSession(sessionId: string, cascade?: boolean): Promise<boolean> {
+    const params: Record<string, unknown> = { session_id: sessionId };
+    if (cascade !== undefined) params.cascade = cascade;
+    return this.call(
+      "delete_session",
+      params as unknown as RpcMethodMap["delete_session"]["params"],
+    );
+  }
+
+  /** Static agent metadata (name, model, tool inventory, …). */
+  async getAgentInfo(): Promise<Record<string, unknown>> {
+    return this.call("get_agent_info") as Promise<Record<string, unknown>>;
   }
 
   /**
@@ -608,13 +751,20 @@ export class RPCClient extends EventEmitter {
   }
 
   /**
-   * Call a server function
+   * Call a server function. An `OPTIONAL_WORKSPACE_READ` extension only
+   * receives its centrally resolved read lease when the caller routes an
+   * environment — pass `environmentId` (typically `defaultEnvironmentId()`)
+   * for functions that read the workspace.
    */
   async serverCall(
     func: string,
     args?: Record<string, unknown>,
     sessionId?: string,
-    opts?: RequestOptions,
+    opts?: RequestOptions & {
+      environmentId?: string;
+      workspaceId?: string;
+      environmentGeneration?: number;
+    },
   ): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = { function: func };
     if (args) {
@@ -623,6 +773,10 @@ export class RPCClient extends EventEmitter {
     if (sessionId) {
       params.session_id = sessionId;
     }
+    if (opts?.environmentId) params.environment_id = opts.environmentId;
+    if (opts?.workspaceId) params.workspace_id = opts.workspaceId;
+    if (opts?.environmentGeneration !== undefined)
+      params.environment_generation = opts.environmentGeneration;
     return this.sendRequest<Record<string, unknown>>("server_call", params, opts);
   }
 
@@ -707,6 +861,152 @@ export class RPCClient extends EventEmitter {
       session_id: sessionId,
       item_id: itemId,
     }) as Promise<{ ok: boolean; id?: string; depth?: number; reason?: string }>;
+  }
+
+  // ---------------------------------------------------------------------
+  // Session control (experimental — gated on the initialize grant; see
+  // ../protocol/experimental.ts and protocol.md).
+  // ---------------------------------------------------------------------
+
+  /**
+   * Fork a session at an item/turn boundary. The server broadcasts
+   * `session_forked` so every connected client learns the new id.
+   */
+  async forkSession(
+    sessionId: string,
+    opts?: { newSessionId?: string; fromItemId?: string; fromTurnId?: string },
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { session_id: sessionId };
+    if (opts?.newSessionId) params.new_session_id = opts.newSessionId;
+    if (opts?.fromItemId) params.from_item_id = opts.fromItemId;
+    if (opts?.fromTurnId) params.from_turn_id = opts.fromTurnId;
+    return this.call(
+      "fork_session",
+      params as unknown as RpcMethodMap["fork_session"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /** Hold (or release) queue draining for a session. */
+  async setSessionHold(
+    sessionId: string,
+    hold: boolean,
+  ): Promise<Record<string, unknown>> {
+    return this.call("set_session_hold", {
+      session_id: sessionId,
+      hold,
+    }) as Promise<Record<string, unknown>>;
+  }
+
+  /** Queue depth / hold state without the full item list. */
+  async queueStatus(sessionId: string): Promise<Record<string, unknown>> {
+    return this.call("queue_status", {
+      session_id: sessionId,
+    }) as Promise<Record<string, unknown>>;
+  }
+
+  /**
+   * Enqueue a background notification message (never triggers a run,
+   * unlike `enqueueMessage`).
+   */
+  async enqueueNotification(
+    sessionId: string,
+    content: string,
+    opts?: { source?: string; safeToolOverrides?: Record<string, unknown> },
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { session_id: sessionId, content };
+    if (opts?.source) params.source = opts.source;
+    if (opts?.safeToolOverrides)
+      params.safe_tool_overrides = opts.safeToolOverrides;
+    return this.call(
+      "enqueue_notification",
+      params as unknown as RpcMethodMap["enqueue_notification"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /**
+   * Patch session variables; the server broadcasts
+   * `session_variables_changed` with the changed keys and merged state.
+   */
+  async updateSessionVariables(
+    sessionId: string,
+    updates: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.call("update_session_variables", {
+      session_id: sessionId,
+      updates,
+    }) as Promise<Record<string, unknown>>;
+  }
+
+  /** Publish a short client status line (surfaced to other clients). */
+  async setClientStatus(text: string): Promise<void> {
+    await this.call("set_client_status", { text });
+  }
+
+  /** Disable a tool for the remainder of the serve process. */
+  async disableTool(toolName: string): Promise<void> {
+    await this.call("disable_tool", { tool_name: toolName });
+  }
+
+  /** Disable an MCP server for the remainder of the serve process. */
+  async disableMcpServer(serverName: string): Promise<void> {
+    await this.call("disable_mcp_server", { server_name: serverName });
+  }
+
+  /** File an incident report, optionally disabling tools/servers with it. */
+  async reportIncident(
+    sessionId: string,
+    description: string,
+    opts?: { disableTools?: string[]; disableMcpServers?: string[] },
+  ): Promise<void> {
+    const params: Record<string, unknown> = {
+      session_id: sessionId,
+      description,
+    };
+    if (opts?.disableTools) params.disable_tools = opts.disableTools;
+    if (opts?.disableMcpServers)
+      params.disable_mcp_servers = opts.disableMcpServers;
+    await this.call(
+      "report_incident",
+      params as unknown as RpcMethodMap["report_incident"]["params"],
+    );
+  }
+
+  /** Export a session transcript; `redact` strips sensitive tool output. */
+  async exportSession(
+    sessionId: string,
+    redact?: boolean,
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { session_id: sessionId };
+    if (redact !== undefined) params.redact = redact;
+    return this.call(
+      "export_session",
+      params as unknown as RpcMethodMap["export_session"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  // ---------------------------------------------------------------------
+  // Layered configuration (experimental) — read, validate and write the
+  // server's layered settings. See protocol.md §"Configuration".
+  // ---------------------------------------------------------------------
+
+  async getConfig(): Promise<Record<string, unknown>> {
+    return this.call("get_config") as Promise<Record<string, unknown>>;
+  }
+
+  async validateConfig(
+    updates: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.call("validate_config", { updates }) as Promise<
+      Record<string, unknown>
+    >;
+  }
+
+  async writeConfig(
+    updates: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.call("write_config", { updates }) as Promise<
+      Record<string, unknown>
+    >;
   }
 
   // ---------------------------------------------------------------------
@@ -948,6 +1248,59 @@ export class RPCClient extends EventEmitter {
     return this.call("mcp_auth_cancel", { auth_id: authId });
   }
 
+  // ----- MCP content access (experimental) -----
+
+  /** Read an MCP resource by URI. */
+  async mcpReadResource(
+    serverName: string,
+    uri: string,
+    sessionId?: string,
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { server_name: serverName, uri };
+    if (sessionId) params.session_id = sessionId;
+    return this.call(
+      "mcp_read_resource",
+      params as unknown as RpcMethodMap["mcp_read_resource"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /** Invoke an MCP tool directly (outside an agent run). */
+  async mcpCallTool(
+    serverName: string,
+    toolName: string,
+    sessionId: string,
+    args?: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {
+      server_name: serverName,
+      tool_name: toolName,
+      session_id: sessionId,
+    };
+    if (args) params.args = args;
+    return this.call(
+      "mcp_call_tool",
+      params as unknown as RpcMethodMap["mcp_call_tool"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /** Resolve an MCP prompt template. */
+  async mcpGetPrompt(
+    serverName: string,
+    promptName: string,
+    opts?: { args?: Record<string, unknown>; sessionId?: string },
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {
+      server_name: serverName,
+      prompt_name: promptName,
+    };
+    if (opts?.args) params.args = opts.args;
+    if (opts?.sessionId) params.session_id = opts.sessionId;
+    return this.call(
+      "mcp_get_prompt",
+      params as unknown as RpcMethodMap["mcp_get_prompt"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
   // ---------------------------------------------------------------------
   // Canonical conversation domain objects — see protocol.md
   // §"Conversation Domain Objects". Reads serve the PERSISTED model: a
@@ -1030,6 +1383,148 @@ export class RPCClient extends EventEmitter {
       cursor = page.next_cursor;
     }
     return out;
+  }
+
+  // ----- Thread organization & lifecycle (experimental) -----
+
+  /** List threads with structured filters, keyset-paginated. */
+  async listThreads(opts?: {
+    status?: string;
+    pinned?: boolean;
+    source?: string;
+    model?: string;
+    parentThreadId?: string;
+    createdAfter?: number;
+    createdBefore?: number;
+    updatedAfter?: number;
+    updatedBefore?: number;
+    limit?: number;
+    cursor?: string;
+    order?: string;
+  }): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = {};
+    if (opts?.status) params.status = opts.status;
+    if (opts?.pinned !== undefined) params.pinned = opts.pinned;
+    if (opts?.source) params.source = opts.source;
+    if (opts?.model) params.model = opts.model;
+    if (opts?.parentThreadId) params.parent_thread_id = opts.parentThreadId;
+    if (opts?.createdAfter !== undefined) params.created_after = opts.createdAfter;
+    if (opts?.createdBefore !== undefined)
+      params.created_before = opts.createdBefore;
+    if (opts?.updatedAfter !== undefined) params.updated_after = opts.updatedAfter;
+    if (opts?.updatedBefore !== undefined)
+      params.updated_before = opts.updatedBefore;
+    if (opts?.limit !== undefined) params.limit = opts.limit;
+    if (opts?.cursor) params.cursor = opts.cursor;
+    if (opts?.order) params.order = opts.order;
+    return this.call(
+      "list_threads",
+      params as unknown as RpcMethodMap["list_threads"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /** Full-text thread search; accepts the same filters as listThreads. */
+  async searchThreads(
+    query: string,
+    opts?: {
+      status?: string;
+      pinned?: boolean;
+      source?: string;
+      model?: string;
+      parentThreadId?: string;
+      createdAfter?: number;
+      createdBefore?: number;
+      updatedAfter?: number;
+      updatedBefore?: number;
+      limit?: number;
+      cursor?: string;
+    },
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { query };
+    if (opts?.status) params.status = opts.status;
+    if (opts?.pinned !== undefined) params.pinned = opts.pinned;
+    if (opts?.source) params.source = opts.source;
+    if (opts?.model) params.model = opts.model;
+    if (opts?.parentThreadId) params.parent_thread_id = opts.parentThreadId;
+    if (opts?.createdAfter !== undefined) params.created_after = opts.createdAfter;
+    if (opts?.createdBefore !== undefined)
+      params.created_before = opts.createdBefore;
+    if (opts?.updatedAfter !== undefined) params.updated_after = opts.updatedAfter;
+    if (opts?.updatedBefore !== undefined)
+      params.updated_before = opts.updatedBefore;
+    if (opts?.limit !== undefined) params.limit = opts.limit;
+    if (opts?.cursor) params.cursor = opts.cursor;
+    return this.call(
+      "search_threads",
+      params as unknown as RpcMethodMap["search_threads"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /**
+   * Update thread metadata (title, pinned, status, metadata). The server
+   * broadcasts `thread_updated` naming the changed fields.
+   */
+  async updateThread(
+    threadId: string,
+    updates: {
+      title?: string;
+      pinned?: boolean;
+      status?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { thread_id: threadId };
+    if (updates.title !== undefined) params.title = updates.title;
+    if (updates.pinned !== undefined) params.pinned = updates.pinned;
+    if (updates.status !== undefined) params.status = updates.status;
+    if (updates.metadata !== undefined) params.metadata = updates.metadata;
+    return this.call(
+      "update_thread",
+      params as unknown as RpcMethodMap["update_thread"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /** The fork tree below a thread. */
+  async listThreadDescendants(
+    threadId: string,
+    opts?: { maxDepth?: number; limit?: number },
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { thread_id: threadId };
+    if (opts?.maxDepth !== undefined) params.max_depth = opts.maxDepth;
+    if (opts?.limit !== undefined) params.limit = opts.limit;
+    return this.call(
+      "list_thread_descendants",
+      params as unknown as RpcMethodMap["list_thread_descendants"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /** Export a thread (optionally with descendants), paginated. */
+  async exportThread(
+    threadId: string,
+    opts?: { limit?: number; cursor?: string; includeDescendants?: boolean },
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { thread_id: threadId };
+    if (opts?.limit !== undefined) params.limit = opts.limit;
+    if (opts?.cursor) params.cursor = opts.cursor;
+    if (opts?.includeDescendants !== undefined)
+      params.include_descendants = opts.includeDescendants;
+    return this.call(
+      "export_thread",
+      params as unknown as RpcMethodMap["export_thread"]["params"],
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  /** Purge threads older than the retention window; dry-run by default off. */
+  async purgeThreads(
+    retentionDays: number,
+    dryRun?: boolean,
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { retention_days: retentionDays };
+    if (dryRun !== undefined) params.dry_run = dryRun;
+    return this.call(
+      "purge_threads",
+      params as unknown as RpcMethodMap["purge_threads"]["params"],
+    ) as Promise<Record<string, unknown>>;
   }
 
   // ----- Durable plans & aggregated run diffs (get_plan / get_run_diff) -----
@@ -1239,6 +1734,7 @@ export class RPCClient extends EventEmitter {
       contextLines?: number
       fromRev?: string
       toRev?: string
+      includeUntracked?: boolean
     },
   ): Promise<GitDiffResult> {
     const params: Record<string, unknown> = { environment_id: environmentId, repo }
@@ -1247,6 +1743,8 @@ export class RPCClient extends EventEmitter {
     if (opts?.contextLines !== undefined) params.context_lines = opts.contextLines
     if (opts?.fromRev !== undefined) params.from_rev = opts.fromRev
     if (opts?.toRev !== undefined) params.to_rev = opts.toRev
+    if (opts?.includeUntracked !== undefined)
+      params.include_untracked = opts.includeUntracked
     return this.call(
       "git_diff",
       params as unknown as RpcMethodMap["git_diff"]["params"],
@@ -1635,59 +2133,20 @@ export class RPCClient extends EventEmitter {
 
   /**
    * Handle server notifications (events)
+   *
+   * Every protocol notification re-emits under its own method name.
+   * The record below is compile-time exhaustive against the generated
+   * notification map, so a protocol regen that adds a notification
+   * fails `tsc` here instead of silently hitting the unknown branch.
+   * (`client_request` never reaches this method — deliverNotification
+   * routes it to the client-function executor first.)
    */
   private handleNotification(notification: JSONRPCNotification): void {
-    const event = notification as ServerEvent;
-
-    switch (event.method) {
-      case "tool_called":
-        this.emit("tool_called", event.params);
-        break;
-      case "tool_result":
-        this.emit("tool_result", event.params);
-        break;
-      case "message_output":
-        this.emit("message_output", event.params);
-        break;
-      case "run_started":
-        this.emit("run_started", event.params);
-        break;
-      case "run_end":
-        this.emit("run_end", event.params);
-        break;
-      case "token":
-        this.emit("token", event.params);
-        break;
-      case "run_status":
-        this.emit("run_status", event.params);
-        break;
-      case "tool_approval_requested":
-        this.emit("tool_approval_requested", event.params);
-        break;
-      case "tool_approval_resolved":
-        this.emit("tool_approval_resolved", event.params);
-        break;
-      case "mcp_approval_requested":
-        this.emit("mcp_approval_requested", event.params);
-        break;
-      case "mcp_approval_resolved":
-        this.emit("mcp_approval_resolved", event.params);
-        break;
-      case "elicitation_requested":
-        this.emit("elicitation_requested", event.params);
-        break;
-      case "elicitation_resolved":
-        this.emit("elicitation_resolved", event.params);
-        break;
-      case "queue_changed":
-        this.emit("queue_changed", event.params);
-        break;
-      default:
-        this.log(
-          "Unknown notification method:",
-          (event as JSONRPCNotification).method,
-        );
+    if (notification.method in SERVER_NOTIFICATION_METHODS) {
+      this.emit(notification.method, notification.params);
+      return;
     }
+    this.log("Unknown notification method:", notification.method);
   }
 
   /**

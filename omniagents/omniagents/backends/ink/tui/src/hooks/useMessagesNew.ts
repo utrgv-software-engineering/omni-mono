@@ -14,8 +14,25 @@ import type {
   McpApprovalInfo,
   Message,
 } from "../store/appStore.js";
-import { registerEscalationResolver } from "./escalationBridge.js";
+import {
+  registerEscalationResolver,
+  discardEscalation,
+} from "./escalationBridge.js";
 import type { ElicitationAnswer } from "../components/ElicitationDialog.js";
+import { normalizeItems } from "../store/conversation.js";
+import { planStepsToTasks } from "../components/task-model.js";
+import { planTransitions } from "../components/transcript-model.js";
+import type { TaskSummary } from "../store/appStore.js";
+import type {
+  ConversationItem,
+  ConversationItemKind,
+  ConversationItemStatus,
+  ConversationRunDiff,
+} from "../types/conversation.js";
+import type {
+  ClientRequestResolvedParams,
+  ItemUpdatedParams,
+} from "../protocol/generated/gui-v1.js";
 
 export interface UseMessagesOptions {
   client: RPCClient | null;
@@ -61,9 +78,12 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     const skipHistoryLoad =
       !!sessionId &&
       useAppStore.getState().actions.consumeMintedSession(sessionId);
-    if (sessionId && !skipHistoryLoad) {
+    // Legacy hydration: fold the raw session-history message list into the
+    // store's Message shape. Only used when the canonical item read fails
+    // (older server, or a session with no materialized thread).
+    const loadLegacyHistory = () =>
       client
-        .getSessionHistory(sessionId)
+        .getSessionHistory(sessionId!)
         .then((history) => {
           const msgs: Message[] = [];
           const toolCallMap = new Map<string, Message>();
@@ -154,6 +174,38 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           debugLog(`Session history loaded (not changing thinking state)`);
         })
         .catch(console.error);
+
+    if (sessionId && !skipHistoryLoad) {
+      // Canonical hydration: the persisted item model (thread_id ==
+      // session_id). One paginated walk, then a pure projection — the
+      // item's recorded status answers "still running?", no event folding.
+      client
+        .listAllItems(sessionId)
+        .then((items) => {
+          actions.setConversationItems(items);
+          actions.setMessages(normalizeItems(items));
+          debugLog(
+            `Hydrated ${items.length} conversation items (not changing thinking state)`,
+          );
+        })
+        .catch((err) => {
+          // Older server or a session without a materialized thread —
+          // fall back to the legacy history fold.
+          debugLog(`list_items hydration failed, using legacy history: ${err}`);
+          void loadLegacyHistory();
+        });
+      // Seed the docked task list from the durable plan (when granted).
+      // The tasks_snapshot tool side-channel and live `plan` item updates
+      // take over from here; failure is non-fatal (dock stays as-is).
+      if (client.isGranted("get_plan")) {
+        client
+          .getPlan(sessionId)
+          .then((result) => {
+            const tasks = planStepsToTasks(result.plan?.steps);
+            if (tasks) actions.setTasks(tasks);
+          })
+          .catch(() => {});
+      }
       // Also seed the "Up next" panel for this session. queue_changed
       // notifications take over from here. Run in parallel; failure is
       // non-fatal — the panel just stays empty until the next broadcast.
@@ -165,6 +217,27 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       // No active session — clear any leftover queue state from a prior one.
       actions.setQueuedMessages([]);
     }
+
+    // Apply a live task-list update and record plan-step transitions as
+    // one-line transcript beats (`◐ plan · X` started, `✔ plan · X`
+    // done). Only during a run — hydration seeds and idle refreshes are
+    // state, not narrative. Steady-state progress stays in the dock.
+    const applyTasks = (tasks: TaskSummary[]) => {
+      if (useAppStore.getState().currentRunId) {
+        const previous = useAppStore.getState().tasks;
+        for (const transition of planTransitions(previous, tasks)) {
+          actions.addMessage({
+            role: "system",
+            content:
+              transition.status === "completed"
+                ? `✔ plan · ${transition.subject}`
+                : `◐ plan · ${transition.subject}`,
+            timestamp: new Date(),
+          });
+        }
+      }
+      actions.setTasks(tasks);
+    };
 
     // Helper to mark buffered messages as superseded (don't add to conversation)
     const markBufferAsSuperseded = () => {
@@ -286,7 +359,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         // Today only task_create/task_list/task_get/task_update do.
         const snapshot = params.metadata?.tasks_snapshot;
         if (Array.isArray(snapshot)) {
-          actions.setTasks(snapshot as any);
+          applyTasks(snapshot as unknown as TaskSummary[]);
         }
         // Same pattern: bash tools attach bash_jobs_snapshot to refresh
         // the docked background-jobs panel.
@@ -304,6 +377,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       run_id: string;
       session_id: string;
       prompt?: string;
+      prompt_role?: string;
     }) => {
       const timestamp = Date.now();
       debugLog(
@@ -319,32 +393,41 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         actions.setPreamble(null);
         actions.setCurrentRunId(params.run_id);
         actions.setThinking(true, null);
-        // A recap is a "while you were away" artifact — stale the moment
-        // the user re-engages. Clear it when a new run starts. (The idle
-        // auto-recap runs via a throwaway Runner.run, not the service run
-        // path, so it never emits run_started here — this only clears on
-        // genuine user activity.)
-        actions.setRecap(null);
+        // The previous run's aggregated diff is stale once a new run
+        // starts; the strip token clears with it.
+        actions.setRunDiff(null);
 
         // Queue-drainer / background-automation path: the server started
         // the run without a local sendMessage call, so no user message
         // has been pushed to the transcript yet. Append it from
         // params.prompt unless the last user message already matches
         // (idempotency for the direct-submit case where handleSubmit
-        // already optimistic-added it).
+        // already optimistic-added it). ``prompt_role`` is honored:
+        // notification batches (worker completions, wakeups) arrive as
+        // "assistant" and render as the agent observing its background
+        // activity — NOT as fake user input. Matches hydration, which
+        // restores these turns with their history role.
         const promptFromEvent =
           typeof params.prompt === "string" ? params.prompt : "";
         if (promptFromEvent) {
-          const messages = useAppStore.getState().messages;
-          const lastUser = [...messages]
-            .reverse()
-            .find((m) => m.role === "user");
-          if (!lastUser || lastUser.content !== promptFromEvent) {
+          if (params.prompt_role === "assistant") {
             actions.addMessage({
-              role: "user",
+              role: "assistant",
               content: promptFromEvent,
               timestamp: new Date(),
             });
+          } else {
+            const messages = useAppStore.getState().messages;
+            const lastUser = [...messages]
+              .reverse()
+              .find((m) => m.role === "user");
+            if (!lastUser || lastUser.content !== promptFromEvent) {
+              actions.addMessage({
+                role: "user",
+                content: promptFromEvent,
+                timestamp: new Date(),
+              });
+            }
           }
         }
       });
@@ -372,6 +455,85 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           Array.isArray(params.items) ? params.items : [],
         );
       });
+    };
+
+    // ITEM UPDATED — the durable record of the conversation advancing
+    // (experimental; only delivered when granted at the handshake).
+    // Three consumers:
+    //   plan items     → refresh the docked task list (with the
+    //                    blocked_by edges the tool snapshot also carries);
+    //   run_diff items → refresh the aggregated-changes panel live;
+    //   everything else → merge into the item cache; while no local run
+    //                    is streaming (another client's run, background
+    //                    automation, finalization sweeps) also re-derive
+    //                    the transcript from the cache. During a local
+    //                    run the event stream owns `messages`, and the
+    //                    cache catches back up on the next hydration.
+    const handleItemUpdated = (params: ItemUpdatedParams) => {
+      const liveSessionId = useAppStore.getState().sessionId;
+      if (
+        params.session_id &&
+        liveSessionId &&
+        params.session_id !== liveSessionId
+      ) {
+        return;
+      }
+      const content = params.content ?? {};
+      const item: ConversationItem = {
+        item_id: params.item_id,
+        thread_id: params.thread_id,
+        turn_id: params.turn_id ?? null,
+        seq: params.item_seq,
+        kind: params.kind as ConversationItemKind,
+        status: params.status as ConversationItemStatus,
+        role: null,
+        created_at: params.updated_at ?? 0,
+        updated_at: params.updated_at ?? 0,
+        completed_at: null,
+        revision: params.revision,
+        content,
+        source_ref: {},
+        long_lived: false,
+        source: "recorded",
+        schema_version: 1,
+      };
+      if (!item.item_id) return;
+
+      batcher.add(() => {
+        actions.mergeConversationItems([item]);
+        if (item.kind === "plan") {
+          const tasks = planStepsToTasks(content.steps);
+          if (tasks) applyTasks(tasks);
+          return;
+        }
+        if (item.kind === "run_diff") {
+          if (typeof content.diff === "string" && Array.isArray(content.files)) {
+            actions.setRunDiff(content as unknown as ConversationRunDiff);
+          }
+          return;
+        }
+        if (!useAppStore.getState().currentRunId) {
+          actions.setMessages(
+            normalizeItems(useAppStore.getState().conversationItems),
+          );
+        }
+      });
+    };
+
+    // CLIENT REQUEST RESOLVED — another client answered a pending
+    // client_request (today: the blocking ``escalate``). Drop the parked
+    // resolver so no stale client_response is ever sent, and dismiss the
+    // banner if it is the one on screen.
+    const handleClientRequestResolved = (
+      params: ClientRequestResolvedParams,
+    ) => {
+      const requestId = params.request_id;
+      if (!requestId) return;
+      discardEscalation(requestId);
+      const escalation = useAppStore.getState().escalation;
+      if (escalation?.request_id === requestId) {
+        actions.setEscalation(null);
+      }
     };
 
     // RUN END - flush non-superseded messages and hide preamble
@@ -437,6 +599,28 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
 
         actions.setCurrentRunId(null);
       });
+
+      // Aggregated changes: the net diff the run is responsible for.
+      // The live `run_diff` item_updated usually lands the store value
+      // first; this fetch is the safety net. On top of the strip token,
+      // the run leaves one transcript line recording what it changed.
+      if (sessionId && client.isGranted("get_run_diff")) {
+        client
+          .getRunDiff(sessionId)
+          .then((result) => {
+            const diff = result.run_diff;
+            if (!diff) return;
+            actions.setRunDiff(diff);
+            const files = diff.stats.files_changed;
+            actions.addMessage({
+              role: "system",
+              content: `${files} file${files === 1 ? "" : "s"} edited +${diff.stats.additions} −${diff.stats.deletions}`,
+              timestamp: new Date(),
+              runDiff: diff,
+            });
+          })
+          .catch(() => {});
+      }
     };
 
     // RUN STATUS - not batched (rare event, needs immediate UI update)
@@ -667,10 +851,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     // and on every terminal state (completed/cancelled/error) from
     // omni-code's tools/worker_tools.py. Snapshot is the full per-session
     // workers list; replace state wholesale.
-    const handleWorkersUpdate = async (args: Record<string, unknown>) => {
+    const handleSubagentsUpdate = async (args: Record<string, unknown>) => {
       const snap = (args as { snapshot?: unknown }).snapshot;
       if (Array.isArray(snap)) {
-        actions.setWorkers(snap as any);
+        actions.setSubagents(snap as any);
       }
       return { ack: true };
     };
@@ -725,12 +909,17 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     };
 
     // Server-pushed session recap (from /recap or the idle auto-recap).
-    // Single-slot — newest replaces any prior recap. Cleared on the next
-    // run_started.
+    // Lands in the transcript as agent prose — it IS retrospective
+    // content, and history is where retrospectives live. (It used to pin
+    // a ~36-row panel between the user and the input.)
     const handleRecap = async (args: Record<string, unknown>) => {
       const text = (args.text as string) ?? "";
       if (text) {
-        actions.setRecap({ text, timestamp: Date.now() });
+        actions.addMessage({
+          role: "assistant",
+          content: `**Session recap**\n\n${text}`,
+          timestamp: new Date(),
+        });
       }
       return { ack: true };
     };
@@ -764,6 +953,22 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       });
     };
 
+    // Live worker mini-transcript relay: one narrative event from a
+    // worker's run (tool_called / message_output / run lifecycle),
+    // tagged with the worker id. Buffered per worker in the store; the
+    // Agents screen renders the buffer as a live activity feed.
+    const handleSubagentEvent = async (args: Record<string, unknown>) => {
+      const workerId = args.subagent_id as string;
+      const method = args.method as string;
+      if (workerId && method) {
+        actions.addSubagentEvent(workerId, {
+          method,
+          params: (args.params as Record<string, unknown>) ?? {},
+        });
+      }
+      return { ack: true };
+    };
+
     // Register event handlers
     client.on("message_output", handleMessageOutput);
     client.on("tool_called", handleToolCalled);
@@ -779,6 +984,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.on("elicitation_requested", handleElicitationRequested);
     client.on("elicitation_resolved", handleElicitationResolved);
     client.on("queue_changed", handleQueueChanged);
+    client.on("item_updated", handleItemUpdated);
+    client.on("client_request_resolved", handleClientRequestResolved);
 
     // Register client functions
     client.registerClientFunction("ui.set_status", handleSetStatus);
@@ -787,7 +994,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       handleSetSessionState,
     );
     client.registerClientFunction("ui.bash_jobs.update", handleBashJobsUpdate);
-    client.registerClientFunction("ui.workers.update", handleWorkersUpdate);
+    client.registerClientFunction("ui.subagents.update", handleSubagentsUpdate);
+    client.registerClientFunction("ui.subagent.event", handleSubagentEvent);
     client.registerClientFunction("ui.goal.update", handleGoalUpdate);
     client.registerClientFunction("ui.wakeup.update", handleWakeupUpdate);
     client.registerClientFunction("ui.loop.update", handleLoopUpdate);
@@ -811,12 +1019,15 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.off("elicitation_requested", handleElicitationRequested);
       client.off("elicitation_resolved", handleElicitationResolved);
       client.off("queue_changed", handleQueueChanged);
+      client.off("item_updated", handleItemUpdated);
+      client.off("client_request_resolved", handleClientRequestResolved);
 
       // Cleanup registered client functions
       client.unregisterClientFunction("ui.set_status");
       client.unregisterClientFunction("ui.set_session_state");
       client.unregisterClientFunction("ui.bash_jobs.update");
-      client.unregisterClientFunction("ui.workers.update");
+      client.unregisterClientFunction("ui.subagents.update");
+      client.unregisterClientFunction("ui.subagent.event");
       client.unregisterClientFunction("ui.goal.update");
       client.unregisterClientFunction("ui.wakeup.update");
       client.unregisterClientFunction("ui.loop.update");

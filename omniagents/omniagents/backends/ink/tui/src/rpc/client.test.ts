@@ -8,13 +8,21 @@ import {
   RpcTimeoutError,
 } from "./lifecycle.js";
 import type { ClientRequest } from "../types/protocol.js";
+import { REQUESTED_EXPERIMENTAL_OPERATIONS } from "../protocol/experimental.js";
 
 const { mockSockets, mockSocketConfig } = vi.hoisted(() => ({
   mockSockets: [] as Array<{
     sent: string[];
     emit: (event: string, ...values: unknown[]) => void;
   }>,
-  mockSocketConfig: { failConnects: false },
+  mockSocketConfig: {
+    failConnects: false,
+    // One-shot (or persistent, below): the next initialize is rejected
+    // with the typed capability_not_negotiated error naming these
+    // operations.
+    rejectCapabilities: null as string[] | null,
+    rejectCapabilitiesPersistent: false,
+  },
 }));
 
 vi.mock("ws", () => {
@@ -47,8 +55,39 @@ vi.mock("ws", () => {
     send(data: string, callback?: (error?: Error) => void): void {
       this.sent.push(data);
       callback?.();
-      const request = JSON.parse(data) as { id?: number; method: string };
+      const request = JSON.parse(data) as {
+        id?: number;
+        method: string;
+        params?: { capabilities?: { experimental_operations?: string[] } };
+      };
       if (request.method === "initialize") {
+        const rejected = mockSocketConfig.rejectCapabilities;
+        if (rejected) {
+          if (!mockSocketConfig.rejectCapabilitiesPersistent) {
+            mockSocketConfig.rejectCapabilities = null;
+          }
+          queueMicrotask(() =>
+            this.emit(
+              "message",
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: request.id,
+                error: {
+                  code: -32013,
+                  message: "Unsupported experimental capabilities",
+                  data: {
+                    kind: "capability_not_negotiated",
+                    unsupported_capabilities: rejected,
+                  },
+                },
+              }),
+            ),
+          );
+          return;
+        }
+        // Like the real server: negotiated grants echo the request, sorted.
+        const requested =
+          request.params?.capabilities?.experimental_operations ?? [];
         queueMicrotask(() =>
           this.emit(
             "message",
@@ -67,7 +106,7 @@ vi.mock("ws", () => {
                   artifacts: false,
                   replay: true,
                   terminal: true,
-                  experimental_operations: [],
+                  experimental_operations: [...requested].sort(),
                   disabled_notifications: [],
                 },
                 agent_host: {
@@ -94,9 +133,17 @@ type TestClient = {
     send: (data: string, callback: (error?: Error) => void) => void;
   };
   handleMessage: (message: unknown) => void;
+  on: RPCClient["on"];
   listSessions: RPCClient["listSessions"];
   archiveSession: RPCClient["archiveSession"];
+  deleteSession: RPCClient["deleteSession"];
   registerClientFunction: RPCClient["registerClientFunction"];
+  serverCall: RPCClient["serverCall"];
+  sendUserMessage: RPCClient["sendUserMessage"];
+  forkSession: RPCClient["forkSession"];
+  listThreads: RPCClient["listThreads"];
+  mcpCallTool: RPCClient["mcpCallTool"];
+  getConfig: RPCClient["getConfig"];
   gitStatus: RPCClient["gitStatus"];
   gitStage: RPCClient["gitStage"];
   gitDiscard: RPCClient["gitDiscard"];
@@ -120,6 +167,8 @@ describe("RPCClient", () => {
   afterEach(() => {
     mockSockets.length = 0;
     mockSocketConfig.failConnects = false;
+    mockSocketConfig.rejectCapabilities = null;
+    mockSocketConfig.rejectCapabilitiesPersistent = false;
     vi.useRealTimers();
   });
 
@@ -150,7 +199,7 @@ describe("RPCClient", () => {
             artifacts: false,
             replay: true,
             terminal: true,
-            experimental_operations: [],
+            experimental_operations: [...REQUESTED_EXPERIMENTAL_OPERATIONS],
             disabled_notifications: [],
           },
         },
@@ -179,6 +228,139 @@ describe("RPCClient", () => {
       params: {},
     });
     expect(ready).toHaveBeenCalledTimes(2);
+  });
+
+  it("is granted the requested experimental operations at the handshake", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const connected = client.connect();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await connected;
+
+    expect(client.isGranted("git_status")).toBe(true);
+    expect(client.isGranted("item_updated")).toBe(true);
+    // Stable operations never appear in the grant list.
+    expect(client.isGranted("start_run")).toBe(false);
+    // Launcher-privileged control plane is never requested.
+    expect(client.isGranted("agent_host_register_workspace")).toBe(false);
+    expect(client.grantedExperimentalOperations).toEqual(
+      [...REQUESTED_EXPERIMENTAL_OPERATIONS].sort(),
+    );
+    expect(client.defaultEnvironmentId()).toBe("environment-1");
+  });
+
+  it("strips capabilities an older server rejects and retries once", async () => {
+    vi.useFakeTimers();
+    mockSocketConfig.rejectCapabilities = ["git_push", "item_updated"];
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const ready = vi.fn();
+    client.on("rpc_ready", ready);
+
+    const connected = client.connect();
+    await vi.runAllTicks();
+    await connected;
+
+    const inits = mockSockets[0]!.sent
+      .map((message) => JSON.parse(message))
+      .filter((message) => message.method === "initialize");
+    expect(inits).toHaveLength(2);
+    expect(inits[0]!.params.capabilities.experimental_operations).toContain(
+      "git_push",
+    );
+    const retried = inits[1]!.params.capabilities
+      .experimental_operations as string[];
+    expect(retried).not.toContain("git_push");
+    expect(retried).not.toContain("item_updated");
+    expect(retried).toContain("git_status");
+    expect(ready).toHaveBeenCalledTimes(1);
+    expect(client.isGranted("git_push")).toBe(false);
+    expect(client.isGranted("git_status")).toBe(true);
+
+    // The reduction is remembered: the reconnect handshake negotiates
+    // cleanly on its first attempt.
+    mockSockets[0]!.emit("close");
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.runAllTicks();
+
+    const reconnectInits = mockSockets[1]!.sent
+      .map((message) => JSON.parse(message))
+      .filter((message) => message.method === "initialize");
+    expect(reconnectInits).toHaveLength(1);
+    expect(
+      reconnectInits[0]!.params.capabilities.experimental_operations,
+    ).not.toContain("git_push");
+  });
+
+  it("fails permanently when the capability rejection survives the retry", async () => {
+    vi.useFakeTimers();
+    mockSocketConfig.rejectCapabilities = ["git_push"];
+    mockSocketConfig.rejectCapabilitiesPersistent = true;
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+
+    const connected = client.connect();
+    await vi.runAllTicks();
+    await expect(connected).rejects.toMatchObject({
+      name: "JSONRPCError",
+      code: -32013,
+    });
+
+    // Deterministic handshake rejection: no reconnect loop.
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(mockSockets).toHaveLength(1);
+  });
+
+  it("re-emits protocol notifications under their method name", () => {
+    const client = connectedClient([]);
+    const itemUpdated = vi.fn();
+    const accountChanged = vi.fn();
+    const fsEvents = vi.fn();
+    const requestResolved = vi.fn();
+    client.on("item_updated", itemUpdated);
+    client.on("account_changed", accountChanged);
+    client.on("fs_events", fsEvents);
+    client.on("client_request_resolved", requestResolved);
+
+    client.handleMessage({
+      jsonrpc: "2.0",
+      method: "item_updated",
+      params: {
+        session_id: "sess",
+        thread_id: "thread-1",
+        item_id: "item-1",
+        kind: "message",
+        status: "completed",
+        revision: 1,
+        item_seq: 1,
+        content: {},
+      },
+    });
+    client.handleMessage({
+      jsonrpc: "2.0",
+      method: "account_changed",
+      params: { provider: "anthropic", reason: "login" },
+    });
+    client.handleMessage({
+      jsonrpc: "2.0",
+      method: "fs_events",
+      params: { environment_id: "environment-1", watch_id: "w1", events: [] },
+    });
+    client.handleMessage({
+      jsonrpc: "2.0",
+      method: "client_request_resolved",
+      params: { request_id: "request-1" },
+    });
+
+    expect(itemUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({ item_id: "item-1" }),
+    );
+    expect(accountChanged).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "anthropic" }),
+    );
+    expect(fsEvents).toHaveBeenCalledWith(
+      expect.objectContaining({ watch_id: "w1" }),
+    );
+    expect(requestResolved).toHaveBeenCalledWith(
+      expect.objectContaining({ request_id: "request-1" }),
+    );
   });
 
   it("omits params when listing sessions", async () => {
@@ -425,6 +607,126 @@ describe("RPCClient typed git wrappers", () => {
     await expect(response).rejects.toMatchObject({
       code: -32093,
       data: { kind: "git_confirmation_required", confirmation_token: "tok" },
+    });
+  });
+});
+
+describe("RPCClient session control, config & thread wrappers", () => {
+  it("shapes fork_session params in snake_case, omitting unset options", () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.forkSession("sess", {
+      newSessionId: "sess-2",
+      fromItemId: "item-9",
+    });
+    expect(JSON.parse(sent[0]!)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "fork_session",
+      params: {
+        session_id: "sess",
+        new_session_id: "sess-2",
+        from_item_id: "item-9",
+      },
+    });
+  });
+
+  it("sends steering messages against the active run", () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.sendUserMessage("run-1", "also check the tests");
+    expect(JSON.parse(sent[0]!)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "send_user_message",
+      params: { run_id: "run-1", content: "also check the tests" },
+    });
+  });
+
+  it("sends delete_session cascade only when set", () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.deleteSession("sess");
+    void client.deleteSession("sess", true);
+    expect(JSON.parse(sent[0]!)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "delete_session",
+      params: { session_id: "sess" },
+    });
+    expect(JSON.parse(sent[1]!)).toMatchObject({
+      method: "delete_session",
+      params: { session_id: "sess", cascade: true },
+    });
+  });
+
+  it("omits unset thread filters and keeps false values", () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.listThreads({ pinned: false, limit: 10 });
+    expect(JSON.parse(sent[0]!)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "list_threads",
+      params: { pinned: false, limit: 10 },
+    });
+  });
+
+  it("sends get_config without params", () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.getConfig();
+    expect(JSON.parse(sent[0]!)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "get_config",
+    });
+  });
+
+  it("shapes mcp_call_tool params", () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.mcpCallTool("github", "search_issues", "sess", {
+      query: "is:open",
+    });
+    expect(JSON.parse(sent[0]!)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "mcp_call_tool",
+      params: {
+        server_name: "github",
+        tool_name: "search_issues",
+        session_id: "sess",
+        args: { query: "is:open" },
+      },
+    });
+  });
+
+  it("routes server_call through an environment when asked", () => {
+    const sent: string[] = [];
+    const client = connectedClient(sent);
+
+    void client.serverCall("goal.status", {}, "sess", {
+      environmentId: "environment-1",
+      environmentGeneration: 3,
+    });
+    expect(JSON.parse(sent[0]!)).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "server_call",
+      params: {
+        function: "goal.status",
+        args: {},
+        session_id: "sess",
+        environment_id: "environment-1",
+        environment_generation: 3,
+      },
     });
   });
 });

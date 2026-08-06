@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 /**
  * Simple color interpolation between two hex colors
@@ -35,10 +35,10 @@ export function useAnimatedScrollbar(
   isFocused: boolean,
   scrollBy: (delta: number) => void,
 ) {
-  const darkColor = "#3b4261"; // Subtle gray (matching border)
-  const focusedColor = TokyoNightTheme.assistantMessage; // Soft blue
+  const darkColor = Theme.borderAmbient;
+  const focusedColor = Theme.accentAgent; // Soft blue
 
-  const [scrollbarColor, setScrollbarColor] = useState(darkColor);
+  const [scrollbarColor, setScrollbarColor] = useState<string>(darkColor);
   const colorRef = useRef(scrollbarColor);
   colorRef.current = scrollbarColor;
 

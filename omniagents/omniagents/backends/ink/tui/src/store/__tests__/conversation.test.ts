@@ -49,6 +49,7 @@ describe("normalizeItems", () => {
     expect(messages[1].role).toBe("tool_call");
     expect(messages[1].toolCall).toEqual({
       tool: "write_file",
+      kind: "file",
       input: '{"path":"a.txt"}',
       call_id: "c1",
       output: "written",

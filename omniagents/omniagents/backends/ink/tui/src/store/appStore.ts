@@ -8,6 +8,11 @@ import { useShallow } from "zustand/react/shallow";
 import { immer } from "zustand/middleware/immer";
 import { enableMapSet } from "immer";
 import { debugLog } from "../utils/debugLog.js";
+import type {
+  ConversationItem,
+  ConversationRunDiff,
+} from "../types/conversation.js";
+import { mergeItems } from "./conversation.js";
 
 // Opt into Immer's Map/Set support so producers can mutate `Set` fields
 // (e.g. mintedSessionIds) directly. Safe to call repeatedly.
@@ -17,6 +22,8 @@ export interface ToolCallInfo {
   tool: string;
   input: string;
   call_id: string;
+  /** Server-side ConversationToolKind, when hydrated from the item model. */
+  kind?: string;
   output?: string;
   metadata?: Record<string, unknown>;
   running: boolean;
@@ -95,6 +102,9 @@ export interface Message {
   timestamp?: Date;
   toolCall?: ToolCallInfo;
   approval?: ApprovalInfo;
+  /** A run-end diff receipt — rendered as a card, `content` is the
+   * plain-text fallback. */
+  runDiff?: ConversationRunDiff;
 }
 
 export interface UsageInfo {
@@ -136,11 +146,23 @@ export interface BashJobSummary {
   cwd?: string;
 }
 
-// Mirror of worker_state_dict on the server (omni-code
-// tools/worker_tools.py). Drives the docked workers panel; empty list
-// means no workers are tracked for this session.
-export interface WorkerSummary {
-  worker_id: string;
+// One entry in the unified subagent snapshot (ui.subagents.update):
+// background workers (WorkerManager) and agent-tool runs (Agent.as_tool
+// streamed onto the subagent bus) share this shape, discriminated by
+// `kind`. Empty list means nothing is tracked for this session.
+const WORKER_EVENT_CAP = 200;
+
+/** One relayed subagent transcript event (ui.subagent.event). */
+export interface SubagentEvent {
+  method: string;
+  params: Record<string, unknown>;
+}
+
+export interface SubagentSummary {
+  subagent_id: string;
+  kind: "worker" | "agent_tool";
+  /** Agent name, for agent_tool runs. */
+  agent?: string;
   status: "running" | "completed" | "cancelled" | "error";
   task: string;
   parent_session_id: string | null;
@@ -220,18 +242,45 @@ export interface LoopTaskSnapshot {
   jitter_seconds: number;
 }
 
-// Session recap (from /recap or the idle auto-recap). Single-slot, prose
-// blob; null means no recap to show. Cleared when the user starts a new
-// run (the recap is a "while you were away" artifact, stale once they
-// re-engage).
-export interface RecapInfo {
-  text: string;
-  timestamp: number;
+/**
+ * What the initialize handshake negotiated — the feature-detection
+ * surface for protocol-gated UI. `grantedExperimental` is the server's
+ * echoed grant list (experimental requests AND notifications); panels
+ * gate on membership instead of try/catching -32013. `agentHost` routes
+ * environment-scoped operations (fs_*, git_*, server_call read leases).
+ */
+export interface ServerInitInfo {
+  protocolVersion: string;
+  grantedExperimental: string[];
+  agentHost: {
+    agentHostId: string;
+    defaultWorkspaceId: string | null;
+    defaultEnvironmentId: string | null;
+  };
 }
 
 interface AppState {
   // Data
   messages: Message[];
+  // Canonical conversation item cache for the active session, keyed by
+  // item_id inside mergeConversationItems. Hydrated from list_items and
+  // kept current by item_updated notifications; the transcript is
+  // re-derived from it via normalizeItems whenever no local run is
+  // streaming (during a run the live event stream drives `messages`).
+  conversationItems: ConversationItem[];
+  // Latest aggregated run diff (durable `run_diff` item / get_run_diff).
+  // Cleared on run_started like the recap.
+  runDiff: ConversationRunDiff | null;
+  // Live subagent mini-transcripts: ui.subagent.event relays keyed by
+  // worker_id, ring-capped so a chatty worker can't grow unbounded.
+  subagentEvents: Record<string, SubagentEvent[]>;
+  // Ctrl+O: render the transcript's activity beats expanded into full
+  // per-tool rows (the mechanical view) instead of semantic one-liners.
+  transcriptDetail: boolean;
+  // The active screen's context line for the status bar (vim-statusline
+  // style): review publishes "review · turn · repo", agents publishes
+  // "agents"; null on chat, where mission tokens own the bar.
+  statusContext: string | null;
   usage: UsageInfo | null;
   sessionModel: string | null;
   sessionReasoningEffort: string | null;
@@ -256,19 +305,21 @@ interface AppState {
   preamble: string | null;
   tasks: TaskSummary[];
   bashJobs: BashJobSummary[];
-  workers: WorkerSummary[];
+  subagents: SubagentSummary[];
   queuedMessages: QueuedMessage[];
   goal: GoalSnapshot | null;
   wakeup: WakeupSnapshot | null;
   loops: LoopTaskSnapshot[];
-  recap: RecapInfo | null;
+  // Last successful handshake; null until the first rpc_ready. Kept
+  // across reconnects (each rpc_ready overwrites it).
+  serverInit: ServerInitInfo | null;
   // IDs of dock items the user has "moved past" — snapshotted from
   // currently-terminal items each time the user submits, so the next
   // run starts with a clean dock instead of dragging the previous
   // run's exits forward. New items spawned by the next run aren't in
   // these sets and render normally; their IDs are added on the *next*
   // submit. Reset on session change.
-  dismissedWorkerIds: Set<string>;
+  dismissedSubagentIds: Set<string>;
   dismissedJobIds: Set<string>;
   dismissedTaskIds: Set<string>;
 
@@ -276,6 +327,14 @@ interface AppState {
   actions: {
     addMessage: (msg: Message) => void;
     setMessages: (msgs: Message[]) => void;
+    setConversationItems: (items: ConversationItem[]) => void;
+    // Revision-aware merge (see store/conversation.ts mergeItems): an
+    // out-of-order arrival can never regress an item that advanced.
+    mergeConversationItems: (incoming: ConversationItem[]) => void;
+    setRunDiff: (diff: ConversationRunDiff | null) => void;
+    addSubagentEvent: (workerId: string, event: SubagentEvent) => void;
+    toggleTranscriptDetail: () => void;
+    setStatusContext: (context: string | null) => void;
     updateToolResult: (
       callId: string,
       output: string,
@@ -317,12 +376,12 @@ interface AppState {
     clearMessages: () => void;
     setTasks: (tasks: TaskSummary[]) => void;
     setBashJobs: (jobs: BashJobSummary[]) => void;
-    setWorkers: (workers: WorkerSummary[]) => void;
+    setSubagents: (subagents: SubagentSummary[]) => void;
     setQueuedMessages: (items: QueuedMessage[]) => void;
     setGoal: (goal: GoalSnapshot | null) => void;
     setWakeup: (wakeup: WakeupSnapshot | null) => void;
     setLoops: (loops: LoopTaskSnapshot[]) => void;
-    setRecap: (recap: RecapInfo | null) => void;
+    setServerInit: (init: ServerInitInfo | null) => void;
     // Add every currently-terminal dock item (exited workers / bash
     // jobs, completed tasks) to its dismissed set. Call this at the
     // start of handleSubmit so the next run shows a clean dock.
@@ -337,6 +396,11 @@ export const useAppStore = create<AppState>()(
   immer((set, get) => ({
     // Initial state
     messages: [],
+    conversationItems: [],
+    runDiff: null,
+    subagentEvents: {},
+    transcriptDetail: false,
+    statusContext: null,
     usage: null,
     sessionModel: null,
     sessionReasoningEffort: null,
@@ -355,15 +419,15 @@ export const useAppStore = create<AppState>()(
     preamble: null,
     tasks: [],
     bashJobs: [],
-    workers: [],
-    dismissedWorkerIds: new Set<string>(),
+    subagents: [],
+    dismissedSubagentIds: new Set<string>(),
     dismissedJobIds: new Set<string>(),
     dismissedTaskIds: new Set<string>(),
     queuedMessages: [],
     goal: null,
     wakeup: null,
     loops: [],
-    recap: null,
+    serverInit: null,
 
     actions: {
       addMessage: (msg) =>
@@ -380,6 +444,44 @@ export const useAppStore = create<AppState>()(
       setMessages: (msgs) =>
         set((state) => {
           state.messages = msgs;
+        }),
+
+      setConversationItems: (items) =>
+        set((state) => {
+          state.conversationItems = items;
+        }),
+
+      mergeConversationItems: (incoming) =>
+        set((state) => {
+          state.conversationItems = mergeItems(
+            state.conversationItems as ConversationItem[],
+            incoming,
+          );
+        }),
+
+      setRunDiff: (diff) =>
+        set((state) => {
+          state.runDiff = diff;
+        }),
+
+      addSubagentEvent: (workerId, event) =>
+        set((state) => {
+          const buffer = state.subagentEvents[workerId] ?? [];
+          buffer.push(event);
+          if (buffer.length > WORKER_EVENT_CAP) {
+            buffer.splice(0, buffer.length - WORKER_EVENT_CAP);
+          }
+          state.subagentEvents[workerId] = buffer;
+        }),
+
+      toggleTranscriptDetail: () =>
+        set((state) => {
+          state.transcriptDetail = !state.transcriptDetail;
+        }),
+
+      setStatusContext: (context) =>
+        set((state) => {
+          state.statusContext = context;
         }),
 
       updateToolResult: (callId, output, metadata) =>
@@ -622,6 +724,8 @@ export const useAppStore = create<AppState>()(
           state.preamble = null;
           state.tasks = [];
           state.bashJobs = [];
+          state.conversationItems = [];
+          state.runDiff = null;
         }),
 
       setTasks: (tasks) =>
@@ -634,9 +738,9 @@ export const useAppStore = create<AppState>()(
           state.bashJobs = jobs;
         }),
 
-      setWorkers: (workers) =>
+      setSubagents: (subagents) =>
         set((state) => {
-          state.workers = workers;
+          state.subagents = subagents;
         }),
 
       setQueuedMessages: (items) =>
@@ -649,9 +753,9 @@ export const useAppStore = create<AppState>()(
           state.goal = goal;
         }),
 
-      setRecap: (recap) =>
+      setServerInit: (init) =>
         set((state) => {
-          state.recap = recap;
+          state.serverInit = init;
         }),
       setWakeup: (wakeup) =>
         set((state) => {
@@ -669,9 +773,9 @@ export const useAppStore = create<AppState>()(
           // (worker error/cancelled, non-zero or null bash exit) stick
           // until the user dismisses them so a quietly-failed background
           // task isn't lost behind the next prompt.
-          for (const w of state.workers) {
+          for (const w of state.subagents) {
             if (w.status === "completed")
-              state.dismissedWorkerIds.add(w.worker_id);
+              state.dismissedSubagentIds.add(w.subagent_id);
           }
           for (const j of state.bashJobs) {
             if (!j.running && j.exit_code === 0)
@@ -684,7 +788,7 @@ export const useAppStore = create<AppState>()(
 
       resetDockDismissals: () =>
         set((state) => {
-          state.dismissedWorkerIds = new Set<string>();
+          state.dismissedSubagentIds = new Set<string>();
           state.dismissedJobIds = new Set<string>();
           state.dismissedTaskIds = new Set<string>();
         }),
@@ -717,14 +821,23 @@ export const useCurrentRunId = () => useAppStore((s) => s.currentRunId);
 export const usePreamble = () => useAppStore((s) => s.preamble);
 export const useTasks = () => useAppStore((s) => s.tasks);
 export const useBashJobs = () => useAppStore((s) => s.bashJobs);
-export const useWorkers = () => useAppStore((s) => s.workers);
-export const useDismissedWorkerIds = () =>
-  useAppStore((s) => s.dismissedWorkerIds);
+export const useSubagents = () => useAppStore((s) => s.subagents);
+export const useDismissedSubagentIds = () =>
+  useAppStore((s) => s.dismissedSubagentIds);
 export const useDismissedJobIds = () => useAppStore((s) => s.dismissedJobIds);
 export const useDismissedTaskIds = () => useAppStore((s) => s.dismissedTaskIds);
 export const useQueuedMessages = () => useAppStore((s) => s.queuedMessages);
 export const useGoal = () => useAppStore((s) => s.goal);
 export const useWakeup = () => useAppStore((s) => s.wakeup);
 export const useLoops = () => useAppStore((s) => s.loops);
-export const useRecap = () => useAppStore((s) => s.recap);
+export const useRunDiff = () => useAppStore((s) => s.runDiff);
+export const useSubagentEvents = () => useAppStore((s) => s.subagentEvents);
+export const useStatusContext = () =>
+  useAppStore((s) => s.statusContext);
+export const useTranscriptDetail = () =>
+  useAppStore((s) => s.transcriptDetail);
+export const useServerInit = () => useAppStore((s) => s.serverInit);
+/** Whether the server granted an experimental operation at the handshake. */
+export const useIsGranted = (operation: string) =>
+  useAppStore((s) => s.serverInit?.grantedExperimental.includes(operation) ?? false);
 export const useActions = () => useAppStore((s) => s.actions);

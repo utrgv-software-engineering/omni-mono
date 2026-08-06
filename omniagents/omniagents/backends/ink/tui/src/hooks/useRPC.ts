@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { RPCClient } from "../rpc/client.js";
+import { useAppStore } from "../store/appStore.js";
 
 export interface UseRPCOptions {
   url: string;
@@ -53,6 +54,26 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
 
     rpcClient.on("rpc_ready", () => {
       setRpcReady(true);
+      // Publish the negotiated handshake so components can feature-detect
+      // protocol-gated panels (grants) and route environment-scoped
+      // operations (agent_host). Re-runs on every reconnect handshake.
+      const init = rpcClient.initializeResult;
+      useAppStore.getState().actions.setServerInit(
+        init
+          ? {
+              protocolVersion: init.protocol_version,
+              grantedExperimental: [
+                ...init.capabilities.experimental_operations,
+              ],
+              agentHost: {
+                agentHostId: init.agent_host.agent_host_id,
+                defaultWorkspaceId: init.agent_host.default_workspace_id ?? null,
+                defaultEnvironmentId:
+                  init.agent_host.default_environment_id ?? null,
+              },
+            }
+          : null,
+      );
     });
 
     rpcClient.on("disconnected", () => {

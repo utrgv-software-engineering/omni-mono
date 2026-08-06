@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Box, Text } from "ink";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 // Star spinner frames (from ink-spinner)
 const STAR_FRAMES = ["✶", "✸", "✹", "✺", "✹", "✸"];
@@ -29,9 +29,9 @@ export const Preamble: React.FC<PreambleProps> = ({ content }) => {
     <Box flexDirection="column">
       <Box>
         <Box marginRight={1}>
-          <Text color={TokyoNightTheme.warning}>{STAR_FRAMES[frame]}</Text>
+          <Text color={Theme.accentAgent}>{STAR_FRAMES[frame]}</Text>
         </Box>
-        <Text color={TokyoNightTheme.warning}>{content}</Text>
+        <Text color={Theme.accentAgent}>{content}</Text>
       </Box>
     </Box>
   );

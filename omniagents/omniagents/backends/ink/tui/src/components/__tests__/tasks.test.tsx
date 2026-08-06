@@ -114,7 +114,7 @@ type InkRender = (typeof import("ink"))["render"];
 
 const instances: Array<ReturnType<InkRender>> = [];
 let inkRender: InkRender;
-let Tasks: React.ComponentType;
+let Tasks: React.ComponentType<{ focused: boolean }>;
 let useAppStore: typeof import("../../store/appStore.js")["useAppStore"];
 
 beforeAll(async () => {
@@ -137,7 +137,7 @@ const renderDock = async (tasks: TaskSummary[]) => {
   useAppStore.getState().actions.setTasks(tasks);
   useAppStore.setState({ thinking: true });
   const stdout = new TestStdout();
-  const instance = inkRender(<Tasks />, {
+  const instance = inkRender(<Tasks focused={true} />, {
     stdout: stdout as unknown as NodeJS.WriteStream,
     debug: true,
     exitOnCtrlC: false,

@@ -1,5 +1,8 @@
 /**
- * Logo component with ASCII art
+ * The dashboard logo: gradient ASCII art, LazyVim-style — the empty
+ * state's centerpiece. It only ever renders on a fresh session (Header
+ * gates on messages.length === 0 && chat screen), so it costs zero rows
+ * once work starts.
  */
 
 import React, { useMemo } from "react";
@@ -18,8 +21,7 @@ export const Logo = React.memo<LogoProps>(({ agentName }) => {
   }, [agentName]);
 
   return (
-    <Box flexDirection="column" paddingY={1}>
-      {/* ASCII art logo with gradient */}
+    <Box flexDirection="column" paddingY={1} alignItems="center">
       {gradientLines.map((line, index) => (
         <Text key={index}>{line}</Text>
       ))}

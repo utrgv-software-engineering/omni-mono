@@ -7,7 +7,7 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import { TokyoNightTheme } from "../../theme.js";
+import { Theme } from "../../theme.js";
 
 export interface DialogShellProps {
   title: string;
@@ -24,19 +24,19 @@ export const DialogShell: React.FC<DialogShellProps> = ({
     <Box
       flexDirection="column"
       borderStyle="single"
-      borderColor={TokyoNightTheme.border}
+      borderColor={Theme.borderAmbient}
       paddingX={2}
       gap={1}
     >
       <Box>
-        <Text bold color={TokyoNightTheme.approvalTitle}>
+        <Text bold color={Theme.stateBlocked}>
           {title}
         </Text>
       </Box>
       {children}
       {footer && (
         <Box>
-          <Text color={TokyoNightTheme.defaultText}>{footer}</Text>
+          <Text color={Theme.textChrome}>{footer}</Text>
         </Box>
       )}
     </Box>

@@ -226,9 +226,11 @@ class InkBackend:
         # Launch the Ink TUI with proper stdin/stdout/stderr
         exit_code = 0
         try:
-            # Pass stdin/stdout/stderr directly so Ink can use raw mode.
-            # Use the original stdout (pre-redirect) so the TUI renders
-            # to the real terminal even when stdout has been captured.
+            # Pass stdin/stdout directly so Ink can use raw mode, with
+            # stdout as the original (pre-redirect) terminal. The child's
+            # stderr goes wherever the parent's captured stderr goes (the
+            # debug log, or /dev/null) — node warnings and crash traces
+            # must not draw over the live frame either.
             real_stdout = Debug.original_stdout()
             proc = subprocess.Popen(
                 cmd,
@@ -249,7 +251,12 @@ class InkBackend:
             sys.exit(1)
 
         if exit_code != 0 and exit_code != -2:
-            print(f"Error: omni-ink-tui exited with code {exit_code}")
+            print(
+                f"Error: omni-ink-tui exited with code {exit_code} "
+                "(re-run with --debug and see ~/.omniagents-debug.log "
+                "for its stderr)",
+                file=Debug.original_stderr(),
+            )
             sys.exit(exit_code)
 
     def _find_binary(self, env_override: Optional[str] = None) -> Optional[Path]:

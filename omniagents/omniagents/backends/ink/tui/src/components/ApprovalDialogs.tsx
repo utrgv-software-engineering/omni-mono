@@ -5,7 +5,7 @@
 
 import React from "react";
 import { Box, Text } from "ink";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 import type { RichMetadata } from "../types/richMetadata.js";
 import { DialogShell } from "./shared/DialogShell.js";
 import {
@@ -61,7 +61,7 @@ export const DiffApproval = React.memo<
     <DialogShell title={title} footer={APPROVAL_FOOTER}>
       {diffLines.length > 0 && (
         <Box flexDirection="column">
-          <Text color={TokyoNightTheme.defaultText}>Changes:</Text>
+          <Text color={Theme.textChrome}>Changes:</Text>
           <Box flexDirection="column">
             {diffLines.map((line, idx) => {
               const lineStr = line.replace(/\n$/, "");
@@ -74,7 +74,7 @@ export const DiffApproval = React.memo<
               // Hunk header
               if (lineStr.startsWith("@@")) {
                 return (
-                  <Text key={idx} color={TokyoNightTheme.defaultText}>
+                  <Text key={idx} color={Theme.textChrome}>
                     {lineStr}
                   </Text>
                 );
@@ -83,7 +83,7 @@ export const DiffApproval = React.memo<
               // Addition
               if (lineStr.startsWith("+") && !lineStr.startsWith("+++")) {
                 return (
-                  <Text key={idx} color={TokyoNightTheme.info}>
+                  <Text key={idx} color={Theme.stateActive}>
                     {lineStr}
                   </Text>
                 );
@@ -92,7 +92,7 @@ export const DiffApproval = React.memo<
               // Deletion
               if (lineStr.startsWith("-") && !lineStr.startsWith("---")) {
                 return (
-                  <Text key={idx} color={TokyoNightTheme.error}>
+                  <Text key={idx} color={Theme.stateFailed}>
                     {lineStr}
                   </Text>
                 );
@@ -100,7 +100,7 @@ export const DiffApproval = React.memo<
 
               // Context
               return (
-                <Text key={idx} color={TokyoNightTheme.defaultText}>
+                <Text key={idx} color={Theme.textChrome}>
                   {lineStr}
                 </Text>
               );
@@ -133,18 +133,18 @@ export const FileWriteApproval = React.memo<
     <DialogShell title={summary} footer={APPROVAL_FOOTER}>
       {content && (
         <Box flexDirection="column">
-          <Text color={TokyoNightTheme.defaultText}>Content:</Text>
+          <Text color={Theme.textChrome}>Content:</Text>
           <Box flexDirection="column">
             {content
               .split("\n")
               .slice(0, 15)
               .map((line, idx) => (
-                <Text key={idx} color={TokyoNightTheme.toolResult}>
+                <Text key={idx} color={Theme.textSecondary}>
                   {line}
                 </Text>
               ))}
             {content.split("\n").length > 15 && (
-              <Text color={TokyoNightTheme.defaultText} italic>
+              <Text color={Theme.textChrome} italic>
                 ... {content.split("\n").length - 15} more lines
               </Text>
             )}
@@ -182,8 +182,8 @@ export const CommandApproval = React.memo<
     <DialogShell title={summary} footer={APPROVAL_FOOTER}>
       {command && (
         <Box flexDirection="column">
-          <Text color={TokyoNightTheme.defaultText}>Command:</Text>
-          <Text color={TokyoNightTheme.info}>$ {command}</Text>
+          <Text color={Theme.textChrome}>Command:</Text>
+          <Text color={Theme.stateActive}>$ {command}</Text>
         </Box>
       )}
 

@@ -2,7 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useEscalation } from "../store/appStore.js";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 // Banner shown when the agent calls ``escalate`` (the blocking
 // client-function builtin). The agent is paused on the tool call
@@ -15,21 +15,22 @@ export const EscalationBanner = React.memo(() => {
 
   return (
     <Box
+      paddingX={1}
       borderStyle="round"
-      borderColor={TokyoNightTheme.warning}
+      borderColor={Theme.stateBlocked}
       flexDirection="column"
     >
       <Box>
-        <Text color={TokyoNightTheme.warning}>
+        <Text color={Theme.stateBlocked}>
           <Spinner type="dots" />
         </Text>
-        <Text color={TokyoNightTheme.warning} bold>
+        <Text color={Theme.stateBlocked} bold>
           {" "}
           Agent escalated — your next message will be sent back as the reply.
         </Text>
       </Box>
       <Box>
-        <Text color={TokyoNightTheme.defaultText}>{escalation.message}</Text>
+        <Text color={Theme.textChrome}>{escalation.message}</Text>
       </Box>
     </Box>
   );

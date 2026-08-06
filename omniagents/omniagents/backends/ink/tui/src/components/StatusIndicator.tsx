@@ -2,7 +2,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useThinking, useStatus } from "../store/appStore.js";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 // Animated spinner with status text
 export const StatusIndicator = React.memo(() => {
@@ -20,7 +20,7 @@ export const StatusIndicator = React.memo(() => {
 
   // Determine color based on status content (like bubbletea does)
   const isError = statusObj?.statusType === "error";
-  const statusColor = isError ? TokyoNightTheme.error : TokyoNightTheme.info;
+  const statusColor = isError ? Theme.stateFailed : Theme.stateActive;
 
   const showSpinner = !!thinking || !!statusObj?.statusSpinner;
 

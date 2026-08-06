@@ -11,7 +11,8 @@
 // derived from one exhaustive list here and the maps are keyed by it.
 
 import type { TaskStatus, TaskSummary } from "../store/appStore.js";
-import { TokyoNightTheme } from "../theme.js";
+import type { PlanStep } from "../types/conversation.js";
+import { Theme } from "../theme.js";
 
 export const TASK_STATUSES: readonly TaskStatus[] = [
   "in_progress",
@@ -22,16 +23,16 @@ export const TASK_STATUSES: readonly TaskStatus[] = [
 
 export const STATUS_GLYPH: Record<TaskStatus, string> = {
   in_progress: "◐",
-  blocked: "⊘",
+  blocked: "◇",
   pending: "○",
-  completed: "●",
+  completed: "✔",
 };
 
 export const STATUS_COLOR: Record<TaskStatus, string> = {
-  in_progress: TokyoNightTheme.info,
-  blocked: TokyoNightTheme.warning,
-  pending: TokyoNightTheme.defaultText,
-  completed: TokyoNightTheme.success,
+  in_progress: Theme.stateActive,
+  blocked: Theme.stateBlocked,
+  pending: Theme.textChrome,
+  completed: Theme.stateDone,
 };
 
 /** Tasks in dock order: active work first, finished work last. */
@@ -48,6 +49,36 @@ export function orderTasks(tasks: TaskSummary[]): TaskSummary[] {
     if (!ordered.includes(task)) ordered.push(task);
   }
   return ordered;
+}
+
+/**
+ * Project durable plan steps (get_plan / `plan` item content) onto the
+ * dock's TaskSummary shape. The statuses are the same closed set; the
+ * field names differ (snake_case wire → camelCase dock). Tolerant of a
+ * malformed payload: returns null so the caller keeps the current dock
+ * instead of blanking it.
+ */
+export function planStepsToTasks(steps: unknown): TaskSummary[] | null {
+  if (!Array.isArray(steps)) return null;
+  const out: TaskSummary[] = [];
+  for (const raw of steps) {
+    const step = raw as Partial<PlanStep>;
+    if (typeof step?.id !== "string" || typeof step?.subject !== "string") {
+      return null;
+    }
+    out.push({
+      id: step.id,
+      subject: step.subject,
+      activeForm:
+        typeof step.active_form === "string" ? step.active_form : undefined,
+      status: (step.status as TaskStatus) ?? "pending",
+      owner: typeof step.owner === "string" ? step.owner : undefined,
+      blockedBy: Array.isArray(step.blocked_by)
+        ? step.blocked_by.filter((id): id is string => typeof id === "string")
+        : undefined,
+    });
+  }
+  return out;
 }
 
 export function taskCounts(tasks: TaskSummary[]): Record<TaskStatus, number> {

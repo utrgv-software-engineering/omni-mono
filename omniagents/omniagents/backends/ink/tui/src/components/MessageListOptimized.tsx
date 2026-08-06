@@ -1,83 +1,117 @@
 /**
- * Optimized message list.
+ * Optimized message list — the semantic "beat" transcript.
+ *
+ * Prose renders bright and full; agent activity renders as dim one-line
+ * beats at the verb level ("⌕ read 6 files"), grouped by
+ * components/transcript-model.ts. Errors, cancellations and the
+ * currently-running call break out of aggregation into their own rows.
+ * Ctrl+O (store.transcriptDetail) flips to the mechanical view: every
+ * tool call as a full row with args and rich output.
  *
  * When mounted inside a <Scrollable> (the common case), uses VirtualizedList
- * to render only messages in the visible viewport. Off-viewport items become
+ * to render only rows in the visible viewport. Off-viewport items become
  * a single spacer Box of the correct measured height so the parent
  * Scrollable's scroll geometry stays accurate.
  *
- * Visible "frozen" messages (not the tail, not a running tool call) are
- * wrapped in <StaticRender> so their Yoga layout is cached — re-renders of
- * the list don't re-run layout on every visible message.
- *
- * Falls back to a plain map when no viewport info is available (e.g. when
- * rendered outside a Scrollable, in tests, or before first measurement). The
- * fallback still uses StaticRender for per-item layout caching.
+ * Visible "frozen" rows (not the tail, not running) are wrapped in
+ * <StaticRender> so their Yoga layout is cached. Falls back to a plain map
+ * when no viewport info is available (tests, outside a Scrollable).
  */
 
 import React, { useCallback, useMemo } from "react";
 import { Box, Text, StaticRender, useStdout } from "ink";
-import { useMessages } from "../store/appStore.js";
-import type { Message } from "../store/appStore.js";
-import { TokyoNightTheme } from "../theme.js";
+import Spinner from "ink-spinner";
+import { useMessages, useTranscriptDetail } from "../store/appStore.js";
+import type { Message, ToolCallInfo } from "../store/appStore.js";
+import type { ConversationRunDiff } from "../types/conversation.js";
+import { changeColor, changeGlyph } from "./review-model.js";
+import { Theme } from "../theme.js";
 import { formatToolArgumentsSmart } from "../utils/formatArguments.js";
 import { renderMarkdownCached } from "../utils/markdownCache.js";
 import { parseRichMetadata } from "../types/richMetadata.js";
 import { RichToolOutput } from "../utils/richToolOutput.js";
 import { VirtualizedList } from "./shared/VirtualizedList.js";
 import { useScrollViewport } from "./Scrollable.js";
+import {
+  errorDetailLines,
+  groupTranscript,
+  rendersNothing,
+  salientArg,
+  spanLine,
+  type BeatSegment,
+  type TranscriptRow,
+} from "./transcript-model.js";
 
-function messageKey(message: Message, index: number): string {
-  const contentPreview = message.content
-    ? message.content.slice(0, 20)
-    : "empty";
-  const role = message.role || "unknown";
-  return (
-    message.toolCall?.call_id ||
-    (message.timestamp
-      ? `${role}-${message.timestamp.getTime()}`
-      : undefined) ||
-    `${role}-${contentPreview}-${index}`
-  );
+function isBeatRow(row: TranscriptRow | undefined): boolean {
+  return row !== undefined && (row.type === "beats" || row.type === "error");
 }
 
 export const MessageListOptimized = React.memo(() => {
   const messages = useMessages();
+  const detail = useTranscriptDetail();
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns ?? 80;
   const viewport = useScrollViewport();
 
-  const renderItem = useCallback(
-    (message: Message, _index: number) => <MessageItem message={message} />,
-    [],
+  // The beat projection is a pure single pass; detail mode bypasses it
+  // and renders every message mechanically.
+  const rows = useMemo<TranscriptRow[]>(
+    () =>
+      detail
+        ? messages
+            .map((message, index) => ({
+              type: "message" as const,
+              key: `msg-${message.role}-${index}`,
+              message,
+            }))
+            .filter((row) => !rendersNothing(row.message))
+        : groupTranscript(messages),
+    [messages, detail],
   );
 
-  const lastIndex = messages.length - 1;
+  const renderItem = useCallback(
+    (row: TranscriptRow, index: number) => (
+      <TranscriptRowItem
+        row={row}
+        // Adjacent activity rows pack tightly; the blank line separates
+        // activity blocks from prose on both sides.
+        tight={isBeatRow(row) && isBeatRow(rows[index + 1])}
+      />
+    ),
+    [rows],
+  );
+
+  const lastIndex = rows.length - 1;
   const isStaticItem = useCallback(
-    (message: Message, index: number) => {
-      const isTail = index === lastIndex;
-      const isRunning = message.toolCall?.running === true;
-      return !isTail && !isRunning;
+    (row: TranscriptRow, index: number) => {
+      if (index === lastIndex) return false;
+      if (row.type === "beats" && row.running.length > 0) return false;
+      if (row.type === "message" && row.message.toolCall?.running === true) {
+        return false;
+      }
+      return true;
     },
     [lastIndex],
   );
 
-  if (messages.length === 0) {
+  const keyExtractor = useCallback((row: TranscriptRow) => row.key, []);
+
+  if (rows.length === 0) {
     return null;
   }
 
-  // Inter-message spacing is owned by MessageItem itself (paddingBottom={1}),
+  // Inter-row spacing is owned by TranscriptRowItem itself (paddingBottom),
   // not by either render path's container. This keeps the virtualized and
   // fallback paths in lockstep and — crucially — keeps the spacing inside the
   // border-box that ink's ResizeObserver measures (getComputedHeight), so the
   // virtualized path's offsets and head/tail spacers stay accurate.
   if (viewport && viewport.innerHeight > 0) {
     return (
-      <VirtualizedList<Message>
-        data={messages}
+      <VirtualizedList<TranscriptRow>
+        data={rows}
         renderItem={renderItem}
-        keyExtractor={messageKey}
-        estimatedItemHeight={3}
+        keyExtractor={keyExtractor}
+        estimatedItemHeight={2}
         containerHeight={viewport.innerHeight}
         scrollTop={viewport.scrollTop}
         width={terminalWidth}
@@ -86,30 +120,32 @@ export const MessageListOptimized = React.memo(() => {
     );
   }
 
-  // Fallback: render everything, with per-item StaticRender for frozen items.
-  // No container gap — each MessageItem carries its own trailing spacing.
+  // Fallback: render everything, with per-item StaticRender for frozen rows.
   return (
     <Box flexDirection="column">
-      {messages.map((message, index) => {
-        const key = messageKey(message, index);
-        const canFreeze = isStaticItem(message, index);
+      {rows.map((row, index) => {
+        const canFreeze = isStaticItem(row, index);
+        const item = renderItem(row, index);
 
         if (!canFreeze) {
-          return <MessageItem key={key} message={message} />;
+          return <React.Fragment key={row.key}>{item}</React.Fragment>;
         }
 
         return (
           <StaticRender
-            key={key}
+            key={row.key}
             width={terminalWidth}
             deps={[
-              message.content,
-              message.toolCall?.output,
-              message.toolCall?.metadata,
+              row.type,
+              row.type === "message" ? row.message.content : row.key,
+              row.type === "message" ? row.message.toolCall?.output : undefined,
+              row.type === "message"
+                ? row.message.toolCall?.metadata
+                : undefined,
               terminalWidth,
             ]}
           >
-            {() => <MessageItem message={message} />}
+            {() => item}
           </StaticRender>
         );
       })}
@@ -117,42 +153,141 @@ export const MessageListOptimized = React.memo(() => {
   );
 });
 
-// Individual message memoized with deep equality check
-const MessageItem = React.memo<{ message: Message }>(
-  ({ message }) => {
+const TranscriptRowItem = React.memo<{ row: TranscriptRow; tight: boolean }>(
+  ({ row, tight }) => {
     const body = (() => {
-      switch (message.role) {
-        case "user":
-          return <UserMessage message={message} />;
-        case "assistant":
-          return <AssistantMessage message={message} />;
-        case "tool_call":
-          // Tools can opt out of the conversation log by setting
-          // ui_metadata.hidden = true (e.g. task_* tools rendered by
-          // the docked Tasks panel instead).
-          if (message.toolCall?.metadata?.hidden === true) {
-            return null;
-          }
-          return <ToolCallMessage message={message} />;
-        case "approval_request":
-          // Approval requests shown in ApprovalDialog, not in message history
-          return null;
+      switch (row.type) {
+        case "beats":
+          return <BeatsRow segments={row.segments} running={row.running} />;
+        case "error":
+          return <ErrorRow message={row.message} />;
         default:
-          return null;
+          return <MessageItem message={row.message} />;
       }
     })();
 
-    // Hidden / non-rendered messages contribute no spacing — the gap lives
-    // here (not in the list container) so both render paths space identically
-    // and the trailing row is part of this item's measured height.
     if (body === null) {
       return null;
     }
     return (
-      <Box flexDirection="column" paddingBottom={1}>
+      <Box flexDirection="column" paddingBottom={tight ? 0 : 1}>
         {body}
       </Box>
     );
+  },
+);
+
+// Activity rows sit under a blank line after their message: a spinner
+// leads while work is in flight, a plain two-space indent once settled.
+// Continuation/detail lines indent two further.
+const ACTIVITY_INDENT = "  ";
+const DETAIL_INDENT = "    ";
+const EXPAND_HINT = " (ctrl+o to expand)";
+
+/**
+ * One activity line per span.
+ * Live:    `⠋ Read 2 files, 1 search · reading src/app.ts… (ctrl+o to expand)`
+ * Settled: `● Read 2 files, 2 searches (ctrl+o to expand)`
+ * The spinner becomes the `●` bullet in place — same column, dim like
+ * the line it marks.
+ */
+const BeatsRow = React.memo<{
+  segments: BeatSegment[];
+  running: ToolCallInfo[];
+}>(({ segments, running }) => {
+  const line = spanLine(segments, running);
+  const live = running.length > 0;
+  return (
+    <Box flexDirection="row">
+      {live ? (
+        <Text color={Theme.stateActive}>
+          <Spinner type="dots" />
+          {" "}
+        </Text>
+      ) : (
+        <Text color={Theme.textChrome}>● </Text>
+      )}
+      <Box flexGrow={1}>
+        <Text color={Theme.textChrome} wrap="truncate-end">
+          {line}
+          {EXPAND_HINT}
+        </Text>
+      </Box>
+    </Box>
+  );
+});
+
+/** A failed or cancelled call — never aggregated, capped detail inline. */
+const ErrorRow = React.memo<{ message: Message }>(({ message }) => {
+  const toolCall = message.toolCall!;
+  const cancelled = toolCall.output === "[Cancelled]";
+  const salient = useMemo(() => salientArg(toolCall.input), [toolCall.input]);
+  const detail = useMemo(
+    () => (cancelled ? [] : errorDetailLines(toolCall)),
+    [cancelled, toolCall],
+  );
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row">
+        <Text>{ACTIVITY_INDENT}</Text>
+        <Box flexGrow={1}>
+          <Text
+            color={cancelled ? Theme.stateBlocked : Theme.stateFailed}
+          >
+            ✗{" "}
+          </Text>
+          <Text color={Theme.textPrimary}>{toolCall.tool}</Text>
+          {salient && (
+            <Text color={Theme.textChrome} wrap="truncate-end">
+              {" "}
+              {salient}
+            </Text>
+          )}
+          {cancelled && (
+            <Text color={Theme.stateBlocked} italic>
+              {" "}
+              · cancelled by user
+            </Text>
+          )}
+        </Box>
+      </Box>
+      {detail.map((line, index) => (
+        <Box key={index} flexDirection="row">
+          <Text>{DETAIL_INDENT}</Text>
+          <Text color={Theme.textSecondary} wrap="truncate-end">
+            {line}
+          </Text>
+        </Box>
+      ))}
+    </Box>
+  );
+});
+
+// Individual message memoized with deep equality check
+const MessageItem = React.memo<{ message: Message }>(
+  ({ message }) => {
+    switch (message.role) {
+      case "user":
+        return <UserMessage message={message} />;
+      case "assistant":
+        return <AssistantMessage message={message} />;
+      case "system":
+        if (message.runDiff) return <RunDiffCard diff={message.runDiff} />;
+        return <SystemMessage message={message} />;
+      case "tool_call":
+        // Tools can opt out of the conversation log by setting
+        // ui_metadata.hidden = true (e.g. task_* tools rendered by
+        // the docked Tasks panel instead).
+        if (message.toolCall?.metadata?.hidden === true) {
+          return null;
+        }
+        return <ToolCallMessage message={message} />;
+      case "approval_request":
+        // Approval requests shown in ApprovalDialog, not in message history
+        return null;
+      default:
+        return null;
+    }
   },
   (prev, next) => {
     // Deep equality check - only re-render if content actually changed
@@ -195,11 +330,11 @@ const UserMessage = React.memo<{ message: Message }>(
           <Box key={index} flexDirection="row">
             <Box width={prefixWidth}>
               {index === 0 && (
-                <Text color={TokyoNightTheme.messagePrompt}>{prefix}</Text>
+                <Text color={Theme.accentUser}>{prefix}</Text>
               )}
             </Box>
             <Box flexGrow={1}>
-              <Text color={TokyoNightTheme.userMessage}>{line}</Text>
+              <Text color={Theme.accentUser}>{line}</Text>
             </Box>
           </Box>
         ))}
@@ -229,11 +364,11 @@ const AssistantMessage = React.memo<{ message: Message }>(
           <Box key={index} flexDirection="row">
             <Box width={prefixWidth}>
               {index === 0 && (
-                <Text color={TokyoNightTheme.assistantMessage}>{prefix}</Text>
+                <Text color={Theme.accentAgent}>{prefix}</Text>
               )}
             </Box>
             <Box flexGrow={1}>
-              <Text color={TokyoNightTheme.assistantMessage}>{line}</Text>
+              <Text color={Theme.accentAgent}>{line}</Text>
             </Box>
           </Box>
         ))}
@@ -241,6 +376,92 @@ const AssistantMessage = React.memo<{ message: Message }>(
     );
   },
   (prev, next) => prev.message.content === next.message.content,
+);
+
+/**
+ * System events — compaction, resolved approvals, plan beats — share the
+ * activity grammar: one dim row, truncated, skimmable or skippable.
+ * (Previously these rendered zero rows: a silently compacted
+ * conversation was invisible.)
+ */
+const SystemMessage = React.memo<{ message: Message }>(
+  ({ message }) => {
+    const firstLine = (message.content ?? "").split("\n")[0] ?? "";
+    if (!firstLine.trim()) return null;
+    return (
+      <Box flexDirection="row">
+        <Text>{ACTIVITY_INDENT}</Text>
+        <Box flexGrow={1}>
+          <Text color={Theme.textChrome} italic wrap="truncate-end">
+            {firstLine}
+          </Text>
+        </Box>
+      </Box>
+    );
+  },
+  (prev, next) => prev.message.content === next.message.content,
+);
+
+const DIFF_CARD_FILES = 5;
+const DIFF_CARD_PATH_MAX = 44;
+
+function pathTail(path: string, max = DIFF_CARD_PATH_MAX): string {
+  return path.length > max ? "…" + path.slice(-(max - 1)) : path;
+}
+
+// The run's receipt: what this turn changed, as a card instead of a
+// log line. Diffstat headline, the first few files, and the breadcrumb
+// to the Review tab (which opens on exactly this diff).
+const RunDiffCard = React.memo<{ diff: ConversationRunDiff }>(
+  ({ diff }) => {
+    const shown = diff.files.slice(0, DIFF_CARD_FILES);
+    const extra = diff.files.length - shown.length;
+    // No gutter indent: the border occupies the glyph column, so the
+    // card's interior text sits at the same column as every other
+    // row's text (after "● ").
+    return (
+      <Box flexDirection="row">
+        <Box
+          flexDirection="column"
+          alignSelf="flex-start"
+          paddingX={1}
+          borderStyle="round"
+          borderColor={Theme.borderAmbient}
+        >
+          <Box>
+            <Text color={Theme.textPrimary} bold>
+              {diff.stats.files_changed} file
+              {diff.stats.files_changed === 1 ? "" : "s"} edited
+            </Text>
+            <Text color={Theme.stateDone}>
+              {"  "}+{diff.stats.additions}
+            </Text>
+            <Text color={Theme.stateFailed}> −{diff.stats.deletions}</Text>
+          </Box>
+          {shown.map((file) => (
+            <Box key={file.path}>
+              <Text color={changeColor(file.change_type)}>
+                {changeGlyph(file.change_type)}{" "}
+              </Text>
+              <Text color={Theme.textSecondary}>{pathTail(file.path)}</Text>
+              <Text color={Theme.stateDone}>
+                {"  "}+{file.additions}
+              </Text>
+              <Text color={Theme.stateFailed}> −{file.deletions}</Text>
+            </Box>
+          ))}
+          {extra > 0 && (
+            <Text color={Theme.textChrome}>… {extra} more</Text>
+          )}
+          <Text color={Theme.textChrome} italic>
+            tab review
+          </Text>
+        </Box>
+      </Box>
+    );
+  },
+  (prev, next) => prev.diff.item_id === next.diff.item_id &&
+    prev.diff.revision === next.diff.revision,
 );
 
 const ToolCallMessage = React.memo<{ message: Message }>(
@@ -268,17 +489,17 @@ const ToolCallMessage = React.memo<{ message: Message }>(
         <Box flexDirection="column">
           <Box flexDirection="row">
             <Box width={prefixWidth}>
-              <Text color={TokyoNightTheme.toolName}>{prefix}</Text>
+              <Text color={Theme.accentAgent}>{prefix}</Text>
             </Box>
             <Box flexGrow={1}>
-              <Text bold color={TokyoNightTheme.toolName}>
+              <Text bold color={Theme.accentAgent}>
                 {tool}
               </Text>
-              <Text color={TokyoNightTheme.defaultText}> ({argsPreview})</Text>
+              <Text color={Theme.textChrome}> ({argsPreview})</Text>
             </Box>
           </Box>
           <Box>
-            <Text color={TokyoNightTheme.warning} italic>
+            <Text color={Theme.stateBlocked} italic>
               {"  └─ Cancelled by user"}
             </Text>
           </Box>
@@ -290,13 +511,13 @@ const ToolCallMessage = React.memo<{ message: Message }>(
       <Box flexDirection="column">
         <Box flexDirection="row">
           <Box width={prefixWidth}>
-            <Text color={TokyoNightTheme.toolName}>{prefix}</Text>
+            <Text color={Theme.accentAgent}>{prefix}</Text>
           </Box>
           <Box flexGrow={1}>
-            <Text bold color={TokyoNightTheme.toolName}>
+            <Text bold color={Theme.accentAgent}>
               {tool}
             </Text>
-            <Text color={TokyoNightTheme.defaultText}> ({argsPreview})</Text>
+            <Text color={Theme.textChrome}> ({argsPreview})</Text>
           </Box>
         </Box>
         {output && (
@@ -304,7 +525,7 @@ const ToolCallMessage = React.memo<{ message: Message }>(
             {richMetadata ? (
               <RichToolOutput metadata={richMetadata} plainOutput={output} />
             ) : (
-              <Text color={TokyoNightTheme.toolResult}>
+              <Text color={Theme.textSecondary}>
                 {"  └─ "}
                 {output.length > 200 ? output.slice(0, 200) + "..." : output}
               </Text>

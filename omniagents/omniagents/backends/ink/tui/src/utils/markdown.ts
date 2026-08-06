@@ -5,6 +5,7 @@
  */
 
 import chalk from "chalk";
+import { Theme } from "../theme.js";
 
 /**
  * Render markdown text to terminal-formatted string
@@ -44,7 +45,7 @@ export function renderMarkdown(markdown: string): string {
           // Render code block with purple color (matching Tokyo Night)
           if (codeBlockContent.length > 0) {
             processedLines.push(
-              chalk.hex("#bb9af7")(codeBlockContent.join("\n")),
+              chalk.hex(Theme.textSecondary)(codeBlockContent.join("\n")),
             );
           }
           codeBlockContent = [];
@@ -62,7 +63,7 @@ export function renderMarkdown(markdown: string): string {
       if (headerMatch) {
         const text = headerMatch[2];
         // Bold blue for headers (matching Glamour)
-        processedLines.push(chalk.bold.hex("#7aa2f7")(text));
+        processedLines.push(chalk.bold.hex(Theme.accentAgent)(text));
         continue;
       }
 
@@ -99,7 +100,7 @@ function processInlineMarkdown(text: string): string {
     .map((segment) => {
       if (segment.startsWith("`") && segment.endsWith("`")) {
         const code = segment.slice(1, -1);
-        return chalk.hex("#9ece6a")(code);
+        return chalk.hex(Theme.textSecondary)(code);
       }
 
       let s = segment;
@@ -111,7 +112,7 @@ function processInlineMarkdown(text: string): string {
       s = s.replace(/_([^_]+)_/g, (_, t) => chalk.italic(t));
 
       s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t) =>
-        chalk.hex("#7dcfff")(t),
+        chalk.hex(Theme.stateActive)(t),
       );
 
       return s;

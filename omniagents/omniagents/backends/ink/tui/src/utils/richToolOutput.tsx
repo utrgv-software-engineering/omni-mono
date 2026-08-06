@@ -6,7 +6,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import type { RichMetadata } from "../types/richMetadata.js";
-import { TokyoNightTheme } from "../theme.js";
+import { Theme } from "../theme.js";
 
 /**
  * Render rich tool output based on display type
@@ -41,7 +41,7 @@ export const RichToolOutput = React.memo<{
       case "diff":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
               {summaryText}
             </Text>
@@ -53,7 +53,7 @@ export const RichToolOutput = React.memo<{
       case "table":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
               {summaryText}
             </Text>
@@ -67,7 +67,7 @@ export const RichToolOutput = React.memo<{
       case "search_results":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
               {summaryText}
             </Text>
@@ -81,7 +81,7 @@ export const RichToolOutput = React.memo<{
       case "directory_listing":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
               {summaryText}
             </Text>
@@ -99,9 +99,9 @@ export const RichToolOutput = React.memo<{
       case "error":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
-              <Text color={TokyoNightTheme.error}>{summaryText}</Text>
+              <Text color={Theme.stateFailed}>{summaryText}</Text>
             </Text>
             {hasDetails && <Text> </Text>}
             {preview && (
@@ -113,7 +113,7 @@ export const RichToolOutput = React.memo<{
       case "command":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
               {summaryText}
             </Text>
@@ -131,7 +131,7 @@ export const RichToolOutput = React.memo<{
       case "file_content":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
               {summaryText}
             </Text>
@@ -149,7 +149,7 @@ export const RichToolOutput = React.memo<{
       case "web_content":
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
               {summaryText}
             </Text>
@@ -164,7 +164,7 @@ export const RichToolOutput = React.memo<{
         // Default: plain text rendering
         return (
           <Box flexDirection="column">
-            <Text color={TokyoNightTheme.toolResult}>
+            <Text color={Theme.textSecondary}>
               {"  └─ "}
               {summaryText}
             </Text>
@@ -221,7 +221,7 @@ const RenderDiffPreview = React.memo<{ value: Record<string, unknown> }>(
               inHunk = true;
             }
             return (
-              <Text key={idx} color={TokyoNightTheme.defaultText}>
+              <Text key={idx} color={Theme.textChrome}>
                 {lineStr}
               </Text>
             );
@@ -229,7 +229,7 @@ const RenderDiffPreview = React.memo<{ value: Record<string, unknown> }>(
 
           if (!inHunk) {
             return (
-              <Text key={idx} color={TokyoNightTheme.defaultText}>
+              <Text key={idx} color={Theme.textChrome}>
                 {lineStr}
               </Text>
             );
@@ -239,7 +239,7 @@ const RenderDiffPreview = React.memo<{ value: Record<string, unknown> }>(
           if (lineStr.startsWith("+") && !lineStr.startsWith("+++")) {
             const content = lineStr.slice(1);
             const result = (
-              <Text key={idx} color={TokyoNightTheme.info}>
+              <Text key={idx} color={Theme.stateActive}>
                 {`${newLine.toString().padStart(4, " ")} + ${content}`}
               </Text>
             );
@@ -251,7 +251,7 @@ const RenderDiffPreview = React.memo<{ value: Record<string, unknown> }>(
           if (lineStr.startsWith("-") && !lineStr.startsWith("---")) {
             const content = lineStr.slice(1);
             const result = (
-              <Text key={idx} color={TokyoNightTheme.error}>
+              <Text key={idx} color={Theme.stateFailed}>
                 {`${oldLine.toString().padStart(4, " ")} - ${content}`}
               </Text>
             );
@@ -261,7 +261,7 @@ const RenderDiffPreview = React.memo<{ value: Record<string, unknown> }>(
 
           // Context
           const result = (
-            <Text key={idx} color={TokyoNightTheme.defaultText}>
+            <Text key={idx} color={Theme.textChrome}>
               {`${newLine.toString().padStart(4, " ")}   ${lineStr}`}
             </Text>
           );
@@ -292,12 +292,12 @@ const RenderTable = React.memo<{
     return (
       <Box flexDirection="column" paddingLeft={4}>
         {rows.slice(0, 10).map((row, idx) => (
-          <Text key={idx} color={TokyoNightTheme.toolResult}>
+          <Text key={idx} color={Theme.textSecondary}>
             {row.map((cell) => String(cell)).join(", ")}
           </Text>
         ))}
         {truncated && rows.length > 10 && (
-          <Text color={TokyoNightTheme.defaultText} italic>
+          <Text color={Theme.textChrome} italic>
             ... {rows.length - 10} more rows
           </Text>
         )}
@@ -325,7 +325,7 @@ const RenderSearchResults = React.memo<{
           // Filename line (e.g., "path/to/file: 3 matches")
           if (line.includes(": ") && line.includes("match")) {
             return (
-              <Text key={idx} bold color={TokyoNightTheme.toolResult}>
+              <Text key={idx} bold color={Theme.textSecondary}>
                 {line}
               </Text>
             );
@@ -336,8 +336,8 @@ const RenderSearchResults = React.memo<{
             const parts = line.split(":", 2);
             if (parts.length === 2) {
               return (
-                <Text key={idx} color={TokyoNightTheme.toolResult}>
-                  <Text color={TokyoNightTheme.defaultText}>{parts[0]}:</Text>
+                <Text key={idx} color={Theme.textSecondary}>
+                  <Text color={Theme.textChrome}>{parts[0]}:</Text>
                   {parts[1]}
                 </Text>
               );
@@ -345,13 +345,13 @@ const RenderSearchResults = React.memo<{
           }
 
           return (
-            <Text key={idx} color={TokyoNightTheme.toolResult}>
+            <Text key={idx} color={Theme.textSecondary}>
               {line}
             </Text>
           );
         })}
         {truncated && (
-          <Text color={TokyoNightTheme.defaultText} italic>
+          <Text color={Theme.textChrome} italic>
             ... more results
           </Text>
         )}
@@ -390,16 +390,16 @@ const RenderDirectoryListing = React.memo<{
             const isSymlink = entryName.includes(" → ");
 
             return (
-              <Text key={idx} color={TokyoNightTheme.toolResult}>
-                <Text color={TokyoNightTheme.defaultText}>
+              <Text key={idx} color={Theme.textSecondary}>
+                <Text color={Theme.textChrome}>
                   {entryNum.padStart(3, " ")}.{" "}
                 </Text>
                 <Text
                   bold={isDir}
                   color={
                     isSymlink
-                      ? TokyoNightTheme.info
-                      : TokyoNightTheme.toolResult
+                      ? Theme.stateActive
+                      : Theme.textSecondary
                   }
                 >
                   {entryName}
@@ -411,7 +411,7 @@ const RenderDirectoryListing = React.memo<{
           // Directories (end with /)
           if (line.endsWith("/")) {
             return (
-              <Text key={idx} bold color={TokyoNightTheme.toolResult}>
+              <Text key={idx} bold color={Theme.textSecondary}>
                 {line}
               </Text>
             );
@@ -419,13 +419,13 @@ const RenderDirectoryListing = React.memo<{
 
           // Regular files/entries
           return (
-            <Text key={idx} color={TokyoNightTheme.toolResult}>
+            <Text key={idx} color={Theme.textSecondary}>
               {line}
             </Text>
           );
         })}
         {(truncated || wasTruncated) && (
-          <Text color={TokyoNightTheme.defaultText} italic>
+          <Text color={Theme.textChrome} italic>
             {totalEntries !== undefined
               ? `... ${totalEntries.toLocaleString()} total entries`
               : fileCount !== undefined && dirCount !== undefined
@@ -452,12 +452,12 @@ const RenderErrorPreview = React.memo<{ preview: string; truncated?: boolean }>(
     return (
       <Box flexDirection="column" paddingLeft={4}>
         {lines.map((line, idx) => (
-          <Text key={idx} color={TokyoNightTheme.error}>
+          <Text key={idx} color={Theme.stateFailed}>
             {line}
           </Text>
         ))}
         {truncated && (
-          <Text color={TokyoNightTheme.defaultText} italic>
+          <Text color={Theme.textChrome} italic>
             ... more error output
           </Text>
         )}
@@ -478,12 +478,12 @@ const RenderPlainPreview = React.memo<{ preview: string; truncated?: boolean }>(
     return (
       <Box flexDirection="column" paddingLeft={4}>
         {lines.map((line, idx) => (
-          <Text key={idx} color={TokyoNightTheme.toolResult}>
+          <Text key={idx} color={Theme.textSecondary}>
             {line}
           </Text>
         ))}
         {truncated && (
-          <Text color={TokyoNightTheme.defaultText} italic>
+          <Text color={Theme.textChrome} italic>
             ... more output
           </Text>
         )}
@@ -515,17 +515,17 @@ const RenderCommandOutput = React.memo<{
       <Box flexDirection="column" paddingLeft={4}>
         {/* Status line */}
         {exitCode !== undefined && (
-          <Text color={TokyoNightTheme.defaultText}>
+          <Text color={Theme.textChrome}>
             <Text
-              color={success ? TokyoNightTheme.info : TokyoNightTheme.error}
+              color={success ? Theme.stateActive : Theme.stateFailed}
             >
               Exit: {exitCode}
             </Text>
             {wallTimeMs !== undefined && (
-              <Text color={TokyoNightTheme.defaultText}> ({wallTimeMs}ms)</Text>
+              <Text color={Theme.textChrome}> ({wallTimeMs}ms)</Text>
             )}
             {wasTruncated && charsTruncated && (
-              <Text color={TokyoNightTheme.defaultText}>
+              <Text color={Theme.textChrome}>
                 {" "}
                 [{charsTruncated.toLocaleString()} chars truncated]
               </Text>
@@ -537,19 +537,19 @@ const RenderCommandOutput = React.memo<{
           // Highlight stderr lines
           if (line.startsWith("[stderr]")) {
             return (
-              <Text key={idx} color={TokyoNightTheme.warning}>
+              <Text key={idx} color={Theme.stateBlocked}>
                 {line}
               </Text>
             );
           }
           return (
-            <Text key={idx} color={TokyoNightTheme.toolResult}>
+            <Text key={idx} color={Theme.textSecondary}>
               {line}
             </Text>
           );
         })}
         {truncated && (
-          <Text color={TokyoNightTheme.defaultText} italic>
+          <Text color={Theme.textChrome} italic>
             ... more output
           </Text>
         )}
@@ -583,22 +583,22 @@ const RenderFileContent = React.memo<{
             const lineNum = lineNumMatch[1];
             const content = line.slice(lineNumMatch[0].length);
             return (
-              <Text key={idx} color={TokyoNightTheme.toolResult}>
-                <Text color={TokyoNightTheme.defaultText}>
+              <Text key={idx} color={Theme.textSecondary}>
+                <Text color={Theme.textChrome}>
                   {lineNum.padStart(4, " ")}
                 </Text>
-                <Text color={TokyoNightTheme.toolResult}>{content}</Text>
+                <Text color={Theme.textSecondary}>{content}</Text>
               </Text>
             );
           }
           return (
-            <Text key={idx} color={TokyoNightTheme.toolResult}>
+            <Text key={idx} color={Theme.textSecondary}>
               {line}
             </Text>
           );
         })}
         {truncated && (
-          <Text color={TokyoNightTheme.defaultText} italic>
+          <Text color={Theme.textChrome} italic>
             ... more content
           </Text>
         )}
@@ -624,12 +624,12 @@ const RenderWebContent = React.memo<{
     return (
       <Box flexDirection="column" paddingLeft={4}>
         {lines.map((line, idx) => (
-          <Text key={idx} color={TokyoNightTheme.toolResult}>
+          <Text key={idx} color={Theme.textSecondary}>
             {line}
           </Text>
         ))}
         {truncated && (
-          <Text color={TokyoNightTheme.defaultText} italic>
+          <Text color={Theme.textChrome} italic>
             ... more content
           </Text>
         )}
