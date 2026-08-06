@@ -138,10 +138,26 @@ class TerminalSession {
         if (frame.type === "output" && typeof frame.data === "string") {
           const bytes = Buffer.from(frame.data, "base64");
           this.outputBytes += bytes.length;
-          if (this.framesReceived <= 3) {
-            debugLog(`[term] output frame ${bytes.length}B`);
+          if (this.framesReceived <= 5) {
+            debugLog(
+              `[term] output frame ${bytes.length}B: ${JSON.stringify(bytes.toString("utf8").slice(0, 80))}`,
+            );
           }
           this.state?.feed(bytes);
+          if (this.framesReceived <= 5) {
+            const st = this.state;
+            if (st) {
+              setTimeout(() => {
+                const sample = st
+                  .readLines(0, 3)
+                  .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
+                  .join("|");
+                debugLog(
+                  `[term] grid: lines=${st.lineCount()} base=${st.baseY()} cols=${st.cols()} rows=${st.rows()} head=${JSON.stringify(sample.slice(0, 100))}`,
+                );
+              }, 50);
+            }
+          }
         } else if (frame.type === "exit") {
           debugLog(`[term] exit frame code=${frame.code}`);
           this.exitCode = typeof frame.code === "number" ? frame.code : null;
