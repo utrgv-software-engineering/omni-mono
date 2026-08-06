@@ -109,8 +109,10 @@ export const TerminalScreen = ({
   useKeypress(
     (input, key) => {
       // Reserved navigation: ctrl+] leaves, alt+digit jumps (handled by
-      // the App accelerator below this handler).
-      if (key.ctrl && input === "]") {
+      // the App accelerator below this handler). Ctrl+] arrives as the
+      // raw GS byte (0x1d) — Ink only synthesizes key.ctrl for the
+      // letter range.
+      if ((key.ctrl && input === "]") || input === "\u001d") {
         onExit();
         return true;
       }

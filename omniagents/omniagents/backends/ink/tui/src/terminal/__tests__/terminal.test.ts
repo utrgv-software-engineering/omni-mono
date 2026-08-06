@@ -87,3 +87,10 @@ describe("keyToBytes", () => {
     expect(keyToBytes("", { pageDown: true })).toBeNull();
   });
 });
+
+describe("detach chord byte forms", () => {
+  it("reserves ctrl+] whether parsed or raw GS", () => {
+    expect(keyToBytes("]", { ctrl: true })).toBeNull();
+    expect(keyToBytes("\u001d", {})).toBeNull();
+  });
+});

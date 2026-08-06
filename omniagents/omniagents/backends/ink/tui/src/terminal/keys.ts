@@ -38,7 +38,7 @@ const TERMINAL_REPORT = /^\[(?:<\d+;\d+;\d+[Mm]|M[\s\S]{0,3}|I|O)$/;
 export function keyToBytes(input: string, key: InkKey): string | null {
   // Ctrl+] is the detach chord (the telnet convention) — never
   // forwarded. PgUp/PgDn belong to our scrollback.
-  if (key.ctrl && input === "]") return null;
+  if ((key.ctrl && input === "]") || input === "\u001d") return null;
   if (key.pageUp || key.pageDown) return null;
   if (TERMINAL_REPORT.test(input)) return null;
 

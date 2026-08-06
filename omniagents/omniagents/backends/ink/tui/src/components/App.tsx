@@ -1130,7 +1130,9 @@ export const App: React.FC<AppProps> = ({
         }
         // Panel chords — each toggles its own panel; opening one closes
         // whatever else was open (single-owner rule).
-        if (key.ctrl && input === "]") {
+        // Ctrl+] is the raw GS byte (0x1d); Ink only sets key.ctrl for
+        // the letter range.
+        if ((key.ctrl && input === "]") || input === "\u001d") {
           setScreen((prev) => (prev === "term" ? "chat" : "term"));
           return;
         }
