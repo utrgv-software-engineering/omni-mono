@@ -30,6 +30,12 @@ export type MouseHandler = (event: MouseEvent) => void;
 interface MouseContextType {
   subscribe: (handler: MouseHandler) => void;
   unsubscribe: (handler: MouseHandler) => void;
+  /** Temporarily release mouse tracking (the terminal screen owns the
+   * input surface while active — reports must not reach the app or
+   * leak into the PTY as typed garbage). The provider stays the single
+   * writer of mouse-mode escapes. */
+  suspend: () => void;
+  resume: () => void;
 }
 
 const MouseContext = createContext<MouseContextType | null>(null);
@@ -47,6 +53,28 @@ export const MouseProvider: React.FC<{
 
   const unsubscribe = useCallback((handler: MouseHandler) => {
     handlersRef.current.delete(handler);
+  }, []);
+
+  // Suspension: while suspended (terminal screen active), tracking is
+  // switched off at the terminal so no reports are generated at all.
+  const enabledRef = useRef(mouseEventsEnabled);
+  enabledRef.current = mouseEventsEnabled;
+  const suspendedRef = useRef(false);
+
+  const suspend = useCallback(() => {
+    if (suspendedRef.current) return;
+    suspendedRef.current = true;
+    if (enabledRef.current) {
+      process.stdout.write("\x1b[?1006l\x1b[?1002l");
+    }
+  }, []);
+
+  const resume = useCallback(() => {
+    if (!suspendedRef.current) return;
+    suspendedRef.current = false;
+    if (enabledRef.current) {
+      process.stdout.write("\x1b[?1002h\x1b[?1006h");
+    }
   }, []);
 
   useEffect(() => {
@@ -125,8 +153,8 @@ export const MouseProvider: React.FC<{
   }, [stdinCtx, mouseEventsEnabled]);
 
   const contextValue = useMemo(
-    () => ({ subscribe, unsubscribe }),
-    [subscribe, unsubscribe],
+    () => ({ subscribe, unsubscribe, suspend, resume }),
+    [subscribe, unsubscribe, suspend, resume],
   );
 
   return (

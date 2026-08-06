@@ -28,11 +28,19 @@ export type InkKey = {
  * the key is not the terminal's to consume (detach chord, scrollback
  * keys — the caller owns those).
  */
+// Terminal reports that are OURS (or nobody's), never the shell's:
+// SGR mouse (\x1b[<b;x;yM/m), legacy X10 mouse (\x1b[M..), focus
+// in/out (\x1b[I / \x1b[O). Mouse tracking is suspended while the
+// terminal screen owns the surface, but reports race through mode
+// transitions — forwarded, the shell echoes them as typed garbage.
+const TERMINAL_REPORT = /^\[(?:<\d+;\d+;\d+[Mm]|M[\s\S]{0,3}|I|O)$/;
+
 export function keyToBytes(input: string, key: InkKey): string | null {
   // Ctrl+] is the detach chord (the telnet convention) — never
   // forwarded. PgUp/PgDn belong to our scrollback.
   if (key.ctrl && input === "]") return null;
   if (key.pageUp || key.pageDown) return null;
+  if (TERMINAL_REPORT.test(input)) return null;
 
   if (key.return) return "\r";
   if (key.backspace || key.delete) return "\x7f";

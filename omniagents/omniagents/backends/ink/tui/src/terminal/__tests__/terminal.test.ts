@@ -71,6 +71,16 @@ describe("keyToBytes", () => {
     expect(keyToBytes("f", { meta: true })).toBe("\x1bf");
   });
 
+  it("drops mouse and focus reports instead of typing them", () => {
+    expect(keyToBytes("[<0;70;35M", { meta: true })).toBeNull();
+    expect(keyToBytes("[<0;70;35m", { meta: true })).toBeNull();
+    expect(keyToBytes("[<0;70;35M", {})).toBeNull();
+    expect(keyToBytes("[I", { meta: true })).toBeNull();
+    expect(keyToBytes("[O", { meta: true })).toBeNull();
+    // Real alt+key chords still forward.
+    expect(keyToBytes("f", { meta: true })).toBe("\x1bf");
+  });
+
   it("reserves the detach chord and scrollback keys", () => {
     expect(keyToBytes("]", { ctrl: true })).toBeNull();
     expect(keyToBytes("", { pageUp: true })).toBeNull();

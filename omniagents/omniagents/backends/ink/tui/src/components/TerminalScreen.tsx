@@ -9,6 +9,7 @@ import { terminalSession } from "../terminal/session.js";
 import { keyToBytes } from "../terminal/keys.js";
 import { Theme } from "../theme.js";
 import { debugLog } from "../utils/debugLog.js";
+import { useMouseContext } from "../contexts/MouseContext.js";
 
 const PAGE = 10;
 
@@ -36,6 +37,7 @@ export const TerminalScreen = ({
   const { stdout } = useStdout();
   const width = stdout?.columns ?? 80;
   const actions = useActions();
+  const mouse = useMouseContext();
   const cols = Math.max(20, width);
   const rows = Math.max(4, height - 1); // hint line
   // Lines scrolled up from the live tail; 0 = following.
@@ -77,6 +79,15 @@ export const TerminalScreen = ({
   useEffect(() => {
     if (!active) setScrollUp(0);
   }, [active]);
+
+  // The terminal owns the input surface: release mouse tracking so the
+  // user's terminal stops generating reports (which would forward into
+  // the shell as typed garbage); restore on leave.
+  useEffect(() => {
+    if (!active) return;
+    mouse.suspend();
+    return () => mouse.resume();
+  }, [active, mouse]);
 
   const phase = terminalSession.phase;
 

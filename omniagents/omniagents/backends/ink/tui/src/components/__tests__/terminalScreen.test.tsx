@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { render } from "ink";
 import { WebSocketServer, type WebSocket as ServerSocket } from "ws";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
+import { MouseProvider } from "../../contexts/MouseContext.js";
 import { TerminalScreen } from "../TerminalScreen.js";
 import { terminalSession } from "../../terminal/session.js";
 import type { RPCClient } from "../../rpc/client.js";
@@ -122,13 +123,15 @@ describe("TerminalScreen end-to-end render", () => {
     const stdout = new CaptureStream();
     instance = render(
       <KeypressProvider>
-        <TerminalScreen
+        <MouseProvider>
+          <TerminalScreen
           active={true}
           height={20}
           client={client}
           sessionId="sess-1"
-          onExit={() => {}}
-        />
+            onExit={() => {}}
+          />
+        </MouseProvider>
       </KeypressProvider>,
       {
         stdout: stdout as unknown as NodeJS.WriteStream,
