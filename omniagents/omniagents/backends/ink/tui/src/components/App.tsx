@@ -57,7 +57,7 @@ import { FilesScreen } from "./FilesScreen.js";
 import { StatusBar, type Screen } from "./StatusBar.js";
 import { TopTabs } from "./TopTabs.js";
 import { GitPanel } from "./GitPanel.js";
-import { TerminalPanel } from "./TerminalPanel.js";
+import { TerminalScreen } from "./TerminalScreen.js";
 import { ModelPickerPanel } from "./ModelPickerPanel.js";
 import { EscalationBanner } from "./EscalationBanner.js";
 import { ElicitationBanner } from "./ElicitationBanner.js";
@@ -275,7 +275,6 @@ type ActivePanel =
   | "jobs"
   | "notifications"
   | "git"
-  | "terminal"
   | "models"
   | null;
 
@@ -358,6 +357,7 @@ export const App: React.FC<AppProps> = ({
     review: false,
     agents: false,
     files: false,
+    term: false,
   });
   const runDiffForBadge = useRunDiff();
   const workersForBadge = useSubagents();
@@ -1096,7 +1096,7 @@ export const App: React.FC<AppProps> = ({
         // Tab cycles screens — from anywhere, always. Overlays close so
         // the switch is never invisible. Shift+Tab reverses.
         if (key.tab && !key.ctrl && !key.meta) {
-          const order: Screen[] = ["chat", "review", "agents", "files"];
+          const order: Screen[] = ["chat", "review", "agents", "files", "term"];
           setScreen((prev) => {
             const index = order.indexOf(prev);
             const step = key.shift ? order.length - 1 : 1;
@@ -1123,11 +1123,15 @@ export const App: React.FC<AppProps> = ({
             setScreen("files");
             return;
           }
+          if (input === "5") {
+            setScreen("term");
+            return;
+          }
         }
         // Panel chords — each toggles its own panel; opening one closes
         // whatever else was open (single-owner rule).
         if (key.ctrl && input === "]") {
-          setActivePanel((prev) => (prev === "terminal" ? null : prev));
+          setScreen((prev) => (prev === "term" ? "chat" : "term"));
           return;
         }
         if (key.ctrl && input === "b") {
@@ -1305,6 +1309,14 @@ export const App: React.FC<AppProps> = ({
                 height={availableTerminalHeight}
                 onExit={() => setScreen("chat")}
               />
+            ) : screen === "term" ? (
+              <TerminalScreen
+                active={screen === "term"}
+                height={availableTerminalHeight}
+                client={client}
+                sessionId={sessionId ?? null}
+                onExit={() => setScreen("chat")}
+              />
             ) : screen === "files" ? (
               <FilesScreen
                 active={screen === "files"}
@@ -1424,12 +1436,6 @@ export const App: React.FC<AppProps> = ({
               onUnfocus={() => setActivePanel(null)}
               client={client}
             />
-            <TerminalPanel
-              open={activePanel === "terminal"}
-              focused={activePanel === "terminal"}
-              client={client}
-              sessionId={sessionId ?? null}
-            />
             <ModelPickerPanel
               open={activePanel === "models"}
               onClose={() => setActivePanel(null)}
@@ -1444,6 +1450,8 @@ export const App: React.FC<AppProps> = ({
               onSelect={(panel) => {
                 if (panel === "workers") {
                   setScreen("agents");
+                } else if (panel === "terminal") {
+                  setScreen("term");
                 } else {
                   setActivePanel(panel);
                 }

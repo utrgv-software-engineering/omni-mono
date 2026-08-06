@@ -18,7 +18,7 @@ import {
 import { buildStripTokens, type StripTone } from "./strip-model.js";
 import { Theme } from "../theme.js";
 
-export type Screen = "chat" | "review" | "agents" | "files";
+export type Screen = "chat" | "review" | "agents" | "files" | "term";
 
 // The status bar: ONE background-filled row at the very bottom of the
 // screen, tmux-style — what's HAPPENING. Mission tokens on the left

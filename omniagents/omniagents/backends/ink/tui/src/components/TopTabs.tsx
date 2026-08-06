@@ -51,6 +51,7 @@ export const TopTabs = React.memo<{
           : ` 3 agents${star("agents")} `,
     },
     { id: "files", text: ` 4 files${star("files")} ` },
+    { id: "term", text: ` 5 term${star("term")} ` },
   ];
   const hint = "tab ";
   const tabsWidth = labels.reduce((sum, l) => sum + l.text.length, 0);
