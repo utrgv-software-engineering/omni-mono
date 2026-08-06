@@ -259,11 +259,15 @@ async def run_diff_observer_scope(service, session):
                 raise
 
 
-def _stream_event_payload(item, run_id: str, *, session_id: str, session=None):
+def stream_event_payload(
+    item, run_id: str, *, session_id: str, session=None, include_mcp_ui: bool = True
+):
     """Map agent stream *item* into a notification name + payload.
 
     Returns (method_name, payload) or (None, None) if the item shouldn't
-    be forwarded to the client.
+    be forwarded to the client. ``include_mcp_ui=False`` skips the MCP-Apps
+    side-channel memo (remember/pop) — nested agent-tool runs share this
+    process and must not steal a pending parent MCP-UI resource.
     """
     if item.type == "tool_call_item":
         inp = item.to_input_item() or {}
@@ -272,7 +276,7 @@ def _stream_event_payload(item, run_id: str, *, session_id: str, session=None):
         # Memoize so the matching ``tool_call_output_item`` (which has no
         # ``.name`` attribute on the SDK side) can recover the tool name
         # for the MCP-Apps UI side-channel lookup below.
-        if isinstance(call_id, str) and isinstance(name, str):
+        if include_mcp_ui and isinstance(call_id, str) and isinstance(name, str):
             mcp_ui.remember_call(call_id, name)
         return "tool_called", {
             "run_id": run_id,
@@ -280,7 +284,7 @@ def _stream_event_payload(item, run_id: str, *, session_id: str, session=None):
             "tool": name,
             "input": inp.get("arguments", ""),
             **({"call_id": call_id} if call_id else {}),
-            **_mcp_label_fields(session, name),
+            **(_mcp_label_fields(session, name) if include_mcp_ui else {}),
         }
     elif item.type == "tool_call_output_item":
         # Extract call_id if present on the underlying raw_item / input item
@@ -307,7 +311,7 @@ def _stream_event_payload(item, run_id: str, *, session_id: str, session=None):
         # ``name`` — recover the tool name from the ``call_id`` map we
         # populated on the preceding ``tool_call_item`` event.
         tool_name = getattr(item, "name", None)
-        if not tool_name and isinstance(call_id, str):
+        if not tool_name and include_mcp_ui and isinstance(call_id, str):
             tool_name = mcp_ui.lookup_tool_name(call_id)
         if not tool_name:
             tool_name = "<tool>"
@@ -319,8 +323,14 @@ def _stream_event_payload(item, run_id: str, *, session_id: str, session=None):
         # name (the call_tool wrapper sees originals), while the stream
         # carries the prefixed public name — translate via the identity
         # map before the lookup.
-        label_fields = _mcp_label_fields(session, tool_name)
-        mcp_ui_payload = mcp_ui.pop(label_fields.get("tool_label", tool_name))
+        label_fields = (
+            _mcp_label_fields(session, tool_name) if include_mcp_ui else {}
+        )
+        mcp_ui_payload = (
+            mcp_ui.pop(label_fields.get("tool_label", tool_name))
+            if include_mcp_ui
+            else None
+        )
         if mcp_ui_payload is not None:
             ui_metadata["display_type"] = "mcp_ui"
             ui_metadata["mcp_ui"] = mcp_ui_payload
@@ -424,6 +434,15 @@ async def stream_agent(
     else:
         _set_requested_cwd(None)
         workspace_token = _set_workspace(None)
+
+    # Run-scoped session identity for code inside the run's task tree that
+    # has no RunContextWrapper (agent-tool stream observers). Reset beside
+    # the workspace token in the finally below.
+    from omniagents.core.session.helpers import (
+        set_current_session_id as _set_current_session_id,
+    )
+
+    session_id_token = _set_current_session_id(getattr(session, "id", None))
 
     # Aggregate this run's file edits into a run-level unified diff
     # (tkt_FqUypyxF2tzC). Bound AFTER the workspace so the observer reads
@@ -797,7 +816,7 @@ async def stream_agent(
                     continue
 
                 item = event.item
-                method, payload = _stream_event_payload(
+                method, payload = stream_event_payload(
                     item,
                     run_id=asyncio.current_task().get_name(),
                     session_id=session.id,
@@ -831,6 +850,19 @@ async def stream_agent(
                 elif method == "tool_result" and payload.get("call_id"):
                     # Tool got a result, remove from pending
                     pending_tool_calls.pop(payload["call_id"], None)
+                    # If this call was an observable agent-tool run, the
+                    # parent's tool_result IS its end signal — settle it on
+                    # the subagent bus (no-op for ordinary tools).
+                    try:
+                        from omniagents.core.runtime.subagents import (
+                            note_parent_tool_result,
+                        )
+
+                        await note_parent_tool_result(
+                            payload["call_id"], payload
+                        )
+                    except Exception:
+                        pass
 
                 if method:
                     delivered = await _broadcast(session, method, payload)
@@ -1319,6 +1351,15 @@ async def stream_agent(
             from omniagents.workspace import reset_workspace as _reset_workspace
 
             _reset_workspace(workspace_token)
+        except Exception:
+            pass
+
+        try:
+            from omniagents.core.session.helpers import (
+                reset_current_session_id as _reset_current_session_id,
+            )
+
+            _reset_current_session_id(session_id_token)
         except Exception:
             pass
 

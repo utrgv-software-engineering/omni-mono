@@ -96,6 +96,10 @@ class AgentToolConfig:
     is_enabled: Optional[Any] = None  # bool or callable predicate
     needs_approval: Optional[Any] = None  # bool or callable predicate
     max_turns: Optional[int] = None  # Max turns for the nested agent run
+    # Stream the nested run onto the subagent bus (ui.subagent.event) so
+    # clients can watch it live. Off for tools whose internals are noise
+    # or sensitive.
+    observable: bool = True
 
     def __post_init__(self):
         if (self.yaml_path is None) == (self.inline_spec is None):

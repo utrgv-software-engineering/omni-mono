@@ -1257,12 +1257,28 @@ support fails with a **typed** error, never a generic `-32603`.
 
 ### Methods
 
-- `account_status()` → `{ providers: [AccountSnapshot], selected_provider }` —
+- `account_status()` → `{ providers: [AccountSnapshot], selected_provider,
+  mutation_persistence }` —
   redacted state of every provider: `state`
   (`signed_in`/`signed_out`/`error`), `source` (`oauth`/`rpc`/`env`),
   `identity` (`account_id`, `plan`, `email` when derivable), typed
   `capabilities`, and the last stored auth error. **Never contains
   credential material.**
+
+  `mutation_persistence` is a redacted deployment capability:
+
+  ```json
+  {
+    "codex_oauth": { "durable": true, "scope": "host" },
+    "pending_logins": { "durable": false, "scope": "process" }
+  }
+  ```
+
+  `codex_oauth.durable` is `true` only when the host explicitly attests
+  `OMNIAGENTS_CODEX_STORE_DURABILITY=host`. Absent or unrecognized values
+  fail closed to `{ "durable": false, "scope": null }`; store writability
+  alone is not treated as evidence. The capability exposes neither a path
+  nor credential material.
 - `account_usage(provider?)` → `{ providers: [...] }` — plan, rate-limit
   windows (`used_percent`, `window_minutes`, `resets_at` epoch seconds),
   capture timestamp, and workspace `notices` when available. For the
@@ -1300,6 +1316,22 @@ support fails with a **typed** error, never a generic `-32603`.
   (surfaced as `selected` in snapshots and `selected_provider` in
   status) so clients agree on the active account.
 
+### Codex OAuth persistence boundary
+
+Completed ChatGPT/Codex OAuth credentials are stored in `codex.json` inside
+the installed product's config directory (or the host's explicit Codex store
+directory), with owner-only `0600` permissions. Successful login and refresh
+replace that file; logout deletes it. A host that ensures this directory
+survives AgentHost process replacement may set
+`OMNIAGENTS_CODEX_STORE_DURABILITY=host`, allowing clients to rely on login
+and logout remaining effective after a process restart.
+
+The attestation covers only completed Codex OAuth credentials. Pending device
+codes, browser login ids, OAuth state, and PKCE verifiers are intentionally
+process-only and must be restarted after reconnect. RPC-installed API keys and
+`selected_provider` are also process-only and are not represented by the
+`codex_oauth` capability.
+
 ### `account_changed` notification (server → client)
 
 ```json
@@ -1317,9 +1349,10 @@ state is server-global, so reconnecting clients refetch via
 `account_status` and `account_usage` are read-only and globally safe.
 Every mutation (`account_login_*`, `account_logout`, `account_refresh`,
 `account_select`) rewrites process-wide provider credentials, so in
-enforced multi-user deployments they are refused for individual
-principals (the `disable_tool` precedent); they are available in
-single-user/no-auth deployments, which is where they are needed.
+enforced multi-user deployments they are refused for individual principals
+(the `disable_tool` precedent). An authenticated principal with the `admin`
+role may perform these explicitly classified global mutations; they are also
+available in single-user/no-auth deployments, which is where they are needed.
 
 ### Secrets
 
@@ -1351,6 +1384,7 @@ Every server snapshot carries a `source`:
 | `user` | user-global `mcp.json` (`~/.config/<product>/mcp.json`) | **Yes** — the one file this API owns |
 | `project_local` | `<project>/.<product>/mcp.json` (hand-managed) | No (`read_only_reason: "project_local_file"`) |
 | `session` | dynamic app-scoped servers passed in `variables.mcp_servers` | No (`read_only_reason: "session_scoped"`) |
+| `host_managed` | host-attested entry materialized in the user `mcp.json` | No (`read_only_reason: "host_managed"`) |
 
 Merge precedence mirrors the loader: `project` < `user` <
 `project_local`. The layered-config keys `allow_user_mcp_servers`,
@@ -1358,6 +1392,13 @@ Merge precedence mirrors the loader: `project` < `user` <
 gate the user layer; gated-out servers still list with
 `enabled: false` and a `disabled_reason`
 (`user_mcp_disabled` / `allowlist_blocked` / `kill_switch`).
+
+Hosts reserve product-owned server identities with the comma-separated
+`OMNIAGENTS_MANAGED_MCP_SERVERS` attestation. Only strict
+`[A-Za-z0-9._-]+` names are accepted. A matching user-file entry (for example
+`omni-projects`) is reported as `source: "host_managed"`, remains active when
+the ordinary user MCP layer is disabled, cannot be shadowed by project-local
+configuration, and rejects create/update/delete with `-32072 host_managed`.
 
 ### Secrets (write-only header/env model)
 
@@ -1370,13 +1411,18 @@ merge write-only: a string sets a value, `null` deletes one, and an
 omitted name keeps the stored (unreadable) value; all other params
 replace wholesale.
 
+These configured header/env values are stored as plaintext inside the
+API-owned `mcp.json`, whose atomic writes use owner-only `0600` permissions on
+POSIX. The protocol guarantee is redaction, not encryption at rest: hosts must
+protect the product config directory as credential-bearing storage.
+
 ### Typed errors
 
 | Code | Name | `data.kind` | Meaning |
 |------|------|-------------|---------|
 | `-32070` | McpServerNotFound | `mcp_server_not_found` | No configured server has `data.server_name`. |
 | `-32071` | McpConfigInvalid | `mcp_config_invalid` | Create/update failed validation; `data.errors` = `[{code, field, message}]`, never echoing submitted values. |
-| `-32072` | McpServerReadOnly | `mcp_server_read_only` | The server's source is not writable here (`data.reason`: `project_manifest`, `project_local_file`, `user_mcp_disabled`). |
+| `-32072` | McpServerReadOnly | `mcp_server_read_only` | The server's source is not writable here (`data.reason`: `project_manifest`, `project_local_file`, `user_mcp_disabled`, `host_managed`). |
 | `-32073` | McpOperationUnsupported | `mcp_operation_unsupported` | The server/transport lacks the capability (`data.operation`: `oauth`, `resources`, `prompts`, ...). |
 | `-32074` | McpServerUnavailable | `mcp_server_unavailable` | Connect/start failed; `data.reason_code` as below. |
 | `-32075` | McpAuthStateInvalid | `mcp_auth_state_invalid` | Auth operation in the wrong state (`data.reason`: `unknown_auth`, `code_required`). |
@@ -1385,7 +1431,7 @@ replace wholesale.
 ### Management & discovery methods
 
 - `mcp_list_servers(session_id?)` → `{ servers: [McpServerSnapshot],
-  user_mcp_allowed, write_target }`. Each snapshot:
+  user_mcp_allowed, write_target, mutation_persistence }`. Each snapshot:
   `server_name`, `source`, `transport`
   (`stdio`/`http`/`sse`/`streamable_http`), redacted `params`,
   `server_options`, `enabled` (+`disabled_reason`), `read_only`
@@ -1394,6 +1440,24 @@ replace wholesale.
   `captured_at`. With `session_id`, that session's dynamic servers are
   appended (`source: "session"`) and the request is authorized by
   session ownership.
+
+  `mutation_persistence` is a redacted deployment capability:
+
+  ```json
+  {
+    "user_config": { "durable": true, "scope": "host" },
+    "oauth_tokens": { "durable": true, "scope": "host" },
+    "pending_auth": { "durable": false, "scope": "process" },
+    "managed_servers": ["omni-projects"]
+  }
+  ```
+
+  The first two guarantees are `true` only for the exact host attestation
+  `OMNIAGENTS_MCP_STORE_DURABILITY=host`; absent or unrecognized values fail
+  closed to `{ "durable": false, "scope": null }`. Managed-server names are
+  the only host-store metadata added to this capability—no path, configured
+  value, or credential is included. The pre-existing `write_target` remains
+  for stable compatibility and is not evidence of durability.
 - `mcp_get_server(server_name, refresh?)` → the full snapshot plus
   discovery detail: `tools`, `resources`, `resource_templates`,
   `prompts` (MCP-spec shapes via `model_dump`; treat unknown fields as
@@ -1413,6 +1477,8 @@ replace wholesale.
   live spec and tears down active per-session instances of the named
   server (or all), so the next run reconnects from current config.
   Status returns to `configured`.
+  Reload reaches every active session in this AgentService process; it does
+  not coordinate other AgentHosts.
 
 Session/OOB operation methods (experimental until a client depends on
 them; promoted from the `mcp.*` server functions, which remain
@@ -1446,6 +1512,9 @@ contract per server:
 
 `status.origin` records what drove the last transition
 (`session:<id8>`, `probe`, `reload`, `auth`, `kill_switch`).
+Status, probes, and `disable_mcp_server` kill switches are process-only and
+are not covered by `mutation_persistence`; kill switches deliberately remain
+non-durable until a symmetric enable/disable product contract exists.
 
 ### `mcp_server_status_changed` notification (server → client)
 
@@ -1481,7 +1550,10 @@ to MCP:
   `{ state: "completed", ... }` (stored/refreshed credentials already
   satisfy the server) or `{ state: "pending", auth_id, auth_url,
   redirect_uri }` — the URL-handoff point. The PKCE verifier and all
-  tokens stay server-side (a 0600 store under the product config dir).
+  tokens stay server-side (one 0600 file per server under the product config
+  directory). Completed tokens and dynamically registered client metadata are
+  covered by `oauth_tokens` when host durability is attested; pending auth ids,
+  OAuth state, and PKCE flow state are always process-only.
   With `session_id` (single-user topology only), the URL is also
   surfaced to that session as a `url`-kind elicitation
   (`source: "mcp:<server>"`); accepting it with `{ "code": ... }` or
@@ -1524,7 +1596,9 @@ the optional `session_id` re-scopes them to the session owner.
 `mcp_reload_server`) and OAuth flows (`mcp_auth_*`) change process-wide
 state every principal shares, so in enforced multi-user deployments
 they are refused for individual principals (the
-`disable_tool`/`account_login_*` precedent). `mcp_auth_start`
+`disable_tool`/`account_login_*` precedent). An authenticated `admin`
+principal may perform these explicitly classified global mutations; they are
+also available in single-user/no-auth deployments. `mcp_auth_start`
 additionally refuses its `session_id` parameter in enforced mode so the
 parameter cannot re-scope a credential mutation.
 

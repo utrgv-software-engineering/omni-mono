@@ -79,3 +79,36 @@ __all__ = [
     "session_from_ctx",
     "session_variables",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Run-scoped current session id
+# ---------------------------------------------------------------------------
+#
+# Set by the run bridge for the duration of stream_agent, so code that runs
+# inside the run's task tree but never receives a RunContextWrapper (e.g.
+# the agent-tool on_stream observer, whose dispatch task inherits this via
+# contextvars) can still attribute work to the owning session.
+
+import contextvars as _contextvars
+
+_current_session_id: _contextvars.ContextVar[Optional[str]] = (
+    _contextvars.ContextVar("omniagents_current_session_id", default=None)
+)
+
+
+def set_current_session_id(
+    session_id: Optional[str],
+) -> _contextvars.Token:
+    """Install *session_id* as the run-scoped current session."""
+    return _current_session_id.set(session_id)
+
+
+def reset_current_session_id(token: _contextvars.Token) -> None:
+    """Restore the previous current-session value."""
+    _current_session_id.reset(token)
+
+
+def current_session_id() -> Optional[str]:
+    """The session id of the run active in this async context, or None."""
+    return _current_session_id.get()

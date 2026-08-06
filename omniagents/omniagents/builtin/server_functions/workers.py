@@ -4,7 +4,7 @@ the UI.
 Mirrors ``server_functions/bash_jobs.py`` in shape: read-only ``list`` +
 state-changing ``kill``, each filtered to workers spawned from the
 caller's session. State-changing calls also broadcast
-``ui.workers.update`` to every channel on the parent session so the
+``ui.subagents.update`` to every channel on the parent session so the
 docked panel refreshes in every connected tab / the Ink TUI.
 
 Workers are simpler than bash jobs in two ways:
@@ -12,7 +12,7 @@ Workers are simpler than bash jobs in two ways:
   log file or signal-escalation dance to mirror.
 - ``WorkerManager`` invokes ``on_complete`` (omni-code's
   ``_on_worker_complete``) on every terminal state, and that callback
-  broadcasts ``ui.workers.update``. So there's no separate sweeper
+  broadcasts ``ui.subagents.update``. So there's no separate sweeper
   needed — exits broadcast on their own.
 """
 

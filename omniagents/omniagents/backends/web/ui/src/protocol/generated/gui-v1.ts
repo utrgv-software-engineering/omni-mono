@@ -414,6 +414,7 @@ export interface GitDiffParams {
   context_lines?: number;
   from_rev?: string;
   to_rev?: string;
+  include_untracked?: boolean;
   workspace_id?: string;
   environment_generation?: number;
 }

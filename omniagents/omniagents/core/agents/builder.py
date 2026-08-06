@@ -412,10 +412,22 @@ async def _build_agent_tools_from_configs(
             async def _ignore_agent_tool_stream_event(_event: Any) -> None:
                 return None
 
+            # Observable agent tools stream their nested run onto the
+            # subagent bus (live mini-transcript in clients); opted-out
+            # ones keep the no-op handler. Streamed execution mode is
+            # identical either way.
+            from omniagents.core.runtime.subagents import (
+                agent_tool_stream_observer,
+            )
+
             as_tool_kwargs: Dict[str, Any] = {
                 "tool_name": at_cfg.tool_name,
                 "tool_description": resolved_tool_description,
-                "on_stream": _ignore_agent_tool_stream_event,
+                "on_stream": (
+                    agent_tool_stream_observer
+                    if getattr(at_cfg, "observable", True)
+                    else _ignore_agent_tool_stream_event
+                ),
             }
             if at_cfg.is_enabled is not None:
                 as_tool_kwargs["is_enabled"] = at_cfg.is_enabled

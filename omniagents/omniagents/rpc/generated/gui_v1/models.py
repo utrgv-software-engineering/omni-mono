@@ -988,6 +988,7 @@ class GitDiffParams(BaseModel):
     context_lines: int | None = None
     from_rev: str | None = None
     to_rev: str | None = None
+    include_untracked: bool | None = None
     workspace_id: str | None = None
     environment_generation: int | None = None
 

@@ -623,6 +623,7 @@ export interface GitDiff {
   environment_generation?: number;
   environment_id: string;
   from_rev?: string;
+  include_untracked?: boolean;
   mode?: string;
   paths?: unknown[];
   repo: string;

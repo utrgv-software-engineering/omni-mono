@@ -432,6 +432,17 @@ class ExecutionEnvironmentManager:
                 record.terminal_defaults,
             )
 
+    async def retire(self, environment_id: str) -> ExecutionEnvironmentDescriptor:
+        """Remove one environment from routing (e.g. a worker's worktree
+        after integration). Leases are immutable snapshots, so in-flight
+        runs holding one are unaffected; new acquisitions fail with
+        EnvironmentNotFoundError. Raises EnvironmentNotFoundError when the
+        id is unknown."""
+        async with self._lock:
+            record = self._record(environment_id)
+            del self._environments[environment_id]
+            return record.descriptor
+
     async def set_lifecycle_controller(
         self, environment_id: str, controller: object | None
     ) -> None:

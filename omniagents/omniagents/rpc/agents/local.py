@@ -27,6 +27,7 @@ class LocalAgent(RemoteAgent):
         settings: Optional[Dict[str, Any]] = None,
         approval_callback: Optional[Any] = None,
         mcp_servers: Optional[List[Any]] = None,
+        host_resources: Optional[Any] = None,
     ):
         """
         Initialize local agent.
@@ -36,6 +37,11 @@ class LocalAgent(RemoteAgent):
             settings: Settings dictionary
             approval_callback: Optional callback for tool approvals
             mcp_servers: Optional MCP servers
+            host_resources: AgentHostResources to share with the hosting
+                process (workers join the parent AgentHost's workspace,
+                environment, thread-binding, and routing registries).
+                When omitted the agent composes a private bundle —
+                standalone embedding.
         """
         # Initialize RemoteAgent with no URL (we'll use custom transport)
         # Pass context and variables from spec to parent
@@ -49,6 +55,7 @@ class LocalAgent(RemoteAgent):
         self.settings = settings or {}
         self.approval_callback = approval_callback
         self.mcp_servers = mcp_servers or []
+        self._host_resources = host_resources
 
         # RPC infrastructure (server side)
         self._agent_service: Optional[AgentService] = None
@@ -135,7 +142,9 @@ class LocalAgent(RemoteAgent):
         # Create agent service with custom spec and set channel immediately
         self._agent_service = AgentService(
             self.spec,
-            AgentHostResources.create(f"local-agent-{secrets.token_hex(8)}"),
+            self._host_resources
+            if self._host_resources is not None
+            else AgentHostResources.create(f"local-agent-{secrets.token_hex(8)}"),
         )
         self._agent_service.channel = channel
 

@@ -1255,6 +1255,8 @@ _GIT_CONFIG_ARGS: Tuple[str, ...] = (
 
 #: Diff arguments shared by every diff invocation. Prefixes are pinned so
 #: captured header lines can be replayed into ``git apply`` verbatim.
+_NULL_OID = "0" * 40
+
 _DIFF_COMMON: Tuple[str, ...] = (
     "--no-color",
     "--no-ext-diff",
@@ -1901,6 +1903,7 @@ class GitManager:
         context_lines: Optional[int] = None,
         from_rev: Optional[str] = None,
         to_rev: Optional[str] = None,
+        include_untracked: bool = False,
     ) -> Dict[str, Any]:
         resolved = await self._resolve_repo(environment_id, repo)
         workspace, repo_id, repo_abs, git_dir_rel = resolved.unpack()
@@ -1912,6 +1915,13 @@ class GitManager:
                 mode=scope,
                 supported=["range"],
             )
+        if include_untracked and scope not in ("worktree", "head"):
+            raise GitStateInvalid(
+                "include_untracked only applies to mode='worktree' or 'head'",
+                reason="parameter_not_applicable",
+                mode=scope,
+                supported=["worktree", "head"],
+            )
         files = await self._collect_diff(
             workspace,
             repo_id,
@@ -1922,6 +1932,16 @@ class GitManager:
             from_rev=from_rev,
             to_rev=to_rev,
         )
+        if include_untracked:
+            files.extend(
+                await self._collect_untracked_diffs(
+                    workspace,
+                    repo_abs,
+                    scope=scope,
+                    paths=paths,
+                    context_lines=context_lines,
+                )
+            )
         return {
             "environment_id": environment_id,
             "repo": repo_id,
@@ -1930,6 +1950,94 @@ class GitManager:
             "context_lines_clamped": self._context_clamped(context_lines),
             "files": [item.to_wire() for item in files],
         }
+
+    async def _collect_untracked_diffs(
+        self,
+        workspace: Workspace,
+        repo_abs: str,
+        *,
+        scope: str,
+        paths: Optional[Sequence[str]] = None,
+        context_lines: Optional[int] = None,
+    ) -> List[DiffFile]:
+        """Untracked files as synthesized whole-file additions.
+
+        ``git diff`` never shows untracked content (there is no baseline
+        for it), so each file gets a read-only ``--no-index`` diff
+        against ``/dev/null`` — the lazygit idiom; the index is never
+        touched (no ``add -N``). ``--no-index`` exits 1 when the files
+        differ, which here is the success case."""
+        listed = await self._run(
+            workspace,
+            repo_abs,
+            [
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                *self._pathspec(paths),
+            ],
+            operation="diff",
+        )
+        context = self._context(context_lines)
+        out: List[DiffFile] = []
+        for path in sorted(p for p in listed.stdout.split("\0") if p):
+            patch = await self._run(
+                workspace,
+                repo_abs,
+                [
+                    "diff",
+                    *_DIFF_COMMON,
+                    "--patch",
+                    f"-U{context}",
+                    "--no-index",
+                    "--",
+                    "/dev/null",
+                    path,
+                ],
+                operation="diff",
+                check=False,
+            )
+            blocks = parse_patch_blocks(patch.stdout)
+            if not blocks:
+                continue
+            block = blocks[0]
+            new_mode = "100644"
+            binary = False
+            for line in block.header_lines:
+                if line.startswith("new file mode "):
+                    new_mode = line.rsplit(" ", 1)[-1]
+                elif line.startswith("Binary files "):
+                    binary = True
+            hunks: List[DiffHunk] = []
+            added: Optional[int] = None if binary else 0
+            if not binary:
+                for position, raw in enumerate(block.hunks):
+                    hunk = _parse_hunk(scope, path, position, raw)
+                    hunks.append(hunk)
+                    added = (added or 0) + sum(
+                        1 for entry in hunk.lines if entry.origin == "add"
+                    )
+            out.append(
+                DiffFile(
+                    path=path,
+                    old_path=None,
+                    change="added",
+                    old_mode="000000",
+                    new_mode=new_mode,
+                    old_oid=_NULL_OID,
+                    new_oid=_NULL_OID,
+                    similarity=None,
+                    binary=binary,
+                    added_lines=added,
+                    deleted_lines=None if binary else 0,
+                    unmerged=False,
+                    submodule=False,
+                    hunks=hunks,
+                    header_lines=list(block.header_lines),
+                )
+            )
+        return out
 
     def _context(self, context_lines: Optional[int]) -> int:
         if context_lines is None:

@@ -123,6 +123,7 @@ def _resolve_agent_tool_entry(
         is_enabled=entry.get("is_enabled"),
         needs_approval=entry.get("needs_approval"),
         max_turns=entry.get("max_turns"),
+        observable=bool(entry.get("observable", True)),
     )
 
 

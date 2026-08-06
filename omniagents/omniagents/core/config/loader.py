@@ -1577,6 +1577,7 @@ def load_agent_spec_from_yaml(
                         is_enabled=is_enabled_resolved,
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
+                        observable=bool(at_item.get("observable", True)),
                     )
                 )
             elif "yaml" in at_item:
@@ -1600,6 +1601,7 @@ def load_agent_spec_from_yaml(
                         is_enabled=is_enabled_resolved,
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
+                        observable=bool(at_item.get("observable", True)),
                     )
                 )
             elif "inline" in at_item:
@@ -1624,6 +1626,7 @@ def load_agent_spec_from_yaml(
                         is_enabled=is_enabled_resolved,
                         needs_approval=needs_approval_resolved,
                         max_turns=max_turns_val,
+                        observable=bool(at_item.get("observable", True)),
                     )
                 )
             else:

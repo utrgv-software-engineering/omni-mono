@@ -3022,3 +3022,52 @@ def test_index_lock_failures_are_classified_from_the_path_not_the_prose():
     )
     assert GitManager._is_index_lock_failure(locked) is True
     assert GitManager._is_index_lock_failure(other) is False
+
+
+@pytest.mark.asyncio
+async def test_diff_include_untracked_synthesizes_added_files(
+    repo: Path, manager: GitManager
+):
+    """Untracked files surface as whole-file additions (a read-only
+    ``--no-index`` diff against /dev/null) — git itself never shows
+    them, and clients want "new file, all + lines", not a stub."""
+    write(repo / "brand_new.txt", "alpha\nbeta\n")
+    (repo / "empty.txt").write_text("")
+
+    # Default: unchanged behavior — untracked files stay invisible.
+    plain = await manager.diff("s1", "app", mode="worktree")
+    assert [f["path"] for f in plain["files"]] == []
+
+    result = await manager.diff(
+        "s1", "app", mode="worktree", include_untracked=True
+    )
+    by_path = {f["path"]: f for f in result["files"]}
+    entry = by_path["brand_new.txt"]
+    assert entry["change"] == "added"
+    assert entry["added_lines"] == 2
+    assert entry["deleted_lines"] == 0
+    origins = [
+        line["origin"] for hunk in entry["hunks"] for line in hunk["lines"]
+    ]
+    assert origins == ["add", "add"]
+    # Empty untracked file: present, no hunks, zero additions.
+    assert by_path["empty.txt"]["hunks"] == []
+    assert by_path["empty.txt"]["added_lines"] == 0
+
+    # Tracked modifications still coexist with the synthesized entries.
+    write(repo / "f.txt", two_hunk_edit())
+    combined = await manager.diff(
+        "s1", "app", mode="worktree", include_untracked=True
+    )
+    paths = [f["path"] for f in combined["files"]]
+    assert "f.txt" in paths and "brand_new.txt" in paths
+
+
+@pytest.mark.asyncio
+async def test_diff_include_untracked_rejected_off_worktree(
+    repo: Path, manager: GitManager
+):
+    with pytest.raises(GitStateInvalid):
+        await manager.diff(
+            "s1", "app", mode="staged", include_untracked=True
+        )

@@ -664,6 +664,7 @@ class GitDiff(BaseModel):
     environment_generation: int | None = None
     environment_id: str
     from_rev: str | None = None
+    include_untracked: bool | None = None
     mode: str | None = None
     paths: list[Any] | None = None
     repo: str

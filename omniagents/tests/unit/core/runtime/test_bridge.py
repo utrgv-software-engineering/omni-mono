@@ -71,7 +71,7 @@ async def test_broadcast_handles_remove_failure():
     assert delivered is False
 
 
-def test_stream_event_payload_variants(monkeypatch):
+def teststream_event_payload_variants(monkeypatch):
     monkeypatch.setattr(
         bridge,
         "ItemHelpers",
@@ -83,7 +83,7 @@ def test_stream_event_payload_variants(monkeypatch):
         type="tool_call_item",
         to_input_item=lambda: {"name": "alpha", "arguments": "{}", "call_id": "c1"},
     )
-    method, payload = bridge._stream_event_payload(
+    method, payload = bridge.stream_event_payload(
         call_item, run_id, session_id=session_id
     )
     assert method == "tool_called"
@@ -95,7 +95,7 @@ def test_stream_event_payload_variants(monkeypatch):
         output=RichToolOutput("done", ui_metadata={"hint": "ok"}),
         to_input_item=lambda: {"call_id": "c1"},
     )
-    method2, payload2 = bridge._stream_event_payload(
+    method2, payload2 = bridge.stream_event_payload(
         output_item, run_id, session_id=session_id
     )
     assert method2 == "tool_result"
@@ -106,21 +106,21 @@ def test_stream_event_payload_variants(monkeypatch):
         text="hello",
         to_input_item=lambda: {"role": "assistant", "content": "hello"},
     )
-    method3, payload3 = bridge._stream_event_payload(
+    method3, payload3 = bridge.stream_event_payload(
         message_item, run_id, session_id=session_id
     )
     assert method3 == "message_output"
     assert payload3["content"] == "hello"
     assert payload3["session_id"] == session_id
     unknown_item = types.SimpleNamespace(type="other")
-    method4, payload4 = bridge._stream_event_payload(
+    method4, payload4 = bridge.stream_event_payload(
         unknown_item, run_id, session_id=session_id
     )
     assert method4 is None
     assert payload4 is None
 
 
-def test_stream_event_payload_handles_input_error(monkeypatch):
+def teststream_event_payload_handles_input_error(monkeypatch):
     monkeypatch.setattr(
         bridge,
         "ItemHelpers",
@@ -136,7 +136,7 @@ def test_stream_event_payload_handles_input_error(monkeypatch):
         def to_input_item(self):
             raise RuntimeError("bad item")
 
-    method, payload = bridge._stream_event_payload(
+    method, payload = bridge.stream_event_payload(
         BadItem(), "run-x", session_id="session-x"
     )
     assert method == "tool_result"
@@ -1246,7 +1246,7 @@ async def test_always_approve_covers_parallel_interruptions(monkeypatch):
     assert state.rejected == []
 
 
-def test_stream_event_payload_mcp_identity_labels(monkeypatch):
+def teststream_event_payload_mcp_identity_labels(monkeypatch):
     """MCP-derived calls carry server_label/tool_label; plain tools don't."""
     monkeypatch.setattr(
         bridge,
@@ -1265,7 +1265,7 @@ def test_stream_event_payload_mcp_identity_labels(monkeypatch):
             "call_id": "c1",
         },
     )
-    method, payload = bridge._stream_event_payload(
+    method, payload = bridge.stream_event_payload(
         mcp_call, "run-1", session_id="s1", session=session
     )
     assert method == "tool_called"
@@ -1277,7 +1277,7 @@ def test_stream_event_payload_mcp_identity_labels(monkeypatch):
         type="tool_call_item",
         to_input_item=lambda: {"name": "read_file", "arguments": "{}", "call_id": "c2"},
     )
-    _, plain_payload = bridge._stream_event_payload(
+    _, plain_payload = bridge.stream_event_payload(
         plain_call, "run-1", session_id="s1", session=session
     )
     assert "server_label" not in plain_payload
@@ -1289,7 +1289,7 @@ def test_stream_event_payload_mcp_identity_labels(monkeypatch):
         output="done",
         to_input_item=lambda: {"call_id": "c1"},
     )
-    method2, result_payload = bridge._stream_event_payload(
+    method2, result_payload = bridge.stream_event_payload(
         mcp_result, "run-1", session_id="s1", session=session
     )
     assert method2 == "tool_result"
@@ -1297,7 +1297,7 @@ def test_stream_event_payload_mcp_identity_labels(monkeypatch):
     assert result_payload["tool_label"] == "hello"
 
 
-def test_stream_event_payload_translates_mcp_ui_key(monkeypatch):
+def teststream_event_payload_translates_mcp_ui_key(monkeypatch):
     """mcp_ui records under the ORIGINAL tool name; the bridge must pop it
     even though the stream carries the prefixed public name."""
     from omniagents.core.agents import mcp_ui
@@ -1323,7 +1323,7 @@ def test_stream_event_payload_translates_mcp_ui_key(monkeypatch):
             output="ok",
             to_input_item=lambda: {"call_id": "c1"},
         )
-        _, payload = bridge._stream_event_payload(
+        _, payload = bridge.stream_event_payload(
             item, "run-1", session_id="s1", session=session
         )
         assert payload["metadata"]["display_type"] == "mcp_ui"

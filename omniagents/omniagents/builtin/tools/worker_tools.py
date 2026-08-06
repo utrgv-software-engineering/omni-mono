@@ -158,6 +158,12 @@ _WORKER_WORKSPACES: dict[str, WorkerWorkspace] = {}
 # Which strategy isolated each worker (for cleanup).
 _WORKER_ISOLATION: dict[str, str] = {}
 
+# Environments registered on the shared AgentHost for isolated workers
+# (worktree/copy roots). Keyed by worker_id; retired at cleanup so dead
+# worktree environments don't accumulate on the host. Shared-workspace
+# workers lease the parent's environment and have no entry here.
+_WORKER_ENVIRONMENTS: dict[str, str] = {}
+
 # Display metadata for the workers panel — populated at spawn time so the
 # UI can show the task description and a wall-time alongside the
 # WorkerHandle's status/result/error. Keyed by worker_id; entries persist
@@ -181,8 +187,25 @@ def manager() -> WorkerManager:
         _MANAGER = WorkerManager(
             spec_loader=defaults.spec_loader,
             on_complete=_on_worker_complete,
+            on_event=_relay_worker_event,
+            host_resources_provider=_host_resources,
         )
     return _MANAGER
+
+
+def _host_resources():
+    """The hosting AgentService's AgentHostResources, or None.
+
+    Workers join the parent AgentHost's registries: their runs route
+    through the same workspaces/environments as every other operation in
+    the process."""
+    try:
+        from omniagents.core.agents.service import current_service
+
+        svc = current_service()
+    except Exception:
+        return None
+    return getattr(svc, "agent_host_resources", None) if svc is not None else None
 
 
 def _workers() -> dict:
@@ -190,7 +213,9 @@ def _workers() -> dict:
     return _MANAGER.workers if _MANAGER is not None else {}
 
 
-def _truncate_task(task: str, limit: int = 200) -> str:
+def _truncate_task(task: str, limit: int = 2000) -> str:
+    # Generous cap: clients decide how much to SHOW (list rows truncate,
+    # detail panes wrap everything); this only bounds the payload.
     one_line = " ".join(task.split())
     if len(one_line) <= limit:
         return one_line
@@ -220,6 +245,8 @@ def worker_state_dict(worker_id: str) -> Optional[dict]:
         wall_ms = int((end - started) * 1000)
     return {
         "worker_id": worker_id,
+        "subagent_id": worker_id,
+        "kind": "worker",
         "status": handle.status,
         "task": meta.get("task") or "",
         "parent_session_id": getattr(handle, "parent_session_id", None),
@@ -253,24 +280,37 @@ def workers_snapshot(parent_session_id: Optional[str] = None) -> list[dict]:
 
 
 async def broadcast_workers_snapshot(service, parent_session_id: Optional[str]) -> None:
-    """Push the per-session workers snapshot to every connected client of
-    ``parent_session_id`` via ``ui.workers.update``. Best-effort: silently
-    drops on broadcast failure (the next state change will catch it up).
-    """
-    if service is None or not parent_session_id:
-        return
-    try:
-        sess = service.get_session(parent_session_id)
-        if sess is None:
-            return
-        await service.request_client_function(
-            "ui.workers.update",
-            {"snapshot": workers_snapshot(parent_session_id=parent_session_id)},
-            session=sess,
-            expect_result=False,
-        )
-    except Exception as e:
-        _workers_log.warning("ui.workers.update broadcast failed: %s", e)
+    """Push the merged subagent snapshot (``ui.subagents.update``) to every
+    connected client of ``parent_session_id``. Workers contribute entries
+    via the bus provider registered below; the bus merges in agent-tool
+    runs. Best-effort: silently drops on broadcast failure (the next state
+    change will catch it up)."""
+    from omniagents.core.runtime.subagents import broadcast_subagents_snapshot
+
+    await broadcast_subagents_snapshot(service, parent_session_id)
+
+
+# Workers contribute their entries to the unified subagent snapshot.
+from omniagents.core.runtime.subagents import register_snapshot_provider as _register_snapshot_provider
+
+_register_snapshot_provider(
+    lambda parent_session_id: workers_snapshot(parent_session_id=parent_session_id)
+)
+
+
+async def _relay_worker_event(handle, method: str, params: dict) -> None:
+    """Forward one worker transcript event to the parent session via the
+    subagent bus (``ui.subagent.event``, kind="worker"). Best-effort: a
+    dropped event only costs display fidelity."""
+    from omniagents.core.runtime.subagents import emit_subagent_event
+
+    await emit_subagent_event(
+        getattr(handle, "parent_session_id", None),
+        getattr(handle, "worker_id", ""),
+        "worker",
+        method,
+        params,
+    )
 
 
 async def _on_worker_complete(handle) -> None:
@@ -349,6 +389,50 @@ async def _default_history_loader(entry, tail: int) -> list[dict]:
 
 def _history_loader():
     return worker_defaults().history_loader or _default_history_loader
+
+
+def _environment_id_from_ctx(ctx: RunContextWrapper[Any] | None) -> str | None:
+    """The parent run's routed environment id, from its lease-populated
+    context. None when the caller runs without an environment."""
+    if ctx is None:
+        return None
+    c = getattr(ctx, "context", None)
+    value = c.get("environment_id") if isinstance(c, dict) else getattr(c, "environment_id", None)
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _register_worktree_environment(worker_id: str, root: str) -> str | None:
+    """Register an isolated worker root as a first-class environment on
+    the shared AgentHost. Returns its id, or None without a host."""
+    resources = _host_resources()
+    if resources is None:
+        return None
+    from omniagents.execution.host import register_host_environment
+
+    descriptor = register_host_environment(
+        resources,
+        root,
+        owner_user_id=None,
+        workspace_id=f"workspace-worker-{worker_id}",
+        environment_id=f"environment-worker-{worker_id}",
+    )
+    _WORKER_ENVIRONMENTS[worker_id] = descriptor.environment_id
+    return descriptor.environment_id
+
+
+async def _retire_worker_environment(worker_id: str) -> None:
+    """Best-effort removal of a worker's worktree environment from the
+    shared AgentHost (leases already held stay valid)."""
+    environment_id = _WORKER_ENVIRONMENTS.pop(worker_id, None)
+    if environment_id is None:
+        return
+    resources = _host_resources()
+    if resources is None:
+        return
+    try:
+        await resources.environments.retire(environment_id)
+    except Exception:
+        pass
 
 
 def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> str:
@@ -489,11 +573,24 @@ async def spawn_worker(
     # for parity with how Job.session_id is captured.
     parent_sid = session_id_from_ctx(ctx)
 
+    # The worker's run must select a real environment on the shared
+    # AgentHost: the parent's own environment when sharing the workspace,
+    # or the isolated root registered as a fresh environment. No
+    # environment reachable -> the worker runs targetless (thinking-only).
+    if worker_workspace_obj is not None:
+        environment_id = _register_worktree_environment(worker_id, worker_workspace)
+    else:
+        environment_id = _environment_id_from_ctx(ctx)
+
     try:
         await manager().spawn(
             worker_id=worker_id,
             task_description=task,
-            context={"workspace_root": worker_workspace, "task_scope": worker_id},
+            context={
+                "workspace_root": worker_workspace,
+                "task_scope": worker_id,
+                "environment_id": environment_id,
+            },
             parent_session_id=parent_sid,
         )
     except Exception as e:
@@ -505,6 +602,7 @@ async def spawn_worker(
                 await strategy.cleanup(worker_id, worker_workspace_obj)
         except Exception:
             pass
+        await _retire_worker_environment(worker_id)
         _WORKER_WORKSPACES.pop(worker_id, None)
         _WORKER_ISOLATION.pop(worker_id, None)
         return _error_output(
@@ -923,17 +1021,24 @@ async def resume_worker(
             },
         )
 
-    # If the worker has an existing isolated workspace, reuse it.
+    # If the worker has an existing isolated workspace, reuse it (and its
+    # registered environment); otherwise share the parent's.
     ws = _WORKER_WORKSPACES.get(worker_id)
     if ws is not None:
         workspace_root = ws.root
+        environment_id = _WORKER_ENVIRONMENTS.get(worker_id)
     else:
         workspace_root = _workspace_root_from_ctx(ctx)
+        environment_id = _environment_id_from_ctx(ctx)
 
     new_entry = await manager().resume(
         worker_id,
         message,
-        context={"workspace_root": workspace_root, "task_scope": worker_id},
+        context={
+            "workspace_root": workspace_root,
+            "task_scope": worker_id,
+            "environment_id": environment_id,
+        },
     )
     if new_entry is None:
         llm_output = json.dumps(
@@ -1010,6 +1115,7 @@ async def cleanup_worker_worktree(worker_id: str) -> RichToolOutput:
     strategy = get_isolation_strategy(_WORKER_ISOLATION.get(worker_id, "none"))
     payload = _workspace_payload(worker_id)
     await strategy.cleanup(worker_id, ws)
+    await _retire_worker_environment(worker_id)
     _WORKER_WORKSPACES.pop(worker_id, None)
     _WORKER_ISOLATION.pop(worker_id, None)
 

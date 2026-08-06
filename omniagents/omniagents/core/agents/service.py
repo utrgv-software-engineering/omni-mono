@@ -5051,6 +5051,8 @@ class AgentService(RpcMethodsBase):
             if policy.can_call_resourceless(method):
                 return
             if method in GLOBAL_MUTATING_METHODS:
+                if principal is not None and ADMIN_ROLE in (principal.roles or []):
+                    return
                 raise AuthorizationDenied(
                     f"{method} changes state for every user and is not "
                     "available to individual principals",
@@ -7184,6 +7186,7 @@ class AgentService(RpcMethodsBase):
         context_lines: int | None = None,
         from_rev: str | None = None,
         to_rev: str | None = None,
+        include_untracked: bool = False,
     ) -> dict:  # noqa: D401
         return await self.git.diff(
             environment_id,
@@ -7193,6 +7196,7 @@ class AgentService(RpcMethodsBase):
             context_lines=context_lines,
             from_rev=from_rev,
             to_rev=to_rev,
+            include_untracked=include_untracked,
         )
 
     async def git_log(

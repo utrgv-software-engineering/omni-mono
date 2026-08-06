@@ -36,6 +36,8 @@ class Debug:
     _log_file = None
     _stdout_redirected: bool = False
     _original_stdout = None
+    _stderr_redirected: bool = False
+    _original_stderr = None
 
     @classmethod
     def init(cls, cli_flag: bool = False, yaml_config: bool = False):
@@ -98,6 +100,41 @@ class Debug:
     def original_stdout(cls):
         """Return the real stdout (pre-redirect) for subprocess I/O."""
         return cls._original_stdout or sys.__stdout__
+
+    @classmethod
+    def capture_stderr(cls):
+        """Redirect sys.stderr to the debug log file (or /dev/null).
+
+        Python logging's default handlers write to stderr — one
+        ``logger.error(..., exc_info=True)`` from a run error is a
+        hundred raw traceback lines straight into the terminal a TUI
+        backend is rendering on. Call this beside ``capture_stdout``
+        before launching a TUI so the frame can never be corrupted;
+        with debug enabled the output lands in the log file, otherwise
+        it is discarded.
+
+        Handlers that captured the old stderr at construction time are
+        retargeted so pre-existing logging configs follow the redirect.
+        """
+        if cls._stderr_redirected:
+            return
+        cls._original_stderr = sys.stderr
+        target = (
+            cls._log_file
+            if (cls._enabled and cls._log_file)
+            else open(os.devnull, "w")
+        )
+        old = sys.stderr
+        sys.stderr = target
+        for handler in logging.getLogger().handlers:
+            if getattr(handler, "stream", None) is old:
+                handler.stream = target
+        cls._stderr_redirected = True
+
+    @classmethod
+    def original_stderr(cls):
+        """Return the real stderr (pre-redirect) for subprocess I/O."""
+        return cls._original_stderr or sys.__stderr__
 
     @classmethod
     def enabled(cls) -> bool:

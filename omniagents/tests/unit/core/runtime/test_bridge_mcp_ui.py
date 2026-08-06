@@ -7,7 +7,7 @@ from __future__ import annotations
 import pytest
 
 from omniagents.core.agents import mcp_ui
-from omniagents.core.runtime.bridge import _stream_event_payload
+from omniagents.core.runtime.bridge import stream_event_payload
 
 
 class _FakeOutputItem:
@@ -47,7 +47,7 @@ def test_tool_result_carries_mcp_ui_when_recorded():
     )
     item = _FakeOutputItem("showRawHtml", "rendered", call_id="call-1")
 
-    method, payload = _stream_event_payload(item, "run-x", session_id="sess-y")
+    method, payload = stream_event_payload(item, "run-x", session_id="sess-y")
 
     assert method == "tool_result"
     meta = payload.get("metadata") or {}
@@ -59,12 +59,12 @@ def test_tool_result_carries_mcp_ui_when_recorded():
     # The pop is one-shot — second event for the same tool should not
     # re-attach the same UI payload.
     second_item = _FakeOutputItem("showRawHtml", "later", call_id="call-2")
-    _, second_payload = _stream_event_payload(second_item, "run-x", session_id="sess-y")
+    _, second_payload = stream_event_payload(second_item, "run-x", session_id="sess-y")
     assert "metadata" not in second_payload
 
 
 def test_tool_result_omits_mcp_ui_when_no_payload():
     item = _FakeOutputItem("plain_tool", "ok", call_id="call-1")
-    method, payload = _stream_event_payload(item, "run-x", session_id="sess-y")
+    method, payload = stream_event_payload(item, "run-x", session_id="sess-y")
     assert method == "tool_result"
     assert "metadata" not in payload

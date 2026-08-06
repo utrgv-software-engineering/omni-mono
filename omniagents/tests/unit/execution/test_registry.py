@@ -287,3 +287,28 @@ async def test_environment_workspace_mismatch_is_rejected():
 
     with pytest.raises(WorkspaceEnvironmentMismatchError):
         await environments.validate_workspace("workspace-b", "env-a")
+
+
+@pytest.mark.asyncio
+async def test_retire_removes_environment_but_not_inflight_leases():
+    """retire() drops the environment from routing; a lease already held
+    is an immutable snapshot and keeps working (worker-worktree
+    lifecycle: integrate, retire, in-flight run drains)."""
+    workspaces = WorkspaceRegistry()
+    workspaces.register(WorkspaceResource("workspace-1"))
+    environments = ExecutionEnvironmentManager(workspaces)
+    await environments.register(
+        descriptor("env-1", "workspace-1"), fake_workspace("x")
+    )
+
+    lease = await environments.acquire("env-1")
+    retired = await environments.retire("env-1")
+    assert retired.environment_id == "env-1"
+    assert lease.workspace is not None  # snapshot unaffected
+
+    from omniagents.execution import EnvironmentNotFoundError
+
+    with pytest.raises(EnvironmentNotFoundError):
+        await environments.acquire("env-1")
+    with pytest.raises(EnvironmentNotFoundError):
+        await environments.retire("env-1")

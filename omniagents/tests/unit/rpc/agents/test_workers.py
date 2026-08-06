@@ -38,9 +38,10 @@ class FakeOther:
 class FakeAgent:
     counter = 0
 
-    def __init__(self, spec):
+    def __init__(self, spec, host_resources=None):
         FakeAgent.counter += 1
         self.spec = spec
+        self.host_resources = host_resources
         self.run_id = f"run-{FakeAgent.counter}"
         self.session_id = f"session-{FakeAgent.counter}"
         self._event_queue = asyncio.Queue()
@@ -202,3 +203,158 @@ async def test_worker_manager_resume_forwards_context_to_start_run():
     )
     assert resumed is not None
     assert resumed.agent.started_context == {"workspace_root": "/resumed"}
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_selects_environment_from_context():
+    """The spawner names the environment (parent's own, or a worktree
+    environment registered on the shared AgentHost); the worker's run
+    selects it explicitly. Without a lease the environment-scoped
+    runtime rejects every file/process tool."""
+    manager = make_manager()
+    handle = await manager.spawn(
+        worker_id="worker-env",
+        task_description="do it",
+        model=None,
+        context={"environment_id": "environment-abc", "task_scope": "worker-env"},
+    )
+    assert handle.agent.started_kwargs["environment_selection"] == {
+        "mode": "explicit",
+        "environment_id": "environment-abc",
+    }
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_targetless_without_environment():
+    """No environment named -> explicitly targetless (thinking-only
+    worker). workspace_root alone is NOT routing — start_run strips it."""
+    manager = make_manager()
+    handle = await manager.spawn(
+        worker_id="worker-bare",
+        task_description="do it",
+        model=None,
+        context={"workspace_root": "/ignored"},
+    )
+    assert handle.agent.started_kwargs["environment_selection"] == {"mode": "none"}
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_threads_host_resources_to_factory():
+    """Workers join the parent AgentHost's registries: the provider's
+    bundle must reach the agent factory."""
+    sentinel = object()
+
+    def spec_loader(model):
+        return SimpleNamespace(
+            variables={}, project_slug="proj", agent_slug="worker"
+        ), {"model": model}
+
+    manager = WorkerManager(
+        spec_loader=spec_loader,
+        agent_factory=FakeAgent,
+        host_resources_provider=lambda: sentinel,
+    )
+    handle = await manager.spawn(
+        worker_id="worker-host", task_description="t", model=None
+    )
+    assert handle.agent.host_resources is sentinel
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_resume_reselects_environment():
+    """Resume re-runs environment selection from the fresh context."""
+    manager = make_manager()
+    await manager.spawn(
+        worker_id="worker-re",
+        task_description="first",
+        model=None,
+        context={"environment_id": "environment-1"},
+    )
+    await manager.close("worker-re")
+
+    resumed = await manager.resume(
+        "worker-re", "again", context={"environment_id": "environment-2"}
+    )
+    assert resumed is not None
+    assert resumed.agent.started_kwargs["environment_selection"] == {
+        "mode": "explicit",
+        "environment_id": "environment-2",
+    }
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_relays_narrative_events_to_observer():
+    """The monitor streams the narrative subset (tool/message/run events)
+    to on_event, tags nothing itself (handle carries identity), answers
+    approvals without relaying them, and still relays run_end before
+    finalizing."""
+    relayed = []
+
+    async def on_event(handle, method, params):
+        relayed.append((handle.worker_id, method, params))
+
+    def spec_loader(model):
+        return SimpleNamespace(
+            variables={}, project_slug="proj", agent_slug="worker"
+        ), {"model": model}
+
+    manager = WorkerManager(
+        spec_loader=spec_loader, agent_factory=FakeAgent, on_event=on_event
+    )
+    handle = await manager.spawn(
+        worker_id="worker-obs", task_description="do it", model=None
+    )
+
+    events = [
+        {"method": "run_started", "params": {"run_id": handle.run_id}},
+        {"method": "tool_called", "params": {"tool": "write_file"}},
+        {"method": "token", "params": {"text": "chatty"}},
+        {"method": "tool_approval_requested", "params": {"call_id": "c1"}},
+        {"method": "tool_result", "params": {"tool": "write_file"}},
+        {"method": "message_output", "params": {"content": "done"}},
+        {
+            "method": "run_end",
+            "params": {"run_id": handle.run_id, "end_reason": "completed"},
+        },
+    ]
+    for event in events:
+        await handle.agent._event_queue.put(event)
+    await asyncio.wait_for(handle.done_event.wait(), timeout=1)
+
+    assert [(m, p.get("tool") or p.get("content") or p.get("run_id")) for _, m, p in relayed] == [
+        ("run_started", handle.run_id),
+        ("tool_called", "write_file"),
+        ("tool_result", "write_file"),
+        ("message_output", "done"),
+        ("run_end", handle.run_id),
+    ]
+    assert all(worker_id == "worker-obs" for worker_id, _, _ in relayed)
+    # Approval was answered, not observed.
+    assert handle.agent._client.other.approvals == []
+
+
+@pytest.mark.asyncio
+async def test_worker_manager_relay_failure_does_not_poison_lifecycle():
+    async def on_event(handle, method, params):
+        raise RuntimeError("relay down")
+
+    def spec_loader(model):
+        return SimpleNamespace(
+            variables={}, project_slug="proj", agent_slug="worker"
+        ), {"model": model}
+
+    manager = WorkerManager(
+        spec_loader=spec_loader, agent_factory=FakeAgent, on_event=on_event
+    )
+    handle = await manager.spawn(
+        worker_id="worker-boom", task_description="do it", model=None
+    )
+    await handle.agent._event_queue.put(
+        {"method": "message_output", "params": {"content": "ok"}}
+    )
+    await handle.agent._event_queue.put(
+        {"method": "run_end", "params": {"run_id": handle.run_id, "end_reason": "completed"}}
+    )
+    await asyncio.wait_for(handle.done_event.wait(), timeout=1)
+    assert handle.status == "completed"
+    assert handle.result == "ok"

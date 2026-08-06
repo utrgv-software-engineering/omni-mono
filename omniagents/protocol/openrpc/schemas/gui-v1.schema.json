@@ -1477,6 +1477,9 @@
         "from_rev": {
           "type": "string"
         },
+        "include_untracked": {
+          "type": "boolean"
+        },
         "mode": {
           "type": "string"
         },

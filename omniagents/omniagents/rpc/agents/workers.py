@@ -54,19 +54,45 @@ class WorkerHandle:
     parent_session_id: str | None = None
 
 
+# Worker transcript events forwarded to the observer: the narrative
+# subset a client needs to render a live mini-transcript. ``token`` is
+# deliberately excluded (per-token chatter); approvals/client_requests
+# are answered by the monitor, not observed.
+RELAYED_WORKER_EVENTS = frozenset(
+    {
+        "run_started",
+        "run_status",
+        "message_output",
+        "tool_called",
+        "tool_result",
+        "run_end",
+    }
+)
+
+
 class WorkerManager:
     def __init__(
         self,
         *,
         spec_loader: Callable[[str | None], tuple[Any, dict | None]],
-        agent_factory: Callable[[Any], Any] | None = None,
+        agent_factory: Callable[[Any, Any], Any] | None = None,
         on_complete: Callable[["WorkerHandle"], Awaitable[None]] | None = None,
+        on_event: Callable[["WorkerHandle", str, dict], Awaitable[None]]
+        | None = None,
+        host_resources_provider: Callable[[], Any | None] | None = None,
     ) -> None:
         self._spec_loader = spec_loader
+        # The factory receives (spec, host_resources): workers join the
+        # parent AgentHost's registries so their runs route through the
+        # same environments as everything else in the process.
         self._agent_factory = agent_factory or (
-            lambda spec: LocalAgent(spec=spec, settings={})
+            lambda spec, resources: LocalAgent(
+                spec=spec, settings={}, host_resources=resources
+            )
         )
         self._on_complete = on_complete
+        self._on_event = on_event
+        self._host_resources_provider = host_resources_provider
         self._workers: dict[str, WorkerHandle] = {}
 
     async def _finalize(self, handle: WorkerHandle) -> None:
@@ -109,6 +135,15 @@ class WorkerManager:
 
             method = msg.get("method", "")
             params = msg.get("params", {})
+
+            # Stream the narrative subset to the observer (parent session)
+            # before local handling — the transcript relay must see run_end
+            # too, and a relay failure must never affect the lifecycle.
+            if self._on_event is not None and method in RELAYED_WORKER_EVENTS:
+                try:
+                    await self._on_event(handle, method, params)
+                except Exception:
+                    pass
 
             if method == "client_request":
                 # Generic client_request from server (artifacts, status, etc.).
@@ -206,19 +241,37 @@ class WorkerManager:
             spec.variables = dict(variables)
         spec.variables["worker_name"] = worker_id
 
-        agent = self._agent_factory(spec)
+        resources = (
+            self._host_resources_provider()
+            if self._host_resources_provider is not None
+            else None
+        )
+        agent = self._agent_factory(spec, resources)
         await agent.initialize()
         await agent._ensure_client()
         client = agent._client
         assert client is not None  # _ensure_client() guarantees a live client
 
+        # Execution derives ONLY from a routed environment lease. The
+        # spawner names the environment (the parent's own, or a worktree
+        # environment it registered on the shared AgentHost) via the
+        # context; the worker's run selects it explicitly. No environment
+        # named -> explicitly targetless (thinking-only worker).
+        environment_id: str | None = None
+        if isinstance(context, dict):
+            raw = context.get("environment_id")
+            if isinstance(raw, str) and raw.strip():
+                environment_id = raw
+
+        environment_selection: dict[str, Any] = (
+            {"mode": "explicit", "environment_id": environment_id}
+            if environment_id is not None
+            else {"mode": "none"}
+        )
+
         start_kwargs: dict[str, Any] = {
             "prompt": task_description,
-            # Worker-local AgentServices do not own the parent's environment.
-            # Until workers are sessions on the shared AgentHost, they must be
-            # explicitly targetless instead of reconstructing a host workspace
-            # from the inherited context dictionary.
-            "environment_selection": {"mode": "none"},
+            "environment_selection": environment_selection,
             "session_id": session_id,
         }
         if context is not None:
