@@ -454,9 +454,10 @@ export function App() {
         }
         return
       }
-      if (fn === 'ui.workers.update') {
-        // Broadcast from omni-code's worker spawn / completion hooks.
-        // Replace the workers list wholesale.
+      if (fn === 'ui.subagents.update') {
+        // Broadcast from the framework's subagent bus on worker spawn /
+        // completion (and agent-tool runs). This panel renders workers
+        // only — agent-tool entries carry no worker_id and are dropped.
         const request_id = String(p?.request_id ?? '')
         const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
         if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) {
@@ -468,7 +469,11 @@ export function App() {
         const args: Record<string, unknown> = p?.args || {}
         const snap = args?.snapshot
         if (Array.isArray(snap)) {
-          setWorkers(snap as WorkerSummary[])
+          setWorkers(
+            (snap as Array<WorkerSummary & { kind?: string }>).filter(
+              (entry) => entry.kind !== 'agent_tool',
+            ),
+          )
         }
         if (request_id) {
           client.clientResponse(request_id, true, { ack: true }).catch(() => {})
