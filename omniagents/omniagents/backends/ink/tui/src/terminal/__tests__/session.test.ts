@@ -68,6 +68,7 @@ describe("terminalSession end-to-end against a frame-accurate server", () => {
           session_id: "sess-1",
         };
       },
+      defaultEnvironmentId: () => null,
       getUrl: () => `ws://127.0.0.1:${port}/ws`,
       getToken: () => undefined,
     } as unknown as RPCClient;

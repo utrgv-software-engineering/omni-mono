@@ -68,10 +68,15 @@ class TerminalSession {
     this.bump();
 
     try {
+      // Environment-scoped like every git_*/fs_* call — a fresh session
+      // has no thread binding yet, so the routed environment must be
+      // named explicitly.
+      const environmentId = client.defaultEnvironmentId();
       const created = (await client.serverCall(
         "terminal.create",
         { cols, rows },
         sessionId,
+        environmentId ? { environmentId } : undefined,
       )) as CreateResult;
       debugLog(
         `[term] created: keys=${Object.keys(created ?? {}).join(",")} id=${created?.terminal_id} path=${created?.path}`,

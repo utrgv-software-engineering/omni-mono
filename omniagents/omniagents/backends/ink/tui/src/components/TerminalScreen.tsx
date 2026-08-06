@@ -52,15 +52,27 @@ export const TerminalScreen = ({
   );
 
   // Open lazily on first visit; track size while active. The session
-  // outlives the screen.
+  // outlives the screen. A fresh TUI has no session until the first
+  // message — ensure one server-side rather than silently doing
+  // nothing (the web terminal's idiom).
   useEffect(() => {
-    if (!active || !client || !sessionId) return;
+    if (!active || !client) return;
+    if (!sessionId) {
+      void client
+        .serverCall("session.ensure", {})
+        .then((res) => {
+          const sid = (res as { session_id?: string })?.session_id;
+          if (typeof sid === "string" && sid) actions.setSessionId(sid);
+        })
+        .catch(() => {});
+      return;
+    }
     if (terminalSession.phase === "idle") {
       void terminalSession.open(client, sessionId, cols, rows);
     } else {
       terminalSession.resize(cols, rows);
     }
-  }, [active, client, sessionId, cols, rows]);
+  }, [active, client, sessionId, cols, rows, actions]);
 
   useEffect(() => {
     if (!active) setScrollUp(0);

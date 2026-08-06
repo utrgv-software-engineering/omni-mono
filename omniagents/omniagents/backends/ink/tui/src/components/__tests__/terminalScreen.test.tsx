@@ -114,6 +114,7 @@ describe("TerminalScreen end-to-end render", () => {
         path: "/ws/terminal",
         session_id: "sess-1",
       }),
+      defaultEnvironmentId: () => null,
       getUrl: () => `ws://127.0.0.1:${port}/ws`,
       getToken: () => undefined,
     } as unknown as RPCClient;
