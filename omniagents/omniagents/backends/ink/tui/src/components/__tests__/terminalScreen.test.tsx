@@ -1,0 +1,150 @@
+/**
+ * Renders the REAL TerminalScreen through Ink against a frame-accurate
+ * /ws/terminal server — the full pipeline: create → attach → output
+ * frames → emulator → useSyncExternalStore → Ink frame. Exists because
+ * a live session showed frames feeding the grid while the screen
+ * stayed blank; this pins where that pipeline breaks.
+ */
+
+import React from "react";
+import { Writable } from "node:stream";
+import { EventEmitter } from "node:events";
+import { afterEach, describe, expect, it } from "vitest";
+import { render } from "ink";
+import { WebSocketServer, type WebSocket as ServerSocket } from "ws";
+import { KeypressProvider } from "../../contexts/KeypressContext.js";
+import { TerminalScreen } from "../TerminalScreen.js";
+import { terminalSession } from "../../terminal/session.js";
+import type { RPCClient } from "../../rpc/client.js";
+
+const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function b64(text: string): string {
+  return Buffer.from(text, "utf8").toString("base64");
+}
+
+class CaptureStream extends Writable {
+  columns = 100;
+  rows = 40;
+  frames: string[] = [];
+  override _write(
+    chunk: Buffer,
+    _enc: string,
+    done: () => void,
+  ): void {
+    this.frames.push(String(chunk));
+    done();
+  }
+  get output(): string {
+    return this.frames.join("");
+  }
+}
+
+class FakeStdin extends EventEmitter {
+  isTTY = true;
+  setRawMode() {}
+  setEncoding() {}
+  resume() {}
+  pause() {}
+  read() {
+    return null;
+  }
+  unref() {}
+  ref() {}
+}
+
+describe("TerminalScreen end-to-end render", () => {
+  let server: WebSocketServer | null = null;
+  let instance: { unmount: () => void } | null = null;
+
+  afterEach(() => {
+    instance?.unmount();
+    instance = null;
+    terminalSession.close();
+    server?.close();
+    server = null;
+  });
+
+  it("paints PTY output into the Ink frame", async () => {
+    server = new WebSocketServer({ port: 0 });
+    const port = await new Promise<number>((resolve) => {
+      server!.on("listening", () => {
+        const addr = server!.address();
+        resolve(typeof addr === "object" && addr ? addr.port : 0);
+      });
+    });
+    server.on("connection", (socket: ServerSocket) => {
+      socket.on("message", (raw) => {
+        const frame = JSON.parse(String(raw)) as { type?: string };
+        if (frame.type === "attach") {
+          // Mirror the live shell: OSC title, bracketed paste, then a
+          // styled two-line prompt — the exact bytes from the field log.
+          socket.send(
+            JSON.stringify({
+              type: "output",
+              terminal_id: "t1",
+              data: b64("\x1b]0;emm@omarchy:~/x\x07"),
+            }),
+          );
+          socket.send(
+            JSON.stringify({
+              type: "output",
+              terminal_id: "t1",
+              data: b64("\x1b[?2004h"),
+            }),
+          );
+          socket.send(
+            JSON.stringify({
+              type: "output",
+              terminal_id: "t1",
+              data: b64(
+                "\r\n\x1b[1;36momniagents\x1b[0m \x1b[3;90m~/x\x1b[0m\r\n\x1b[1;35m❯\x1b[0m ",
+              ),
+            }),
+          );
+        }
+      });
+    });
+
+    const client = {
+      serverCall: async () => ({
+        terminal_id: "t1",
+        terminal_token: "tok",
+        token: "tok",
+        path: "/ws/terminal",
+        session_id: "sess-1",
+      }),
+      getUrl: () => `ws://127.0.0.1:${port}/ws`,
+      getToken: () => undefined,
+    } as unknown as RPCClient;
+
+    const stdout = new CaptureStream();
+    instance = render(
+      <KeypressProvider>
+        <TerminalScreen
+          active={true}
+          height={20}
+          client={client}
+          sessionId="sess-1"
+          onExit={() => {}}
+        />
+      </KeypressProvider>,
+      {
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        stdin: new FakeStdin() as unknown as NodeJS.ReadStream,
+        debug: false,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    );
+
+    await settle(400);
+
+    const plain = stdout.output.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "");
+    expect(terminalSession.phase).toBe("running");
+    expect(terminalSession.outputBytes).toBeGreaterThan(0);
+    // The prompt must be IN THE RENDERED FRAME, not just in the grid.
+    expect(plain).toContain("omniagents");
+    expect(plain).toContain("❯");
+  });
+});

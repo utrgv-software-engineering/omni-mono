@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Box, Text, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -8,7 +8,7 @@ import { useActions } from "../store/appStore.js";
 import { terminalSession } from "../terminal/session.js";
 import { keyToBytes } from "../terminal/keys.js";
 import { Theme } from "../theme.js";
-import { useSyncExternalStore } from "react";
+import { debugLog } from "../utils/debugLog.js";
 
 const PAGE = 10;
 
@@ -41,10 +41,14 @@ export const TerminalScreen = ({
   // Lines scrolled up from the live tail; 0 = following.
   const [scrollUp, setScrollUp] = useState(0);
 
-  useSyncExternalStore(
-    terminalSession.subscribe,
-    terminalSession.getVersion,
-    terminalSession.getVersion,
+  // Boring, explicit reactivity: subscribe → bump a counter. (The
+  // useSyncExternalStore variant rendered fine in tests but a live
+  // session sat frozen on its first paint — this primitive has no
+  // snapshot-equality subtleties to be wrong about.)
+  const [, setTick] = useState(0);
+  useEffect(
+    () => terminalSession.subscribe(() => setTick((n) => n + 1)),
+    [],
   );
 
   // Open lazily on first visit; track size while active. The session
@@ -115,18 +119,19 @@ export const TerminalScreen = ({
     { isActive: active, priority: KeypressPriority.Critical },
   );
 
-  const lines = useMemo(() => {
-    const state = terminalSession.state;
-    if (!state) return [];
-    const base = state.baseY();
-    const start = Math.max(0, base - scrollUp);
-    return state.readLines(start, rows);
-  }, [
-    scrollUp,
-    rows,
-    // Version-driven: useSyncExternalStore re-renders on every batch.
-    terminalSession.getVersion(),
-  ]);
+  // Recomputed every render — reading the grid is cheap at TUI frame
+  // rates, and caching is exactly where a stale-screen bug can hide.
+  const state = terminalSession.state;
+  const lines = state
+    ? state.readLines(Math.max(0, state.baseY() - scrollUp), rows)
+    : [];
+  useEffect(() => {
+    if (!active) return;
+    const firstContent = lines.find((l) => l.trim().length > 0);
+    debugLog(
+      `[term-ui] render v=${terminalSession.getVersion()} phase=${terminalSession.phase} rows=${rows} lines=${lines.length} first=${JSON.stringify((firstContent ?? "").slice(0, 40))}`,
+    );
+  });
 
   if (!active) return null;
 
