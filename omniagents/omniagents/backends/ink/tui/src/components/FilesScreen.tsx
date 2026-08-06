@@ -14,11 +14,13 @@ import type { FsListEntry, RPCClient } from "../rpc/client.js";
 import { useActions } from "../store/appStore.js";
 import { windowStart } from "./model-picker-model.js";
 import { clampScroll } from "./git-model.js";
-import { wrapPlain } from "./agents-model.js";
+import { wrapPlain, wrapStyled } from "./agents-model.js";
+import { highlight, supportsLanguage } from "cli-highlight";
 import {
   baseName,
   buildTree,
   formatSize,
+  languageForPath,
   sniffBinary,
   type TreeRow,
 } from "./files-model.js";
@@ -413,6 +415,28 @@ export const FilesScreen = ({
         color: Theme.textChrome,
       });
       return lines;
+    }
+    // Syntax highlighting: highlight.js → ANSI, wrapped by VISUAL
+    // width (escape codes carry none). Plain fallback for unknown
+    // languages, oversized files, or a highlighter hiccup.
+    const language = languageForPath(preview.path);
+    if (
+      language &&
+      preview.text.length < 200_000 &&
+      supportsLanguage(language)
+    ) {
+      try {
+        const colored = highlight(preview.text, {
+          language,
+          ignoreIllegals: true,
+        });
+        for (const row of wrapStyled(colored, previewWidth)) {
+          lines.push({ text: row, color: Theme.textSecondary });
+        }
+        return lines;
+      } catch {
+        // fall through to plain
+      }
     }
     for (const raw of preview.text.split("\n")) {
       for (const row of wrapPlain(raw, previewWidth)) {

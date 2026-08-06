@@ -3,6 +3,7 @@ import {
   baseName,
   buildTree,
   formatSize,
+  languageForPath,
   parentDir,
   sniffBinary,
 } from "../files-model.js";
@@ -60,6 +61,17 @@ describe("sniffBinary", () => {
   it("flags NUL bytes and passes text", () => {
     expect(sniffBinary(new Uint8Array([104, 105, 0, 33]))).toBe(true);
     expect(sniffBinary(new TextEncoder().encode("plain text\n"))).toBe(false);
+  });
+});
+
+describe("languageForPath", () => {
+  it("maps extensions and special names", () => {
+    expect(languageForPath("src/app.ts")).toBe("typescript");
+    expect(languageForPath("a/b/mod.rs")).toBe("rust");
+    expect(languageForPath("Dockerfile")).toBe("dockerfile");
+    expect(languageForPath("Makefile")).toBe("makefile");
+    expect(languageForPath("notes.txt")).toBeNull();
+    expect(languageForPath("README")).toBeNull();
   });
 });
 

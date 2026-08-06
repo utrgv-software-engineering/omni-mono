@@ -75,6 +75,63 @@ export function sniffBinary(head: Uint8Array): boolean {
   return false;
 }
 
+const LANGUAGE_BY_EXT: Record<string, string> = {
+  ts: "typescript",
+  tsx: "typescript",
+  mts: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  py: "python",
+  rs: "rust",
+  go: "go",
+  rb: "ruby",
+  java: "java",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  cc: "cpp",
+  hpp: "cpp",
+  cs: "csharp",
+  php: "php",
+  swift: "swift",
+  kt: "kotlin",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  fish: "bash",
+  json: "json",
+  yml: "yaml",
+  yaml: "yaml",
+  toml: "ini",
+  ini: "ini",
+  xml: "xml",
+  html: "xml",
+  css: "css",
+  scss: "scss",
+  less: "less",
+  md: "markdown",
+  markdown: "markdown",
+  sql: "sql",
+  diff: "diff",
+  patch: "diff",
+  dockerfile: "dockerfile",
+  makefile: "makefile",
+  lua: "lua",
+  vim: "vim",
+};
+
+/** highlight.js language for a path, or null for plain text. */
+export function languageForPath(path: string): string | null {
+  const name = baseName(path).toLowerCase();
+  if (name === "dockerfile") return "dockerfile";
+  if (name === "makefile") return "makefile";
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return null;
+  return LANGUAGE_BY_EXT[name.slice(dot + 1)] ?? null;
+}
+
 export function formatSize(size: number | null): string {
   if (size === null) return "";
   if (size < 1024) return `${size}B`;
