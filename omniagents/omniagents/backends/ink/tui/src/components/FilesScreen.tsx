@@ -5,6 +5,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { createHash } from "node:crypto";
 import { Box, Text, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -21,6 +22,12 @@ import {
   sniffBinary,
   type TreeRow,
 } from "./files-model.js";
+import {
+  applyEdit,
+  fromText,
+  toText,
+  type EditorBuffer,
+} from "./editor-model.js";
 import { EmptyState } from "./shared/EmptyState.js";
 import { Theme } from "../theme.js";
 
@@ -29,6 +36,8 @@ const TREE_WIDTH = 40;
 const PAGE = 12;
 // Preview reads at most this much — it's a peek, not an editor.
 const PREVIEW_CAP = 128 * 1024;
+// The inline editor loads whole files; bigger than this wants $EDITOR.
+const EDIT_CAP = 512 * 1024;
 
 type Preview = {
   path: string;
@@ -36,6 +45,16 @@ type Preview = {
   binary: boolean;
   truncated: boolean;
   text: string;
+};
+
+type EditState = {
+  path: string;
+  /** sha256 of the downloaded original — the optimistic-concurrency
+   * token for save (fs_upload_open expected_sha256). */
+  sha: string;
+  buffer: EditorBuffer;
+  saving: boolean;
+  notice: string | null;
 };
 
 type Props = {
@@ -73,6 +92,9 @@ export const FilesScreen = ({
   const [previewScroll, setPreviewScroll] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [edit, setEdit] = useState<EditState | null>(null);
+  // First Esc on a dirty buffer arms the discard; the second discards.
+  const [discardArm, setDiscardArm] = useState(false);
   // dir -> watch_id for every expanded directory (plus the root).
   const watchesRef = useRef<Record<string, string>>({});
 
@@ -128,6 +150,8 @@ export const FilesScreen = ({
     setPane("tree");
     setPreview(null);
     setPreviewScroll(0);
+    setEdit(null);
+    setDiscardArm(false);
     setError(null);
     void loadDir(".");
     void watchDir(".");
@@ -202,6 +226,118 @@ export const FilesScreen = ({
     },
     [entriesByDir, loadDir, watchDir, unwatchDir],
   );
+
+  const downloadAll = useCallback(
+    async (path: string, cap: number) => {
+      if (!client || !environmentId) return null;
+      const open = await client.fsDownloadOpen(environmentId, path);
+      if (open.size > cap) {
+        throw new Error(
+          `${baseName(path)} is ${formatSize(open.size)} — too large (cap ${formatSize(cap)})`,
+        );
+      }
+      let received = Buffer.alloc(0);
+      let offset = 0;
+      while (offset < open.size) {
+        const chunk = await client.fsDownloadRead(
+          environmentId,
+          open.transfer_id,
+          { offset },
+        );
+        received = Buffer.concat([
+          received,
+          Buffer.from(chunk.data, "base64"),
+        ]);
+        offset = chunk.offset + chunk.bytes;
+        if (chunk.eof) break;
+      }
+      void client
+        .fsDownloadClose(environmentId, open.transfer_id)
+        .catch(() => {});
+      return { bytes: received, sha: open.sha256, size: open.size };
+    },
+    [client, environmentId],
+  );
+
+  const startEdit = useCallback(
+    async (path: string) => {
+      if (busy || edit) return;
+      setBusy(true);
+      try {
+        const result = await downloadAll(path, EDIT_CAP);
+        if (!result) return;
+        if (sniffBinary(result.bytes)) {
+          setError(`${baseName(path)} is binary — not editable here`);
+          return;
+        }
+        setEdit({
+          path,
+          sha: result.sha,
+          buffer: fromText(result.bytes.toString("utf8")),
+          saving: false,
+          notice: null,
+        });
+        setDiscardArm(false);
+        setPane("preview");
+        setError(null);
+      } catch (e) {
+        setError((e as Error).message ?? String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, edit, downloadAll],
+  );
+
+  const saveEdit = useCallback(async () => {
+    if (!client || !environmentId || !edit || edit.saving) return;
+    setEdit((prev) => (prev ? { ...prev, saving: true, notice: null } : prev));
+    try {
+      const bytes = Buffer.from(toText(edit.buffer), "utf8");
+      const sha = createHash("sha256").update(bytes).digest("hex");
+      const open = await client.fsUploadOpen(
+        environmentId,
+        edit.path,
+        bytes.length,
+        { sha256: sha, expectedSha256: edit.sha, overwrite: true },
+      );
+      const chunkSize = open.chunk_size > 0 ? open.chunk_size : 64 * 1024;
+      try {
+        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+          await client.fsUploadChunk(
+            environmentId,
+            open.transfer_id,
+            offset,
+            bytes.subarray(offset, offset + chunkSize).toString("base64"),
+          );
+        }
+        await client.fsUploadCommit(environmentId, open.transfer_id);
+      } catch (e) {
+        void client
+          .fsUploadAbort(environmentId, open.transfer_id)
+          .catch(() => {});
+        throw e;
+      }
+      // Saved: the new content is the next edit's baseline.
+      setEdit((prev) =>
+        prev
+          ? {
+              ...prev,
+              sha,
+              saving: false,
+              notice: "saved",
+              buffer: { ...prev.buffer, dirty: false },
+            }
+          : prev,
+      );
+      setPreview(null); // stale — re-enter to re-read
+    } catch (e) {
+      const message = (e as Error).message ?? String(e);
+      setEdit((prev) =>
+        prev ? { ...prev, saving: false, notice: message } : prev,
+      );
+    }
+  }, [client, environmentId, edit]);
 
   const openPreview = useCallback(
     async (row: TreeRow) => {
@@ -290,14 +426,54 @@ export const FilesScreen = ({
   useEffect(() => {
     if (!active) return;
     actions.setStatusContext(
-      pane === "preview" && preview
-        ? `files · ${baseName(preview.path)}`
-        : "files",
+      edit
+        ? `files · edit · ${baseName(edit.path)}${edit.buffer.dirty ? " *" : ""}`
+        : pane === "preview" && preview
+          ? `files · ${baseName(preview.path)}`
+          : "files",
     );
     return () => actions.setStatusContext(null);
-  }, [active, pane, preview, actions]);
+  }, [active, pane, preview, edit, actions]);
 
   const previewFocused = pane === "preview" && preview !== null;
+
+  const editRows = Math.max(3, bodyHeight - 3); // header + notice + hint
+
+  useKeypress(
+    (input, key) => {
+      if (!edit) return false;
+      if (key.tab && key.ctrl) return false;
+      if (key.ctrl && input === "s") {
+        void saveEdit();
+        return true;
+      }
+      if (key.escape || (key.meta && key.escape)) {
+        if (edit.buffer.dirty && !discardArm) {
+          setDiscardArm(true);
+          return true;
+        }
+        setEdit(null);
+        setDiscardArm(false);
+        return true;
+      }
+      if (key.ctrl || (key.meta && input.length === 0)) return true;
+      setDiscardArm(false);
+      setEdit((prev) =>
+        prev
+          ? {
+              ...prev,
+              notice: null,
+              buffer: applyEdit(prev.buffer, input, key, editRows),
+            }
+          : prev,
+      );
+      return true; // the editor owns the keyboard, tab included
+    },
+    {
+      isActive: active && edit !== null,
+      priority: KeypressPriority.Critical,
+    },
+  );
 
   useKeypress(
     (input, key) => {
@@ -370,6 +546,17 @@ export const FilesScreen = ({
         );
         return true;
       }
+      // e edits the file inline (save = upload with sha conflict check).
+      if (input === "e") {
+        const target =
+          previewFocused && preview
+            ? preview.path
+            : current?.type === "file"
+              ? current.path
+              : null;
+        if (target) void startEdit(target);
+        return true;
+      }
       // m mentions the file in chat: `@path` lands in the composer.
       if (input === "m") {
         const target =
@@ -379,7 +566,7 @@ export const FilesScreen = ({
       }
       return false;
     },
-    { isActive: active, priority: KeypressPriority.High },
+    { isActive: active && edit === null, priority: KeypressPriority.High },
   );
 
   if (!active) return null;
@@ -484,7 +671,62 @@ export const FilesScreen = ({
       paddingLeft={wide ? 1 : 0}
       paddingTop={1}
     >
-      {preview === null ? (
+      {edit !== null ? (
+        <>
+          <Box>
+            <Text color={Theme.textPrimary} bold>
+              {edit.path}
+            </Text>
+            {edit.buffer.dirty && <Text color={Theme.stateBlocked}> *</Text>}
+            {edit.saving && (
+              <Text color={Theme.stateActive}>
+                {" "}
+                <Spinner type="dots" /> saving
+              </Text>
+            )}
+          </Box>
+          {(edit.notice || discardArm) && (
+            <Text
+              color={
+                discardArm || edit.notice !== "saved"
+                  ? Theme.stateBlocked
+                  : Theme.stateDone
+              }
+            >
+              {discardArm
+                ? "unsaved changes — esc again to discard"
+                : edit.notice}
+            </Text>
+          )}
+          {edit.buffer.lines
+            .slice(edit.buffer.top, edit.buffer.top + editRows)
+            .map((line, i) => {
+              const row = edit.buffer.top + i;
+              if (row !== edit.buffer.row) {
+                return (
+                  <Text
+                    key={row}
+                    color={Theme.textSecondary}
+                    wrap="truncate-end"
+                  >
+                    {line.length > 0 ? line : " "}
+                  </Text>
+                );
+              }
+              const col = edit.buffer.col;
+              const pre = line.slice(0, col);
+              const at = line.slice(col, col + 1) || " ";
+              const post = line.slice(col + 1);
+              return (
+                <Text key={row} color={Theme.textPrimary} wrap="truncate-end">
+                  {pre}
+                  <Text inverse>{at}</Text>
+                  {post}
+                </Text>
+              );
+            })}
+        </>
+      ) : preview === null ? (
         <Text color={Theme.textChrome}>
           {error ?? "enter on a file previews it here"}
         </Text>
@@ -526,9 +768,11 @@ export const FilesScreen = ({
       )}
 
       <Text color={Theme.textChrome}>
-        {previewFocused
-          ? "↑↓ scroll · ←/esc tree · m mention"
-          : "↑↓ move · enter open · m mention · r refresh · esc chat"}
+        {edit !== null
+          ? "editing · ctrl+s save · esc discard · tab indent"
+          : previewFocused
+            ? "↑↓ scroll · ←/esc tree · e edit · m mention"
+            : "↑↓ move · enter open · e edit · m mention · r refresh · esc chat"}
       </Text>
     </Box>
   );
