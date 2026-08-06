@@ -440,7 +440,14 @@ export const FilesScreen = ({
 
   const previewLines = useMemo(() => {
     if (!preview) return [];
-    const lines: Array<{ text: string; color: string; bold?: boolean }> = [];
+    type Row = {
+      text: string;
+      color: string;
+      bold?: boolean;
+      /** Right-aligned line number; null = continuation/header row. */
+      gutter?: string | null;
+    };
+    const lines: Row[] = [];
     for (const row of wrapPlain(preview.path, previewWidth)) {
       lines.push({ text: row, color: Theme.textPrimary, bold: true });
     }
@@ -456,33 +463,45 @@ export const FilesScreen = ({
       });
       return lines;
     }
+    const sourceLines = preview.text.split("\n");
+    const gutterWidth = Math.max(3, String(sourceLines.length).length);
+    const contentWidth = Math.max(20, previewWidth - gutterWidth - 1);
     // Syntax highlighting: highlight.js → ANSI, wrapped by VISUAL
-    // width (escape codes carry none). Plain fallback for unknown
-    // languages, oversized files, or a highlighter hiccup.
+    // width per source line (escape codes carry none). The first
+    // wrapped row carries the number; continuations get blank gutter.
     const language = languageForPath(preview.path);
+    let coloredLines: string[] | null = null;
     if (
       language &&
       preview.text.length < 200_000 &&
       supportsLanguage(language)
     ) {
       try {
-        const colored = highlight(preview.text, {
+        coloredLines = highlight(preview.text, {
           language,
           ignoreIllegals: true,
-        });
-        for (const row of wrapStyled(colored, previewWidth)) {
-          lines.push({ text: row, color: Theme.textSecondary });
-        }
-        return lines;
+        }).split("\n");
+        if (coloredLines.length !== sourceLines.length) coloredLines = null;
       } catch {
-        // fall through to plain
+        coloredLines = null;
       }
     }
-    for (const raw of preview.text.split("\n")) {
-      for (const row of wrapPlain(raw, previewWidth)) {
-        lines.push({ text: row, color: Theme.textSecondary });
-      }
-    }
+    sourceLines.forEach((raw, index) => {
+      const source = coloredLines ? coloredLines[index]! : raw;
+      const wrapped = coloredLines
+        ? wrapStyled(source, contentWidth)
+        : wrapPlain(source, contentWidth);
+      wrapped.forEach((row, wrapIndex) => {
+        lines.push({
+          text: row,
+          color: Theme.textSecondary,
+          gutter:
+            wrapIndex === 0
+              ? String(index + 1).padStart(gutterWidth)
+              : " ".repeat(gutterWidth),
+        });
+      });
+    });
     return lines;
   }, [preview, previewWidth]);
 
@@ -775,6 +794,11 @@ export const FilesScreen = ({
             .slice(edit.buffer.top, edit.buffer.top + editRows)
             .map((line, i) => {
               const row = edit.buffer.top + i;
+              const gutterWidth = Math.max(
+                3,
+                String(edit.buffer.lines.length).length,
+              );
+              const gutter = String(row + 1).padStart(gutterWidth);
               // Colors apply only when they match the CURRENT text —
               // a stale async result must never desync with the cursor.
               const colored =
@@ -786,13 +810,14 @@ export const FilesScreen = ({
               if (row !== edit.buffer.row) {
                 const shown = colored ?? line;
                 return (
-                  <Text
-                    key={row}
-                    color={Theme.textSecondary}
-                    wrap="truncate-end"
-                  >
-                    {shown.length > 0 ? shown : " "}
-                  </Text>
+                  <Box key={row}>
+                    <Text color={Theme.textChrome}>{gutter} </Text>
+                    <Box flexGrow={1} minWidth={0}>
+                      <Text color={Theme.textSecondary} wrap="truncate-end">
+                        {shown.length > 0 ? shown : " "}
+                      </Text>
+                    </Box>
+                  </Box>
                 );
               }
               const col = edit.buffer.col;
@@ -806,11 +831,19 @@ export const FilesScreen = ({
                   ? sliceAnsi(colored, col + 1)
                   : line.slice(col + 1);
               return (
-                <Text key={row} color={Theme.textPrimary} wrap="truncate-end">
-                  {pre}
-                  <Text inverse>{at}</Text>
-                  {post}
-                </Text>
+                <Box key={row}>
+                  <Text color={Theme.focus}>{gutter} </Text>
+                  <Box flexGrow={1} minWidth={0}>
+                    <Text
+                      color={Theme.textPrimary}
+                      wrap="truncate-end"
+                    >
+                      {pre}
+                      <Text inverse>{at}</Text>
+                      {post}
+                    </Text>
+                  </Box>
+                </Box>
               );
             })}
         </>
@@ -821,14 +854,20 @@ export const FilesScreen = ({
       ) : (
         <>
           {visiblePreview.map((line, i) => (
-            <Text
-              key={previewScroll + i}
-              color={line.color}
-              bold={line.bold}
-              wrap="truncate-end"
-            >
-              {line.text.length > 0 ? line.text : " "}
-            </Text>
+            <Box key={previewScroll + i}>
+              {"gutter" in line && line.gutter != null && (
+                <Text color={Theme.textChrome}>{line.gutter} </Text>
+              )}
+              <Box flexGrow={1} minWidth={0}>
+                <Text
+                  color={line.color}
+                  bold={line.bold}
+                  wrap="truncate-end"
+                >
+                  {line.text.length > 0 ? line.text : " "}
+                </Text>
+              </Box>
+            </Box>
           ))}
           {previewLines.length > previewWindow && (
             <Text color={Theme.textChrome}>
