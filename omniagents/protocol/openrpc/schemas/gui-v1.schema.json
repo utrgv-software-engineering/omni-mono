@@ -3101,6 +3101,9 @@
     "start_run": {
       "additionalProperties": false,
       "properties": {
+        "approvals_reviewer": {
+          "type": "string"
+        },
         "content": {
           "type": "string"
         },

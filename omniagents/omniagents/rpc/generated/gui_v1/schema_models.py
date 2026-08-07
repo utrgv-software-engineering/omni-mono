@@ -1371,6 +1371,7 @@ class StartRun(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    approvals_reviewer: str | None = None
     content: str | None = None
     context: dict[str, Any] | None = None
     environment_selection: (

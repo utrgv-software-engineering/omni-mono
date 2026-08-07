@@ -92,6 +92,7 @@ class StartRunParams(BaseModel):
     workflow_name: str | None = None
     group_id: str | None = None
     safe_tool_overrides: dict[str, Any] | None = None
+    approvals_reviewer: str | None = None
     prompt_role: str | None = None
 
 

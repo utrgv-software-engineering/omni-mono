@@ -161,6 +161,7 @@ export interface Platform {
   os: string;
 }
 export interface StartRun {
+  approvals_reviewer?: string;
   content?: string;
   context?: {
     [k: string]: unknown;

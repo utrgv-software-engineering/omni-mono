@@ -1301,6 +1301,13 @@
           }
         },
         {
+          "name": "approvals_reviewer",
+          "required": false,
+          "schema": {
+            "$ref": "./schemas/gui-v1.schema.json#/$defs/start_run/properties/approvals_reviewer"
+          }
+        },
+        {
           "name": "prompt_role",
           "required": false,
           "schema": {

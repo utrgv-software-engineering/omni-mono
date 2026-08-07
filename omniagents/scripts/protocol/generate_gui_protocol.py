@@ -206,6 +206,7 @@ OPTIONAL_FIELDS = {
         "workflow_name",
         "group_id",
         "safe_tool_overrides",
+        "approvals_reviewer",
         "prompt_role",
     ),
     "list_sessions": ("limit", "offset"),

@@ -22,6 +22,7 @@ export interface StartRunParams {
   workflow_name?: string;
   group_id?: string;
   safe_tool_overrides?: Record<string, unknown>;
+  approvals_reviewer?: string;
   prompt_role?: string;
 }
 export interface StartRunResult { run_id: string; session_id: string }
