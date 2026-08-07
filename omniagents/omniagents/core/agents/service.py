@@ -5561,6 +5561,7 @@ class AgentService(RpcMethodsBase):
                 "session_id": sess.id,
                 "active_model": (store.normalize_model_ref(active) if active else None),
                 "reasoning_effort": getattr(sess, "reasoning_effort", None),
+                "approvals_reviewer": getattr(sess, "approvals_reviewer", None),
             }
         return result
 
