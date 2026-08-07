@@ -1305,6 +1305,14 @@ class SetClientStatus(BaseModel):
     text: str
 
 
+class SetSessionApprovals(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    reviewer: str
+    session_id: str
+
+
 class SetSessionHold(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1450,6 +1458,24 @@ class ToolApprovalResponse(BaseModel):
     rejection_message: str | None = None
 
 
+class ToolApprovalReviewed(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    call_id: str
+    kind: str | None = None
+    outcome: str
+    rationale: str | None = None
+    reviewer: str
+    risk_level: str | None = None
+    run_id: str | None = None
+    seq: int | None = None
+    server_label: str | None = None
+    session_id: str | None = None
+    stream_id: str | None = None
+    tool_name: str
+
+
 class ToolCalled(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1582,6 +1608,7 @@ class Model(
         | ListTurns
         | ListItems
         | GetItem
+        | SetSessionApprovals
         | AgentHostRegisterWorkspace
         | AgentHostRegisterProfile
         | AgentHostBindThread
@@ -1658,6 +1685,7 @@ class Model(
         | ElicitationRequested
         | ElicitationResolved
         | McpServerStatusChanged
+        | ToolApprovalReviewed
         | SessionForked
         | SessionVariablesChanged
         | FsEvents
@@ -1718,6 +1746,7 @@ class Model(
         | ListTurns
         | ListItems
         | GetItem
+        | SetSessionApprovals
         | AgentHostRegisterWorkspace
         | AgentHostRegisterProfile
         | AgentHostBindThread
@@ -1794,6 +1823,7 @@ class Model(
         | ElicitationRequested
         | ElicitationResolved
         | McpServerStatusChanged
+        | ToolApprovalReviewed
         | SessionForked
         | SessionVariablesChanged
         | FsEvents

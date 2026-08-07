@@ -116,6 +116,9 @@ STABLE_REQUESTS = (
 )
 
 EXPERIMENTAL_REQUESTS = (
+    # Approval reviewer ("Approve for me"): per-session routing of
+    # tool/MCP approvals to the guardian reviewer instead of the human.
+    "set_session_approvals",
     # AgentHost provisioning control plane. These are introduced together so
     # clients never have to smuggle Workspace/profile identity through a Run.
     "agent_host_register_workspace",
@@ -245,6 +248,9 @@ CORRELATED_NOTIFICATIONS = {
 }
 
 EXPERIMENTAL_NOTIFICATIONS = (
+    # Reviewer/sandbox-resolved approval decisions that never reached the
+    # client as prompts. Journaled: transcripts and replay must show them.
+    "tool_approval_reviewed",
     "session_forked",
     "session_variables_changed",
     # Filesystem watch/transfer events (tkt_B5fXOZHf08K1). Per-connection
@@ -328,6 +334,7 @@ _REQUEST_CLASSIFICATIONS = _classification_map(
                 "ack_events",
                 "set_session_model",
                 "set_session_reasoning",
+                "set_session_approvals",
                 "get_thread",
                 "list_turns",
                 "list_items",
@@ -502,6 +509,7 @@ _SERVER_NOTIFICATION_CLASSIFICATIONS = _classification_map(
                 "run_end",
                 "tool_approval_requested",
                 "tool_approval_resolved",
+                "tool_approval_reviewed",
                 "mcp_approval_requested",
                 "mcp_approval_resolved",
                 "client_request",

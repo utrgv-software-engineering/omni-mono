@@ -5,6 +5,7 @@
   ],
   "notifications": {
     "experimental": [
+      "tool_approval_reviewed",
       "session_forked",
       "session_variables_changed",
       "fs_events",
@@ -578,6 +579,10 @@
       "execution_requirements": [],
       "resource_scope": "connection"
     },
+    "set_session_approvals": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
     "set_session_hold": {
       "execution_requirements": [],
       "resource_scope": "thread"
@@ -624,6 +629,10 @@
       "execution_requirements": [],
       "resource_scope": "run"
     },
+    "tool_approval_reviewed": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
     "tool_called": {
       "execution_requirements": [],
       "resource_scope": "run"
@@ -651,6 +660,7 @@
   },
   "requests": {
     "experimental": [
+      "set_session_approvals",
       "agent_host_register_workspace",
       "agent_host_register_profile",
       "agent_host_bind_thread",

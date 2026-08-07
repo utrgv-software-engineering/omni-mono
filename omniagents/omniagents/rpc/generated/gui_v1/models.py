@@ -582,6 +582,16 @@ class GetItemResult(RootModel[dict[str, Any]]):
     pass
 
 
+class SetSessionApprovalsParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    reviewer: str
+
+
+class SetSessionApprovalsResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class AgentHostRegisterWorkspaceParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     workspace_id: str
@@ -1526,6 +1536,22 @@ class McpServerStatusChangedParams(BaseModel):
     stream_id: str | None = None
 
 
+class ToolApprovalReviewedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    call_id: str
+    tool_name: str
+    outcome: str
+    reviewer: str
+    kind: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    server_label: str | None = None
+    risk_level: str | None = None
+    rationale: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
 class SessionForkedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -1669,6 +1695,7 @@ CLIENT_REQUEST_MODELS = {
     "list_turns": ListTurnsParams,
     "list_items": ListItemsParams,
     "get_item": GetItemParams,
+    "set_session_approvals": SetSessionApprovalsParams,
     "agent_host_register_workspace": AgentHostRegisterWorkspaceParams,
     "agent_host_register_profile": AgentHostRegisterProfileParams,
     "agent_host_bind_thread": AgentHostBindThreadParams,
@@ -1777,6 +1804,7 @@ CLIENT_RESULT_MODELS = {
     "list_turns": ListTurnsResult,
     "list_items": ListItemsResult,
     "get_item": GetItemResult,
+    "set_session_approvals": SetSessionApprovalsResult,
     "agent_host_register_workspace": AgentHostRegisterWorkspaceResult,
     "agent_host_register_profile": AgentHostRegisterProfileResult,
     "agent_host_bind_thread": AgentHostBindThreadResult,
@@ -1855,6 +1883,7 @@ SERVER_NOTIFICATION_MODELS = {
     "elicitation_requested": ElicitationRequestedParams,
     "elicitation_resolved": ElicitationResolvedParams,
     "mcp_server_status_changed": McpServerStatusChangedParams,
+    "tool_approval_reviewed": ToolApprovalReviewedParams,
     "session_forked": SessionForkedParams,
     "session_variables_changed": SessionVariablesChangedParams,
     "fs_events": FsEventsParams,
@@ -1919,6 +1948,7 @@ STABLE_REQUESTS = frozenset(
 )
 EXPERIMENTAL_REQUESTS = frozenset(
     [
+        "set_session_approvals",
         "agent_host_register_workspace",
         "agent_host_register_profile",
         "agent_host_bind_thread",
@@ -2003,6 +2033,7 @@ STABLE_NOTIFICATIONS = frozenset(
 )
 EXPERIMENTAL_NOTIFICATIONS = frozenset(
     [
+        "tool_approval_reviewed",
         "session_forked",
         "session_variables_changed",
         "fs_events",

@@ -378,6 +378,9 @@ RESOURCE_SCOPED_METHODS = frozenset(
         # session gates who may change its model / reasoning effort.
         "set_session_model",
         "set_session_reasoning",
+        # Approval reviewer toggle: session ownership gates who reroutes
+        # that session's approvals to the guardian.
+        "set_session_approvals",
         # Out-of-band MCP tool calls act on behalf of one session
         # (MCP-Apps postMessage routing): ``session_id`` is required and
         # its ownership authorizes the call.

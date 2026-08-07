@@ -48,6 +48,7 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ListTurns
   | ListItems
   | GetItem
+  | SetSessionApprovals
   | AgentHostRegisterWorkspace
   | AgentHostRegisterProfile
   | AgentHostBindThread
@@ -124,6 +125,7 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ElicitationRequested
   | ElicitationResolved
   | McpServerStatusChanged
+  | ToolApprovalReviewed
   | SessionForked
   | SessionVariablesChanged
   | FsEvents
@@ -398,6 +400,10 @@ export interface ListItems {
 export interface GetItem {
   item_id: string;
   thread_id: string;
+}
+export interface SetSessionApprovals {
+  reviewer: string;
+  session_id: string;
 }
 export interface AgentHostRegisterWorkspace {
   materialization_path: string;
@@ -1015,6 +1021,20 @@ export interface McpServerStatusChanged {
   server_name: string;
   status: string;
   stream_id?: string;
+}
+export interface ToolApprovalReviewed {
+  call_id: string;
+  kind?: string;
+  outcome: string;
+  rationale?: string;
+  reviewer: string;
+  risk_level?: string;
+  run_id?: string;
+  seq?: number;
+  server_label?: string;
+  session_id?: string;
+  stream_id?: string;
+  tool_name: string;
 }
 export interface SessionForked {
   from_item_id?: string;

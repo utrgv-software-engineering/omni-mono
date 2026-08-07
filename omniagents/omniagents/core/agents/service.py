@@ -1394,6 +1394,18 @@ class AgentService(RpcMethodsBase):
             if key is not None:
                 allow_set.add(key)
 
+    @staticmethod
+    def _apply_approvals_reviewer(session: Session, reviewer: str | None) -> None:
+        """Set the session's per-conversation approval reviewer override.
+
+        Unknown values are ignored rather than raised: run starts must not
+        fail on a stale client sending a reviewer this runtime predates.
+        """
+        from omniagents.core.agents.approval_policy import REVIEWERS
+
+        if reviewer in REVIEWERS:
+            session.approvals_reviewer = reviewer
+
     @classmethod
     def _is_mcp_tool_always_allowed(
         cls, session: Session, server_label: Any, tool_name: Any
@@ -2484,6 +2496,167 @@ class AgentService(RpcMethodsBase):
     #  resolve it from ``tool_approval_response``.
     # ------------------------------------------------------------------
 
+    async def _resolve_approval_without_client(
+        self,
+        *,
+        session: Session,
+        kind: str,
+        call_id: str,
+        tool_name: str,
+        arguments: str | None,
+        server_label: str | None = None,
+        metadata: dict | None = None,
+        run_id: str | None = None,
+    ) -> dict | None:
+        """Resolve an approval via the sandbox tier or guardian, or ``None``.
+
+        ``None`` means "route to the human" — the caller proceeds with the
+        ordinary broadcast-and-await prompt. A non-None return is a complete
+        response dict (``decision``/``always_approve``/``rejection_message``)
+        that never reached the client; the decision is audited and broadcast
+        as ``tool_approval_reviewed`` so transcripts and replay show it.
+        """
+        from omniagents.core.agents import guardian
+        from omniagents.core.agents.approval_policy import (
+            ApprovalRoute,
+            resolve_approval_route,
+        )
+
+        route, environment = await resolve_approval_route(self, session)
+        if route is ApprovalRoute.HUMAN:
+            return None
+
+        if route is ApprovalRoute.AUTO_APPROVE:
+            rationale = (
+                f"Sandboxed environment ({environment.kind})"
+                f"{' without network egress' if not environment.has_network else ''}"
+                " — auto-approved by sandbox policy"
+            )
+            await self._record_reviewed_approval(
+                session,
+                kind=kind,
+                call_id=call_id,
+                tool_name=tool_name,
+                server_label=server_label,
+                run_id=run_id,
+                reviewer="sandbox-policy",
+                outcome="allow",
+                risk_level=None,
+                rationale=rationale,
+            )
+            return {
+                "decision": "approve",
+                "always_approve": False,
+                "rejection_message": None,
+            }
+
+        # GUARDIAN — codex-style: allow approves, deny rejects with the
+        # rationale; unsure/timeout/error and a tripped circuit breaker fall
+        # through to the human prompt.
+        if guardian.breaker_tripped(session, run_id):
+            return None
+        request = guardian.GuardianRequest(
+            kind=kind,
+            tool_name=tool_name,
+            arguments=arguments or "",
+            server_label=server_label,
+            metadata=metadata,
+            environment_kind=environment.kind,
+            environment_has_network=environment.has_network,
+        )
+        assessment = await guardian.review_approval(self, session, request)
+        if assessment is None:
+            return None
+        if assessment.allowed:
+            guardian.record_allow(session, run_id)
+            response = {
+                "decision": "approve",
+                "always_approve": False,
+                "rejection_message": None,
+            }
+        else:
+            guardian.record_denial(session, run_id)
+            response = {
+                "decision": "reject",
+                "always_approve": False,
+                "rejection_message": (
+                    f"Denied by the approval reviewer: {assessment.rationale}"
+                ),
+            }
+        await self._record_reviewed_approval(
+            session,
+            kind=kind,
+            call_id=call_id,
+            tool_name=tool_name,
+            server_label=server_label,
+            run_id=run_id,
+            reviewer="guardian",
+            outcome=assessment.outcome,
+            risk_level=assessment.risk_level,
+            rationale=assessment.rationale,
+        )
+        return response
+
+    async def _record_reviewed_approval(
+        self,
+        session: Session,
+        *,
+        kind: str,
+        call_id: str,
+        tool_name: str,
+        server_label: str | None,
+        run_id: str | None,
+        reviewer: str,
+        outcome: str,
+        risk_level: str | None,
+        rationale: str,
+    ) -> None:
+        """Broadcast + audit one reviewer/sandbox-resolved approval decision."""
+        payload: dict[str, Any] = {
+            "call_id": call_id,
+            "kind": kind,
+            "tool_name": tool_name,
+            "session_id": session.id,
+            "reviewer": reviewer,
+            "outcome": outcome,
+            "rationale": rationale,
+        }
+        if server_label:
+            payload["server_label"] = server_label
+        if run_id is not None:
+            payload["run_id"] = run_id
+        if risk_level is not None:
+            payload["risk_level"] = risk_level
+        try:
+            await self._broadcast_session(
+                session,
+                "tool_approval_reviewed",
+                payload,
+                queue_if_unseen=True,
+            )
+        except Exception:
+            logger.exception("tool_approval_reviewed broadcast failed")
+        try:
+            from omniagents.core.audit.events import make_audit_event
+
+            event_type = "tool_approved" if outcome == "allow" else "tool_rejected"
+            details: dict[str, Any] = {"tool": tool_name, "reviewer": reviewer}
+            if outcome != "allow":
+                details["reason"] = rationale
+            await self.emit_runtime_hook(
+                "audit",
+                **make_audit_event(
+                    event_type,
+                    session_id=session.id,
+                    user_id=getattr(session, "user_id", None),
+                    run_id=run_id,
+                    agent_name=getattr(self.spec, "name", None),
+                    details=details,
+                ),
+            )
+        except Exception:
+            pass
+
     async def request_tool_approval(
         self,
         *,
@@ -2534,6 +2707,19 @@ class AgentService(RpcMethodsBase):
         mcp_identity = lookup_identity(session, tool_name)
         if mcp_identity is not None:
             payload["server_label"], payload["tool_label"] = mcp_identity
+
+        resolved = await self._resolve_approval_without_client(
+            session=session,
+            kind="tool",
+            call_id=call_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            server_label=payload.get("server_label"),
+            metadata=metadata if isinstance(metadata, dict) else None,
+            run_id=run_id,
+        )
+        if resolved is not None:
+            return resolved
 
         if Debug.enabled():
             logger.debug(
@@ -2657,6 +2843,21 @@ class AgentService(RpcMethodsBase):
                     f" session={session.id} run_id={run_id}"
                 )
             return {"decision": "approve", "rejection_message": None}
+
+        resolved = await self._resolve_approval_without_client(
+            session=session,
+            kind="mcp",
+            call_id=request_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            server_label=server_label,
+            run_id=run_id,
+        )
+        if resolved is not None:
+            return {
+                "decision": resolved["decision"],
+                "rejection_message": resolved.get("rejection_message"),
+            }
 
         payload: dict[str, Any] = {
             "kind": "mcp",
@@ -3133,6 +3334,7 @@ class AgentService(RpcMethodsBase):
         workflow_name: str | None = None,
         group_id: str | None = None,
         safe_tool_overrides: dict | None = None,
+        approvals_reviewer: str | None = None,
         prompt_role: str = "user",
     ) -> dict:  # noqa: D401
         sess: Session = self._session_manager.get_or_create(
@@ -3239,6 +3441,7 @@ class AgentService(RpcMethodsBase):
         )
 
         self._apply_safe_tool_overrides(sess, safe_tool_overrides)
+        self._apply_approvals_reviewer(sess, approvals_reviewer)
 
         # Store workflow_name and group_id for tracing
         if workflow_name is not None:
@@ -5411,6 +5614,27 @@ class AgentService(RpcMethodsBase):
         if result.get("ok"):
             await notify_session_state(self, sess)
         return result
+
+    async def set_session_approvals(self, session_id: str, reviewer: str) -> dict:
+        """Set a session's approval reviewer ("Approve for me" toggle).
+
+        ``reviewer`` is ``"user"`` (prompt the human) or ``"auto"`` (route
+        approvals to the guardian reviewer). The setting is per conversation
+        and overrides the layered-config ``approvals.reviewer`` default.
+        """
+        from omniagents.core.agents.approval_policy import REVIEWERS
+
+        if reviewer not in REVIEWERS:
+            return {
+                "ok": False,
+                "session_id": session_id,
+                "reason": f"unknown reviewer: {reviewer!r}",
+            }
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
+        sess.approvals_reviewer = reviewer
+        return {"ok": True, "session_id": sess.id, "reviewer": reviewer}
 
     async def set_session_reasoning(self, session_id: str, effort: str) -> dict:
         """Set a session's reasoning effort (typed ``/reasoning`` surface)."""

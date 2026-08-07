@@ -753,6 +753,9 @@ class Session:  # noqa: D101
         self.always_allow_tools: set[str] = set()
         self.always_allow_patterns: set[str] = set()
         self.always_allow_mcp_tools: set[tuple[str, str]] = set()
+        # Per-conversation approval reviewer override ("user" | "auto");
+        # None inherits the layered-config approvals.reviewer default.
+        self.approvals_reviewer: str | None = None
         self.context: Any | None = None
         self.variables: Any | None = None
         self.active_run_id: str | None = None

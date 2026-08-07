@@ -249,6 +249,47 @@ CONFIG_FIELDS: Tuple[ConfigField, ...] = (
         secret=True,
     ),
     ConfigField(
+        key="approvals.reviewer",
+        type="string",
+        label="Approval reviewer",
+        description=(
+            "Who reviews tool-approval requests by default: 'user' prompts "
+            "the human; 'auto' routes them to the guardian reviewer, which "
+            "approves or denies against the shipped risk policy. Sessions "
+            "may override per conversation."
+        ),
+        default="user",
+        allowed_values=("user", "auto"),
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
+        key="approvals.sandbox_auto_approve",
+        type="string",
+        label="Sandbox auto-approval",
+        description=(
+            "When a session's execution environment is a sandbox (never the "
+            "host), auto-approve tool calls without prompting: 'no_network' "
+            "only when the environment lacks the network capability; "
+            "'always' for every sandboxed environment; 'never' disables the "
+            "tier. Host environments always prompt or route to the reviewer."
+        ),
+        default="no_network",
+        allowed_values=("never", "no_network", "always"),
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
+        key="approvals.guardian_model",
+        type="string",
+        label="Guardian model",
+        description=(
+            "Model reference powering the guardian reviewer. Empty resolves "
+            "through the utility-agent preference order (session model, then "
+            "the agent's configured model)."
+        ),
+        default="",
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
         key="tracing.provider",
         type="string",
         label="Tracing provider",

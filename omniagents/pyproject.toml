@@ -299,6 +299,10 @@ include-package-data = true
 "omniagents.builtin" = [
     "capabilities/*.yml",
 ]
+# Guardian reviewer risk policy — data file read at review time.
+"omniagents.core.agents" = [
+    "guardian_policy.md",
+]
 # Ensure the Ink TUI TypeScript sources are included in wheels/sdists
 "omniagents.backends.ink" = [
     "tui/package.json",
