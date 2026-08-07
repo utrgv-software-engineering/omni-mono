@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import random
 import time
 import uuid
 from pathlib import Path
@@ -293,6 +294,11 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
         threshold = self._idle_threshold_s
         if threshold is None or threshold <= 0:
             return
+        # Per-watcher jitter (up to +20%, capped at +60s): sessions restored
+        # in the same boot share a last-activity timestamp, so without this
+        # every idle checkpoint fires in the same instant — a synchronized
+        # herd of snapshot persists against one shared serve process.
+        threshold += random.uniform(0.0, min(60.0, threshold * 0.2))
         try:
             while True:
                 await asyncio.sleep(_IDLE_WATCHER_INTERVAL_S)

@@ -28,6 +28,7 @@ Product knobs, defaulting to the omni-code values they were lifted with:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import tarfile
@@ -654,8 +655,10 @@ async def bring_up_session(
     # Without it, a persisted tar containing an unsafe symlink (e.g. a
     # committed `.fvm/flutter_sdk -> /Users/...` absolute symlink in a cloned
     # repo) would make `start()` throw WorkspaceArchiveWriteError and the
-    # session would never come up. Best-effort + idempotent.
-    _scrub_workspace_snapshot(session)
+    # session would never come up. Best-effort + idempotent. Off-loop: the
+    # scrub reads and rewrites the whole tar, and bring_up_session runs on
+    # the shared serve loop — a large snapshot must not stall other sessions.
+    await asyncio.to_thread(_scrub_workspace_snapshot, session)
 
     await session.start()
     started_services: List[Tuple[ServiceSpec, int]] = []
