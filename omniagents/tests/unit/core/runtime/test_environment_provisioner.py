@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -94,23 +95,202 @@ async def test_host_profile_mounts_multiple_local_sources_under_one_logical_root
     assert await provisioned.workspace.read_text("backend/identity.txt") == "backend"
 
 
-@pytest.mark.asyncio
-async def test_host_profile_rejects_remote_source_instead_of_using_config_root(
-    tmp_path,
-):
-    provisioner = ServeEnvironmentProvisioner(
+def _run_git(*args: str, cwd=None) -> str:
+    result = subprocess.run(
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+def _make_remote(tmp_path: Path) -> str:
+    """A local bare repo standing in for the remote (main + a `feature` branch)."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    _run_git("init", "-b", "main", cwd=seed)
+    (seed / "README.md").write_text("hello from remote\n")
+    _run_git("add", ".", cwd=seed)
+    _run_git(
+        "-c",
+        "user.email=test@test",
+        "-c",
+        "user.name=Test",
+        "commit",
+        "-m",
+        "init",
+        cwd=seed,
+    )
+    _run_git("branch", "feature", cwd=seed)
+    (seed / "feature.txt").write_text("only on feature\n")
+    _run_git("checkout", "feature", cwd=seed)
+    _run_git("add", ".", cwd=seed)
+    _run_git(
+        "-c",
+        "user.email=test@test",
+        "-c",
+        "user.name=Test",
+        "commit",
+        "-m",
+        "feature",
+        cwd=seed,
+    )
+    _run_git("checkout", "main", cwd=seed)
+    bare = tmp_path / "remote.git"
+    _run_git("clone", "--bare", str(seed), str(bare))
+    return str(bare)
+
+
+def _host_provisioner(layout: Path) -> ServeEnvironmentProvisioner:
+    return ServeEnvironmentProvisioner(
         profile_resolver=lambda request, workspace_dir: profile("host"),
-        workspace_directory_resolver=lambda workspace: tmp_path / "layout",
+        workspace_directory_resolver=lambda workspace: layout,
     )
 
-    with pytest.raises(ValueError, match="cannot materialize remote Git sources"):
+
+@pytest.mark.asyncio
+async def test_host_profile_materializes_remote_source_and_reuses_the_checkout(
+    tmp_path,
+):
+    url = _make_remote(tmp_path)
+    layout = tmp_path / "layout"
+    provisioner = _host_provisioner(layout)
+    remote_source = {"kind": "git-remote", "mountName": "remote", "repoUrl": url}
+
+    provisioned = await provisioner.provision(request(sources=[remote_source]))
+
+    assert provisioned.kind is EnvironmentKind.HOST
+    assert isinstance(provisioned.workspace, MountedHostWorkspace)
+    assert provisioned.terminal_defaults.cwd == str(layout)
+    checkout = layout / "remote"
+    assert (checkout / ".git").is_dir()
+    assert await provisioned.workspace.read_text("remote/README.md") == (
+        "hello from remote\n"
+    )
+
+    # Reuse is verbatim: durable working state survives re-provisioning.
+    (checkout / "wip.txt").write_text("uncommitted work\n")
+    again = await provisioner.provision(request(sources=[remote_source]))
+    assert await again.workspace.read_text("remote/wip.txt") == "uncommitted work\n"
+
+
+@pytest.mark.asyncio
+async def test_host_remote_materialization_honors_ref(tmp_path):
+    url = _make_remote(tmp_path)
+    layout = tmp_path / "layout"
+    provisioner = _host_provisioner(layout)
+
+    provisioned = await provisioner.provision(
+        request(
+            sources=[
+                {
+                    "kind": "git-remote",
+                    "mountName": "remote",
+                    "repoUrl": url,
+                    "ref": "feature",
+                }
+            ]
+        )
+    )
+
+    assert await provisioned.workspace.read_text("remote/feature.txt") == (
+        "only on feature\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_host_profile_refuses_checkout_of_a_different_remote(tmp_path):
+    url = _make_remote(tmp_path)
+    other = tmp_path / "other.git"
+    _run_git("clone", "--bare", url, str(other))
+    layout = tmp_path / "layout"
+    provisioner = _host_provisioner(layout)
+    await provisioner.provision(
+        request(sources=[{"kind": "git-remote", "mountName": "remote", "repoUrl": url}])
+    )
+
+    with pytest.raises(ValueError, match="refusing to reuse"):
         await provisioner.provision(
             request(
                 sources=[
                     {
                         "kind": "git-remote",
                         "mountName": "remote",
-                        "repoUrl": "https://example.com/repo.git",
+                        "repoUrl": str(other),
+                    }
+                ]
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_host_profile_refuses_non_checkout_mount_directory(tmp_path):
+    url = _make_remote(tmp_path)
+    layout = tmp_path / "layout"
+    stray = layout / "remote"
+    stray.mkdir(parents=True)
+    (stray / "existing.txt").write_text("not a clone\n")
+    provisioner = _host_provisioner(layout)
+
+    with pytest.raises(ValueError, match="is not a checkout"):
+        await provisioner.provision(
+            request(
+                sources=[{"kind": "git-remote", "mountName": "remote", "repoUrl": url}]
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_host_remote_auth_persists_repo_local_helper_without_the_token(
+    tmp_path, monkeypatch
+):
+    url = _make_remote(tmp_path)
+    monkeypatch.setenv("OMNI_TEST_GIT_TOKEN", "secret-token-value")
+    layout = tmp_path / "layout"
+    provisioner = _host_provisioner(layout)
+
+    await provisioner.provision(
+        request(
+            sources=[
+                {
+                    "kind": "git-remote",
+                    "mountName": "remote",
+                    "repoUrl": url,
+                    "auth": {
+                        "tokenEnv": "OMNI_TEST_GIT_TOKEN",
+                        "username": "x-access-token",
+                    },
+                }
+            ]
+        )
+    )
+
+    checkout = layout / "remote"
+    helper = _run_git("-C", str(checkout), "config", "credential.helper")
+    assert "$OMNI_TEST_GIT_TOKEN" in helper
+    assert "secret-token-value" not in helper
+    assert (
+        _run_git("-C", str(checkout), "config", "credential.username")
+        == "x-access-token"
+    )
+
+
+@pytest.mark.asyncio
+async def test_host_remote_auth_rejects_shell_syntax_in_token_env_name(
+    tmp_path, monkeypatch
+):
+    url = _make_remote(tmp_path)
+    monkeypatch.setenv("BAD NAME", "token")
+    provisioner = _host_provisioner(tmp_path / "layout")
+
+    with pytest.raises(ValueError, match="invalid git token env name"):
+        await provisioner.provision(
+            request(
+                sources=[
+                    {
+                        "kind": "git-remote",
+                        "mountName": "remote",
+                        "repoUrl": url,
+                        "auth": {"tokenEnv": "BAD NAME", "username": "x"},
                     }
                 ]
             )

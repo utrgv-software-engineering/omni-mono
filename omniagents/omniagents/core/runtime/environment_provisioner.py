@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Sequence
+import logging
+import os
+import re
+import subprocess
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +38,121 @@ from .serve_harness import (
 
 ProfileResolver = Callable[[EnvironmentProvisionRequest, Path], ResolvedProfile]
 WorkspaceDirectoryResolver = Callable[[WorkspaceResource], Path]
+
+logger = logging.getLogger(__name__)
+
+#: Env-var names interpolated into a git credential-helper shell fragment must
+#: be plain identifiers — anything else could smuggle shell syntax.
+_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _normalized_git_url(url: str) -> str:
+    cleaned = url.strip().rstrip("/")
+    return cleaned[:-4] if cleaned.endswith(".git") else cleaned
+
+
+def _validated_mount_name(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("git-remote source mountName must be a non-empty string")
+    name = value.strip()
+    if name in {".", ".."} or "/" in name or "\\" in name:
+        raise ValueError(f"invalid git-remote source mountName: {name!r}")
+    return name
+
+
+def _run_git(args: Sequence[str], *, cwd: Path | None = None) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=str(cwd) if cwd is not None else None,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "unknown git error"
+        raise ValueError(f"host git materialization failed ({args[0]}): {detail}")
+    return result.stdout.strip()
+
+
+def _materialize_host_remote_checkout(
+    workspace_dir: Path, source: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Ensure a host checkout of one ``git-remote`` source and localize it.
+
+    Host environments get the same remote-source semantics as sandboxes: the
+    repo is cloned blobless into ``<workspace_dir>/<mountName>`` — entirely
+    launcher-managed space — on first materialization and reused verbatim
+    afterwards (the checkout is durable working state, so no implicit fetch or
+    re-checkout ever rewrites it). A directory that exists but is not a
+    checkout of the same remote fails closed.
+
+    Private remotes authenticate exactly like the container path's
+    ``AuthenticatedGitRepo``: the token is read from the environment variable
+    named by ``auth.tokenEnv`` and never appears on argv or in the URL. The
+    credential helper is persisted repo-locally (never in the user's global
+    git config) so the agent's later fetch/push keeps working.
+
+    Returns the source rewritten as a ``local-git`` entry rooted at the
+    checkout, ready for the ordinary host mounting path.
+    """
+    mount_name = _validated_mount_name(source.get("mountName"))
+    url = source.get("repoUrl")
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError(f"git-remote source {mount_name!r} has no repoUrl")
+    url = url.strip()
+    dest = workspace_dir / mount_name
+
+    if (dest / ".git").exists():
+        origin = _run_git(["-C", str(dest), "remote", "get-url", "origin"])
+        if _normalized_git_url(origin) != _normalized_git_url(url):
+            raise ValueError(
+                f"host checkout {dest} tracks {origin!r}, not {url!r}; "
+                "refusing to reuse it"
+            )
+    elif dest.exists() and any(dest.iterdir()):
+        raise ValueError(
+            f"host mount directory {dest} exists but is not a checkout of {url!r}"
+        )
+    else:
+        credential_config: list[str] = []
+        persisted_helper: tuple[str, str] | None = None
+        auth = source.get("auth")
+        if isinstance(auth, Mapping):
+            token_env = str(auth.get("tokenEnv") or "")
+            username = str(auth.get("username") or "x-access-token")
+            if token_env and os.environ.get(token_env):
+                if not _ENV_NAME_RE.fullmatch(token_env):
+                    raise ValueError(f"invalid git token env name: {token_env!r}")
+                helper = f'!f() {{ printf "password=%s\\n" "${token_env}"; }}; f'
+                credential_config = [
+                    "-c",
+                    f"credential.username={username}",
+                    "-c",
+                    f"credential.helper={helper}",
+                ]
+                persisted_helper = (username, helper)
+            else:
+                logger.warning(
+                    "host materialization: env %r is empty; cloning %r without auth",
+                    token_env,
+                    mount_name,
+                )
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        _run_git([*credential_config, "clone", "--filter=blob:none", url, str(dest)])
+        ref = source.get("ref")
+        if isinstance(ref, str) and ref.strip():
+            _run_git(["-C", str(dest), "checkout", ref.strip()])
+        if persisted_helper is not None:
+            username, helper = persisted_helper
+            _run_git(["-C", str(dest), "config", "credential.username", username])
+            _run_git(["-C", str(dest), "config", "credential.helper", helper])
+
+    localized = {
+        key: source[key] for key in ("id", "mountName", "writable") if key in source
+    }
+    localized["kind"] = "local-git"
+    localized["path"] = str(dest)
+    return localized
 
 _FULL_CAPABILITIES = frozenset(
     {
@@ -198,25 +317,24 @@ class ServeEnvironmentProvisioner:
         )
         if _is_host_profile(profile.raw):
             sources = [dict(source) for source in request.workspace.sources]
-            remote_sources = [
-                source for source in sources if source.get("kind") == "git-remote"
-            ]
-            if remote_sources:
-                mounts = ", ".join(
-                    str(source.get("mountName") or "unnamed")
-                    for source in remote_sources
-                )
-                raise ValueError(
-                    "Host environments cannot materialize remote Git sources "
-                    f"without an explicit local checkout: {mounts}. Select a "
-                    "Devbox or attach a local folder."
-                )
-            local_sources = [
-                source
-                for source in sources
-                if source.get("kind") in {"local", "local-git"}
-            ]
             materialization_root = workspace_dir.expanduser().resolve()
+            # Host parity with the sandbox path: git-remote sources are cloned
+            # into the launcher-managed materialization root and then behave
+            # like any local-git source (idempotent — an existing checkout of
+            # the same remote is reused, anything else fails closed).
+            local_sources: list[dict[str, Any]] = []
+            for source in sources:
+                kind = source.get("kind")
+                if kind == "git-remote":
+                    local_sources.append(
+                        await asyncio.to_thread(
+                            _materialize_host_remote_checkout,
+                            materialization_root,
+                            source,
+                        )
+                    )
+                elif kind in {"local", "local-git"}:
+                    local_sources.append(source)
             use_composite = bool(local_sources) and (
                 len(local_sources) > 1
                 or any(

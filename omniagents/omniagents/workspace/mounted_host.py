@@ -88,7 +88,10 @@ class MountedHostWorkspace(HostWorkspace):
                 if link.is_symlink() and link.resolve() != target:
                     link.unlink()
                     link.symlink_to(target, target_is_directory=True)
-                elif not link.is_symlink():
+                elif not link.is_symlink() and link.resolve() != target:
+                    # A real directory that IS the target needs no link: the
+                    # source lives physically at its mount point (e.g. a
+                    # host-materialized remote checkout under this root).
                     raise ValueError(
                         f"host workspace mount {mount_name!r} already exists differently"
                     )
