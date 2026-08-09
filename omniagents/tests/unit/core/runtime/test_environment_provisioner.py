@@ -381,6 +381,7 @@ async def test_devbox_profile_provisions_sources_runtime_and_lifecycle(
         credentials_parsed=[{"tokenEnv": "GITHUB_TOKEN"}],
         snapshot_ref="snapshot-1",
         snapshot_dir=tmp_path / "snapshots",
+        state_path=tmp_path / "sandbox-state" / "snapshot-1.json",
     )
 
 
@@ -413,7 +414,9 @@ async def test_environment_manager_stop_closes_provisioned_session(
     stopped = await resources.environments.stop(descriptor.environment_id)
 
     assert stopped.state.value == "stopped"
-    teardown.assert_awaited_once_with(session, [], discard_snapshot=False)
+    teardown.assert_awaited_once_with(
+        session, [], discard_snapshot=False, detach=False, destroy=False, state_path=None
+    )
     assert (
         await resources.environments.sandbox_runtime(descriptor.environment_id) is None
     )
@@ -441,4 +444,4 @@ async def test_invalid_brought_up_manifest_is_torn_down(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="no workspace root"):
         await provisioner.provision(request())
 
-    teardown.assert_awaited_once_with(session, [])
+    teardown.assert_awaited_once_with(session, [], detach=False)

@@ -188,6 +188,7 @@ def manager() -> WorkerManager:
             spec_loader=defaults.spec_loader,
             on_complete=_on_worker_complete,
             on_event=_relay_worker_event,
+            on_session_event=_mirror_worker_event,
             host_resources_provider=_host_resources,
         )
     return _MANAGER
@@ -296,6 +297,38 @@ from omniagents.core.runtime.subagents import register_snapshot_provider as _reg
 _register_snapshot_provider(
     lambda parent_session_id: workers_snapshot(parent_session_id=parent_session_id)
 )
+
+
+async def _mirror_worker_event(handle, method: str, params: dict) -> None:
+    """Deliver one worker session event — verbatim, already stamped and
+    journaled by the worker's own service — to clients attached to that
+    session on THIS serve (the launcher's read-only transcript viewer).
+
+    The event journal lives in the shared per-(project, agent) store, so
+    the stamps and ``ack_events`` stay coherent. Events not mirrored
+    (approvals, client_requests) are recovered from the journal when the
+    client resumes over a sequence gap. Best-effort: a dropped mirror only
+    costs display latency, never correctness.
+    """
+    session_id = getattr(handle, "session_id", None)
+    if not session_id:
+        return
+    try:
+        from omniagents.core.agents.service import current_service
+
+        service = current_service()
+    except Exception:
+        return
+    if service is None:
+        return
+    sess = service.get_session(session_id)
+    if sess is None:
+        return
+    for ch in list(getattr(sess, "channels", None) or []):
+        try:
+            await service._safe_notify(ch, method, params)
+        except Exception:
+            pass
 
 
 async def _relay_worker_event(handle, method: str, params: dict) -> None:
@@ -573,6 +606,36 @@ async def spawn_worker(
     # for parity with how Job.session_id is captured.
     parent_sid = session_id_from_ctx(ctx)
 
+    # The worker acts AS the user who owns the parent session: resolve the
+    # driving channel's principal (falling back to the parent session's
+    # persisted owner) so the worker's session is created owned by that
+    # user. Without this, enforced-authorization deployments reject the
+    # owner's own reads of the worker thread ("Not authorized to access
+    # this thread") because internally spawned sessions were unowned.
+    parent_principal = None
+    try:
+        from omniagents.core.agents.service import current_service
+
+        _svc = current_service()
+    except Exception:
+        _svc = None
+    parent_project_slug = None
+    parent_agent_slug = None
+    if _svc is not None:
+        parent_principal = getattr(getattr(_svc, "channel", None), "principal", None)
+        if parent_principal is None and parent_sid:
+            _owner = getattr(_svc.get_session(parent_sid), "user_id", None)
+            if isinstance(_owner, str) and _owner:
+                from omniagents.core.providers.auth.base import UserIdentity
+
+                parent_principal = UserIdentity(user_id=_owner)
+        # Workers persist in the parent's session namespace so the parent
+        # serve can authorize AND read their threads (owner rows and items
+        # live in the per-(project, agent) store the parent looks in).
+        _mgr = getattr(_svc, "_session_manager", None)
+        parent_project_slug = getattr(_mgr, "_project_slug", None)
+        parent_agent_slug = getattr(_mgr, "_agent_slug", None)
+
     # The worker's run must select a real environment on the shared
     # AgentHost: the parent's own environment when sharing the workspace,
     # or the isolated root registered as a fresh environment. No
@@ -592,6 +655,9 @@ async def spawn_worker(
                 "environment_id": environment_id,
             },
             parent_session_id=parent_sid,
+            principal=parent_principal,
+            project_slug=parent_project_slug,
+            agent_slug=parent_agent_slug,
         )
     except Exception as e:
         # The worktree was prepared above; a failed spawn must not leak it —

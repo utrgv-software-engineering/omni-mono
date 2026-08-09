@@ -4,6 +4,7 @@ import {
   changeGlyph,
   fileBadge,
   numberedFromHunks,
+  numberUnified,
   splitUnifiedDiff,
 } from "../review-model.js";
 import type { GitDiffHunk } from "../../rpc/client.js";
@@ -96,6 +97,18 @@ describe("fileBadge", () => {
       fileBadge({ path: "c", change: "added", additions: 1, deletions: null })
         .text,
     ).toBe("A ");
+  });
+});
+
+describe("numberUnified", () => {
+  it("drops the run-diff builder's bare 'new file' marker (not just git's 'new file mode')", () => {
+    const raw = ["new file", "--- /dev/null", "+++ b/notes.txt", "@@ -0,0 +1 @@", "+hello", ""];
+    const texts = numberUnified(raw).map((line) => line.text);
+    expect(texts).toEqual(["   ⋯", "   1 + hello"]);
+  });
+
+  it("yields no lines for a hunkless binary section", () => {
+    expect(numberUnified(["Binary files a/logo.png and b/logo.png differ"])).toEqual([]);
   });
 });
 

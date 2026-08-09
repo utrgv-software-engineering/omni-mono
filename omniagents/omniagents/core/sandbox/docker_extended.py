@@ -26,12 +26,7 @@ access, so monkey-patching ``.create`` on it doesn't stick.
 from __future__ import annotations
 
 import asyncio
-import io
-import logging
-import random
-import time
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncIterator, Optional, Sequence
 
 from agents.sandbox.manifest import Manifest
@@ -48,21 +43,12 @@ from agents.sandbox.sandboxes.docker import (
     _manifest_requires_sys_admin,
 )
 from agents.sandbox.session import SandboxSession
-from agents.sandbox.session.pty_types import PtyExecUpdate
 from agents.sandbox.snapshot import SnapshotBase, SnapshotSpec, resolve_snapshot
-from agents.sandbox.types import ExecResult, User
 from docker.types import Mount as DockerSDKMount
 from docker.utils import parse_repository_tag
 
 from omniagents.core.sandbox.lifecycle_session import LifecycleSessionClientMixin
 from omniagents.core.sandbox.pty_stream import PtyStreamingSession
-
-_idle_log = logging.getLogger("omniagents.sandbox.idle")
-_IDLE_WATCHER_INTERVAL_S = 10.0
-# Default-on. Embedders that want a different value call
-# ``set_idle_threshold(seconds)`` before ``session.start()``; passing
-# ``0`` disables the watcher entirely.
-DEFAULT_IDLE_THRESHOLD_S = 15 * 60
 
 if TYPE_CHECKING:
     from docker import DockerClient as DockerSDKClient
@@ -100,45 +86,16 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
     :mod:`omniagents.core.sandbox.pty_stream` for the contract.
     """
 
-    def __init__(
-        self,
-        *,
-        docker_client: "DockerSDKClient",
-        container: "Container",
-        state: DockerSandboxSessionState,
-    ) -> None:
-        super().__init__(docker_client=docker_client, container=container, state=state)
-        # Idle pause state. The watcher arms itself in ``_after_start`` with
-        # ``DEFAULT_IDLE_THRESHOLD_S`` — default-on. Embedders override the
-        # threshold by calling ``set_idle_threshold(seconds)`` before
-        # ``session.start()`` (or pass ``0`` to disable entirely).
-        self._idle_threshold_s: float = float(DEFAULT_IDLE_THRESHOLD_S)
-        self._idle_last_activity_at: float = time.monotonic()
-        self._idle_watcher_task: Optional[asyncio.Task] = None
-        self._idle_paused: bool = False
-        self._idle_paused_at: Optional[float] = None
-        # Serializes pause/unpause transitions so the watcher and a wrapped
-        # call's auto-unpause can't fight each other.
-        self._idle_lock: asyncio.Lock = asyncio.Lock()
-
     def should_provision_manifest_accounts_on_resume(self) -> bool:
         return False
 
     async def _ensure_backend_started(self) -> None:
-        # Bringing the session back up is activity, and it's the one start
-        # path the activity wrappers below miss. The idle watcher freezes the
-        # container via the cgroup freezer; when the next turn re-ensures the
-        # session, the SDK base reads a paused container as "not running" and
-        # calls ``container.start()``, which docker rejects with a 409
-        # ("cannot start a paused container, try unpause instead"). Route
-        # through ``_touch_activity`` so the idle state machine (flag,
-        # timestamp, lock) stays consistent and the timer resets; the
-        # ``paused()`` re-check is belt-and-suspenders for a container paused
-        # out-of-band (manual ``docker pause`` or a desynced ``_idle_paused``
-        # flag), where ``_touch_activity`` would no-op. ``unpause()`` is
-        # idempotent, so the healthy / stopped cases fall straight through to
-        # the base start.
-        await self._touch_activity()
+        # A paused container (manual ``sandbox.pause`` or out-of-band
+        # ``docker pause``) reads as "not running" to the SDK base, which
+        # would call ``container.start()`` and get a 409 ("cannot start a
+        # paused container, try unpause instead"). ``unpause()`` is
+        # idempotent, so the healthy / stopped cases fall straight through
+        # to the base start.
         if await self.paused():
             await self.unpause()
         # docker-py is synchronous.  Calling reload/start directly from this
@@ -155,20 +112,13 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
 
         await loop.run_in_executor(_DOCKER_EXECUTOR, _ensure_started)
 
-    async def _after_start(self) -> None:
-        # Inherit the parent's bookkeeping (workspace_root_ready flag,
-        # resume-probe clear) then arm the idle watcher.
-        await super()._after_start()
-        if self._idle_threshold_s and self._idle_threshold_s > 0:
-            self.start_idle_watcher(self._idle_threshold_s)
-
     async def _shutdown_backend(self) -> None:
         # The SDK's version calls ``container.stop()`` with docker's default
         # 10s SIGTERM grace — but PID 1 is ``tail -f /dev/null`` (see the
         # client's ``_create_container``), which as PID 1 ignores SIGTERM, so
-        # every shutdown burns the full grace before the SIGKILL. By the time
-        # this runs the container is disposable (the workspace snapshot is
-        # already persisted), so use a 1s grace and let docker kill it.
+        # every shutdown burns the full grace before the SIGKILL. The
+        # container's writable layer (the workspace) survives the stop, so
+        # use a 1s grace and let docker kill it.
         loop = asyncio.get_running_loop()
 
         def _stop() -> None:
@@ -185,264 +135,24 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
 
         await loop.run_in_executor(_DOCKER_EXECUTOR, _stop)
 
-    async def notify_activity(self) -> None:
-        """External presence ping. Resets the idle timer (and auto-unpauses
-        if paused) without going through a wrapped method. Used by clients
-        to signal "the user is engaging with this sandbox" — e.g. chat UI
-        focus, code-server keystrokes, browser tab interaction with a
-        published port."""
-        await self._touch_activity()
+    async def remove_container(self) -> None:
+        """Force-remove the backing container (terminal shutdown only).
 
-    def set_idle_threshold(self, threshold_s: float) -> None:
-        """Configure the idle-pause threshold for this session.
-
-        Call before ``session.start()`` to override the 15-minute default;
-        ``_after_start`` reads this value when arming the watcher. Pass
-        ``0`` or a negative number to disable the watcher entirely.
-
-        Safe to call after start() too, but you'd need to stop / restart
-        the watcher explicitly to pick up the new value — the typical
-        embedder pattern is one ``set_idle_threshold`` call at boot,
-        derived from profile config.
+        The container's writable layer is the durable workspace, so this
+        is the point of no return — callers reach it via
+        ``teardown_session(destroy=True)`` when the owning session is
+        closed/archived for good.
         """
-        self._idle_threshold_s = max(0.0, float(threshold_s))
+        loop = asyncio.get_running_loop()
 
-    # ------------------------------------------------------------------
-    # Idle pause: watcher + activity tracking
-    #
-    # Sandbox-level idle is the right level because "is this resource
-    # being used?" is exactly what the freezer cgroup operates on. We
-    # don't care about agent-level lifecycle (turns, goals, wakeups) —
-    # we care whether some caller is making a call against the container.
-    # Every entry point that touches docker calls ``_touch_activity()``,
-    # which (a) updates the last-activity timestamp and (b) auto-unpauses
-    # if currently paused. The caller proceeds normally without knowing
-    # about the pause; latency cost is one ``docker unpause`` per
-    # re-activation (~100ms).
-    # ------------------------------------------------------------------
-
-    def start_idle_watcher(self, threshold_s: float) -> None:
-        """Begin watching for idleness; pause after *threshold_s* seconds
-        without a sandbox call. Idempotent — calling again is a no-op
-        while the existing watcher is alive. Pass ``threshold_s <= 0``
-        to disable (the watcher just doesn't start)."""
-        if threshold_s <= 0:
-            _idle_log.info("idle watcher disabled (threshold=%s)", threshold_s)
-            return
-        if self._idle_watcher_task is not None and not self._idle_watcher_task.done():
-            return
-        self._idle_threshold_s = threshold_s
-        self._idle_last_activity_at = time.monotonic()
-        self._idle_watcher_task = asyncio.create_task(
-            self._run_idle_watcher(), name="idle-watcher"
-        )
-        _idle_log.info("idle watcher started (threshold=%.0fs)", threshold_s)
-
-    async def stop_idle_watcher(self) -> None:
-        """Cancel the watcher and unpause if currently paused.
-
-        Important: callers (snapshot persist, container shutdown) need a
-        thawed container, so the defensive unpause here is part of the
-        contract, not a courtesy.
-        """
-        task = self._idle_watcher_task
-        self._idle_watcher_task = None
-        if task is not None and not task.done():
-            task.cancel()
+        def _rm() -> None:
             try:
-                await task
-            except (asyncio.CancelledError, Exception):
+                self._container.remove(force=True)
+            except Exception:
+                # Already gone — mission accomplished.
                 pass
-        if self._idle_paused:
-            async with self._idle_lock:
-                if self._idle_paused:
-                    try:
-                        await self._do_unpause(reason="watcher stop")
-                    except Exception:
-                        # If unpause itself fails, clear the flag anyway —
-                        # the alternative is leaving us believing we're
-                        # paused when we may or may not be.
-                        self._idle_paused = False
-                        self._idle_paused_at = None
 
-    def is_idle_paused(self) -> bool:
-        return self._idle_paused
-
-    async def _touch_activity(self) -> None:
-        """Mark the sandbox as being used right now. Updates the timestamp
-        and transparently unpauses if currently paused. Called from every
-        wrapped entry point — the wrappers are the chokepoints that make
-        "auto-resume on use" a single-line per call site."""
-        self._idle_last_activity_at = time.monotonic()
-        if not self._idle_paused:
-            return
-        async with self._idle_lock:
-            if not self._idle_paused:
-                return
-            try:
-                await self._do_unpause(reason="activity")
-            except Exception as exc:
-                _idle_log.warning("auto-unpause failed: %s", exc)
-                # Clear the flag even on failure so the caller isn't stuck
-                # in a "I believe I'm paused" loop. The next call will
-                # attempt and surface a real error if the container is
-                # genuinely broken.
-                self._idle_paused = False
-                self._idle_paused_at = None
-
-    async def _run_idle_watcher(self) -> None:
-        threshold = self._idle_threshold_s
-        if threshold is None or threshold <= 0:
-            return
-        # Per-watcher jitter (up to +20%, capped at +60s): sessions restored
-        # in the same boot share a last-activity timestamp, so without this
-        # every idle checkpoint fires in the same instant — a synchronized
-        # herd of snapshot persists against one shared serve process.
-        threshold += random.uniform(0.0, min(60.0, threshold * 0.2))
-        try:
-            while True:
-                await asyncio.sleep(_IDLE_WATCHER_INTERVAL_S)
-                if self._idle_paused:
-                    continue
-                idle_for = time.monotonic() - self._idle_last_activity_at
-                if idle_for < threshold:
-                    continue
-                async with self._idle_lock:
-                    # Re-check inside the lock; ``_touch_activity`` may
-                    # have flipped the state between our outer check and
-                    # acquiring the lock.
-                    idle_for = time.monotonic() - self._idle_last_activity_at
-                    if idle_for < threshold or self._idle_paused:
-                        continue
-                    try:
-                        await self._do_pause(idle_for=idle_for)
-                    except Exception as exc:
-                        _idle_log.warning("auto-pause failed: %s", exc)
-        except asyncio.CancelledError:
-            raise
-
-    async def _do_pause(self, *, idle_for: float) -> None:
-        # Checkpoint the workspace snapshot BEFORE freezing — exec hangs on a
-        # paused container, and idle is the natural quiet point to tar. This
-        # makes graceful teardown no longer the *only* persistence point: an
-        # ungraceful death afterwards (SIGKILL, crash, power loss) loses at
-        # most the work since this checkpoint. Noop-snapshot configurations
-        # return immediately. Best-effort — a failed checkpoint must not
-        # block the pause.
-        try:
-            await self._persist_snapshot()
-        except Exception as exc:
-            _idle_log.warning("[idle] checkpoint snapshot failed: %s", exc)
-        await self.pause()
-        self._idle_paused = True
-        self._idle_paused_at = time.monotonic()
-        _idle_log.info(
-            "[idle] sandbox paused after %.0fm of inactivity — will resume on next sandbox call",
-            idle_for / 60.0,
-        )
-
-    async def _do_unpause(self, *, reason: str) -> None:
-        await self.unpause()
-        paused_for = (
-            (time.monotonic() - self._idle_paused_at)
-            if self._idle_paused_at is not None
-            else 0.0
-        )
-        self._idle_paused = False
-        self._idle_paused_at = None
-        _idle_log.info(
-            "[idle] sandbox resumed after %.1fm paused (trigger: %s)",
-            paused_for / 60.0,
-            reason,
-        )
-
-    # ------------------------------------------------------------------
-    # Activity-tracking entry-point wrappers.
-    #
-    # These four cover every path that talks to the docker API for
-    # agent work:
-    #   * ``_exec_run`` — shell commands, file ops via exec (mkdir, ls,
-    #     test, rm, chmod, ...), workspace probes
-    #   * ``_stream_into_exec`` — ``read`` / ``write`` / ``hydrate_workspace``
-    #     bulk content streaming through exec
-    #   * ``pty_exec_start`` — new PTY session creation
-    #   * ``pty_write_stdin`` — keystroke input to an existing PTY
-    #
-    # We deliberately do NOT wrap ``running()``, ``pause()``, ``unpause()``,
-    # ``paused()`` — those are lifecycle / introspection and would either
-    # infinite-loop (pause auto-unpausing itself) or be wrong (a status
-    # check shouldn't wake a paused container).
-    # ------------------------------------------------------------------
-
-    async def _exec_run(
-        self,
-        *,
-        cmd: "list[str]",
-        workdir: "str | None",
-        user: "str | None",
-        timeout: "float | None",
-        command_for_errors: "tuple[str | Path, ...]",
-        kill_on_timeout: bool,
-    ) -> ExecResult:
-        await self._touch_activity()
-        return await super()._exec_run(
-            cmd=cmd,
-            workdir=workdir,
-            user=user,
-            timeout=timeout,
-            command_for_errors=command_for_errors,
-            kill_on_timeout=kill_on_timeout,
-        )
-
-    async def _stream_into_exec(
-        self,
-        *,
-        cmd: "list[str]",
-        stream: io.IOBase,
-        error_path: Path,
-        user: "str | User | None" = None,
-    ) -> None:
-        await self._touch_activity()
-        return await super()._stream_into_exec(
-            cmd=cmd, stream=stream, error_path=error_path, user=user
-        )
-
-    async def pty_exec_start(
-        self,
-        *command: "str | Path",
-        timeout: "float | None" = None,
-        shell: "bool | list[str]" = True,
-        user: "str | User | None" = None,
-        tty: bool = False,
-        yield_time_s: "float | None" = None,
-        max_output_tokens: "int | None" = None,
-    ) -> PtyExecUpdate:
-        await self._touch_activity()
-        return await super().pty_exec_start(
-            *command,
-            timeout=timeout,
-            shell=shell,
-            user=user,
-            tty=tty,
-            yield_time_s=yield_time_s,
-            max_output_tokens=max_output_tokens,
-        )
-
-    async def pty_write_stdin(
-        self,
-        *,
-        session_id: int,
-        chars: str,
-        yield_time_s: "float | None" = None,
-        max_output_tokens: "int | None" = None,
-    ) -> PtyExecUpdate:
-        await self._touch_activity()
-        return await super().pty_write_stdin(
-            session_id=session_id,
-            chars=chars,
-            yield_time_s=yield_time_s,
-            max_output_tokens=max_output_tokens,
-        )
+        await loop.run_in_executor(_DOCKER_EXECUTOR, _rm)
 
     def pty_stream_output(self, process_id: int) -> AsyncIterator[bytes]:
         return self._pty_stream_output(process_id)
@@ -497,10 +207,9 @@ class ExtendedDockerSandboxSession(DockerSandboxSession, PtyStreamingSession):
         etc.). Distinct from :meth:`shutdown`, which releases compute
         entirely at the cost of having to restart processes on resume.
 
-        Tolerant of "already paused" / "not running" — the launcher fires
-        this on idle detection which may race with explicit user actions;
-        a 409 here just means we're already in the requested state and
-        callers can carry on.
+        Tolerant of "already paused" / "not running" — a 409 here just
+        means we're already in the requested state and callers can
+        carry on.
         """
         loop = asyncio.get_running_loop()
 

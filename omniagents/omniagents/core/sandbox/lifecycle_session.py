@@ -4,28 +4,23 @@ The SDK's :class:`~agents.sandbox.session.sandbox_session.SandboxSession`
 proxies a *fixed* method set to the backend session it wraps (held on
 ``_inner``) and does not forward by ``__getattr__``. The omniagents
 extended backends add lifecycle methods the SDK wrapper doesn't know
-about — ``pause`` / ``unpause`` (docker cgroup freezer), the idle
-watcher (``set_idle_threshold`` / ``notify_activity`` /
-``stop_idle_watcher``), and pause introspection (``paused`` /
-``is_idle_paused``). Serve hosts used to reach through ``session._inner``
-to call them; :class:`LifecycleSandboxSession` makes them first-class on
-the wrapper so downstream code never touches ``_inner``.
+about — ``pause`` / ``unpause`` (docker cgroup freezer) and pause
+introspection (``paused``). Serve hosts used to reach through
+``session._inner`` to call them; :class:`LifecycleSandboxSession` makes
+them first-class on the wrapper so downstream code never touches
+``_inner``.
 
 Every proxy is **capability-probing**: the wrapper works over any
 backend, including ones without a lifecycle surface (``unix_local``,
 host-bridge, future cloud backends that can only stop+start).
 
-* ``pause`` / ``unpause`` / ``notify_activity`` raise
-  :class:`SandboxLifecycleUnsupported` when the backend lacks the method
-  — callers that need graceful degradation catch that one type (the
-  builtin ``sandbox.*`` server functions turn it into
-  ``{"ok": false, "supported": false}``).
-* ``set_idle_threshold`` / ``stop_idle_watcher`` are best-effort
-  configuration/teardown calls and **no-op** on unsupported backends,
-  returning ``False`` so callers can log if they care.
-* ``paused`` / ``is_idle_paused`` report ``False`` when the backend
-  can't answer — "not paused" is the correct degraded answer for a
-  backend with no pause primitive.
+* ``pause`` / ``unpause`` raise :class:`SandboxLifecycleUnsupported`
+  when the backend lacks the method — callers that need graceful
+  degradation catch that one type (the builtin ``sandbox.*`` server
+  functions turn it into ``{"ok": false, "supported": false}``).
+* ``paused`` reports ``False`` when the backend can't answer — "not
+  paused" is the correct degraded answer for a backend with no pause
+  primitive.
 
 The module-level helpers (:func:`resolve_backend_session`,
 :func:`backend_supports`) implement the probing over *any* session
@@ -128,52 +123,6 @@ class LifecycleSandboxSession(SandboxSession):
             return False
 
     # ----------------------------------------------------------------- #
-    # Idle watcher
-    # ----------------------------------------------------------------- #
-
-    async def notify_activity(self) -> None:
-        """External presence ping — reset the idle timer (auto-unpausing
-        if idle-paused). Raises :class:`SandboxLifecycleUnsupported` when
-        the backend has no idle machinery."""
-        inner = self._inner
-        if not hasattr(inner, "notify_activity"):
-            raise SandboxLifecycleUnsupported(
-                "backend does not implement notify_activity"
-            )
-        await inner.notify_activity()
-
-    def set_idle_threshold(self, threshold_s: float) -> bool:
-        """Configure the idle-pause threshold (call before ``start()``
-        arms the watcher). No-op returning ``False`` when the backend has
-        no idle machinery."""
-        inner = self._inner
-        if not hasattr(inner, "set_idle_threshold"):
-            return False
-        inner.set_idle_threshold(threshold_s)
-        return True
-
-    async def stop_idle_watcher(self) -> bool:
-        """Cancel the idle watcher (and unpause if idle-paused) ahead of
-        teardown. No-op returning ``False`` when the backend has no idle
-        machinery."""
-        inner = self._inner
-        if not hasattr(inner, "stop_idle_watcher"):
-            return False
-        await inner.stop_idle_watcher()
-        return True
-
-    def is_idle_paused(self) -> bool:
-        """True when the idle watcher currently holds the sandbox paused.
-        ``False`` when the backend can't answer."""
-        inner = self._inner
-        if not hasattr(inner, "is_idle_paused"):
-            return False
-        try:
-            return bool(inner.is_idle_paused())
-        except Exception:
-            return False
-
-    # ----------------------------------------------------------------- #
     # Introspection
     # ----------------------------------------------------------------- #
 
@@ -187,7 +136,7 @@ class LifecycleSessionClientMixin:
     """Wrap sessions in :class:`LifecycleSandboxSession`.
 
     Mixed into the omniagents extended sandbox clients (docker,
-    unix_local, ACI, host-bridge) ahead of the SDK base so their
+    unix_local, host-bridge) ahead of the SDK base so their
     ``create``/``resume`` paths — which all funnel through the SDK's
     ``_wrap_session`` — hand back the lifecycle-capable wrapper.
     """

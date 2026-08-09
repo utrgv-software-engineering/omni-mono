@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, TypeGuard, cast
 
 from .local import LocalAgent
+
+logger = logging.getLogger(__name__)
 
 
 def _default_worker_safety(spec: Any) -> None:
@@ -52,6 +55,18 @@ class WorkerHandle:
     error: str | None = None
     worker_id: str = ""
     parent_session_id: str | None = None
+    #: Principal the worker acts as (the parent session's user). Stamped on
+    #: the worker agent's in-process channel so its session is CREATED owned
+    #: by that user — under enforced authorization an unowned worker thread
+    #: would be unreadable by the very user whose agent spawned it.
+    principal: Any = None
+    #: Session namespace the worker persists under — the PARENT's
+    #: (project_slug, agent_slug), not a worker-private one. The parent
+    #: serve authorizes and reads worker threads through ITS store; a
+    #: private namespace makes them unowned AND itemless from the parent's
+    #: perspective.
+    project_slug: str | None = None
+    agent_slug: str | None = None
 
 
 # Worker transcript events forwarded to the observer: the narrative
@@ -69,6 +84,17 @@ RELAYED_WORKER_EVENTS = frozenset(
     }
 )
 
+# Superset mirrored VERBATIM (payloads keep the worker service's replay
+# stamps) to clients viewing the worker's session through the parent serve
+# — the launcher's read-only transcript viewer. Adds ``token`` (live
+# typing; transient, never journaled) and ``item_updated`` (canonical item
+# revisions). Interaction events (approvals, client_requests) are
+# deliberately NOT mirrored: the monitor auto-answers those and a
+# read-only viewer must not be prompted or double-respond. They are still
+# journaled, so any live seq gap self-heals via client resume against the
+# shared per-namespace journal.
+MIRRORED_WORKER_EVENTS = RELAYED_WORKER_EVENTS | frozenset({"token", "item_updated"})
+
 
 class WorkerManager:
     def __init__(
@@ -78,6 +104,8 @@ class WorkerManager:
         agent_factory: Callable[[Any, Any], Any] | None = None,
         on_complete: Callable[["WorkerHandle"], Awaitable[None]] | None = None,
         on_event: Callable[["WorkerHandle", str, dict], Awaitable[None]]
+        | None = None,
+        on_session_event: Callable[["WorkerHandle", str, dict], Awaitable[None]]
         | None = None,
         host_resources_provider: Callable[[], Any | None] | None = None,
     ) -> None:
@@ -92,6 +120,7 @@ class WorkerManager:
         )
         self._on_complete = on_complete
         self._on_event = on_event
+        self._on_session_event = on_session_event
         self._host_resources_provider = host_resources_provider
         self._workers: dict[str, WorkerHandle] = {}
 
@@ -135,6 +164,15 @@ class WorkerManager:
 
             method = msg.get("method", "")
             params = msg.get("params", {})
+
+            # Mirror the session-event superset to viewers of the worker's
+            # own thread (verbatim, stamps intact) before anything else —
+            # a mirror failure must never affect the lifecycle.
+            if self._on_session_event is not None and method in MIRRORED_WORKER_EVENTS:
+                try:
+                    await self._on_session_event(handle, method, params)
+                except Exception:
+                    pass
 
             # Stream the narrative subset to the observer (parent session)
             # before local handling — the transcript relay must see run_end
@@ -231,9 +269,19 @@ class WorkerManager:
         session_id: str | None = None,
         context: dict | None = None,
         parent_session_id: str | None = None,
+        principal: Any = None,
+        project_slug: str | None = None,
+        agent_slug: str | None = None,
     ) -> WorkerHandle:
         spec, _runtime = self._spec_loader(model)
         _default_worker_safety(spec)
+        # Persist the worker in the spawning agent's session namespace (see
+        # WorkerHandle.project_slug). The spec drives the worker service's
+        # SessionManager slugs, so stamping it here is the one chokepoint.
+        if project_slug is not None:
+            spec.project_slug = project_slug
+        if agent_slug is not None:
+            spec.agent_slug = agent_slug
         variables = getattr(spec, "variables", None)
         if variables is None:
             spec.variables = {}
@@ -251,6 +299,18 @@ class WorkerManager:
         await agent._ensure_client()
         client = agent._client
         assert client is not None  # _ensure_client() guarantees a live client
+
+        # The worker acts AS the spawning user: attach the parent principal
+        # to the worker's in-process channel BEFORE start_run, so the worker
+        # session is created owned by that user and its thread stays
+        # readable to them under enforced authorization. This MUST go
+        # through ``set_principal`` (the stored channel object) — reading
+        # ``service.channel`` here would hit the ContextVar property and
+        # return THIS task's channel, not the worker's.
+        if principal is not None:
+            setter = getattr(agent, "set_principal", None)
+            if callable(setter):
+                setter(principal)
 
         # Execution derives ONLY from a routed environment lease. The
         # spawner names the environment (the parent's own, or a worktree
@@ -286,6 +346,45 @@ class WorkerManager:
             run_id = ""
             sess_id = ""
 
+        # Worker threads share the parent's store but are not conversations
+        # the user opened — archive them at birth so session listings stay
+        # clean while the thread remains readable by id (the launcher's
+        # Agents app mounts it as a transcript). THREE writes make this
+        # stick, because "archived" lives in three places:
+        #   1. the legacy ``sessions.archived`` row (list_sessions),
+        #   2. the LIVE session object — the conversation recorder
+        #      force-syncs ``Thread.status`` from ``session.archived`` on
+        #      every recorded item, and the live flag hydrated False before
+        #      this ran; without this write the thread flips back to
+        #      ACTIVE on the very next item,
+        #   3. via (2), the canonical Thread row itself — which is the
+        #      projection session listings actually prefer.
+        if sess_id and (project_slug is not None or agent_slug is not None):
+            try:
+                from omniagents.core.session.history_db import set_archived
+
+                set_archived(
+                    sess_id,
+                    True,
+                    project_slug=project_slug,
+                    agent_slug=agent_slug,
+                )
+            except Exception:
+                logger.exception("failed to archive worker session %s", sess_id)
+            try:
+                worker_service = getattr(agent, "_agent_service", None)
+                live = (
+                    worker_service.get_session(sess_id)
+                    if worker_service is not None
+                    else None
+                )
+                if live is not None:
+                    live.archived = True
+            except Exception:
+                logger.exception(
+                    "failed to flag live worker session %s archived", sess_id
+                )
+
         handle = WorkerHandle(
             agent=agent,
             run_id=run_id,
@@ -294,6 +393,9 @@ class WorkerManager:
             monitor_task=None,
             worker_id=worker_id,
             parent_session_id=parent_session_id,
+            principal=principal,
+            project_slug=project_slug,
+            agent_slug=agent_slug,
         )
         handle.monitor_task = asyncio.create_task(
             self._monitor_worker(handle), name=f"worker-monitor-{run_id or worker_id}"
@@ -308,6 +410,9 @@ class WorkerManager:
         model: str | None = None,
         context: dict | None = None,
         parent_session_id: str | None = None,
+        principal: Any = None,
+        project_slug: str | None = None,
+        agent_slug: str | None = None,
     ) -> WorkerHandle:
         handle = await self._create_worker(
             worker_id=worker_id,
@@ -315,6 +420,9 @@ class WorkerManager:
             model=model,
             context=context,
             parent_session_id=parent_session_id,
+            principal=principal,
+            project_slug=project_slug,
+            agent_slug=agent_slug,
         )
         self._workers[worker_id] = handle
         return handle
@@ -454,6 +562,10 @@ class WorkerManager:
             model=None,
             session_id=old_session_id,
             context=context,
+            parent_session_id=handle.parent_session_id,
+            principal=handle.principal,
+            project_slug=handle.project_slug,
+            agent_slug=handle.agent_slug,
         )
         new_handle.result = None
         self._workers[worker_id] = new_handle

@@ -178,9 +178,6 @@ class TeardownSession:
     async def pty_terminate_all(self):
         self.calls.append("pty_terminate_all")
 
-    async def stop_idle_watcher(self):
-        self.calls.append("stop_idle_watcher")
-
     async def unpause(self):
         self.calls.append("unpause")
 
@@ -202,7 +199,6 @@ def test_teardown_full_sequence_and_idempotence():
     asyncio.run(teardown_session(session, [("svc", 1)]))
     assert session.calls == [
         "pty_terminate_all",
-        "stop_idle_watcher",
         "unpause",
         "stop",
         "aclose",
@@ -216,7 +212,7 @@ def test_teardown_full_sequence_and_idempotence():
 def test_teardown_skips_pty_terminate_without_started_services():
     session = TeardownSession()
     asyncio.run(teardown_session(session, []))
-    assert session.calls == ["stop_idle_watcher", "unpause", "stop", "aclose"]
+    assert session.calls == ["unpause", "stop", "aclose"]
 
 
 def test_teardown_survives_stop_failure():

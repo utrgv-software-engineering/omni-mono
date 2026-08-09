@@ -29,7 +29,6 @@ class _LifecycleInner(_BareInner):
     def __init__(self):
         self.calls = []
         self._paused = False
-        self.idle_threshold = None
 
     async def pause(self):
         self.calls.append("pause")
@@ -40,18 +39,6 @@ class _LifecycleInner(_BareInner):
         self._paused = False
 
     async def paused(self):
-        return self._paused
-
-    async def notify_activity(self):
-        self.calls.append("notify_activity")
-
-    def set_idle_threshold(self, threshold_s):
-        self.idle_threshold = threshold_s
-
-    async def stop_idle_watcher(self):
-        self.calls.append("stop_idle_watcher")
-
-    def is_idle_paused(self):
         return self._paused
 
 
@@ -69,16 +56,11 @@ def test_proxies_forward_to_backend():
     async def go():
         await session.pause()
         assert await session.paused() is True
-        assert session.is_idle_paused() is True
         await session.unpause()
         assert await session.paused() is False
-        await session.notify_activity()
-        assert await session.stop_idle_watcher() is True
 
     asyncio.run(go())
-    assert inner.calls == ["pause", "unpause", "notify_activity", "stop_idle_watcher"]
-    assert session.set_idle_threshold(300.0) is True
-    assert inner.idle_threshold == 300.0
+    assert inner.calls == ["pause", "unpause"]
     assert session.supports_pause() and session.supports_unpause()
     assert session.backend_class_name == "_LifecycleInner"
 
@@ -105,13 +87,8 @@ def test_unsupported_backend_probes():
         asyncio.run(session.pause())
     with pytest.raises(SandboxLifecycleUnsupported):
         asyncio.run(session.unpause())
-    with pytest.raises(SandboxLifecycleUnsupported):
-        asyncio.run(session.notify_activity())
     # Best-effort ops no-op instead of raising.
-    assert session.set_idle_threshold(60.0) is False
-    assert asyncio.run(session.stop_idle_watcher()) is False
     assert asyncio.run(session.paused()) is False
-    assert session.is_idle_paused() is False
 
 
 def test_paused_swallows_backend_errors():
@@ -137,7 +114,7 @@ def test_resolve_backend_session_unwraps_wrapper():
 def test_backend_supports_probes_through_wrapper():
     assert backend_supports(_wrap(_LifecycleInner()), "pause") is True
     assert backend_supports(_wrap(_BareInner()), "pause") is False
-    assert backend_supports(_LifecycleInner(), "notify_activity") is True
+    assert backend_supports(_LifecycleInner(), "unpause") is True
 
 
 # --------------------------- client wiring ----------------------------- #
@@ -153,7 +130,6 @@ def test_mixin_wraps_in_lifecycle_session():
 
 
 def test_all_extended_clients_carry_the_mixin():
-    from omniagents.core.sandbox.aci import AciSandboxClient
     from omniagents.core.sandbox.docker_extended import ExtendedDockerSandboxClient
     from omniagents.core.sandbox.host_bridge import HostBridgeSandboxClient
     from omniagents.core.sandbox.unix_local_extended import (
@@ -163,7 +139,6 @@ def test_all_extended_clients_carry_the_mixin():
     for cls in (
         ExtendedDockerSandboxClient,
         ExtendedUnixLocalSandboxClient,
-        AciSandboxClient,
         HostBridgeSandboxClient,
     ):
         assert issubclass(cls, LifecycleSessionClientMixin), cls

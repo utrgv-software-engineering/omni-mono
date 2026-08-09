@@ -180,6 +180,7 @@ class ServeEnvironmentLifecycleController:
         container_id: str | None,
         service_urls: dict[str, Any],
         started_services: list[tuple[Any, int]],
+        state_path: Path | None = None,
     ) -> None:
         self.environment_id = environment_id
         self.profile_id = profile_id
@@ -187,6 +188,10 @@ class ServeEnvironmentLifecycleController:
         self.container_id = container_id
         self.service_urls = service_urls
         self.started_services = started_services
+        # Durable container session (docker): ordinary close detaches and
+        # leaves the container for reattach; only a discard destroys it.
+        self.detachable = state_path is not None
+        self.state_path = state_path
         self.discard_snapshot_on_exit = False
         self._ready = asyncio.Event()
         self._ready.set()
@@ -254,18 +259,6 @@ class ServeEnvironmentLifecycleController:
             return {"ok": False, "supported": True, "reason": str(exc)}
         return {"ok": True, "supported": True, "paused": paused}
 
-    async def notify_activity(self, lease: EnvironmentLease) -> dict[str, Any]:
-        self._validate(lease)
-        backend = self._backend(lease)
-        notify = getattr(backend, "notify_activity", None)
-        if not callable(notify):
-            return {"ok": False}
-        try:
-            await notify()
-        except Exception:  # noqa: BLE001
-            return {"ok": False}
-        return {"ok": True}
-
     async def discard_snapshot(self, lease: EnvironmentLease) -> dict[str, Any]:
         self._validate(lease)
         self.discard_snapshot_on_exit = True
@@ -281,6 +274,9 @@ class ServeEnvironmentLifecycleController:
             session,
             self.started_services,
             discard_snapshot=self.discard_snapshot_on_exit,
+            detach=self.detachable and not self.discard_snapshot_on_exit,
+            destroy=self.detachable and self.discard_snapshot_on_exit,
+            state_path=self.state_path,
         )
         self.started_services = []
         self._closed = True
@@ -365,12 +361,15 @@ class ServeEnvironmentProvisioner:
                 terminal_defaults=terminal_defaults,
             )
 
+        snapshot_ref = request.workspace.snapshot_ref or request.environment_id
+        state_path = self._session_state_path(profile, snapshot_ref)
         brought = await bring_up_session(
             profile=profile,
             sources_parsed=[dict(source) for source in request.workspace.sources],
             credentials_parsed=self._credentials,
-            snapshot_ref=request.workspace.snapshot_ref or request.environment_id,
+            snapshot_ref=snapshot_ref,
             snapshot_dir=self._snapshot_dir,
+            state_path=state_path,
         )
         try:
             root = getattr(brought.manifest, "root", None)
@@ -384,6 +383,7 @@ class ServeEnvironmentProvisioner:
                 container_id=brought.container_id,
                 service_urls=brought.service_urls,
                 started_services=brought.started_services,
+                state_path=state_path,
             )
             return ProvisionedEnvironment(
                 workspace=SandboxWorkspace(
@@ -401,5 +401,38 @@ class ServeEnvironmentProvisioner:
                 terminal_defaults=terminal_defaults,
             )
         except Exception:
-            await teardown_session(brought.session, brought.started_services)
+            # Post-bring-up registration failure: the workspace is intact, so
+            # a durable container session detaches (reattach on retry) rather
+            # than being destroyed.
+            await teardown_session(
+                brought.session,
+                brought.started_services,
+                detach=state_path is not None,
+            )
             raise
+
+    def _session_state_path(
+        self, profile: ResolvedProfile, snapshot_ref: str
+    ) -> Path | None:
+        """Where this Workspace's container session-state record lives.
+
+        Only docker sessions are reattachable; other backends return None
+        (their teardown keeps the legacy stop semantics). Records live in
+        ``<config>/sandbox-state/`` — a sibling of the snapshot dir the
+        product already passes — keyed by the Workspace's durable
+        ``snapshot_ref``. A ref that can't be a safe filename disables
+        persistence rather than escaping the directory.
+        """
+        if self._snapshot_dir is None:
+            return None
+        client_type = (profile.raw.get("client") or {}).get("type")
+        if client_type != "docker":
+            return None
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", snapshot_ref):
+            logger.warning(
+                "snapshot_ref %r is not a safe filename; container session "
+                "state will not persist",
+                snapshot_ref,
+            )
+            return None
+        return self._snapshot_dir.parent / "sandbox-state" / f"{snapshot_ref}.json"

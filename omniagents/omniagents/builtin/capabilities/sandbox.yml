@@ -17,7 +17,6 @@ tools:
 server_functions:
   - sandbox.pause
   - sandbox.unpause
-  - sandbox.notify_activity
   - sandbox.discard_snapshot
 instructions: |
   Observe the environment your filesystem/shell tools run in. You CANNOT change

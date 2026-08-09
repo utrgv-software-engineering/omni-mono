@@ -9,10 +9,12 @@ attached to the running agent":
 
 * :func:`bring_up_session` — build the sandbox client from a
   :class:`~omniagents.core.sandbox.profiles.ResolvedProfile`,
-  create the session, scrub + hydrate the Workspace snapshot, run init
-  commands, start services, and resolve their URLs.
-* :func:`teardown_session` — stop services, persist the workspace
-  snapshot, close the session. Idempotent and ``None``-safe.
+  reattach to the workspace's recorded container (docker) or create a
+  fresh session, run init commands (fresh workspaces only), start
+  services, and resolve their URLs.
+* :func:`teardown_session` — detach from a durable container session
+  (leaving it running), or stop + destroy it on terminal shutdown.
+  Idempotent and ``None``-safe.
 Runtime placement is returned to the AgentHost for explicit environment
 registration. The harness does not publish filesystem or sandbox handles in
 process-global state.
@@ -29,6 +31,7 @@ Product knobs, defaulting to the omni-code values they were lifted with:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import tarfile
@@ -54,16 +57,18 @@ __all__ = [
     "BroughtUpSession",
     "bring_up_session",
     "teardown_session",
+    "write_session_state",
     "NOOP_SNAPSHOT_CLIENT_TYPES",
     "DEFAULT_SERVICE_URL_SUFFIXES",
 ]
 
 
-# Client types whose lifecycle snapshot is a noop: the workspace IS a
-# durable directory (on this host for ``unix_local``, on the remote host
-# for ``host_bridge``), so tarring it on stop would be pure overhead —
-# no snapshot archive is needed.
-NOOP_SNAPSHOT_CLIENT_TYPES: Tuple[str, ...] = ("unix_local", "host_bridge")
+# Client types whose lifecycle snapshot is a noop: the workspace is
+# durable without a tar archive — a host directory for ``unix_local``,
+# the remote host's disk for ``host_bridge``, and the container's own
+# writable layer for ``docker`` (sessions reattach to their recorded
+# container instead of rehydrating an archive).
+NOOP_SNAPSHOT_CLIENT_TYPES: Tuple[str, ...] = ("unix_local", "docker", "host_bridge")
 
 # Per-service-name URL suffixes applied by :func:`_resolve_service_urls`.
 # A service named ``vnc`` is assumed to be noVNC and gets pointed at its
@@ -196,34 +201,6 @@ def _build_seed_entry(src: Dict[str, Any]) -> Any:
             )
         return PartialCloneGitRepo(host=host, repo=repo, ref=ref)
     raise ValueError(f"unknown --source kind: {kind!r}")
-
-
-_DEFAULT_IDLE_THRESHOLD_S = 15 * 60
-
-
-def _parse_idle_threshold(raw: Optional[Any]) -> float:
-    """Read ``idle.pause_after_seconds`` from a resolved profile dict.
-
-    Missing block → 15-minute default. Explicit ``0`` (or negative) disables
-    the watcher. Non-numeric values fall back to the default and log a warning;
-    we'd rather paper over a YAML typo than fail the launch.
-    """
-    if not isinstance(raw, dict):
-        return float(_DEFAULT_IDLE_THRESHOLD_S)
-    value = raw.get("pause_after_seconds")
-    if value is None:
-        return float(_DEFAULT_IDLE_THRESHOLD_S)
-    try:
-        seconds = float(value)
-    except (TypeError, ValueError):
-        print(
-            f"[serve] idle.pause_after_seconds is not a number ({value!r}); using default",
-            file=sys.stderr,
-        )
-        return float(_DEFAULT_IDLE_THRESHOLD_S)
-    if seconds < 0:
-        return 0.0
-    return seconds
 
 
 def _build_snapshot(
@@ -610,6 +587,43 @@ class BroughtUpSession:
     manifest: Any
     client_type: Optional[str]
     container_id: Optional[str]
+    workspace_preserved: bool = False
+
+
+def _read_session_state(state_path: Path) -> Optional[Dict[str, Any]]:
+    """Parse a persisted sandbox-state record; None when missing/corrupt."""
+    try:
+        data = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_session_state(state_path: Path, client: Any, session: Any) -> None:
+    """Persist the session's backend state so a later serve process can
+    reattach to its container. Atomic (tmp + rename); best-effort — a
+    failed write degrades to a fresh container next boot, never a crash.
+
+    The top-level ``container_id`` duplicates the SDK payload's field so
+    ownership tooling (the launcher's orphan sweep) can read it without
+    knowing the SDK schema.
+    """
+    try:
+        payload = {
+            "version": 1,
+            "backend": getattr(client, "backend_id", None) or type(client).__name__,
+            "container_id": getattr(session.state, "container_id", None),
+            "session_state": client.serialize_session_state(session.state),
+        }
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = state_path.with_name(state_path.name + ".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(state_path)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[serve] failed to persist sandbox state to {state_path}: {exc}",
+            file=sys.stderr,
+        )
 
 
 async def bring_up_session(
@@ -619,13 +633,20 @@ async def bring_up_session(
     snapshot_ref: str,
     snapshot_dir: Optional[Path],
     credentials_parsed: Optional[List[Dict[str, Any]]] = None,
+    state_path: Optional[Path] = None,
 ) -> BroughtUpSession:
-    """Build the sandbox client from *profile*, create and hydrate the session,
-    start it, run init + services, and return its runtime resources. Raises
-    ``ValueError`` for a bad profile/source; tears the partial
-    session down (re-raising) if init/services fail.
+    """Build the sandbox client from *profile* and attach a session.
 
-    Used by both startup and AgentHost-managed environment provisioning.
+    When *state_path* holds a prior session-state record (docker), the
+    recorded container is resumed: its writable layer IS the durable
+    workspace, so init commands are skipped (re-running them would move
+    the ``omni/seed`` PR baseline) and already-listening services are
+    adopted rather than respawned. Otherwise a fresh session is created
+    and fully initialized. The state record is (re)written after a
+    successful bring-up. Raises ``ValueError`` for a bad profile/source;
+    tears the partial session down (re-raising) if init/services fail —
+    destroying a fresh container, but leaving a resumed one intact for
+    the next attempt.
     """
     client, options, manifest = _build_sandbox(profile, sources=sources_parsed)
 
@@ -637,47 +658,81 @@ async def bring_up_session(
         client_type=client_type,
     )
 
-    session = await client.create(
-        manifest=manifest,
-        options=options,
-        snapshot=snapshot,
-    )
+    session: Any = None
+    recorded_container_id: Optional[str] = None
+    if state_path is not None and state_path.is_file() and hasattr(client, "resume"):
+        record = _read_session_state(state_path)
+        recorded_state = record.get("session_state") if record else None
+        if isinstance(recorded_state, dict):
+            try:
+                session = await client.resume(
+                    client.deserialize_session_state(recorded_state)
+                )
+                raw_id = record.get("container_id") if record else None
+                recorded_container_id = raw_id if isinstance(raw_id, str) else None
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"[serve] sandbox state {state_path} not resumable ({exc}); "
+                    "creating a fresh session",
+                    file=sys.stderr,
+                )
+                session = None
 
-    # Idle-pause threshold from the profile YAML before start() arms the
-    # watcher. First-class proxy on the framework's session wrapper; no-ops
-    # on backends without idle machinery.
-    raw_idle = profile.raw.get("idle")
-    if isinstance(raw_idle, dict) and "pause_after_seconds" in raw_idle:
-        session.set_idle_threshold(_parse_idle_threshold(raw_idle))
-
-    # Scrub the snapshot tar BEFORE start() hydrates it — this is the ONLY
-    # scrub site (teardown deliberately doesn't scrub; see teardown_session).
-    # Without it, a persisted tar containing an unsafe symlink (e.g. a
-    # committed `.fvm/flutter_sdk -> /Users/...` absolute symlink in a cloned
-    # repo) would make `start()` throw WorkspaceArchiveWriteError and the
-    # session would never come up. Best-effort + idempotent. Off-loop: the
-    # scrub reads and rewrites the whole tar, and bring_up_session runs on
-    # the shared serve loop — a large snapshot must not stall other sessions.
-    await asyncio.to_thread(_scrub_workspace_snapshot, session)
+    if session is None:
+        session = await client.create(
+            manifest=manifest,
+            options=options,
+            snapshot=snapshot,
+        )
+        # Scrub the snapshot tar BEFORE start() hydrates it — this is the ONLY
+        # scrub site. Without it, a persisted tar containing an unsafe symlink
+        # (e.g. a committed `.fvm/flutter_sdk -> /Users/...` absolute symlink
+        # in a cloned repo) would make `start()` throw
+        # WorkspaceArchiveWriteError and the session would never come up.
+        # No-op for noop-snapshot backends (docker/unix_local/host_bridge).
+        # Off-loop: the scrub reads and rewrites the whole tar, and
+        # bring_up_session runs on the shared serve loop.
+        await asyncio.to_thread(_scrub_workspace_snapshot, session)
 
     await session.start()
+    # Preserved = we resumed AND landed on the same container (resume falls
+    # back to a fresh container when the recorded one is gone — that fresh
+    # container was re-seeded from the manifest and needs full init).
+    workspace_preserved = (
+        recorded_container_id is not None
+        and getattr(session.state, "container_id", None) == recorded_container_id
+    )
     started_services: List[Tuple[ServiceSpec, int]] = []
     try:
         # Configure git + CLI auth before init/services and before the agent
         # runs, so private clones already done during create() are joined by
         # working `gh` / `az devops` for the agent's own commands. Written as the
         # profile's run_as identity so creds land in the HOME the agent uses.
+        # Re-run on reattach too — tokens rotate between serve processes.
         await _configure_credentials(
             session,
             credentials_parsed or [],
             run_as_user=_run_as_exec_user(profile.raw),
         )
-        await _run_init(session, profile.init)
+        if not workspace_preserved:
+            await _run_init(session, profile.init)
         started_services = await _start_services(session, profile.services)
         service_urls = await _resolve_service_urls(session, started_services)
     except Exception:
-        await teardown_session(session, started_services)
+        # A fresh container is half-initialized garbage — destroy it. A
+        # preserved container holds real user work — detach and leave it
+        # for the next attempt.
+        await teardown_session(
+            session,
+            started_services,
+            detach=workspace_preserved,
+            destroy=not workspace_preserved,
+            state_path=None if workspace_preserved else state_path,
+        )
         raise
+
+    if state_path is not None:
+        write_session_state(state_path, client, session)
 
     return BroughtUpSession(
         session=session,
@@ -686,6 +741,7 @@ async def bring_up_session(
         manifest=manifest,
         client_type=client_type,
         container_id=getattr(session.state, "container_id", None),
+        workspace_preserved=workspace_preserved,
     )
 
 
@@ -824,19 +880,31 @@ async def teardown_session(
     started_services: List[Tuple[ServiceSpec, int]],
     *,
     discard_snapshot: bool = False,
+    detach: bool = False,
+    destroy: bool = False,
+    state_path: Optional[Path] = None,
 ) -> None:
-    """Stop services + persist the workspace snapshot + close the session.
+    """Release a session one of three ways.
+
+    * ``detach=True`` — the backend is a durable container session (docker):
+      leave the container, its services, and its PTYs running. The next
+      serve process reattaches via the state record. Default for docker on
+      ordinary serve shutdown. Note: the SDK's ``aclose()`` runs
+      ``stop()`` + ``shutdown()`` (which stops the container), so detach
+      deliberately calls NOTHING on the session — its process-local
+      resources die with this serve process.
+    * ``destroy=True`` — terminal shutdown (chat closed/archived, or a
+      half-initialized fresh container after a failed bring-up): stop the
+      container, remove it, and delete *state_path*.
+    * neither — legacy stop for non-durable backends: stop services, persist
+      the workspace snapshot (unless ``discard_snapshot``), close.
 
     Safe to call on a partially-started session, or on ``None`` (the host
     target has no session to tear down).
-
-    ``discard_snapshot=True`` skips the workspace snapshot persist entirely
-    (fingerprint pass + full tar export). Only for terminal shutdowns — the
-    launcher deletes the tar right after this process exits
-    (``sandbox.discard_snapshot``). Never set it on a switch: the switch
-    rehydrates the new backend from the snapshot this persist writes.
     """
     if session is None:
+        return
+    if detach and not destroy:
         return
     # pty_terminate_all is broad but appropriate — every PTY in this session
     # was started by us.
@@ -845,15 +913,8 @@ async def teardown_session(
             await session.pty_terminate_all()
         except Exception:
             pass
-    # Idle watchers belong to the environment session, not the product serve
-    # process. Stop them here so every lifecycle-controller close path has the
-    # same complete teardown sequence.
-    try:
-        await session.stop_idle_watcher()
-    except Exception:
-        pass
-    # If the container was paused for idle, unpause first — session.stop()
-    # → persist_snapshot drives ``session.exec`` to write the fingerprint
+    # If the container is paused, unpause first — session.stop() →
+    # persist_snapshot drives ``session.exec`` to write the fingerprint
     # helper output, which hangs forever on a paused container. First-class
     # proxy; SandboxLifecycleUnsupported (backend without unpause) and
     # backend errors are both swallowed — cheap no-op either way.
@@ -867,7 +928,7 @@ async def teardown_session(
     # a separate public ``persist_snapshot`` method on the session.
     # Snapshot is best-effort: log any failure so the launcher can
     # surface it, but don't block shutdown.
-    if discard_snapshot:
+    if discard_snapshot or destroy:
         # ``persist_snapshot`` early-returns on a NoopSnapshot, so swapping
         # one in is the supported way to skip the persist without forking
         # the SDK's stop path.
@@ -884,6 +945,20 @@ async def teardown_session(
         await session.stop()
     except Exception as e:
         print(f"[teardown] session stop failed: {e}", file=sys.stderr)
+    if destroy:
+        from omniagents.core.sandbox.lifecycle_session import resolve_backend_session
+
+        remove = getattr(resolve_backend_session(session), "remove_container", None)
+        if callable(remove):
+            try:
+                await remove()
+            except Exception as e:  # noqa: BLE001
+                print(f"[teardown] container remove failed: {e}", file=sys.stderr)
+        if state_path is not None:
+            try:
+                state_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     try:
         await session.aclose()
     except Exception:

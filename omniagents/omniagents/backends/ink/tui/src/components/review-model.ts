@@ -156,20 +156,29 @@ const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@ ?(.*)$/;
 
 /**
  * Raw unified-diff text (one file's section) → numbered display lines.
- * The `@@` headers seed the two counters and render as `⋯` separators;
- * header noise is dropped.
+ * The `@@` headers seed the counter and render as `⋯` separators.
+ *
+ * Noise is dropped by grammar, not by prefix list: everything before the
+ * section's first `@@` is file-header material (`index …`, `--- `/`+++ `,
+ * git's `new file mode 100644`, the run-diff builder's bare `new file`,
+ * `Binary files … differ`, rename/copy markers), and inside a hunk only
+ * `+` / `-` / `\\` / space lines are content. A prefix list can't keep up
+ * with header variants — treating "n" as context is how a bare `new file`
+ * once rendered as the mystery line `0 ew file`.
  */
 export function numberUnified(rawLines: string[]): DiffViewLine[] {
   const out: DiffViewLine[] = [];
   let newNo = 0;
+  let inHunk = false;
   for (const line of rawLines) {
     const header = line.match(HUNK_HEADER);
     if (header) {
+      inHunk = true;
       newNo = parseInt(header[2]!, 10);
       out.push(hunkSeparator(header[3]?.trim() || null));
       continue;
     }
-    if (NOISE_PREFIXES.some((prefix) => line.startsWith(prefix))) continue;
+    if (!inHunk) continue;
     if (line.startsWith("+")) {
       out.push({
         text: gutter(newNo, "+") + line.slice(1),
@@ -186,13 +195,15 @@ export function numberUnified(rawLines: string[]): DiffViewLine[] {
         text: gutter(null, " ") + line,
         color: Theme.textChrome,
       });
-    } else {
+    } else if (line.startsWith(" ")) {
       out.push({
         text: gutter(newNo, " ") + line.slice(1),
         color: Theme.textSecondary,
       });
       newNo += 1;
     }
+    // Anything else inside a hunk (a truncation artifact, the trailing
+    // empty string from the final newline split) is not diff content.
   }
   return out;
 }

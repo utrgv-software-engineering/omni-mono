@@ -13,7 +13,6 @@ import pytest
 from omniagents.builtin.server_functions.sandbox_lifecycle import (
     SANDBOX_SERVER_FUNCTIONS,
     sandbox_discard_snapshot,
-    sandbox_notify_activity,
     sandbox_pause,
     sandbox_unpause,
 )
@@ -44,10 +43,6 @@ class _Controller:
     async def unpause(self, lease):
         self.calls.append(("unpause", lease.environment_id))
         return {"ok": True, "supported": True, "paused": False}
-
-    async def notify_activity(self, lease):
-        self.calls.append(("notify", lease.environment_id))
-        return {"ok": True}
 
     async def discard_snapshot(self, lease):
         self.calls.append(("discard", lease.environment_id))
@@ -102,16 +97,6 @@ def test_lifecycle_without_controller_is_typed_capability_error():
         asyncio.run(sandbox_pause(None))
 
 
-# ----------------------------- notify_activity -------------------------- #
-
-
-def test_notify_activity():
-    controller = _Controller()
-    with _routed(controller):
-        assert asyncio.run(sandbox_notify_activity(None)) == {"ok": True}
-    assert controller.calls == [("notify", "env-1")]
-
-
 # ----------------------------- discard_snapshot ------------------------- #
 
 
@@ -155,7 +140,6 @@ def test_sandbox_pack_rpc_surface(tmp_path):
     assert sf_names == {
         "sandbox.pause",
         "sandbox.unpause",
-        "sandbox.notify_activity",
         "sandbox.discard_snapshot",
     }
 
@@ -165,4 +149,4 @@ def test_sandbox_pack_rpc_surface(tmp_path):
 
     # The builtin server-function registry carries the RPC names.
     assert "sandbox.pause" in proj.server_functions_registry
-    assert len(SANDBOX_SERVER_FUNCTIONS) == 4
+    assert len(SANDBOX_SERVER_FUNCTIONS) == 3

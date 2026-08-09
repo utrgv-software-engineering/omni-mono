@@ -7,10 +7,9 @@ to a remote host running ``omni sandbox-host`` (see
 ``omni_code.sandbox_host_cli``), which hosts a real
 ``UnixLocalSandboxSession`` and executes against that host's filesystem.
 
-This mirrors :mod:`omniagents.core.sandbox.aci` exactly: the cloud-side
-``HostBridgeSandboxSession`` is the "smart" half (it inherits the SDK lifecycle,
-command prep, manifest/snapshot orchestration), and the remote host is a thin
-executor. Command prep (``sh -lc`` wrapping, ``sudo -u`` for ``run_as``) happens
+The cloud-side ``HostBridgeSandboxSession`` is the "smart" half (it inherits the
+SDK lifecycle, command prep, manifest/snapshot orchestration), and the remote
+host is a thin executor. Command prep (``sh -lc`` wrapping, ``sudo -u`` for ``run_as``) happens
 here via ``BaseSandboxSession.exec``; the already-prepared argv is forwarded and
 run on the host with ``shell=False`` so it is executed exactly once.
 

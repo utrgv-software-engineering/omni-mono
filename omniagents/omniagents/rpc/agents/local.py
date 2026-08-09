@@ -139,7 +139,11 @@ class LocalAgent(RemoteAgent):
             enforce_initialization=True,
         )
 
-        # Create agent service with custom spec and set channel immediately
+        # Create agent service with custom spec and set channel immediately.
+        # Keep a real reference too: ``AgentService.channel`` is a
+        # ContextVar-backed property, so reading it back from another task
+        # returns THAT task's channel — useless for reaching this object.
+        self._channel = channel
         self._agent_service = AgentService(
             self.spec,
             self._host_resources
@@ -206,6 +210,16 @@ class LocalAgent(RemoteAgent):
 
             # Call parent to create client
             await super()._ensure_client()
+
+    def set_principal(self, principal) -> None:
+        """Attach an authenticated identity to the in-process channel — the
+        same idiom the WS server uses (``channel.principal``). Everything
+        the embedded service does on behalf of this client (session
+        creation, scoped listings, authorization) then acts as that
+        principal. Call after ``initialize()``."""
+        channel = getattr(self, "_channel", None)
+        if channel is not None:
+            channel.principal = principal
 
     async def _run_server(self, endpoint, channel):
         """Run the server side of the RPC connection."""
