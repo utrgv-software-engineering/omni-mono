@@ -290,6 +290,33 @@ CONFIG_FIELDS: Tuple[ConfigField, ...] = (
         reload=RELOAD_HOT,
     ),
     ConfigField(
+        key="workflow.completion_reviewer",
+        type="string",
+        label="Completion reviewer",
+        description=(
+            "Who reviews plan-step completions that carry exit criteria: "
+            "'guardian' routes them to the one-shot completion reviewer, "
+            "which accepts or rejects against the shipped policy; 'off' "
+            "waives all reviews. Steps without exit criteria are never "
+            "reviewed. Sessions may override per conversation."
+        ),
+        default="guardian",
+        allowed_values=("guardian", "off"),
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
+        key="workflow.guardian_model",
+        type="string",
+        label="Completion reviewer model",
+        description=(
+            "Model reference powering the plan-completion reviewer. Empty "
+            "resolves through the utility-agent preference order (session "
+            "model, then the agent's configured model)."
+        ),
+        default="",
+        reload=RELOAD_HOT,
+    ),
+    ConfigField(
         key="tracing.provider",
         type="string",
         label="Tracing provider",

@@ -229,3 +229,101 @@ def test_teardown_discard_snapshot_swaps_in_noop():
     assert isinstance(session.state.snapshot, NoopSnapshot)
     assert session.state.snapshot.id == "snap-1"
     assert "stop" in session.calls
+
+
+def test_build_sandbox_seeds_a_root_mount(monkeypatch, tmp_path):
+    """A source with mountName '.' seeds the workspace root itself — the
+    solo-folder layout (chat scratch sessions): the folder IS the
+    workspace, so no wrapper directory ever appears in any path."""
+    from omniagents.core.runtime import serve_harness
+    from omniagents.core.sandbox import PermissiveLocalDir, factory
+
+    monkeypatch.setattr(factory, "build_sandbox_client", lambda raw: (object(), {}))
+    profile = SimpleNamespace(
+        raw={"client": {"type": "docker"}, "manifest": {"root": "/workspace"}}
+    )
+    source = {"kind": "local", "mountName": ".", "path": str(tmp_path)}
+
+    _, _, manifest = serve_harness._build_sandbox(profile, sources=[source])
+
+    entry = manifest.entries["."]
+    assert isinstance(entry, PermissiveLocalDir)
+    assert str(entry.src) == str(tmp_path)
+
+    with pytest.raises(ValueError, match=r"root \('\.'\) source must be the only"):
+        serve_harness._build_sandbox(
+            profile,
+            sources=[
+                source,
+                {"kind": "local", "mountName": "docs", "path": str(tmp_path)},
+            ],
+        )
+
+
+@pytest.mark.asyncio
+async def test_bring_up_declares_root_mount_layout_before_profile_init(
+    monkeypatch, tmp_path
+):
+    """A root-mounted ('.') source drops the ``.omni-workspace-root``
+    marker as the FIRST init command, so profile seed scripts can branch
+    on the layout as a fact instead of guessing from directory shape.
+    Mounted layouts get no marker."""
+    from unittest.mock import AsyncMock
+
+    from omniagents.core.runtime import serve_harness
+
+    execs: list[str] = []
+
+    class _Session:
+        state = SimpleNamespace(container_id="container-1")
+
+        async def start(self):
+            return None
+
+        async def exec(self, cmd, shell=True, user=None):
+            execs.append(cmd)
+            return SimpleNamespace(exit_code=0, stdout=b"", stderr=b"")
+
+    class _Client:
+        async def create(self, *, manifest, options, snapshot):
+            return _Session()
+
+    manifest = SimpleNamespace(root="/workspace")
+    monkeypatch.setattr(
+        serve_harness,
+        "_build_sandbox",
+        lambda profile, *, sources: (_Client(), {}, manifest),
+    )
+    monkeypatch.setattr(serve_harness, "_build_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(
+        serve_harness, "_scrub_workspace_snapshot", lambda session: None
+    )
+    monkeypatch.setattr(serve_harness, "_configure_credentials", AsyncMock())
+    monkeypatch.setattr(serve_harness, "_start_services", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        serve_harness, "_resolve_service_urls", AsyncMock(return_value={})
+    )
+
+    profile = SimpleNamespace(
+        raw={"client": {"type": "docker"}}, init=["echo profile-init"], services=[]
+    )
+
+    await serve_harness.bring_up_session(
+        profile=profile,
+        sources_parsed=[{"kind": "local", "mountName": ".", "path": str(tmp_path)}],
+        snapshot_ref="ref-1",
+        snapshot_dir=None,
+        state_path=None,
+    )
+    assert execs[0] == "touch /workspace/.omni-workspace-root"
+    assert execs[1] == "echo profile-init"
+
+    execs.clear()
+    await serve_harness.bring_up_session(
+        profile=profile,
+        sources_parsed=[{"kind": "local", "mountName": "app", "path": str(tmp_path)}],
+        snapshot_ref="ref-2",
+        snapshot_dir=None,
+        state_path=None,
+    )
+    assert execs == ["echo profile-init"]

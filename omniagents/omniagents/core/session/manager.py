@@ -756,6 +756,10 @@ class Session:  # noqa: D101
         # Per-conversation approval reviewer override ("user" | "auto");
         # None inherits the layered-config approvals.reviewer default.
         self.approvals_reviewer: str | None = None
+        # Per-conversation workflow completion reviewer override
+        # ("guardian" | "user" | "off"); None inherits the layered-config
+        # workflow.completion_reviewer default.
+        self.workflow_reviewer: str | None = None
         self.context: Any | None = None
         self.variables: Any | None = None
         self.active_run_id: str | None = None

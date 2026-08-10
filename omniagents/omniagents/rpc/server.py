@@ -596,9 +596,23 @@ class JsonRpcEndpoint:
         # without resolving identity a second time.
         context_token = None
         if request_context is not None:
-            from omniagents.execution import bind_request_context
+            from omniagents.execution import (
+                ADDRESSING_GUARD_PARAMS,
+                bind_request_context,
+            )
 
             context_token = bind_request_context(request_context)
+
+            # The router has consumed the addressing guards; forward one to
+            # the handler only when its signature names it as a real argument.
+            handler_params = inspect.signature(func).parameters
+            if not any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in handler_params.values()
+            ):
+                for guard in ADDRESSING_GUARD_PARAMS:
+                    if guard in params and guard not in handler_params:
+                        del params[guard]
 
         try:
             # Central authorization: method containers that expose

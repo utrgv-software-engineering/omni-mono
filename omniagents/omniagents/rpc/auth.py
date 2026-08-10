@@ -381,6 +381,10 @@ RESOURCE_SCOPED_METHODS = frozenset(
         # Approval reviewer toggle: session ownership gates who reroutes
         # that session's approvals to the guardian.
         "set_session_approvals",
+        # Workflow completion reviewer toggle: same posture — session
+        # ownership gates who reroutes that session's plan-completion
+        # reviews.
+        "set_session_workflow",
         # Out-of-band MCP tool calls act on behalf of one session
         # (MCP-Apps postMessage routing): ``session_id`` is required and
         # its ownership authorizes the call.
@@ -401,6 +405,9 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "fs_upload_chunk",
         "fs_upload_commit",
         "fs_upload_abort",
+        "fs_delete",
+        "fs_rename",
+        "fs_mkdir",
         # Canonical conversation domain objects (tkt_a-QF2Oc4OAsD). A
         # thread IS a session (``thread_id == session_id``) and its turns
         # and items are that session's transcript — the most
@@ -456,6 +463,11 @@ RESOURCE_SCOPED_METHODS = frozenset(
         "git_fetch",
         "git_pull",
         "git_push",
+        # Repository-status watches follow the same environment-ownership
+        # gate; watch ids are additionally bound to the creating connection
+        # inside GitManager.
+        "git_status_watch",
+        "git_status_unwatch",
     }
 )
 

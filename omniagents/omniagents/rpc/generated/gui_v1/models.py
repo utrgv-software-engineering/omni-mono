@@ -593,6 +593,16 @@ class SetSessionApprovalsResult(RootModel[dict[str, Any]]):
     pass
 
 
+class SetSessionWorkflowParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    reviewer: str
+
+
+class SetSessionWorkflowResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class AgentHostRegisterWorkspaceParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     workspace_id: str
@@ -962,6 +972,44 @@ class FsUploadAbortResult(RootModel[bool]):
     pass
 
 
+class FsDeleteParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment_id: str
+    path: str
+    recursive: bool | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
+
+
+class FsDeleteResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsRenameParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment_id: str
+    path: str
+    to: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
+
+
+class FsRenameResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class FsMkdirParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment_id: str
+    path: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
+
+
+class FsMkdirResult(RootModel[dict[str, Any]]):
+    pass
+
+
 class GitListRepositoriesParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     environment_id: str
@@ -1205,6 +1253,31 @@ class GitPushParams(BaseModel):
 
 
 class GitPushResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitStatusWatchParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment_id: str
+    repo: str
+    poll_interval_ms: int | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
+
+
+class GitStatusWatchResult(RootModel[dict[str, Any]]):
+    pass
+
+
+class GitStatusUnwatchParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment_id: str
+    watch_id: str
+    workspace_id: str | None = None
+    environment_generation: int | None = None
+
+
+class GitStatusUnwatchResult(RootModel[bool]):
     pass
 
 
@@ -1553,6 +1626,19 @@ class ToolApprovalReviewedParams(BaseModel):
     stream_id: str | None = None
 
 
+class PlanCompletionReviewedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_id: str
+    outcome: str
+    reviewer: str
+    session_id: str | None = None
+    subject: str | None = None
+    rationale: str | None = None
+    run_id: str | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
 class SessionForkedParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
@@ -1614,6 +1700,18 @@ class GitOperationProgressParams(BaseModel):
     operation: str
     phase: str
     detail: dict[str, Any] | None = None
+    workspace_id: str | None = None
+    environment_generation: int | None = None
+    seq: int | None = None
+    stream_id: str | None = None
+
+
+class GitStatusChangedParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    environment_id: str
+    repo: str
+    watch_id: str
+    digest: str
     workspace_id: str | None = None
     environment_generation: int | None = None
     seq: int | None = None
@@ -1697,6 +1795,7 @@ CLIENT_REQUEST_MODELS = {
     "list_items": ListItemsParams,
     "get_item": GetItemParams,
     "set_session_approvals": SetSessionApprovalsParams,
+    "set_session_workflow": SetSessionWorkflowParams,
     "agent_host_register_workspace": AgentHostRegisterWorkspaceParams,
     "agent_host_register_profile": AgentHostRegisterProfileParams,
     "agent_host_bind_thread": AgentHostBindThreadParams,
@@ -1730,6 +1829,9 @@ CLIENT_REQUEST_MODELS = {
     "fs_upload_chunk": FsUploadChunkParams,
     "fs_upload_commit": FsUploadCommitParams,
     "fs_upload_abort": FsUploadAbortParams,
+    "fs_delete": FsDeleteParams,
+    "fs_rename": FsRenameParams,
+    "fs_mkdir": FsMkdirParams,
     "git_list_repositories": GitListRepositoriesParams,
     "git_status": GitStatusParams,
     "git_diff": GitDiffParams,
@@ -1746,6 +1848,8 @@ CLIENT_REQUEST_MODELS = {
     "git_fetch": GitFetchParams,
     "git_pull": GitPullParams,
     "git_push": GitPushParams,
+    "git_status_watch": GitStatusWatchParams,
+    "git_status_unwatch": GitStatusUnwatchParams,
     "list_threads": ListThreadsParams,
     "search_threads": SearchThreadsParams,
     "update_thread": UpdateThreadParams,
@@ -1806,6 +1910,7 @@ CLIENT_RESULT_MODELS = {
     "list_items": ListItemsResult,
     "get_item": GetItemResult,
     "set_session_approvals": SetSessionApprovalsResult,
+    "set_session_workflow": SetSessionWorkflowResult,
     "agent_host_register_workspace": AgentHostRegisterWorkspaceResult,
     "agent_host_register_profile": AgentHostRegisterProfileResult,
     "agent_host_bind_thread": AgentHostBindThreadResult,
@@ -1839,6 +1944,9 @@ CLIENT_RESULT_MODELS = {
     "fs_upload_chunk": FsUploadChunkResult,
     "fs_upload_commit": FsUploadCommitResult,
     "fs_upload_abort": FsUploadAbortResult,
+    "fs_delete": FsDeleteResult,
+    "fs_rename": FsRenameResult,
+    "fs_mkdir": FsMkdirResult,
     "git_list_repositories": GitListRepositoriesResult,
     "git_status": GitStatusResult,
     "git_diff": GitDiffResult,
@@ -1855,6 +1963,8 @@ CLIENT_RESULT_MODELS = {
     "git_fetch": GitFetchResult,
     "git_pull": GitPullResult,
     "git_push": GitPushResult,
+    "git_status_watch": GitStatusWatchResult,
+    "git_status_unwatch": GitStatusUnwatchResult,
     "list_threads": ListThreadsResult,
     "search_threads": SearchThreadsResult,
     "update_thread": UpdateThreadResult,
@@ -1885,12 +1995,14 @@ SERVER_NOTIFICATION_MODELS = {
     "elicitation_resolved": ElicitationResolvedParams,
     "mcp_server_status_changed": McpServerStatusChangedParams,
     "tool_approval_reviewed": ToolApprovalReviewedParams,
+    "plan_completion_reviewed": PlanCompletionReviewedParams,
     "session_forked": SessionForkedParams,
     "session_variables_changed": SessionVariablesChangedParams,
     "fs_events": FsEventsParams,
     "fs_rescan_required": FsRescanRequiredParams,
     "fs_transfer_progress": FsTransferProgressParams,
     "git_operation_progress": GitOperationProgressParams,
+    "git_status_changed": GitStatusChangedParams,
     "thread_updated": ThreadUpdatedParams,
     "item_updated": ItemUpdatedParams,
 }
@@ -1950,6 +2062,7 @@ STABLE_REQUESTS = frozenset(
 EXPERIMENTAL_REQUESTS = frozenset(
     [
         "set_session_approvals",
+        "set_session_workflow",
         "agent_host_register_workspace",
         "agent_host_register_profile",
         "agent_host_bind_thread",
@@ -1983,6 +2096,9 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "fs_upload_chunk",
         "fs_upload_commit",
         "fs_upload_abort",
+        "fs_delete",
+        "fs_rename",
+        "fs_mkdir",
         "git_list_repositories",
         "git_status",
         "git_diff",
@@ -1999,6 +2115,8 @@ EXPERIMENTAL_REQUESTS = frozenset(
         "git_fetch",
         "git_pull",
         "git_push",
+        "git_status_watch",
+        "git_status_unwatch",
         "list_threads",
         "search_threads",
         "update_thread",
@@ -2035,12 +2153,14 @@ STABLE_NOTIFICATIONS = frozenset(
 EXPERIMENTAL_NOTIFICATIONS = frozenset(
     [
         "tool_approval_reviewed",
+        "plan_completion_reviewed",
         "session_forked",
         "session_variables_changed",
         "fs_events",
         "fs_rescan_required",
         "fs_transfer_progress",
         "git_operation_progress",
+        "git_status_changed",
         "thread_updated",
         "item_updated",
     ]

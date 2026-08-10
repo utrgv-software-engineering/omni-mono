@@ -42,8 +42,11 @@ from omniagents.core.conversation.plans import (
     PlanGenerationsExhausted,
     PlanStep,
     PlanStore,
+    dependency_map,
     link,
+    unlink,
     unlink_all,
+    would_cycle,
 )
 from omniagents.core.tools import (
     RichToolOutput,
@@ -255,6 +258,9 @@ def _step_payload(plan: Plan, step: PlanStep) -> Dict[str, Any]:
         "blocks": list(step.blocks),
         "blockedBy": list(step.blocked_by),
         "openBlockers": plan.open_blockers(step),
+        "exitCriteria": step.exit_criteria,
+        "criteriaEdited": bool(step.original_exit_criteria),
+        "originalExitCriteria": step.original_exit_criteria,
     }
 
 
@@ -302,6 +308,201 @@ def _error(
 
 
 # ---------------------------------------------------------------------------
+# Completion review — semantic guard on ``status="completed"``
+# ---------------------------------------------------------------------------
+
+
+async def _review_completion(
+    handle: "_PlanHandle",
+    plan: Plan,
+    step: PlanStep,
+    criteria: str,
+    original_criteria: str,
+) -> tuple[Optional[Dict[str, Any]], Optional[RichToolOutput]]:
+    """Route one ``completed`` attempt through completion review.
+
+    Returns ``(review, denial)`` — exactly one is non-None. ``review`` is
+    the record to stamp on the step before the write; ``denial`` is the
+    error output to return with nothing written. *criteria* is the
+    EFFECTIVE exit criteria for this call (an ``exitCriteria`` edit in the
+    same ``task_update`` applies) and *original_criteria* the EFFECTIVE
+    ratchet record (including one stamped by this same call), while *step*
+    stays untouched so a denial's ``tasks_snapshot`` renders the stored
+    plan.
+
+    Fail-open-to-allow throughout: no service, no session, judge timeout,
+    or malformed judge output all accept the completion as ``unverified``.
+    Plan bookkeeping must never abort a turn (module docstring rule).
+    """
+    from dataclasses import replace
+
+    from omniagents.core.agents import plan_review
+    from omniagents.core.agents.workflow_policy import (
+        COMPLETION_ROUTE_OFF,
+        effective_workflow_reviewer,
+        resolve_completion_route,
+    )
+
+    service = _service()
+    session = handle.session
+    reviewer = effective_workflow_reviewer(service, session)
+    route = resolve_completion_route(reviewer, replace(step, exit_criteria=criteria))
+
+    if route == COMPLETION_ROUTE_OFF:
+        return {"outcome": "waived", "reviewer": "none", "rationale": ""}, None
+
+    run_id = _current_run_id()
+
+    # GUARDIAN — codex-style: accept completes (verified or unverified),
+    # reject returns the rationale to the model with nothing written.
+    if plan_review.breaker_should_accept(session, run_id, step.id):
+        last = plan_review.last_rejection_rationale(session, run_id, step.id)
+        rationale = f"accepted after repeated disagreement: {last}"
+        review = {
+            "outcome": "unverified",
+            "reviewer": "guardian",
+            "rationale": rationale,
+        }
+        plan_review.record_accept(session, run_id, step.id)
+        await _broadcast_completion_review(
+            handle,
+            task_id=step.id,
+            subject=step.subject,
+            outcome="escalated",
+            reviewer="guardian",
+            rationale=rationale,
+            run_id=run_id,
+        )
+        return review, None
+
+    request = plan_review.PlanReviewRequest(
+        step_id=step.id,
+        subject=step.subject,
+        description=step.description,
+        exit_criteria=criteria,
+        original_exit_criteria=original_criteria,
+        plan_id=plan.plan_id,
+        scope=plan.scope,
+    )
+    assessment = await plan_review.review_completion(service, session, request)
+
+    if assessment is None:
+        review = {
+            "outcome": "unverified",
+            "reviewer": "none",
+            "rationale": "review unavailable",
+        }
+        plan_review.record_accept(session, run_id, step.id)
+        await _broadcast_completion_review(
+            handle,
+            task_id=step.id,
+            subject=step.subject,
+            outcome="accept_unverified",
+            reviewer="none",
+            rationale="review unavailable",
+            run_id=run_id,
+        )
+        return review, None
+
+    if assessment.accepted:
+        plan_review.record_accept(session, run_id, step.id)
+        outcome = "verified" if assessment.verified else "unverified"
+        review = {
+            "outcome": outcome,
+            "reviewer": "guardian",
+            "rationale": assessment.rationale,
+        }
+        await _broadcast_completion_review(
+            handle,
+            task_id=step.id,
+            subject=step.subject,
+            outcome=(
+                "accept_verified" if outcome == "verified" else "accept_unverified"
+            ),
+            reviewer="guardian",
+            rationale=assessment.rationale,
+            run_id=run_id,
+        )
+        return review, None
+
+    plan_review.record_rejection(session, run_id, step.id, assessment.rationale)
+    await _broadcast_completion_review(
+        handle,
+        task_id=step.id,
+        subject=step.subject,
+        outcome="reject",
+        reviewer="guardian",
+        rationale=assessment.rationale,
+        run_id=run_id,
+    )
+    denial = _error(
+        plan,
+        summary=f"Task #{step.id} completion rejected",
+        preview=f"Exit criteria not met: {assessment.rationale}"[:1500],
+        payload={
+            "task_id": step.id,
+            "error": "exit_criteria_not_met",
+            "rationale": assessment.rationale,
+        },
+    )
+    return None, denial
+
+
+def _service() -> Any:
+    """The AgentService owning this run's task tree, or ``None``."""
+    try:
+        from omniagents.core.agents.service import current_service
+
+        return current_service()
+    except Exception:
+        return None
+
+
+async def _broadcast_completion_review(
+    handle: "_PlanHandle",
+    *,
+    task_id: str,
+    subject: str,
+    outcome: str,
+    reviewer: str,
+    rationale: str,
+    run_id: Optional[str],
+) -> None:
+    """Broadcast one non-clean completion-review outcome.
+
+    Emitted for every REVIEWED outcome — rejections, unverified accepts,
+    clean verifications (``accept_verified``), and breaker/human
+    escalations. Only waived completions (no criteria / reviewer off) stay
+    silent: nothing was reviewed, so there is no decision to record. Same mechanism as
+    ``tool_approval_reviewed``: session-scoped, queued if unseen.
+    Best-effort — a broadcast failure never fails the tool call.
+    """
+    service = _service()
+    session = handle.session
+    if service is None or session is None:
+        return
+    payload: Dict[str, Any] = {
+        "session_id": getattr(session, "id", None) or handle.thread_id,
+        "task_id": task_id,
+        "subject": subject,
+        "outcome": outcome,
+        "reviewer": reviewer,
+        "rationale": rationale,
+    }
+    if run_id is not None:
+        payload["run_id"] = run_id
+    try:
+        await service._broadcast_session(
+            session,
+            "plan_completion_reviewed",
+            payload,
+            queue_if_unseen=True,
+        )
+    except Exception:
+        logger.exception("plan_completion_reviewed broadcast failed")
+
+
+# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
@@ -312,6 +513,7 @@ async def task_create(
     subject: str,
     description: str,
     activeForm: Optional[str] = None,
+    exitCriteria: Optional[str] = None,
 ) -> RichToolOutput:
     """Create a new task in your task list.
 
@@ -326,6 +528,14 @@ async def task_create(
         activeForm: Present-continuous form shown in the spinner while the
             task is in_progress, e.g. "Running the test suite".
             Falls back to ``subject`` if omitted.
+        exitCriteria: Definition-of-done for the task. State a criterion
+            an outside reviewer could check from the transcript: a
+            command that must have run and passed, a file that must
+            exist, a PR that must be open. Phrase it as evidence, not
+            intent ("`npm test` passes", not "code is tested").
+            Completing a task that has exitCriteria is reviewed and may
+            be rejected with a rationale; tasks without it complete
+            unreviewed.
     """
     handle = _handle(ctx)
     plan = handle.read()
@@ -335,6 +545,7 @@ async def task_create(
         description=description,
         active_form=activeForm or subject,
         status="pending",
+        exit_criteria=exitCriteria or "",
     )
     plan.steps.append(step)
     try:
@@ -458,6 +669,9 @@ async def task_update(
     owner: Optional[str] = None,
     addBlocks: Optional[list[str]] = None,
     addBlockedBy: Optional[list[str]] = None,
+    removeBlockedBy: Optional[list[str]] = None,
+    exitCriteria: Optional[str] = None,
+    overrideBlockers: bool = False,
 ) -> RichToolOutput:
     """Update a task. Only fields you pass are changed.
 
@@ -466,6 +680,16 @@ async def task_update(
     one task should be ``in_progress`` at a time. Don't mark completed
     if the work is partial: set ``blocked`` and say what you are waiting
     on, or leave it in_progress and create a task for the blocker.
+
+    Setting ``in_progress`` on a task whose blockers are still open is
+    refused with error ``blocked`` listing the open blocker ids —
+    complete the blockers first, or pass ``overrideBlockers=true``.
+    Setting ``completed`` on a task that has ``exitCriteria`` is
+    reviewed against the transcript and may be rejected with error
+    ``exit_criteria_not_met`` and a rationale; address the rationale
+    (or correct the criteria), then mark it completed again.
+    A dependency edge that would create a cycle is refused with error
+    ``dependency_cycle`` — a cycle would deadlock every task on it.
 
     Args:
         task_id: The task to update.
@@ -477,10 +701,28 @@ async def task_update(
         owner: Claim the task by setting an owner string (e.g. agent
             name).
         addBlocks: Append task ids that this task blocks. Their
-            ``blockedBy`` lists are updated symmetrically.
+            ``blockedBy`` lists are updated symmetrically. An edge that
+            would create a dependency cycle is refused with error
+            ``dependency_cycle`` naming the existing chain — restructure
+            the tasks or remove an edge with ``removeBlockedBy`` first.
         addBlockedBy: Append task ids that must complete before this
             one starts. Symmetric edge written into the dependency's
-            ``blocks`` list.
+            ``blocks`` list. Same cycle refusal as ``addBlocks``.
+        removeBlockedBy: Remove dependency edges: this task no longer
+            waits on these task ids (their ``blocks`` lists are updated
+            symmetrically). The ordinary fix for a mis-drawn edge —
+            prefer this over ``overrideBlockers``. Absent edges are
+            ignored.
+        exitCriteria: New definition-of-done for the task — a criterion
+            an outside reviewer could check from the transcript (a
+            command that must have run and passed, a file that must
+            exist, a PR that must be open). Pass an empty string to
+            clear it. Editing the criteria of a task that is already
+            in_progress is allowed but recorded: completion review sees
+            both the edited and the original criteria.
+        overrideBlockers: Start the task even though blockers are open.
+            Use only when a blocker is stale or is being handled
+            elsewhere.
     """
     handle = _handle(ctx)
     plan = handle.read()
@@ -527,6 +769,100 @@ async def task_update(
             payload={"task_id": task_id, "error": f"invalid status: {status}"},
         )
 
+    # Both guards run BEFORE any mutation: a denial writes nothing, and the
+    # error payload's ``tasks_snapshot`` must render the STORED plan, not
+    # the edit that was refused.
+    if status == "in_progress" and not overrideBlockers:
+        open_blockers = plan.open_blockers(step)
+        if open_blockers:
+            names = ", ".join(
+                f"#{blocker_id}"
+                + (f" ({other.subject})" if (other := plan.step(blocker_id)) else "")
+                for blocker_id in open_blockers
+            )
+            return _error(
+                plan,
+                summary=f"Task #{task_id} is blocked",
+                preview=(
+                    f"Blocked by {names}. Complete the blockers first, or "
+                    "pass overrideBlockers=true."
+                ),
+                payload={
+                    "task_id": task_id,
+                    "error": "blocked",
+                    "openBlockers": open_blockers,
+                },
+            )
+
+    # Criteria-edit ratchet: an ``exitCriteria`` edit on a step that is
+    # ``in_progress`` — or arriving in the same call that sets
+    # ``completed`` — records the pre-edit value, once (the FIRST original
+    # survives later edits). Edits while ``pending``/``blocked`` are free:
+    # refining an unstarted step is planning, not weakening. The edit is
+    # never blocked and fires no review of its own — the record is weighed
+    # at completion review. Computed here (against the step's PRE-call
+    # status) but stamped only after the guards, so a denial writes
+    # nothing and its ``tasks_snapshot`` renders the stored plan.
+    stamp_original = (
+        exitCriteria is not None
+        and exitCriteria != step.exit_criteria
+        and (step.status == "in_progress" or status == "completed")
+        and not step.original_exit_criteria
+    )
+    effective_original = (
+        step.exit_criteria if stamp_original else step.original_exit_criteria
+    )
+
+    # Edge changes are validated BEFORE the completion review — a cycle
+    # refusal must not leave review side effects (breaker resets,
+    # broadcasts) behind — and before any mutation, so the error's
+    # ``tasks_snapshot`` renders the stored plan. The simulation applies
+    # removals first (a call may remove the very edge that would have made
+    # its addition cyclic) and additions incrementally (two additions in
+    # one call can form a cycle only with each other).
+    new_edges = [(task_id, other_id) for other_id in addBlocks or []] + [
+        (other_id, task_id) for other_id in addBlockedBy or []
+    ]
+    if new_edges:
+        deps = dependency_map(plan)
+        removed = set(removeBlockedBy or [])
+        if removed and task_id in deps:
+            deps[task_id] = [d for d in deps[task_id] if d not in removed]
+        for blocker_id, blocked_id in new_edges:
+            if plan.step(blocker_id) is None or plan.step(blocked_id) is None:
+                continue  # link() ignores unknown ids
+            cycle = would_cycle(deps, blocker_id, blocked_id)
+            if cycle is not None:
+                chain = " → ".join(f"#{sid}" for sid in cycle)
+                return _error(
+                    plan,
+                    summary=f"Task #{task_id}: dependency cycle refused",
+                    preview=(
+                        f"#{blocked_id} cannot wait on #{blocker_id}: "
+                        f"#{blocker_id} already waits on #{blocked_id} "
+                        f"({chain}, where → means 'waits on'). Restructure "
+                        "the tasks or remove an edge with removeBlockedBy."
+                    ),
+                    payload={
+                        "task_id": task_id,
+                        "error": "dependency_cycle",
+                        "edge": {"blocker": blocker_id, "blocked": blocked_id},
+                        "path": cycle,
+                    },
+                )
+            deps.setdefault(blocked_id, []).append(blocker_id)
+
+    review: Optional[Dict[str, Any]] = None
+    if status == "completed":
+        criteria = exitCriteria if exitCriteria is not None else step.exit_criteria
+        review, denial = await _review_completion(
+            handle, plan, step, criteria, effective_original
+        )
+        if denial is not None:
+            return denial
+
+    if stamp_original:
+        step.original_exit_criteria = effective_original
     if status is not None:
         step.status = status
     if subject is not None:
@@ -537,11 +873,18 @@ async def task_update(
         step.active_form = activeForm
     if owner is not None:
         step.owner = owner
+    if exitCriteria is not None:
+        step.exit_criteria = exitCriteria
+    if review is not None:
+        step.review = review
 
-    for other_id in addBlocks or []:
-        link(plan, task_id, other_id)
-    for other_id in addBlockedBy or []:
-        link(plan, other_id, task_id)
+    for other_id in removeBlockedBy or []:
+        unlink(plan, other_id, task_id)
+    for blocker_id, blocked_id in new_edges:
+        # Pre-validated above; link() independently refuses cycles too, so
+        # persisted content can't hold one even if the simulation and the
+        # plan ever disagree.
+        link(plan, blocker_id, blocked_id)
 
     try:
         plan = handle.write(plan)

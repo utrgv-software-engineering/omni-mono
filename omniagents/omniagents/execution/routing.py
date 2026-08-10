@@ -35,6 +35,15 @@ _CURRENT_REQUEST_CONTEXT: ContextVar[RequestContext | None] = ContextVar(
     "omniagents_request_context", default=None
 )
 
+# Addressing consistency guards from the protocol catalog: the client names
+# the workspace identity and lease generation it believes it is talking to,
+# and ``OperationRouter.prepare`` fails the request closed on any mismatch.
+# Once a RequestContext is bound the guards are spent — dispatch drops them
+# rather than forwarding them to handlers, so a handler receives one of these
+# names only when it declares it as a real operation argument (``start_run``'s
+# ``workspace_id`` selects where to run; a git handler never sees it).
+ADDRESSING_GUARD_PARAMS = frozenset({"workspace_id", "environment_generation"})
+
 _LEASE_REQUIREMENTS = (
     ExecutionRequirement.WORKSPACE_READ
     | ExecutionRequirement.WORKSPACE_WRITE

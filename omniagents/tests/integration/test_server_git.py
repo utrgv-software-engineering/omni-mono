@@ -48,6 +48,9 @@ GIT_EXPERIMENTAL = (
     "git_pull",
     "git_push",
     "git_operation_progress",
+    "git_status_watch",
+    "git_status_unwatch",
+    "git_status_changed",
 )
 
 NUMBERED = "\n".join(f"line{index}" for index in range(1, 21)) + "\n"
@@ -234,6 +237,44 @@ def test_multi_repository_projects_are_addressed_by_id(
         escape = rpc.error("git_status", environment_id="git-env", repo="../elsewhere")
         assert escape["code"] == -32091
         assert escape["data"]["kind"] == "git_path_invalid"
+
+
+# ---------------------------------------------------------------------------
+#  Addressing consistency guards
+# ---------------------------------------------------------------------------
+
+
+def test_addressing_guards_are_consumed_by_the_router(session: Rpc, repo: Path):
+    # The full addressing envelope a routed client sends on every request:
+    # the guards are validated by the OperationRouter and never reach the
+    # handler, so the call succeeds without git_status declaring them.
+    status = session.result(
+        "git_status",
+        environment_id="git-env",
+        repo="app",
+        workspace_id="git-workspace",
+        environment_generation=1,
+    )
+    assert status["clean"] is True
+
+    # A stale guard still fails closed before the handler runs.
+    mismatch = session.error(
+        "git_status",
+        environment_id="git-env",
+        repo="app",
+        workspace_id="someone-elses-workspace",
+    )
+    assert mismatch["code"] == -32120
+    assert mismatch["data"]["kind"] == "workspace_environment_mismatch"
+
+    changed = session.error(
+        "git_status",
+        environment_id="git-env",
+        repo="app",
+        environment_generation=999,
+    )
+    assert changed["code"] == -32120
+    assert changed["data"]["kind"] == "environment_changed"
 
 
 # ---------------------------------------------------------------------------
@@ -912,3 +953,55 @@ def test_head_scope_hunks_are_stageable_over_the_wire(session: Rpc, repo: Path):
     )
     staged = git(repo, "diff", "--cached")
     assert "CHANGED-TOP" in staged and "CHANGED-BOTTOM" not in staged
+
+
+def test_status_watch_pushes_digest_changes(session: Rpc, repo: Path):
+    """The server polls porcelain status and pushes a coalesced digest event."""
+    watch = session.result(
+        "git_status_watch",
+        environment_id="git-env",
+        repo="app",
+        poll_interval_ms=200,
+    )
+    assert watch["environment_id"] == "git-env"
+    assert watch["repo"] == "app"
+    initial = watch["digest"]
+
+    # Server-side change; the client only blocks on its socket.
+    (repo / "f.txt").write_text(two_hunk_edit())
+    while True:
+        message = session.ws.receive_json()
+        if message.get("method") == "git_status_changed":
+            payload = message["params"]
+            break
+    assert payload["environment_id"] == "git-env"
+    assert payload["repo"] == "app"
+    assert payload["watch_id"] == watch["watch_id"]
+    assert payload["digest"] != initial
+
+    assert (
+        session.result(
+            "git_status_unwatch",
+            environment_id="git-env",
+            watch_id=watch["watch_id"],
+        )
+        is True
+    )
+    error = session.error(
+        "git_status_unwatch", environment_id="git-env", watch_id=watch["watch_id"]
+    )
+    assert error["code"] == -32092
+    assert error["data"]["reason"] == "unknown_watch"
+
+
+def test_status_watch_is_channel_budgeted(session: Rpc, repo: Path):
+    for _ in range(8):
+        session.result(
+            "git_status_watch",
+            environment_id="git-env",
+            repo="app",
+            poll_interval_ms=30_000,
+        )
+    error = session.error("git_status_watch", environment_id="git-env", repo="app")
+    assert error["code"] == -32092
+    assert error["data"]["reason"] == "watch_limit_exceeded"

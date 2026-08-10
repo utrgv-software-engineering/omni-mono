@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import sys
 import tarfile
 from dataclasses import dataclass
@@ -106,13 +107,18 @@ def _build_sandbox(
     manifest = build_manifest(profile.raw)
 
     # Inject one seeding entry per source, keyed by mountName so the
-    # SDK materializes each under /workspace/<mountName>.
+    # SDK materializes each under /workspace/<mountName>. A mountName of
+    # '.' seeds the workspace root itself (``resolve_workspace_path``
+    # resolves a part-less key to the root) — the solo-folder layout,
+    # where the folder IS the workspace and no wrapper directory exists.
     seen_mounts: set[str] = set()
     new_entries = dict(manifest.entries)
     for src in sources:
         mount_name = src.get("mountName")
         if not isinstance(mount_name, str) or not mount_name:
             raise ValueError(f"--source missing mountName: {src!r}")
+        if mount_name == "." and len(sources) > 1:
+            raise ValueError("a root ('.') source must be the only --source")
         if mount_name in seen_mounts:
             raise ValueError(f"duplicate --source mountName: {mount_name!r}")
         seen_mounts.add(mount_name)
@@ -715,7 +721,17 @@ async def bring_up_session(
             run_as_user=_run_as_exec_user(profile.raw),
         )
         if not workspace_preserved:
-            await _run_init(session, profile.init)
+            init_commands = list(profile.init)
+            if any(src.get("mountName") == "." for src in sources_parsed):
+                # Declare the root-mount layout (a solo folder seeded AT the
+                # workspace root) so profile init scripts can branch on a
+                # fact instead of guessing from directory shape — the seed
+                # dance must tag the root itself, never its subdirectories.
+                root = str(getattr(manifest, "root", "/workspace") or "/workspace")
+                init_commands.insert(
+                    0, f"touch {shlex.quote(root + '/.omni-workspace-root')}"
+                )
+            await _run_init(session, init_commands)
         started_services = await _start_services(session, profile.services)
         service_urls = await _resolve_service_urls(session, started_services)
     except Exception:

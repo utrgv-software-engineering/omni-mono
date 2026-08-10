@@ -136,6 +136,17 @@ class ItemKind(str, Enum):
     #: exemption: it opens at the first edit of a turn, is revised as
     #: further edits land, and settles when the turn ends.
     RUN_DIFF = "run_diff"
+    #: A workflow completion-review decision (``plan_completion_reviewed``):
+    #: a reviewer's verdict on a task's completion claim — outcome,
+    #: reviewer and rationale.
+    #:
+    #: Append-only and born terminal: it is the record of a decision that
+    #: already happened, not a lifecycle, and the same task can be rejected
+    #: and later accepted — so each review is its own item rather than an
+    #: update to one (see the occurrence-ordinal pattern in the recorder).
+    #: Distinct from :attr:`APPROVAL`, which is a *prompt* awaiting its
+    #: resolution: nothing was ever pending here.
+    WORKFLOW_REVIEW = "workflow_review"
 
 
 class ItemStatus(str, Enum):

@@ -49,6 +49,7 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ListItems
   | GetItem
   | SetSessionApprovals
+  | SetSessionWorkflow
   | AgentHostRegisterWorkspace
   | AgentHostRegisterProfile
   | AgentHostBindThread
@@ -82,6 +83,9 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | FsUploadChunk
   | FsUploadCommit
   | FsUploadAbort
+  | FsDelete
+  | FsRename
+  | FsMkdir
   | GitListRepositories
   | GitStatus
   | GitDiff
@@ -98,6 +102,8 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | GitFetch
   | GitPull
   | GitPush
+  | GitStatusWatch
+  | GitStatusUnwatch
   | ListThreads
   | SearchThreads
   | UpdateThread
@@ -126,12 +132,14 @@ export type HttpsOmniagentsDevProtocolGuiV1SchemaJson =
   | ElicitationResolved
   | McpServerStatusChanged
   | ToolApprovalReviewed
+  | PlanCompletionReviewed
   | SessionForked
   | SessionVariablesChanged
   | FsEvents
   | FsRescanRequired
   | FsTransferProgress
   | GitOperationProgress
+  | GitStatusChanged
   | ThreadUpdated
   | ItemUpdated;
 
@@ -406,6 +414,10 @@ export interface SetSessionApprovals {
   reviewer: string;
   session_id: string;
 }
+export interface SetSessionWorkflow {
+  reviewer: string;
+  session_id: string;
+}
 export interface AgentHostRegisterWorkspace {
   materialization_path: string;
   owner_user_id?: string;
@@ -610,6 +622,26 @@ export interface FsUploadAbort {
   transfer_id: string;
   workspace_id?: string;
 }
+export interface FsDelete {
+  environment_generation?: number;
+  environment_id: string;
+  path: string;
+  recursive?: boolean;
+  workspace_id?: string;
+}
+export interface FsRename {
+  environment_generation?: number;
+  environment_id: string;
+  path: string;
+  to: string;
+  workspace_id?: string;
+}
+export interface FsMkdir {
+  environment_generation?: number;
+  environment_id: string;
+  path: string;
+  workspace_id?: string;
+}
 export interface GitListRepositories {
   environment_generation?: number;
   environment_id: string;
@@ -758,6 +790,19 @@ export interface GitPush {
   remote?: string;
   repo: string;
   set_upstream?: boolean;
+  workspace_id?: string;
+}
+export interface GitStatusWatch {
+  environment_generation?: number;
+  environment_id: string;
+  poll_interval_ms?: number;
+  repo: string;
+  workspace_id?: string;
+}
+export interface GitStatusUnwatch {
+  environment_generation?: number;
+  environment_id: string;
+  watch_id: string;
   workspace_id?: string;
 }
 export interface ListThreads {
@@ -1037,6 +1082,17 @@ export interface ToolApprovalReviewed {
   stream_id?: string;
   tool_name: string;
 }
+export interface PlanCompletionReviewed {
+  outcome: string;
+  rationale?: string;
+  reviewer: string;
+  run_id?: string;
+  seq?: number;
+  session_id?: string;
+  stream_id?: string;
+  subject?: string;
+  task_id: string;
+}
 export interface SessionForked {
   from_item_id?: string;
   new_session_id: string;
@@ -1094,6 +1150,16 @@ export interface GitOperationProgress {
   repo: string;
   seq?: number;
   stream_id?: string;
+  workspace_id?: string;
+}
+export interface GitStatusChanged {
+  digest: string;
+  environment_generation?: number;
+  environment_id: string;
+  repo: string;
+  seq?: number;
+  stream_id?: string;
+  watch_id: string;
   workspace_id?: string;
 }
 export interface ThreadUpdated {

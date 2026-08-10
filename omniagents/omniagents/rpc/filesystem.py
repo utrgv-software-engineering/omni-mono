@@ -100,6 +100,7 @@ import logging
 import mimetypes
 import os
 import posixpath
+import shutil
 import tempfile
 import time
 import uuid
@@ -1495,6 +1496,135 @@ class FilesystemManager:
             state.spool.close()
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    #  Mutations (``fs_delete`` / ``fs_rename`` / ``fs_mkdir``)
+    #
+    #  GUI file management for the workspace tree. Every mutation runs the
+    #  same effective-writability policy as ``upload_commit`` (source
+    #  read-only flags win over backend permission bits) and every path is
+    #  canonicalized through ``canonical_relpath`` so traversal and
+    #  absolute-path spellings are rejected before the workspace is
+    #  touched. Watches observe the result through their normal polling
+    #  cycle — mutations do not synthesize events.
+    # ------------------------------------------------------------------
+
+    async def delete(
+        self, environment_id: str, path: str, *, recursive: bool = False
+    ) -> Dict[str, Any]:
+        rel = canonical_relpath(path)
+        if rel == ".":
+            raise FsPathError("cannot delete the workspace root", path=path)
+        workspace = await self._workspace(environment_id)
+        try:
+            await self._assert_writable(environment_id, workspace, rel)
+            if not await workspace.exists(rel):
+                raise FsNotFoundError("no such file or directory", path=rel)
+            if await workspace.is_dir(rel) and not recursive:
+                raise FsPathError(
+                    "path is a directory; pass recursive=true to delete it",
+                    path=rel,
+                    reason="directory_requires_recursive",
+                )
+            await workspace.remove(rel, recursive=recursive)
+        except WorkspaceEscapeError as exc:
+            raise FsPathError(str(exc), path=path) from exc
+        return {"path": rel, "deleted": True}
+
+    async def make_directory(self, environment_id: str, path: str) -> Dict[str, Any]:
+        rel = canonical_relpath(path)
+        if rel == ".":
+            raise FsPathError(
+                "the workspace root already exists", path=path, reason="target_exists"
+            )
+        workspace = await self._workspace(environment_id)
+        try:
+            await self._assert_writable(environment_id, workspace, rel)
+            if await workspace.exists(rel):
+                raise FsPathError(
+                    "target already exists", path=rel, reason="target_exists"
+                )
+            await workspace.mkdir(rel, parents=True, exist_ok=False)
+        except WorkspaceEscapeError as exc:
+            raise FsPathError(str(exc), path=path) from exc
+        return {"path": rel, "created": True}
+
+    async def rename(self, environment_id: str, path: str, to: str) -> Dict[str, Any]:
+        src = canonical_relpath(path)
+        dst = canonical_relpath(to)
+        if src == "." or dst == ".":
+            raise FsPathError("cannot rename the workspace root", path=path)
+        if dst == src or dst.startswith(f"{src}/"):
+            raise FsPathError(
+                "destination must be outside the source",
+                path=dst,
+                reason="invalid_destination",
+            )
+        workspace = await self._workspace(environment_id)
+        try:
+            # Both endpoints are mutation targets: the source loses an entry
+            # and the destination gains one, so read-only policy on either
+            # side refuses the move.
+            await self._assert_writable(environment_id, workspace, src)
+            await self._assert_writable(environment_id, workspace, dst)
+            if not await workspace.exists(src):
+                raise FsNotFoundError("no such file or directory", path=src)
+            if await workspace.exists(dst):
+                raise FsPathError(
+                    "target already exists", path=dst, reason="target_exists"
+                )
+            await self._perform_rename(workspace, src, dst)
+        except WorkspaceEscapeError as exc:
+            raise FsPathError(str(exc), path=path) from exc
+        return {"path": src, "to": dst, "renamed": True}
+
+    @staticmethod
+    async def _perform_rename(workspace: Workspace, src: str, dst: str) -> None:
+        """Move ``src`` to ``dst`` with the best mechanism the substrate has.
+
+        Host workspaces rename natively (with a copy fallback for
+        cross-device moves). Shell-capable substrates use ``mv``. The rest
+        can still move a single file through read/write/remove; a directory
+        move without a native primitive is refused rather than emulated by
+        an unbounded recursive copy.
+        """
+        if isinstance(workspace, HostWorkspace):
+            src_abs = workspace.resolve(src)
+            dst_abs = workspace.resolve(dst)
+
+            def _move_host() -> None:
+                os.makedirs(os.path.dirname(dst_abs) or ".", exist_ok=True)
+                try:
+                    os.replace(src_abs, dst_abs)
+                except OSError:
+                    shutil.move(src_abs, dst_abs)
+
+            await asyncio.to_thread(_move_host)
+            return
+        if bool(getattr(workspace, "supports_shell", False)):
+            parent = posixpath.dirname(dst) or "."
+            if parent != ".":
+                await workspace.mkdir(parent, parents=True, exist_ok=True)
+            result = await workspace.exec(
+                ["mv", workspace.resolve(src), workspace.resolve(dst)], shell=False
+            )
+            if result.exit_code != 0:
+                raise FsPathError(
+                    (result.stderr or "rename failed").strip(),
+                    path=src,
+                    reason="rename_failed",
+                )
+            return
+        if await workspace.is_file(src):
+            data = await workspace.read_bytes(src)
+            await workspace.write_bytes(dst, data, create_dirs=True)
+            await workspace.remove(src)
+            return
+        raise FsPathError(
+            "this workspace substrate cannot rename directories",
+            path=src,
+            reason="rename_unsupported",
+        )
 
     # ------------------------------------------------------------------
     #  Lifecycle

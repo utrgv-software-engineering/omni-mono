@@ -48,6 +48,7 @@ from .provisioning import (
     ProvisionedEnvironment,
 )
 from .routing import (
+    ADDRESSING_GUARD_PARAMS,
     OperationExecutionDescriptor,
     OperationRouter,
     RequestContext,
@@ -59,6 +60,7 @@ from .routing import (
 )
 
 __all__ = [
+    "ADDRESSING_GUARD_PARAMS",
     "AgentHostResources",
     "AgentHostProvisioningCatalog",
     "AutomaticEnvironment",

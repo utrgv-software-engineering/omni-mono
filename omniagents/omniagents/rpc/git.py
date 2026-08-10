@@ -181,6 +181,22 @@ class _ResolvedRepo:
         return self.workspace, self.repo_id, self.root_abs, self.git_dir_rel
 
 
+@dataclass
+class _StatusWatchState:
+    """One channel-bound repository-status watch (``git_status_watch``)."""
+
+    watch_id: str
+    environment_id: str
+    repo: str
+    channel: Any
+    workspace: Workspace
+    repo_abs: str
+    interval: float
+    digest: str
+    task: Optional["asyncio.Task[None]"] = None
+    closed: bool = False
+
+
 class GitRpcError(Exception):
     """Typed ``git_*`` error surfaced to the wire verbatim."""
 
@@ -1302,6 +1318,10 @@ class GitManager:
         source_provider: Optional[
             Callable[[str], Awaitable[Sequence[Mapping[str, Any]]]]
         ] = None,
+        status_watch_interval: float = 2.0,
+        min_status_watch_interval: float = 0.2,
+        max_status_watch_interval: float = 30.0,
+        max_status_watches_per_connection: int = 8,
     ) -> None:
         self._workspace_resolver = workspace_resolver
         self._read_timeout = read_timeout
@@ -1317,6 +1337,11 @@ class GitManager:
         self._max_conflict_blob_bytes = max_conflict_blob_bytes
         self._max_conflict_content_paths = max_conflict_content_paths
         self._source_provider = source_provider or _no_sources
+        self._status_watch_interval = status_watch_interval
+        self._min_status_watch_interval = min_status_watch_interval
+        self._max_status_watch_interval = max_status_watch_interval
+        self._max_status_watches_per_connection = max_status_watches_per_connection
+        self._status_watches: Dict[str, _StatusWatchState] = {}
         self.confirmations = ConfirmationBroker(ttl_seconds=confirmation_ttl)
         # One lock per *physical* git directory — the thing that actually
         # owns ``index.lock``. Keying on (environment, repo) instead would give
@@ -1893,6 +1918,167 @@ class GitManager:
             return []
         canonical = [canonical_repo_path(item, allow_root=False) for item in paths]
         return ["--", *canonical]
+
+    # ------------------------------------------------------------------
+    #  Repository-status watches (``git_status_watch``, tkt follow-up to
+    #  tkt_l_l0lUi4A5V2)
+    #
+    #  The server polls ``git status --porcelain=v2`` — git itself applies
+    #  ignore rules, so this stays cheap and bounded where a recursive
+    #  filesystem watch of the worktree would blow the scan limit on any
+    #  repository with a dependency tree. Clients receive a coalesced
+    #  ``git_status_changed`` notification whenever the digest moves and
+    #  refetch ``git_status``/``git_diff`` themselves; the event carries no
+    #  repository content. Watches are channel-bound exactly like the
+    #  ``fs_watch`` precedent: a dropped socket tears them down and a
+    #  reconnecting client re-subscribes.
+    # ------------------------------------------------------------------
+
+    _STATUS_DIGEST_ARGS = (
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "--show-stash",
+        "-z",
+        "--untracked-files=all",
+    )
+
+    async def _status_digest(self, workspace: Workspace, repo_abs: str) -> str:
+        result = await self._run(
+            workspace,
+            repo_abs,
+            list(self._STATUS_DIGEST_ARGS),
+            operation="status_watch",
+        )
+        return hashlib.sha256(result.stdout.encode("utf-8", "replace")).hexdigest()
+
+    def _status_watch_count(self, channel: Any) -> int:
+        return sum(
+            1 for state in self._status_watches.values() if state.channel is channel
+        )
+
+    async def status_watch(
+        self,
+        environment_id: str,
+        repo: str,
+        *,
+        poll_interval_ms: Optional[int] = None,
+        channel: Any,
+    ) -> Dict[str, Any]:
+        if channel is None:
+            raise GitOperationFailed(
+                "git_status_watch requires a connected channel",
+                operation="status_watch",
+                reason="no_channel",
+            )
+        if self._status_watch_count(channel) >= self._max_status_watches_per_connection:
+            raise GitOperationFailed(
+                "too many status watches on this connection",
+                operation="status_watch",
+                reason="watch_limit_exceeded",
+            )
+        resolved = await self._resolve_repo(environment_id, repo)
+        interval = self._status_watch_interval
+        if poll_interval_ms is not None:
+            interval = min(
+                self._max_status_watch_interval,
+                max(self._min_status_watch_interval, poll_interval_ms / 1000.0),
+            )
+        digest = await self._status_digest(resolved.workspace, resolved.root_abs)
+        state = _StatusWatchState(
+            watch_id=secrets.token_hex(16),
+            environment_id=environment_id,
+            repo=resolved.repo_id,
+            channel=channel,
+            workspace=resolved.workspace,
+            repo_abs=resolved.root_abs,
+            interval=interval,
+            digest=digest,
+        )
+        self._status_watches[state.watch_id] = state
+        state.task = asyncio.create_task(self._status_watch_loop(state))
+        return {
+            "watch_id": state.watch_id,
+            "environment_id": environment_id,
+            "repo": state.repo,
+            "poll_interval_ms": int(interval * 1000),
+            "digest": digest,
+        }
+
+    async def _status_watch_loop(self, state: _StatusWatchState) -> None:
+        try:
+            while not state.closed:
+                await asyncio.sleep(state.interval)
+                if state.closed:
+                    return
+                try:
+                    digest = await self._status_digest(state.workspace, state.repo_abs)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    # Transient (index.lock races, a repo mid-rewrite) or the
+                    # repository is gone; either way the next cycle retries
+                    # and a permanently broken repo just polls quietly.
+                    logger.debug(
+                        "git status watch poll failed (watch %s)",
+                        state.watch_id,
+                        exc_info=True,
+                    )
+                    continue
+                if digest == state.digest:
+                    continue
+                state.digest = digest
+                try:
+                    await state.channel.async_call(
+                        "git_status_changed",
+                        {
+                            "environment_id": state.environment_id,
+                            "repo": state.repo,
+                            "watch_id": state.watch_id,
+                            "digest": digest,
+                        },
+                    )
+                except Exception:
+                    logger.debug(
+                        "git_status_changed delivery failed (watch %s)",
+                        state.watch_id,
+                        exc_info=True,
+                    )
+                    return
+        finally:
+            state.closed = True
+            self._status_watches.pop(state.watch_id, None)
+
+    async def status_unwatch(
+        self, environment_id: str, watch_id: str, *, channel: Any
+    ) -> bool:
+        state = self._status_watches.get(watch_id)
+        if (
+            state is None
+            or state.environment_id != environment_id
+            or state.channel is not channel
+        ):
+            raise GitOperationFailed(
+                "unknown status watch",
+                operation="status_unwatch",
+                reason="unknown_watch",
+            )
+        self._drop_status_watch(state)
+        return True
+
+    def _drop_status_watch(self, state: _StatusWatchState) -> None:
+        state.closed = True
+        self._status_watches.pop(state.watch_id, None)
+        if state.task is not None and not state.task.done():
+            state.task.cancel()
+
+    def cleanup_channel(self, channel: Any) -> None:
+        """Tear down every status watch owned by a disconnected channel."""
+        for state in [s for s in self._status_watches.values() if s.channel is channel]:
+            self._drop_status_watch(state)
+
+    def status_watch_count(self) -> int:
+        return len(self._status_watches)
 
     async def diff(
         self,

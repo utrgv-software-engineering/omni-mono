@@ -75,8 +75,10 @@ _HANDLED = frozenset(
         "run_end",
         "tool_approval_requested",
         "tool_approval_resolved",
+        "tool_approval_reviewed",
         "mcp_approval_requested",
         "mcp_approval_resolved",
+        "plan_completion_reviewed",
         "elicitation_requested",
         "elicitation_resolved",
         "client_request",
@@ -689,6 +691,16 @@ class ConversationRecorder:
                     if isinstance(payload.get("tool_label"), str)
                     else {}
                 ),
+                # The tool's declared ``running_summary`` (bridge attaches it
+                # as ``metadata.summary`` on ``tool_called``). Without it a
+                # canonical-rendering client shows the raw tool name while
+                # the call is in flight. Superseded wholesale by the result's
+                # metadata in ``_on_tool_result``.
+                **(
+                    {"metadata": payload["metadata"]}
+                    if isinstance(payload.get("metadata"), dict)
+                    else {}
+                ),
             },
             source_ref={"event": "tool_called", "call_id": payload.get("call_id")},
         )
@@ -700,8 +712,11 @@ class ConversationRecorder:
         metadata = _as_dict(payload.get("metadata"))
         failed = metadata.get("display_type") == "error"
         content: Dict[str, Any] = {"output": payload.get("output")}
-        if metadata:
-            content["metadata"] = metadata
+        # Written even when empty: the result's metadata supersedes the
+        # call-time metadata (the running summary) WHOLESALE — a result
+        # without metadata must not leave "Running…" phrasing on a
+        # finished item.
+        content["metadata"] = metadata
         self._update_item(
             thread_id,
             key,
@@ -793,8 +808,81 @@ class ConversationRecorder:
             f"approval:tool:{call_id}",
             status=ItemStatus.COMPLETED,
             content={
-                key: payload[key] for key in ("reason",) if payload.get(key) is not None
+                # ``decision`` is normally attached by
+                # ``record_approval_decision`` (the wire event carries only
+                # the correlation id today), but a resolution payload that
+                # does carry it must not be recorded more blandly than it
+                # arrived.
+                key: payload[key]
+                for key in ("reason", "decision")
+                if payload.get(key) is not None
             },
+        )
+
+    def _on_tool_approval_reviewed(
+        self, thread_id: str, payload: Dict[str, Any]
+    ) -> None:
+        """A reviewer-resolved approval (sandbox policy or guardian).
+
+        ``kind`` selects the approval namespace: the tool lane keys on
+        ``call_id``, and the hosted-MCP lane reuses the same payload field
+        for its ``request_id`` (``request_mcp_approval`` passes
+        ``call_id=request_id`` into the review path).
+
+        The verdict is MERGED onto the canonical approval item so a
+        reloading client renders the guardian's decision, not a bland
+        record. But in every auto-resolved lane the prompt was never
+        broadcast — ``_resolve_approval_without_client`` returns before
+        ``tool_approval_requested`` goes out — so there is usually no item
+        to merge into. The review is then appended as its own approval
+        item, born terminal: the decision already happened, and dropping it
+        would show a reloading client a transcript missing a verdict it
+        saw live.
+        """
+        call_id = payload.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            return
+        approval_kind = "mcp" if payload.get("kind") == "mcp" else "tool"
+        natural_key = f"approval:{approval_kind}:{call_id}"
+        verdict = {
+            key: payload[key]
+            for key in ("reviewer", "outcome", "rationale", "risk_level")
+            if isinstance(payload.get(key), str)
+        }
+        if self._update_item(thread_id, natural_key, content=verdict) is not None:
+            return
+        tool_name = payload.get("tool_name")
+        server_label = payload.get("server_label")
+        self._append_item(
+            thread_id,
+            natural_key=natural_key,
+            kind=ItemKind.APPROVAL,
+            turn_id=(
+                payload.get("run_id")
+                if isinstance(payload.get("run_id"), str)
+                else None
+            ),
+            status=ItemStatus.COMPLETED,
+            content={
+                "approval_kind": approval_kind,
+                "tool": tool_name,
+                "tool_kind": classify_tool(
+                    tool_name if isinstance(tool_name, str) else None,
+                    server_label=(
+                        server_label if isinstance(server_label, str) else None
+                    ),
+                ).value,
+                **(
+                    {"server_label": server_label}
+                    if isinstance(server_label, str)
+                    else {}
+                ),
+                # Same identity field the matching *_approval_requested
+                # handler would have written, so the two shapes agree.
+                ("request_id" if approval_kind == "mcp" else "call_id"): call_id,
+                **verdict,
+            },
+            source_ref={"event": "tool_approval_reviewed", "call_id": call_id},
         )
 
     def _on_mcp_approval_requested(
@@ -837,6 +925,43 @@ class ConversationRecorder:
             content={
                 key: payload[key] for key in ("reason",) if payload.get(key) is not None
             },
+        )
+
+    def _on_plan_completion_reviewed(
+        self, thread_id: str, payload: Dict[str, Any]
+    ) -> None:
+        """A workflow completion-review verdict (``task_list_tools``).
+
+        Append-only, with the occurrence ordinal restoring distinctness —
+        the same task is legitimately reviewed more than once (rejected,
+        then accepted), and the transcript is a record: collapsing the
+        rejection into the later accept would hide why the run took the
+        path it did. Born terminal for the same reason as
+        :attr:`ItemKind.WORKFLOW_REVIEW` documents: it is the record of a
+        decision, not a lifecycle.
+        """
+        task_id = payload.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            return
+        run_id = payload.get("run_id")
+        self._append_item(
+            thread_id,
+            natural_key=self._next_occurrence_key(
+                thread_id, f"workflow_review:{task_id}"
+            ),
+            kind=ItemKind.WORKFLOW_REVIEW,
+            turn_id=run_id if isinstance(run_id, str) else None,
+            status=ItemStatus.COMPLETED,
+            role="assistant",
+            content={
+                "task_id": task_id,
+                **{
+                    key: payload[key]
+                    for key in ("subject", "outcome", "reviewer", "rationale")
+                    if isinstance(payload.get(key), str)
+                },
+            },
+            source_ref={"event": "plan_completion_reviewed", "task_id": task_id},
         )
 
     def _on_elicitation_requested(

@@ -88,7 +88,7 @@ def _get_cells(nb: dict) -> list:
     return []
 
 
-@rich_function_tool
+@rich_function_tool(running_summary="Reading notebook...")
 async def read_notebook(
     ctx: RunContextWrapper[Any],
     file_path: str,
@@ -192,7 +192,7 @@ async def read_notebook(
         )
 
 
-@rich_function_tool
+@rich_function_tool(running_summary="Editing notebook...")
 async def edit_notebook(
     ctx: RunContextWrapper[Any],
     file_path: str,

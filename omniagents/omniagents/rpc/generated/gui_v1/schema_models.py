@@ -388,6 +388,17 @@ class ForkSession(BaseModel):
     session_id: str
 
 
+class FsDelete(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_generation: int | None = None
+    environment_id: str
+    path: str
+    recursive: bool | None = None
+    workspace_id: str | None = None
+
+
 class FsDownloadClose(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -441,6 +452,27 @@ class FsList(BaseModel):
     environment_id: str
     path: str
     recursive: bool | None = None
+    workspace_id: str | None = None
+
+
+class FsMkdir(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_generation: int | None = None
+    environment_id: str
+    path: str
+    workspace_id: str | None = None
+
+
+class FsRename(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_generation: int | None = None
+    environment_id: str
+    path: str
+    to: str
     workspace_id: str | None = None
 
 
@@ -832,6 +864,41 @@ class GitStatus(BaseModel):
     workspace_id: str | None = None
 
 
+class GitStatusChanged(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    digest: str
+    environment_generation: int | None = None
+    environment_id: str
+    repo: str
+    seq: int | None = None
+    stream_id: str | None = None
+    watch_id: str
+    workspace_id: str | None = None
+
+
+class GitStatusUnwatch(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_generation: int | None = None
+    environment_id: str
+    watch_id: str
+    workspace_id: str | None = None
+
+
+class GitStatusWatch(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    environment_generation: int | None = None
+    environment_id: str
+    poll_interval_ms: int | None = None
+    repo: str
+    workspace_id: str | None = None
+
+
 class GitUnstage(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1136,6 +1203,21 @@ class MessageOutput(BaseModel):
     stream_id: str | None = None
 
 
+class PlanCompletionReviewed(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    outcome: str
+    rationale: str | None = None
+    reviewer: str
+    run_id: str | None = None
+    seq: int | None = None
+    session_id: str | None = None
+    stream_id: str | None = None
+    subject: str | None = None
+    task_id: str
+
+
 class Platform(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
@@ -1334,6 +1416,14 @@ class SetSessionReasoning(BaseModel):
         extra="forbid",
     )
     effort: str
+    session_id: str
+
+
+class SetSessionWorkflow(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    reviewer: str
     session_id: str
 
 
@@ -1610,6 +1700,7 @@ class Model(
         | ListItems
         | GetItem
         | SetSessionApprovals
+        | SetSessionWorkflow
         | AgentHostRegisterWorkspace
         | AgentHostRegisterProfile
         | AgentHostBindThread
@@ -1643,6 +1734,9 @@ class Model(
         | FsUploadChunk
         | FsUploadCommit
         | FsUploadAbort
+        | FsDelete
+        | FsRename
+        | FsMkdir
         | GitListRepositories
         | GitStatus
         | GitDiff
@@ -1659,6 +1753,8 @@ class Model(
         | GitFetch
         | GitPull
         | GitPush
+        | GitStatusWatch
+        | GitStatusUnwatch
         | ListThreads
         | SearchThreads
         | UpdateThread
@@ -1687,12 +1783,14 @@ class Model(
         | ElicitationResolved
         | McpServerStatusChanged
         | ToolApprovalReviewed
+        | PlanCompletionReviewed
         | SessionForked
         | SessionVariablesChanged
         | FsEvents
         | FsRescanRequired
         | FsTransferProgress
         | GitOperationProgress
+        | GitStatusChanged
         | ThreadUpdated
         | ItemUpdated
     ]
@@ -1748,6 +1846,7 @@ class Model(
         | ListItems
         | GetItem
         | SetSessionApprovals
+        | SetSessionWorkflow
         | AgentHostRegisterWorkspace
         | AgentHostRegisterProfile
         | AgentHostBindThread
@@ -1781,6 +1880,9 @@ class Model(
         | FsUploadChunk
         | FsUploadCommit
         | FsUploadAbort
+        | FsDelete
+        | FsRename
+        | FsMkdir
         | GitListRepositories
         | GitStatus
         | GitDiff
@@ -1797,6 +1899,8 @@ class Model(
         | GitFetch
         | GitPull
         | GitPush
+        | GitStatusWatch
+        | GitStatusUnwatch
         | ListThreads
         | SearchThreads
         | UpdateThread
@@ -1825,12 +1929,14 @@ class Model(
         | ElicitationResolved
         | McpServerStatusChanged
         | ToolApprovalReviewed
+        | PlanCompletionReviewed
         | SessionForked
         | SessionVariablesChanged
         | FsEvents
         | FsRescanRequired
         | FsTransferProgress
         | GitOperationProgress
+        | GitStatusChanged
         | ThreadUpdated
         | ItemUpdated
     )

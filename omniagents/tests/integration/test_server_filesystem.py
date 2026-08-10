@@ -43,6 +43,9 @@ FS_EXPERIMENTAL = (
     "fs_upload_chunk",
     "fs_upload_commit",
     "fs_upload_abort",
+    "fs_delete",
+    "fs_rename",
+    "fs_mkdir",
     "fs_events",
     "fs_rescan_required",
     "fs_transfer_progress",
@@ -482,3 +485,86 @@ def test_cross_user_workspace_access_denied(tmp_path):
             error = _error(bob, call_id, method, params)
             assert error["code"] == -32014, (method, error)
             assert error["data"]["kind"] == "authorization_denied"
+
+
+def test_file_management_mutations_round_trip(client, workspace):
+    (workspace / "notes.txt").write_text("hello")
+    with client.websocket_connect("/ws") as ws:
+        perform_gui_handshake(ws, experimental=FS_EXPERIMENTAL)
+        _ensure_session(ws, "fs-sess", workspace)
+
+        created, _ = _ok(ws, 1, "fs_mkdir", {"environment_id": "fs-env", "path": "sub"})
+        assert created == {"path": "sub", "created": True}
+        assert (workspace / "sub").is_dir()
+        error = _error(ws, 2, "fs_mkdir", {"environment_id": "fs-env", "path": "sub"})
+        assert error["code"] == -32060
+        assert error["data"]["reason"] == "target_exists"
+
+        renamed, _ = _ok(
+            ws,
+            3,
+            "fs_rename",
+            {"environment_id": "fs-env", "path": "notes.txt", "to": "sub/renamed.txt"},
+        )
+        assert renamed == {
+            "path": "notes.txt",
+            "to": "sub/renamed.txt",
+            "renamed": True,
+        }
+        assert not (workspace / "notes.txt").exists()
+        assert (workspace / "sub" / "renamed.txt").read_text() == "hello"
+
+        # A directory needs an explicit recursive delete.
+        error = _error(ws, 4, "fs_delete", {"environment_id": "fs-env", "path": "sub"})
+        assert error["code"] == -32060
+        assert error["data"]["reason"] == "directory_requires_recursive"
+        deleted, _ = _ok(
+            ws,
+            5,
+            "fs_delete",
+            {"environment_id": "fs-env", "path": "sub", "recursive": True},
+        )
+        assert deleted == {"path": "sub", "deleted": True}
+        assert not (workspace / "sub").exists()
+
+        # Missing targets and the workspace root are honest, typed refusals.
+        error = _error(
+            ws, 6, "fs_delete", {"environment_id": "fs-env", "path": "gone.txt"}
+        )
+        assert error["code"] == -32061
+        error = _error(ws, 7, "fs_delete", {"environment_id": "fs-env", "path": "."})
+        assert error["code"] == -32060
+        error = _error(
+            ws,
+            8,
+            "fs_rename",
+            {"environment_id": "fs-env", "path": "../outside", "to": "in"},
+        )
+        assert error["code"] == -32060
+
+
+def test_file_management_respects_read_only_sources(client, workspace):
+    """Mutations run the same effective-writability policy as uploads."""
+    (workspace / "notes.txt").write_text("hello")
+    service = client.app.state.agent_service
+
+    async def read_only(environment_id, ws_obj, rel):
+        return False
+
+    service.filesystem._source_writability_resolver = read_only
+    with client.websocket_connect("/ws") as ws:
+        perform_gui_handshake(ws, experimental=FS_EXPERIMENTAL)
+        _ensure_session(ws, "fs-sess", workspace)
+        for call_id, method, params in (
+            ("a", "fs_delete", {"environment_id": "fs-env", "path": "notes.txt"}),
+            (
+                "b",
+                "fs_rename",
+                {"environment_id": "fs-env", "path": "notes.txt", "to": "other.txt"},
+            ),
+            ("c", "fs_mkdir", {"environment_id": "fs-env", "path": "sub"}),
+        ):
+            error = _error(ws, call_id, method, params)
+            assert error["code"] == -32064, (method, error)
+            assert error["data"]["kind"] == "fs_read_only"
+    assert (workspace / "notes.txt").read_text() == "hello"

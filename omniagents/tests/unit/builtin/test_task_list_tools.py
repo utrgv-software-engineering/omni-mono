@@ -131,6 +131,9 @@ class TestToolSurface:
                 "status": "pending",
                 "owner": "",
                 "blockedBy": [],
+                "exitCriteria": "",
+                "verified": None,
+                "criteriaEdited": False,
             }
         ]
 
@@ -162,6 +165,9 @@ class TestResultShape:
             "blocks": [],
             "blockedBy": ["1"],
             "openBlockers": ["1"],
+            "exitCriteria": "",
+            "criteriaEdited": False,
+            "originalExitCriteria": "",
         }
 
     @pytest.mark.asyncio
@@ -189,6 +195,9 @@ class TestResultShape:
                 "status": "pending",
                 "owner": "",
                 "blockedBy": [],
+                "exitCriteria": "",
+                "verified": None,
+                "criteriaEdited": False,
             }
         ]
         assert payload["counts"] == {
@@ -533,3 +542,111 @@ class TestSessionlessFallback:
         tasks = json.loads(str(await _call(tlt.task_list, session_ctx("s1"))))["tasks"]
         assert tasks == []
         assert store().list_items("s1", limit=10, kinds=[ItemKind.PLAN]) == []
+
+
+# ---------------------------------------------------------------------
+# Edge integrity: cycle refusal and edge removal
+# ---------------------------------------------------------------------
+
+
+class TestEdgeIntegrity:
+    """A dependency cycle can never mean iteration in an all-of precedence
+    model — only deadlock — so cycle-closing edges are refused with the
+    chain named, and ``removeBlockedBy`` is the ordinary fix for a
+    mis-drawn edge (the alternatives — overrideBlockers, deletion —
+    bypass the guard or destroy history)."""
+
+    async def _three(self, ctx):
+        await _call(tlt.task_create, ctx, subject="a", description="d")
+        await _call(tlt.task_create, ctx, subject="b", description="d")
+        await _call(tlt.task_create, ctx, subject="c", description="d")
+
+    @pytest.mark.asyncio
+    async def test_direct_cycle_is_refused_and_nothing_is_written(self):
+        ctx = session_ctx("s1")
+        await self._three(ctx)
+        await _call(tlt.task_update, ctx, task_id="2", addBlockedBy=["1"])
+        out = await _call(tlt.task_update, ctx, task_id="1", addBlockedBy=["2"])
+        payload = json.loads(str(out))
+        assert payload["error"] == "dependency_cycle"
+        assert payload["path"] == ["2", "1"]
+        assert payload["edge"] == {"blocker": "2", "blocked": "1"}
+        stored = plans().current("s1", "main")
+        assert stored.step("1").blocked_by == []
+        assert stored.step("2").blocked_by == ["1"]
+
+    @pytest.mark.asyncio
+    async def test_transitive_cycle_is_refused_with_the_chain(self):
+        ctx = session_ctx("s1")
+        await self._three(ctx)
+        await _call(tlt.task_update, ctx, task_id="2", addBlockedBy=["1"])
+        await _call(tlt.task_update, ctx, task_id="3", addBlockedBy=["2"])
+        out = await _call(tlt.task_update, ctx, task_id="1", addBlockedBy=["3"])
+        payload = json.loads(str(out))
+        assert payload["error"] == "dependency_cycle"
+        assert payload["path"] == ["3", "2", "1"]
+
+    @pytest.mark.asyncio
+    async def test_two_additions_in_one_call_cannot_form_a_cycle(self):
+        ctx = session_ctx("s1")
+        await self._three(ctx)
+        # blocks: 1 blocks 2; blockedBy: 1 waits on 2 — together a cycle.
+        out = await _call(
+            tlt.task_update, ctx, task_id="1", addBlocks=["2"], addBlockedBy=["2"]
+        )
+        payload = json.loads(str(out))
+        assert payload["error"] == "dependency_cycle"
+        stored = plans().current("s1", "main")
+        assert stored.step("1").blocks == []
+        assert stored.step("1").blocked_by == []
+
+    @pytest.mark.asyncio
+    async def test_diamond_fan_out_fan_in_is_legal(self):
+        ctx = session_ctx("s1")
+        await self._three(ctx)
+        await _call(tlt.task_create, ctx, subject="d", description="d")
+        await _call(tlt.task_update, ctx, task_id="2", addBlockedBy=["1"])
+        await _call(tlt.task_update, ctx, task_id="3", addBlockedBy=["1"])
+        out = await _call(tlt.task_update, ctx, task_id="4", addBlockedBy=["2", "3"])
+        assert json.loads(str(out))["task"]["blockedBy"] == ["2", "3"]
+
+    @pytest.mark.asyncio
+    async def test_remove_blocked_by_is_symmetric_and_unblocks(self):
+        ctx = session_ctx("s1")
+        await self._three(ctx)
+        await _call(tlt.task_update, ctx, task_id="2", addBlockedBy=["1"])
+        out = await _call(tlt.task_update, ctx, task_id="2", removeBlockedBy=["1"])
+        assert json.loads(str(out))["task"]["blockedBy"] == []
+        stored = plans().current("s1", "main")
+        assert stored.step("1").blocks == []
+        assert stored.step("2").blocked_by == []
+        started = await _call(tlt.task_update, ctx, task_id="2", status="in_progress")
+        assert json.loads(str(started))["task"]["status"] == "in_progress"
+
+    @pytest.mark.asyncio
+    async def test_remove_of_absent_edge_or_unknown_id_is_a_noop(self):
+        ctx = session_ctx("s1")
+        await self._three(ctx)
+        out = await _call(
+            tlt.task_update, ctx, task_id="2", removeBlockedBy=["1", "99"]
+        )
+        assert json.loads(str(out))["task"]["blockedBy"] == []
+
+    @pytest.mark.asyncio
+    async def test_removal_in_same_call_legalizes_the_addition(self):
+        ctx = session_ctx("s1")
+        await self._three(ctx)
+        # 1 waits on 2. Reversing the edge in ONE call on task 1 must
+        # work: the removal is simulated before the addition is validated.
+        await _call(tlt.task_update, ctx, task_id="1", addBlockedBy=["2"])
+        out = await _call(
+            tlt.task_update,
+            ctx,
+            task_id="1",
+            addBlocks=["2"],
+            removeBlockedBy=["2"],
+        )
+        assert "error" not in json.loads(str(out))
+        stored = plans().current("s1", "main")
+        assert stored.step("1").blocked_by == []
+        assert stored.step("2").blocked_by == ["1"]

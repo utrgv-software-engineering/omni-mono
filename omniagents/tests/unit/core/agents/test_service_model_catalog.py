@@ -105,6 +105,8 @@ async def test_list_models_returns_catalog_with_session_context(service, store):
         "session_id": "sess-1",
         "active_model": None,
         "reasoning_effort": None,
+        "approvals_reviewer": None,
+        "workflow_reviewer": None,
     }
 
     hidden = await service.list_models(include_hidden=True)

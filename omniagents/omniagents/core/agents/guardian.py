@@ -30,6 +30,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from omniagents.core.agents.transcript_compaction import (
+    MAX_ACTION_CHARS,
+    MAX_MESSAGE_ENTRY_CHARS,
+    MAX_TOOL_ENTRY_CHARS,
+    MAX_TRANSCRIPT_CHARS,
+    MAX_TRANSCRIPT_ENTRIES,
+)
+from omniagents.core.agents.transcript_compaction import clip as _clip
+from omniagents.core.agents.transcript_compaction import (
+    compact_transcript as _compact_transcript,
+)
+from omniagents.core.agents.transcript_compaction import (
+    content_text as _content_text,
+)
+from omniagents.core.agents.transcript_compaction import (
+    transcript_line as _transcript_line,
+)
+
 logger = logging.getLogger(__name__)
 
 GUARDIAN_TIMEOUT_SECONDS = 45.0
@@ -39,14 +57,10 @@ RISK_LEVELS = ("low", "medium", "high", "critical")
 USER_AUTHORIZATIONS = ("unknown", "low", "medium", "high")
 OUTCOMES = ("allow", "deny")
 
-#: Transcript budgets (approximate tokens; 4 chars ≈ 1 token). Mirrors the
-#: shape of codex's guardian: recent entries only, with per-entry caps so one
-#: giant tool result can't crowd out the user's actual intent.
-MAX_TRANSCRIPT_ENTRIES = 40
-MAX_MESSAGE_ENTRY_CHARS = 8_000
-MAX_TOOL_ENTRY_CHARS = 4_000
-MAX_TRANSCRIPT_CHARS = 80_000
-MAX_ACTION_CHARS = 64_000
+# Transcript budgets and compaction helpers live in
+# ``transcript_compaction`` (shared with the plan-completion reviewer).
+# The aliased imports above keep the historical module-level names
+# (``_compact_transcript``, ``_clip``, ...) importable from here.
 
 _POLICY_PATH = Path(__file__).with_name("guardian_policy.md")
 
@@ -256,69 +270,6 @@ async def _build_prompt(service: Any, session: Any, request: GuardianRequest) ->
         "## Planned action under review\n"
         f"{json.dumps(action, ensure_ascii=False, default=str)}\n"
     )
-
-
-async def _compact_transcript(service: Any, session: Any) -> str:
-    try:
-        items = await service.get_session_history(session.id)
-    except Exception:
-        return ""
-    if not isinstance(items, list):
-        return ""
-    lines: list[str] = []
-    for item in items[-MAX_TRANSCRIPT_ENTRIES:]:
-        line = _transcript_line(item)
-        if line:
-            lines.append(line)
-    text = "\n".join(lines)
-    if len(text) > MAX_TRANSCRIPT_CHARS:
-        text = "[earlier transcript truncated]\n" + text[-MAX_TRANSCRIPT_CHARS:]
-    return text
-
-
-def _transcript_line(item: Any) -> str:
-    if not isinstance(item, dict):
-        return ""
-    role = item.get("role")
-    if isinstance(role, str) and role:
-        content = _content_text(item.get("content"))
-        if content:
-            return f"{role}: {_clip(content, MAX_MESSAGE_ENTRY_CHARS)}"
-        return ""
-    item_type = item.get("type")
-    if item_type in ("function_call", "tool_call"):
-        name = item.get("name") or item.get("tool_name") or "tool"
-        arguments = item.get("arguments") or ""
-        return f"tool-call {name}: {_clip(str(arguments), MAX_TOOL_ENTRY_CHARS)}"
-    if item_type in ("function_call_output", "tool_result"):
-        output = item.get("output") or item.get("result") or ""
-        return f"tool-result: {_clip(_content_text(output), MAX_TOOL_ENTRY_CHARS)}"
-    return ""
-
-
-def _content_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for part in content:
-            if isinstance(part, dict):
-                text = part.get("text")
-                if isinstance(text, str):
-                    parts.append(text)
-            elif isinstance(part, str):
-                parts.append(part)
-        return " ".join(parts)
-    if isinstance(content, dict):
-        text = content.get("text")
-        return text if isinstance(text, str) else ""
-    return "" if content is None else str(content)
-
-
-def _clip(text: str, limit: int) -> str:
-    if len(text) <= limit:
-        return text
-    return text[:limit] + " …[truncated]"
 
 
 def _session_review_lock(session: Any) -> asyncio.Lock:

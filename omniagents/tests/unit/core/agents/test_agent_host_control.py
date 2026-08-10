@@ -266,6 +266,69 @@ async def test_materialize_environment_resolves_registered_workspace_profile(
     assert environment["services"] == {}
     assert environment["workspace_root"] == str(tmp_path)
     assert environment["default_cwd"] is None
+    assert environment["mounts"] == []
+
+
+@pytest.mark.asyncio
+async def test_materialize_environment_reports_authoritative_mounts(tmp_path):
+    """The mount table states where each source landed relative to the root:
+    '.' when the root IS the source (single-local-source host layout),
+    the mount name everywhere else. Clients scope the workspace surfaces
+    from this — never from default_cwd heuristics."""
+
+    class HostProvisioner:
+        async def provision(self, request):
+            return ProvisionedEnvironment(
+                workspace=HostWorkspace(root=str(tmp_path)),
+                kind=EnvironmentKind.HOST,
+                capabilities=frozenset({EnvironmentCapability.WORKSPACE_READ}),
+            )
+
+    spec = AgentSpec(
+        name="control",
+        welcome_text="",
+        get_agent_instructions=lambda: "",
+        build_agent=None,
+    )
+    resources = AgentHostResources.create(
+        "mounts-host", environment_provisioner=HostProvisioner()
+    )
+    service = AgentService(spec, resources)
+    await service.agent_host_register_workspace(
+        "workspace-1",
+        str(tmp_path),
+        sources=[
+            {
+                "kind": "local",
+                "mountName": "scratch",
+                "path": str(tmp_path),
+                "writable": True,
+            },
+            {
+                "kind": "local-git",
+                "mountName": "library",
+                "path": str(tmp_path / "elsewhere"),
+                "writable": False,
+            },
+            {"kind": "git-remote", "mountName": "vendored"},
+        ],
+    )
+    await service.agent_host_register_profile("host", {"kind": "default"})
+
+    environment = await service.agent_host_materialize_environment(
+        "workspace-1", "host"
+    )
+
+    assert environment["mounts"] == [
+        {"name": "scratch", "path": ".", "writable": True, "kind": "local"},
+        {"name": "library", "path": "library", "writable": False, "kind": "local-git"},
+        {
+            "name": "vendored",
+            "path": "vendored",
+            "writable": True,
+            "kind": "git-remote",
+        },
+    ]
 
 
 @pytest.mark.asyncio

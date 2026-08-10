@@ -13,4 +13,10 @@ instructions: |
     done — no batching.
   - Task `subject` is a short imperative title; `description` carries
     enough context that someone else could execute the step.
-  - Use `addBlockedBy` to link sequenced steps so order isn't hidden.
+  - Use `addBlockedBy` to link sequenced steps so order isn't hidden;
+    tasks with open blockers cannot be started.
+  - Set `exitCriteria` on tasks whose completion is externally checkable,
+    stated as evidence, not intent ("test output shows 0 failures", not
+    "code is tested"). Completion of such tasks is reviewed and may be
+    rejected with a rationale — respond by doing the missing work, not
+    by rewording the criteria.

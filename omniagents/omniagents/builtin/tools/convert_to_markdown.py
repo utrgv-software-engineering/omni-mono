@@ -50,7 +50,7 @@ def _error_output(
     )
 
 
-@rich_function_tool
+@rich_function_tool(running_summary="Converting document to markdown...")
 async def convert_to_markdown(
     ctx: RunContextWrapper[Any],
     file_path: str,

@@ -231,6 +231,74 @@ class TestItemLifecycle:
         assert tool.revision == 1
         assert store.count_items(THREAD) == 2  # prompt + ONE tool item
 
+    def test_running_summary_is_recorded_then_superseded_by_the_result(
+        self, store, recorder
+    ):
+        feed(
+            recorder,
+            ("run_started", {"run_id": RUN, "prompt": "hi"}),
+            (
+                "tool_called",
+                {
+                    "run_id": RUN,
+                    "tool": "execute_bash",
+                    "input": "{}",
+                    "call_id": "c1",
+                    "metadata": {"summary": "Running shell command..."},
+                },
+            ),
+        )
+        [tool] = only(store, ItemKind.TOOL_CALL)
+        # A canonical-rendering client titles the in-flight card from this.
+        assert tool.content["metadata"] == {"summary": "Running shell command..."}
+
+        # A result WITHOUT metadata must clear it — "Running…" phrasing may
+        # never survive on a finished item.
+        feed(
+            recorder,
+            (
+                "tool_result",
+                {
+                    "run_id": RUN,
+                    "tool": "execute_bash",
+                    "output": "ok",
+                    "call_id": "c1",
+                },
+            ),
+        )
+        [tool] = only(store, ItemKind.TOOL_CALL)
+        assert tool.content["metadata"] == {}
+
+        # And a result WITH metadata replaces it wholesale.
+        feed(
+            recorder,
+            (
+                "tool_called",
+                {
+                    "run_id": RUN,
+                    "tool": "execute_bash",
+                    "input": "{}",
+                    "call_id": "c2",
+                    "metadata": {"summary": "Running shell command..."},
+                },
+            ),
+            (
+                "tool_result",
+                {
+                    "run_id": RUN,
+                    "tool": "execute_bash",
+                    "output": "ok",
+                    "call_id": "c2",
+                    "metadata": {"summary": "Ran npm test", "display_type": "command"},
+                },
+            ),
+        )
+        tools = only(store, ItemKind.TOOL_CALL)
+        assert tools[-1].content["metadata"] == {
+            "summary": "Ran npm test",
+            "display_type": "command",
+        }
+
     def test_error_metadata_lands_the_tool_item_as_failed(self, store, recorder):
         feed(
             recorder,
@@ -720,6 +788,252 @@ class TestConceptCoverage:
             ("queue_changed", {"depth": 1, "items": []}),
             ("session_variables_changed", {"changed": {}, "variables": {}}),
             ("client_request_resolved", {"request_id": "r1"}),
+        )
+        assert store.count_items(THREAD) == 0
+
+
+# ---------------------------------------------------------------------
+# Review decisions (workflow completion + guardian approvals)
+# ---------------------------------------------------------------------
+
+
+class TestReviewDecisions:
+    """Review verdicts are part of the record: a client reloading a session
+    must see the same guardian/workflow decisions it saw live."""
+
+    def test_workflow_review_appends_a_terminal_item_under_its_turn(
+        self, store, recorder
+    ):
+        feed(
+            recorder,
+            ("run_started", {"run_id": RUN, "prompt": "build it"}),
+            (
+                "plan_completion_reviewed",
+                {
+                    "task_id": "1",
+                    "subject": "Wire the API",
+                    "outcome": "reject",
+                    "reviewer": "guardian",
+                    "rationale": "exit criteria unmet",
+                    "run_id": RUN,
+                },
+            ),
+        )
+        [review] = only(store, ItemKind.WORKFLOW_REVIEW)
+        assert review.turn_id == RUN
+        assert review.status is ItemStatus.COMPLETED
+        assert review.role == "assistant"
+        assert review.content == {
+            "task_id": "1",
+            "subject": "Wire the API",
+            "outcome": "reject",
+            "reviewer": "guardian",
+            "rationale": "exit criteria unmet",
+        }
+
+    def test_repeated_reviews_of_one_task_stay_distinct_in_order(self, store, recorder):
+        """The same task is legitimately reviewed more than once (rejected,
+        then accepted). The transcript is a record: both verdicts stay."""
+        base = {
+            "task_id": "1",
+            "subject": "Wire the API",
+            "reviewer": "guardian",
+            "run_id": RUN,
+        }
+        feed(
+            recorder,
+            ("run_started", {"run_id": RUN, "prompt": "build it"}),
+            (
+                "plan_completion_reviewed",
+                {**base, "outcome": "reject", "rationale": "not yet"},
+            ),
+            (
+                "plan_completion_reviewed",
+                {**base, "outcome": "accept_verified", "rationale": "done"},
+            ),
+        )
+        reviews = only(store, ItemKind.WORKFLOW_REVIEW)
+        assert [r.content["outcome"] for r in reviews] == [
+            "reject",
+            "accept_verified",
+        ]
+        assert reviews[0].item_id != reviews[1].item_id
+        assert reviews[0].seq < reviews[1].seq
+
+    def test_workflow_review_drops_non_string_fields(self, store, recorder):
+        feed(
+            recorder,
+            (
+                "plan_completion_reviewed",
+                {
+                    "task_id": "1",
+                    "subject": None,
+                    "outcome": "accept_unverified",
+                    "reviewer": "none",
+                    "rationale": 123,
+                },
+            ),
+        )
+        [review] = only(store, ItemKind.WORKFLOW_REVIEW)
+        assert review.content == {
+            "task_id": "1",
+            "outcome": "accept_unverified",
+            "reviewer": "none",
+        }
+
+    def test_workflow_review_without_a_task_id_is_ignored(self, store, recorder):
+        feed(
+            recorder,
+            ("plan_completion_reviewed", {"outcome": "reject", "reviewer": "guardian"}),
+            ("plan_completion_reviewed", {"task_id": 7, "outcome": "reject"}),
+        )
+        assert store.count_items(THREAD) == 0
+
+    def test_tool_approval_reviewed_merges_the_verdict_onto_the_prompt(
+        self, store, recorder
+    ):
+        feed(
+            recorder,
+            (
+                "tool_approval_requested",
+                {
+                    "run_id": RUN,
+                    "call_id": "a1",
+                    "tool_name": "write_file",
+                    "arguments": {},
+                },
+            ),
+            (
+                "tool_approval_reviewed",
+                {
+                    "call_id": "a1",
+                    "kind": "tool",
+                    "tool_name": "write_file",
+                    "reviewer": "guardian",
+                    "outcome": "deny",
+                    "rationale": "writes outside the workspace",
+                    "risk_level": "high",
+                    "run_id": RUN,
+                },
+            ),
+        )
+        [approval] = only(store, ItemKind.APPROVAL)
+        assert approval.content["reviewer"] == "guardian"
+        assert approval.content["outcome"] == "deny"
+        assert approval.content["rationale"] == "writes outside the workspace"
+        assert approval.content["risk_level"] == "high"
+        # The review is content, not a lifecycle step: status is untouched.
+        assert approval.status is ItemStatus.STARTED
+
+    def test_mcp_reviewed_targets_the_mcp_approval_item(self, store, recorder):
+        """The mcp lane reuses the ``call_id`` payload field for its
+        ``request_id`` (``request_mcp_approval`` passes it through)."""
+        feed(
+            recorder,
+            (
+                "mcp_approval_requested",
+                {
+                    "run_id": RUN,
+                    "request_id": "r1",
+                    "server_label": "docs",
+                    "tool_name": "search",
+                    "arguments": {},
+                },
+            ),
+            (
+                "tool_approval_reviewed",
+                {
+                    "call_id": "r1",
+                    "kind": "mcp",
+                    "tool_name": "search",
+                    "server_label": "docs",
+                    "reviewer": "guardian",
+                    "outcome": "allow",
+                    "rationale": "read-only",
+                },
+            ),
+        )
+        [approval] = only(store, ItemKind.APPROVAL)
+        assert approval.content["approval_kind"] == "mcp"
+        assert approval.content["reviewer"] == "guardian"
+        assert approval.content["outcome"] == "allow"
+
+    def test_reviewed_without_a_prompt_still_records_the_decision(
+        self, store, recorder
+    ):
+        """The guardian/sandbox lane never broadcasts the approval prompt
+        (``_resolve_approval_without_client`` returns before it), so the
+        review must stand alone or a reloading client loses the verdict."""
+        feed(
+            recorder,
+            ("run_started", {"run_id": RUN, "prompt": "build it"}),
+            (
+                "tool_approval_reviewed",
+                {
+                    "call_id": "a1",
+                    "kind": "tool",
+                    "tool_name": "execute_bash",
+                    "reviewer": "sandbox-policy",
+                    "outcome": "allow",
+                    "rationale": "sandboxed environment",
+                    "run_id": RUN,
+                },
+            ),
+        )
+        [approval] = only(store, ItemKind.APPROVAL)
+        assert approval.status is ItemStatus.COMPLETED
+        assert approval.turn_id == RUN
+        assert approval.content["approval_kind"] == "tool"
+        assert approval.content["tool"] == "execute_bash"
+        assert approval.content["call_id"] == "a1"
+        assert approval.content["reviewer"] == "sandbox-policy"
+        assert approval.content["outcome"] == "allow"
+        assert approval.content["rationale"] == "sandboxed environment"
+
+    def test_duplicate_reviewed_delivery_does_not_duplicate(self, store, recorder):
+        payload = {
+            "call_id": "a1",
+            "kind": "tool",
+            "tool_name": "execute_bash",
+            "reviewer": "guardian",
+            "outcome": "allow",
+            "rationale": "safe",
+        }
+        feed(
+            recorder,
+            ("tool_approval_reviewed", payload),
+            ("tool_approval_reviewed", payload),
+        )
+        assert len(only(store, ItemKind.APPROVAL)) == 1
+
+    def test_resolved_stores_the_decision_when_the_payload_carries_it(
+        self, store, recorder
+    ):
+        feed(
+            recorder,
+            (
+                "tool_approval_requested",
+                {
+                    "run_id": RUN,
+                    "call_id": "c1",
+                    "tool_name": "write_file",
+                    "arguments": {},
+                },
+            ),
+            ("tool_approval_resolved", {"call_id": "c1", "decision": "approve"}),
+        )
+        [approval] = only(store, ItemKind.APPROVAL)
+        assert approval.status is ItemStatus.COMPLETED
+        assert approval.content["decision"] == "approve"
+
+    def test_reviewed_without_a_call_id_is_ignored(self, store, recorder):
+        feed(
+            recorder,
+            (
+                "tool_approval_reviewed",
+                {"kind": "tool", "reviewer": "guardian", "outcome": "allow"},
+            ),
+            ("tool_approval_reviewed", {"call_id": "", "kind": "tool"}),
         )
         assert store.count_items(THREAD) == 0
 

@@ -6,12 +6,14 @@
   "notifications": {
     "experimental": [
       "tool_approval_reviewed",
+      "plan_completion_reviewed",
       "session_forked",
       "session_variables_changed",
       "fs_events",
       "fs_rescan_required",
       "fs_transfer_progress",
       "git_operation_progress",
+      "git_status_changed",
       "thread_updated",
       "item_updated"
     ],
@@ -172,6 +174,12 @@
       "execution_requirements": [],
       "resource_scope": "thread"
     },
+    "fs_delete": {
+      "execution_requirements": [
+        "workspace_write"
+      ],
+      "resource_scope": "workspace"
+    },
     "fs_download_close": {
       "execution_requirements": [
         "workspace_read"
@@ -197,6 +205,18 @@
     "fs_list": {
       "execution_requirements": [
         "workspace_read"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_mkdir": {
+      "execution_requirements": [
+        "workspace_write"
+      ],
+      "resource_scope": "workspace"
+    },
+    "fs_rename": {
+      "execution_requirements": [
+        "workspace_write"
       ],
       "resource_scope": "workspace"
     },
@@ -398,6 +418,24 @@
       ],
       "resource_scope": "workspace"
     },
+    "git_status_changed": {
+      "execution_requirements": [],
+      "resource_scope": "workspace"
+    },
+    "git_status_unwatch": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
+    "git_status_watch": {
+      "execution_requirements": [
+        "workspace_read",
+        "process"
+      ],
+      "resource_scope": "workspace"
+    },
     "git_unstage": {
       "execution_requirements": [
         "workspace_write",
@@ -521,6 +559,10 @@
       "execution_requirements": [],
       "resource_scope": "run"
     },
+    "plan_completion_reviewed": {
+      "execution_requirements": [],
+      "resource_scope": "run"
+    },
     "purge_threads": {
       "execution_requirements": [],
       "resource_scope": "agent_host"
@@ -595,6 +637,10 @@
       "execution_requirements": [],
       "resource_scope": "thread"
     },
+    "set_session_workflow": {
+      "execution_requirements": [],
+      "resource_scope": "thread"
+    },
     "set_voice_model": {
       "execution_requirements": [],
       "resource_scope": "agent_host"
@@ -661,6 +707,7 @@
   "requests": {
     "experimental": [
       "set_session_approvals",
+      "set_session_workflow",
       "agent_host_register_workspace",
       "agent_host_register_profile",
       "agent_host_bind_thread",
@@ -694,6 +741,9 @@
       "fs_upload_chunk",
       "fs_upload_commit",
       "fs_upload_abort",
+      "fs_delete",
+      "fs_rename",
+      "fs_mkdir",
       "git_list_repositories",
       "git_status",
       "git_diff",
@@ -710,6 +760,8 @@
       "git_fetch",
       "git_pull",
       "git_push",
+      "git_status_watch",
+      "git_status_unwatch",
       "list_threads",
       "search_threads",
       "update_thread",

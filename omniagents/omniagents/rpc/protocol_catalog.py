@@ -119,6 +119,10 @@ EXPERIMENTAL_REQUESTS = (
     # Approval reviewer ("Approve for me"): per-session routing of
     # tool/MCP approvals to the guardian reviewer instead of the human.
     "set_session_approvals",
+    # Workflow completion reviewer: per-session routing of plan-step
+    # completions with exit criteria to the plan-review guardian, the
+    # human, or nobody.
+    "set_session_workflow",
     # AgentHost provisioning control plane. These are introduced together so
     # clients never have to smuggle Workspace/profile identity through a Run.
     "agent_host_register_workspace",
@@ -162,6 +166,13 @@ EXPERIMENTAL_REQUESTS = (
     "fs_upload_chunk",
     "fs_upload_commit",
     "fs_upload_abort",
+    # Workspace file management (delete/rename/mkdir) for the desktop
+    # Files tree. Experimental on entry, same posture as the transfer
+    # operations above: mutations run the identical effective-writability
+    # policy as fs_upload_commit.
+    "fs_delete",
+    "fs_rename",
+    "fs_mkdir",
     # Typed git operations & interactive diff (tkt_l_l0lUi4A5V2).
     # Experimental on entry, matching the fs_* precedent: the Omni
     # Desktop interactive diff UI is a follow-up, so the hunk model has
@@ -183,6 +194,12 @@ EXPERIMENTAL_REQUESTS = (
     "git_fetch",
     "git_pull",
     "git_push",
+    # Server-side repository-status watch: the server polls porcelain
+    # status (git applies ignore rules, so this stays bounded where a
+    # recursive fs watch of a worktree would not) and pushes a coalesced
+    # git_status_changed digest. Channel-bound like fs_watch.
+    "git_status_watch",
+    "git_status_unwatch",
     # Conversation organization, search & branching (tkt_eZldW-Gje6kn).
     # Experimental on entry, following the fs_*/git_* precedent for a
     # brand-new surface: the filter set and the two cursor shapes (keyset
@@ -251,6 +268,11 @@ EXPERIMENTAL_NOTIFICATIONS = (
     # Reviewer/sandbox-resolved approval decisions that never reached the
     # client as prompts. Journaled: transcripts and replay must show them.
     "tool_approval_reviewed",
+    # Plan-step completion review outcomes that need surfacing: rejections,
+    # unverified accepts, and breaker/human escalations. Clean verifications
+    # and waived completions are deliberately silent — the plan snapshot
+    # already carries the verified state.
+    "plan_completion_reviewed",
     "session_forked",
     "session_variables_changed",
     # Filesystem watch/transfer events (tkt_B5fXOZHf08K1). Per-connection
@@ -265,6 +287,11 @@ EXPERIMENTAL_NOTIFICATIONS = (
     # journaled: like the fs_* events these are per-connection and
     # derivable — a reconnecting client refetches git_status.
     "git_operation_progress",
+    # Repository status moved (git_status_watch). Carries only a digest —
+    # never repository content — and is per-connection and derivable, so
+    # like the fs_* events it is not journaled: a reconnecting client
+    # re-subscribes and refetches git_status.
+    "git_status_changed",
     # Thread metadata changed (tkt_eZldW-Gje6kn). Connection-wide, so a
     # rename or an archive reaches the sidebar of every open column and not
     # just the one already displaying the thread. Not journaled: this is
@@ -335,6 +362,7 @@ _REQUEST_CLASSIFICATIONS = _classification_map(
                 "set_session_model",
                 "set_session_reasoning",
                 "set_session_approvals",
+                "set_session_workflow",
                 "get_thread",
                 "list_turns",
                 "list_items",
@@ -447,6 +475,9 @@ _REQUEST_CLASSIFICATIONS = _classification_map(
                 "fs_upload_chunk",
                 "fs_upload_commit",
                 "fs_upload_abort",
+                "fs_delete",
+                "fs_rename",
+                "fs_mkdir",
             ),
         ),
         (
@@ -460,6 +491,8 @@ _REQUEST_CLASSIFICATIONS = _classification_map(
                 "git_list_branches",
                 "git_list_worktrees",
                 "git_conflicts",
+                "git_status_watch",
+                "git_status_unwatch",
             ),
         ),
         (
@@ -510,6 +543,7 @@ _SERVER_NOTIFICATION_CLASSIFICATIONS = _classification_map(
                 "tool_approval_requested",
                 "tool_approval_resolved",
                 "tool_approval_reviewed",
+                "plan_completion_reviewed",
                 "mcp_approval_requested",
                 "mcp_approval_resolved",
                 "client_request",
@@ -547,6 +581,7 @@ _SERVER_NOTIFICATION_CLASSIFICATIONS = _classification_map(
                 "fs_rescan_required",
                 "fs_transfer_progress",
                 "git_operation_progress",
+                "git_status_changed",
             ),
         ),
     )

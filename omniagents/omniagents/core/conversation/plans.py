@@ -54,9 +54,12 @@ __all__ = [
     "Plan",
     "PlanStep",
     "PlanStore",
+    "dependency_map",
     "link",
     "plan_natural_key",
+    "unlink",
     "unlink_all",
+    "would_cycle",
 ]
 
 #: The closed set of step statuses. ``blocked`` is first-class rather than
@@ -116,6 +119,20 @@ class PlanStep:
     #: (see :meth:`PlanStore.link`).
     blocks: List[str] = field(default_factory=list)
     blocked_by: List[str] = field(default_factory=list)
+    #: Checkable definition-of-done for this step. Empty means "no semantic
+    #: review for this step" — the natural opt-in.
+    exit_criteria: str = ""
+    #: Outcome of the last completion review:
+    #: ``{"outcome": "verified" | "unverified" | "waived",
+    #:   "reviewer": "guardian" | "human" | "none", "rationale": str}``.
+    #: ``None`` until the step first reaches ``completed``.
+    review: Optional[Dict[str, Any]] = None
+    #: The criteria-edit ratchet's record: set once, to the pre-edit value,
+    #: the first time ``exit_criteria`` changes while the step is
+    #: ``in_progress`` (including an edit arriving in the same call that
+    #: sets ``completed``). Later edits keep the FIRST original. Empty means
+    #: the criteria were never edited mid-step.
+    original_exit_criteria: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -127,6 +144,9 @@ class PlanStep:
             "owner": self.owner,
             "blocks": list(self.blocks),
             "blocked_by": list(self.blocked_by),
+            "exit_criteria": self.exit_criteria,
+            "review": dict(self.review) if isinstance(self.review, dict) else None,
+            "original_exit_criteria": self.original_exit_criteria,
         }
 
     @classmethod
@@ -149,6 +169,7 @@ class PlanStep:
             value = raw.get(field)
             return value if isinstance(value, str) else ""
 
+        review = raw.get("review")
         return cls(
             id=step_id,
             subject=text("subject"),
@@ -162,7 +183,23 @@ class PlanStep:
             blocked_by=[
                 value for value in raw.get("blocked_by") or [] if isinstance(value, str)
             ],
+            exit_criteria=text("exit_criteria"),
+            review=review if isinstance(review, dict) else None,
+            original_exit_criteria=text("original_exit_criteria"),
         )
+
+    def verified(self) -> Optional[bool]:
+        """Compact review verdict for clients: ``True`` when the completion
+        was verified, ``False`` when it was accepted unverified, ``None``
+        otherwise (waived, never reviewed, or not currently completed)."""
+        if self.status != "completed" or not isinstance(self.review, dict):
+            return None
+        outcome = self.review.get("outcome")
+        if outcome == "verified":
+            return True
+        if outcome == "unverified":
+            return False
+        return None
 
 
 @dataclass
@@ -274,6 +311,9 @@ class Plan:
                 "status": step.status,
                 "owner": step.owner,
                 "blockedBy": self.open_blockers(step),
+                "exitCriteria": step.exit_criteria,
+                "verified": step.verified(),
+                "criteriaEdited": bool(step.original_exit_criteria),
             }
             for step in self.steps
         ]
@@ -415,24 +455,99 @@ class PlanStore:
         return plans
 
 
-def link(plan: Plan, blocker_id: str, blocked_id: str) -> None:
+def _dependency_path(
+    deps: Dict[str, List[str]], start: str, target: str
+) -> Optional[List[str]]:
+    """Chain ``[start, …, target]`` following dependency edges, or ``None``.
+
+    ``deps`` maps a step id to the ids it depends on (its ``blocked_by``).
+    Iterative DFS; ids absent from *deps* simply have no outgoing edges.
+    """
+    stack: List[tuple[str, List[str]]] = [(start, [start])]
+    seen: set[str] = set()
+    while stack:
+        current, path = stack.pop()
+        if current == target:
+            return path
+        if current in seen:
+            continue
+        seen.add(current)
+        for dep in deps.get(current, []):
+            stack.append((dep, path + [dep]))
+    return None
+
+
+def dependency_map(plan: Plan) -> Dict[str, List[str]]:
+    """``step id → blocked_by`` adjacency for cycle checks (copies lists)."""
+    return {step.id: list(step.blocked_by) for step in plan.steps}
+
+
+def would_cycle(
+    deps: Dict[str, List[str]], blocker_id: str, blocked_id: str
+) -> Optional[List[str]]:
+    """The dependency chain the edge ``blocker → blocked`` would close.
+
+    The edge means *blocked* depends on *blocker*; it creates a cycle
+    exactly when *blocker* already (transitively) depends on *blocked*.
+    Returns that existing chain ``[blocker, …, blocked]`` — the cycle is
+    this chain plus the proposed edge — or ``None`` when the edge is safe.
+    Operates on a plain adjacency so callers can simulate a batch of edge
+    changes (removals first, additions incrementally) before mutating the
+    plan.
+    """
+    if blocker_id == blocked_id:
+        return None  # link() ignores self-edges outright
+    return _dependency_path(deps, blocker_id, blocked_id)
+
+
+def link(plan: Plan, blocker_id: str, blocked_id: str) -> Optional[List[str]]:
     """Record that *blocker_id* must complete before *blocked_id*.
 
     Writes BOTH edges. The singleton did this too, but only inside one
     scope's dict; here the symmetry is enforced on the plan object so the
     persisted content can never hold a half edge that renders as "blocked
     by nothing" on one side and "blocks nothing" on the other.
+
+    Refuses an edge that would close a dependency cycle and returns the
+    would-be cycle's existing chain (``[blocker, …, blocked]``): in an
+    all-of precedence model a cycle can never mean iteration — every step
+    on it would refuse to start, permanently. Enforced here, not only in
+    the tool layer, so persisted plan content can never hold a cycle no
+    matter who calls. Unknown ids and self-edges are ignored and return
+    ``None``, as before.
     """
     if blocker_id == blocked_id:
-        return
+        return None
     blocker = plan.step(blocker_id)
     blocked = plan.step(blocked_id)
     if blocker is None or blocked is None:
-        return
+        return None
+    cycle = would_cycle(dependency_map(plan), blocker_id, blocked_id)
+    if cycle is not None:
+        return cycle
     if blocked_id not in blocker.blocks:
         blocker.blocks.append(blocked_id)
     if blocker_id not in blocked.blocked_by:
         blocked.blocked_by.append(blocker_id)
+    return None
+
+
+def unlink(plan: Plan, blocker_id: str, blocked_id: str) -> None:
+    """Remove the ``blocker → blocked`` edge, both directions.
+
+    Silent no-op when either step or the edge is absent — retracting a
+    dependency that isn't there is the goal state, not an error (the same
+    tolerance ``link`` has for unknown ids). This is the ordinary fix for
+    a mis-drawn edge; without it the only recoveries were
+    ``overrideBlockers`` (which bypasses the start guard) or deleting the
+    step (which destroys its history).
+    """
+    blocker = plan.step(blocker_id)
+    blocked = plan.step(blocked_id)
+    if blocker is not None and blocked_id in blocker.blocks:
+        blocker.blocks.remove(blocked_id)
+    if blocked is not None and blocker_id in blocked.blocked_by:
+        blocked.blocked_by.remove(blocker_id)
 
 
 def unlink_all(plan: Plan, step_id: str) -> None:

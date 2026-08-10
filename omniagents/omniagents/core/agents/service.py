@@ -5447,9 +5447,45 @@ class AgentService(RpcMethodsBase):
                 "services": dict(getattr(controller, "service_urls", {}) or {}),
                 "workspace_root": lease.workspace.root,
                 "default_cwd": lease.terminal_defaults.cwd,
+                "mounts": self._workspace_mounts(workspace, lease.workspace.root),
             }
         )
         return payload
+
+    @staticmethod
+    def _workspace_mounts(workspace, workspace_root: str) -> list:
+        """Authoritative mount table for one materialized environment.
+
+        Reports where every registered source landed relative to
+        ``workspace_root``: ``"."`` when the root IS the source (the
+        single-local-source host layout keeps the folder as its own
+        root), ``"<mountName>"`` everywhere else (container manifests,
+        mounted-host symlinks, and composite host layouts all key the
+        source under the root by mount name). This is materialization
+        reporting its own decision — clients must never re-derive the
+        layout from ``default_cwd`` or path heuristics.
+        """
+        normalized_root = os.path.normpath(str(workspace_root))
+        mounts = []
+        for source in workspace.sources:
+            name = source.get("mountName")
+            if not isinstance(name, str) or not name:
+                continue
+            source_path = source.get("path")
+            direct = (
+                isinstance(source_path, str)
+                and bool(source_path)
+                and os.path.normpath(source_path) == normalized_root
+            )
+            mounts.append(
+                {
+                    "name": name,
+                    "path": "." if direct else name,
+                    "writable": source.get("writable") is not False,
+                    "kind": source.get("kind"),
+                }
+            )
+        return mounts
 
     @staticmethod
     def _workspace_payload(workspace) -> dict:
@@ -5562,6 +5598,7 @@ class AgentService(RpcMethodsBase):
                 "active_model": (store.normalize_model_ref(active) if active else None),
                 "reasoning_effort": getattr(sess, "reasoning_effort", None),
                 "approvals_reviewer": getattr(sess, "approvals_reviewer", None),
+                "workflow_reviewer": getattr(sess, "workflow_reviewer", None),
             }
         return result
 
@@ -5635,6 +5672,29 @@ class AgentService(RpcMethodsBase):
             session_id, user_id=self._current_user_id()
         )
         sess.approvals_reviewer = reviewer
+        return {"ok": True, "session_id": sess.id, "reviewer": reviewer}
+
+    async def set_session_workflow(self, session_id: str, reviewer: str) -> dict:
+        """Set a session's workflow completion reviewer.
+
+        ``reviewer`` is ``"guardian"`` (route criteria-bearing plan-step
+        completions to the one-shot completion reviewer) or ``"off"``
+        (waive all reviews). The setting is per conversation and
+        overrides the layered-config ``workflow.completion_reviewer``
+        default.
+        """
+        from omniagents.core.agents.workflow_policy import WORKFLOW_REVIEWERS
+
+        if reviewer not in WORKFLOW_REVIEWERS:
+            return {
+                "ok": False,
+                "session_id": session_id,
+                "reason": f"unknown reviewer: {reviewer!r}",
+            }
+        sess = self._session_manager.get_or_create(
+            session_id, user_id=self._current_user_id()
+        )
+        sess.workflow_reviewer = reviewer
         return {"ok": True, "session_id": sess.id, "reviewer": reviewer}
 
     async def set_session_reasoning(self, session_id: str, effort: str) -> dict:
@@ -6645,6 +6705,7 @@ class AgentService(RpcMethodsBase):
         # Watches and transfers are per-connection: a dropped socket tears
         # them down (clients re-subscribe and rescan after reconnecting).
         self.filesystem.cleanup_channel(channel)
+        self.git.cleanup_channel(channel)
 
     async def _broadcast_account_changed(
         self, provider: str, reason: str, account: Optional[dict] = None
@@ -7239,8 +7300,16 @@ class AgentService(RpcMethodsBase):
             return all(writable for _, writable in candidates)
 
         parts = rel.split("/")
+        # A root mount ('.') IS the workspace: its policy governs every
+        # path. Otherwise the manifest's exact first component names the
+        # governing mount.
         source = next(
-            (source for source in sources if source["mountName"] == parts[0]), None
+            (
+                source
+                for source in sources
+                if source["mountName"] == "." or source["mountName"] == parts[0]
+            ),
+            None,
         )
         if source is not None and source.get("writable") is False:
             return False
@@ -7375,6 +7444,19 @@ class AgentService(RpcMethodsBase):
             environment_id, transfer_id, channel=self.channel
         )
 
+    async def fs_delete(
+        self, environment_id: str, path: str, recursive: bool = False
+    ) -> dict:  # noqa: D401
+        return await self.filesystem.delete(environment_id, path, recursive=recursive)
+
+    async def fs_rename(
+        self, environment_id: str, path: str, to: str
+    ) -> dict:  # noqa: D401
+        return await self.filesystem.rename(environment_id, path, to)
+
+    async def fs_mkdir(self, environment_id: str, path: str) -> dict:  # noqa: D401
+        return await self.filesystem.make_directory(environment_id, path)
+
     # ------------------------------------------------------------------
     #  Typed git operations (``git_*`` RPCs, tkt_l_l0lUi4A5V2).
     #
@@ -7423,6 +7505,26 @@ class AgentService(RpcMethodsBase):
             include_untracked=include_untracked,
             include_ignored=include_ignored,
             paths=paths,
+        )
+
+    async def git_status_watch(
+        self,
+        environment_id: str,
+        repo: str,
+        poll_interval_ms: int | None = None,
+    ) -> dict:  # noqa: D401
+        return await self.git.status_watch(
+            environment_id,
+            repo,
+            poll_interval_ms=poll_interval_ms,
+            channel=self.channel,
+        )
+
+    async def git_status_unwatch(
+        self, environment_id: str, watch_id: str
+    ) -> bool:  # noqa: D401
+        return await self.git.status_unwatch(
+            environment_id, watch_id, channel=self.channel
         )
 
     async def git_diff(

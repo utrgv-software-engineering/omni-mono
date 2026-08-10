@@ -505,4 +505,139 @@ class TestDerivedState:
             "status": "in_progress",
             "owner": "",
             "blockedBy": ["1"],
+            "exitCriteria": "",
+            "verified": None,
+            "criteriaEdited": False,
         }
+
+
+class TestExitCriteriaAndReviewSchema:
+    """The two review fields round-trip snake_case and degrade defensively,
+    per the convention every other PlanStep field follows."""
+
+    def test_round_trip_carries_exit_criteria_and_review(self):
+        step = PlanStep(
+            id="1",
+            subject="run tests",
+            status="completed",
+            exit_criteria="pytest -q passes",
+            review={
+                "outcome": "verified",
+                "reviewer": "guardian",
+                "rationale": "test run shown passing",
+            },
+        )
+        raw = step.to_dict()
+        assert raw["exit_criteria"] == "pytest -q passes"
+        assert raw["review"]["outcome"] == "verified"
+        restored = PlanStep.from_dict(raw)
+        assert restored.exit_criteria == "pytest -q passes"
+        assert restored.review == step.review
+
+    def test_round_trip_carries_original_exit_criteria(self):
+        step = PlanStep(
+            id="1",
+            subject="run tests",
+            status="in_progress",
+            exit_criteria="pytest -q passes on the new tests",
+            original_exit_criteria="pytest -q passes",
+        )
+        raw = step.to_dict()
+        assert raw["original_exit_criteria"] == "pytest -q passes"
+        restored = PlanStep.from_dict(raw)
+        assert restored.original_exit_criteria == "pytest -q passes"
+
+    def test_absent_fields_default(self):
+        step = PlanStep.from_dict({"id": "1", "subject": "a"})
+        assert step.exit_criteria == ""
+        assert step.review is None
+        assert step.to_dict()["review"] is None
+        assert step.original_exit_criteria == ""
+        assert step.to_dict()["original_exit_criteria"] == ""
+
+    @pytest.mark.parametrize("bad", [7, ["x"], {"nested": True}, None])
+    def test_non_string_criteria_degrade_to_empty(self, bad):
+        step = PlanStep.from_dict({"id": "1", "subject": "a", "exit_criteria": bad})
+        assert step.exit_criteria == ""
+
+    @pytest.mark.parametrize("bad", [7, ["x"], {"nested": True}, None])
+    def test_non_string_original_criteria_degrade_to_empty(self, bad):
+        step = PlanStep.from_dict(
+            {"id": "1", "subject": "a", "original_exit_criteria": bad}
+        )
+        assert step.original_exit_criteria == ""
+
+    @pytest.mark.parametrize("bad", ["verified", 7, ["outcome"], True])
+    def test_malformed_review_degrades_to_none(self, bad):
+        step = PlanStep.from_dict({"id": "1", "subject": "a", "review": bad})
+        assert step.review is None
+
+    def test_summaries_carry_exit_criteria_and_verified(self):
+        plan = Plan(plan_id="p", thread_id=THREAD, scope="main", generation=0)
+        plan.steps = [
+            PlanStep(
+                id="1",
+                subject="a",
+                status="completed",
+                exit_criteria="tests pass",
+                review={
+                    "outcome": "verified",
+                    "reviewer": "guardian",
+                    "rationale": "r",
+                },
+            ),
+            PlanStep(
+                id="2",
+                subject="b",
+                status="completed",
+                exit_criteria="file exists",
+                review={
+                    "outcome": "unverified",
+                    "reviewer": "guardian",
+                    "rationale": "r",
+                },
+            ),
+            PlanStep(
+                id="3",
+                subject="c",
+                status="completed",
+                review={"outcome": "waived", "reviewer": "none", "rationale": ""},
+            ),
+            PlanStep(id="4", subject="d"),
+            # A reviewed step that was REOPENED is no longer a verified
+            # completion; the stale review must not badge it.
+            PlanStep(
+                id="5",
+                subject="e",
+                status="in_progress",
+                exit_criteria="tests pass",
+                review={
+                    "outcome": "verified",
+                    "reviewer": "guardian",
+                    "rationale": "r",
+                },
+            ),
+        ]
+        summaries = plan.to_summaries()
+        assert [(s["exitCriteria"], s["verified"]) for s in summaries] == [
+            ("tests pass", True),
+            ("file exists", False),
+            ("", None),
+            ("", None),
+            ("tests pass", None),
+        ]
+
+    def test_summaries_carry_criteria_edited(self):
+        plan = Plan(plan_id="p", thread_id=THREAD, scope="main", generation=0)
+        plan.steps = [
+            PlanStep(
+                id="1",
+                subject="a",
+                status="in_progress",
+                exit_criteria="tests pass on the happy path",
+                original_exit_criteria="tests pass",
+            ),
+            PlanStep(id="2", subject="b", exit_criteria="file exists"),
+        ]
+        summaries = plan.to_summaries()
+        assert [s["criteriaEdited"] for s in summaries] == [True, False]
