@@ -32,10 +32,23 @@ def test_is_host_profile():
     assert serve_cli._is_host_profile({}) is False
 
 
-def test_default_profile_is_unconfined_host(tmp_path: Path):
+def test_default_profile_is_the_host_target(tmp_path: Path):
     prof = resolve_profile(workspace_dir=tmp_path, project_id=None, explicit_path=None)
     assert (prof.raw.get("client") or {}).get("type") == "host"
-    assert prof.raw.get("confine") is False
+
+
+def test_default_profile_declares_no_confinement_knob(tmp_path: Path):
+    """No "host but fenced" tier — see the profile's own comment.
+
+    This replaces an assertion that the profile declared ``confine: false``.
+    That assertion passed for months while nothing read the key: it tested
+    the declaration, not the effect, so the dead knob was invisible. The
+    effect — the host target building an unconfined workspace — is framework
+    behavior and is tested there
+    (``tests/unit/core/runtime/test_environment_provisioner.py``).
+    """
+    prof = resolve_profile(workspace_dir=tmp_path, project_id=None, explicit_path=None)
+    assert "confine" not in prof.raw
 
 
 # --------------------------------------------------------------------------

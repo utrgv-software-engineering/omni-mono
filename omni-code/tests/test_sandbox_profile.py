@@ -563,6 +563,65 @@ def test_malformed_network_json_falls_open(config_dir, workspace):
     assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
 
 
+def test_network_json_injects_wasm_client_network(config_dir, workspace, tmp_path):
+    """Wasm clients get the allowlist as ``client.network`` (their runtimes
+    enforce it in-process), not as the iptables env var."""
+    _write_network_json(
+        config_dir, enabled=True, allowlist=["api.openai.com", "github.com"]
+    )
+    profile_path = _write(
+        tmp_path / "p.yml",
+        """
+        client:
+          type: wasm
+        manifest:
+          root: /workspace
+        """,
+    )
+    profile = resolve_profile(workspace_dir=workspace, explicit_path=profile_path)
+    assert profile.raw["client"]["network"] == {
+        "allow": ["api.openai.com", "github.com"]
+    }
+    assert "OMNI_SANDBOX_NETWORK_ALLOWLIST" not in _env_values(profile)
+
+
+def test_explicit_wasm_network_wins_over_network_json(config_dir, workspace, tmp_path):
+    """A profile's explicit ``network`` — including the offline opt-out —
+    is never overridden by network.json."""
+    _write_network_json(config_dir, enabled=True, allowlist=["from-network-json.com"])
+    profile_path = _write(
+        tmp_path / "p.yml",
+        """
+        client:
+          type: wasm
+          network: none
+        manifest:
+          root: /workspace
+        """,
+    )
+    profile = resolve_profile(workspace_dir=workspace, explicit_path=profile_path)
+    assert profile.raw["client"]["network"] == "none"
+
+
+def test_network_json_disabled_leaves_wasm_network_unset(
+    config_dir, workspace, tmp_path
+):
+    """No injection → `network` stays absent, which is wasm's off-by-default
+    (boots offline, toggleable)."""
+    _write_network_json(config_dir, enabled=False, allowlist=["api.openai.com"])
+    profile_path = _write(
+        tmp_path / "p.yml",
+        """
+        client:
+          type: wasm
+        manifest:
+          root: /workspace
+        """,
+    )
+    profile = resolve_profile(workspace_dir=workspace, explicit_path=profile_path)
+    assert "network" not in profile.raw["client"]
+
+
 def test_init_empty_string_rejected(config_dir, workspace, tmp_path):
     profile_path = _write(
         tmp_path / "p.yml",

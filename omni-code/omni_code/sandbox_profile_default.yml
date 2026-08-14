@@ -7,10 +7,12 @@ version: 1
 # only target that works on every platform (Windows included); unix_local,
 # docker, etc. are sandboxed targets the user/launcher selects explicitly.
 #
-# `confine: false` lifts the workspace-root boundary so the agent's file tools
-# may read/write anywhere the process can — i.e. truly no sandbox. A confined
-# host (file tools fenced to ${workspace_dir}) is available by setting
-# `confine: true`; the launcher ships such a profile for its desktop default.
+# There is deliberately no knob for "host but fenced". The host target's shell
+# reaches the whole machine, so fencing its file tools to ${workspace_dir}
+# contained nothing — it only made `cat /etc/hosts` and `read_text` disagree
+# about what exists. Choose a sandboxed target to be contained, or host to not
+# be. (An earlier `confine:` key here declared exactly that middle tier and was
+# never read by anything; it is gone rather than promoted to a real option.)
 #
 # Resolution: this is the lowest layer. The launcher overrides it via
 # ~/.config/omni_code/sandbox/default.yml (user-default) and
@@ -21,14 +23,12 @@ version: 1
 client:
   type: host
 
-# No workspace-root boundary on file tools (true no-sandbox).
-confine: false
-
 manifest:
   # ${workspace_dir} is replaced with the Workspace directory selected during
   # environment materialization. Under the host target this is the agent's
-  # working directory (relative paths resolve here); it is not a security
-  # boundary when `confine: false`.
+  # working directory — relative paths resolve here, and that is all it is.
+  # It is not a security boundary: the file tools may name anything on the
+  # machine, exactly as the shell may.
   root: ${workspace_dir}
 
 # Defaults for the launcher's Terminal app. Under the host target the shell
