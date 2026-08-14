@@ -38,7 +38,12 @@ def make_service() -> AgentService:
 
 
 async def bind_environment(service, thread_id, *, network: bool) -> None:
-    capabilities = {EnvironmentCapability.WORKSPACE_READ}
+    # CONTAINED mirrors what real docker provisioning grants — the sandbox
+    # tiers key on it, never on kind (see _CONTAINED_CLIENT_TYPES).
+    capabilities = {
+        EnvironmentCapability.WORKSPACE_READ,
+        EnvironmentCapability.CONTAINED,
+    }
     if network:
         capabilities.add(EnvironmentCapability.NETWORK)
     service.workspace_registry.register(WorkspaceResource("workspace-1"))
@@ -48,7 +53,7 @@ async def bind_environment(service, thread_id, *, network: bool) -> None:
         ExecutionEnvironmentDescriptor(
             environment_id="env-1",
             workspace_id="workspace-1",
-            kind=EnvironmentKind.DEVBOX,
+            kind=EnvironmentKind.CONTAINER,
             state=EnvironmentState.READY,
             generation=1,
             capabilities=frozenset(capabilities),
@@ -80,10 +85,13 @@ def session_for(service, session_id="thread-1"):
 
 @pytest.mark.asyncio
 async def test_offline_devbox_auto_approves_without_prompting():
+    # Auto-approve applies WITHIN the user's "Approve for me" delegation —
+    # the offline contained sandbox upgrades guardian review to promptless.
     service = make_service()
     await bind_environment(service, "thread-1", network=False)
     broadcasts = capture_broadcasts(service)
     session = session_for(service)
+    session.approvals_reviewer = "auto"
 
     response = await service.request_tool_approval(
         session=session,
@@ -133,6 +141,42 @@ async def test_networked_devbox_prompts_the_human_by_default():
     )
 
     assert response["decision"] == "reject"
+    assert [m for m, _ in broadcasts] == ["tool_approval_requested"]
+
+
+@pytest.mark.asyncio
+async def test_offline_devbox_still_prompts_under_ask_me_first():
+    # The reviewer choice is authoritative: taking the sandbox offline never
+    # changes the user's approval policy. Under the default "Ask me first"
+    # reviewer, an offline contained sandbox still prompts.
+    service = make_service()
+    await bind_environment(service, "thread-1", network=False)
+    broadcasts = capture_broadcasts(service)
+    session = session_for(service)
+
+    async def respond_immediately(*args, **kwargs):
+        future, _ = service._pending_tool_approvals["call-1"]
+        future.set_result({"decision": "approve", "always_approve": False})
+        return None
+
+    original = service._broadcast_session
+
+    async def record_and_respond(sess, method, payload, **kwargs):
+        await original(sess, method, payload, **kwargs)
+        if method == "tool_approval_requested":
+            await respond_immediately()
+
+    service._broadcast_session = record_and_respond
+
+    response = await service.request_tool_approval(
+        session=session,
+        call_id="call-1",
+        tool_name="execute_bash",
+        arguments="{}",
+        run_id="run-1",
+    )
+
+    assert response["decision"] == "approve"
     assert [m for m, _ in broadcasts] == ["tool_approval_requested"]
 
 
@@ -249,6 +293,7 @@ async def test_mcp_approvals_route_identically(monkeypatch):
     await bind_environment(service, "thread-1", network=False)
     broadcasts = capture_broadcasts(service)
     session = session_for(service)
+    session.approvals_reviewer = "auto"
 
     response = await service.request_mcp_approval(
         session=session,

@@ -22,16 +22,58 @@ def env(kind, *capabilities):
         (env("host"), "user", "always", ApprovalRoute.HUMAN),
         (env("host"), "auto", "always", ApprovalRoute.GUARDIAN),
         (HOST_ENVIRONMENT, "user", "always", ApprovalRoute.HUMAN),
-        # Offline sandbox auto-approves under the default tier.
-        (env("devbox"), "user", "no_network", ApprovalRoute.AUTO_APPROVE),
-        (env("devbox"), "auto", "no_network", ApprovalRoute.AUTO_APPROVE),
-        # Networked sandbox does not auto-approve under no_network.
-        (env("devbox", "network"), "user", "no_network", ApprovalRoute.HUMAN),
-        (env("devbox", "network"), "auto", "no_network", ApprovalRoute.GUARDIAN),
-        # 'always' covers networked sandboxes too; 'never' disables the tier.
-        (env("devbox", "network"), "user", "always", ApprovalRoute.AUTO_APPROVE),
-        (env("devbox"), "user", "never", ApprovalRoute.HUMAN),
-        (env("devbox"), "auto", "never", ApprovalRoute.GUARDIAN),
+        # The reviewer choice is authoritative: "Ask me first" always
+        # prompts, even in an offline contained sandbox — no environment
+        # state overrides the user's approval policy.
+        (
+            env("container", "contained"),
+            "user",
+            "no_network",
+            ApprovalRoute.HUMAN,
+        ),
+        # Within "Approve for me", an offline CONTAINED sandbox upgrades
+        # guardian review to promptless under the default tier.
+        (
+            env("container", "contained"),
+            "auto",
+            "no_network",
+            ApprovalRoute.AUTO_APPROVE,
+        ),
+        # Networked contained sandbox does not auto-approve under no_network.
+        (
+            env("container", "contained", "network"),
+            "user",
+            "no_network",
+            ApprovalRoute.HUMAN,
+        ),
+        (
+            env("container", "contained", "network"),
+            "auto",
+            "no_network",
+            ApprovalRoute.GUARDIAN,
+        ),
+        # 'always' covers networked contained sandboxes too — still only
+        # within "Approve for me"; 'never' disables the tier.
+        (
+            env("container", "contained", "network"),
+            "user",
+            "always",
+            ApprovalRoute.HUMAN,
+        ),
+        (
+            env("container", "contained", "network"),
+            "auto",
+            "always",
+            ApprovalRoute.AUTO_APPROVE,
+        ),
+        (env("container", "contained"), "user", "never", ApprovalRoute.HUMAN),
+        (env("container", "contained"), "auto", "never", ApprovalRoute.GUARDIAN),
+        # kind "container" WITHOUT the contained capability (unix_local,
+        # host_bridge — sandbox sessions over raw host processes) never
+        # auto-approves, even under 'always'.
+        (env("container"), "user", "always", ApprovalRoute.HUMAN),
+        (env("container"), "auto", "always", ApprovalRoute.GUARDIAN),
+        (env("container"), "user", "no_network", ApprovalRoute.HUMAN),
     ],
 )
 def test_route_matrix(environment, reviewer, tier, expected):

@@ -64,7 +64,7 @@ def _routed_devbox(workspace, sources):
     descriptor = ExecutionEnvironmentDescriptor(
         environment_id="environment-1",
         workspace_id=resource.workspace_id,
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
         state=EnvironmentState.READY,
         generation=1,
     )

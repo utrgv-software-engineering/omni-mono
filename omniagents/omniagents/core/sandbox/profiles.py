@@ -56,10 +56,13 @@ import yaml
 
 from omniagents.core.utils.merge import deep_merge as _deep_merge
 
-# Env var the in-container `apply-network-isolation.sh` reads. Set on the
-# manifest environment so the entrypoint init step can apply iptables
-# allowlist rules. Auto-populated from ``<config>/network.json`` unless
-# the profile sets it explicitly.
+# Env var carrying the egress allowlist into the container's manifest
+# environment. Serve reads it back at bring-up and applies the iptables
+# allowlist chain via root exec (``core/sandbox/network_policy.py``) —
+# the SDK bypasses image entrypoints, so no in-image script is involved.
+# Auto-populated from ``<config>/network.json`` unless the profile sets
+# it explicitly. Wasm profiles get the same allowlist as ``client.network``
+# instead — their runtimes enforce it in-process, not via iptables.
 NETWORK_ALLOWLIST_ENV = "OMNI_SANDBOX_NETWORK_ALLOWLIST"
 
 #: The ``paths:`` key naming a product's packaged default profile,
@@ -293,22 +296,35 @@ def _manifest_env_values(profile: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _inject_network_allowlist(profile: Dict[str, Any], config_dir: Path) -> None:
-    """Merge the user's ``network.json`` allowlist into manifest env.
+    """Merge the user's ``network.json`` allowlist into the profile.
 
     Read ``<config>/network.json``; when ``enabled: true`` and the
-    allowlist is non-empty, set ``manifest.environment.value.<env>`` to a
-    comma-joined hosts string so the in-container init step can apply
-    iptables egress rules. Profiles that set the env explicitly win
-    (including to empty string — that's how a user opts out of
-    auto-discovery).
+    allowlist is non-empty, apply it in the form the profile's client can
+    actually enforce:
+
+    * ``wasm`` — set ``client.network`` to ``{"allow": [hosts]}`` so the
+      one policy both runtimes obey (bashkit's curl/git builtins and
+      pyodide's fetch) host-filters egress. A profile that sets
+      ``network`` explicitly wins — including ``none``, the offline
+      opt-out.
+    * everything else (docker) — set ``manifest.environment.value.<env>``
+      to a comma-joined hosts string so the in-container init step can
+      apply iptables egress rules. Profiles that set the env explicitly
+      win (including to empty string — that's how a user opts out of
+      auto-discovery).
     """
-    allowlist = _load_network_allowlist(config_dir)
-    if not allowlist:
+    hosts = _load_network_allowlist(config_dir)
+    if not hosts:
         return  # nothing to inject — don't materialize the env nesting
+    client = profile.get("client")
+    if isinstance(client, dict) and client.get("type") == "wasm":
+        if "network" not in client:  # explicit profile value wins
+            client["network"] = {"allow": list(hosts)}
+        return
     values = _manifest_env_values(profile)
     if values is None or NETWORK_ALLOWLIST_ENV in values:
         return  # bad shape, or explicit profile value wins (including "")
-    values[NETWORK_ALLOWLIST_ENV] = allowlist
+    values[NETWORK_ALLOWLIST_ENV] = ",".join(hosts)
 
 
 def _inject_user_env(profile: Dict[str, Any], config_dir: Path) -> None:
@@ -367,8 +383,8 @@ def _load_env_file(config_dir: Path) -> Dict[str, str]:
         return {}
 
 
-def _load_network_allowlist(config_dir: Path) -> Optional[str]:
-    """Load ``<config>/network.json`` and return a comma-joined allowlist.
+def _load_network_allowlist(config_dir: Path) -> Optional[List[str]]:
+    """Load ``<config>/network.json`` and return the allowlist hosts.
 
     Returns ``None`` when the file is missing, ``enabled`` is false, or
     the allowlist is empty. Parse errors return ``None`` rather than
@@ -389,9 +405,7 @@ def _load_network_allowlist(config_dir: Path) -> Optional[str]:
     if not isinstance(allowlist, list):
         return None
     hosts = [str(h).strip() for h in allowlist if isinstance(h, str) and h.strip()]
-    if not hosts:
-        return None
-    return ",".join(hosts)
+    return hosts or None
 
 
 def _parse_init(raw: Any) -> List[str]:

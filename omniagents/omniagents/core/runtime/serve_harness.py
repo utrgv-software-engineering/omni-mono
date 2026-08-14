@@ -48,7 +48,9 @@ from typing import (
     Tuple,
 )
 
+from omniagents.core.sandbox import network_policy
 from omniagents.core.sandbox.profiles import (
+    NETWORK_ALLOWLIST_ENV,
     ResolvedProfile,
     ServiceSpec,
     TerminalSpec,
@@ -69,7 +71,14 @@ __all__ = [
 # the remote host's disk for ``host_bridge``, and the container's own
 # writable layer for ``docker`` (sessions reattach to their recorded
 # container instead of rehydrating an archive).
-NOOP_SNAPSHOT_CLIENT_TYPES: Tuple[str, ...] = ("unix_local", "docker", "host_bridge")
+NOOP_SNAPSHOT_CLIENT_TYPES: Tuple[str, ...] = (
+    "unix_local",
+    "docker",
+    "host_bridge",
+    # wasm sandbox: bashkit mounts a real host directory and pyodide
+    # NODEFS-mounts the same one — the host dir is the durable truth.
+    "wasm",
+)
 
 # Per-service-name URL suffixes applied by :func:`_resolve_service_urls`.
 # A service named ``vnc`` is assumed to be noVNC and gets pointed at its
@@ -594,6 +603,7 @@ class BroughtUpSession:
     client_type: Optional[str]
     container_id: Optional[str]
     workspace_preserved: bool = False
+    network_blocked: bool = False
 
 
 def _read_session_state(state_path: Path) -> Optional[Dict[str, Any]]:
@@ -709,7 +719,29 @@ async def bring_up_session(
         and getattr(session.state, "container_id", None) == recorded_container_id
     )
     started_services: List[Tuple[ServiceSpec, int]] = []
+    session_network_blocked = False
     try:
+        # Network egress policy is serve's job: the SDK creates containers
+        # with ``entrypoint: ["tail"]``, so the image's isolation entrypoint
+        # never runs. Applied on every bring-up (fresh AND reattach) because
+        # a container restart recreates the network namespace and drops the
+        # rules; the scripts are idempotent. The offline toggle
+        # (``sandbox.set_network``) leaves a durable marker in the writable
+        # layer — re-apply it here so "network disabled" survives serve
+        # restarts. Docker-only: other backends have no NET_ADMIN surface.
+        if client_type == "docker":
+            manifest_environment = getattr(manifest, "environment", None)
+            allowlist_env = (
+                await manifest_environment.resolve()
+                if manifest_environment is not None
+                else {}
+            )
+            await network_policy.apply_baseline_egress(
+                session, (allowlist_env or {}).get(NETWORK_ALLOWLIST_ENV)
+            )
+            if await network_policy.network_blocked(session):
+                await network_policy.set_network_blocked(session, True)
+                session_network_blocked = True
         # Configure git + CLI auth before init/services and before the agent
         # runs, so private clones already done during create() are joined by
         # working `gh` / `az devops` for the agent's own commands. Written as the
@@ -758,6 +790,7 @@ async def bring_up_session(
         client_type=client_type,
         container_id=getattr(session.state, "container_id", None),
         workspace_preserved=workspace_preserved,
+        network_blocked=session_network_blocked,
     )
 
 
@@ -834,7 +867,9 @@ async def _register_execution_environment(
     from omniagents.workspace.sandbox import SandboxWorkspace
 
     workspace = (
-        HostWorkspace(root=root)
+        # No session means the host target — the no-sandbox one, so the file
+        # tools are unconfined like its shell. Matches the provisioner.
+        HostWorkspace(root=root, confine=False)
         if session is None
         else SandboxWorkspace(
             session=session,
@@ -852,7 +887,7 @@ async def _register_execution_environment(
     descriptor = ExecutionEnvironmentDescriptor(
         environment_id=environment_id,
         workspace_id=workspace_id,
-        kind=(EnvironmentKind.HOST if session is None else EnvironmentKind.DEVBOX),
+        kind=(EnvironmentKind.HOST if session is None else EnvironmentKind.CONTAINER),
         state=EnvironmentState.READY,
         generation=1,
         capabilities=frozenset(

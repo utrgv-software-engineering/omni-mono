@@ -66,7 +66,7 @@ def _routed(controller):
     descriptor = ExecutionEnvironmentDescriptor(
         environment_id="environment-1",
         workspace_id=workspace_resource.workspace_id,
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
         state=EnvironmentState.READY,
         generation=1,
     )

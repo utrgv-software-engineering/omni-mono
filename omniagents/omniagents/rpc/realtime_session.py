@@ -365,6 +365,8 @@ class RealtimeSession:
         session_id: Optional[str] = None,
         audio_storage: Optional[AudioStorageBackend] = None,
         owner_user_id: Optional[str] = None,
+        extra_tools: Optional[list] = None,
+        environment_lease: Optional[Any] = None,
     ):
         """Initialize a realtime session.
 
@@ -374,6 +376,14 @@ class RealtimeSession:
             session_id: Optional session ID (generated if not provided)
             audio_storage: Optional AudioStorage instance (created if not provided)
             owner_user_id: Authenticated principal that owns this session
+            extra_tools: Additional SDK tools appended to the spec's tools —
+                the client-tool proxies bridged from a GUI session sharing
+                this session id (see AgentService.build_realtime_client_tools)
+            environment_lease: EnvironmentLease for the paired GUI session's
+                execution environment. Binds the workspace contextvar and
+                stamps workspace/environment identity on the run context so
+                server-side tools execute where text runs do. Without it,
+                workspace-touching tools raise WorkspaceRootRequiredError.
         """
         if not spec.realtime_mode:
             raise ValueError("AgentSpec must have realtime_mode=True")
@@ -382,6 +392,8 @@ class RealtimeSession:
         self.settings = settings or {}
         self.session_id = session_id or str(uuid.uuid4())
         self.owner_user_id = owner_user_id
+        self.extra_tools = list(extra_tools or [])
+        self.environment_lease = environment_lease
 
         # Extract project and agent slugs for database storage
         self._project_slug = getattr(spec, "project_slug", None)
@@ -499,8 +511,45 @@ class RealtimeSession:
             masked_key,
         )
 
-        # Build tools if available
-        tools = self.spec.available_tools if self.spec.available_tools else []
+        # Build tools if available (spec tools + capability-pack tools + any
+        # bridged client tools). Capability packs are normally expanded by
+        # build_agent(); realtime builds its agent here, so expand them the
+        # same way. No approval predicates are attached — realtime has no
+        # tool-approval flow yet, so capability tools run ungated.
+        tools = list(self.spec.available_tools or [])
+        resolved_caps = list(getattr(self.spec, "resolved_capabilities", []) or [])
+        for cap in resolved_caps:
+            cap_label = getattr(cap, "capability_name", None) or getattr(
+                cap, "type", "?"
+            )
+            try:
+                tools.extend(cap.tools())
+            except Exception as e:
+                logger.error(
+                    "Capability %r tools() raised: %s. Skipping its tools.",
+                    cap_label,
+                    e,
+                )
+        # Agent-as-tool FunctionTools (e.g. the exploration pack's `explore`):
+        # the loader flattens capability agent_tools into
+        # spec.agent_tool_configs; build them here like build_agent() does.
+        if getattr(self.spec, "agent_tool_configs", None):
+            from omniagents.core.agents.builder import _build_agent_tools_from_configs
+
+            try:
+                agent_tools_built = await _build_agent_tools_from_configs(
+                    agent_tool_configs=self.spec.agent_tool_configs,
+                    settings=self.settings,
+                    approval_callback=None,
+                    parent_spec=self.spec,
+                )
+                tools.extend(agent_tools_built)
+            except Exception as e:
+                logger.error(
+                    "Failed to build agent_tools for '%s': %s", self.spec.name, e
+                )
+        if self.extra_tools:
+            tools = tools + self.extra_tools
 
         mcp_servers = await self._ensure_mcp_servers()
 
@@ -527,6 +576,19 @@ class RealtimeSession:
             if self.spec.get_agent_instructions
             else ""
         )
+
+        # Append capability instruction fragments before rendering, matching
+        # build_agent(): fragments are appended to the raw string so they
+        # flow through Jinja2 alongside the agent's own template.
+        cap_instructions_parts = []
+        for cap in resolved_caps:
+            text = getattr(cap, "instructions_text", None)
+            if isinstance(text, str) and text.strip():
+                cap_instructions_parts.append(text.strip())
+        if cap_instructions_parts and isinstance(raw_instructions, str):
+            raw_instructions = (
+                raw_instructions.rstrip() + "\n\n" + "\n\n".join(cap_instructions_parts)
+            )
 
         # Build context from factory if available
         context_dict = {}
@@ -787,9 +849,34 @@ class RealtimeSession:
             loggable_config,
         )
 
+        # Execution wiring, mirroring the text-run path (runtime/bridge.py +
+        # AgentService context stamping): bind the lease's workspace to the
+        # contextvar so tool bodies route through the right backend, and stamp
+        # workspace/environment identity on the run context so tools can
+        # resolve cwd and scope per-session state. The contextvar is set here,
+        # before __aenter__, so the model's listener task — where the SDK
+        # executes tool calls — inherits it.
+        run_context: Dict[str, Any] = {"session_id": self.session_id}
+        if self.environment_lease is not None:
+            from omniagents.workspace import set_requested_cwd, set_workspace
+
+            lease = self.environment_lease
+            set_requested_cwd(lease.workspace.root)
+            set_workspace(lease.workspace)
+            run_context.update(
+                {
+                    "workspace_root": lease.workspace.root,
+                    "workspace_id": lease.workspace_id,
+                    "environment_id": lease.environment_id,
+                    "environment_generation": lease.generation,
+                }
+            )
+
         # Get the session from runner.run()
         # This returns a RealtimeSession that needs to be used as async context manager
-        self._realtime_session = await self._runner.run(model_config=model_config)
+        self._realtime_session = await self._runner.run(
+            context=run_context, model_config=model_config
+        )
 
         # Enter the async context manager
         await self._realtime_session.__aenter__()

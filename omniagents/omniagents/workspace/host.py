@@ -53,10 +53,18 @@ class HostWorkspace(Workspace):
         self.root = str(resolved)
 
         # When False, ``resolve`` still anchors relative paths at ``root``
-        # (so cwd ergonomics are unchanged) but does NOT reject absolute
-        # paths outside it. This is the "no sandbox" host target: the agent
-        # may read/write anywhere the process can. Default True keeps the
-        # workspace-root boundary every existing caller relies on.
+        # (so cwd ergonomics are unchanged) but does NOT reject paths that
+        # land outside it. This is the "no sandbox" host target: the agent
+        # may read/write anywhere the process can — which its shell already
+        # could, since ``exec`` hands the command straight to the host and
+        # only ever resolves ``cwd``. Fencing the file tools while bash runs
+        # free bought no containment, only a disagreement between two tool
+        # families about what exists.
+        #
+        # Set False by the host execution target (see
+        # ``core/runtime/environment_provisioner``); the default stays True
+        # for every other caller. Wire surfaces that need the boundary
+        # regardless call ``resolve_confined`` rather than ``resolve``.
         self.confine = confine
 
         # Scratch directory — deliberately outside ``root`` so tool-internal
@@ -71,6 +79,10 @@ class HostWorkspace(Workspace):
         self.scratch_root = str(Path(scratch).expanduser().resolve())
 
     # ----------------------------- helpers ----------------------------- #
+
+    @property
+    def enforces_confinement(self) -> bool:
+        return self.confine
 
     def _display_path(self, p: Path) -> str:
         """Path shown in discovery results: relative to root when inside it,

@@ -39,7 +39,7 @@ def descriptor(
     return ExecutionEnvironmentDescriptor(
         environment_id=environment_id,
         workspace_id=workspace_id,
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
         state=EnvironmentState.READY,
         generation=generation,
         capabilities=capabilities,
@@ -101,6 +101,47 @@ async def test_acquisition_is_explicit_and_capability_checked():
             required_capabilities=frozenset({EnvironmentCapability.PROCESS}),
         )
     assert exc_info.value.data["missing"] == ["process"]
+
+
+@pytest.mark.asyncio
+async def test_set_capability_updates_descriptor_without_new_generation():
+    workspaces = WorkspaceRegistry()
+    workspaces.register(WorkspaceResource("workspace-1"))
+    environments = ExecutionEnvironmentManager(workspaces)
+    await environments.register(
+        descriptor(
+            "env-1",
+            "workspace-1",
+            capabilities=frozenset(
+                {EnvironmentCapability.WORKSPACE_READ, EnvironmentCapability.NETWORK}
+            ),
+        ),
+        fake_workspace("content"),
+    )
+    lease_before = await environments.acquire("env-1")
+
+    updated = await environments.set_capability(
+        "env-1", EnvironmentCapability.NETWORK, present=False
+    )
+
+    # Same generation — the toggle records what the CURRENT backend can do.
+    assert updated.generation == 1
+    assert EnvironmentCapability.NETWORK not in updated.capabilities
+    # describe() (what the approval policy reads per-request) sees the change;
+    # the pre-existing lease keeps its immutable snapshot.
+    described = await environments.describe("env-1")
+    assert EnvironmentCapability.NETWORK not in described.capabilities
+    assert EnvironmentCapability.NETWORK in lease_before.descriptor.capabilities
+
+    restored = await environments.set_capability(
+        "env-1", EnvironmentCapability.NETWORK, present=True
+    )
+    assert EnvironmentCapability.NETWORK in restored.capabilities
+
+    with pytest.raises(EnvironmentNotFoundError):
+        await environments.set_capability(
+            "missing", EnvironmentCapability.NETWORK, present=True
+        )
 
 
 @pytest.mark.asyncio
@@ -239,7 +280,7 @@ async def test_shutdown_waits_for_inflight_provisioning_then_stops_result():
         await release_provision.wait()
         return ProvisionedEnvironment(
             workspace=fake_workspace("provisioned"),
-            kind=EnvironmentKind.DEVBOX,
+            kind=EnvironmentKind.CONTAINER,
             capabilities=frozenset({EnvironmentCapability.WORKSPACE_READ}),
         )
 
@@ -297,9 +338,7 @@ async def test_retire_removes_environment_but_not_inflight_leases():
     workspaces = WorkspaceRegistry()
     workspaces.register(WorkspaceResource("workspace-1"))
     environments = ExecutionEnvironmentManager(workspaces)
-    await environments.register(
-        descriptor("env-1", "workspace-1"), fake_workspace("x")
-    )
+    await environments.register(descriptor("env-1", "workspace-1"), fake_workspace("x"))
 
     lease = await environments.acquire("env-1")
     retired = await environments.retire("env-1")

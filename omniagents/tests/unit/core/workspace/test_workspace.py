@@ -8,6 +8,7 @@ active.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -139,6 +140,60 @@ async def test_confine_true_is_default_and_still_rejects(tmp_path: Path):
     assert confined.confine is True
     with pytest.raises(WorkspaceEscapeError):
         confined.resolve("/etc/passwd")
+
+
+# -- resolve_confined: confinement as the caller's policy -----------------
+#
+# The wire surfaces (fs_*, git_*) promise their paths stay inside the root
+# whatever the execution target is, so they ask for the boundary explicitly
+# instead of inheriting whatever the workspace happens to enforce.
+
+
+@pytest.mark.asyncio
+async def test_resolve_confined_reimposes_the_boundary_when_unconfined(
+    tmp_path: Path,
+):
+    unconfined = HostWorkspace(root=str(tmp_path), confine=False)
+
+    assert unconfined.resolve("/etc/hostname") == "/etc/hostname"
+    with pytest.raises(WorkspaceEscapeError):
+        unconfined.resolve_confined("/etc/hostname")
+
+
+@pytest.mark.asyncio
+async def test_resolve_confined_catches_a_symlink_out_of_the_root(tmp_path: Path):
+    """The case the wire canonicalizers structurally cannot catch.
+
+    ``canonical_relpath`` rejects absolute and ``..`` spellings before any
+    I/O, so a symlink *inside* the root is the only way a legal wire path
+    can name a file outside it.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    root = tmp_path / "workspace"
+    root.mkdir()
+    os.symlink(outside / "secret.txt", root / "link.txt")
+    unconfined = HostWorkspace(root=str(root), confine=False)
+
+    assert unconfined.resolve("link.txt") == str(outside / "secret.txt")
+    with pytest.raises(WorkspaceEscapeError):
+        unconfined.resolve_confined("link.txt")
+
+
+@pytest.mark.asyncio
+async def test_resolve_confined_is_plain_resolve_when_already_confined(
+    tmp_path: Path,
+):
+    """Confined substrates pay nothing: resolve already refused."""
+    confined = HostWorkspace(root=str(tmp_path))
+
+    assert confined.enforces_confinement is True
+    assert confined.resolve_confined("sub/file.txt") == str(
+        (tmp_path / "sub" / "file.txt").resolve()
+    )
+    with pytest.raises(WorkspaceEscapeError):
+        confined.resolve_confined("/etc/passwd")
 
 
 def test_current_workspace_fails_without_run_binding():

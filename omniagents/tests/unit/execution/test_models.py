@@ -29,7 +29,7 @@ def descriptor(
     return ExecutionEnvironmentDescriptor(
         environment_id=environment_id,
         workspace_id=workspace_id,
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
         state=state,
         generation=1,
         capabilities=frozenset(

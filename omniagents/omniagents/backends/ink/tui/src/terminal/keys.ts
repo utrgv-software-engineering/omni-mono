@@ -3,8 +3,12 @@
 // The docked terminal receives parsed Ink keys (we sit inside the
 // KeypressContext like every other surface) and reconstructs the byte
 // sequence a real terminal would have sent. Covers the line-oriented
-// world (shells, REPLs, dev servers) fully; full-screen apps get the
-// takeover escape hatch instead.
+// world (shells, REPLs, dev servers) fully.
+//
+// This runs only while the terminal screen is *captured* — full-screen
+// apps (vim, htop, less) therefore receive keys exactly while captured
+// and stop receiving them the moment you release with ctrl+], which is
+// how Neovim's own :terminal behaves.
 
 export type InkKey = {
   escape?: boolean;

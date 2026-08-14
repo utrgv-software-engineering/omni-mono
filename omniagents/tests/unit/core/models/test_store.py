@@ -128,6 +128,59 @@ def test_oauth_discovery_merges_over_seed(tmp_path):
     assert "gpt-new" in models
 
 
+def test_oauth_discovery_keeps_realtime_seeds(tmp_path):
+    def defaults():
+        return {
+            "codex": {
+                "type": "openai-oauth",
+                "models": {
+                    "gpt-old": {"model": "gpt-old", "label": "Stale Text Seed"},
+                    "gpt-realtime-2.1": {
+                        "model": "gpt-realtime-2.1",
+                        "label": "Realtime 2.1",
+                        "realtime": True,
+                    },
+                },
+            }
+        }
+
+    store = _store(
+        tmp_path,
+        default_providers=defaults,
+        oauth_models=lambda: {"gpt-new": {"model": "gpt-new", "label": "New"}},
+    )
+    models = store.merged_providers()["codex"]["models"]
+    # Discovery replaces stale text seeds but can never return realtime
+    # models, so realtime-flagged seeds must survive the replacement.
+    assert "gpt-old" not in models
+    assert "gpt-new" in models
+    assert models["gpt-realtime-2.1"]["realtime"] is True
+
+
+def test_resolve_model_for_runtime_oauth_ignores_env_api_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-ambient-shadow")
+
+    def defaults():
+        return {
+            "codex": {
+                "type": "openai-oauth",
+                "models": {
+                    "gpt-realtime-2.1": {
+                        "model": "gpt-realtime-2.1",
+                        "realtime": True,
+                    }
+                },
+            }
+        }
+
+    store = _store(tmp_path, default_providers=defaults)
+    runtime = store.resolve_model_for_runtime("codex/gpt-realtime-2.1")
+    # The OAuth token is the credential; an ambient key must not shadow it.
+    assert runtime["api_key"] is None
+    settings = store.resolve_voice_settings_for_realtime("codex/gpt-realtime-2.1")
+    assert settings["openai_api_key"] == ""
+
+
 def test_resolve_model_for_runtime_env_expansion(tmp_path, monkeypatch):
     monkeypatch.setenv("TEST_MODELS_KEY", "sk-expanded")
     store = _store(tmp_path)

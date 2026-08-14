@@ -356,3 +356,38 @@ async def test_get_session_history_replays_live_state():
         args for method, args in channel.calls if method == "client_request"
     ]
     assert len(client_requests) >= 2
+
+
+@pytest.mark.asyncio
+async def test_acquire_environment_for_session_default_fallback(
+    temp_history_db, tmp_path
+):
+    """A session with no thread binding inherits nothing; the server-default
+    environment (the one the GUI handshake advertises) is applied as an
+    explicit fallback — the voice-before-first-text-run path."""
+    from pathlib import Path
+
+    from omniagents.execution import register_host_environment
+
+    spec = AgentSpec(
+        name="name",
+        welcome_text="welcome",
+        get_agent_instructions=lambda: "",
+        build_agent=None,
+    )
+    resources = AgentHostResources.create("test-acquire-env-host")
+    default_env = register_host_environment(
+        resources, str(tmp_path), owner_user_id=None
+    )
+    service = AgentService(spec, resources)
+
+    # Unbound session, no default: inherit resolves to no environment.
+    assert await service.acquire_environment_for_session("voice-sess-1") is None
+
+    # Unbound session with the server default: explicit fallback lease.
+    lease = await service.acquire_environment_for_session(
+        "voice-sess-1", default_environment_id=default_env.environment_id
+    )
+    assert lease is not None
+    assert lease.environment_id == default_env.environment_id
+    assert Path(lease.workspace.root).resolve() == tmp_path.resolve()

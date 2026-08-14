@@ -18,7 +18,8 @@ import { TerminalScreen } from "../TerminalScreen.js";
 import { terminalSession } from "../../terminal/session.js";
 import type { RPCClient } from "../../rpc/client.js";
 
-const settle = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const settle = (ms: number) =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 function b64(text: string): string {
   return Buffer.from(text, "utf8").toString("base64");
@@ -28,11 +29,7 @@ class CaptureStream extends Writable {
   columns = 100;
   rows = 40;
   frames: string[] = [];
-  override _write(
-    chunk: Buffer,
-    _enc: string,
-    done: () => void,
-  ): void {
+  override _write(chunk: Buffer, _enc: string, done: () => void): void {
     this.frames.push(String(chunk));
     done();
   }
@@ -125,10 +122,12 @@ describe("TerminalScreen end-to-end render", () => {
       <KeypressProvider>
         <MouseProvider>
           <TerminalScreen
-          active={true}
-          height={20}
-          client={client}
-          sessionId="sess-1"
+            active={true}
+            height={20}
+            client={client}
+            sessionId="sess-1"
+            captured={true}
+            onCapturedChange={() => {}}
             onExit={() => {}}
           />
         </MouseProvider>

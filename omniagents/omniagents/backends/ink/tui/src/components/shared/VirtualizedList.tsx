@@ -69,8 +69,10 @@ export function VirtualizedList<T>({
   // re-renders so once an item scrolls off we still know how tall it was.
   const heights = useRef<Map<string, number>>(new Map()).current;
   const itemRefs = useRef<Map<string, DOMElement>>(new Map()).current;
-  // Bump to force a re-render when measurements change.
-  const [, forceUpdate] = useReducer((x: number) => x + 1, 0);
+  // Bump to force a re-render when measurements change. `measureVersion` is
+  // also a dependency of the offsets memo below — `heights` is a mutated-in-
+  // place Map, so a re-render alone would hand back stale cached offsets.
+  const [measureVersion, forceUpdate] = useReducer((x: number) => x + 1, 0);
 
   // Drain pending measurement deltas in a microtask so a single layout pass
   // triggers a single re-render even if multiple items resize.
@@ -133,8 +135,13 @@ export function VirtualizedList<T>({
       totalHeight: off[data.length],
       itemHeights: heightsArr,
     };
-    // Re-run when items change or any measured height changes (forceUpdate bumps).
-  }, [data, keyExtractor, estimatedItemHeight]);
+    // Re-run when items change or any measured height changes. `measureVersion`
+    // is what carries the latter: `heights` is mutated in place, so it can
+    // never invalidate this memo on its own. Dropping it strands the offsets
+    // at `estimatedItemHeight` for every row measured since the last `data`
+    // change — which puts this list's coordinate space out of sync with the
+    // parent Scrollable's measured `scrollTop` and blanks the viewport.
+  }, [data, keyExtractor, estimatedItemHeight, measureVersion]);
 
   // Visible range. With containerHeight <= 0, fall back to rendering all
   // items (see top-of-file comment on the 0-height pitfall).
@@ -155,7 +162,12 @@ export function VirtualizedList<T>({
         if (offsets[mid + 1] > top) hi = mid;
         else lo = mid + 1;
       }
-      first = lo;
+      // Clamp: a `scrollTop` past the end of the offset table (a transient
+      // the parent Scrollable can produce while a tall row is still being
+      // measured) would otherwise yield first > last, an empty slice, and a
+      // viewport containing nothing but a spacer. Showing the last row is
+      // always a better failure mode than showing blank.
+      first = Math.min(lo, data.length - 1);
     }
     // Linear walk for last (cheap, fan-out is small).
     let last = first;

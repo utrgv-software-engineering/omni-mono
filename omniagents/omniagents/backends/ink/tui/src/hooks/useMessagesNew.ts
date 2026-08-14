@@ -21,7 +21,6 @@ import {
 import type { ElicitationAnswer } from "../components/ElicitationDialog.js";
 import { normalizeItems } from "../store/conversation.js";
 import { planStepsToTasks } from "../components/task-model.js";
-import { planTransitions } from "../components/transcript-model.js";
 import type { TaskSummary } from "../store/appStore.js";
 import type {
   ConversationItem,
@@ -218,24 +217,26 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       actions.setQueuedMessages([]);
     }
 
-    // Apply a live task-list update and record plan-step transitions as
-    // one-line transcript beats (`◐ plan · X` started, `✔ plan · X`
-    // done). Only during a run — hydration seeds and idle refreshes are
-    // state, not narrative. Steady-state progress stays in the dock.
+    // Apply a live task-list update. The plan lives in the dock; the
+    // transcript says nothing about it.
+    //
+    // This used to also synthesize `◐ plan · X` / `✔ plan · X` system
+    // messages by diffing the task list. That was a client-local
+    // reconstruction of information the transcript already had and had
+    // deliberately dropped: `task_create`/`task_update` are real TOOL_CALL
+    // items (content.tool_kind == "plan"), and those tools mark themselves
+    // `hidden` so the dock can own the display. Re-deriving prose from the
+    // state those hidden calls produced fused glyph, separator and subject
+    // into one string that became the de-facto schema, made plan beats
+    // indistinguishable from compaction/approval/artifact system messages,
+    // and — because the synthesis was gated on an active run while the
+    // hidden tool calls stayed hidden on replay — meant a resumed session
+    // rendered a different transcript than the live one.
+    //
+    // If plan progress should appear in the transcript again, it belongs to
+    // the hidden tool calls that actually carry it (they replay, and ship a
+    // tasks_snapshot), as a typed TranscriptRow — not as fabricated prose.
     const applyTasks = (tasks: TaskSummary[]) => {
-      if (useAppStore.getState().currentRunId) {
-        const previous = useAppStore.getState().tasks;
-        for (const transition of planTransitions(previous, tasks)) {
-          actions.addMessage({
-            role: "system",
-            content:
-              transition.status === "completed"
-                ? `✔ plan · ${transition.subject}`
-                : `◐ plan · ${transition.subject}`,
-            timestamp: new Date(),
-          });
-        }
-      }
       actions.setTasks(tasks);
     };
 
@@ -507,7 +508,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           return;
         }
         if (item.kind === "run_diff") {
-          if (typeof content.diff === "string" && Array.isArray(content.files)) {
+          if (
+            typeof content.diff === "string" &&
+            Array.isArray(content.files)
+          ) {
             actions.setRunDiff(content as unknown as ConversationRunDiff);
           }
           return;

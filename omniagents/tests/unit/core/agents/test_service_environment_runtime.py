@@ -31,7 +31,7 @@ def _lease(environment_id: str, session: object, run_as: str) -> EnvironmentLeas
     descriptor = ExecutionEnvironmentDescriptor(
         environment_id=environment_id,
         workspace_id=f"workspace-{environment_id}",
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
         state=EnvironmentState.READY,
         generation=1,
     )
@@ -154,7 +154,7 @@ async def test_start_run_passes_environment_runtime_to_builder_and_runner(monkey
         ExecutionEnvironmentDescriptor(
             environment_id="environment-a",
             workspace_id="workspace-a",
-            kind=EnvironmentKind.DEVBOX,
+            kind=EnvironmentKind.CONTAINER,
             state=EnvironmentState.READY,
             generation=1,
         ),
@@ -195,7 +195,7 @@ async def test_start_run_materializes_inherited_automatic_environment(monkeypatc
             workspace.root = "/workspace"
             return ProvisionedEnvironment(
                 workspace=workspace,
-                kind=EnvironmentKind.DEVBOX,
+                kind=EnvironmentKind.CONTAINER,
                 capabilities=frozenset({EnvironmentCapability.WORKSPACE_READ}),
                 sandbox_runtime=SandboxExecutionRuntime(runtime_session),
             )

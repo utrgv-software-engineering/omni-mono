@@ -121,6 +121,8 @@ export const Scrollable: React.FC<ScrollableProps> = ({
       selfUpdateRef.current = true;
     }
 
+    const bottom = Math.max(0, scrollHeight - innerHeight);
+
     // Only snap to bottom while the user is pinned there. scrollBy
     // clears the pin when the user scrolls up via mouse wheel or
     // shift+arrow so streamed events don't yank them back; once they
@@ -130,7 +132,18 @@ export const Scrollable: React.FC<ScrollableProps> = ({
       pinToBottomRef.current &&
       !guardTripped
     ) {
-      const bottom = Math.max(0, scrollHeight - innerHeight);
+      setScrollTop(bottom);
+      selfUpdateRef.current = true;
+    } else if (scrollTop > bottom + EPS) {
+      // Content shrank out from under a scrollTop that is now past the end.
+      // Neither branch above covers that, and an out-of-range scrollTop
+      // scrolls the viewport into empty space below the content — a blank
+      // screen the user cannot scroll out of, because scrollBy clamps
+      // against the new geometry and every recovery immediately re-trips
+      // the snap above. Deliberately not gated on `guardTripped`: this is
+      // the recovery path *for* a tripped guard, and it is safe to leave
+      // ungated because it only ever decreases scrollTop toward a floor of
+      // 0, so it cannot be the thing that fails to converge.
       setScrollTop(bottom);
       selfUpdateRef.current = true;
     }

@@ -32,7 +32,7 @@ def _routed(environment_id: str):
     descriptor = ExecutionEnvironmentDescriptor(
         environment_id=environment_id,
         workspace_id="workspace-1",
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
         state=EnvironmentState.READY,
         generation=2,
         capabilities=frozenset({EnvironmentCapability.PROCESS}),

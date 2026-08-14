@@ -150,9 +150,7 @@ const ElicitationDialogWrapper = React.memo<{
   (prev, next) => {
     if (prev.elicitation === next.elicitation) return true;
     if (!prev.elicitation || !next.elicitation) return false;
-    return (
-      prev.elicitation.elicitation_id === next.elicitation.elicitation_id
-    );
+    return prev.elicitation.elicitation_id === next.elicitation.elicitation_id;
   },
 );
 
@@ -183,11 +181,24 @@ const InlineStatusIndicator = React.memo(() => {
  *
  * Layout inside the scroll region (top-to-bottom):
  *   1. MessageListOptimized — full transcript
- *   2. InlineStatusIndicator — "⠋ Thinking…" / status line, only when active
- *   3. Preamble — animated streaming agent text, co-located with status
- *   4. ``children`` — dock panels (Goal/Tasks/Workers/QueuedMessages/
- *      Notifications/BashJobs/EscalationBanner) passed in from App
- *   5. Approval / MCP approval dialog, when present
+ *   2. Preamble — animated streaming agent text, only while streaming
+ *   3. InlineStatusIndicator — "⠋ Thinking…" / status line, only when active
+ *   4. Approval / MCP approval / elicitation dialog, when present
+ *
+ * Prose before chrome. The Preamble is the newest agent text — the
+ * transcript's continuation — so it reads directly on from the last
+ * message instead of having a status line wedged in between. Keeping
+ * "Thinking…" below it also holds the spinner still: it stays the last
+ * line above the composer rather than drifting up as prose streams in.
+ *
+ * The dock panels (Tasks/QueuedMessages/Notifications/BashJobs/
+ * Escalation) are NOT here — they are fixed chrome in the footer next to
+ * the composer, below. This component used to accept them as
+ * ``children`` and wrap them in a gap={0} Box; the call site stopped
+ * passing any, but the wrapper kept rendering, and an empty flex item
+ * still takes the parent's gap on BOTH sides. That silently put 2 blank
+ * rows wherever it sat. Removed rather than made conditional: a slot
+ * nothing fills is how it got here.
  *
  * Pin-to-bottom keeps the newest content visible by default; scrolling
  * up via mouse wheel or shift+↑/↓ clears the pin (see Scrollable.tsx).
@@ -197,8 +208,7 @@ const ScrollableMessageList: React.FC<{
   onApprove: (value: "yes" | "always" | "no") => void;
   onMcpApprove: (value: "yes" | "no") => void;
   onElicit: (answer: ElicitationAnswer) => void;
-  children?: React.ReactNode;
-}> = ({ availableHeight, onApprove, onMcpApprove, onElicit, children }) => {
+}> = ({ availableHeight, onApprove, onMcpApprove, onElicit }) => {
   const messages = useMessages();
   const approval = useApproval();
   const mcpApproval = useMcpApproval();
@@ -214,21 +224,17 @@ const ScrollableMessageList: React.FC<{
       contentVersion={contentVersion}
     >
       {/* Outer gap={1}: 1-row rhythm between transcript, Thinking…,
-          Preamble, the panel group, and approvals. Inner gap={0} on
-          the panel-group wrapper lets bordered panels stack with
-          their borders touching (no empty row between them). Children
-          must not carry their own marginTop / marginBottom.
+          Preamble and approvals — and it is the ONLY thing that spaces
+          them. Children must not carry their own marginTop /
+          marginBottom or trailing padding, or the rhythm doubles at
+          that seam (see TranscriptRowItem's isLast).
           paddingTop separates the first message from the tab bar. */}
       <Box flexDirection="column" gap={1} paddingTop={1}>
         <MessageListOptimized />
 
-        <InlineStatusIndicator />
-
         {preamble && <Preamble content={preamble} />}
 
-        <Box flexDirection="column" gap={0}>
-          {children}
-        </Box>
+        <InlineStatusIndicator />
 
         {approval && (
           <ApprovalDialogWrapper approval={approval} onApprove={onApprove} />
@@ -344,6 +350,16 @@ export const App: React.FC<AppProps> = ({
   // the conversation (composer, transcript, decisions inline); review
   // is the full-height diff screen. Drawer overlays live on chat.
   const [screen, setScreen] = useState<Screen>("chat");
+  // True while the terminal screen's PTY owns the keyboard. Lifted here
+  // because the tab bar has to show it: it decides whether Tab cycles
+  // tabs or completes a filename, and an invisible mode that reassigns
+  // Tab is exactly the trap this design exists to avoid. Arriving on the
+  // screen never captures — you press `i`/enter — so leaving always
+  // clears it and every arrival starts in the same state.
+  const [termCaptured, setTermCaptured] = useState(false);
+  useEffect(() => {
+    if (screen !== "term") setTermCaptured(false);
+  }, [screen]);
   // Text queued for the composer (the Files screen's @path mention
   // bridge): consumed by MultiLineInputOptimized on the next render.
   const [pendingInsert, setPendingInsert] = useState<string | null>(null);
@@ -1227,9 +1243,7 @@ export const App: React.FC<AppProps> = ({
   if (uiState === "connecting") {
     return (
       <Box flexDirection="column">
-        <Text color={Theme.textChrome}>
-          Connecting to {agentName}...
-        </Text>
+        <Text color={Theme.textChrome}>Connecting to {agentName}...</Text>
       </Box>
     );
   }
@@ -1287,7 +1301,11 @@ export const App: React.FC<AppProps> = ({
         <Box flexDirection="column" gap={0} height={terminalHeight - 1}>
           {/* Header with logo and welcome message - visible only before first message */}
           {/* Browser-style tabs on the top row: where you are. */}
-          <TopTabs screen={screen} unread={unread} />
+          <TopTabs
+            screen={screen}
+            unread={unread}
+            termCaptured={termCaptured}
+          />
 
           {/* Message history + dock panels - all scrollable together.
               Goal/Tasks/Workers/QueuedMessages/Notifications/BashJobs/
@@ -1317,6 +1335,8 @@ export const App: React.FC<AppProps> = ({
                 height={availableTerminalHeight}
                 client={client}
                 sessionId={sessionId ?? null}
+                captured={termCaptured}
+                onCapturedChange={setTermCaptured}
                 onExit={() => setScreen("chat")}
               />
             ) : screen === "files" ? (

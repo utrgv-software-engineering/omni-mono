@@ -15,7 +15,7 @@
  *   live progress stays visible.
  */
 
-import type { Message, TaskSummary, ToolCallInfo } from "../store/appStore.js";
+import type { Message, ToolCallInfo } from "../store/appStore.js";
 
 export type ActivityVerb =
   | "read"
@@ -53,7 +53,10 @@ const KIND_VERB: Record<string, ActivityVerb> = {
 
 const NAME_PATTERNS: Array<[RegExp, ActivityVerb]> = [
   [/read|\bcat\b|open|view|glob|list_dir|list_files|ls\b/, "read"],
-  [/edit|write|create|patch|apply|append|mkdir|move|copy|rename|delete|remove/, "edit"],
+  [
+    /edit|write|create|patch|apply|append|mkdir|move|copy|rename|delete|remove/,
+    "edit",
+  ],
   [/grep|search|find|rg\b/, "search"],
   [/bash|shell|exec|command|run_/, "command"],
   [/web|fetch|browse|http|url|download/, "web"],
@@ -166,7 +169,9 @@ const VERB_NOUN: Record<ActivityVerb, [string, string]> = {
  */
 export function segmentText(segment: BeatSegment): string {
   const template =
-    segment.count === 1 ? VERB_NOUN[segment.verb][0] : VERB_NOUN[segment.verb][1];
+    segment.count === 1
+      ? VERB_NOUN[segment.verb][0]
+      : VERB_NOUN[segment.verb][1];
   return template.replace("%n", String(segment.count));
 }
 
@@ -246,7 +251,10 @@ function toolCallKey(message: Message, index: number): string {
  */
 export function rendersNothing(message: Message): boolean {
   if (message.role === "approval_request") return true;
-  if (message.role === "tool_call" && message.toolCall?.metadata?.hidden === true) {
+  if (
+    message.role === "tool_call" &&
+    message.toolCall?.metadata?.hidden === true
+  ) {
     return true;
   }
   if (message.role === "system" && !(message.content ?? "").trim()) return true;
@@ -328,26 +336,4 @@ export function errorDetailLines(toolCall: ToolCallInfo, cap = 4): string[] {
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
   return lines.slice(-cap);
-}
-
-/**
- * Plan-step transitions worth a transcript beat: a step newly
- * in_progress or newly completed. Steady-state progress lives in the
- * Tasks dock; the transcript only records the transitions.
- */
-export function planTransitions(
-  prev: TaskSummary[],
-  next: TaskSummary[],
-): Array<{ subject: string; status: "in_progress" | "completed" }> {
-  const before = new Map(prev.map((task) => [task.id, task.status]));
-  const out: Array<{ subject: string; status: "in_progress" | "completed" }> =
-    [];
-  for (const task of next) {
-    const was = before.get(task.id);
-    if (task.status === was) continue;
-    if (task.status === "in_progress" || task.status === "completed") {
-      out.push({ subject: task.subject, status: task.status });
-    }
-  }
-  return out;
 }

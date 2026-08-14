@@ -21,10 +21,17 @@ def _require_id(value: str, field_name: str) -> None:
 
 
 class EnvironmentKind(str, Enum):
-    """Placement family for a live tool runtime."""
+    """Placement family for a live tool runtime.
+
+    Purely descriptive — WHERE the runtime lives, never a trust or routing
+    signal (containment is the ``contained`` capability; terminal routing
+    keys on the lease's sandbox runtime). Values are generic families, not
+    product profile names: the launcher's bundled "devbox" profile is one
+    *configured* local container, i.e. kind ``container``.
+    """
 
     HOST = "host"
-    DEVBOX = "devbox"
+    CONTAINER = "container"
     REMOTE = "remote"
 
 
@@ -50,6 +57,14 @@ class EnvironmentCapability(str, Enum):
     HTTP = "http"
     SERVICES = "services"
     ENVIRONMENT_LIFECYCLE = "environment_lifecycle"
+    #: The environment is a genuine containment boundary (container, VM, or
+    #: syscall sandbox) — the agent's tools cannot reach the hosting machine.
+    #: Granted per backend client type at provisioning; NOT implied by
+    #: ``kind``, which records placement only: ``unix_local`` and
+    #: ``host_bridge`` carry sandbox sessions yet run raw host processes.
+    #: The approval policy's sandbox auto-approve tiers key on this, never
+    #: on ``kind``.
+    CONTAINED = "contained"
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,7 +11,7 @@ The Realtime Agent Protocol is a JSON-RPC 2.0 based protocol for voice-enabled A
 - **Session Management**: Create, manage, and terminate voice sessions
 - **Audio Storage**: Automatic storage of audio chunks with metadata in database
 - **Modality Support**: Audio-only, text-only, or combined audio+text interactions
-- **Tool Execution**: Full support for tool calls during voice conversations
+- **Tool Execution**: Full support for tool calls during voice conversations. This includes client tools: when a realtime session is started with a GUI session id, client tools registered on that GUI session via `variables.client_tools` are bridged in — `safe: true` tools only, since realtime has no approval flow — and their invocations arrive as `client_request {tool.call}` on the GUI `/ws` connection(s), not on `/ws/realtime`.
 - **Agent Handoffs**: Seamless transitions between specialized voice agents
 - **Guardrails**: Input and output content validation during realtime interactions
 - **Interruption**: User can interrupt agent responses mid-speech

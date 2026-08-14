@@ -315,8 +315,17 @@ async def test_bring_up_declares_root_mount_layout_before_profile_init(
         snapshot_dir=None,
         state_path=None,
     )
-    assert execs[0] == "touch /workspace/.omni-workspace-root"
-    assert execs[1] == "echo profile-init"
+
+    # Docker bring-up also probes/applies the network egress policy via
+    # exec; the layout contract is about INIT ordering, so filter to the
+    # init commands themselves.
+    def _init_execs() -> list[str]:
+        return [c for c in execs if "network-blocked" not in c and "iptables" not in c]
+
+    assert _init_execs() == [
+        "touch /workspace/.omni-workspace-root",
+        "echo profile-init",
+    ]
 
     execs.clear()
     await serve_harness.bring_up_session(
@@ -326,4 +335,100 @@ async def test_bring_up_declares_root_mount_layout_before_profile_init(
         snapshot_dir=None,
         state_path=None,
     )
-    assert execs == ["echo profile-init"]
+    assert _init_execs() == ["echo profile-init"]
+
+
+@pytest.mark.asyncio
+async def test_bring_up_applies_network_policy_for_docker(monkeypatch, tmp_path):
+    """Docker bring-up owns egress policy: the SDK bypasses the image
+    entrypoint, so the allowlist chain is applied here from the resolved
+    manifest env, and a persisted offline marker re-installs the block
+    (the container's network namespace forgets rules across restarts)."""
+    from unittest.mock import AsyncMock
+
+    from omniagents.core.runtime import serve_harness
+
+    execs: list[str] = []
+    marker_blocked = {"value": False}
+
+    class _Session:
+        state = SimpleNamespace(container_id="container-1")
+
+        async def start(self):
+            return None
+
+        async def exec(self, cmd, shell=True, user=None):
+            execs.append(cmd)
+            if cmd.startswith("test -f"):
+                return SimpleNamespace(
+                    exit_code=0 if marker_blocked["value"] else 1,
+                    stdout=b"",
+                    stderr=b"",
+                )
+            return SimpleNamespace(exit_code=0, stdout=b"", stderr=b"")
+
+    class _Client:
+        async def create(self, *, manifest, options, snapshot):
+            return _Session()
+
+    class _Environment:
+        async def resolve(self):
+            return {"OMNI_SANDBOX_NETWORK_ALLOWLIST": "api.openai.com"}
+
+    manifest = SimpleNamespace(root="/workspace", environment=_Environment())
+    monkeypatch.setattr(
+        serve_harness,
+        "_build_sandbox",
+        lambda profile, *, sources: (_Client(), {}, manifest),
+    )
+    monkeypatch.setattr(serve_harness, "_build_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(
+        serve_harness, "_scrub_workspace_snapshot", lambda session: None
+    )
+    monkeypatch.setattr(serve_harness, "_configure_credentials", AsyncMock())
+    monkeypatch.setattr(serve_harness, "_start_services", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        serve_harness, "_resolve_service_urls", AsyncMock(return_value={})
+    )
+
+    profile = SimpleNamespace(raw={"client": {"type": "docker"}}, init=[], services=[])
+
+    brought = await serve_harness.bring_up_session(
+        profile=profile,
+        sources_parsed=[],
+        snapshot_ref="ref-1",
+        snapshot_dir=None,
+        state_path=None,
+    )
+    assert brought.network_blocked is False
+    baseline = [c for c in execs if "OMNI_EGRESS" in c]
+    assert len(baseline) == 1 and "api.openai.com" in baseline[0]
+    # No offline marker → the block chain is not installed.
+    assert not any("OMNI_BLOCK" in c and "touch" in c for c in execs)
+
+    # Persisted offline marker → the block is re-applied and reported.
+    execs.clear()
+    marker_blocked["value"] = True
+    brought = await serve_harness.bring_up_session(
+        profile=profile,
+        sources_parsed=[],
+        snapshot_ref="ref-2",
+        snapshot_dir=None,
+        state_path=None,
+    )
+    assert brought.network_blocked is True
+    assert any("OMNI_BLOCK" in c for c in execs)
+
+    # Non-docker targets get no iptables exec at all.
+    execs.clear()
+    profile_host = SimpleNamespace(
+        raw={"client": {"type": "unix_local"}}, init=[], services=[]
+    )
+    await serve_harness.bring_up_session(
+        profile=profile_host,
+        sources_parsed=[],
+        snapshot_ref="ref-3",
+        snapshot_dir=None,
+        state_path=None,
+    )
+    assert not any("iptables" in c for c in execs)

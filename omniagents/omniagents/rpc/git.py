@@ -1507,7 +1507,7 @@ class GitManager:
                     operation=operation,
                     reason="patch_write_failed",
                 ) from exc
-            scratch_abs = workspace.resolve(scratch)
+            scratch_abs = workspace.resolve_confined(scratch)
             result = await self._run(
                 workspace,
                 repo_abs,
@@ -1570,7 +1570,7 @@ class GitManager:
         repo_id = canonical_repo_path(repo)
         workspace = await self._workspace(environment_id)
         try:
-            repo_abs = workspace.resolve(repo_id)
+            repo_abs = workspace.resolve_confined(repo_id)
         except WorkspaceEscapeError as exc:
             raise GitPathError(str(exc), path=repo, reason="escapes_workspace") from exc
         if not workspace.contains_path(repo_abs):

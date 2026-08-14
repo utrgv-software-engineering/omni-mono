@@ -267,11 +267,14 @@ CONFIG_FIELDS: Tuple[ConfigField, ...] = (
         type="string",
         label="Sandbox auto-approval",
         description=(
-            "When a session's execution environment is a sandbox (never the "
-            "host), auto-approve tool calls without prompting: 'no_network' "
-            "only when the environment lacks the network capability; "
-            "'always' for every sandboxed environment; 'never' disables the "
-            "tier. Host environments always prompt or route to the reviewer."
+            "When a session's execution environment is a genuine containment "
+            "boundary (it carries the 'contained' capability — docker, the "
+            "process sandbox, cloud micro-VMs; never the host, unix_local, "
+            "or host_bridge), auto-approve tool calls without prompting: "
+            "'no_network' only when the environment also lacks the network "
+            "capability; 'always' for every contained environment; 'never' "
+            "disables the tier. Uncontained environments always prompt or "
+            "route to the reviewer."
         ),
         default="no_network",
         allowed_values=("never", "no_network", "always"),

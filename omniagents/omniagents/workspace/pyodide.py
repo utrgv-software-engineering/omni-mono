@@ -84,12 +84,30 @@ class _PyodideWorker:
         worker_script: Optional[str] = None,
         packages: Sequence[str] = (),
         snapshot_path: Optional[str] = None,
+        mount_point: Optional[str] = None,
+        network: str = "open",
+        network_allow: Sequence[str] = (),
+        network_blocked: bool = False,
     ) -> None:
         self._host_workspace_dir = host_workspace_dir
         self._node_path = node_path
         self._worker_script = worker_script or _default_worker_script()
         self._packages = tuple(packages)
         self._snapshot_path = snapshot_path
+        # Where the workspace appears inside the interpreter. None keeps the
+        # worker's /workspace default; the wasm sandbox passes the host path
+        # itself so shell and python share one uniform namespace.
+        self._mount_point = mount_point
+        # Python egress policy: "open" (unrestricted — the historical
+        # standalone-interpreter default), "none" (no network), or
+        # "allow" with a host allowlist. See the worker's applyNetworkPolicy.
+        # network_blocked boots the worker with its gate refusing (the wasm
+        # sandbox's off-by-default) while keeping the configured policy
+        # toggleable via set_network — unlike "none", which deletes the
+        # egress globals outright.
+        self._network = network
+        self._network_allow = tuple(network_allow)
+        self._network_blocked = bool(network_blocked)
 
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._reader_task: Optional[asyncio.Task[None]] = None
@@ -113,6 +131,13 @@ class _PyodideWorker:
         args = [self._node_path, self._worker_script]
         if self._host_workspace_dir:
             args.append(f"--workspace={self._host_workspace_dir}")
+        if self._mount_point:
+            args.append(f"--mount-point={self._mount_point}")
+        args.append(f"--network={self._network}")
+        if self._network == "allow" and self._network_allow:
+            args.append(f"--network-allow={','.join(self._network_allow)}")
+        if self._network_blocked and self._network != "none":
+            args.append("--network-blocked")
         if self._packages:
             args.append(f"--packages={','.join(self._packages)}")
         if self._snapshot_path:
@@ -172,6 +197,30 @@ class _PyodideWorker:
                 if not fut.done():
                     fut.set_exception(PyodideWorkerError("worker shut down"))
             self._pending.clear()
+
+    async def set_network(self, network: str, allow: Sequence[str] = ()) -> None:
+        """Update the worker's egress policy live (sandbox.set_network).
+
+        The stored fields are updated first so a not-yet-started worker
+        boots with the new policy from its spawn args; a running worker
+        gets the RPC, which flips the gate the boot-time wrappers consult.
+        ``"none"`` here means the toggle's blocked state — the configured
+        policy is kept for the spawn args so a later re-enable restores
+        it. Raises :class:`PyodideWorkerError` when the worker booted with
+        ``network=none`` — deletion-based offline has nothing to re-enable.
+        """
+        if network == "none":
+            self._network_blocked = True
+        else:
+            self._network = network
+            self._network_allow = tuple(allow)
+            self._network_blocked = False
+        if self._proc is None or self._proc.returncode is not None:
+            return
+        await self.call(
+            "set_network",
+            {"network": network, "network_allow": list(allow)},
+        )
 
     # ---- I/O loop -------------------------------------------------------- #
 

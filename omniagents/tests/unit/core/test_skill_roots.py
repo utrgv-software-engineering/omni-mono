@@ -138,7 +138,7 @@ def test_host_source_roots_use_declared_local_paths_and_workspace_mounts():
 def test_devbox_source_roots_ignore_host_paths():
     with _routed_sources(
         [{"kind": "local-git", "mountName": "app", "path": "/host/app"}],
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
     ):
         assert source_skill_roots() == [Path("/workspace/app/skills")]
 

@@ -103,6 +103,86 @@ async def test_start_session(realtime_spec, settings_with_key):
 
 
 @pytest.mark.asyncio
+async def test_start_session_acquires_environment(realtime_spec, settings_with_key):
+    """With an agent service, start_session acquires the paired GUI session's
+    environment lease and hands it to the RealtimeSession."""
+    lease = SimpleNamespace(
+        workspace=SimpleNamespace(root="/work/repo"),
+        workspace_id="ws-1",
+        environment_id="env-1",
+        generation=1,
+    )
+    agent_service = MagicMock()
+    agent_service.build_realtime_client_tools = MagicMock(return_value=[])
+    agent_service.acquire_environment_for_session = AsyncMock(return_value=lease)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+    ):
+        mock_session = AsyncMock()
+
+        async def mock_events():
+            return
+            yield
+
+        mock_session.__aiter__ = lambda self: mock_events()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+        mock_runner = MockRunner.return_value
+        mock_runner.run = AsyncMock(return_value=mock_session)
+
+        service = RealtimeService(
+            realtime_spec, settings_with_key, agent_service=agent_service
+        )
+        service.default_environment_id = "env-default"
+        await service.start_session("test-session-123")
+
+        agent_service.acquire_environment_for_session.assert_awaited_once_with(
+            "test-session-123", principal=None, default_environment_id="env-default"
+        )
+        assert service._sessions["test-session-123"].environment_lease is lease
+
+
+@pytest.mark.asyncio
+async def test_start_session_lease_failure_is_nonfatal(
+    realtime_spec, settings_with_key
+):
+    """A failing environment acquisition logs and continues without a lease."""
+    agent_service = MagicMock()
+    agent_service.build_realtime_client_tools = MagicMock(return_value=[])
+    agent_service.acquire_environment_for_session = AsyncMock(
+        side_effect=RuntimeError("no binding")
+    )
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+    ):
+        mock_session = AsyncMock()
+
+        async def mock_events():
+            return
+            yield
+
+        mock_session.__aiter__ = lambda self: mock_events()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+        mock_runner = MockRunner.return_value
+        mock_runner.run = AsyncMock(return_value=mock_session)
+
+        service = RealtimeService(
+            realtime_spec, settings_with_key, agent_service=agent_service
+        )
+        result = await service.start_session("test-session-123")
+
+        assert result["session_id"] == "test-session-123"
+        assert service._sessions["test-session-123"].environment_lease is None
+
+
+@pytest.mark.asyncio
 async def test_start_session_generates_id(realtime_spec, settings_with_key):
     """Test that session ID is generated if not provided."""
     with (
@@ -649,3 +729,81 @@ class TestCapabilities:
         )
         caps = await service.capabilities()
         assert caps["enabled"] is True
+
+
+# --- Client tool bridging ---
+
+
+class _StreamStub:
+    """RealtimeSession stand-in: starts, streams nothing, stops."""
+
+    def __init__(self):
+        self.start = AsyncMock(return_value="run-stub")
+        self.connect = AsyncMock()
+        self.stop = AsyncMock()
+        self._run_id = "run-stub"
+        self._active = True
+
+    async def stream_events(self):
+        return
+        yield  # pragma: no cover — makes this an (empty) async generator
+
+
+@pytest.mark.asyncio
+async def test_start_session_bridges_client_tools(realtime_spec, settings_with_key):
+    sentinel_tools = [object()]
+    agent_service = MagicMock()
+    agent_service.build_realtime_client_tools = MagicMock(return_value=sentinel_tools)
+    service = RealtimeService(
+        realtime_spec, settings_with_key, agent_service=agent_service
+    )
+
+    with patch(
+        "omniagents.rpc.realtime_service.RealtimeSession",
+        return_value=_StreamStub(),
+    ) as session_cls:
+        await service.start_session("gui-sess-1")
+
+    agent_service.build_realtime_client_tools.assert_called_once_with(
+        "gui-sess-1", principal=None
+    )
+    assert session_cls.call_args.kwargs["extra_tools"] is sentinel_tools
+
+    await service.stop_session("gui-sess-1")
+
+
+@pytest.mark.asyncio
+async def test_start_session_without_agent_service(realtime_spec, settings_with_key):
+    service = RealtimeService(realtime_spec, settings_with_key)
+
+    with patch(
+        "omniagents.rpc.realtime_service.RealtimeSession",
+        return_value=_StreamStub(),
+    ) as session_cls:
+        await service.start_session("gui-sess-2")
+
+    assert session_cls.call_args.kwargs["extra_tools"] == []
+
+    await service.stop_session("gui-sess-2")
+
+
+@pytest.mark.asyncio
+async def test_start_session_survives_bridge_failure(realtime_spec, settings_with_key):
+    agent_service = MagicMock()
+    agent_service.build_realtime_client_tools = MagicMock(
+        side_effect=RuntimeError("boom")
+    )
+    service = RealtimeService(
+        realtime_spec, settings_with_key, agent_service=agent_service
+    )
+
+    with patch(
+        "omniagents.rpc.realtime_service.RealtimeSession",
+        return_value=_StreamStub(),
+    ) as session_cls:
+        result = await service.start_session("gui-sess-3")
+
+    assert result["session_id"] == "gui-sess-3"
+    assert session_cls.call_args.kwargs["extra_tools"] == []
+
+    await service.stop_session("gui-sess-3")

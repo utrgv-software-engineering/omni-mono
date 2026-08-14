@@ -654,6 +654,13 @@ def build_app(
                 settings_resolver=(
                     settings_resolver if callable(settings_resolver) else None
                 ),
+                agent_service=service,
+            )
+            # Same server default the GUI handshake advertises — lets a voice
+            # session started before any text run fall back to it for its
+            # execution environment.
+            realtime_service.default_environment_id = getattr(
+                app.state, "default_environment_id", None
             )
         realtime_service.authorization_policy = authenticator.authorization_policy
         app.state.realtime_service = realtime_service

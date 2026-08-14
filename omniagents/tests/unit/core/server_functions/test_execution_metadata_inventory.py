@@ -85,6 +85,12 @@ EXPECTED_BUILTIN_CLASSIFICATIONS: dict[str, Classification] = {
     "sandbox.discard_snapshot": _classification(
         ResourceScope.ENVIRONMENT, ExecutionRequirement.ENVIRONMENT_LIFECYCLE
     ),
+    "sandbox.set_network": _classification(
+        ResourceScope.ENVIRONMENT, ExecutionRequirement.ENVIRONMENT_LIFECYCLE
+    ),
+    "sandbox.get_network": _classification(
+        ResourceScope.ENVIRONMENT, ExecutionRequirement.ENVIRONMENT_LIFECYCLE
+    ),
     "terminal.create": _classification(ResourceScope.THREAD, ExecutionRequirement.PTY),
     "terminal.close": _classification(ResourceScope.THREAD, ExecutionRequirement.PTY),
     "wakeup.stop": _classification(ResourceScope.THREAD),
@@ -269,11 +275,11 @@ def _literal_core_registrations() -> dict[str, tuple[dict[str, ast.expr], str]]:
     return registrations
 
 
-def test_all_45_decorated_builtins_have_the_expected_execution_metadata():
+def test_all_47_decorated_builtins_have_the_expected_execution_metadata():
     declarations = _decorated_builtins()
     by_name = {declaration.published_name: declaration for declaration in declarations}
 
-    assert len(declarations) == 45
+    assert len(declarations) == 47
     assert len(by_name) == len(
         declarations
     ), "published server-function names must be unique"

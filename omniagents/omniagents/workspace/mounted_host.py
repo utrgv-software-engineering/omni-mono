@@ -20,10 +20,22 @@ from .types import FileEntry, GrepMatch, WorkspaceEscapeError
 
 
 class GitMetadataHostWorkspace(HostWorkspace):
-    """Direct host tree with explicitly authorized external Git metadata."""
+    """Direct host tree with explicitly authorized external Git metadata.
 
-    def __init__(self, root: str, sources: Sequence[Mapping[str, Any]]) -> None:
-        super().__init__(root=root, confine=True)
+    ``confine`` is passed through: under the host (no-sandbox) target the
+    tree is unconfined like any other host workspace, and the authorized
+    metadata paths then matter only to ``contains_path`` / ``io_path`` —
+    the boundary questions ``git_*`` and ``resolve_confined`` still ask.
+    """
+
+    def __init__(
+        self,
+        root: str,
+        sources: Sequence[Mapping[str, Any]],
+        *,
+        confine: bool = True,
+    ) -> None:
+        super().__init__(root=root, confine=confine)
         self._git_metadata = _git_metadata_paths(sources)
 
     def _contains_metadata(self, absolute_path: str) -> bool:
@@ -56,6 +68,12 @@ class MountedHostWorkspace(HostWorkspace):
     supports_direct_host_scan = False
 
     def __init__(self, root: str, sources: Sequence[Mapping[str, Any]]) -> None:
+        # Confined unconditionally, and not because of any sandboxing: this
+        # root is a *logical* tree of symlinks this class synthesizes, and
+        # paths are meaningful only as mount-relative names. There is no
+        # "the whole machine" reading of a path here to opt into — the
+        # mount table is the address space. ``resolve`` is overridden below
+        # to route through it.
         super().__init__(root=root, confine=True)
         self._visible_mounts: dict[str, Path] = {}
         self._internal_mounts: dict[str, Path] = {}

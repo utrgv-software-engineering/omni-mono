@@ -145,6 +145,57 @@ async def test_start_session(realtime_spec, settings_with_key):
 
 
 @pytest.mark.asyncio
+async def test_start_session_expands_capability_packs(realtime_spec, settings_with_key):
+    """Capability-pack tools and instruction fragments reach the RealtimeAgent.
+
+    The text path expands capabilities in build_agent(); realtime builds its
+    agent in start() and must do the same expansion, or capability-only
+    agents (like the voice agent) end up with no tools.
+    """
+    spec_tool = Mock(name="spec_tool")
+    cap_tool_a = Mock(name="cap_tool_a")
+    cap_tool_b = Mock(name="cap_tool_b")
+    realtime_spec.available_tools = [spec_tool]
+    good_cap = SimpleNamespace(
+        capability_name="shell",
+        instructions_text="Shell capability instructions.",
+        tools=lambda: [cap_tool_a, cap_tool_b],
+    )
+
+    def _raise():
+        raise RuntimeError("boom")
+
+    broken_cap = SimpleNamespace(
+        capability_name="broken",
+        instructions_text=None,
+        tools=_raise,
+    )
+    realtime_spec.resolved_capabilities = [good_cap, broken_cap]
+    agent_tool = Mock(name="explore_tool")
+    realtime_spec.agent_tool_configs = [Mock(name="explore_cfg")]
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True) as MockAgent,
+        patch("agents.realtime.RealtimeRunner", create=True),
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+        patch(
+            "omniagents.core.agents.builder._build_agent_tools_from_configs",
+            AsyncMock(return_value=[agent_tool]),
+        ) as mock_build_agent_tools,
+    ):
+        session = RealtimeSession(realtime_spec, settings=settings_with_key)
+        await session.start()
+
+        call_kwargs = MockAgent.call_args[1]
+        assert call_kwargs["tools"] == [spec_tool, cap_tool_a, cap_tool_b, agent_tool]
+        assert "Test instructions" in call_kwargs["instructions"]
+        assert "Shell capability instructions." in call_kwargs["instructions"]
+        build_kwargs = mock_build_agent_tools.call_args[1]
+        assert build_kwargs["agent_tool_configs"] == realtime_spec.agent_tool_configs
+        assert build_kwargs["parent_spec"] is realtime_spec
+
+
+@pytest.mark.asyncio
 async def test_start_session_with_mcp_servers(realtime_spec, settings_with_key):
     realtime_spec.mcp_servers = [Mock(name="mcp_cfg")]
 
@@ -292,6 +343,72 @@ async def test_connect_session(realtime_spec, settings_with_key):
 
         # Verify session was entered
         mock_session.__aenter__.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_connect_binds_environment_lease(realtime_spec, settings_with_key):
+    """The lease's workspace is bound to the contextvar and its identity is
+    stamped on the run context passed to runner.run(), mirroring text runs."""
+    lease = SimpleNamespace(
+        workspace=SimpleNamespace(root="/work/repo"),
+        workspace_id="ws-1",
+        environment_id="env-1",
+        generation=3,
+    )
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+        patch("omniagents.workspace.set_workspace") as mock_set_ws,
+        patch("omniagents.workspace.set_requested_cwd") as mock_set_cwd,
+    ):
+        mock_runner = MockRunner.return_value
+        mock_runner.run = AsyncMock(return_value=mock_session)
+
+        session = RealtimeSession(
+            realtime_spec, settings=settings_with_key, environment_lease=lease
+        )
+        await session.start()
+        await session.connect()
+
+        mock_set_cwd.assert_called_once_with("/work/repo")
+        mock_set_ws.assert_called_once_with(lease.workspace)
+        run_context = mock_runner.run.call_args[1]["context"]
+        assert run_context["workspace_root"] == "/work/repo"
+        assert run_context["workspace_id"] == "ws-1"
+        assert run_context["environment_id"] == "env-1"
+        assert run_context["environment_generation"] == 3
+        assert run_context["session_id"] == session.session_id
+
+
+@pytest.mark.asyncio
+async def test_connect_without_lease_still_stamps_session_id(
+    realtime_spec, settings_with_key
+):
+    """No lease → no workspace binding, but the run context still carries
+    session_id so per-session tool state stays scoped."""
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+        patch("omniagents.workspace.set_workspace") as mock_set_ws,
+    ):
+        mock_runner = MockRunner.return_value
+        mock_runner.run = AsyncMock(return_value=mock_session)
+
+        session = RealtimeSession(realtime_spec, settings=settings_with_key)
+        await session.start()
+        await session.connect()
+
+        mock_set_ws.assert_not_called()
+        run_context = mock_runner.run.call_args[1]["context"]
+        assert run_context == {"session_id": session.session_id}
 
 
 @pytest.mark.asyncio

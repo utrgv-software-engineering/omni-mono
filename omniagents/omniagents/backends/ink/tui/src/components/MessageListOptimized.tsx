@@ -76,6 +76,14 @@ export const MessageListOptimized = React.memo(() => {
         // Adjacent activity rows pack tightly; the blank line separates
         // activity blocks from prose on both sides.
         tight={isBeatRow(row) && isBeatRow(rows[index + 1])}
+        // The last row's padding would separate it from nothing. The
+        // enclosing column already owns the gap to whatever follows
+        // (gap={1} in App's scroll region), so padding here too made the
+        // transcript→"Thinking…" boundary 2 rows while every other
+        // boundary was 1 — against that container's own stated 1-row
+        // rhythm. Row padding separates rows; the container separates
+        // blocks.
+        isLast={index === rows.length - 1}
       />
     ),
     [rows],
@@ -153,29 +161,31 @@ export const MessageListOptimized = React.memo(() => {
   );
 });
 
-const TranscriptRowItem = React.memo<{ row: TranscriptRow; tight: boolean }>(
-  ({ row, tight }) => {
-    const body = (() => {
-      switch (row.type) {
-        case "beats":
-          return <BeatsRow segments={row.segments} running={row.running} />;
-        case "error":
-          return <ErrorRow message={row.message} />;
-        default:
-          return <MessageItem message={row.message} />;
-      }
-    })();
-
-    if (body === null) {
-      return null;
+const TranscriptRowItem = React.memo<{
+  row: TranscriptRow;
+  tight: boolean;
+  isLast: boolean;
+}>(({ row, tight, isLast }) => {
+  const body = (() => {
+    switch (row.type) {
+      case "beats":
+        return <BeatsRow segments={row.segments} running={row.running} />;
+      case "error":
+        return <ErrorRow message={row.message} />;
+      default:
+        return <MessageItem message={row.message} />;
     }
-    return (
-      <Box flexDirection="column" paddingBottom={tight ? 0 : 1}>
-        {body}
-      </Box>
-    );
-  },
-);
+  })();
+
+  if (body === null) {
+    return null;
+  }
+  return (
+    <Box flexDirection="column" paddingBottom={tight || isLast ? 0 : 1}>
+      {body}
+    </Box>
+  );
+});
 
 // Activity rows sit under a blank line after their message: a spinner
 // leads while work is in flight, a plain two-space indent once settled.
@@ -201,8 +211,7 @@ const BeatsRow = React.memo<{
     <Box flexDirection="row">
       {live ? (
         <Text color={Theme.stateActive}>
-          <Spinner type="dots" />
-          {" "}
+          <Spinner type="dots" />{" "}
         </Text>
       ) : (
         <Text color={Theme.textChrome}>● </Text>
@@ -231,9 +240,7 @@ const ErrorRow = React.memo<{ message: Message }>(({ message }) => {
       <Box flexDirection="row">
         <Text>{ACTIVITY_INDENT}</Text>
         <Box flexGrow={1}>
-          <Text
-            color={cancelled ? Theme.stateBlocked : Theme.stateFailed}
-          >
+          <Text color={cancelled ? Theme.stateBlocked : Theme.stateFailed}>
             ✗{" "}
           </Text>
           <Text color={Theme.textPrimary}>{toolCall.tool}</Text>
@@ -329,9 +336,7 @@ const UserMessage = React.memo<{ message: Message }>(
         {lines.map((line, index) => (
           <Box key={index} flexDirection="row">
             <Box width={prefixWidth}>
-              {index === 0 && (
-                <Text color={Theme.accentUser}>{prefix}</Text>
-              )}
+              {index === 0 && <Text color={Theme.accentUser}>{prefix}</Text>}
             </Box>
             <Box flexGrow={1}>
               <Text color={Theme.accentUser}>{line}</Text>
@@ -363,9 +368,7 @@ const AssistantMessage = React.memo<{ message: Message }>(
         {lines.map((line, index) => (
           <Box key={index} flexDirection="row">
             <Box width={prefixWidth}>
-              {index === 0 && (
-                <Text color={Theme.accentAgent}>{prefix}</Text>
-              )}
+              {index === 0 && <Text color={Theme.accentAgent}>{prefix}</Text>}
             </Box>
             <Box flexGrow={1}>
               <Text color={Theme.accentAgent}>{line}</Text>
@@ -450,9 +453,7 @@ const RunDiffCard = React.memo<{ diff: ConversationRunDiff }>(
               <Text color={Theme.stateFailed}> −{file.deletions}</Text>
             </Box>
           ))}
-          {extra > 0 && (
-            <Text color={Theme.textChrome}>… {extra} more</Text>
-          )}
+          {extra > 0 && <Text color={Theme.textChrome}>… {extra} more</Text>}
           <Text color={Theme.textChrome} italic>
             tab review
           </Text>
@@ -460,7 +461,8 @@ const RunDiffCard = React.memo<{ diff: ConversationRunDiff }>(
       </Box>
     );
   },
-  (prev, next) => prev.diff.item_id === next.diff.item_id &&
+  (prev, next) =>
+    prev.diff.item_id === next.diff.item_id &&
     prev.diff.revision === next.diff.revision,
 );
 

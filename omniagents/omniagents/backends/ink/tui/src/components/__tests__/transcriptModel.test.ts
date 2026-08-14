@@ -5,7 +5,6 @@ import {
   errorDetailLines,
   groupTranscript,
   isErrorToolCall,
-  planTransitions,
   rendersNothing,
   runningLabel,
   salientArg,
@@ -57,9 +56,9 @@ describe("classifyToolCall", () => {
 
 describe("isErrorToolCall", () => {
   it("flags error display_type and non-zero exits", () => {
-    expect(
-      isErrorToolCall(tc({ metadata: { display_type: "error" } })),
-    ).toBe(true);
+    expect(isErrorToolCall(tc({ metadata: { display_type: "error" } }))).toBe(
+      true,
+    );
     expect(
       isErrorToolCall(
         tc({ metadata: { display_type: "command", exit_code: 1 } }),
@@ -146,7 +145,12 @@ describe("groupTranscript", () => {
       toolMsg({ call_id: "c", tool: "read_file", output: "[Cancelled]" }),
       toolMsg({ call_id: "d", tool: "grep", running: true }),
     ]);
-    expect(rows.map((r) => r.type)).toEqual(["beats", "error", "error", "beats"]);
+    expect(rows.map((r) => r.type)).toEqual([
+      "beats",
+      "error",
+      "error",
+      "beats",
+    ]);
     const live = rows[3] as Extract<(typeof rows)[number], { type: "beats" }>;
     expect(live.segments).toEqual([]);
     expect(live.running).toHaveLength(1);
@@ -169,16 +173,28 @@ describe("groupTranscript", () => {
       "Read 2 files · searching useRPC…",
     );
     // Once the call lands, the same span settles into pure past tense.
-    expect(spanLine([{ verb: "read", count: 2 }, { verb: "search", count: 1 }], [])).toBe(
-      "Read 2 files, 1 search",
-    );
+    expect(
+      spanLine(
+        [
+          { verb: "read", count: 2 },
+          { verb: "search", count: 1 },
+        ],
+        [],
+      ),
+    ).toBe("Read 2 files, 1 search");
     // Nothing landed yet → the live phrase leads capitalized.
     expect(
-      spanLine([], [tc({ tool: "read_file", input: '{"path":"x"}' , running: true })]),
+      spanLine(
+        [],
+        [tc({ tool: "read_file", input: '{"path":"x"}', running: true })],
+      ),
     ).toBe("Reading x…");
     // Parallel calls summarize.
     expect(
-      spanLine([], [tc({ running: true }), tc({ running: true }), tc({ running: true })]),
+      spanLine(
+        [],
+        [tc({ running: true }), tc({ running: true }), tc({ running: true })],
+      ),
     ).toBe("Running 3 tools…");
   });
 
@@ -194,7 +210,7 @@ describe("groupTranscript", () => {
 
   it("renders system events as message rows", () => {
     const rows = groupTranscript([
-      { role: "system", content: "✔ plan · Fix product cli package" },
+      { role: "system", content: "conversation compacted" },
     ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.type).toBe("message");
@@ -207,7 +223,9 @@ describe("runningLabel", () => {
       runningLabel(tc({ tool: "read_file", input: '{"path":"src/app.ts"}' })),
     ).toEqual({ action: "reading", detail: "src/app.ts" });
     expect(
-      runningLabel(tc({ tool: "execute_bash", input: '{"command":"npm test"}' })),
+      runningLabel(
+        tc({ tool: "execute_bash", input: '{"command":"npm test"}' }),
+      ),
     ).toEqual({ action: "running", detail: "npm test" });
     expect(
       runningLabel(tc({ tool: "grep_search", input: '{"pattern":"useRPC"}' })),
@@ -231,37 +249,5 @@ describe("errorDetailLines", () => {
   it("keeps the informative tail, capped", () => {
     const output = ["a", "", "b", "c", "d", "e", ""].join("\n");
     expect(errorDetailLines(tc({ output }), 3)).toEqual(["c", "d", "e"]);
-  });
-});
-
-describe("planTransitions", () => {
-  const task = (id: string, status: string) => ({
-    id,
-    subject: `Task ${id}`,
-    status: status as never,
-  });
-
-  it("emits only transitions to in_progress or completed", () => {
-    expect(
-      planTransitions(
-        [task("1", "pending"), task("2", "in_progress"), task("3", "pending")],
-        [
-          task("1", "in_progress"),
-          task("2", "completed"),
-          task("3", "blocked"),
-          task("4", "in_progress"),
-        ],
-      ),
-    ).toEqual([
-      { subject: "Task 1", status: "in_progress" },
-      { subject: "Task 2", status: "completed" },
-      { subject: "Task 4", status: "in_progress" },
-    ]);
-  });
-
-  it("emits nothing when statuses are unchanged", () => {
-    expect(
-      planTransitions([task("1", "in_progress")], [task("1", "in_progress")]),
-    ).toEqual([]);
   });
 });

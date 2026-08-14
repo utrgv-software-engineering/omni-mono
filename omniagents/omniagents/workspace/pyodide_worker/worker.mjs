@@ -25,19 +25,53 @@ import { Buffer } from "node:buffer";
 
 // ---------------- argv / env --------------------------------------------- //
 
-// --workspace=<host_dir>     If set, mount NODEFS at /workspace → host_dir.
-//                            Files persist on host disk automatically.
+// --workspace=<host_dir>     If set, mount NODEFS at the mount point →
+//                            host_dir. Files persist on host disk
+//                            automatically.
+// --mount-point=<vfs_path>   Where the workspace appears inside the
+//                            interpreter (default /workspace). The wasm
+//                            sandbox passes the HOST path itself so the
+//                            shell (bashkit) and python agree on one
+//                            uniform path namespace.
 // --packages=<a,b,c>         Pre-load these pyodide-built packages.
 // --snapshot=<path>          Read/write a serialized heap snapshot for fast
 //                            warm starts (optional).
 function parseArgs(args) {
-  const out = { workspace: null, packages: [], snapshot: null };
+  const out = {
+    workspace: null,
+    mountPoint: "/workspace",
+    packages: [],
+    snapshot: null,
+    network: "none",
+    networkAllow: [],
+    networkBlocked: false,
+  };
   for (const a of args) {
     if (a.startsWith("--workspace=")) out.workspace = a.slice("--workspace=".length);
-    else if (a.startsWith("--packages=")) {
+    else if (a.startsWith("--mount-point=")) {
+      const v = a.slice("--mount-point=".length).trim();
+      if (v) out.mountPoint = v;
+    } else if (a.startsWith("--packages=")) {
       const v = a.slice("--packages=".length).trim();
       if (v) out.packages = v.split(",").map((s) => s.trim()).filter(Boolean);
     } else if (a.startsWith("--snapshot=")) out.snapshot = a.slice("--snapshot=".length);
+    // --network=none|open  and  --network-allow=host1,host2
+    // Controls whether Python can egress. Pyodide exposes Node's real
+    // fetch/XMLHttpRequest/WebSocket through its `js` module, so an
+    // unrestricted worker has full network — which would silently defeat
+    // a sandbox that advertises itself as offline (and auto-approves on
+    // that basis). Default `none`: SAFE. The wasm sandbox passes the
+    // profile's network policy explicitly.
+    else if (a.startsWith("--network=")) out.network = a.slice("--network=".length).trim() || "none";
+    else if (a.startsWith("--network-allow=")) {
+      const v = a.slice("--network-allow=".length).trim();
+      if (v) out.networkAllow = v.split(",").map((s) => s.trim()).filter(Boolean);
+    }
+    // --network-blocked: boot with the gate refusing (the wasm sandbox's
+    // off-by-default) while keeping --network as the configured policy the
+    // set_network toggle restores. Distinct from --network=none, which
+    // deletes the egress globals outright and cannot be re-enabled.
+    else if (a === "--network-blocked") out.networkBlocked = true;
   }
   return out;
 }
@@ -48,6 +82,130 @@ const args = parseArgs(argv.slice(2));
 
 function log(...m) {
   stderr.write(`[pyodide-worker] ${m.join(" ")}\n`);
+}
+
+// The JS egress surfaces reachable from Python via the `js` module. Pyodide
+// (Emscripten) raw sockets need a websocket proxy we never configure, so
+// these are the ONLY paths out.
+const NETWORK_GLOBALS = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource"];
+
+// Mutable policy the gate wrappers consult on every call/construct. The
+// `set_network` op (the sandbox.set_network live toggle) rewrites it; the
+// wrappers themselves are installed once at boot, so references Python
+// captured earlier still obey a later toggle. A --network-blocked boot
+// starts the gate refusing ("none") while --network stays the configured
+// policy the toggle restores.
+const netPolicy = {
+  mode: args.networkBlocked && args.network !== "none" ? "none" : (args.network || "none"),
+  allow: new Set((args.networkAllow || []).map((h) => String(h).toLowerCase())),
+};
+let networkGateInstalled = false;
+let pyodideHttpAttempted = false;
+
+function hostPermitted(url) {
+  let host;
+  try {
+    host = new URL(typeof url === "string" ? url : url.url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  // Exact host or dot-suffix match (allow "example.com" → "api.example.com").
+  for (const entry of netPolicy.allow) {
+    if (host === entry || host.endsWith("." + entry)) return true;
+  }
+  return false;
+}
+
+function applyNetworkPolicy() {
+  if (args.network === "none") {
+    // Explicitly offline (`network: none`): remove the globals outright —
+    // the strongest form, and safe because such a profile reads as
+    // toggle-unsupported (there is nothing to re-enable). `from js import
+    // fetch` fails at import, matching the contained-and-offline contract.
+    // A --network-blocked boot does NOT land here: it installs the gate
+    // below with netPolicy.mode starting at "none".
+    for (const name of NETWORK_GLOBALS) {
+      try {
+        delete globalThis[name];
+      } catch {
+        try {
+          Object.defineProperty(globalThis, name, { value: undefined, configurable: true });
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+    log("network: none (egress globals removed)");
+    return;
+  }
+  // Booted with egress (open or allowlist): install policy-checking gates
+  // so sandbox.set_network can flip enforcement live. fetch throws
+  // synchronously when refused, so Python sees an immediate JsException
+  // instead of an unhandled promise rejection.
+  const realFetch = globalThis.fetch ? globalThis.fetch.bind(globalThis) : null;
+  globalThis.fetch = (url, ...rest) => {
+    if (netPolicy.mode === "open" && realFetch) return realFetch(url, ...rest);
+    if (netPolicy.mode === "allow" && realFetch && hostPermitted(url)) {
+      return realFetch(url, ...rest);
+    }
+    throw new Error(
+      netPolicy.mode === "allow"
+        ? `network: host not in sandbox allowlist: ${url}`
+        : "network: sandbox is offline",
+    );
+  };
+  // XHR/WebSocket/EventSource can't be host-filtered as cheaply; they work
+  // only in open mode (fetch stays the sole egress path under an
+  // allowlist), checked per call/construct so the toggle reaches captured
+  // references too.
+  for (const name of NETWORK_GLOBALS.filter((n) => n !== "fetch")) {
+    const real = globalThis[name];
+    if (typeof real !== "function") continue;
+    const refuse = () => {
+      throw new Error(
+        netPolicy.mode === "allow"
+          ? `network: ${name} unavailable in allowlist mode (fetch is the only egress path)`
+          : "network: sandbox is offline",
+      );
+    };
+    globalThis[name] = new Proxy(real, {
+      construct(target, cargs) {
+        if (netPolicy.mode !== "open") refuse();
+        return Reflect.construct(target, cargs);
+      },
+      apply(target, thisArg, cargs) {
+        if (netPolicy.mode !== "open") refuse();
+        return Reflect.apply(target, thisArg, cargs);
+      },
+    });
+  }
+  networkGateInstalled = true;
+  log(
+    `network: gate installed (mode: ${netPolicy.mode}` +
+      (netPolicy.mode === "allow" ? `, allow: ${[...netPolicy.allow].join(", ")})` : ")"),
+  );
+}
+
+// Best-effort pyodide-http patch (urllib/requests support). Runs at boot for
+// network-on sessions and lazily on the first set_network enable for
+// blocked boots — it needs egress (micropip → PyPI) to install.
+async function applyPyodideHttp(py) {
+  if (pyodideHttpAttempted) return;
+  pyodideHttpAttempted = true;
+  try {
+    await py.loadPackage(["micropip"]);
+    await py.runPythonAsync(`
+import micropip
+try:
+    await micropip.install("pyodide-http")
+    import pyodide_http
+    pyodide_http.patch_all()
+except Exception:
+    pass
+`);
+  } catch (e) {
+    log(`pyodide-http setup skipped: ${e.message}`);
+  }
 }
 
 // ---------------- pyodide bootstrap -------------------------------------- //
@@ -76,31 +234,28 @@ async function bootstrap() {
   if (args.workspace) {
     const hostDir = resolve(args.workspace);
     if (!existsSync(hostDir)) mkdirSync(hostDir, { recursive: true });
-    py.FS.mkdirTree("/workspace");
-    py.FS.mount(py.FS.filesystems.NODEFS, { root: hostDir }, "/workspace");
-    log(`mounted NODEFS /workspace → ${hostDir}`);
+    py.FS.mkdirTree(args.mountPoint);
+    py.FS.mount(py.FS.filesystems.NODEFS, { root: hostDir }, args.mountPoint);
+    log(`mounted NODEFS ${args.mountPoint} → ${hostDir}`);
   } else {
     // MEMFS default — still create the dir so paths resolve.
-    py.FS.mkdirTree("/workspace");
-    log("using MEMFS /workspace (ephemeral)");
+    py.FS.mkdirTree(args.mountPoint);
+    log(`using MEMFS ${args.mountPoint} (ephemeral)`);
   }
 
-  // Apply pyodide-http patch so urllib/requests calls in user code don't hang.
-  // Pure-Python wheel; safe to no-op if absent.
-  try {
-    await py.loadPackage(["micropip"]);
-    await py.runPythonAsync(`
-import micropip
-try:
-    await micropip.install("pyodide-http")
-    import pyodide_http
-    pyodide_http.patch_all()
-except Exception:
-    pass
-`);
-  } catch (e) {
-    log(`pyodide-http setup skipped: ${e.message}`);
+  // Apply pyodide-http patch so urllib/requests calls in user code don't
+  // hang. Pointless (and would try to reach PyPI) when offline — skip it;
+  // a blocked boot defers it to the first set_network enable.
+  if (netPolicy.mode !== "none") {
+    await applyPyodideHttp(py);
   }
+
+  // Network policy. Pyodide's `js` module proxies the Node global scope, so
+  // `from js import fetch` reaches Node's REAL fetch — full egress unless we
+  // intervene. This is the single control point for Python network in the
+  // wasm sandbox; the bashkit shell's curl/git builtins are gated
+  // separately on the same profile policy.
+  applyNetworkPolicy();
 
   // Heap snapshot (best effort; only supported in some pyodide builds).
   if (args.snapshot && snapshotBytes === null) {
@@ -273,6 +428,26 @@ function makeHandlers(py) {
         FS.syncfs(populate, (err) => (err ? reject(err) : resolve()));
       });
       return { ok: true };
+    },
+
+    // ----- network toggle (sandbox.set_network) ----- //
+
+    set_network: async ({ network, network_allow = [] }) => {
+      if (!networkGateInstalled) {
+        // Booted with `network: none`: the globals were deleted, not
+        // gated — there is nothing to re-enable.
+        throw new Error("network toggle unsupported: worker booted offline");
+      }
+      const mode = network === "open" || network === "allow" ? network : "none";
+      netPolicy.mode = mode;
+      netPolicy.allow = new Set(
+        (network_allow || []).map((h) => String(h).toLowerCase()),
+      );
+      // Blocked boots skipped the urllib/requests patch; catch up now
+      // that egress exists (best effort, same as boot).
+      if (mode !== "none") await applyPyodideHttp(py);
+      log(`network: policy updated (mode: ${mode})`);
+      return { ok: true, mode };
     },
 
     // ----- python execution ----- //

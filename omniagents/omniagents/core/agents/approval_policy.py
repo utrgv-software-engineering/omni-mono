@@ -3,10 +3,18 @@
 Codex-style layering: approval strictness is a function of the execution
 environment's actual blast radius plus the session's chosen reviewer.
 
-* ``AUTO_APPROVE`` — the environment itself is the permission boundary: a
-  sandboxed (non-host) environment, optionally required to lack the
-  ``network`` capability. The call runs without any review; the decision is
-  audited and broadcast so the transcript shows what happened.
+* ``AUTO_APPROVE`` — the environment itself is the permission boundary: an
+  environment carrying the ``contained`` capability (a real containment
+  boundary — container/VM/syscall sandbox, granted per backend at
+  provisioning), optionally required to also lack the ``network``
+  capability. Applies only WITHIN the user's ``auto`` reviewer choice —
+  it upgrades "Approve for me" to promptless, never overrides "Ask me
+  first"; the approval policy is the user's, and no sandbox state changes
+  it. Kind is deliberately NOT the signal: kind records placement,
+  and backends like ``unix_local``/``host_bridge`` carry sandbox sessions
+  while executing raw host processes, so they must never auto-approve. The
+  call runs without any review; the decision is audited and broadcast so
+  the transcript shows what happened.
 * ``GUARDIAN`` — an LLM reviewer (:mod:`omniagents.core.agents.guardian`)
   assesses the exact planned action and approves or denies it in the
   user's stead ("Approve for me").
@@ -50,7 +58,7 @@ class EnvironmentSummary:
     """What the approval layer knows about where the tool would run.
 
     ``kind`` is the :class:`~omniagents.execution.EnvironmentKind` value
-    (``"host"``, ``"devbox"``, …) or ``None`` when the session has no
+    (``"host"``, ``"container"``, …) or ``None`` when the session has no
     resolved environment — treated exactly like HOST everywhere.
     """
 
@@ -61,7 +69,15 @@ class EnvironmentSummary:
 
     @property
     def is_sandboxed(self) -> bool:
-        return self.kind is not None and self.kind != "host"
+        """True only for a genuine containment boundary.
+
+        Keys on the ``contained`` capability, not ``kind`` — kind records
+        placement, and backends like ``unix_local`` carry sandbox
+        sessions while running raw host processes. Absent capability data
+        this reads False, so unknown environments fail closed to the
+        prompting tiers.
+        """
+        return "contained" in self.capabilities
 
     @property
     def has_network(self) -> bool:
@@ -128,15 +144,22 @@ def guardian_model_ref(service: Any) -> str | None:
 def resolve_route(
     *, reviewer: str, sandbox_tier: str, environment: EnvironmentSummary
 ) -> ApprovalRoute:
-    """Pure routing decision — see the module docstring for the tiers."""
+    """Pure routing decision — see the module docstring for the tiers.
+
+    The reviewer choice is authoritative: ``user`` ("Ask me first") always
+    prompts, in every environment — no sandbox state overrides it. The
+    sandbox auto-approve tiers are an optimization *within* the user's
+    ``auto`` ("Approve for me") delegation: a genuinely contained (and,
+    under ``no_network``, offline) environment skips even guardian review.
+    """
+    if reviewer != REVIEWER_AUTO:
+        return ApprovalRoute.HUMAN
     if environment.is_sandboxed:
         if sandbox_tier == SANDBOX_AUTO_ALWAYS:
             return ApprovalRoute.AUTO_APPROVE
         if sandbox_tier == SANDBOX_AUTO_NO_NETWORK and not environment.has_network:
             return ApprovalRoute.AUTO_APPROVE
-    if reviewer == REVIEWER_AUTO:
-        return ApprovalRoute.GUARDIAN
-    return ApprovalRoute.HUMAN
+    return ApprovalRoute.GUARDIAN
 
 
 async def resolve_approval_route(

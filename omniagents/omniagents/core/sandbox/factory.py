@@ -294,6 +294,21 @@ def _build_cloudflare_options(options: Dict[str, Any]) -> Any:
     return CloudflareSandboxClientOptions(**options)
 
 
+def _build_wasm_client(client_kwargs: Dict[str, Any]) -> Any:
+    # The wasm sandbox: bashkit shell + pyodide Python over one host-dir
+    # workspace. Both runtimes ship with this package — no pip extra, no
+    # daemon; Node must be on PATH for the pyodide worker.
+    from omniagents.core.sandbox.wasm import WasmSandboxClient
+
+    return WasmSandboxClient(**client_kwargs)
+
+
+def _build_wasm_options(options: Dict[str, Any]) -> Any:
+    from omniagents.core.sandbox.wasm import WasmSandboxClientOptions
+
+    return WasmSandboxClientOptions(**options)
+
+
 def _build_host_bridge_client(client_kwargs: Dict[str, Any]) -> Any:
     # Computer-as-sandbox: the agent stays put; this client forwards the sandbox
     # surface to a remote host running `omni sandbox-host`. No pip extra — pure
@@ -326,6 +341,7 @@ _CLIENT_BUILDERS: Dict[
     "vercel": (_build_vercel_client, _build_vercel_options),
     "cloudflare": (_build_cloudflare_client, _build_cloudflare_options),
     "host_bridge": (_build_host_bridge_client, _build_host_bridge_options),
+    "wasm": (_build_wasm_client, _build_wasm_options),
 }
 
 

@@ -71,7 +71,7 @@ def _routed(workspace, *, sources=()):
         environment_id="env-1",
         workspace_id="workspace-1",
         kind=(
-            EnvironmentKind.DEVBOX
+            EnvironmentKind.CONTAINER
             if isinstance(workspace, SandboxWorkspace)
             else EnvironmentKind.HOST
         ),

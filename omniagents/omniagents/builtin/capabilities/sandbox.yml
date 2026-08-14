@@ -18,6 +18,10 @@ server_functions:
   - sandbox.pause
   - sandbox.unpause
   - sandbox.discard_snapshot
+  # Live egress toggle (docker): operator-only like the rest — the agent
+  # must never be able to switch its own network (or approval tier) back on.
+  - sandbox.set_network
+  - sandbox.get_network
 instructions: |
   Observe the environment your filesystem/shell tools run in. You CANNOT change
   it — selecting another profile is an operator action the user triggers

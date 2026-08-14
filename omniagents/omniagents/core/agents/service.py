@@ -1103,17 +1103,21 @@ class AgentService(RpcMethodsBase):
 
         return active_servers_holder["servers"]
 
-    def _build_client_tools(self, session: Session) -> list:
+    def _build_client_tools(self, session: Session, defs: list | None = None) -> list:
         """Build FunctionTool proxies for client-provided tools.
 
         Each tool, when invoked by the agent, sends a ``client_request`` with
         ``function="tool.call"`` over the existing WebSocket and awaits the
         ``client_response`` containing the tool result.  This avoids any
         additional network connections between container and host.
+
+        ``defs`` overrides the session's registered definitions (used by the
+        realtime bridge to pass a filtered subset).
         """
         from agents.tool import FunctionTool
 
-        defs: list = getattr(session, "_client_tools", None) or []
+        if defs is None:
+            defs = getattr(session, "_client_tools", None) or []
         if not defs:
             return []
 
@@ -1171,6 +1175,80 @@ class AgentService(RpcMethodsBase):
             )
 
         return tools
+
+    async def acquire_environment_for_session(
+        self,
+        session_id: str,
+        principal=None,
+        default_environment_id: Optional[str] = None,
+    ) -> "EnvironmentLease | None":
+        """Acquire an environment lease for out-of-band execution paired to a
+        GUI session — the realtime (voice) pipeline, which runs outside RPC
+        dispatch and so never gets a routed request context.
+
+        Mirrors ``start_run``'s inherit routing: the session's thread binding
+        selects the environment (existing or automatic) and ``materialize``
+        provisions an automatic selection into a ready lease.
+
+        A session that has never run a text turn has a targetless binding, so
+        inherit resolves to no environment. ``default_environment_id`` covers
+        that: it is the same server default the GUI handshake advertises
+        (``agent_host.default_environment_id``) and is applied here as an
+        explicit selection, exactly as the GUI client would on its first
+        ``start_run``. Returns ``None`` when neither resolves.
+        """
+        request_context = await self.operation_router.prepare_protocol(
+            OPERATION_BY_NAME["start_run"],
+            {
+                "session_id": session_id,
+                "environment_selection": {"mode": "inherit"},
+            },
+            principal=principal,
+        )
+        request_context = await self.operation_router.materialize(request_context)
+        lease = request_context.environment_lease
+        if lease is None and default_environment_id:
+            request_context = await self.operation_router.prepare_protocol(
+                OPERATION_BY_NAME["start_run"],
+                {
+                    "session_id": session_id,
+                    "environment_selection": {
+                        "mode": "explicit",
+                        "environment_id": default_environment_id,
+                    },
+                },
+                principal=principal,
+            )
+            lease = request_context.environment_lease
+        return lease
+
+    def build_realtime_client_tools(self, session_id: str, principal=None) -> list:
+        """Client tools bridged into a realtime (voice) session that shares
+        this GUI session's id.
+
+        The voice UI starts its realtime session with the GUI session id, so
+        client tools the GUI client registered via ``variables.client_tools``
+        (see ``_sf_session_ensure``) can serve the voice agent too: the proxy
+        broadcasts ``client_request {tool.call}`` over the GUI session's
+        channels exactly as in text runs, and whichever connected client
+        answers first supplies the result.
+
+        The realtime pipeline has no tool-approval flow, so only tools the
+        client explicitly registered with ``safe: true`` are bridged;
+        approval-gated tools stay text-run only rather than silently losing
+        their gate. Returns ``[]`` when the session isn't live, has no safe
+        client tools, or ``principal`` may not access it.
+        """
+        session = self._session_manager.get(session_id)
+        if session is None:
+            return []
+        if not self.authorization_policy.can_access(
+            principal, getattr(session, "user_id", None)
+        ):
+            return []
+        defs = getattr(session, "_client_tools", None) or []
+        safe_defs = [d for d in defs if isinstance(d, dict) and d.get("safe") is True]
+        return self._build_client_tools(session, defs=safe_defs)
 
     def _spec_for_environment(
         self, environment_lease: EnvironmentLease | None
@@ -2528,7 +2606,7 @@ class AgentService(RpcMethodsBase):
 
         if route is ApprovalRoute.AUTO_APPROVE:
             rationale = (
-                f"Sandboxed environment ({environment.kind})"
+                f"Contained environment ({environment.kind})"
                 f"{' without network egress' if not environment.has_network else ''}"
                 " — auto-approved by sandbox policy"
             )

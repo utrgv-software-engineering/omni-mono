@@ -374,7 +374,7 @@ async def _scan(
     workspace: Workspace, base_rel: str, recursive: bool, max_entries: int
 ) -> Tuple[_Snapshot, bool]:
     if bool(getattr(workspace, "supports_direct_host_scan", False)):
-        base_abs = workspace.resolve(base_rel)
+        base_abs = workspace.resolve_confined(base_rel)
         return await asyncio.to_thread(
             _scan_host, base_abs, workspace.root, recursive, max_entries
         )
@@ -627,7 +627,7 @@ class FilesystemManager:
             if not bool(getattr(workspace, "supports_shell", False)):
                 return False
             try:
-                absolute = workspace.resolve(probe)
+                absolute = workspace.resolve_confined(probe)
                 writable = await workspace.exec(["test", "-w", absolute], shell=False)
                 if writable.exit_code != 0:
                     return False
@@ -640,7 +640,7 @@ class FilesystemManager:
             except Exception:
                 return False
 
-        absolute = workspace.resolve(rel)
+        absolute = workspace.resolve_confined(rel)
 
         def _check() -> bool:
             if os.path.exists(absolute):
@@ -704,7 +704,7 @@ class FilesystemManager:
 
     @staticmethod
     async def _host_stat(workspace: HostWorkspace, rel: str) -> os.stat_result:
-        absolute = workspace.resolve(rel)
+        absolute = workspace.resolve_confined(rel)
 
         def _stat() -> os.stat_result:
             return os.stat(absolute)
@@ -718,7 +718,7 @@ class FilesystemManager:
                 stat = await self._host_stat(workspace, rel)
             except FileNotFoundError:
                 raise FsNotFoundError("no such file or directory", path=rel)
-            if os.path.isdir(workspace.resolve(rel)):
+            if os.path.isdir(workspace.resolve_confined(rel)):
                 return {
                     "path": rel,
                     "type": "directory",
@@ -818,7 +818,7 @@ class FilesystemManager:
     @staticmethod
     async def _is_dir(workspace: Workspace, rel: str) -> bool:
         if isinstance(workspace, HostWorkspace):
-            absolute = workspace.resolve(rel)
+            absolute = workspace.resolve_confined(rel)
             return await asyncio.to_thread(os.path.isdir, absolute)
         return await workspace.is_dir(rel)
 
@@ -1010,7 +1010,7 @@ class FilesystemManager:
         info: Optional[Dict[str, Any]] = None
         try:
             if isinstance(workspace, HostWorkspace):
-                absolute = workspace.resolve(rel)
+                absolute = workspace.resolve_confined(rel)
 
                 def _open_host() -> Tuple[Any, int, str]:
                     if not os.path.isfile(absolute):
@@ -1240,7 +1240,7 @@ class FilesystemManager:
             if isinstance(workspace, HostWorkspace):
                 # Resolving the target validates the whole path (symlinked
                 # parents included) against the workspace boundary.
-                workspace.resolve(rel)
+                workspace.resolve_confined(rel)
             await self._assert_writable(environment_id, workspace, rel)
             if await workspace.is_dir(rel):
                 raise FsTransferError(
@@ -1380,7 +1380,7 @@ class FilesystemManager:
                     if isinstance(workspace, HostWorkspace):
                         # Re-resolve under the commit lock immediately before
                         # checking the target and publishing the staged bytes.
-                        absolute = workspace.resolve(state.path)
+                        absolute = workspace.resolve_confined(state.path)
                     else:
                         absolute = None
 
@@ -1589,8 +1589,8 @@ class FilesystemManager:
         an unbounded recursive copy.
         """
         if isinstance(workspace, HostWorkspace):
-            src_abs = workspace.resolve(src)
-            dst_abs = workspace.resolve(dst)
+            src_abs = workspace.resolve_confined(src)
+            dst_abs = workspace.resolve_confined(dst)
 
             def _move_host() -> None:
                 os.makedirs(os.path.dirname(dst_abs) or ".", exist_ok=True)
@@ -1606,7 +1606,12 @@ class FilesystemManager:
             if parent != ".":
                 await workspace.mkdir(parent, parents=True, exist_ok=True)
             result = await workspace.exec(
-                ["mv", workspace.resolve(src), workspace.resolve(dst)], shell=False
+                [
+                    "mv",
+                    workspace.resolve_confined(src),
+                    workspace.resolve_confined(dst),
+                ],
+                shell=False,
             )
             if result.exit_code != 0:
                 raise FsPathError(

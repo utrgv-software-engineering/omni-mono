@@ -19,7 +19,7 @@ import abc
 import posixpath
 from typing import Dict, List, Literal, Optional, Sequence, Union
 
-from .types import ExecResult, FileEntry, GrepMatch
+from .types import ExecResult, FileEntry, GrepMatch, WorkspaceEscapeError
 
 CommandLike = Union[str, Sequence[str]]
 
@@ -120,6 +120,49 @@ class Workspace(abc.ABC):
         """Whether *absolute_path* belongs to this Workspace boundary."""
 
         return self.relative_path(absolute_path) is not None
+
+    @property
+    def enforces_confinement(self) -> bool:
+        """Whether :meth:`resolve` itself refuses paths outside the root.
+
+        True everywhere except an unconfined :class:`HostWorkspace` — the
+        ``host`` (no-sandbox) execution target, where the agent's file tools
+        deliberately reach the whole machine, exactly as its shell already
+        does. Callers that need the boundary regardless use
+        :meth:`resolve_confined`.
+        """
+
+        return True
+
+    def resolve_confined(self, path: str) -> str:
+        """:meth:`resolve`, with the workspace-root boundary always enforced.
+
+        The wire surfaces (``fs_*``, ``git_*``) promise every path they touch
+        stays inside the root: their canonicalizers already reject absolute
+        and ``..`` spellings, so the only way out is a symlink *inside* the
+        root pointing outside it. A confined workspace catches that in
+        ``resolve``; an unconfined one does not, and would otherwise serve a
+        file outside the root to a client that was promised it could not
+        happen. Confinement is therefore the *caller's* policy, not a
+        property of the workspace: the agent's tools want the machine, the
+        wire surfaces want the root.
+
+        Containment is asked of the workspace (:meth:`contains_path`) rather
+        than recomputed here, so a composite workspace's authorized mounts —
+        and a :class:`GitMetadataHostWorkspace`'s external Git metadata —
+        stay reachable. Confined workspaces pay nothing: ``resolve`` already
+        refused, so the extra check is skipped entirely.
+        """
+
+        absolute = self.resolve(path)
+        if self.enforces_confinement:
+            return absolute
+        if not self.contains_path(absolute):
+            raise WorkspaceEscapeError(
+                f"Path {path!r} resolves to {absolute!r}, outside workspace "
+                f"root {self.root!r}"
+            )
+        return absolute
 
     def io_path(self, absolute_path: str) -> Optional[str]:
         """Return a spelling accepted by Workspace I/O for an authorized path.

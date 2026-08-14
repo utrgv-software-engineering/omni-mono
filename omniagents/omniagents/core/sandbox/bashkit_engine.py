@@ -59,12 +59,25 @@ from .bashkit_builtins import DEFAULT_AUTHOR
 
 _DIR_TYPES = {"directory", "dir"}
 
+#: git subcommands that reach the network (dulwich remote ops). Everything
+#: else is local object-store work and keeps working when the offline
+#: toggle blocks egress.
+_GIT_NETWORK_SUBCOMMANDS = frozenset({"clone", "fetch", "pull", "push", "ls-remote"})
+
 
 class BashkitSandboxSession(BaseSandboxSession):
     """Sandbox session backed by a bashkit interpreter.
 
     Args:
         root: manifest root inside the VFS.
+        host_dir: real host directory backing ``root``. Defaults to ``root``
+            itself (the historical identity mapping, used in-browser where
+            the "host" filesystem is the surrounding Emscripten FS). When it
+            differs, the shell presents ``root`` (e.g. ``/workspace``) while
+            bytes live in ``host_dir`` — the host path never appears inside
+            the sandbox, matching the docker container's namespace shape.
+            The host-side builtins (git/curl) receive translated host paths
+            transparently.
         bash: an existing ``bashkit.Bash`` to adopt, when the interpreter
             must be shared with other code on the page. Omit to build one.
         session_id: reused as the snapshot id; useful when persisting.
@@ -76,6 +89,7 @@ class BashkitSandboxSession(BaseSandboxSession):
         self,
         *,
         root: str = "/workspace",
+        host_dir: str | None = None,
         bash: Any = None,
         session_id: str = "bashkit",
         git: Any = False,
@@ -83,6 +97,18 @@ class BashkitSandboxSession(BaseSandboxSession):
         real_python: bool = True,
         **bash_kwargs: Any,
     ) -> None:
+        # Live offline toggle (sandbox.set_network). The network-capable
+        # builtins (curl/wget, git's remote subcommands) consult this flag
+        # per invocation, so flipping it gates a running session without
+        # rebuilding builtins. Construction-time policy (the allowlist)
+        # stays inside the builtins themselves.
+        self._network_blocked = False
+        # None = identity (vfs path IS the host path) — the historical and
+        # in-browser behavior. Set = split namespace; every host-side file
+        # operation goes through _host_path()/_virtual_path().
+        self._host_dir = os.path.realpath(host_dir) if host_dir else None
+        self._vfs_root = root
+        backing = self._host_dir or root
         if bash is None:
             from bashkit import Bash, FileSystem
 
@@ -90,9 +116,13 @@ class BashkitSandboxSession(BaseSandboxSession):
             # filesystem, mounted into the shell. One filesystem: what the
             # editor writes, the shell lists; what the shell writes, Python
             # reads. No copying, and so no second source of truth to drift.
-            os.makedirs(root, exist_ok=True)
+            os.makedirs(backing, exist_ok=True)
             for path, content in (bash_kwargs.pop("files", None) or {}).items():
-                target = path if path.startswith("/") else os.path.join(root, path)
+                target = (
+                    self._host_path(path)
+                    if path.startswith("/")
+                    else os.path.join(backing, path)
+                )
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 with open(target, "w") as handle:
                     handle.write(content)
@@ -103,36 +133,45 @@ class BashkitSandboxSession(BaseSandboxSession):
 
                 # Shadows bashkit's embedded Monty, so `python3` in the shell
                 # is the interpreter Run uses - same version, same packages.
-                runner = make_python_builtin(root=root)
-                builtins["python3"] = runner
-                builtins["python"] = runner
+                runner = make_python_builtin(root=backing)
+                builtins["python3"] = self._host_cwd_builtin(runner)
+                builtins["python"] = self._host_cwd_builtin(runner)
             if git:
                 from .bashkit_builtins import make_git_builtin
 
                 git_spec = {} if git is True else dict(git)
-                builtins["git"] = make_git_builtin(
-                    root=root,
-                    proxy_base=git_spec.get("proxy_base"),
-                    author=git_spec.get("author", DEFAULT_AUTHOR),
+                builtins["git"] = self._network_gated(
+                    "git",
+                    self._host_cwd_builtin(
+                        make_git_builtin(
+                            root=backing,
+                            proxy_base=git_spec.get("proxy_base"),
+                            author=git_spec.get("author", DEFAULT_AUTHOR),
+                        )
+                    ),
+                    git_subcommands=True,
                 )
             if network:
                 from .bashkit_builtins import make_http_builtins
 
                 spec = {} if network is True else dict(network)
                 builtins.update(
-                    make_http_builtins(
-                        allow=spec.get("allow"),
-                        allow_all=bool(spec.get("allow_all", network is True)),
-                        timeout=float(spec.get("timeout", 30.0)),
-                        root=root,
-                    )
+                    {
+                        name: self._network_gated(name, self._host_cwd_builtin(fn))
+                        for name, fn in make_http_builtins(
+                            allow=spec.get("allow"),
+                            allow_all=bool(spec.get("allow_all", network is True)),
+                            timeout=float(spec.get("timeout", 30.0)),
+                            root=backing,
+                        ).items()
+                    }
                 )
             if builtins:
                 bash_kwargs["custom_builtins"] = builtins
             bash_kwargs.setdefault("python", True)
             bash_kwargs.setdefault("cwd", root)
             bash = Bash(**bash_kwargs)
-            bash.mount(root, FileSystem.real(root, writable=True))
+            bash.mount(root, FileSystem.real(backing, writable=True))
         elif git or network:
             raise TypeError(
                 "git=/network= build custom builtins at construction, so they "
@@ -151,6 +190,114 @@ class BashkitSandboxSession(BaseSandboxSession):
             snapshot=NoopSnapshot(id=session_id),
             manifest=Manifest(root=root),
         )
+
+    # --------------------------- path namespace ---------------------------- #
+
+    def _host_path(self, path: Any) -> str:
+        """VFS path → real host path. Identity when there is no split."""
+        text = str(path)
+        if self._host_dir is None:
+            return text
+        vfs_root = PurePosixPath(self._vfs_root)
+        candidate = PurePosixPath(text)
+        if candidate == vfs_root:
+            return self._host_dir
+        try:
+            relative = candidate.relative_to(vfs_root)
+        except ValueError:
+            # Outside the VFS root: nothing to translate. Confinement
+            # checks reject these; plain file ops fail on the host path.
+            return text
+        return os.path.join(self._host_dir, *relative.parts)
+
+    def _virtual_path(self, path: Any) -> str:
+        """Real host path → VFS path, for output the sandbox user sees."""
+        text = str(path)
+        if self._host_dir is None:
+            return text
+        relative = os.path.relpath(os.path.realpath(text), self._host_dir)
+        if relative == ".":
+            return self._vfs_root
+        if relative.startswith(".."):
+            return text
+        return str(PurePosixPath(self._vfs_root, *relative.split(os.sep)))
+
+    def _network_gated(
+        self, name: str, fn: Any, *, git_subcommands: bool = False
+    ) -> Any:
+        """Wrap a network-capable builtin behind the live offline toggle.
+
+        The flag is read per invocation, so ``sandbox.set_network`` gates a
+        running session. With ``git_subcommands`` only the remote
+        operations are refused — local git (status/commit/log) keeps
+        working offline, exactly like the docker iptables block.
+        """
+        session = self
+
+        def gated(ctx: Any):
+            if session._network_blocked:
+                argv = [str(a) for a in getattr(ctx, "argv", ())]
+                if not git_subcommands or (
+                    argv and argv[0] in _GIT_NETWORK_SUBCOMMANDS
+                ):
+                    from bashkit import BuiltinResult
+
+                    return BuiltinResult(
+                        stderr=f"{name}: network is disabled (sandbox offline)\n",
+                        exit_code=1,
+                    )
+            return fn(ctx)
+
+        return gated
+
+    def _host_cwd_builtin(self, fn: Any) -> Any:
+        """Wrap a host-side builtin (git/curl/python) for the split namespace.
+
+        Two translations, both no-ops without a split: ``ctx.cwd`` (a VFS
+        path from bashkit) becomes a host path before the builtin touches
+        the filesystem, and any host path the builtin echoes back
+        (``Initialized empty Git repository in …``, curl's saved-to
+        messages, tracebacks) is rewritten to the VFS path — the host
+        layout must never leak into sandbox output.
+        """
+        if self._host_dir is None:
+            return fn
+
+        session = self
+
+        def wrapped(ctx: Any):
+            class _Ctx:
+                def __getattr__(self, name: str) -> Any:
+                    return getattr(ctx, name)
+
+                @property
+                def cwd(self) -> str:
+                    return session._host_path(getattr(ctx, "cwd", "") or "")
+
+            return session._virtualize_result(fn(_Ctx()))
+
+        return wrapped
+
+    def _virtualize_result(self, result: Any) -> Any:
+        """Rewrite host paths in a BuiltinResult's output to VFS paths."""
+        host_dir = self._host_dir
+        if host_dir is None:
+            return result
+        try:
+            from bashkit import BuiltinResult
+
+            def fix(value: Any) -> Any:
+                if isinstance(value, str):
+                    return value.replace(host_dir, self._vfs_root)
+                return value
+
+            return BuiltinResult(
+                stdout=fix(getattr(result, "stdout", "") or ""),
+                stderr=fix(getattr(result, "stderr", "") or ""),
+                exit_code=int(getattr(result, "exit_code", 0) or 0),
+            )
+        except Exception:
+            return result
 
     # ------------------------------ lifecycle ------------------------------ #
 
@@ -192,7 +339,7 @@ class BashkitSandboxSession(BaseSandboxSession):
         import tarfile
 
         buffer = _io.BytesIO()
-        root = str(self.state.manifest.root)
+        root = self._host_dir or str(self.state.manifest.root)
         with tarfile.open(fileobj=buffer, mode="w") as archive:
             archive.add(root, arcname=".")
         return buffer.getvalue()
@@ -204,7 +351,7 @@ class BashkitSandboxSession(BaseSandboxSession):
         import tarfile
         import tempfile
 
-        root = str(self.state.manifest.root)
+        root = self._host_dir or str(self.state.manifest.root)
         parent = os.path.dirname(root) or "."
         os.makedirs(parent, exist_ok=True)
 
@@ -260,6 +407,14 @@ class BashkitSandboxSession(BaseSandboxSession):
         return buffer
 
     # -------------------------------- exec --------------------------------- #
+
+    def _prepare_exec_command(self, *command, shell, user):
+        # bashkit has no user identities: everything runs as the single wasm
+        # interpreter, and there is no sudo. The SDK base wraps `user=` in
+        # ``sudo -u <user> --`` — under bashkit that exits 127 (serve's init
+        # commands and credential setup pass ``user="root"``). Drop the
+        # identity instead: it is meaningless here, not a privilege change.
+        return super()._prepare_exec_command(*command, shell=shell, user=None)
 
     async def _exec_internal(
         self,
@@ -330,7 +485,7 @@ class BashkitSandboxSession(BaseSandboxSession):
                 files = [name for name in files if not name.startswith(".")]
             for name in [*directories, *files]:
                 if fnmatch.fnmatchcase(name, pattern):
-                    matches.append(os.path.join(current, name))
+                    matches.append(self._virtual_path(os.path.join(current, name)))
             if not recursive:
                 directories[:] = []
 
@@ -372,10 +527,11 @@ class BashkitSandboxSession(BaseSandboxSession):
                     continue
                 try:
                     with open(path, encoding="utf-8", errors="replace") as handle:
+                        virtual = self._virtual_path(path)
                         for line_number, line in enumerate(handle, 1):
                             if expression.search(line):
                                 content = line.rstrip("\r\n")
-                                matches.append(f"{path}:{line_number}:{content}\n")
+                                matches.append(f"{virtual}:{line_number}:{content}\n")
                 except OSError:
                     continue
 
@@ -387,8 +543,8 @@ class BashkitSandboxSession(BaseSandboxSession):
 
     def _confined_mounted_root(self, candidate: str) -> Optional[str]:
         """Return a real path only when it remains under the workspace."""
-        workspace = os.path.realpath(str(self.state.manifest.root))
-        requested = os.path.realpath(candidate)
+        workspace = os.path.realpath(self._host_dir or str(self.state.manifest.root))
+        requested = os.path.realpath(self._host_path(candidate))
         try:
             if os.path.commonpath((workspace, requested)) != workspace:
                 return None
@@ -404,13 +560,13 @@ class BashkitSandboxSession(BaseSandboxSession):
     # invisible to every command.
 
     async def read(self, path: Path, *, user: str | User | None = None) -> io.IOBase:
-        with open(str(path), "rb") as handle:
+        with open(self._host_path(path), "rb") as handle:
             return io.BytesIO(handle.read())
 
     async def write(
         self, path: Path, data: io.IOBase, *, user: str | User | None = None
     ) -> None:
-        target = str(path)
+        target = self._host_path(path)
         parent = os.path.dirname(target)
         if parent:
             os.makedirs(parent, exist_ok=True)
@@ -423,7 +579,7 @@ class BashkitSandboxSession(BaseSandboxSession):
     async def ls(
         self, path: Path | str, *, user: str | User | None = None
     ) -> list[FileEntry]:
-        base = str(path)
+        base = self._host_path(path)
         entries: list[FileEntry] = []
         for name in os.listdir(base):
             full = os.path.join(base, name)
@@ -438,7 +594,9 @@ class BashkitSandboxSession(BaseSandboxSession):
                 kind = EntryKind.OTHER
             entries.append(
                 FileEntry(
-                    path=full,
+                    # VFS path, not the host path — callers (and the agent's
+                    # file tools) must never see through the mount.
+                    path=self._virtual_path(full),
                     permissions=Permissions.from_mode(info.st_mode & 0o777),
                     owner="user",
                     group="user",

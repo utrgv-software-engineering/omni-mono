@@ -154,6 +154,7 @@ def _materialize_host_remote_checkout(
     localized["path"] = str(dest)
     return localized
 
+
 _FULL_CAPABILITIES = frozenset(
     {
         EnvironmentCapability.WORKSPACE_READ,
@@ -166,6 +167,116 @@ _FULL_CAPABILITIES = frozenset(
         EnvironmentCapability.ENVIRONMENT_LIFECYCLE,
     }
 )
+
+
+#: Backend client types that are genuine containment boundaries — the
+#: agent's tools cannot reach the hosting machine. ``unix_local`` and
+#: ``host_bridge`` are deliberately absent: they carry sandbox sessions
+#: but execute raw host processes. Unknown client types fail closed to
+#: not-contained.
+_CONTAINED_CLIENT_TYPES = frozenset(
+    {
+        "docker",  # container
+        "process",  # omni-sandbox: bwrap / seatbelt / AppContainer
+        "wasm",  # bashkit + pyodide: no syscalls, workspace-only FS reach
+        "e2b",  # remote micro-VM / container providers
+        "modal",
+        "runloop",
+        "daytona",
+        "blaxel",
+        "vercel",
+        "cloudflare",
+    }
+)
+
+
+#: Truthful placement family per backend client type. Kind records WHERE
+#: the runtime lives — never trust: ``unix_local`` and ``process`` are
+#: host-placed even though they carry sandbox sessions, and ``host_bridge``
+#: executes on another machine entirely. Trust (containment) is the
+#: ``contained`` capability above; terminal routing keys on the lease's
+#: sandbox runtime. Unknown session-backed client types default to CONTAINER.
+_ENVIRONMENT_KINDS = {
+    "host": EnvironmentKind.HOST,
+    "unix_local": EnvironmentKind.HOST,
+    "process": EnvironmentKind.HOST,
+    "wasm": EnvironmentKind.HOST,
+    "docker": EnvironmentKind.CONTAINER,
+    "host_bridge": EnvironmentKind.REMOTE,
+    "e2b": EnvironmentKind.REMOTE,
+    "modal": EnvironmentKind.REMOTE,
+    "runloop": EnvironmentKind.REMOTE,
+    "daytona": EnvironmentKind.REMOTE,
+    "blaxel": EnvironmentKind.REMOTE,
+    "vercel": EnvironmentKind.REMOTE,
+    "cloudflare": EnvironmentKind.REMOTE,
+}
+
+
+def _environment_kind(profile_raw: dict[str, Any]) -> EnvironmentKind:
+    client_type = (profile_raw.get("client") or {}).get("type")
+    if not isinstance(client_type, str):
+        return EnvironmentKind.CONTAINER
+    return _ENVIRONMENT_KINDS.get(client_type, EnvironmentKind.CONTAINER)
+
+
+def _wasm_is_offline(network: Any) -> bool:
+    """True when the wasm session *boots* with no egress.
+
+    Wasm is off by default: absent boots blocked (contained-and-offline —
+    promptless only within "Approve for me") but stays toggleable, and
+    ``sandbox.set_network`` keeps the NETWORK capability current when the
+    user enables it later. Explicit grants (open / allowlist) boot with
+    NETWORK present.
+    """
+    from omniagents.core.sandbox.wasm import _wasm_network_boots_blocked
+
+    return _wasm_network_boots_blocked(network)
+
+
+def _sandbox_capabilities(profile_raw: dict[str, Any], brought: Any) -> frozenset:
+    """Capability truth for a sandbox environment at registration time.
+
+    CONTAINED is granted only for client types that are real containment
+    boundaries (:data:`_CONTAINED_CLIENT_TYPES`) — the approval policy's
+    sandbox auto-approve tiers key on it, so a ``unix_local`` session must
+    never carry it. NETWORK is dropped when the environment genuinely
+    cannot reach out: docker ``network_mode: "none"`` or a persisted
+    offline block re-applied during bring-up. A host-filtered *allowlist*
+    still counts as NETWORK — limited egress is egress, and the approval
+    ``no_network`` tier must not auto-approve around it. The approval
+    policy reads this via ``describe()`` on every request, and
+    ``sandbox.set_network`` keeps NETWORK current across live toggles.
+    """
+    client = profile_raw.get("client") or {}
+    client_type = client.get("type")
+    capabilities = set(_FULL_CAPABILITIES)
+    if client_type in _CONTAINED_CLIENT_TYPES:
+        capabilities.add(EnvironmentCapability.CONTAINED)
+    if client_type == "wasm":
+        # No processes exist in either wasm runtime: nothing to attach a
+        # PTY to and nothing to run as a service. Shell exec (bashkit) and
+        # python (pyodide) remain, so PROCESS stays.
+        capabilities -= {EnvironmentCapability.PTY, EnvironmentCapability.SERVICES}
+    offline = (
+        # docker: no network stack at all.
+        client.get("network_mode") == "none"
+        # process (omni-sandbox): all-or-nothing, blocked unless the
+        # profile explicitly opts into "unrestricted" (blocked is the
+        # binary's default).
+        or (client_type == "process" and client.get("network") != "unrestricted")
+        # wasm: both runtimes obey one policy derived from the profile's
+        # ``network`` block (bashkit curl/git builtins + pyodide js.fetch),
+        # OFF by default. Uses the same boot-state resolver the session
+        # uses so the NETWORK capability can never disagree with what
+        # Python can actually reach.
+        or (client_type == "wasm" and _wasm_is_offline(client.get("network")))
+        # docker offline toggle persisted across restarts.
+        or bool(getattr(brought, "network_blocked", False))
+    )
+    if offline:
+        capabilities.discard(EnvironmentCapability.NETWORK)
+    return frozenset(capabilities)
 
 
 class ServeEnvironmentLifecycleController:
@@ -181,11 +292,15 @@ class ServeEnvironmentLifecycleController:
         service_urls: dict[str, Any],
         started_services: list[tuple[Any, int]],
         state_path: Path | None = None,
+        network_mode: str | None = None,
     ) -> None:
         self.environment_id = environment_id
         self.profile_id = profile_id
         self.backend = backend
         self.container_id = container_id
+        # docker network_mode from the profile; "none" means there is no
+        # egress to toggle, so the network toggle reads as unsupported.
+        self.network_mode = network_mode
         self.service_urls = service_urls
         self.started_services = started_services
         # Durable container session (docker): ordinary close detaches and
@@ -264,6 +379,92 @@ class ServeEnvironmentLifecycleController:
         self.discard_snapshot_on_exit = True
         return {"ok": True}
 
+    def _network_session(self, lease: EnvironmentLease) -> Any:
+        """The SDK session for iptables network toggling, or None.
+
+        Docker-only: the block is iptables inside the container (NET_ADMIN).
+        Wasm sessions toggle in-process instead (:meth:`_wasm_session`);
+        every other backend has no toggle — the host has nothing to fence,
+        and the process sandbox is start-time all-or-nothing.
+        """
+        if self.backend != "docker" or self.network_mode == "none":
+            return None
+        runtime = lease.sandbox_runtime
+        return runtime.session if runtime is not None else None
+
+    def _wasm_session(self, lease: EnvironmentLease) -> Any:
+        """The wasm session for in-process network toggling, or None.
+
+        Wasm enforcement is not iptables: the session gates the bashkit
+        curl/git builtins and the pyodide worker's egress globals in one
+        move via ``set_network_enabled``. State lives with the session —
+        which for wasm IS the sandbox lifetime.
+        """
+        if self.backend != "wasm":
+            return None
+        runtime = lease.sandbox_runtime
+        session = runtime.session if runtime is not None else None
+        return session if hasattr(session, "set_network_enabled") else None
+
+    async def set_network(
+        self, lease: EnvironmentLease, *, enabled: bool
+    ) -> dict[str, Any]:
+        """Toggle sandbox egress live. Enforcement only — the caller
+        (the ``sandbox.set_network`` server function) flips the NETWORK
+        capability on the descriptor so approval routing follows."""
+        self._validate(lease)
+        wasm = self._wasm_session(lease)
+        if wasm is not None:
+            if not getattr(wasm, "network_toggleable", False):
+                return {
+                    "ok": False,
+                    "supported": False,
+                    "reason": "profile is explicitly offline; no egress to toggle",
+                }
+            try:
+                await wasm.set_network_enabled(enabled)
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "supported": True, "reason": str(exc)}
+            return {"ok": True, "supported": True, "enabled": enabled}
+        session = self._network_session(lease)
+        if session is None:
+            return {
+                "ok": False,
+                "supported": False,
+                "reason": "environment backend does not support a network toggle",
+            }
+        from omniagents.core.sandbox import network_policy
+
+        try:
+            await network_policy.set_network_blocked(session, not enabled)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "supported": True, "reason": str(exc)}
+        return {"ok": True, "supported": True, "enabled": enabled}
+
+    async def get_network(self, lease: EnvironmentLease) -> dict[str, Any]:
+        """Report whether the offline block is currently installed."""
+        self._validate(lease)
+        wasm = self._wasm_session(lease)
+        if wasm is not None:
+            if not getattr(wasm, "network_toggleable", False):
+                return {"ok": True, "supported": False, "enabled": False}
+            return {
+                "ok": True,
+                "supported": True,
+                "enabled": bool(wasm.network_enabled),
+            }
+        session = self._network_session(lease)
+        if session is None:
+            return {
+                "ok": True,
+                "supported": False,
+                "enabled": self.network_mode != "none",
+            }
+        from omniagents.core.sandbox import network_policy
+
+        blocked = await network_policy.network_blocked(session)
+        return {"ok": True, "supported": True, "enabled": not blocked}
+
     async def close(self, lease: EnvironmentLease) -> None:
         self._validate(lease)
         if self._closed:
@@ -339,16 +540,32 @@ class ServeEnvironmentProvisioner:
                     for source in local_sources
                 )
             )
+            # The host target is the no-sandbox target: nothing contains the
+            # agent here. Its shell already reaches the whole machine (host
+            # ``exec`` resolves only ``cwd``), so fencing the file tools to
+            # the workspace root bought no containment — only a split where
+            # `cat /etc/hosts` worked and `read_text("/etc/hosts")` raised.
+            # The file tools now agree with the shell.
+            #
+            # This is not configurable. A "host but fenced" tier would be
+            # answering a question no user has: pick a real sandbox
+            # (unix_local, docker) to be contained, or host to not be. The
+            # wire surfaces that do need the root keep it by calling
+            # ``resolve_confined`` — see Workspace.resolve_confined.
             workspace: HostWorkspace
             if use_composite:
+                # Composite stays confined: its root is a synthetic mount
+                # table, not a place on the machine. See MountedHostWorkspace.
                 workspace = MountedHostWorkspace(str(workspace_dir), local_sources)
             elif any(
                 source.get("gitDir") or source.get("gitCommonDir")
                 for source in local_sources
             ):
-                workspace = GitMetadataHostWorkspace(str(workspace_dir), local_sources)
+                workspace = GitMetadataHostWorkspace(
+                    str(workspace_dir), local_sources, confine=False
+                )
             else:
-                workspace = HostWorkspace(root=str(workspace_dir))
+                workspace = HostWorkspace(root=str(workspace_dir), confine=False)
             terminal_defaults = TerminalExecutionDefaults(
                 shell=profile.terminal.command,
                 cwd=workspace.root,
@@ -376,6 +593,7 @@ class ServeEnvironmentProvisioner:
             if not isinstance(root, str) or not root:
                 raise RuntimeError("provisioned sandbox manifest has no workspace root")
             run_as = _run_as_exec_user(profile.raw)
+            raw_network_mode = (profile.raw.get("client") or {}).get("network_mode")
             controller = ServeEnvironmentLifecycleController(
                 environment_id=request.environment_id,
                 profile_id=request.profile_id,
@@ -384,6 +602,9 @@ class ServeEnvironmentProvisioner:
                 service_urls=brought.service_urls,
                 started_services=brought.started_services,
                 state_path=state_path,
+                network_mode=(
+                    raw_network_mode if isinstance(raw_network_mode, str) else None
+                ),
             )
             return ProvisionedEnvironment(
                 workspace=SandboxWorkspace(
@@ -391,8 +612,8 @@ class ServeEnvironmentProvisioner:
                     root=root,
                     default_user=run_as,
                 ),
-                kind=EnvironmentKind.DEVBOX,
-                capabilities=_FULL_CAPABILITIES,
+                kind=_environment_kind(profile.raw),
+                capabilities=_sandbox_capabilities(profile.raw, brought),
                 lifecycle_controller=controller,
                 sandbox_runtime=SandboxExecutionRuntime(
                     session=brought.session,

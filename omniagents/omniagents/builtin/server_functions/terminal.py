@@ -19,7 +19,7 @@ from typing import Optional
 
 from omniagents import server_function
 from omniagents.core.session import Session
-from omniagents.execution import EnvironmentKind, require_environment_lease
+from omniagents.execution import require_environment_lease
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 _terminal_manager = None
@@ -75,7 +75,11 @@ def _coerce_positive_int(value: Optional[int]) -> Optional[int]:
 
 
 def _backend_for_lease(lease):
-    if lease.descriptor.kind is EnvironmentKind.HOST:
+    # Keyed on the lease's sandbox runtime, NOT descriptor.kind — kind is
+    # the placement family (a unix_local environment is host-placed, but
+    # its shell must ride the sandbox session exactly like its tools do).
+    # No sandbox session → the shell runs as a child of serve on the host.
+    if lease.sandbox_runtime is None:
         from omniagents.rpc.terminal_backends import HostPtyBackend
 
         return HostPtyBackend()

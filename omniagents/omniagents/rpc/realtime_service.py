@@ -5,6 +5,7 @@ sessions over JSON-RPC WebSocket connections.
 """
 
 import asyncio
+import logging
 import uuid
 from typing import Optional, Dict, Any
 
@@ -15,6 +16,8 @@ from omniagents.rpc.realtime_session import (
     realtime_credential_status,
 )
 from omniagents.core.agents.specs import AgentSpec
+
+logger = logging.getLogger(__name__)
 
 
 class RealtimeService(RpcMethodsBase):
@@ -32,12 +35,17 @@ class RealtimeService(RpcMethodsBase):
         spec: AgentSpec,
         settings: Optional[Dict[str, Any]] = None,
         settings_resolver: Optional[Any] = None,
+        agent_service: Optional[Any] = None,
     ):
         """Initialize the realtime service.
 
         Args:
             spec: Agent specification (must have realtime_mode=True)
             settings: Settings dict with API keys, etc.
+            agent_service: The deployment's AgentService, when available.
+                Lets a voice session started with a GUI session id use the
+                client tools registered on that GUI session (safe ones only —
+                see AgentService.build_realtime_client_tools).
         """
         super().__init__()
 
@@ -49,6 +57,12 @@ class RealtimeService(RpcMethodsBase):
         self.spec = spec
         self.settings = settings or {}
         self.settings_resolver = settings_resolver
+        self._agent_service = agent_service
+        # The server's default environment (same one the GUI handshake
+        # advertises as agent_host.default_environment_id); build_app installs
+        # it. Fallback for voice sessions started before any text run has
+        # bound the session's environment.
+        self.default_environment_id: Optional[str] = None
 
         # Active sessions: session_id -> RealtimeSession
         self._sessions: Dict[str, RealtimeSession] = {}
@@ -141,12 +155,49 @@ class RealtimeService(RpcMethodsBase):
 
         owner_user_id = self._current_owner_user_id()
 
+        # Bridge client tools from the GUI session with the same id (the web
+        # UI starts voice with the current GUI session id). Best-effort: no
+        # agent service, no live GUI session, or no safe client tools all
+        # mean a plain voice session.
+        extra_tools: list = []
+        environment_lease = None
+        principal = getattr(self.channel, "principal", None) if self.channel else None
+        if self._agent_service is not None:
+            try:
+                extra_tools = self._agent_service.build_realtime_client_tools(
+                    session_id, principal=principal
+                )
+            except Exception:
+                extra_tools = []
+
+            # Acquire the paired GUI session's execution environment so
+            # server-side tools (bash, filesystem, ...) run against the same
+            # workspace/sandbox as text runs. Best-effort: without a lease the
+            # session still starts, but workspace-touching tools will error.
+            try:
+                environment_lease = (
+                    await self._agent_service.acquire_environment_for_session(
+                        session_id,
+                        principal=principal,
+                        default_environment_id=self.default_environment_id,
+                    )
+                )
+            except Exception:
+                logger.warning(
+                    "Realtime session %s: could not acquire an execution "
+                    "environment; workspace tools will be unavailable",
+                    session_id,
+                    exc_info=True,
+                )
+
         # Create session bound to the authenticated principal
         session = RealtimeSession(
             spec=self.spec,
             settings=self._effective_settings(),
             session_id=session_id,
             owner_user_id=owner_user_id,
+            extra_tools=extra_tools,
+            environment_lease=environment_lease,
         )
 
         # Start session

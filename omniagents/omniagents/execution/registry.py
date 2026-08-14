@@ -442,6 +442,42 @@ class ExecutionEnvironmentManager:
                 record.terminal_defaults,
             )
 
+    async def set_capability(
+        self,
+        environment_id: str,
+        capability: EnvironmentCapability,
+        *,
+        present: bool,
+    ) -> ExecutionEnvironmentDescriptor:
+        """Grant or revoke one capability on the live descriptor.
+
+        Same generation, same workspace, same runtime — this records a
+        change in what the *current* backend can do (e.g. the network
+        egress toggle), not a replacement. Existing leases keep their
+        immutable snapshot; new acquisitions and ``describe`` (which the
+        approval policy reads on every request) see the updated set.
+        """
+        if not isinstance(capability, EnvironmentCapability):
+            raise TypeError("capability must be an EnvironmentCapability")
+        async with self._lock:
+            record = self._record(environment_id)
+            capabilities = set(record.descriptor.capabilities)
+            if present:
+                capabilities.add(capability)
+            else:
+                capabilities.discard(capability)
+            descriptor = replace(
+                record.descriptor, capabilities=frozenset(capabilities)
+            )
+            self._environments[environment_id] = _EnvironmentRecord(
+                descriptor,
+                record.workspace,
+                record.lifecycle_controller,
+                record.sandbox_runtime,
+                record.terminal_defaults,
+            )
+            return descriptor
+
     async def retire(self, environment_id: str) -> ExecutionEnvironmentDescriptor:
         """Remove one environment from routing (e.g. a worker's worktree
         after integration). Leases are immutable snapshots, so in-flight

@@ -42,7 +42,7 @@ async def make_router(
         ExecutionEnvironmentDescriptor(
             environment_id="env-1",
             workspace_id="workspace-1",
-            kind=EnvironmentKind.DEVBOX,
+            kind=EnvironmentKind.CONTAINER,
             state=EnvironmentState.READY,
             generation=3,
             capabilities=capabilities,

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Box, Text, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -18,20 +18,35 @@ type Props = {
   height: number;
   client: RPCClient | null;
   sessionId: string | null;
+  /** True while the PTY owns the keyboard. Lifted to App so the tab bar
+   *  can show it; App also clears it whenever you leave the screen. */
+  captured: boolean;
+  onCapturedChange: (captured: boolean) => void;
   onExit: () => void;
 };
 
-// The Terminal screen (tab 5): a real shell, full height. While this
-// screen is active the keyboard belongs to the PTY — including Tab
-// (completion is non-negotiable), so this is the one screen the tab
-// cycle enters but does not leave: ctrl+] toggles back to chat and
-// alt+digit jumps stay reserved. The shell survives leaving the
-// screen; returning reattaches to the same grid.
+// The Terminal screen (tab 5): a real shell, full height, in two states.
+//
+// Exactly one key cannot be shared — Tab, which shell completion needs
+// and tab cycling needs. So the screen does not take the keyboard just
+// because you arrived on it (that was the old behavior, and it made the
+// tab cycle a one-way door: you could Tab in but never Tab out).
+//
+//   browsing (on arrival) — the app owns the keyboard. Tab cycles tabs,
+//     j/k/PgUp/PgDn scroll the scrollback, `i` or Enter captures.
+//   captured — the PTY owns every key, Tab included. ctrl+] releases
+//     back to browsing; alt+1..5 still jump straight to a screen.
+//
+// ctrl+] therefore means one thing everywhere: back out one level.
+// Captured → browsing → chat. The shell keeps running through all of
+// it; these states only decide who the keyboard belongs to.
 export const TerminalScreen = ({
   active,
   height,
   client,
   sessionId,
+  captured,
+  onCapturedChange,
   onExit,
 }: Props) => {
   const { stdout } = useStdout();
@@ -48,10 +63,7 @@ export const TerminalScreen = ({
   // session sat frozen on its first paint — this primitive has no
   // snapshot-equality subtleties to be wrong about.)
   const [, setTick] = useState(0);
-  useEffect(
-    () => terminalSession.subscribe(() => setTick((n) => n + 1)),
-    [],
-  );
+  useEffect(() => terminalSession.subscribe(() => setTick((n) => n + 1)), []);
 
   // Open lazily on first visit; track size while active. The session
   // outlives the screen. A fresh TUI has no session until the first
@@ -80,18 +92,21 @@ export const TerminalScreen = ({
     if (!active) setScrollUp(0);
   }, [active]);
 
-  // The terminal owns the input surface: release mouse tracking so the
-  // user's terminal stops generating reports (which would forward into
-  // the shell as typed garbage); restore on leave.
+  // Only a *captured* terminal owns the input surface: release mouse
+  // tracking so the user's terminal stops generating reports (which
+  // would forward into the shell as typed garbage). While browsing the
+  // app still owns the keyboard, so the wheel keeps scrolling normally.
   useEffect(() => {
-    if (!active) return;
+    if (!active || !captured) return;
     mouse.suspend();
     return () => mouse.resume();
-  }, [active, mouse]);
+  }, [active, captured, mouse]);
 
   const phase = terminalSession.phase;
 
-  // Publish the focus path to the status bar.
+  // Publish the focus path to the status bar. The mode is the load-
+  // bearing part: a mode you cannot see is a trap, and this one decides
+  // whether Tab cycles tabs or completes a filename.
   useEffect(() => {
     if (!active) return;
     const suffix =
@@ -101,22 +116,77 @@ export const TerminalScreen = ({
           ? " · connecting"
           : phase === "error"
             ? " · error"
-            : "";
+            : captured
+              ? " · INPUT"
+              : " · browsing";
     actions.setStatusContext(`term${suffix}`);
     return () => actions.setStatusContext(null);
-  }, [active, phase, actions]);
+  }, [active, phase, captured, actions]);
+
+  const restart = useCallback(() => {
+    if (!client || !sessionId) return;
+    terminalSession.close();
+    void terminalSession.open(client, sessionId, cols, rows);
+  }, [client, sessionId, cols, rows]);
 
   useKeypress(
     (input, key) => {
-      // Reserved navigation: ctrl+] leaves, alt+digit jumps (handled by
-      // the App accelerator below this handler). Ctrl+] arrives as the
-      // raw GS byte (0x1d) — Ink only synthesizes key.ctrl for the
-      // letter range.
-      if ((key.ctrl && input === "]") || input === "\u001d") {
-        onExit();
+      // Ctrl+] arrives as the raw GS byte (0x1d) - Ink only synthesizes
+      // key.ctrl for the letter range.
+      const backOut = (key.ctrl && input === "]") || input === "\u001d";
+
+      if (!captured) {
+        // Browsing: the app owns the keyboard. Only scrollback and the
+        // two transition chords are ours - everything else falls through
+        // (returning false), which is what keeps Tab cycling tabs and
+        // leaves ctrl+c, alt+digit and the rest behaving as they do on
+        // every other screen.
+        if (backOut) {
+          onExit();
+          return true;
+        }
+        if (phase === "exited" && key.return) {
+          restart();
+          return true;
+        }
+        if (input === "i" || key.return) {
+          onCapturedChange(true);
+          return true;
+        }
+        if (key.pageUp) {
+          setScrollUp((prev) => prev + PAGE);
+          return true;
+        }
+        if (key.pageDown) {
+          setScrollUp((prev) => Math.max(0, prev - PAGE));
+          return true;
+        }
+        if (key.upArrow || input === "k") {
+          setScrollUp((prev) => prev + 1);
+          return true;
+        }
+        if (key.downArrow || input === "j") {
+          setScrollUp((prev) => Math.max(0, prev - 1));
+          return true;
+        }
+        if (input === "G") {
+          setScrollUp(0);
+          return true;
+        }
+        return false;
+      }
+
+      // Captured: the PTY owns the keyboard, Tab included.
+      if (backOut) {
+        onCapturedChange(false);
         return true;
       }
-      if (key.meta && !key.escape && input >= "1" && input <= "9") {
+      // Alt+1..5 stay reserved as direct jumps, handled by the App
+      // accelerator below this handler. The range must match what App
+      // actually binds: a key declined here that App does not bind is
+      // swallowed outright - it never reaches the shell either. (This
+      // declined 1..9 while App bound only 1..5, so alt+6..9 were dead.)
+      if (key.meta && !key.escape && input >= "1" && input <= "5") {
         return false;
       }
       if (key.pageUp) {
@@ -128,10 +198,7 @@ export const TerminalScreen = ({
         return true;
       }
       if (phase === "exited" && key.return) {
-        if (client && sessionId) {
-          terminalSession.close();
-          void terminalSession.open(client, sessionId, cols, rows);
-        }
+        restart();
         return true;
       }
       const bytes = keyToBytes(input, key);
@@ -139,7 +206,7 @@ export const TerminalScreen = ({
         setScrollUp(0);
         terminalSession.sendInput(bytes);
       }
-      return true; // the terminal owns the keyboard, Tab included
+      return true;
     },
     { isActive: active, priority: KeypressPriority.Critical },
   );
@@ -184,15 +251,25 @@ export const TerminalScreen = ({
             <Spinner type="dots" />{" "}
           </Text>
         )}
-        {scrollUp > 0 && (
-          <Text color={Theme.stateBlocked}>↑{scrollUp} </Text>
+        {scrollUp > 0 && <Text color={Theme.stateBlocked}>↑{scrollUp} </Text>}
+        {/* The mode marker leads the line: which of Tab's two meanings is
+            live right now is the single most important thing here. */}
+        {phase !== "exited" && phase !== "error" && (
+          <Text
+            color={captured ? Theme.stateActive : Theme.textChrome}
+            bold={captured}
+          >
+            {captured ? "● INPUT " : "○ browsing "}
+          </Text>
         )}
         <Text color={Theme.textChrome}>
           {phase === "exited"
             ? `exited${terminalSession.exitCode !== null ? ` ${terminalSession.exitCode}` : ""}${terminalSession.error ? ` (${terminalSession.error})` : ""} · enter restart · ctrl+] chat`
             : phase === "running" && terminalSession.outputBytes === 0
               ? "attached · no output yet — is the shell alive? · ctrl+] chat"
-              : "keys → shell (tab too) · ctrl+] chat · alt+1..4 screens · PgUp/PgDn scroll"}
+              : captured
+                ? "keys → shell (tab too) · ctrl+] release · alt+1..5 screens · PgUp/PgDn scroll"
+                : "i or enter to type · tab cycles tabs · j/k PgUp/PgDn scroll · ctrl+] chat"}
         </Text>
       </Box>
     </Box>

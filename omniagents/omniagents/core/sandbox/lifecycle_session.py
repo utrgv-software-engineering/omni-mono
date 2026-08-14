@@ -123,6 +123,32 @@ class LifecycleSandboxSession(SandboxSession):
             return False
 
     # ----------------------------------------------------------------- #
+    # Network toggle (wasm gates in-process; docker toggles via iptables
+    # in the lifecycle controller and never lands here)
+    # ----------------------------------------------------------------- #
+
+    @property
+    def network_toggleable(self) -> bool:
+        """True when the backend supports a live egress toggle."""
+        return bool(getattr(self._inner, "network_toggleable", False))
+
+    @property
+    def network_enabled(self) -> bool:
+        """Current toggle state; backends without a toggle read enabled."""
+        return bool(getattr(self._inner, "network_enabled", True))
+
+    async def set_network_enabled(self, enabled: bool) -> None:
+        """Flip the backend's live egress gate. Raises
+        :class:`SandboxLifecycleUnsupported` when the backend has no
+        toggle; backend errors propagate as-is."""
+        inner = self._inner
+        if not hasattr(inner, "set_network_enabled"):
+            raise SandboxLifecycleUnsupported(
+                "backend does not implement a network toggle"
+            )
+        await inner.set_network_enabled(enabled)
+
+    # ----------------------------------------------------------------- #
     # Introspection
     # ----------------------------------------------------------------- #
 

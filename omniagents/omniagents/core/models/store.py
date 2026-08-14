@@ -280,6 +280,9 @@ class ModelConfigStore:
         Best-effort: when not signed in or the fetch fails, the provider
         keeps its statically-seeded models. Discovered models merge over
         the seed so per-model overrides in models.json still apply.
+        ``realtime``-flagged seeds always survive: discovery only ever
+        returns text models, so replacing the set wholesale would drop
+        every seeded voice model (and with it ``voice_default``).
         """
         if self._oauth_models is None:
             return merged
@@ -297,8 +300,15 @@ class ModelConfigStore:
             seed_candidate = provider_config.get("models")
             seed = seed_candidate if isinstance(seed_candidate, dict) else {}
             provider_config["models"] = {
-                slug: {**entry, **(seed.get(slug) or {})}
-                for slug, entry in discovered.items()
+                **{
+                    slug: entry
+                    for slug, entry in seed.items()
+                    if isinstance(entry, dict) and entry.get("realtime")
+                },
+                **{
+                    slug: {**entry, **(seed.get(slug) or {})}
+                    for slug, entry in discovered.items()
+                },
             }
         return merged
 
@@ -908,8 +918,10 @@ class ModelConfigStore:
             else:
                 result["api_key"] = None
 
-        # Priority 3: environment variable fallback
-        if not result.get("api_key"):
+        # Priority 3: environment variable fallback. Never for openai-oauth:
+        # its credential is the ChatGPT token, and an ambient OPENAI_API_KEY
+        # (e.g. from a workspace .env) would shadow it downstream.
+        if not result.get("api_key") and provider != "openai-oauth":
             if provider == "azure":
                 result["api_key"] = os.getenv("AZURE_OPENAI_API_KEY")
             elif provider == "litellm":

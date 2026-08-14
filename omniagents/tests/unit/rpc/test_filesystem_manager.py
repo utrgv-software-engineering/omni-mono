@@ -354,6 +354,36 @@ async def test_symlink_escape_is_rejected(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_symlink_escape_is_rejected_on_an_unconfined_workspace(tmp_path):
+    """The host (no-sandbox) target lifts the fence for the *agent's* tools.
+
+    ``fs_*`` is a different caller with a different promise: every wire path
+    is workspace-relative (``canonical_relpath`` rejects absolute and ``..``
+    spellings outright), so the only way out is a symlink inside the root —
+    and the surface answers ``fs_path_invalid`` for it either way. The
+    boundary here belongs to the caller, not to the workspace, which is why
+    these managers resolve through ``resolve_confined``.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    root = tmp_path / "workspace"
+    root.mkdir()
+    os.symlink(outside / "secret.txt", root / "link.txt")
+    workspace = HostWorkspace(root=str(root), confine=False)
+    manager = make_manager(workspace)
+
+    # The agent's own tools reach it — that is the point of the host target.
+    assert workspace.resolve("link.txt") == str(outside / "secret.txt")
+
+    # The wire surface does not.
+    with pytest.raises(FsPathError):
+        await manager.stat("s1", "link.txt")
+    with pytest.raises(FsPathError):
+        await manager.download_open("s1", "link.txt", channel=FakeChannel())
+
+
+@pytest.mark.asyncio
 async def test_scan_does_not_descend_symlinked_directories(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()

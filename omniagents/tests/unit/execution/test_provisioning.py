@@ -37,7 +37,7 @@ class RecordingProvisioner:
         workspace.root = "/workspace"
         return ProvisionedEnvironment(
             workspace=workspace,
-            kind=EnvironmentKind.DEVBOX,
+            kind=EnvironmentKind.CONTAINER,
             capabilities=frozenset(
                 {
                     EnvironmentCapability.WORKSPACE_READ,

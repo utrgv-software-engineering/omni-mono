@@ -54,7 +54,7 @@ def _routed(controller):
     descriptor = ExecutionEnvironmentDescriptor(
         environment_id="env-1",
         workspace_id="workspace-1",
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
         state=EnvironmentState.READY,
         generation=4,
         capabilities=frozenset({EnvironmentCapability.ENVIRONMENT_LIFECYCLE}),
@@ -95,6 +95,104 @@ def test_pause_unpause_happy_path():
 def test_lifecycle_without_controller_is_typed_capability_error():
     with _routed(None), pytest.raises(CapabilityUnavailableError):
         asyncio.run(sandbox_pause(None))
+
+
+# ----------------------------- set/get network -------------------------- #
+
+
+class _NetworkController(_Controller):
+    def __init__(self, *, supported=True, enabled=True, ok=True):
+        super().__init__()
+        self.supported = supported
+        self.enabled = enabled
+        self.ok = ok
+
+    async def set_network(self, lease, *, enabled):
+        self.calls.append(("set_network", lease.environment_id, enabled))
+        if not self.supported:
+            return {"ok": False, "supported": False, "reason": "unsupported"}
+        if not self.ok:
+            return {"ok": False, "supported": True, "reason": "iptables failed"}
+        self.enabled = enabled
+        return {"ok": True, "supported": True, "enabled": enabled}
+
+    async def get_network(self, lease):
+        self.calls.append(("get_network", lease.environment_id))
+        return {"ok": True, "supported": self.supported, "enabled": self.enabled}
+
+
+class _RecordingEnvironmentManager:
+    def __init__(self):
+        self.capability_calls = []
+
+    async def set_capability(self, environment_id, capability, *, present):
+        self.capability_calls.append((environment_id, capability, present))
+
+
+def _service_with_manager():
+    service = Mock()
+    service.environment_manager = _RecordingEnvironmentManager()
+    return service
+
+
+def test_set_network_flips_capability_on_success():
+    from omniagents.builtin.server_functions.sandbox_lifecycle import (
+        sandbox_set_network,
+    )
+
+    controller = _NetworkController()
+    service = _service_with_manager()
+    with _routed(controller):
+        result = asyncio.run(sandbox_set_network(service, enabled=False))
+    assert result == {"ok": True, "supported": True, "enabled": False}
+    assert service.environment_manager.capability_calls == [
+        ("env-1", EnvironmentCapability.NETWORK, False)
+    ]
+    with _routed(controller):
+        result = asyncio.run(sandbox_set_network(service, enabled=True))
+    assert result["enabled"] is True
+    assert service.environment_manager.capability_calls[-1] == (
+        "env-1",
+        EnvironmentCapability.NETWORK,
+        True,
+    )
+
+
+def test_set_network_failure_leaves_capability_untouched():
+    from omniagents.builtin.server_functions.sandbox_lifecycle import (
+        sandbox_set_network,
+    )
+
+    controller = _NetworkController(ok=False)
+    service = _service_with_manager()
+    with _routed(controller):
+        result = asyncio.run(sandbox_set_network(service, enabled=False))
+    assert result["ok"] is False
+    assert service.environment_manager.capability_calls == []
+
+
+def test_set_network_unsupported_backend_reports_unsupported():
+    from omniagents.builtin.server_functions.sandbox_lifecycle import (
+        sandbox_set_network,
+    )
+
+    controller = _NetworkController(supported=False)
+    service = _service_with_manager()
+    with _routed(controller):
+        result = asyncio.run(sandbox_set_network(service, enabled=False))
+    assert result == {"ok": False, "supported": False, "reason": "unsupported"}
+    assert service.environment_manager.capability_calls == []
+
+
+def test_get_network_reports_state():
+    from omniagents.builtin.server_functions.sandbox_lifecycle import (
+        sandbox_get_network,
+    )
+
+    controller = _NetworkController(enabled=False)
+    with _routed(controller):
+        result = asyncio.run(sandbox_get_network(None))
+    assert result == {"ok": True, "supported": True, "enabled": False}
 
 
 # ----------------------------- discard_snapshot ------------------------- #
@@ -141,6 +239,8 @@ def test_sandbox_pack_rpc_surface(tmp_path):
         "sandbox.pause",
         "sandbox.unpause",
         "sandbox.discard_snapshot",
+        "sandbox.set_network",
+        "sandbox.get_network",
     }
 
     instructions = asyncio.run(cap.instructions())
@@ -149,4 +249,4 @@ def test_sandbox_pack_rpc_surface(tmp_path):
 
     # The builtin server-function registry carries the RPC names.
     assert "sandbox.pause" in proj.server_functions_registry
-    assert len(SANDBOX_SERVER_FUNCTIONS) == 3
+    assert len(SANDBOX_SERVER_FUNCTIONS) == 5

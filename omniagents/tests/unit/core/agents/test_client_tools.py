@@ -558,3 +558,53 @@ class TestBuildAgentInjectsClientTools:
         assert "existing_tool" in tool_names
         assert "get_ticket" in tool_names
         assert len(agent.tools) == 2
+
+
+# ---------------------------------------------------------------------------
+# 5. build_realtime_client_tools bridges safe tools to voice sessions
+# ---------------------------------------------------------------------------
+
+
+class TestBuildRealtimeClientTools:
+    def _service_with_session(self, defs, session_id="rt-sess"):
+        service = AgentService(
+            make_spec(),
+            AgentHostResources.create("test-unit-core-agents-client_tools-host"),
+        )
+        session = service._session_manager.get_or_create(session_id)
+        session._client_tools = defs
+        return service, session
+
+    def test_bridges_only_safe_tools(self):
+        defs = [
+            dict(CLIENT_TOOLS_DEFS[0], safe=True),  # get_ticket, safe
+            CLIENT_TOOLS_DEFS[1],  # move_ticket, approval-gated
+            dict(CLIENT_TOOLS_DEFS[2], safe=False),  # escalate, explicit False
+        ]
+        service, _ = self._service_with_session(defs)
+
+        tools = service.build_realtime_client_tools("rt-sess")
+
+        assert [t.name for t in tools] == ["get_ticket"]
+
+    def test_unknown_session_returns_empty(self):
+        service, _ = self._service_with_session([dict(CLIENT_TOOLS_DEFS[0], safe=True)])
+
+        assert service.build_realtime_client_tools("no-such-session") == []
+
+    def test_session_without_client_tools_returns_empty(self):
+        service, session = self._service_with_session([])
+
+        assert service.build_realtime_client_tools("rt-sess") == []
+
+    def test_foreign_owner_denied_under_enforcement(self):
+        from omniagents.rpc.auth import AuthorizationPolicy
+
+        service, session = self._service_with_session(
+            [dict(CLIENT_TOOLS_DEFS[0], safe=True)]
+        )
+        session.user_id = "alice"
+        service.authorization_policy = AuthorizationPolicy(enforced=True)
+
+        # Anonymous realtime principal must not borrow alice's client tools.
+        assert service.build_realtime_client_tools("rt-sess", principal=None) == []

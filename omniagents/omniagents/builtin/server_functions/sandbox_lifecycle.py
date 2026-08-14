@@ -122,8 +122,91 @@ async def sandbox_discard_snapshot(service: Any) -> dict:  # noqa: ARG001
     return await controller.discard_snapshot(lease)
 
 
+_NETWORK_SET_SCHEMA = {
+    "type": "object",
+    "properties": {"enabled": {"type": "boolean"}},
+    "required": ["enabled"],
+    "additionalProperties": False,
+}
+
+_NETWORK_RESULT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ok": {"type": "boolean"},
+        "supported": {"type": "boolean"},
+        "enabled": {"type": "boolean"},
+        "reason": {"type": "string"},
+    },
+    "required": ["ok"],
+    "additionalProperties": False,
+}
+
+
+@server_function(
+    name_override="sandbox.set_network",
+    description=(
+        "Toggle the sandbox's outbound network live. Disabling revokes the "
+        "environment's NETWORK capability and enabling restores it; the "
+        "user's approval policy is never changed by this toggle — in "
+        "'Approve for me' sessions an offline contained sandbox runs "
+        "promptless under the approvals.sandbox_auto_approve 'no_network' "
+        "tier, while 'Ask me first' keeps prompting regardless. Docker: an "
+        "in-container iptables block (loopback, the docker host gateway, "
+        "and replies to inbound connections still pass, so "
+        "code-server/VNC/terminals keep working), durable across serve "
+        "restarts via a marker in the container's writable layer. Wasm: "
+        "the session gates the shell's curl/git builtins and the pyodide "
+        "worker's egress globals in-process; state lives with the session. "
+        "Profiles that are explicitly offline (wasm `network: none`, "
+        "docker `network_mode: none`) report unsupported — their "
+        "auto-approval basis cannot be revoked mid-session. Operator "
+        "command, NOT an agent tool."
+    ),
+    params_schema=_NETWORK_SET_SCHEMA,
+    result_schema=_NETWORK_RESULT_SCHEMA,
+    strict=True,
+    resource_scope=ResourceScope.ENVIRONMENT,
+    execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
+)
+async def sandbox_set_network(service: Any, enabled: bool) -> dict:
+    lease, controller = _lifecycle_binding()
+    result = await controller.set_network(lease, enabled=bool(enabled))
+    if result.get("ok"):
+        # Enforcement succeeded — record the capability truth so approval
+        # routing (which re-reads describe() on every request) follows the
+        # toggle immediately, mid-conversation.
+        from omniagents.execution import EnvironmentCapability
+
+        await service.environment_manager.set_capability(
+            lease.environment_id,
+            EnvironmentCapability.NETWORK,
+            present=bool(enabled),
+        )
+    return result
+
+
+@server_function(
+    name_override="sandbox.get_network",
+    description=(
+        "Report the sandbox's network toggle state: whether a toggle is "
+        "supported here (docker and wasm) and whether outbound network is "
+        "currently enabled."
+    ),
+    params_schema=_PAUSE_SCHEMA,
+    result_schema=_NETWORK_RESULT_SCHEMA,
+    strict=True,
+    resource_scope=ResourceScope.ENVIRONMENT,
+    execution_requirements=ExecutionRequirement.ENVIRONMENT_LIFECYCLE,
+)
+async def sandbox_get_network(service: Any) -> dict:  # noqa: ARG001
+    lease, controller = _lifecycle_binding()
+    return await controller.get_network(lease)
+
+
 SANDBOX_SERVER_FUNCTIONS = [
     sandbox_pause,
     sandbox_unpause,
     sandbox_discard_snapshot,
+    sandbox_set_network,
+    sandbox_get_network,
 ]

@@ -128,7 +128,7 @@ def test_non_host_sources_always_use_environment_mounts():
             {"kind": "git-remote", "mountName": "web", "repoUrl": "https://x/y.git"},
             {"kind": "local-git", "mountName": "api", "path": "/host/api"},
         ],
-        kind=EnvironmentKind.DEVBOX,
+        kind=EnvironmentKind.CONTAINER,
     ):
         assert serve_worker_sources() == [
             WorkerSource(name="web", host_path="/workspace/web", git=True),
