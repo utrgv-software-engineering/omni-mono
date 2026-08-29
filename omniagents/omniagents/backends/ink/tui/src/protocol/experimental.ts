@@ -34,6 +34,11 @@ export const EXPERIMENTAL_REQUESTS = [
   "disable_mcp_server",
   "report_incident",
   "export_session",
+  // Who reviews tool calls / plan completions for the session. Setting a
+  // non-human reviewer is what turns the approval dialogs into the
+  // `*_reviewed` notifications below.
+  "set_session_approvals",
+  "set_session_workflow",
   // Layered configuration
   "get_config",
   "validate_config",
@@ -54,6 +59,10 @@ export const EXPERIMENTAL_REQUESTS = [
   "fs_upload_chunk",
   "fs_upload_commit",
   "fs_upload_abort",
+  // Workspace mutations
+  "fs_delete",
+  "fs_mkdir",
+  "fs_rename",
   // Typed Git operations
   "git_list_repositories",
   "git_status",
@@ -71,6 +80,10 @@ export const EXPERIMENTAL_REQUESTS = [
   "git_fetch",
   "git_pull",
   "git_push",
+  // Digest-based status subscription: the server pushes
+  // `git_status_changed` instead of the panel re-polling `git_status`.
+  "git_status_watch",
+  "git_status_unwatch",
   // Thread organization & lifecycle
   "list_threads",
   "search_threads",
@@ -90,8 +103,15 @@ export const EXPERIMENTAL_NOTIFICATIONS = [
   "fs_rescan_required",
   "fs_transfer_progress",
   "git_operation_progress",
+  "git_status_changed",
   "thread_updated",
   "item_updated",
+  // Delivered when a non-human reviewer settles a decision the TUI would
+  // otherwise have prompted for. Granting them costs nothing while
+  // nothing listens, and withholding the grant is what would make a
+  // guardian-reviewed session look like one where nothing happened.
+  "tool_approval_reviewed",
+  "plan_completion_reviewed",
 ] as const satisfies readonly (keyof RpcNotificationMap)[];
 
 /** The full opt-in list sent as `capabilities.experimental_operations`. */

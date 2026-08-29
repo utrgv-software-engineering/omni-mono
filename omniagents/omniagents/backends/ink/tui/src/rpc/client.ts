@@ -123,8 +123,14 @@ const SERVER_NOTIFICATION_METHODS = {
   fs_rescan_required: true,
   fs_transfer_progress: true,
   git_operation_progress: true,
+  git_status_changed: true,
   thread_updated: true,
   item_updated: true,
+  // Review outcomes. These arrive INSTEAD of an approval dialog when a
+  // non-human reviewer (the guardian) is configured for the session, so
+  // a client that ignores them shows nothing where a decision happened.
+  tool_approval_reviewed: true,
+  plan_completion_reviewed: true,
 } as const satisfies Record<keyof GeneratedRpcNotificationMap, true>;
 
 export class JSONRPCError extends Error {
@@ -1477,7 +1483,12 @@ export class RPCClient extends EventEmitter {
   async updateThread(
     threadId: string,
     updates: {
-      title?: string;
+      /**
+       * ``null`` CLEARS the title (the protocol's `string | null`);
+       * omitting the key leaves it untouched. The two are different
+       * requests, so the type has to be able to say both.
+       */
+      title?: string | null;
       pinned?: boolean;
       status?: string;
       metadata?: Record<string, unknown>;

@@ -111,6 +111,7 @@ describe("buildPanelMenuRows", () => {
       "git",
       "terminal",
       "models",
+      "commands",
     ]);
     const keys = rows.map((r) => r.key);
     expect(new Set(keys).size).toBe(keys.length);

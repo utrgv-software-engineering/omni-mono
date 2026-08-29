@@ -129,7 +129,8 @@ export type MenuPanelId =
   | "notifications"
   | "git"
   | "terminal"
-  | "models";
+  | "models"
+  | "commands";
 
 export type PanelMenuRow = {
   /** Mnemonic key that opens the panel from the menu. */
@@ -236,6 +237,13 @@ export function buildPanelMenuRows(state: StripState): PanelMenuRow[] {
       warn: false,
     },
     { key: "m", panel: "models", label: "models", summary: null, warn: false },
+    {
+      key: "c",
+      panel: "commands",
+      label: "commands",
+      summary: null,
+      warn: false,
+    },
   ];
 
   return [...rows].sort((a, b) => Number(b.warn) - Number(a.warn));

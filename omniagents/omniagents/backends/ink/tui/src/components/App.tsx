@@ -45,7 +45,7 @@ import { MultiLineInputOptimized } from "./MultiLineInputOptimized.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";
 import { McpApprovalDialog } from "./McpApprovalDialog.js";
 import { Preamble } from "./Preamble.js";
-import { SessionList } from "./SessionList.js";
+import { SessionManager } from "./SessionManager.js";
 import { Scrollable } from "./Scrollable.js";
 import { Tasks } from "./Tasks.js";
 import { BashJobs } from "./BashJobs.js";
@@ -59,6 +59,7 @@ import { TopTabs } from "./TopTabs.js";
 import { GitPanel } from "./GitPanel.js";
 import { TerminalScreen } from "./TerminalScreen.js";
 import { ModelPickerPanel } from "./ModelPickerPanel.js";
+import { CommandPalettePanel } from "./CommandPalettePanel.js";
 import { EscalationBanner } from "./EscalationBanner.js";
 import { ElicitationBanner } from "./ElicitationBanner.js";
 import {
@@ -282,6 +283,7 @@ type ActivePanel =
   | "notifications"
   | "git"
   | "models"
+  | "commands"
   | null;
 
 export const App: React.FC<AppProps> = ({
@@ -297,17 +299,6 @@ export const App: React.FC<AppProps> = ({
 }) => {
   const [messageHistory, setMessageHistory] = useState<string[]>([]);
   const [uiState, setUIState] = useState<UIState>("connecting");
-  const [availableSessions, setAvailableSessions] = useState<
-    Array<{
-      id: string;
-      created_at: string;
-      archived: boolean;
-      message_count: number;
-      first_message?: unknown;
-      last_message?: unknown;
-    }>
-  >([]);
-  const [selectedSessionIndex, setSelectedSessionIndex] = useState(0);
 
   // Get terminal dimensions for scrolling calculations
   const { stdout } = useStdout();
@@ -617,78 +608,22 @@ export const App: React.FC<AppProps> = ({
     loadHistory();
   }, [client, rpcReady, debug]);
 
-  // Load sessions for resume mode (wait for RPC ready to avoid race condition)
+  // Route to the resume screen or straight to chat. The listing itself
+  // belongs to SessionManager — it owns which surface to read
+  // (list_threads vs list_sessions), its own search state and its own
+  // refetch-on-thread_updated subscription, none of which App needs to
+  // know about to decide a route.
   useEffect(() => {
     if (!client || !rpcReady) {
       return;
     }
-
-    // If resume mode and no specific session ID, show session list
-    if (resumeMode && !initialSessionId) {
-      const loadSessions = async () => {
-        try {
-          if (debug) {
-            console.error("[DEBUG] Fetching sessions for resume mode...");
-          }
-          const sessions = await client.listSessions();
-          if (debug) {
-            console.error(`[DEBUG] Fetched ${sessions?.length || 0} sessions`);
-          }
-          if (sessions && sessions.length > 0) {
-            setAvailableSessions(sessions);
-            setUIState("session_select");
-            if (debug) {
-              console.error("[DEBUG] UI state: session_select");
-            }
-          } else {
-            // No sessions - go directly to chat
-            setUIState("chat");
-            if (debug) {
-              console.error("[DEBUG] No sessions found, UI state: chat");
-            }
-          }
-        } catch (err) {
-          console.error("Failed to load sessions:", err);
-          // On error, just start fresh chat
-          setUIState("chat");
-        }
-      };
-
-      loadSessions();
-    } else if (rpcReady && !resumeMode) {
-      // Not in resume mode, go straight to chat
-      setUIState("chat");
-      if (debug) {
-        console.error("[DEBUG] Not resume mode, UI state: chat");
-      }
-    } else if (rpcReady && initialSessionId) {
-      // Have a specific session ID, go straight to chat
-      setUIState("chat");
-      if (debug) {
-        console.error("[DEBUG] Have session ID, UI state: chat");
-      }
+    const next: UIState =
+      resumeMode && !initialSessionId ? "session_select" : "chat";
+    setUIState(next);
+    if (debug) {
+      console.error(`[DEBUG] UI state: ${next}`);
     }
   }, [client, rpcReady, resumeMode, initialSessionId, debug]);
-
-  // Keep the session picker current: thread_updated fires when another
-  // client renames/pins/archives a thread (experimental; delivered only
-  // when granted). A wholesale refetch is fine — the picker is a startup
-  // surface and the list is small.
-  useEffect(() => {
-    if (!client || uiState !== "session_select") return;
-    const handleThreadUpdated = () => {
-      client
-        .listSessions()
-        .then((sessions) => {
-          if (sessions) setAvailableSessions(sessions);
-        })
-        .catch(() => {});
-    };
-    client.on("thread_updated", handleThreadUpdated);
-    return () => {
-      client.off("thread_updated", handleThreadUpdated);
-    };
-  }, [client, uiState]);
 
   // Reflect connection status into status indicator like bubbletea
   useEffect(() => {
@@ -698,48 +633,25 @@ export const App: React.FC<AppProps> = ({
     }
   }, [connected, uiState]);
 
-  // Handle session list navigation
-  const handleSessionListInput = useCallback(
-    (input: string, key: any) => {
+  /** Resume screen → chat, on the conversation the user picked. */
+  const handleOpenSession = useCallback(
+    (id: string) => {
       if (debug) {
-        console.error("[DEBUG] Session list input:", {
-          input,
-          key: Object.keys(key).filter((k) => key[k]),
-        });
+        console.error("[DEBUG] Selected session:", id);
       }
-
-      if (key.upArrow) {
-        setSelectedSessionIndex((prev) => Math.max(0, prev - 1));
-      } else if (key.downArrow) {
-        setSelectedSessionIndex((prev) =>
-          Math.min(availableSessions.length - 1, prev + 1),
-        );
-      } else if (key.return) {
-        // Select session and transition to chat
-        const selected = availableSessions[selectedSessionIndex];
-        if (selected) {
-          if (debug) {
-            console.error("[DEBUG] Selected session:", selected.id);
-          }
-          actions.setSessionId(selected.id);
-          setUIState("chat");
-          if (debug) {
-            console.error("[DEBUG] UI state: chat (session selected)");
-          }
-        }
-      } else if (key.tab) {
-        // Create new session and transition to chat
-        if (debug) {
-          console.error("[DEBUG] Creating new session (Tab pressed)");
-        }
-        setUIState("chat");
-        if (debug) {
-          console.error("[DEBUG] UI state: chat (new session)");
-        }
-      }
+      actions.setSessionId(id);
+      setUIState("chat");
     },
-    [availableSessions, selectedSessionIndex, debug],
+    [actions, debug],
   );
+
+  /** Resume screen → chat, with no session (the next send mints one). */
+  const handleNewSession = useCallback(() => {
+    if (debug) {
+      console.error("[DEBUG] Creating new session");
+    }
+    setUIState("chat");
+  }, [debug]);
 
   // Handle approval
   const handleApproval = useCallback(
@@ -794,7 +706,14 @@ export const App: React.FC<AppProps> = ({
         return { sendToLLM: false };
       }
 
-      // Built-in /help removed; allow server function 'help' or fallback
+      // Built-in: /help — the command directory. Client-side because
+      // half its rows (this one, /model, /exit) never reach the server,
+      // and a directory missing the commands you are reading it in is
+      // not a directory.
+      if (name === "/help" || name === "/?") {
+        setActivePanel("commands");
+        return { sendToLLM: false };
+      }
 
       // Server function invocation
       try {
@@ -1025,34 +944,11 @@ export const App: React.FC<AppProps> = ({
     ],
   );
 
-  // Handle session list input (only when in session_select state).
-  // Critical priority: session select is full-screen modal so it must beat
-  // everything else when active.
-  useKeypress(
-    (input, key) => {
-      if (debug) {
-        const flags = key as unknown as Record<string, unknown>;
-        console.error("[DEBUG] useKeypress triggered:", {
-          input,
-          key: Object.keys(flags).filter((k) => flags[k]),
-          uiState,
-          isActive: uiState === "session_select",
-        });
-      }
-      if (uiState === "session_select") {
-        // Consume only what the list actually handles — Ctrl+C (and any
-        // other chord) must fall through to the global quit handler.
-        if (key.ctrl || (key.meta && !key.escape)) return false;
-        handleSessionListInput(input, key);
-        return true;
-      }
-      return false;
-    },
-    {
-      isActive: uiState === "session_select",
-      priority: KeypressPriority.Critical,
-    },
-  );
+  // The resume screen's keyboard belongs to SessionManager: it has four
+  // input modes (list / search / rename / confirm) that have to route
+  // between themselves, and splitting that across two files is how a
+  // key ends up handled twice. It declines chords, so the global Ctrl+C
+  // below still wins.
 
   // Global Ctrl+C — double tap to quit (like bubbletea). Critical and
   // active in EVERY uiState (including connecting/error, where nothing
@@ -1166,6 +1062,12 @@ export const App: React.FC<AppProps> = ({
           setActivePanel((prev) => (prev === "git" ? null : "git"));
           return;
         }
+        // Ctrl+K: the slash-command directory. The conventional palette
+        // chord, and free here — the composer binds only Ctrl+D.
+        if (key.ctrl && input === "k") {
+          setActivePanel((prev) => (prev === "commands" ? null : "commands"));
+          return;
+        }
         // Ctrl+A: toggle the which-key panel menu — one mnemonic
         // keypress to any panel, with live summaries.
         if (key.ctrl && input === "a") {
@@ -1178,13 +1080,12 @@ export const App: React.FC<AppProps> = ({
           actions.toggleTranscriptDetail();
           return;
         }
-        // Esc closes the display-only drawers (tasks/workers/queue).
-        // Interactive panels handle their own Esc at High priority.
+        // Esc closes the display-only drawers (tasks/workers).
+        // Interactive panels — queue included, now that it owns a cursor
+        // and a cancel key — handle their own Esc at High priority.
         if (
           key.escape &&
-          (activePanel === "tasks" ||
-            activePanel === "workers" ||
-            activePanel === "queue")
+          (activePanel === "tasks" || activePanel === "workers")
         ) {
           setActivePanel(null);
           return;
@@ -1260,30 +1161,22 @@ export const App: React.FC<AppProps> = ({
   }
 
   if (uiState === "session_select") {
-    if (debug) {
-      console.error(
-        `[DEBUG] Rendering session_select state with ${availableSessions.length} sessions, selectedIndex=${selectedSessionIndex}`,
-      );
-    }
     return (
       <Box flexDirection="column">
         <Box paddingX={1}>
           <Logo agentName={agentName} />
         </Box>
         <Box marginTop={1}>
-          <SessionList
-            sessions={availableSessions}
-            selectedIndex={selectedSessionIndex}
+          <SessionManager
+            client={client}
+            onOpen={handleOpenSession}
+            onNew={handleNewSession}
+            // Nothing to resume is not a screen worth showing: `--resume`
+            // on a fresh install used to land straight in chat, and it
+            // still does.
+            onEmpty={handleNewSession}
           />
         </Box>
-        {debug && (
-          <Box paddingX={1} marginTop={1}>
-            <Text color={Theme.textChrome}>
-              DEBUG: State={uiState}, Selected={selectedSessionIndex}/
-              {availableSessions.length}
-            </Text>
-          </Box>
-        )}
       </Box>
     );
   }
@@ -1426,7 +1319,16 @@ export const App: React.FC<AppProps> = ({
                 history. The measured controls height grows when one
                 opens, so the content region shrinks to make room. */}
             <Tasks focused={activePanel === "tasks"} />
-            <QueuedMessages focused={activePanel === "queue"} />
+            <QueuedMessages
+              focused={activePanel === "queue"}
+              onUnfocus={() => setActivePanel(null)}
+              onCancel={async (itemId) => {
+                if (!client || !sessionId) {
+                  return { ok: false, reason: "no session" };
+                }
+                return await client.cancelQueuedMessage(sessionId, itemId);
+              }}
+            />
             <Notifications
               focused={activePanel === "notifications"}
               onUnfocus={() => setActivePanel(null)}
@@ -1463,6 +1365,15 @@ export const App: React.FC<AppProps> = ({
               onClose={() => setActivePanel(null)}
               client={client}
               sessionId={sessionId}
+            />
+            <CommandPalettePanel
+              open={activePanel === "commands"}
+              onClose={() => setActivePanel(null)}
+              client={client}
+              // Completes into the composer rather than running: a
+              // command may still need arguments, and the user has to
+              // be able to read one before committing to it.
+              onComplete={(text) => setPendingInsert(text)}
             />
 
             {/* Which-key panel picker — works from any screen. Workers
