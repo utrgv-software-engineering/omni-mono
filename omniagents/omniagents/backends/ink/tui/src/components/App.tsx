@@ -61,6 +61,7 @@ import { TerminalScreen } from "./TerminalScreen.js";
 import { ModelPickerPanel } from "./ModelPickerPanel.js";
 import { CommandPalettePanel } from "./CommandPalettePanel.js";
 import { ArtifactsPanel } from "./ArtifactsPanel.js";
+import { ReviewerPanel } from "./ReviewerPanel.js";
 import { EscalationBanner } from "./EscalationBanner.js";
 import { ElicitationBanner } from "./ElicitationBanner.js";
 import {
@@ -286,6 +287,8 @@ type ActivePanel =
   | "models"
   | "commands"
   | "artifacts"
+  | "approvals"
+  | "checks"
   | null;
 
 export const App: React.FC<AppProps> = ({
@@ -720,6 +723,19 @@ export const App: React.FC<AppProps> = ({
       // not a directory.
       if (name === "/help" || name === "/?") {
         setActivePanel("commands");
+        return { sendToLLM: false };
+      }
+
+      // Built-in: the two reviewer switches. Independent commands
+      // because they are independent switches — who answers a tool
+      // approval, and who reviews a plan-step completion — over
+      // different subjects, each paired with its own transcript record.
+      if (name === "/approvals") {
+        setActivePanel("approvals");
+        return { sendToLLM: false };
+      }
+      if (name === "/checks") {
+        setActivePanel("checks");
         return { sendToLLM: false };
       }
 
@@ -1374,6 +1390,20 @@ export const App: React.FC<AppProps> = ({
             />
             <ModelPickerPanel
               open={activePanel === "models"}
+              onClose={() => setActivePanel(null)}
+              client={client}
+              sessionId={sessionId}
+            />
+            <ReviewerPanel
+              kind="approvals"
+              open={activePanel === "approvals"}
+              onClose={() => setActivePanel(null)}
+              client={client}
+              sessionId={sessionId}
+            />
+            <ReviewerPanel
+              kind="checks"
+              open={activePanel === "checks"}
               onClose={() => setActivePanel(null)}
               client={client}
               sessionId={sessionId}

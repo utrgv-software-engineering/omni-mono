@@ -8,6 +8,12 @@ import { RPCClient } from "../rpc/client.js";
 import { useActions, useAppStore } from "../store/appStore.js";
 import { EventBatcher } from "../utils/eventBatcher.js";
 import { debugLog } from "../utils/debugLog.js";
+import {
+  guardianReviewLine,
+  parseGuardianReview,
+  parseWorkflowReview,
+  workflowReviewLine,
+} from "../components/reviewer-model.js";
 import type {
   ApprovalInfo,
   ElicitationInfo,
@@ -974,6 +980,36 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     };
 
     // Register event handlers
+    // A reviewer settled a decision the TUI would otherwise have
+    // prompted for. On this path the server never broadcasts
+    // ``tool_approval_requested`` at all — service.py is explicit that
+    // the response "never reached the client" — so without this handler
+    // the tool is simply approved or denied with nothing shown.
+    const handleToolApprovalReviewed = (params: unknown) => {
+      const review = parseGuardianReview(params);
+      if (!review) return;
+      actions.addMessage({
+        role: "system",
+        content: guardianReviewLine(review),
+        timestamp: new Date(),
+      });
+    };
+
+    // A plan-step completion was reviewed against its exit criteria.
+    // ``workflow.completion_reviewer`` DEFAULTS to guardian, so these run
+    // whether or not the switch is exposed — and a rejection writes
+    // nothing to the plan, it just hands the rationale back to the model.
+    // Unrendered, that reads as a step that silently will not stick.
+    const handlePlanCompletionReviewed = (params: unknown) => {
+      const review = parseWorkflowReview(params);
+      if (!review) return;
+      actions.addMessage({
+        role: "system",
+        content: workflowReviewLine(review),
+        timestamp: new Date(),
+      });
+    };
+
     client.on("message_output", handleMessageOutput);
     client.on("tool_called", handleToolCalled);
     client.on("tool_result", handleToolResult);
@@ -990,6 +1026,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.on("queue_changed", handleQueueChanged);
     client.on("item_updated", handleItemUpdated);
     client.on("client_request_resolved", handleClientRequestResolved);
+    client.on("tool_approval_reviewed", handleToolApprovalReviewed);
+    client.on("plan_completion_reviewed", handlePlanCompletionReviewed);
 
     // Agent emitted an artifact (``display_artifact`` / the artifact
     // bridge). Upserting is the contract: re-issuing the same
@@ -1057,6 +1095,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.off("queue_changed", handleQueueChanged);
       client.off("item_updated", handleItemUpdated);
       client.off("client_request_resolved", handleClientRequestResolved);
+      client.off("tool_approval_reviewed", handleToolApprovalReviewed);
+      client.off("plan_completion_reviewed", handlePlanCompletionReviewed);
 
       // Cleanup registered client functions
       client.unregisterClientFunction("ui.add_artifact");

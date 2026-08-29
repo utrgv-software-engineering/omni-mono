@@ -902,6 +902,38 @@ export class RPCClient extends EventEmitter {
     ) as Promise<Record<string, unknown>>;
   }
 
+  /**
+   * Who answers this session's tool/MCP approvals: `user` prompts the
+   * human, `auto` routes to the guardian. Overrides the layered-config
+   * `approvals.reviewer` default for this conversation only.
+   */
+  async setSessionApprovals(
+    sessionId: string,
+    reviewer: "user" | "auto",
+  ): Promise<Record<string, unknown>> {
+    return this.call("set_session_approvals", {
+      session_id: sessionId,
+      reviewer,
+    }) as Promise<Record<string, unknown>>;
+  }
+
+  /**
+   * Who reviews this session's plan-step completions: `guardian` checks
+   * them against their exit criteria, `off` waives. Overrides the
+   * layered-config `workflow.completion_reviewer` default, which is
+   * `guardian` — so these reviews run whether or not a client exposes
+   * this switch.
+   */
+  async setSessionWorkflow(
+    sessionId: string,
+    reviewer: "off" | "guardian",
+  ): Promise<Record<string, unknown>> {
+    return this.call("set_session_workflow", {
+      session_id: sessionId,
+      reviewer,
+    }) as Promise<Record<string, unknown>>;
+  }
+
   /** Hold (or release) queue draining for a session. */
   async setSessionHold(
     sessionId: string,

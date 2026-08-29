@@ -77,6 +77,13 @@ export type ListModelsResult = {
     session_id: string
     active_model: string | null
     reasoning_effort: string | null
+    /**
+     * Per-session reviewer OVERRIDES — `null` means "unset, use the
+     * layered-config value". Resolving the effective reviewer therefore
+     * needs `get_config` too; see components/reviewer-model.ts.
+     */
+    approvals_reviewer?: string | null
+    workflow_reviewer?: string | null
   }
 }
 

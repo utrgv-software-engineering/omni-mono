@@ -42,6 +42,18 @@ export const BUILTIN_COMMANDS: readonly CommandRow[] = [
     takesArgs: false,
   },
   {
+    name: "approvals",
+    description: "Who answers tool approvals — you, or the guardian",
+    source: "builtin",
+    takesArgs: false,
+  },
+  {
+    name: "checks",
+    description: "Who reviews plan-step completions against exit criteria",
+    source: "builtin",
+    takesArgs: false,
+  },
+  {
     name: "help",
     description: "Show this command palette",
     source: "builtin",
