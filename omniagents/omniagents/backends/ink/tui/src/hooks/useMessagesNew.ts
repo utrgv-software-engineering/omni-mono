@@ -991,6 +991,37 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.on("item_updated", handleItemUpdated);
     client.on("client_request_resolved", handleClientRequestResolved);
 
+    // Agent emitted an artifact (``display_artifact`` / the artifact
+    // bridge). Upserting is the contract: re-issuing the same
+    // ``artifact_id`` means "here is the new version of that artifact".
+    //
+    // NOTE the payload is ``{title, content, mode, artifact_id}`` — NOT
+    // the shape ``types/protocol.ts`` used to declare. Content for
+    // image/pdf modes is a base64 data URL, which is exactly why nothing
+    // here touches the transcript: the drawer decides what is safe to
+    // print, and a megabyte of base64 is not.
+    const handleAddArtifact = async (args: Record<string, unknown>) => {
+      const title = typeof args.title === "string" ? args.title : "";
+      const content = typeof args.content === "string" ? args.content : "";
+      const mode = typeof args.mode === "string" ? args.mode : "markdown";
+      const artifactId =
+        typeof args.artifact_id === "string" && args.artifact_id !== ""
+          ? args.artifact_id
+          : undefined;
+      const eventSessionId =
+        typeof args.session_id === "string" ? args.session_id : undefined;
+      actions.addArtifact({
+        artifactId,
+        title,
+        content,
+        mode,
+        sessionId: eventSessionId,
+        updatedAt: Date.now(),
+        revision: 0,
+      });
+      return { ack: true };
+    };
+
     // Register client functions
     client.registerClientFunction("ui.set_status", handleSetStatus);
     client.registerClientFunction(
@@ -1005,6 +1036,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     client.registerClientFunction("ui.loop.update", handleLoopUpdate);
     client.registerClientFunction("notify", handleNotify);
     client.registerClientFunction("ui.recap", handleRecap);
+    client.registerClientFunction("ui.add_artifact", handleAddArtifact);
     client.registerClientFunction("escalate", handleEscalate);
 
     // Cleanup
@@ -1027,6 +1059,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client.off("client_request_resolved", handleClientRequestResolved);
 
       // Cleanup registered client functions
+      client.unregisterClientFunction("ui.add_artifact");
       client.unregisterClientFunction("ui.set_status");
       client.unregisterClientFunction("ui.set_session_state");
       client.unregisterClientFunction("ui.bash_jobs.update");

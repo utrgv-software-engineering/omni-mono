@@ -325,15 +325,28 @@ export interface McpApprovalResponseRequest {
   };
 }
 
+/**
+ * The artifact payload as the server actually sends it
+ * (omniagents/core/runtime/bridge.py `_send_artifact`, and
+ * omniagents/core/server_functions/helpers.py).
+ *
+ * This previously declared `{type, description, language, metadata}`,
+ * none of which is on the wire — a shape nothing produced and nothing
+ * consumed, which is how it stayed wrong while the only handler for it
+ * was missing.
+ *
+ * `content` is a `data:<mime>;base64,…` URL for the `image` and `pdf`
+ * modes; see components/artifact-model.ts.
+ */
 export interface AddArtifactRequest {
   function: "ui.add_artifact";
   arguments: {
-    type: string;
-    title?: string;
-    description?: string;
+    title: string;
     content: string;
-    language?: string;
-    metadata?: Record<string, unknown>;
+    /** `markdown` | `html` | `image` | `pdf`. */
+    mode: string;
+    /** Re-sending the same id replaces that artifact in place. */
+    artifact_id?: string | null;
   };
 }
 

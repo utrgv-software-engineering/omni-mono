@@ -23,6 +23,8 @@ export interface StripState {
   bashJobs: BashJobSummary[];
   queuedMessages: QueuedMessage[];
   notificationCount: number;
+  /** Artifacts the agent has emitted this session. */
+  artifactCount: number;
   goal: GoalSnapshot | null;
   wakeup: WakeupSnapshot | null;
   loops: LoopTaskSnapshot[];
@@ -90,6 +92,13 @@ export function buildStripTokens(state: StripState): StripToken[] {
     tokens.push({ text: `${plural(failedJobs, "job")} failed`, tone: "warn" });
   }
 
+  if (state.artifactCount > 0) {
+    tokens.push({
+      text: plural(state.artifactCount, "artifact"),
+      tone: "info",
+    });
+  }
+
   if (state.queuedMessages.length > 0) {
     tokens.push({
       text: `${state.queuedMessages.length} queued`,
@@ -130,7 +139,8 @@ export type MenuPanelId =
   | "git"
   | "terminal"
   | "models"
-  | "commands";
+  | "commands"
+  | "artifacts";
 
 export type PanelMenuRow = {
   /** Mnemonic key that opens the panel from the menu. */
@@ -237,6 +247,14 @@ export function buildPanelMenuRows(state: StripState): PanelMenuRow[] {
       warn: false,
     },
     { key: "m", panel: "models", label: "models", summary: null, warn: false },
+    {
+      key: "a",
+      panel: "artifacts",
+      label: "artifacts",
+      summary:
+        state.artifactCount > 0 ? plural(state.artifactCount, "artifact") : null,
+      warn: false,
+    },
     {
       key: "c",
       panel: "commands",

@@ -5,6 +5,7 @@ import {
   useBashJobs,
   useGoal,
   useLoops,
+  useArtifacts,
   useNotifications,
   useQueuedMessages,
   useRunDiff,
@@ -45,6 +46,7 @@ export const StatusBar = React.memo<{
   const bashJobs = useBashJobs();
   const queuedMessages = useQueuedMessages();
   const notifications = useNotifications();
+  const artifacts = useArtifacts();
   const goal = useGoal();
   const wakeup = useWakeup();
   const loops = useLoops();
@@ -65,6 +67,7 @@ export const StatusBar = React.memo<{
     ),
     queuedMessages,
     notificationCount: notifications.length,
+    artifactCount: artifacts.length,
     goal,
     wakeup,
     loops,

@@ -12,6 +12,7 @@ function state(overrides: Partial<StripState>): StripState {
     bashJobs: [],
     queuedMessages: [],
     notificationCount: 0,
+    artifactCount: 0,
     goal: null,
     wakeup: null,
     loops: [],
@@ -111,6 +112,7 @@ describe("buildPanelMenuRows", () => {
       "git",
       "terminal",
       "models",
+      "artifacts",
       "commands",
     ]);
     const keys = rows.map((r) => r.key);

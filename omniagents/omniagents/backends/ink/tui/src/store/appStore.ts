@@ -8,6 +8,10 @@ import { useShallow } from "zustand/react/shallow";
 import { immer } from "zustand/middleware/immer";
 import { enableMapSet } from "immer";
 import { debugLog } from "../utils/debugLog.js";
+import {
+  upsertArtifact,
+  type ArtifactEntry,
+} from "../components/artifact-model.js";
 import type {
   ConversationItem,
   ConversationRunDiff,
@@ -95,6 +99,9 @@ export interface NotificationInfo {
   message: string;
   timestamp: number;
 }
+
+/** Agent-produced artifacts (`ui.add_artifact`), newest last. */
+export type { ArtifactEntry } from "../components/artifact-model.js";
 
 export interface Message {
   role: "user" | "assistant" | "system" | "tool_call" | "approval_request";
@@ -301,6 +308,7 @@ interface AppState {
   escalation: EscalationInfo | null;
   elicitation: ElicitationInfo | null;
   notifications: NotificationInfo[];
+  artifacts: ArtifactEntry[];
   currentRunId: string | null;
   preamble: string | null;
   tasks: TaskSummary[];
@@ -353,6 +361,9 @@ interface AppState {
     addNotification: (message: string) => void;
     removeNotification: (id: string) => void;
     clearNotifications: () => void;
+    /** Upsert an artifact: same `artifactId` replaces, else appends. */
+    addArtifact: (entry: ArtifactEntry) => void;
+    clearArtifacts: () => void;
     setUsage: (usage: UsageInfo) => void;
     setSessionState: (state: {
       model?: string | null;
@@ -415,6 +426,7 @@ export const useAppStore = create<AppState>()(
     escalation: null,
     elicitation: null,
     notifications: [],
+    artifacts: [],
     currentRunId: null,
     preamble: null,
     tasks: [],
@@ -609,6 +621,23 @@ export const useAppStore = create<AppState>()(
         set((state) => {
           if (state.notifications.length > 0) {
             state.notifications = [];
+          }
+        }),
+
+      addArtifact: (entry) =>
+        set((state) => {
+          // The upsert rule (same id replaces and bumps revision) lives
+          // in the model so it stays testable without a store.
+          const next = upsertArtifact(state.artifacts, entry);
+          if (next !== state.artifacts) {
+            state.artifacts = next;
+          }
+        }),
+
+      clearArtifacts: () =>
+        set((state) => {
+          if (state.artifacts.length > 0) {
+            state.artifacts = [];
           }
         }),
 
@@ -812,6 +841,7 @@ export const useMcpApproval = () => useAppStore((s) => s.mcpApproval);
 export const useEscalation = () => useAppStore((s) => s.escalation);
 export const useElicitation = () => useAppStore((s) => s.elicitation);
 export const useNotifications = () => useAppStore((s) => s.notifications);
+export const useArtifacts = () => useAppStore((s) => s.artifacts);
 export const useUsage = () => useAppStore((s) => s.usage);
 export const useSessionModel = () => useAppStore((s) => s.sessionModel);
 export const useSessionReasoningEffort = () =>

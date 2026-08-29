@@ -60,6 +60,7 @@ import { GitPanel } from "./GitPanel.js";
 import { TerminalScreen } from "./TerminalScreen.js";
 import { ModelPickerPanel } from "./ModelPickerPanel.js";
 import { CommandPalettePanel } from "./CommandPalettePanel.js";
+import { ArtifactsPanel } from "./ArtifactsPanel.js";
 import { EscalationBanner } from "./EscalationBanner.js";
 import { ElicitationBanner } from "./ElicitationBanner.js";
 import {
@@ -284,6 +285,7 @@ type ActivePanel =
   | "git"
   | "models"
   | "commands"
+  | "artifacts"
   | null;
 
 export const App: React.FC<AppProps> = ({
@@ -519,8 +521,14 @@ export const App: React.FC<AppProps> = ({
   // Reset dock dismissal sets on session change so the freshly bound
   // session starts with the panels showing their full server-side
   // snapshot.
+  //
+  // Artifacts clear with them. They are session-scoped (the payload
+  // carries `session_id`) and are held only in memory — nothing refetches
+  // them for a resumed session — so keeping the previous session's
+  // artifacts would attribute one conversation's output to another.
   useEffect(() => {
     actions.resetDockDismissals();
+    actions.clearArtifacts();
   }, [sessionId, actions]);
 
   useLayoutEffect(() => {
@@ -1354,6 +1362,10 @@ export const App: React.FC<AppProps> = ({
                   sessionId || undefined,
                 )) as any;
               }}
+            />
+            <ArtifactsPanel
+              focused={activePanel === "artifacts"}
+              onUnfocus={() => setActivePanel(null)}
             />
             <GitPanel
               focused={activePanel === "git"}

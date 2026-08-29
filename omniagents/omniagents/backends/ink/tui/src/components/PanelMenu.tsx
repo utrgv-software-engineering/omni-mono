@@ -7,6 +7,7 @@ import {
   useBashJobs,
   useGoal,
   useLoops,
+  useArtifacts,
   useNotifications,
   useQueuedMessages,
   useRunDiff,
@@ -34,6 +35,7 @@ export const PanelMenu = React.memo(({ open, onSelect, onClose }: Props) => {
   const bashJobs = useBashJobs();
   const queuedMessages = useQueuedMessages();
   const notifications = useNotifications();
+  const artifacts = useArtifacts();
   const goal = useGoal();
   const wakeup = useWakeup();
   const loops = useLoops();
@@ -51,6 +53,7 @@ export const PanelMenu = React.memo(({ open, onSelect, onClose }: Props) => {
     ),
     queuedMessages,
     notificationCount: notifications.length,
+    artifactCount: artifacts.length,
     goal,
     wakeup,
     loops,
