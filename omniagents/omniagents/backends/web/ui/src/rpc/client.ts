@@ -25,6 +25,7 @@ import type {
   SetVoiceModelResult,
 } from '../protocol/catalog'
 import { SessionReplayCoordinator, type ResumeResult } from './replay'
+import { REQUESTED_EXPERIMENTAL_OPERATIONS } from '../protocol/experimental'
 
 type JSONRPCId = number | string
 
@@ -48,6 +49,55 @@ type JSONRPCNotification = {
   params?: Record<string, unknown>
 }
 
+/**
+ * Every server→client notification the GUI protocol defines.
+ * `satisfies Record<keyof …, true>` makes the record exhaustive: a
+ * protocol regen that adds a notification fails type-check here until it
+ * is added (and, if experimental, opted into in ../protocol/experimental).
+ *
+ * It is a COMPILE-TIME guard only — dispatch stays permissive on
+ * purpose. `realtime_event` is not in the generated map (the voice
+ * pipeline rides the same channel out of band), so gating `emit` on this
+ * record would silently take voice offline. Anything not listed here is
+ * still delivered; it just does not get the drift guarantee.
+ */
+const SERVER_NOTIFICATION_METHODS = {
+  run_started: true,
+  run_status: true,
+  tool_called: true,
+  tool_result: true,
+  message_output: true,
+  token: true,
+  run_end: true,
+  tool_approval_requested: true,
+  tool_approval_resolved: true,
+  tool_approval_reviewed: true,
+  plan_completion_reviewed: true,
+  mcp_approval_requested: true,
+  mcp_approval_resolved: true,
+  client_request: true,
+  client_request_resolved: true,
+  queue_changed: true,
+  account_changed: true,
+  elicitation_requested: true,
+  elicitation_resolved: true,
+  mcp_server_status_changed: true,
+  session_forked: true,
+  session_variables_changed: true,
+  fs_events: true,
+  fs_rescan_required: true,
+  fs_transfer_progress: true,
+  git_operation_progress: true,
+  git_status_changed: true,
+  thread_updated: true,
+  item_updated: true,
+} as const satisfies Record<keyof RpcNotificationMap, true>
+
+/** True for a notification the generated protocol defines. */
+export function isProtocolNotification(method: string): boolean {
+  return method in SERVER_NOTIFICATION_METHODS
+}
+
 const CLIENT_CAPABILITIES: Capabilities = {
   realtime: true,
   mcp_apps: true,
@@ -55,8 +105,13 @@ const CLIENT_CAPABILITIES: Capabilities = {
   approvals: true,
   artifacts: true,
   replay: true,
-  terminal: false,
-  experimental_operations: [],
+  // This UI ships a working TerminalPanel (terminal.create / terminal_id
+  // over the session's PTY backend), so declaring false was simply
+  // untrue. No server reads this field today, which is exactly why it
+  // was able to drift — and why a server that starts gating on it would
+  // take the web terminal offline for no discoverable reason.
+  terminal: true,
+  experimental_operations: [...REQUESTED_EXPERIMENTAL_OPERATIONS],
   disabled_notifications: [],
 }
 
@@ -118,6 +173,24 @@ export class JSONRPCError extends Error {
   }
 }
 
+/**
+ * The experimental capability names a `-32013` handshake rejection
+ * blames, or null when the error is anything else.
+ *
+ * Without this the manifest would be a liability rather than a feature:
+ * a server older than one operation on the list rejects the WHOLE
+ * `initialize`, and this client treats a structured handshake failure as
+ * permanent — so a single unknown name would take the entire UI offline
+ * instead of costing it one capability.
+ */
+function unsupportedCapabilitiesOf(error: unknown): Set<string> | null {
+  if (!(error instanceof JSONRPCError) || error.code !== -32013) return null
+  const data = error.data as { kind?: string; unsupported_capabilities?: unknown } | undefined
+  if (data?.kind !== 'capability_not_negotiated') return null
+  if (!Array.isArray(data.unsupported_capabilities)) return null
+  return new Set(data.unsupported_capabilities.filter((name): name is string => typeof name === 'string'))
+}
+
 export type RequestOptions = {
   /** Per-call deadline in ms. Omit for the policy default; null disables the deadline. */
   timeoutMs?: number | null
@@ -149,6 +222,13 @@ export class RPCClient {
   private connectSettlers: { resolve: () => void; reject: (e: Error) => void } | null = null
   private replay: SessionReplayCoordinator
   private ackTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  /**
+   * The manifest to request at the next handshake. Starts as the full
+   * opt-in list and shrinks permanently the first time a server rejects
+   * part of it, so a reconnect loop against an older server does not
+   * re-negotiate the same failure on every attempt.
+   */
+  private experimentalToRequest: readonly string[] = REQUESTED_EXPERIMENTAL_OPERATIONS
 
   /**
    * Fired when the sequenced event stream cannot be recovered by replay
@@ -173,6 +253,25 @@ export class RPCClient {
 
   get initializeResult(): InitializeResult | null {
     return this.negotiatedInitialization
+  }
+
+  /**
+   * Whether the server granted `operation` at the handshake. Stable
+   * operations are always available and never appear in the grant list;
+   * this answers for experimental requests AND notifications — UIs
+   * feature-detect panels with it instead of try/catching -32013.
+   *
+   * Only meaningful once the handshake has landed: it reads a field
+   * assigned immediately before the connection is reported connected.
+   */
+  isGranted(operation: string): boolean {
+    const granted = this.negotiatedInitialization?.capabilities.experimental_operations
+    return granted ? granted.includes(operation) : false
+  }
+
+  /** The experimental operations the server granted (empty until ready). */
+  get grantedExperimentalOperations(): readonly string[] {
+    return this.negotiatedInitialization?.capabilities.experimental_operations ?? []
   }
 
   get connectionState(): ConnectionState {
@@ -315,14 +414,29 @@ export class RPCClient {
     }
     ws.onopen = async () => {
       try {
-        const initialize: InitializeParams = {
-          protocol_version: '1.0.0',
-          identity: { name: 'omniagents-web-ui', version: '0.0.0' },
-          platform: { os: 'browser', arch: 'unknown' },
-          capabilities: CLIENT_CAPABILITIES,
+        const attempt = (operations: readonly string[]): Promise<InitializeResult> => {
+          const initialize: InitializeParams = {
+            protocol_version: '1.0.0',
+            identity: { name: 'omniagents-web-ui', version: '0.0.0' },
+            platform: { os: 'browser', arch: 'unknown' },
+            capabilities: { ...CLIENT_CAPABILITIES, experimental_operations: [...operations] },
+          }
+          // The connect timer bounds the whole attempt; no per-call deadline.
+          return this.sendRequest<InitializeResult>('initialize', initialize, { timeoutMs: null })
         }
-        // The connect timer bounds the whole attempt; no per-call deadline.
-        const result = await this.sendRequest<InitializeResult>('initialize', initialize, { timeoutMs: null })
+        // If the server predates part of our experimental manifest it
+        // rejects the whole call naming the unsupported subset; strip
+        // exactly that subset and retry once. The reduction is remembered
+        // so later reconnects negotiate cleanly on the first attempt.
+        let result: InitializeResult
+        try {
+          result = await attempt(this.experimentalToRequest)
+        } catch (e) {
+          const unsupported = unsupportedCapabilitiesOf(e)
+          if (!unsupported) throw e
+          this.experimentalToRequest = this.experimentalToRequest.filter((name) => !unsupported.has(name))
+          result = await attempt(this.experimentalToRequest)
+        }
         this.negotiatedInitialization = result
         this.sendNotification('initialized', {})
         ready = true

@@ -6,6 +6,7 @@ import {
   RpcTimeoutError,
   type ConnectionState,
 } from './lifecycle'
+import { REQUESTED_EXPERIMENTAL_OPERATIONS } from '../protocol/experimental'
 
 const initializeResult = {
   protocol_version: '1.0.0',
@@ -129,8 +130,15 @@ describe('RPCClient initialization', () => {
             approvals: true,
             artifacts: true,
             replay: true,
-            terminal: false,
-            experimental_operations: [],
+            // True because this UI ships a TerminalPanel; see the
+            // capability block in ./client.
+            terminal: true,
+            // Asserted by identity against the manifest rather than
+            // inlined: the exact list is owned by
+            // ../protocol/experimental and guarded against the protocol
+            // inventory there, so duplicating 69 names here would only
+            // create a second place to forget.
+            experimental_operations: [...REQUESTED_EXPERIMENTAL_OPERATIONS],
             disabled_notifications: [],
           },
         },
