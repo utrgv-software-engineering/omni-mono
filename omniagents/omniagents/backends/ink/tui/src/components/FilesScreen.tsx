@@ -712,6 +712,8 @@ export const FilesScreen = ({
         visibleRows.map((row, i) => {
           const index = listStart + i;
           const isCurrent = index === cursor;
+          const glyph =
+            row.type === "directory" ? (row.expanded ? "▾ " : "▸ ") : "  ";
           return (
             <SelectableRow
               key={row.path}
@@ -720,6 +722,15 @@ export const FilesScreen = ({
               <RowText color={Theme.textChrome}>
                 {"  ".repeat(row.depth)}
               </RowText>
+              <RowText
+                color={
+                  row.type === "directory"
+                    ? Theme.stateActive
+                    : Theme.textChrome
+                }
+              >
+                {glyph}
+              </RowText>
               {/* minWidth 0 — a long name must truncate, never wrap
                   into a phantom second line (see ReviewScreen sidebar).
                   The row deliberately carries no trailing column: a size
@@ -727,16 +738,10 @@ export const FilesScreen = ({
                   its own space ("12.3" / "KB"), splitting the row. */}
               <Box flexGrow={1} minWidth={0}>
                 <RowText
-                  color={
-                    row.type === "directory"
-                      ? Theme.stateActive
-                      : isCurrent
-                        ? Theme.textPrimary
-                        : Theme.textSecondary
-                  }
+                  color={isCurrent ? Theme.textPrimary : Theme.textSecondary}
                   wrap="truncate-end"
                 >
-                  {row.type === "directory" ? `${row.name}/` : row.name}
+                  {row.name}
                 </RowText>
               </Box>
             </SelectableRow>
