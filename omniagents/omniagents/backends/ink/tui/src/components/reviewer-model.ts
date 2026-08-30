@@ -36,12 +36,16 @@ export const APPROVALS_OPTIONS: readonly ReviewerOption<ApprovalsReviewer>[] = [
   {
     value: "user",
     label: "Ask me first",
-    hint: "every tool approval prompts you",
+    hint: "every tool call waits for you",
   },
   {
     value: "auto",
     label: "Approve for me",
-    hint: "the guardian reviews approvals; it fails to you, never closed",
+    // Says what happens when the guardian cannot answer, in words a
+    // person reading a switch can act on. The behavior is that a
+    // timeout or an error returns None and falls through to the
+    // ordinary prompt (guardian.py) — i.e. it never silently denies.
+    hint: "the guardian decides; you are asked if it cannot",
   },
 ] as const;
 
@@ -49,12 +53,12 @@ export const CHECKS_OPTIONS: readonly ReviewerOption<WorkflowReviewer>[] = [
   {
     value: "guardian",
     label: "Task checks on",
-    hint: "plan-step completions are reviewed against their exit criteria",
+    hint: "a finished step is checked against its exit criteria",
   },
   {
     value: "off",
     label: "Checks off",
-    hint: "completions are accepted unreviewed",
+    hint: "a step is done as soon as the agent says it is",
   },
 ] as const;
 
