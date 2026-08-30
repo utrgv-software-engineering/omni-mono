@@ -33,16 +33,22 @@ type Props = {
 // because you arrived on it (that was the old behavior, and it made the
 // tab cycle a one-way door: you could Tab in but never Tab out).
 //
-//   on arrival — the app owns the keyboard. Tab cycles tabs,
-//     j/k/PgUp/PgDn scroll the scrollback, `i` or Enter hands the
-//     keyboard to the shell.
-//   typing — the PTY owns every key, Tab included. ctrl+] hands the
-//     keyboard back; alt+1..5 still jump straight to a screen.
+//   The app has the keyboard (on arrival, hollow dot). Tab cycles tabs,
+//     Esc leaves, j/k/PgUp/PgDn scroll the scrollback, `i` or Enter
+//     hands the keyboard to the shell.
+//   The shell has it (filled dot). Every key goes to the PTY, Tab and
+//     Esc included. ctrl+] hands it back; alt+1..5 still jump straight
+//     to a screen, though the hint does not teach that — release first.
+//
+// Neither state has a NAME, on purpose. "INPUT", "browsing", "typing"
+// were all vocabulary invented to describe the distinction, and none of
+// them told anyone what to press. The dot shows which side holds the
+// keyboard and the hint beside it says what to do about it.
 //
 // ctrl+] means exactly one thing and nothing else: give the keyboard
 // back. It is NOT a way to leave the screen — it used to double as a
 // chat toggle, which made one key mean two things depending on a state
-// the user could not see. Leaving is Tab and alt+1..5, the same as
+// the user could not see. Leaving is Esc, Tab and alt+1..5, the same as
 // every other screen. The shell keeps running throughout; these states
 // only decide who the keyboard belongs to.
 /**
@@ -52,7 +58,7 @@ type Props = {
  * one thing: whether the terminal is captured. That label used to be
  * written into four separate branches and only two of them consulted
  * `captured` — the "no output yet" branch was tested FIRST, so a shell
- * that had not printed its prompt yet showed `● INPUT` beside
+ * that had not printed its prompt yet showed a captured terminal beside
  * `ctrl+] chat` while the key actually released. Derived in one place
  * now, so the label cannot disagree with the handler.
  */
@@ -69,9 +75,6 @@ export function terminalHint({
   exitCode: number | null;
   error?: string | null;
 }): string {
-  // ctrl+] only ever means "give the keyboard back", so it is only worth
-  // mentioning while the terminal has it.
-  const release = captured ? " · ctrl+] release" : "";
   if (phase === "exited") {
     const code = exitCode !== null ? ` ${exitCode}` : "";
     const why = error ? ` (${error})` : "";
@@ -80,13 +83,16 @@ export function terminalHint({
   if (phase === "running" && outputBytes === 0 && !captured) {
     return "attached · no output yet — is the shell alive?";
   }
-  // While the shell has the keyboard there is exactly one thing worth
-  // teaching: how to get it back. alt+1..5 still jumps straight to a
-  // screen, but naming it here offered a second way out of a state whose
-  // whole problem was having more than one — release first, then
-  // navigate the way every other screen is navigated.
+  // A hint is for what to DO. It used to restate where the keys were
+  // going and explain that Tab was among them, which described the
+  // mechanism instead of offering an action. What is left is the way out
+  // and the way to scroll — and between the two branches, the hint is
+  // what tells you which state you are in.
+  // ctrl+] only ever means "give the keyboard back", so it is named
+  // only while the terminal has it — and it is the only exit named
+  // there, so the state has exactly one way out.
   return captured
-    ? `keys → shell (tab too)${release} · PgUp/PgDn scroll`
+    ? "ctrl+] release · PgUp/PgDn scroll"
     : "i or enter to type · j/k PgUp/PgDn scroll · esc chat";
 }
 
@@ -166,9 +172,11 @@ export const TerminalScreen = ({
           ? " · connecting"
           : phase === "error"
             ? " · error"
-            : captured
-              ? " · typing"
-              : "";
+            : // No suffix for keyboard focus: this context is set only
+              // while the terminal screen is active, and the focus dot is
+              // right there on it. Phases are different — they are facts
+              // about the shell, not about where the keys are going.
+              "";
     actions.setStatusContext(`term${suffix}`);
     return () => actions.setStatusContext(null);
   }, [active, phase, captured, actions]);
@@ -313,14 +321,18 @@ export const TerminalScreen = ({
           </Text>
         )}
         {scrollUp > 0 && <Text color={Theme.stateBlocked}>↑{scrollUp} </Text>}
-        {/* The mode marker leads the line: which of Tab's two meanings is
-            live right now is the single most important thing here. */}
+        {/* A focus dot, not a mode name. Filled means the shell has your
+            keys; hollow means the app does. It carries no label because
+            the hint beside it already says what to do in each case, and
+            the labels it used to carry ("INPUT", "browsing", "typing")
+            were vocabulary invented to describe a distinction the hint
+            makes on its own. */}
         {phase !== "exited" && phase !== "error" && (
           <Text
             color={captured ? Theme.stateActive : Theme.textChrome}
             bold={captured}
           >
-            {captured ? "● typing " : "○ press i to type "}
+            {captured ? "● " : "○ "}
           </Text>
         )}
         <Text color={Theme.textChrome}>
