@@ -167,6 +167,38 @@ describe("VirtualizedList slice", () => {
     expect(frame).toContain("item-11");
   });
 
+  it("shows the tail PAGE, not just the tail row, past the end", async () => {
+    // The ctrl+o bug. Toggling the detail view swaps the row set
+    // wholesale, so for a pass or two the parent's scrollTop is a
+    // position in the old content while these offsets describe the new
+    // one. `first = Math.min(lo, length - 1)` kept the viewport legal but
+    // rendered exactly ONE row — the last — and it stayed that way until
+    // a scroll forced the parent to re-clamp. Clamping scrollTop into
+    // this list's own geometry fills the viewport instead.
+    const frame = await renderList({
+      data: rows(8, 1),
+      containerHeight: 10,
+      scrollTop: 400,
+    });
+
+    for (let i = 0; i < 8; i += 1) {
+      expect(frame, `row ${i} should be on screen`).toContain(`item-${i}`);
+    }
+  });
+
+  it("leaves an in-range scrollTop alone", async () => {
+    // The clamp must be a no-op whenever the parent is telling the truth,
+    // or it would drag the viewport back up during ordinary scrolling.
+    const frame = await renderList({
+      data: rows(40, 1),
+      containerHeight: 6,
+      scrollTop: 20,
+    });
+
+    expect(frame).toContain("item-20");
+    expect(frame).not.toContain("item-0-head");
+  });
+
   it("keeps a single tall row rendered when scrolled past it", async () => {
     const frame = await renderList({
       data: [

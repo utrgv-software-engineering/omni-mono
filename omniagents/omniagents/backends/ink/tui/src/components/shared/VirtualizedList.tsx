@@ -150,8 +150,25 @@ export function VirtualizedList<T>({
     if (noViewport || data.length === 0) {
       return [0, data.length - 1] as const;
     }
-    const top = Math.max(0, scrollTop - overscan);
-    const bottom = scrollTop + containerHeight + overscan;
+    // Clamp the parent's scrollTop into THIS list's geometry first.
+    //
+    // The parent measures its scroll offset against what was on screen a
+    // moment ago. Toggling the transcript's detail view (ctrl+o) swaps
+    // the row set wholesale, so for a pass or two `scrollTop` is a
+    // position in the OLD content while `offsets` describes the new — and
+    // rows whose heights have not been measured yet count as
+    // `estimatedItemHeight`, making the new content look far shorter than
+    // it is. The result was a `scrollTop` past the end of the table, the
+    // `first` clamp below firing, and a viewport showing only the final
+    // row until the user scrolled and forced a re-clamp.
+    //
+    // Showing the last PAGE is both correct and self-correcting: when the
+    // parent catches up this is a no-op, since the min never binds for an
+    // in-range offset.
+    const maxScroll = Math.max(0, totalHeight - containerHeight);
+    const effectiveTop = Math.min(scrollTop, maxScroll);
+    const top = Math.max(0, effectiveTop - overscan);
+    const bottom = effectiveTop + containerHeight + overscan;
     // Binary search for first item whose end > top.
     let first = 0;
     {
@@ -176,7 +193,15 @@ export function VirtualizedList<T>({
       last = i;
     }
     return [first, Math.min(last, data.length - 1)] as const;
-  }, [noViewport, data.length, scrollTop, containerHeight, overscan, offsets]);
+  }, [
+    noViewport,
+    data.length,
+    scrollTop,
+    containerHeight,
+    overscan,
+    offsets,
+    totalHeight,
+  ]);
 
   const setItemRef = useCallback(
     (key: string) => (node: DOMElement | null) => {
