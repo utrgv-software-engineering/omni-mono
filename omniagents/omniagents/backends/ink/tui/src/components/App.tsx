@@ -1066,12 +1066,10 @@ export const App: React.FC<AppProps> = ({
         }
         // Panel chords — each toggles its own panel; opening one closes
         // whatever else was open (single-owner rule).
-        // Ctrl+] is the raw GS byte (0x1d); Ink only sets key.ctrl for
-        // the letter range.
-        if ((key.ctrl && input === "]") || input === "\u001d") {
-          setScreen((prev) => (prev === "term" ? "chat" : "term"));
-          return;
-        }
+        //
+        // ctrl+] is deliberately NOT among them. It means exactly one
+        // thing, on the terminal screen only: give the keyboard back.
+        // Screens are reached with Tab and alt+1..5.
         if (key.ctrl && input === "b") {
           setActivePanel((prev) => (prev === "jobs" ? null : "jobs"));
           return;
@@ -1254,7 +1252,6 @@ export const App: React.FC<AppProps> = ({
                 sessionId={sessionId ?? null}
                 captured={termCaptured}
                 onCapturedChange={setTermCaptured}
-                onExit={() => setScreen("chat")}
               />
             ) : screen === "files" ? (
               <FilesScreen

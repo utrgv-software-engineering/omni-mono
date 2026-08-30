@@ -84,7 +84,6 @@ type Harness = {
   stdin: FakeStdin;
   reached: ReturnType<typeof vi.fn>;
   onCapturedChange: ReturnType<typeof vi.fn>;
-  onExit: ReturnType<typeof vi.fn>;
   unmount: () => void;
 };
 
@@ -92,7 +91,6 @@ function mount(captured: boolean): Harness {
   const stdin = new FakeStdin();
   const reached = vi.fn();
   const onCapturedChange = vi.fn();
-  const onExit = vi.fn();
 
   // No client: the session never opens, so sendInput is a documented
   // no-op (session.ts guards on phase). Dispatch is what is under test.
@@ -107,7 +105,6 @@ function mount(captured: boolean): Harness {
           sessionId={null}
           captured={captured}
           onCapturedChange={onCapturedChange}
-          onExit={onExit}
         />
       </MouseProvider>
     </KeypressProvider>,
@@ -124,7 +121,6 @@ function mount(captured: boolean): Harness {
     stdin,
     reached,
     onCapturedChange,
-    onExit,
     unmount: () => instance.unmount(),
   };
 }
@@ -176,7 +172,7 @@ describe("terminal screen keyboard ownership", () => {
     expect(harness.reached).not.toHaveBeenCalled();
   });
 
-  it("releases to browsing on ctrl+], staying on the screen", async () => {
+  it("gives the keyboard back on ctrl+], staying on the screen", async () => {
     harness = mount(true);
     await settle();
 
@@ -184,19 +180,21 @@ describe("terminal screen keyboard ownership", () => {
     await settle();
 
     expect(harness.onCapturedChange).toHaveBeenCalledWith(false);
-    // Release is one level, not two: still on the terminal tab.
-    expect(harness.onExit).not.toHaveBeenCalled();
   });
 
-  it("leaves to chat on ctrl+] while browsing", async () => {
+  it("does nothing on ctrl+] once the keyboard is already back", async () => {
+    // ctrl+] means one thing: release. With nothing to release it is
+    // inert — it must not double as "leave the screen", and it must not
+    // fall through to the app either, or one key would mean two things
+    // depending on a mode the user cannot see.
     harness = mount(false);
     await settle();
 
     harness.stdin.press(CTRL_RBRACKET);
     await settle();
 
-    expect(harness.onExit).toHaveBeenCalled();
     expect(harness.onCapturedChange).not.toHaveBeenCalled();
+    expect(harness.reached).not.toHaveBeenCalled();
   });
 
   it("keeps alt+1..5 available as direct jumps while captured", async () => {

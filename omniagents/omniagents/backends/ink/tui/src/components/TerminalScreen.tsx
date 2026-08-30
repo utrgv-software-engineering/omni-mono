@@ -22,7 +22,6 @@ type Props = {
    *  can show it; App also clears it whenever you leave the screen. */
   captured: boolean;
   onCapturedChange: (captured: boolean) => void;
-  onExit: () => void;
 };
 
 // The Terminal screen (tab 5): a real shell, full height, in two states.
@@ -32,14 +31,18 @@ type Props = {
 // because you arrived on it (that was the old behavior, and it made the
 // tab cycle a one-way door: you could Tab in but never Tab out).
 //
-//   browsing (on arrival) — the app owns the keyboard. Tab cycles tabs,
-//     j/k/PgUp/PgDn scroll the scrollback, `i` or Enter captures.
-//   captured — the PTY owns every key, Tab included. ctrl+] releases
-//     back to browsing; alt+1..5 still jump straight to a screen.
+//   on arrival — the app owns the keyboard. Tab cycles tabs,
+//     j/k/PgUp/PgDn scroll the scrollback, `i` or Enter hands the
+//     keyboard to the shell.
+//   typing — the PTY owns every key, Tab included. ctrl+] hands the
+//     keyboard back; alt+1..5 still jump straight to a screen.
 //
-// ctrl+] therefore means one thing everywhere: back out one level.
-// Captured → browsing → chat. The shell keeps running through all of
-// it; these states only decide who the keyboard belongs to.
+// ctrl+] means exactly one thing and nothing else: give the keyboard
+// back. It is NOT a way to leave the screen — it used to double as a
+// chat toggle, which made one key mean two things depending on a state
+// the user could not see. Leaving is Tab and alt+1..5, the same as
+// every other screen. The shell keeps running throughout; these states
+// only decide who the keyboard belongs to.
 /**
  * The footer hint.
  *
@@ -64,18 +67,20 @@ export function terminalHint({
   exitCode: number | null;
   error?: string | null;
 }): string {
-  const backOut = captured ? "ctrl+] release" : "ctrl+] chat";
+  // ctrl+] only ever means "give the keyboard back", so it is only worth
+  // mentioning while the terminal has it.
+  const release = captured ? " · ctrl+] release" : "";
   if (phase === "exited") {
     const code = exitCode !== null ? ` ${exitCode}` : "";
     const why = error ? ` (${error})` : "";
-    return `exited${code}${why} · enter restart · ${backOut}`;
+    return `exited${code}${why} · enter restart`;
   }
   if (phase === "running" && outputBytes === 0 && !captured) {
-    return `attached · no output yet — is the shell alive? · ${backOut}`;
+    return "attached · no output yet — is the shell alive?";
   }
   return captured
-    ? `keys → shell (tab too) · ${backOut} · alt+1..5 screens · PgUp/PgDn scroll`
-    : `i or enter to type · tab cycles tabs · j/k PgUp/PgDn scroll · ${backOut}`;
+    ? `keys → shell (tab too)${release} · alt+1..5 screens · PgUp/PgDn scroll`
+    : "i or enter to type · tab cycles tabs · j/k PgUp/PgDn scroll";
 }
 
 export const TerminalScreen = ({
@@ -85,7 +90,6 @@ export const TerminalScreen = ({
   sessionId,
   captured,
   onCapturedChange,
-  onExit,
 }: Props) => {
   const { stdout } = useStdout();
   const width = stdout?.columns ?? 80;
@@ -132,8 +136,8 @@ export const TerminalScreen = ({
 
   // Only a *captured* terminal owns the input surface: release mouse
   // tracking so the user's terminal stops generating reports (which
-  // would forward into the shell as typed garbage). While browsing the
-  // app still owns the keyboard, so the wheel keeps scrolling normally.
+  // would forward into the shell as typed garbage). Until then the app
+  // still owns the keyboard, so the wheel keeps scrolling normally.
   useEffect(() => {
     if (!active || !captured) return;
     mouse.suspend();
@@ -155,8 +159,8 @@ export const TerminalScreen = ({
           : phase === "error"
             ? " · error"
             : captured
-              ? " · INPUT"
-              : " · browsing";
+              ? " · typing"
+              : "";
     actions.setStatusContext(`term${suffix}`);
     return () => actions.setStatusContext(null);
   }, [active, phase, captured, actions]);
@@ -174,13 +178,17 @@ export const TerminalScreen = ({
       const backOut = (key.ctrl && input === "]") || input === "\u001d";
 
       if (!captured) {
-        // Browsing: the app owns the keyboard. Only scrollback and the
-        // two transition chords are ours - everything else falls through
-        // (returning false), which is what keeps Tab cycling tabs and
-        // leaves ctrl+c, alt+digit and the rest behaving as they do on
-        // every other screen.
+        // The app owns the keyboard: only scrollback is ours, and
+        // everything else falls through (returning false), which keeps
+        // Tab cycling tabs and leaves ctrl+c, alt+digit and the rest
+        // behaving as they do on every other screen.
+        //
+        // ctrl+] is swallowed rather than declined. It has one meaning —
+        // give the keyboard back — and the keyboard is already given
+        // back, so it does nothing here. Letting it through would make
+        // one key mean "release" sometimes and "leave the screen" other
+        // times, which is the ambiguity it was renamed out of.
         if (backOut) {
-          onExit();
           return true;
         }
         if (phase === "exited" && key.return) {
@@ -297,7 +305,7 @@ export const TerminalScreen = ({
             color={captured ? Theme.stateActive : Theme.textChrome}
             bold={captured}
           >
-            {captured ? "● INPUT " : "○ browsing "}
+            {captured ? "● typing " : "○ press i to type "}
           </Text>
         )}
         <Text color={Theme.textChrome}>

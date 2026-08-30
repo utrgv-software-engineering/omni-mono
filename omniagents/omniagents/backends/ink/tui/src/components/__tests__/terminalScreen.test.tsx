@@ -128,7 +128,6 @@ describe("TerminalScreen end-to-end render", () => {
             sessionId="sess-1"
             captured={true}
             onCapturedChange={() => {}}
-            onExit={() => {}}
           />
         </MouseProvider>
       </KeypressProvider>,
@@ -161,26 +160,27 @@ describe("terminal footer hint", () => {
     error: null,
   };
 
-  it("labels ctrl+] by what it will actually do", () => {
+  it("mentions ctrl+] only when there is a keyboard to give back", () => {
+    // It has one meaning: release. Naming it while the app already owns
+    // the keyboard is what made it read as a navigation key.
     expect(terminalHint({ ...base, captured: true })).toContain(
       "ctrl+] release",
     );
-    expect(terminalHint({ ...base, captured: false })).toContain("ctrl+] chat");
+    expect(terminalHint({ ...base, captured: false })).not.toContain("ctrl+]");
   });
 
   it("says release even before the shell has printed anything", () => {
-    // The bug: the no-output branch was tested before `captured`, so a
-    // shell that had not printed its prompt yet showed `● INPUT` beside
-    // `ctrl+] chat` while the key actually released.
-    const hint = terminalHint({ ...base, captured: true, outputBytes: 0 });
-    expect(hint).toContain("ctrl+] release");
-    expect(hint).not.toContain("ctrl+] chat");
+    // The no-output branch used to be tested before `captured`, so a
+    // shell that had not printed its prompt yet advertised the wrong key.
+    expect(terminalHint({ ...base, captured: true, outputBytes: 0 })).toContain(
+      "ctrl+] release",
+    );
   });
 
-  it("keeps the is-it-alive nudge while browsing a silent shell", () => {
+  it("keeps the is-it-alive nudge for a shell nobody is typing into", () => {
     const hint = terminalHint({ ...base, captured: false, outputBytes: 0 });
     expect(hint).toContain("no output yet");
-    expect(hint).toContain("ctrl+] chat");
+    expect(hint).not.toContain("ctrl+]");
   });
 
   it("reports how an exited shell ended", () => {
