@@ -33,10 +33,9 @@ import { RichToolOutput } from "../utils/richToolOutput.js";
 import { VirtualizedList } from "./shared/VirtualizedList.js";
 import { useScrollViewport } from "./Scrollable.js";
 import {
-  errorDetailLines,
   groupTranscript,
   rendersNothing,
-  salientArg,
+  failureNote,
   spanLine,
   type BeatSegment,
   type TranscriptRow,
@@ -44,15 +43,11 @@ import {
 
 /**
  * Rows that belong to the same activity block and therefore pack tight
- * against each other. A blocking review is one: it sits under the beat
- * whose call it stopped, exactly as an error sits under the call that
- * failed, and a blank line on either side breaks that nesting.
+ * against each other. Only beats qualify now that nothing breaks out of
+ * a span — failures and verdicts are counts on the beat itself.
  */
 function isBeatRow(row: TranscriptRow | undefined): boolean {
-  return (
-    row !== undefined &&
-    (row.type === "beats" || row.type === "error" || row.type === "review")
-  );
+  return row !== undefined && row.type === "beats";
 }
 
 export const MessageListOptimized = React.memo(() => {
@@ -183,12 +178,10 @@ const TranscriptRowItem = React.memo<{
             segments={row.segments}
             running={row.running}
             reviewed={row.reviewed}
+            errors={row.errors}
+            rejections={row.rejections}
           />
         );
-      case "error":
-        return <ErrorRow message={row.message} />;
-      case "review":
-        return <ReviewRow message={row.message} />;
       default:
         return <MessageItem message={row.message} />;
     }
@@ -222,8 +215,11 @@ const BeatsRow = React.memo<{
   segments: BeatSegment[];
   running: ToolCallInfo[];
   reviewed: number;
-}>(({ segments, running, reviewed }) => {
+  errors: number;
+  rejections: number;
+}>(({ segments, running, reviewed, errors, rejections }) => {
   const line = spanLine(segments, running, reviewed);
+  const failures = failureNote(errors, rejections);
   const live = running.length > 0;
   return (
     <Box flexDirection="row">
@@ -234,9 +230,19 @@ const BeatsRow = React.memo<{
       ) : (
         <Text color={Theme.textChrome}>● </Text>
       )}
-      <Box flexGrow={1}>
+      <Box flexGrow={1} flexBasis={0} minWidth={0}>
         <Text color={Theme.textChrome} wrap="truncate-end">
           {line}
+        </Text>
+        {/* Toned, so a failure inside a folded span is still visible at
+            a glance without costing the run a row. */}
+        {failures && (
+          <Text color={Theme.stateFailed} wrap="truncate-end">
+            {line ? " · " : ""}
+            {failures}
+          </Text>
+        )}
+        <Text color={Theme.textChrome} wrap="truncate-end">
           {EXPAND_HINT}
         </Text>
       </Box>
@@ -245,92 +251,6 @@ const BeatsRow = React.memo<{
 });
 
 /** A failed or cancelled call — never aggregated, capped detail inline. */
-/**
- * A reviewer BLOCKED something — the plot, so it gets its own row next
- * to errors rather than folding into the span. The rationale rides here
- * because this is the row with room for it: on a folded review there is
- * nowhere to put it and no reason to.
- */
-const ReviewRow = React.memo<{ message: Message }>(({ message }) => {
-  const review = message.review;
-  if (!review) return null;
-  // Only a blocking review stopped something. The beat renderer never
-  // routes an allowing one here, but the mechanical view (ctrl+o) shows
-  // every message, and painting an approval in the blocked colour said
-  // the opposite of what happened.
-  const blocked = review.blocking;
-  return (
-    <Box flexDirection="column">
-      <Box flexDirection="row">
-        <Text>{ACTIVITY_INDENT}</Text>
-        <Box flexGrow={1} flexBasis={0} minWidth={0}>
-          {/* One shield: a reviewer acted. The colour is the verdict —
-              the same split Desktop draws with ShieldX vs ShieldCheck. */}
-          <Text color={blocked ? Theme.stateFailed : Theme.stateDone}>
-            {"⛊ "}
-          </Text>
-          <Text color={Theme.textPrimary} wrap="truncate-end">
-            {review.line}
-          </Text>
-        </Box>
-      </Box>
-      {review.rationale && (
-        <Box flexDirection="row">
-          <Text>{ACTIVITY_INDENT}</Text>
-          <Text>{"  "}</Text>
-          <Box flexGrow={1} flexBasis={0} minWidth={0}>
-            <Text color={Theme.textChrome} wrap="truncate-end">
-              {review.rationale}
-            </Text>
-          </Box>
-        </Box>
-      )}
-    </Box>
-  );
-});
-
-const ErrorRow = React.memo<{ message: Message }>(({ message }) => {
-  const toolCall = message.toolCall!;
-  const cancelled = toolCall.output === "[Cancelled]";
-  const salient = useMemo(() => salientArg(toolCall.input), [toolCall.input]);
-  const detail = useMemo(
-    () => (cancelled ? [] : errorDetailLines(toolCall)),
-    [cancelled, toolCall],
-  );
-  return (
-    <Box flexDirection="column">
-      <Box flexDirection="row">
-        <Text>{ACTIVITY_INDENT}</Text>
-        <Box flexGrow={1}>
-          <Text color={cancelled ? Theme.stateBlocked : Theme.stateFailed}>
-            ✗{" "}
-          </Text>
-          <Text color={Theme.textPrimary}>{toolCall.tool}</Text>
-          {salient && (
-            <Text color={Theme.textChrome} wrap="truncate-end">
-              {" "}
-              {salient}
-            </Text>
-          )}
-          {cancelled && (
-            <Text color={Theme.stateBlocked} italic>
-              {" "}
-              · cancelled by user
-            </Text>
-          )}
-        </Box>
-      </Box>
-      {detail.map((line, index) => (
-        <Box key={index} flexDirection="row">
-          <Text>{DETAIL_INDENT}</Text>
-          <Text color={Theme.textSecondary} wrap="truncate-end">
-            {line}
-          </Text>
-        </Box>
-      ))}
-    </Box>
-  );
-});
 
 // Individual message memoized with deep equality check
 const MessageItem = React.memo<{ message: Message }>(
@@ -451,6 +371,48 @@ const AssistantMessage = React.memo<{ message: Message }>(
  * (Previously these rendered zero rows: a silently compacted
  * conversation was invisible.)
  */
+/**
+ * One reviewer verdict, spelled out. Only the mechanical view (ctrl+o)
+ * renders these: the beat span counts verdicts rather than listing
+ * them, so this is where the rationale finally has room.
+ */
+const ReviewRow = React.memo<{ message: Message }>(({ message }) => {
+  const review = message.review;
+  if (!review) return null;
+  // Only a blocking review stopped something. The beat renderer never
+  // routes an allowing one here, but the mechanical view (ctrl+o) shows
+  // every message, and painting an approval in the blocked colour said
+  // the opposite of what happened.
+  const blocked = review.blocking;
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row">
+        <Text>{ACTIVITY_INDENT}</Text>
+        <Box flexGrow={1} flexBasis={0} minWidth={0}>
+          {/* One shield: a reviewer acted. The colour is the verdict —
+              the same split Desktop draws with ShieldX vs ShieldCheck. */}
+          <Text color={blocked ? Theme.stateFailed : Theme.stateDone}>
+            {"⛊ "}
+          </Text>
+          <Text color={Theme.textPrimary} wrap="truncate-end">
+            {review.line}
+          </Text>
+        </Box>
+      </Box>
+      {review.rationale && (
+        <Box flexDirection="row">
+          <Text>{DETAIL_INDENT}</Text>
+          <Box flexGrow={1} flexBasis={0} minWidth={0}>
+            <Text color={Theme.textChrome} wrap="truncate-end">
+              {review.rationale}
+            </Text>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  );
+});
+
 const SystemMessage = React.memo<{ message: Message }>(
   ({ message }) => {
     const firstLine = (message.content ?? "").split("\n")[0] ?? "";

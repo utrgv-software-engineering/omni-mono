@@ -125,11 +125,10 @@ describe("scroll-region rhythm", () => {
   });
 
   /**
-   * Activity rows nest: a beat, then the error or blocked review that
-   * belongs to it, then its detail. A blank line between them reads as
-   * three unrelated blocks instead of one, so they pack tight — and a
-   * blocking review must pack the same way an error does, being the same
-   * kind of row.
+   * Nothing breaks out of an activity span, so a run that reads, gets a
+   * call denied and hits an error is ONE row — with the failures toned
+   * onto it. The regression this guards is the opposite: a review or an
+   * error splitting the span into three blocks with blank lines between.
    */
   const activityFrame = async () => {
     const tool = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -144,6 +143,7 @@ describe("scroll-region rhythm", () => {
       },
     });
     useAppStore.getState().actions.setMessages([
+      { role: "assistant", content: "BEFORE" },
       tool("a"),
       {
         role: "review",
@@ -151,17 +151,17 @@ describe("scroll-region rhythm", () => {
         review: {
           kind: "guardian",
           blocking: true,
-          line: "REVIEW-DENIED",
-          rationale: "REVIEW-WHY",
+          line: "denied",
+          rationale: "why",
         },
       },
       tool("b"),
       tool("c", {
         tool: "bash",
-        output: "ERROR-BODY",
+        output: "boom",
         metadata: { display_type: "error" },
       }),
-      tool("d"),
+      { role: "assistant", content: "AFTER" },
     ] as never);
     const stdout = new TestStdout();
     instance = render(
@@ -179,18 +179,13 @@ describe("scroll-region rhythm", () => {
     return stdout.lastFrame();
   };
 
-  it("packs a blocked review against its beats, exactly as an error does", async () => {
+  it("folds a run's failures onto one activity row", async () => {
     const f = await activityFrame();
-    // The regression: a review was not in the tight set, so it took a
-    // blank line on each side while the error beside it took none.
-    expect(blanksBetween(f, "Read 1 file", "REVIEW-DENIED")).toBe(0);
-    expect(blanksBetween(f, "REVIEW-WHY", "Read 1 file")).toBe(0);
-    expect(blanksBetween(f, "bash", "Read 1 file")).toBe(0);
-  });
-
-  it("keeps a review's rationale on the row below it", async () => {
-    expect(
-      blanksBetween(await activityFrame(), "REVIEW-DENIED", "REVIEW-WHY"),
-    ).toBe(0);
+    expect(f).toContain("Read 2 files");
+    expect(f).toContain("1 failed");
+    expect(f).toContain("1 rejected");
+    // One row, so exactly one blank line to the prose on either side.
+    expect(blanksBetween(f, "BEFORE", "Read 2 files")).toBe(1);
+    expect(blanksBetween(f, "Read 2 files", "AFTER")).toBe(1);
   });
 });

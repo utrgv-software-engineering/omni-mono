@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   beatsLine,
   classifyToolCall,
-  errorDetailLines,
+  failureNote,
   groupTranscript,
   isErrorToolCall,
   rendersNothing,
@@ -146,7 +146,7 @@ describe("groupTranscript", () => {
     expect(line).toBe("Read 2 files, 1 tool call, 1 search");
   });
 
-  it("breaks errors and cancellations out; running calls stay in the span", () => {
+  it("counts errors and cancellations in the span; running calls stay in it", () => {
     const rows = groupTranscript([
       toolMsg({ call_id: "a", tool: "read_file" }),
       toolMsg({
@@ -158,15 +158,13 @@ describe("groupTranscript", () => {
       toolMsg({ call_id: "c", tool: "read_file", output: "[Cancelled]" }),
       toolMsg({ call_id: "d", tool: "grep", running: true }),
     ]);
-    expect(rows.map((r) => r.type)).toEqual([
-      "beats",
-      "error",
-      "error",
-      "beats",
-    ]);
-    const live = rows[3] as Extract<(typeof rows)[number], { type: "beats" }>;
-    expect(live.segments).toEqual([]);
-    expect(live.running).toHaveLength(1);
+    // One span: nothing breaks out any more. The two failures are a
+    // toned count on it, and the in-flight call keeps it live.
+    expect(rows).toHaveLength(1);
+    const beats = rows[0] as Extract<(typeof rows)[number], { type: "beats" }>;
+    expect(beats.errors).toBe(2);
+    expect(beats.segments).toEqual([{ verb: "read", count: 1 }]);
+    expect(beats.running).toHaveLength(1);
   });
 
   it("merges landed work and the in-flight call into one live span", () => {
@@ -258,13 +256,6 @@ describe("runningLabel", () => {
   });
 });
 
-describe("errorDetailLines", () => {
-  it("keeps the informative tail, capped", () => {
-    const output = ["a", "", "b", "c", "d", "e", ""].join("\n");
-    expect(errorDetailLines(tc({ output }), 3)).toEqual(["c", "d", "e"]);
-  });
-});
-
 describe("reviews in the transcript", () => {
   it("folds an allowing review into the span instead of splitting it", () => {
     // The defect this guards: as a `system` message a review flushed the
@@ -292,18 +283,43 @@ describe("reviews in the transcript", () => {
     expect(spanLine([{ verb: "read", count: 1 }], [], 0)).toBe("Read 1 file");
   });
 
-  it("breaks a blocking review out into its own row", () => {
+  it("counts a blocking review into the span rather than splitting it", () => {
     const rows = groupTranscript([
       toolMsg({ call_id: "a" }),
       reviewMsg(true, "deletes the repo"),
       toolMsg({ call_id: "b" }),
     ]);
-    expect(rows.map((r) => r.type)).toEqual(["beats", "review", "beats"]);
+    expect(rows).toHaveLength(1);
+    const beats = rows[0] as Extract<(typeof rows)[number], { type: "beats" }>;
+    expect(beats.rejections).toBe(1);
+    expect(beats.reviewed).toBe(0);
+    expect(beats.segments).toEqual([{ verb: "read", count: 2 }]);
   });
 
-  it("keeps the rationale on the blocking row", () => {
-    const rows = groupTranscript([reviewMsg(true, "deletes the repo")]);
-    const row = rows[0] as Extract<(typeof rows)[number], { type: "review" }>;
-    expect(row.message.review?.rationale).toBe("deletes the repo");
+  it("counts a failed call into the span rather than splitting it", () => {
+    // A run that tries, fails and retries is ordinary agent behaviour.
+    // It used to cost a broken-out row per attempt.
+    const rows = groupTranscript([
+      toolMsg({ call_id: "a" }),
+      toolMsg({ call_id: "b", metadata: { display_type: "error" } }),
+      toolMsg({ call_id: "c" }),
+    ]);
+    expect(rows).toHaveLength(1);
+    const beats = rows[0] as Extract<(typeof rows)[number], { type: "beats" }>;
+    expect(beats.errors).toBe(1);
+    expect(beats.segments).toEqual([{ verb: "read", count: 2 }]);
+  });
+
+  it("counts a cancelled call as a failure too", () => {
+    const rows = groupTranscript([toolMsg({ output: "[Cancelled]" })]);
+    const beats = rows[0] as Extract<(typeof rows)[number], { type: "beats" }>;
+    expect(beats.errors).toBe(1);
+  });
+
+  it("words the toned half of the span line", () => {
+    expect(failureNote(0, 0)).toBe("");
+    expect(failureNote(2, 0)).toBe("2 failed");
+    expect(failureNote(0, 1)).toBe("1 rejected");
+    expect(failureNote(2, 1)).toBe("2 failed · 1 rejected");
   });
 });

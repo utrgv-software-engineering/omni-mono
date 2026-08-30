@@ -9,11 +9,14 @@
  *   consecutive same-verb calls merge into counted segments, and the
  *   span renders as one dim line (`✎ edited 3 files · ⌕ read 2`);
  * - a prose/system message flushes the span;
- * - errors and cancellations break out of aggregation into their own
- *   row (the failed command is the plot — never hide it);
- * - a reviewer's verdict follows the same rule: a BLOCKING one (guardian
- *   denial, completion rejection) stopped something and breaks out, an
- *   allowing one is machinery and folds into the span as a count;
+ * - NOTHING breaks out of the span. A failed call, a cancelled one, a
+ *   guardian denial: they are all still machinery, and a run that tries
+ *   something, fails and retries is ordinary agent behaviour rather than
+ *   an event the transcript should stop for. They fold in as toned
+ *   counts — `Read 3 files · 1 failed` — and ctrl+o is where the detail
+ *   lives. This mirrors Omni Desktop, whose activity chain counts
+ *   failures and rejections into its collapsed header and keeps the
+ *   per-call detail behind the expander;
  * - the currently-running call breaks out with its salient argument so
  *   live progress stays visible.
  */
@@ -149,15 +152,17 @@ export type TranscriptRow =
       /** Calls still in flight — the span renders live while non-empty. */
       running: ToolCallInfo[];
       /**
-       * Non-blocking reviews that happened inside this span. Rendered as
-       * one trailing count, never as rows: under "Approve for me" there
-       * is one per tool call, and the whole point of the span is that a
-       * run's machinery costs a line, not a line each.
+       * Reviews that happened inside this span. Rendered as one trailing
+       * count, never as rows: under "Approve for me" there is one per
+       * tool call, and the whole point of the span is that a run's
+       * machinery costs a line, not a line each.
        */
       reviewed: number;
-    }
-  | { type: "error"; key: string; message: Message }
-  | { type: "review"; key: string; message: Message };
+      /** Calls that failed or were cancelled — toned, never hidden. */
+      errors: number;
+      /** Guardian denials and completion rejections. */
+      rejections: number;
+    };
 
 const VERB_NOUN: Record<ActivityVerb, [string, string]> = {
   read: ["read %n file", "read %n files"],
@@ -259,10 +264,23 @@ export function spanLine(
   return `${head} · ${live}`;
 }
 
-/** `· 3 reviewed` — the guardian's ordinary work, as one token. */
+/** `3 reviewed` — the guardian's ordinary work, as one token. */
 export function reviewedSuffix(reviewed: number): string {
   if (reviewed <= 0) return "";
   return `${reviewed} reviewed`;
+}
+
+/**
+ * The toned half of a span line: what went wrong inside it. Kept
+ * separate from `spanLine` because it renders in a different colour —
+ * the same split Desktop draws between its group summary and its
+ * `formatGroupFailures`.
+ */
+export function failureNote(errors: number, rejections: number): string {
+  const parts: string[] = [];
+  if (errors > 0) parts.push(`${errors} failed`);
+  if (rejections > 0) parts.push(`${rejections} rejected`);
+  return parts.join(" · ");
 }
 
 function toolCallKey(message: Message, index: number): string {
@@ -302,10 +320,16 @@ export function groupTranscript(messages: Message[]): TranscriptRow[] {
   let spanRunning: ToolCallInfo[] = [];
   let spanKey: string | null = null;
   let spanReviewed = 0;
+  let spanErrors = 0;
+  let spanRejections = 0;
 
   const flush = () => {
     const hasContent =
-      spanCounts.size > 0 || spanRunning.length > 0 || spanReviewed > 0;
+      spanCounts.size > 0 ||
+      spanRunning.length > 0 ||
+      spanReviewed > 0 ||
+      spanErrors > 0 ||
+      spanRejections > 0;
     if (hasContent && spanKey !== null) {
       rows.push({
         type: "beats",
@@ -316,11 +340,15 @@ export function groupTranscript(messages: Message[]): TranscriptRow[] {
         })),
         running: spanRunning,
         reviewed: spanReviewed,
+        errors: spanErrors,
+        rejections: spanRejections,
       });
     }
     spanCounts = new Map();
     spanRunning = [];
     spanReviewed = 0;
+    spanErrors = 0;
+    spanRejections = 0;
     spanKey = null;
   };
 
@@ -328,19 +356,14 @@ export function groupTranscript(messages: Message[]): TranscriptRow[] {
     if (rendersNothing(message)) return;
 
     if (message.role === "review" && message.review) {
+      // Never flushes: a verdict belongs to the same beat as the call it
+      // judged, whichever way it went.
       if (message.review.blocking) {
-        flush();
-        rows.push({
-          type: "review",
-          key: `review-${index}`,
-          message,
-        });
+        spanRejections += 1;
       } else {
-        // Deliberately does NOT flush: an allowed call is part of the
-        // same beat as the call it allowed.
         spanReviewed += 1;
-        spanKey ??= `review-${index}`;
       }
+      spanKey ??= `review-${index}`;
       return;
     }
 
@@ -356,12 +379,10 @@ export function groupTranscript(messages: Message[]): TranscriptRow[] {
     const toolCall = message.toolCall;
 
     if (isErrorToolCall(toolCall) || toolCall.output === "[Cancelled]") {
-      flush();
-      rows.push({
-        type: "error",
-        key: `err-${toolCallKey(message, index)}`,
-        message,
-      });
+      // Counted, not broken out. The failure still shows — toned, in the
+      // span line — but a retry loop no longer costs three rows a try.
+      spanErrors += 1;
+      spanKey ??= toolCallKey(message, index);
       return;
     }
     if (spanKey === null) spanKey = toolCallKey(message, index);
@@ -374,14 +395,4 @@ export function groupTranscript(messages: Message[]): TranscriptRow[] {
   });
   flush();
   return rows;
-}
-
-/** Most-informative tail of a failed call's output, capped. */
-export function errorDetailLines(toolCall: ToolCallInfo, cap = 4): string[] {
-  const output = toolCall.output ?? "";
-  const lines = output
-    .split("\n")
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0);
-  return lines.slice(-cap);
 }
