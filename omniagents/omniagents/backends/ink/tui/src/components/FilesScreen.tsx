@@ -453,10 +453,15 @@ export const FilesScreen = ({
     for (const row of wrapPlain(preview.path, previewWidth)) {
       lines.push({ text: row, color: Theme.textPrimary, bold: true });
     }
-    const meta = [formatSize(preview.size)];
+    // No size: it is not what you came to the preview to read, and it
+    // pushed a metadata line under every filename. What remains is only
+    // what changes how you read the content below it.
+    const meta: string[] = [];
     if (preview.binary) meta.push("binary");
     if (preview.truncated) meta.push(`first ${formatSize(PREVIEW_CAP)} shown`);
-    lines.push({ text: meta.join(" · "), color: Theme.textChrome });
+    if (meta.length > 0) {
+      lines.push({ text: meta.join(" · "), color: Theme.textChrome });
+    }
     lines.push({ text: "", color: Theme.textChrome });
     if (preview.binary) {
       lines.push({
