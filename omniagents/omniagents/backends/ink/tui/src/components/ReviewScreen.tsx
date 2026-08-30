@@ -559,7 +559,7 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
             {/* minWidth 0: without it the truncating text's intrinsic
                 width is a floor, an overflowing row wraps to height 2,
                 and the cursor gets squeezed into a phantom blank line. */}
-            <Box flexGrow={1} minWidth={0}>
+            <Box flexGrow={1} flexBasis={0} minWidth={0}>
               <RowText
                 color={isCurrent ? Theme.textPrimary : Theme.textChrome}
                 wrap="truncate-start"
@@ -612,7 +612,7 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
           >
             ▌ {files[fileIndex] ? fileBadge(files[fileIndex]!).text : "M "}{" "}
           </Text>
-          <Box flexGrow={1} minWidth={0}>
+          <Box flexGrow={1} flexBasis={0} minWidth={0}>
             <Text color={Theme.textPrimary} wrap="truncate-start">
               {current.path}
             </Text>

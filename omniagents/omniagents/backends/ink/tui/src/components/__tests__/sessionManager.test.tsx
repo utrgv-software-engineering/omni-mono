@@ -69,6 +69,25 @@ const KEY = {
 
 const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Poll until `check` stops throwing. A fixed sleep raced the component's
+ * initial load — the RPC stub resolves on a microtask but the effect
+ * chain behind it does not, so a busy machine failed the assertion about
+ * one run in three.
+ */
+async function waitFor(check: () => void, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      check();
+      return;
+    } catch (error) {
+      if (Date.now() > deadline) throw error;
+      await settle(10);
+    }
+  }
+}
+
 const ALL_GRANTS = [
   "list_threads",
   "search_threads",
@@ -200,7 +219,7 @@ describe("SessionManager surface selection", () => {
     stub.listThreads.mockResolvedValueOnce({ threads: [] });
     const onEmpty = vi.fn();
     await mount(stub, { onEmpty });
-    expect(onEmpty).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onEmpty).toHaveBeenCalledTimes(1));
   });
 
   it("does not report empty when there are conversations", async () => {

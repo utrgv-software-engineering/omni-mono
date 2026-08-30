@@ -99,4 +99,25 @@ describe("selected-row pattern", () => {
     }
     expect(offenders, "use RowText inside a SelectableRow").toEqual([]);
   });
+
+  it("gives every truncating column an explicit flexBasis", () => {
+    // A `flexGrow` column with the default `auto` basis starts from its
+    // text's own width. A name longer than the row never shrinks far
+    // enough before Ink measures it, so `wrap` never gets to truncate and
+    // the row silently becomes two lines — a blank gap in the sidebar.
+    const offenders: string[] = [];
+    for (const { rel, source } of files) {
+      const lines = source.split("\n");
+      lines.forEach((line, i) => {
+        if (!line.includes("flexGrow")) return;
+        if (!line.includes("minWidth={0}")) return;
+        if (line.includes("flexBasis")) return;
+        offenders.push(`${rel}:${i + 1}`);
+      });
+    }
+    expect(
+      offenders,
+      "a truncating column needs flexBasis={0} or it wraps instead",
+    ).toEqual([]);
+  });
 });

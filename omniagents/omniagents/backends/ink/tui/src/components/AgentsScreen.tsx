@@ -244,7 +244,7 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
         )}
         {/* minWidth 0 — see ReviewScreen sidebar: overflowing rows
             otherwise wrap to height 2 and eat the cursor. */}
-        <Box flexGrow={1} minWidth={0}>
+        <Box flexGrow={1} flexBasis={0} minWidth={0}>
           <RowText
             color={isSelected ? Theme.textPrimary : Theme.textChrome}
             wrap="truncate-end"

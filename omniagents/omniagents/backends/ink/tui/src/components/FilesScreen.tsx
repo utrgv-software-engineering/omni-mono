@@ -746,7 +746,7 @@ export const FilesScreen = ({
                   The row deliberately carries no trailing column: a size
                   here got squeezed by the deeper indents and wrapped at
                   its own space ("12.3" / "KB"), splitting the row. */}
-              <Box flexGrow={1} minWidth={0}>
+              <Box flexGrow={1} flexBasis={0} minWidth={0}>
                 <RowText
                   color={isCurrent ? Theme.textPrimary : Theme.textSecondary}
                   wrap="truncate-end"
@@ -824,7 +824,7 @@ export const FilesScreen = ({
                 return (
                   <Box key={row}>
                     <Text color={Theme.textChrome}>{gutter} </Text>
-                    <Box flexGrow={1} minWidth={0}>
+                    <Box flexGrow={1} flexBasis={0} minWidth={0}>
                       <Text color={Theme.textSecondary} wrap="truncate-end">
                         {shown.length > 0 ? shown : " "}
                       </Text>
@@ -845,7 +845,7 @@ export const FilesScreen = ({
               return (
                 <Box key={row}>
                   <Text color={Theme.focus}>{gutter} </Text>
-                  <Box flexGrow={1} minWidth={0}>
+                  <Box flexGrow={1} flexBasis={0} minWidth={0}>
                     <Text
                       color={Theme.textPrimary}
                       wrap="truncate-end"
@@ -870,7 +870,7 @@ export const FilesScreen = ({
               {"gutter" in line && line.gutter != null && (
                 <Text color={Theme.textChrome}>{line.gutter} </Text>
               )}
-              <Box flexGrow={1} minWidth={0}>
+              <Box flexGrow={1} flexBasis={0} minWidth={0}>
                 <Text
                   color={line.color}
                   bold={line.bold}
