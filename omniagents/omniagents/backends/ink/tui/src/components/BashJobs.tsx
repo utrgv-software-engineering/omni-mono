@@ -8,6 +8,7 @@ import {
   useThinking,
 } from "../store/appStore.js";
 import type { BashJobSummary } from "../store/appStore.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const RUNNING_GLYPH = "◐";
@@ -279,10 +280,7 @@ export const BashJobs = React.memo(
             ? COMMAND_TRUNCATE_FOCUSED
             : COMMAND_TRUNCATE_UNFOCUSED;
           return (
-            <Box key={j.job_id}>
-              <Text color={Theme.focus}>
-                {isSelected ? "▶ " : "  "}
-              </Text>
+            <SelectableRow key={j.job_id} selected={isSelected}>
               <Text color={statusColor(j)}>{statusGlyph(j)} </Text>
               <Text color={Theme.textChrome}>{j.job_id} </Text>
               <Text
@@ -296,7 +294,7 @@ export const BashJobs = React.memo(
                 {shortCommand(j.command, max)}
               </Text>
               <Text color={Theme.textChrome}> {tail}</Text>
-            </Box>
+            </SelectableRow>
           );
         })}
 

@@ -11,6 +11,7 @@ import {
   windowStart,
   type ModelRow,
 } from "./model-picker-model.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const WINDOW = 8;
@@ -174,10 +175,7 @@ export const ModelPickerPanel = React.memo(
         {visible.map((row, i) => {
           const isSelected = start + i === index;
           return (
-            <Box key={row.id}>
-              <Text color={Theme.focus}>
-                {isSelected ? "▶ " : "  "}
-              </Text>
+            <SelectableRow key={row.id} selected={isSelected}>
               <Text
                 color={
                   row.active
@@ -208,7 +206,7 @@ export const ModelPickerPanel = React.memo(
               {row.note && (
                 <Text color={Theme.stateBlocked}> ⚠ {row.note}</Text>
               )}
-            </Box>
+            </SelectableRow>
           );
         })}
 

@@ -14,6 +14,7 @@ import {
   type ArtifactEntry,
 } from "./artifact-model.js";
 import { windowStart } from "./model-picker-model.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 /**
@@ -214,13 +215,15 @@ export const ArtifactsPanel = React.memo<Props>(
             const position = start + i;
             const isSelected = position === index;
             return (
-              <Box key={`${entry.artifactId ?? "anon"}-${position}`}>
-                <Text color={Theme.focus}>{isSelected ? "▶ " : "  "}</Text>
+              <SelectableRow
+                key={`${entry.artifactId ?? "anon"}-${position}`}
+                selected={isSelected}
+              >
                 <Text color={Theme.textPrimary} bold={isSelected}>
                   {entry.title || "(untitled)"}
                 </Text>
                 <Text color={Theme.textChrome}> · {artifactMeta(entry)}</Text>
-              </Box>
+              </SelectableRow>
             );
           })}
 

@@ -17,6 +17,7 @@ import {
   type ReviewerOption,
   type ReviewerSource,
 } from "./reviewer-model.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 /**
@@ -220,8 +221,7 @@ export const ReviewerPanel = React.memo<Props>(
           const isSelected = i === index;
           const isActive = option.value === current;
           return (
-            <Box key={option.value}>
-              <Text color={Theme.focus}>{isSelected ? "▶ " : "  "}</Text>
+            <SelectableRow key={option.value} selected={isSelected}>
               <Text
                 color={isActive ? Theme.stateDone : Theme.textPrimary}
                 bold={isActive}
@@ -232,7 +232,7 @@ export const ReviewerPanel = React.memo<Props>(
                 <Text color={Theme.stateDone}> ✔ {sourceNote(source)}</Text>
               )}
               <Text color={Theme.textChrome}> · {option.hint}</Text>
-            </Box>
+            </SelectableRow>
           );
         })}
 

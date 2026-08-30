@@ -9,6 +9,7 @@ import { windowStart } from "./model-picker-model.js";
 import { clampScroll } from "./git-model.js";
 import { buildWorkerDetail } from "./agents-model.js";
 import { EmptyState } from "./shared/EmptyState.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const WIDE_BREAKPOINT = 90;
@@ -231,8 +232,7 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
   const rows = visible.map((worker, i) => {
     const isSelected = listStart + i === index;
     return (
-      <Box key={worker.subagent_id}>
-        <Text color={Theme.focus}>{isSelected ? "▶ " : "  "}</Text>
+      <SelectableRow key={worker.subagent_id} selected={isSelected}>
         {worker.status === "running" ? (
           <Text color={Theme.stateActive}>
             <Spinner type="dots" />{" "}
@@ -254,7 +254,7 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
           </Text>
         </Box>
         <Text color={Theme.textChrome}> {elapsed(worker, nowMs)}</Text>
-      </Box>
+      </SelectableRow>
     );
   });
 

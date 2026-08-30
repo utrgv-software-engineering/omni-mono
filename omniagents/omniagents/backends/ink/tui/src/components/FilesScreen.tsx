@@ -32,6 +32,7 @@ import {
   type EditorBuffer,
 } from "./editor-model.js";
 import { EmptyState } from "./shared/EmptyState.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const SIDEBAR_BREAKPOINT = 90;
@@ -714,8 +715,11 @@ export const FilesScreen = ({
           const glyph =
             row.type === "directory" ? (row.expanded ? "▾ " : "▸ ") : "  ";
           return (
-            <Box key={row.path}>
-              <Text color={Theme.focus}>{isCurrent ? "▶" : " "}</Text>
+            <SelectableRow
+              key={row.path}
+              selected={isCurrent}
+              focused={pane === "tree"}
+            >
               <Text color={Theme.textChrome}>
                 {"  ".repeat(row.depth)}
               </Text>
@@ -742,7 +746,7 @@ export const FilesScreen = ({
                   {row.name}
                 </Text>
               </Box>
-            </Box>
+            </SelectableRow>
           );
         })
       )}

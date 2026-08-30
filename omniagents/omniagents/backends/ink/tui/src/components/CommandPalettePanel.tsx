@@ -11,6 +11,7 @@ import {
   type CommandRow,
 } from "./command-palette-model.js";
 import { windowStart } from "./model-picker-model.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const WINDOW = 8;
@@ -172,8 +173,10 @@ export const CommandPalettePanel = React.memo<Props>(
         {visible.map((row, i) => {
           const isSelected = start + i === cursor;
           return (
-            <Box key={`${row.source}:${row.name}`}>
-              <Text color={Theme.focus}>{isSelected ? "▶ " : "  "}</Text>
+            <SelectableRow
+              key={`${row.source}:${row.name}`}
+              selected={isSelected}
+            >
               <Text color={Theme.textPrimary} bold={isSelected}>
                 /{row.name}
               </Text>
@@ -186,7 +189,7 @@ export const CommandPalettePanel = React.memo<Props>(
               {row.description && (
                 <Text color={Theme.textChrome}> · {row.description}</Text>
               )}
-            </Box>
+            </SelectableRow>
           );
         })}
 

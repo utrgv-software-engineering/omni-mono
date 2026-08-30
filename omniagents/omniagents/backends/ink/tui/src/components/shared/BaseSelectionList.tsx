@@ -12,6 +12,7 @@ import React, { useState } from "react";
 import { Box, Text } from "ink";
 import { useKeypress } from "../../hooks/useKeypress.js";
 import { KeypressPriority } from "../../contexts/KeypressContext.js";
+import { SelectableRow } from "./SelectableRow.js";
 import { Theme } from "../../theme.js";
 
 export interface SelectionOption<V extends string> {
@@ -78,17 +79,17 @@ export function BaseSelectionList<V extends string>({
   return (
     <Box flexDirection="column">
       {options.map((option, index) => (
-        <Box key={option.value}>
+        <SelectableRow key={option.value} selected={index === selectedIndex}>
           {index === selectedIndex ? (
             <Text bold color={Theme.focus}>
-              ▶ {option.title} - {option.description}
+              {option.title} - {option.description}
             </Text>
           ) : (
             <Text color={Theme.textChrome}>
               {option.title} - {option.description}
             </Text>
           )}
-        </Box>
+        </SelectableRow>
       ))}
     </Box>
   );

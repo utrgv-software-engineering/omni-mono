@@ -23,6 +23,7 @@ import {
   type SessionRow,
 } from "./session-manager-model.js";
 import { windowStart } from "./model-picker-model.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 /**
@@ -474,8 +475,7 @@ export const SessionManager = React.memo<Props>(
             const isSelected = start + i === index;
             return (
               <Box key={row.id} flexDirection="column">
-                <Box>
-                  <Text color={Theme.focus}>{isSelected ? "▶ " : "  "}</Text>
+                <SelectableRow selected={isSelected}>
                   <Text color={Theme.stateBlocked}>
                     {row.pinned ? "★ " : "  "}
                   </Text>
@@ -497,7 +497,7 @@ export const SessionManager = React.memo<Props>(
                       ⚠ {row.pendingAttention}
                     </Text>
                   )}
-                </Box>
+                </SelectableRow>
                 {row.preview && (
                   <Box paddingLeft={4}>
                     <Text color={Theme.textSecondary}>

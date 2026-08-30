@@ -58,6 +58,18 @@ export const Theme = {
   borderFocus: palette.purple,
   borderBlocking: palette.yellow,
 
+  // Selected row in any list or sidebar. Deliberately a MUTED band
+  // rather than a saturated fill: every list already picks its own
+  // foreground per row (state colors, dimmed paths, diff green/red), and
+  // a bright background would have required re-checking contrast at
+  // fourteen call sites. bgHighlight sits one step off the terminal
+  // ground, so every existing foreground still reads on it.
+  //
+  // The band is never the ONLY signal — see shared/SelectableRow: the
+  // glyph and bold ride along, because chalk drops backgrounds entirely
+  // under NO_COLOR and a colour-only selection would vanish there.
+  selectionBg: palette.bgHighlight,
+
   // Filled bars (top tabs / bottom status)
   barBg: palette.bgHighlight,
   barActiveBg: palette.blue,

@@ -21,6 +21,7 @@ import {
   type GitFileRow,
 } from "./git-model.js";
 import { EmptyState } from "./shared/EmptyState.js";
+import { SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const PAGE = 12;
@@ -546,8 +547,11 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
         const badge = fileBadge(file);
         const hasStats = file.additions !== null || file.deletions !== null;
         return (
-          <Box key={file.path}>
-            <Text color={Theme.focus}>{isCurrent ? "▶" : " "}</Text>
+          <SelectableRow
+            key={file.path}
+            selected={isCurrent}
+            focused={pane === "files"}
+          >
             <Text color={badge.color}>{badge.text} </Text>
             {/* minWidth 0: without it the truncating text's intrinsic
                 width is a floor, an overflowing row wraps to height 2,
@@ -578,7 +582,7 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
                 </Text>
               </Box>
             )}
-          </Box>
+          </SelectableRow>
         );
       })}
       {files.length > sidebarRows && (
