@@ -14,7 +14,7 @@ import { render } from "ink";
 import { WebSocketServer, type WebSocket as ServerSocket } from "ws";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
 import { MouseProvider } from "../../contexts/MouseContext.js";
-import { TerminalScreen } from "../TerminalScreen.js";
+import { TerminalScreen, terminalHint } from "../TerminalScreen.js";
 import { terminalSession } from "../../terminal/session.js";
 import type { RPCClient } from "../../rpc/client.js";
 
@@ -149,5 +149,46 @@ describe("TerminalScreen end-to-end render", () => {
     // The prompt must be IN THE RENDERED FRAME, not just in the grid.
     expect(plain).toContain("omniagents");
     expect(plain).toContain("❯");
+  });
+});
+
+describe("terminal footer hint", () => {
+  const base = {
+    phase: "running",
+    captured: false,
+    outputBytes: 10,
+    exitCode: null,
+    error: null,
+  };
+
+  it("labels ctrl+] by what it will actually do", () => {
+    expect(terminalHint({ ...base, captured: true })).toContain(
+      "ctrl+] release",
+    );
+    expect(terminalHint({ ...base, captured: false })).toContain("ctrl+] chat");
+  });
+
+  it("says release even before the shell has printed anything", () => {
+    // The bug: the no-output branch was tested before `captured`, so a
+    // shell that had not printed its prompt yet showed `● INPUT` beside
+    // `ctrl+] chat` while the key actually released.
+    const hint = terminalHint({ ...base, captured: true, outputBytes: 0 });
+    expect(hint).toContain("ctrl+] release");
+    expect(hint).not.toContain("ctrl+] chat");
+  });
+
+  it("keeps the is-it-alive nudge while browsing a silent shell", () => {
+    const hint = terminalHint({ ...base, captured: false, outputBytes: 0 });
+    expect(hint).toContain("no output yet");
+    expect(hint).toContain("ctrl+] chat");
+  });
+
+  it("reports how an exited shell ended", () => {
+    expect(terminalHint({ ...base, phase: "exited", exitCode: 130 })).toContain(
+      "exited 130 · enter restart",
+    );
+    expect(
+      terminalHint({ ...base, phase: "exited", exitCode: 1, error: "boom" }),
+    ).toContain("(boom)");
   });
 });

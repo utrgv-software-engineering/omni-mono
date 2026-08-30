@@ -40,6 +40,44 @@ type Props = {
 // ctrl+] therefore means one thing everywhere: back out one level.
 // Captured → browsing → chat. The shell keeps running through all of
 // it; these states only decide who the keyboard belongs to.
+/**
+ * The footer hint.
+ *
+ * `ctrl+]` backs out exactly one level, so what it is labelled depends on
+ * one thing: whether the terminal is captured. That label used to be
+ * written into four separate branches and only two of them consulted
+ * `captured` — the "no output yet" branch was tested FIRST, so a shell
+ * that had not printed its prompt yet showed `● INPUT` beside
+ * `ctrl+] chat` while the key actually released. Derived in one place
+ * now, so the label cannot disagree with the handler.
+ */
+export function terminalHint({
+  phase,
+  captured,
+  outputBytes,
+  exitCode,
+  error,
+}: {
+  phase: string;
+  captured: boolean;
+  outputBytes: number;
+  exitCode: number | null;
+  error?: string | null;
+}): string {
+  const backOut = captured ? "ctrl+] release" : "ctrl+] chat";
+  if (phase === "exited") {
+    const code = exitCode !== null ? ` ${exitCode}` : "";
+    const why = error ? ` (${error})` : "";
+    return `exited${code}${why} · enter restart · ${backOut}`;
+  }
+  if (phase === "running" && outputBytes === 0 && !captured) {
+    return `attached · no output yet — is the shell alive? · ${backOut}`;
+  }
+  return captured
+    ? `keys → shell (tab too) · ${backOut} · alt+1..5 screens · PgUp/PgDn scroll`
+    : `i or enter to type · tab cycles tabs · j/k PgUp/PgDn scroll · ${backOut}`;
+}
+
 export const TerminalScreen = ({
   active,
   height,
@@ -263,13 +301,13 @@ export const TerminalScreen = ({
           </Text>
         )}
         <Text color={Theme.textChrome}>
-          {phase === "exited"
-            ? `exited${terminalSession.exitCode !== null ? ` ${terminalSession.exitCode}` : ""}${terminalSession.error ? ` (${terminalSession.error})` : ""} · enter restart · ctrl+] chat`
-            : phase === "running" && terminalSession.outputBytes === 0
-              ? "attached · no output yet — is the shell alive? · ctrl+] chat"
-              : captured
-                ? "keys → shell (tab too) · ctrl+] release · alt+1..5 screens · PgUp/PgDn scroll"
-                : "i or enter to type · tab cycles tabs · j/k PgUp/PgDn scroll · ctrl+] chat"}
+          {terminalHint({
+            phase,
+            captured,
+            outputBytes: terminalSession.outputBytes,
+            exitCode: terminalSession.exitCode,
+            error: terminalSession.error,
+          })}
         </Text>
       </Box>
     </Box>
