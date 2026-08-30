@@ -13,7 +13,11 @@ import type {
   ConversationItem,
   ConversationToolKind,
 } from "../types/conversation.js";
-import type { Message, ToolCallInfo } from "./appStore.js";
+import type { Message, ReviewInfo, ToolCallInfo } from "./appStore.js";
+import {
+  guardianReviewLine,
+  workflowReviewLine,
+} from "../components/reviewer-model.js";
 
 const TERMINAL_STATUSES = ["completed", "failed", "cancelled"] as const;
 
@@ -64,6 +68,69 @@ function toolCallInfo(item: ConversationItem): ToolCallInfo {
   };
 }
 
+/**
+ * Rebuild a guardian verdict from a recorded approval item, or null when
+ * the item is an ordinary prompt rather than a reviewed one.
+ *
+ * The wording goes through the same `guardianReviewLine` the live event
+ * uses, so a resumed conversation is character-identical to the one that
+ * was open.
+ */
+function guardianReviewFromItem(item: ConversationItem): ReviewInfo | null {
+  const outcome = item.content.outcome;
+  if (outcome !== "allow" && outcome !== "deny") return null;
+  const line = guardianReviewLine({
+    callId:
+      typeof item.content.call_id === "string"
+        ? item.content.call_id
+        : item.item_id,
+    tool: text(item.content.tool) || "tool",
+    reviewer: text(item.content.reviewer) || "reviewer",
+    outcome,
+    kind: item.content.approval_kind === "mcp" ? "mcp" : "tool",
+    serverLabel: text(item.content.server_label) || undefined,
+    riskLevel: text(item.content.risk_level) || undefined,
+    rationale: text(item.content.rationale) || undefined,
+  });
+  return {
+    kind: "guardian",
+    blocking: outcome === "deny",
+    line,
+    rationale: text(item.content.rationale) || undefined,
+  };
+}
+
+const WORKFLOW_OUTCOMES = [
+  "reject",
+  "accept_unverified",
+  "escalated",
+  "accept_verified",
+] as const;
+
+/** The same, for a recorded plan-step completion review. */
+function workflowReviewFromItem(item: ConversationItem): ReviewInfo | null {
+  const outcome = item.content.outcome;
+  if (
+    typeof outcome !== "string" ||
+    !(WORKFLOW_OUTCOMES as readonly string[]).includes(outcome)
+  ) {
+    return null;
+  }
+  const line = workflowReviewLine({
+    taskId: text(item.content.task_id) || "?",
+    subject: text(item.content.subject),
+    reviewer: text(item.content.reviewer) || "reviewer",
+    outcome: outcome as (typeof WORKFLOW_OUTCOMES)[number],
+    rationale: text(item.content.rationale) || undefined,
+  });
+  return {
+    kind: "workflow",
+    blocking: outcome === "reject",
+    line,
+    rationale: text(item.content.rationale) || undefined,
+  };
+}
+
 function normalizeOne(item: ConversationItem): Message | null {
   switch (item.kind) {
     case "user_message":
@@ -81,9 +148,25 @@ function normalizeOne(item: ConversationItem): Message | null {
         content: "",
         toolCall: toolCallInfo(item),
       };
-    case "approval":
+    case "approval": {
+      // A reviewer-resolved approval carries `outcome`, never `decision`:
+      // the prompt was never broadcast, so the recorder appends the
+      // verdict as its own terminal item (recorder._on_tool_approval_
+      // reviewed). It must rebuild as the SAME review row the live event
+      // produced — as a plain system note it read "approval completed:
+      // bash" and, worse, flushed the activity span that the live path
+      // folds it into.
+      const reviewed = guardianReviewFromItem(item);
+      if (reviewed) {
+        return {
+          role: "review",
+          content: reviewed.line,
+          review: reviewed,
+        };
+      }
       if (isTerminal(item)) {
-        // Already resolved: render the decision, not a fresh prompt.
+        // A human's own decision. Still a system note: the user made it,
+        // and the transcript already shows the tool that followed.
         const decision =
           typeof item.content.decision === "string"
             ? item.content.decision
@@ -109,6 +192,11 @@ function normalizeOne(item: ConversationItem): Message | null {
           session_id: item.thread_id,
         },
       };
+    }
+    case "workflow_review": {
+      const review = workflowReviewFromItem(item);
+      return review ? { role: "review", content: review.line, review } : null;
+    }
     case "artifact":
       return {
         role: "system",

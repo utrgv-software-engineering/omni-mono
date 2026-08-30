@@ -200,3 +200,119 @@ describe("item helpers", () => {
     expect(toolKind(item({ seq: 1, kind: "tool_call" }))).toBe("other");
   });
 });
+
+/**
+ * A resumed conversation must render exactly what the live one did.
+ *
+ * The recorder persists reviewer verdicts precisely so a reloading client
+ * keeps them ("dropping it would show a reloading client a transcript
+ * missing a verdict it saw live"). This projection was throwing them
+ * away one layer above: a reviewed approval rebuilt as a bland
+ * `approval completed: bash` system note — which also FLUSHED the
+ * activity span the live path folds it into — and a workflow review hit
+ * the `default: return null` arm and vanished entirely.
+ */
+describe("reviews survive a reload", () => {
+  it("rebuilds a guardian denial as the row the live event produced", () => {
+    const [msg] = normalizeItems([
+      item({
+        seq: 1,
+        kind: "approval",
+        content: {
+          approval_kind: "tool",
+          call_id: "c1",
+          tool: "bash",
+          reviewer: "guardian",
+          outcome: "deny",
+          rationale: "deletes the repo",
+        },
+      }),
+    ]);
+    expect(msg!.role).toBe("review");
+    expect(msg!.review).toEqual({
+      kind: "guardian",
+      blocking: true,
+      line: "bash denied by guardian",
+      rationale: "deletes the repo",
+    });
+  });
+
+  it("rebuilds an allowed review as non-blocking, so it folds into the span", () => {
+    const [msg] = normalizeItems([
+      item({
+        seq: 1,
+        kind: "approval",
+        content: { call_id: "c1", tool: "read_file", reviewer: "sandbox-policy", outcome: "allow" },
+      }),
+    ]);
+    expect(msg!.review?.blocking).toBe(false);
+    expect(msg!.review?.line).toBe("read_file approved by sandbox policy");
+  });
+
+  it("qualifies an mcp verdict with its server, as the live line does", () => {
+    const [msg] = normalizeItems([
+      item({
+        seq: 1,
+        kind: "approval",
+        content: {
+          approval_kind: "mcp",
+          request_id: "r1",
+          tool: "create_issue",
+          server_label: "github",
+          reviewer: "guardian",
+          outcome: "allow",
+        },
+      }),
+    ]);
+    expect(msg!.review?.line).toBe("github · create_issue approved by guardian");
+  });
+
+  it("rebuilds a workflow review, which used to vanish on reload", () => {
+    const [msg] = normalizeItems([
+      item({
+        seq: 1,
+        kind: "workflow_review",
+        content: {
+          task_id: "3",
+          subject: "add tests",
+          reviewer: "guardian",
+          outcome: "reject",
+          rationale: "no assertions added",
+        },
+      }),
+    ]);
+    expect(msg!.role).toBe("review");
+    expect(msg!.review).toEqual({
+      kind: "workflow",
+      blocking: true,
+      line: "step #3 'add tests' — completion rejected",
+      rationale: "no assertions added",
+    });
+  });
+
+  it("leaves a human's own approval as a system note", () => {
+    // No `outcome` field: nobody reviewed this, the user answered a
+    // prompt. It is not a review row and must not become one.
+    const [msg] = normalizeItems([
+      item({
+        seq: 1,
+        kind: "approval",
+        content: { call_id: "c1", tool: "bash", decision: "approved" },
+      }),
+    ]);
+    expect(msg!.role).toBe("system");
+    expect(msg!.content).toBe("approval approved: bash");
+  });
+
+  it("still renders a pending approval as a prompt", () => {
+    const [msg] = normalizeItems([
+      item({
+        seq: 1,
+        kind: "approval",
+        status: "started",
+        content: { call_id: "c1", tool: "bash" },
+      }),
+    ]);
+    expect(msg!.role).toBe("approval_request");
+  });
+});

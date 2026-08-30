@@ -19,7 +19,14 @@ export type ConversationItemKind =
   /** Durable plan / run-level aggregated diff — see protocol.md
    * § Durable Structured Plans & Aggregated Run Diffs. */
   | "plan"
-  | "run_diff";
+  | "run_diff"
+  /**
+   * A reviewer's verdict on a task's completion claim. Append-only and
+   * born terminal — the same task can be rejected and later accepted, so
+   * each review is its own item. Distinct from `approval`, which is a
+   * PROMPT awaiting resolution; nothing was ever pending here.
+   */
+  | "workflow_review";
 
 /** Item lifecycle. Exactly one terminal state is ever reached. */
 export type ConversationItemStatus =
