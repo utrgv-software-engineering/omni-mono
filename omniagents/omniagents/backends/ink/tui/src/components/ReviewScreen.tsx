@@ -29,7 +29,11 @@ const PAGE = 12;
 // lazygit-style master/detail. It shows when the terminal is wide
 // enough to afford it.
 const SIDEBAR_BREAKPOINT = 90;
-const SIDEBAR_WIDTH = 30;
+// 40 is the width every TUI file sidebar settles on — neo-tree's
+// `window.width`, snacks' `M.sidebar`, and this TUI's own Files tree.
+// It was 30, which left the path column ~26 columns after the border,
+// the padding and the change badge.
+const SIDEBAR_WIDTH = 40;
 
 type Props = {
   active: boolean;
