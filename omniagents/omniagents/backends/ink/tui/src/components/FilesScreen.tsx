@@ -728,8 +728,11 @@ export const FilesScreen = ({
               >
                 {glyph}
               </Text>
-              {/* minWidth 0 — overflowing rows must truncate, never
-                  wrap into a phantom line (see ReviewScreen sidebar). */}
+              {/* minWidth 0 — a long name must truncate, never wrap
+                  into a phantom second line (see ReviewScreen sidebar).
+                  The row deliberately carries no trailing column: a size
+                  here got squeezed by the deeper indents and wrapped at
+                  its own space ("12.3" / "KB"), splitting the row. */}
               <Box flexGrow={1} minWidth={0}>
                 <Text
                   color={isCurrent ? Theme.textPrimary : Theme.textSecondary}
@@ -739,9 +742,6 @@ export const FilesScreen = ({
                   {row.name}
                 </Text>
               </Box>
-              {row.type === "file" && row.size !== null && (
-                <Text color={Theme.textChrome}> {formatSize(row.size)}</Text>
-              )}
             </Box>
           );
         })

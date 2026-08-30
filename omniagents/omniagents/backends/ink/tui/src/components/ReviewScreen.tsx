@@ -561,15 +561,22 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
                 {file.path}
               </Text>
             </Box>
+            {/* flexShrink 0: the counts are short and fixed-width, so
+                the path column (minWidth 0, truncating) absorbs the
+                shrink instead. Without it Yoga squeezes this column
+                below its intrinsic width and Ink wraps it at the space
+                between the two counts, splitting the row into two. */}
             {hasStats && (
-              <Text>
-                {file.additions !== null && (
-                  <Text color={Theme.stateDone}> +{file.additions}</Text>
-                )}
-                {file.deletions !== null && (
-                  <Text color={Theme.stateFailed}> −{file.deletions}</Text>
-                )}
-              </Text>
+              <Box flexShrink={0}>
+                <Text>
+                  {file.additions !== null && (
+                    <Text color={Theme.stateDone}> +{file.additions}</Text>
+                  )}
+                  {file.deletions !== null && (
+                    <Text color={Theme.stateFailed}> −{file.deletions}</Text>
+                  )}
+                </Text>
+              </Box>
             )}
           </Box>
         );
