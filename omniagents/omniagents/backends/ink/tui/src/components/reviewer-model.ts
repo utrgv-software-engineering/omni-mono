@@ -177,8 +177,10 @@ export function guardianReviewLine(review: GuardianReview): string {
     ? `${review.serverLabel} · ${review.tool}`
     : review.tool;
   const verdict = review.outcome === "deny" ? "denied" : "approved";
-  const base = `${tool} ${verdict} by ${reviewer}`;
-  return review.rationale ? `${base} — ${review.rationale}` : base;
+  // The rationale is NOT appended: a blocking review renders it on its
+  // own row, and a folded one never shows it. Concatenating meant it was
+  // truncated off the end of the line in both cases.
+  return `${tool} ${verdict} by ${reviewer}`;
 }
 
 /** One line for a reviewed plan-step completion (Desktop's wording). */
@@ -192,10 +194,9 @@ export function workflowReviewLine(review: WorkflowReview): string {
         : review.outcome === "accept_unverified"
           ? "completion accepted (unverified)"
           : "completion contested — accepted after repeated disagreement";
-  const base = `${step} — ${verdict}`;
-  // The rationale is the whole value of a rejection: without it the user
-  // sees a step that will not stick and no reason why.
-  return review.rationale ? `${base}: ${review.rationale}` : base;
+  // The rationale rides its own row on a rejection (the only outcome
+  // that renders as a row at all), so it is not concatenated here.
+  return `${step} — ${verdict}`;
 }
 
 /** Parse a `tool_approval_reviewed` payload, or null when unusable. */

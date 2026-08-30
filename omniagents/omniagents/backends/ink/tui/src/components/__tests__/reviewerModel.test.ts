@@ -162,7 +162,9 @@ describe("guardianReviewLine", () => {
     ).toBe("github · create_issue approved by guardian");
   });
 
-  it("carries the rationale when there is one", () => {
+  it("leaves the rationale off the line", () => {
+    // It renders on its own row under a blocking review. Concatenated,
+    // it was simply truncated off the end of the line instead.
     expect(
       guardianReviewLine({
         callId: "c",
@@ -171,7 +173,7 @@ describe("guardianReviewLine", () => {
         outcome: "deny",
         rationale: "deletes the repo",
       }),
-    ).toBe("bash denied by guardian — deletes the repo");
+    ).toBe("bash denied by guardian");
   });
 });
 
@@ -194,9 +196,9 @@ describe("parseWorkflowReview / workflowReviewLine", () => {
     expect(parseWorkflowReview({ task_id: "3", outcome: "shrug" })).toBeNull();
   });
 
-  it("always includes the rationale for a rejection", () => {
-    // Without it the user sees a step that will not stick and no reason
-    // why — the whole defect this feature exists to fix.
+  it("keeps the rationale off the line", () => {
+    // A rejection renders the rationale on its own row; the summary line
+    // stays one scannable sentence.
     expect(
       workflowReviewLine({
         taskId: "3",
@@ -205,7 +207,7 @@ describe("parseWorkflowReview / workflowReviewLine", () => {
         outcome: "reject",
         rationale: "no assertions added",
       }),
-    ).toBe("step #3 'add tests' — completion rejected: no assertions added");
+    ).toBe("step #3 'add tests' — completion rejected");
   });
 
   it("words each outcome distinctly", () => {

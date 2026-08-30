@@ -11,6 +11,9 @@
  * - a prose/system message flushes the span;
  * - errors and cancellations break out of aggregation into their own
  *   row (the failed command is the plot — never hide it);
+ * - a reviewer's verdict follows the same rule: a BLOCKING one (guardian
+ *   denial, completion rejection) stopped something and breaks out, an
+ *   allowing one is machinery and folds into the span as a count;
  * - the currently-running call breaks out with its salient argument so
  *   live progress stays visible.
  */
@@ -145,8 +148,16 @@ export type TranscriptRow =
       segments: BeatSegment[];
       /** Calls still in flight — the span renders live while non-empty. */
       running: ToolCallInfo[];
+      /**
+       * Non-blocking reviews that happened inside this span. Rendered as
+       * one trailing count, never as rows: under "Approve for me" there
+       * is one per tool call, and the whole point of the span is that a
+       * run's machinery costs a line, not a line each.
+       */
+      reviewed: number;
     }
-  | { type: "error"; key: string; message: Message };
+  | { type: "error"; key: string; message: Message }
+  | { type: "review"; key: string; message: Message };
 
 const VERB_NOUN: Record<ActivityVerb, [string, string]> = {
   read: ["read %n file", "read %n files"],
@@ -224,9 +235,16 @@ export function runningLabel(toolCall: ToolCallInfo): {
 export function spanLine(
   segments: BeatSegment[],
   running: ToolCallInfo[],
+  reviewed = 0,
 ): string {
+  const reviewNote = reviewedSuffix(reviewed);
+  const withReview = (text: string) =>
+    reviewNote ? (text ? `${text} · ${reviewNote}` : reviewNote) : text;
   const past = segments.length > 0 ? beatsLine(segments) : "";
-  if (running.length === 0) return past;
+  if (running.length === 0) {
+    const settled = withReview(past);
+    return settled.charAt(0).toUpperCase() + settled.slice(1);
+  }
   let live: string;
   if (running.length === 1) {
     const label = runningLabel(running[0]!);
@@ -236,8 +254,15 @@ export function spanLine(
   } else {
     live = `running ${running.length} tools…`;
   }
-  if (!past) return live.charAt(0).toUpperCase() + live.slice(1);
-  return `${past} · ${live}`;
+  const head = withReview(past);
+  if (!head) return live.charAt(0).toUpperCase() + live.slice(1);
+  return `${head} · ${live}`;
+}
+
+/** `· 3 reviewed` — the guardian's ordinary work, as one token. */
+export function reviewedSuffix(reviewed: number): string {
+  if (reviewed <= 0) return "";
+  return `${reviewed} reviewed`;
 }
 
 function toolCallKey(message: Message, index: number): string {
@@ -276,9 +301,12 @@ export function groupTranscript(messages: Message[]): TranscriptRow[] {
   // past-tense summary when the last one lands.
   let spanRunning: ToolCallInfo[] = [];
   let spanKey: string | null = null;
+  let spanReviewed = 0;
 
   const flush = () => {
-    if ((spanCounts.size > 0 || spanRunning.length > 0) && spanKey !== null) {
+    const hasContent =
+      spanCounts.size > 0 || spanRunning.length > 0 || spanReviewed > 0;
+    if (hasContent && spanKey !== null) {
       rows.push({
         type: "beats",
         key: `beats-${spanKey}`,
@@ -287,15 +315,35 @@ export function groupTranscript(messages: Message[]): TranscriptRow[] {
           count,
         })),
         running: spanRunning,
+        reviewed: spanReviewed,
       });
     }
     spanCounts = new Map();
     spanRunning = [];
+    spanReviewed = 0;
     spanKey = null;
   };
 
   messages.forEach((message, index) => {
     if (rendersNothing(message)) return;
+
+    if (message.role === "review" && message.review) {
+      if (message.review.blocking) {
+        flush();
+        rows.push({
+          type: "review",
+          key: `review-${index}`,
+          message,
+        });
+      } else {
+        // Deliberately does NOT flush: an allowed call is part of the
+        // same beat as the call it allowed.
+        spanReviewed += 1;
+        spanKey ??= `review-${index}`;
+      }
+      return;
+    }
+
     if (message.role !== "tool_call" || !message.toolCall) {
       flush();
       rows.push({

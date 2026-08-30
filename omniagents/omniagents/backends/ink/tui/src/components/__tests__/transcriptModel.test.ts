@@ -26,6 +26,19 @@ function toolMsg(overrides: Partial<ToolCallInfo>): Message {
   return { role: "tool_call", content: "", toolCall: tc(overrides) };
 }
 
+function reviewMsg(blocking: boolean, rationale?: string): Message {
+  return {
+    role: "review",
+    content: "reviewed",
+    review: {
+      kind: "guardian",
+      blocking,
+      line: blocking ? "bash denied by guardian" : "bash approved by guardian",
+      rationale,
+    },
+  };
+}
+
 describe("classifyToolCall", () => {
   it("trusts the server's display_type first", () => {
     expect(
@@ -249,5 +262,48 @@ describe("errorDetailLines", () => {
   it("keeps the informative tail, capped", () => {
     const output = ["a", "", "b", "c", "d", "e", ""].join("\n");
     expect(errorDetailLines(tc({ output }), 3)).toEqual(["c", "d", "e"]);
+  });
+});
+
+describe("reviews in the transcript", () => {
+  it("folds an allowing review into the span instead of splitting it", () => {
+    // The defect this guards: as a `system` message a review flushed the
+    // span, so under "Approve for me" — one review per tool call — the
+    // beat renderer aggregated nothing and every call got its own rows.
+    const rows = groupTranscript([
+      toolMsg({ call_id: "a" }),
+      reviewMsg(false),
+      toolMsg({ call_id: "b" }),
+      reviewMsg(false),
+      toolMsg({ call_id: "c" }),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.type).toBe("beats");
+    const beats = rows[0] as Extract<(typeof rows)[number], { type: "beats" }>;
+    expect(beats.segments).toEqual([{ verb: "read", count: 3 }]);
+    expect(beats.reviewed).toBe(2);
+  });
+
+  it("counts folded reviews into the span line", () => {
+    expect(spanLine([{ verb: "read", count: 3 }], [], 2)).toBe(
+      "Read 3 files · 2 reviewed",
+    );
+    expect(spanLine([], [], 2)).toBe("2 reviewed");
+    expect(spanLine([{ verb: "read", count: 1 }], [], 0)).toBe("Read 1 file");
+  });
+
+  it("breaks a blocking review out into its own row", () => {
+    const rows = groupTranscript([
+      toolMsg({ call_id: "a" }),
+      reviewMsg(true, "deletes the repo"),
+      toolMsg({ call_id: "b" }),
+    ]);
+    expect(rows.map((r) => r.type)).toEqual(["beats", "review", "beats"]);
+  });
+
+  it("keeps the rationale on the blocking row", () => {
+    const rows = groupTranscript([reviewMsg(true, "deletes the repo")]);
+    const row = rows[0] as Extract<(typeof rows)[number], { type: "review" }>;
+    expect(row.message.review?.rationale).toBe("deletes the repo");
   });
 });

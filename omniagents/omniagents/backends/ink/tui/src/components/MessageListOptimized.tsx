@@ -169,9 +169,17 @@ const TranscriptRowItem = React.memo<{
   const body = (() => {
     switch (row.type) {
       case "beats":
-        return <BeatsRow segments={row.segments} running={row.running} />;
+        return (
+          <BeatsRow
+            segments={row.segments}
+            running={row.running}
+            reviewed={row.reviewed}
+          />
+        );
       case "error":
         return <ErrorRow message={row.message} />;
+      case "review":
+        return <ReviewRow message={row.message} />;
       default:
         return <MessageItem message={row.message} />;
     }
@@ -204,8 +212,9 @@ const EXPAND_HINT = " (ctrl+o to expand)";
 const BeatsRow = React.memo<{
   segments: BeatSegment[];
   running: ToolCallInfo[];
-}>(({ segments, running }) => {
-  const line = spanLine(segments, running);
+  reviewed: number;
+}>(({ segments, running, reviewed }) => {
+  const line = spanLine(segments, running, reviewed);
   const live = running.length > 0;
   return (
     <Box flexDirection="row">
@@ -227,6 +236,40 @@ const BeatsRow = React.memo<{
 });
 
 /** A failed or cancelled call — never aggregated, capped detail inline. */
+/**
+ * A reviewer BLOCKED something — the plot, so it gets its own row next
+ * to errors rather than folding into the span. The rationale rides here
+ * because this is the row with room for it: on a folded review there is
+ * nowhere to put it and no reason to.
+ */
+const ReviewRow = React.memo<{ message: Message }>(({ message }) => {
+  const review = message.review!;
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row">
+        <Text>{ACTIVITY_INDENT}</Text>
+        <Box flexGrow={1} flexBasis={0} minWidth={0}>
+          <Text color={Theme.stateFailed}>⛊ </Text>
+          <Text color={Theme.textPrimary} wrap="truncate-end">
+            {review.line}
+          </Text>
+        </Box>
+      </Box>
+      {review.rationale && (
+        <Box flexDirection="row">
+          <Text>{ACTIVITY_INDENT}</Text>
+          <Text>{"  "}</Text>
+          <Box flexGrow={1} flexBasis={0} minWidth={0}>
+            <Text color={Theme.textChrome} wrap="truncate-end">
+              {review.rationale}
+            </Text>
+          </Box>
+        </Box>
+      )}
+    </Box>
+  );
+});
+
 const ErrorRow = React.memo<{ message: Message }>(({ message }) => {
   const toolCall = message.toolCall!;
   const cancelled = toolCall.output === "[Cancelled]";
@@ -289,6 +332,8 @@ const MessageItem = React.memo<{ message: Message }>(
           return null;
         }
         return <ToolCallMessage message={message} />;
+      case "review":
+        return <ReviewRow message={message} />;
       case "approval_request":
         // Approval requests shown in ApprovalDialog, not in message history
         return null;

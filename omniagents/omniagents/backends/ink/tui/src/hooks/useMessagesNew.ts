@@ -989,8 +989,16 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       const review = parseGuardianReview(params);
       if (!review) return;
       actions.addMessage({
-        role: "system",
+        role: "review",
         content: guardianReviewLine(review),
+        review: {
+          kind: "guardian",
+          // A denial stopped a tool call; an allow is the ordinary case
+          // and folds into the beat span rather than costing a row.
+          blocking: review.outcome === "deny",
+          line: guardianReviewLine(review),
+          rationale: review.rationale,
+        },
         timestamp: new Date(),
       });
     };
@@ -1004,8 +1012,16 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       const review = parseWorkflowReview(params);
       if (!review) return;
       actions.addMessage({
-        role: "system",
+        role: "review",
         content: workflowReviewLine(review),
+        review: {
+          kind: "workflow",
+          // Only a rejection stopped the step. The other outcomes are
+          // trust signals about a completion that stood.
+          blocking: review.outcome === "reject",
+          line: workflowReviewLine(review),
+          rationale: review.rationale,
+        },
         timestamp: new Date(),
       });
     };

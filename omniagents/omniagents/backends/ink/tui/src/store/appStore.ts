@@ -103,12 +103,39 @@ export interface NotificationInfo {
 /** Agent-produced artifacts (`ui.add_artifact`), newest last. */
 export type { ArtifactEntry } from "../components/artifact-model.js";
 
+/**
+ * A reviewer's verdict on a tool call or a plan-step completion.
+ *
+ * Its own message kind, not a `system` message: the transcript folds
+ * consecutive tool calls into one beat and ANY non-tool message flushes
+ * that span. Under "Approve for me" there is a review per tool call, so
+ * as system messages these would flush every span and permanently
+ * disable the aggregation the beat renderer exists to do.
+ */
+export interface ReviewInfo {
+  /** `guardian` blocked or allowed a call; `workflow` judged a step. */
+  kind: "guardian" | "workflow";
+  /** Something was stopped. Blocking reviews break out of the span. */
+  blocking: boolean;
+  /** One-line summary, already worded. */
+  line: string;
+  /** Why — shown only on a broken-out row, where there is room. */
+  rationale?: string;
+}
+
 export interface Message {
-  role: "user" | "assistant" | "system" | "tool_call" | "approval_request";
+  role:
+    | "user"
+    | "assistant"
+    | "system"
+    | "tool_call"
+    | "approval_request"
+    | "review";
   content: string;
   timestamp?: Date;
   toolCall?: ToolCallInfo;
   approval?: ApprovalInfo;
+  review?: ReviewInfo;
   /** A run-end diff receipt — rendered as a card, `content` is the
    * plain-text fallback. */
   runDiff?: ConversationRunDiff;
