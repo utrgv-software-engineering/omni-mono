@@ -42,8 +42,17 @@ import {
   type TranscriptRow,
 } from "./transcript-model.js";
 
+/**
+ * Rows that belong to the same activity block and therefore pack tight
+ * against each other. A blocking review is one: it sits under the beat
+ * whose call it stopped, exactly as an error sits under the call that
+ * failed, and a blank line on either side breaks that nesting.
+ */
 function isBeatRow(row: TranscriptRow | undefined): boolean {
-  return row !== undefined && (row.type === "beats" || row.type === "error");
+  return (
+    row !== undefined &&
+    (row.type === "beats" || row.type === "error" || row.type === "review")
+  );
 }
 
 export const MessageListOptimized = React.memo(() => {
@@ -243,13 +252,23 @@ const BeatsRow = React.memo<{
  * nowhere to put it and no reason to.
  */
 const ReviewRow = React.memo<{ message: Message }>(({ message }) => {
-  const review = message.review!;
+  const review = message.review;
+  if (!review) return null;
+  // Only a blocking review stopped something. The beat renderer never
+  // routes an allowing one here, but the mechanical view (ctrl+o) shows
+  // every message, and painting an approval in the blocked colour said
+  // the opposite of what happened.
+  const blocked = review.blocking;
   return (
     <Box flexDirection="column">
       <Box flexDirection="row">
         <Text>{ACTIVITY_INDENT}</Text>
         <Box flexGrow={1} flexBasis={0} minWidth={0}>
-          <Text color={Theme.stateFailed}>⛊ </Text>
+          {/* One shield: a reviewer acted. The colour is the verdict —
+              the same split Desktop draws with ShieldX vs ShieldCheck. */}
+          <Text color={blocked ? Theme.stateFailed : Theme.stateDone}>
+            {"⛊ "}
+          </Text>
           <Text color={Theme.textPrimary} wrap="truncate-end">
             {review.line}
           </Text>

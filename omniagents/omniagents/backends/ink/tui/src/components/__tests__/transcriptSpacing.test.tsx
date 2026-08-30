@@ -123,4 +123,74 @@ describe("scroll-region rhythm", () => {
       1,
     );
   });
+
+  /**
+   * Activity rows nest: a beat, then the error or blocked review that
+   * belongs to it, then its detail. A blank line between them reads as
+   * three unrelated blocks instead of one, so they pack tight — and a
+   * blocking review must pack the same way an error does, being the same
+   * kind of row.
+   */
+  const activityFrame = async () => {
+    const tool = (id: string, extra: Record<string, unknown> = {}) => ({
+      role: "tool_call",
+      content: "",
+      toolCall: {
+        tool: "read_file",
+        input: "{}",
+        call_id: id,
+        running: false,
+        ...extra,
+      },
+    });
+    useAppStore.getState().actions.setMessages([
+      tool("a"),
+      {
+        role: "review",
+        content: "",
+        review: {
+          kind: "guardian",
+          blocking: true,
+          line: "REVIEW-DENIED",
+          rationale: "REVIEW-WHY",
+        },
+      },
+      tool("b"),
+      tool("c", {
+        tool: "bash",
+        output: "ERROR-BODY",
+        metadata: { display_type: "error" },
+      }),
+      tool("d"),
+    ] as never);
+    const stdout = new TestStdout();
+    instance = render(
+      <Box flexDirection="column" gap={1} paddingTop={1}>
+        <MessageListOptimized />
+      </Box>,
+      {
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        debug: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    );
+    await new Promise((r) => setTimeout(r, 60));
+    return stdout.lastFrame();
+  };
+
+  it("packs a blocked review against its beats, exactly as an error does", async () => {
+    const f = await activityFrame();
+    // The regression: a review was not in the tight set, so it took a
+    // blank line on each side while the error beside it took none.
+    expect(blanksBetween(f, "Read 1 file", "REVIEW-DENIED")).toBe(0);
+    expect(blanksBetween(f, "REVIEW-WHY", "Read 1 file")).toBe(0);
+    expect(blanksBetween(f, "bash", "Read 1 file")).toBe(0);
+  });
+
+  it("keeps a review's rationale on the row below it", async () => {
+    expect(
+      blanksBetween(await activityFrame(), "REVIEW-DENIED", "REVIEW-WHY"),
+    ).toBe(0);
+  });
 });
