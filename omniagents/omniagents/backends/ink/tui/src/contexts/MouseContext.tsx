@@ -95,6 +95,10 @@ export const MouseProvider: React.FC<{
 
     process.stdout.write("\x1b[?1002h\x1b[?1006h");
 
+    // The longest prefix of an SGR mouse report; anything that is still a
+    // prefix of this might yet become one, so it is held rather than skipped.
+    const MOUSE_PREFIX = "\x1b[<";
+
     let buffer = "";
 
     const flushOne = (): boolean => {
@@ -129,7 +133,12 @@ export const MouseProvider: React.FC<{
       for (;;) {
         if (flushOne()) continue;
 
+        // A partial SGR report: wait for the rest of it.
         if (/^\x1b\[</.test(buffer) && !/[Mm]/.test(buffer)) {
+          break;
+        }
+        // ...or a prefix that could still become one ("\x1b", "\x1b[").
+        if (MOUSE_PREFIX.startsWith(buffer)) {
           break;
         }
 
@@ -138,7 +147,20 @@ export const MouseProvider: React.FC<{
           buffer = buffer.slice(idx);
           continue;
         }
-        if (idx === 0) break;
+        if (idx === 0) {
+          // An escape sequence at the head that is NOT a mouse report and
+          // cannot become one — an arrow key, a function key, anything
+          // ink's own parser handles. Skip past it.
+          //
+          // This used to `break` and keep the buffer, which wedged it
+          // permanently: the head never matched, so every later chunk was
+          // appended behind a sequence that would never be consumed and
+          // no mouse event ever parsed again. The wheel worked until the
+          // user pressed their first arrow key, then never again.
+          const next = buffer.indexOf("\x1b", 1);
+          buffer = next === -1 ? "" : buffer.slice(next);
+          continue;
+        }
         buffer = "";
         break;
       }
