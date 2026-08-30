@@ -32,6 +32,7 @@ import {
   type EditorBuffer,
 } from "./editor-model.js";
 import { EmptyState } from "./shared/EmptyState.js";
+import { iconFor, iconsEnabled } from "./file-icons.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
@@ -679,6 +680,9 @@ export const FilesScreen = ({
     );
   }
 
+  // Resolved once, not per row: the env read is cheap but the flag is
+  // constant for the session and the tree re-renders on every keypress.
+  const showIcons = iconsEnabled();
   const listStart = windowStart(cursor, rows.length, treeRows);
   const visibleRows = rows.slice(listStart, listStart + treeRows);
   const visiblePreview = previewLines.slice(
@@ -714,6 +718,9 @@ export const FilesScreen = ({
           const isCurrent = index === cursor;
           const glyph =
             row.type === "directory" ? (row.expanded ? "▾ " : "▸ ") : "  ";
+          const icon = showIcons
+            ? iconFor(row.name, row.type, row.expanded)
+            : null;
           return (
             <SelectableRow
               key={row.path}
@@ -731,6 +738,9 @@ export const FilesScreen = ({
               >
                 {glyph}
               </RowText>
+              {icon && (
+                <RowText color={icon.color}>{icon.glyph} </RowText>
+              )}
               {/* minWidth 0 — a long name must truncate, never wrap
                   into a phantom second line (see ReviewScreen sidebar).
                   The row deliberately carries no trailing column: a size
