@@ -80,12 +80,13 @@ export function terminalHint({
   if (phase === "running" && outputBytes === 0 && !captured) {
     return "attached · no output yet — is the shell alive?";
   }
-  // alt+1..5 is named only while captured, and it is earned there: Tab
-  // and Esc both belong to the shell, so it is the one way out that
-  // still works. Uncaptured, Esc leaves like it does everywhere else and
-  // the reminder would just be noise.
+  // While the shell has the keyboard there is exactly one thing worth
+  // teaching: how to get it back. alt+1..5 still jumps straight to a
+  // screen, but naming it here offered a second way out of a state whose
+  // whole problem was having more than one — release first, then
+  // navigate the way every other screen is navigated.
   return captured
-    ? `keys → shell (tab too)${release} · alt+1..5 screens · PgUp/PgDn scroll`
+    ? `keys → shell (tab too)${release} · PgUp/PgDn scroll`
     : "i or enter to type · j/k PgUp/PgDn scroll · esc chat";
 }
 

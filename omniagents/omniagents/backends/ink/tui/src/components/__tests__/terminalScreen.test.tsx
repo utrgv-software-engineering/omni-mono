@@ -170,13 +170,19 @@ describe("terminal footer hint", () => {
     expect(terminalHint({ ...base, captured: false })).not.toContain("ctrl+]");
   });
 
-  it("names alt+1..5 only while the shell owns Tab and Esc", () => {
-    // Earned while captured — it is the one way out that still works —
-    // and noise otherwise, where Esc leaves like on every other screen.
-    expect(terminalHint({ ...base, captured: true })).toContain("alt+1..5");
+  it("teaches one way out of each state, never two", () => {
+    // Captured, that is ctrl+] and nothing else: alt+1..5 still works but
+    // naming it offered a second exit from the state whose whole problem
+    // was having more than one. Uncaptured, it is esc, as everywhere else.
+    const typing = terminalHint({ ...base, captured: true });
+    expect(typing).toContain("ctrl+] release");
+    expect(typing).not.toContain("alt+1..5");
+    expect(typing).not.toContain("esc");
+
     const free = terminalHint({ ...base, captured: false });
-    expect(free).not.toContain("alt+1..5");
     expect(free).toContain("esc chat");
+    expect(free).not.toContain("alt+1..5");
+    expect(free).not.toContain("ctrl+]");
   });
 
   it("says release even before the shell has printed anything", () => {
