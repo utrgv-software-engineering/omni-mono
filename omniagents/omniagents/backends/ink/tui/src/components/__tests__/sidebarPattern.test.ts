@@ -69,20 +69,12 @@ describe("selected-row pattern", () => {
     ).toEqual([]);
   });
 
-  it("keeps both signals in SelectableRow, so selection survives NO_COLOR", () => {
-    // Chalk drops backgrounds AND bold without colour support. If the
-    // band were the only marker, a monochrome terminal would show no
-    // selection at all — so the glyph is load-bearing, not decoration.
+  it("marks selection with the band and nothing else", () => {
+    // A cursor glyph on top of a full-width highlight is belt-and-braces
+    // that costs two columns on every row of every list. The band is the
+    // marker, the way vim's cursorline is.
     const owner = files.find((f) => f.rel === OWNER)!.source;
-    expect(owner).toContain("▶");
     expect(owner).toContain("selectionBg");
-  });
-
-  it("distinguishes a focused selection from an inert one", () => {
-    // A sidebar can hold a selection while another pane owns the
-    // keyboard; the band means "your keys act here" and must not show
-    // on a pane that cannot receive them.
-    const owner = files.find((f) => f.rel === OWNER)!.source;
-    expect(owner).toContain("focused");
+    expect(owner).not.toContain("\u25b6");
   });
 });

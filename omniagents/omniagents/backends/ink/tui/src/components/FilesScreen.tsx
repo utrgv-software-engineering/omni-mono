@@ -718,7 +718,6 @@ export const FilesScreen = ({
             <SelectableRow
               key={row.path}
               selected={isCurrent}
-              focused={pane === "tree"}
             >
               <Text color={Theme.textChrome}>
                 {"  ".repeat(row.depth)}

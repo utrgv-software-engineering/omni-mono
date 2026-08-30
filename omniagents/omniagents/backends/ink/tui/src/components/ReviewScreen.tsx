@@ -550,7 +550,6 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
           <SelectableRow
             key={file.path}
             selected={isCurrent}
-            focused={pane === "files"}
           >
             <Text color={badge.color}>{badge.text} </Text>
             {/* minWidth 0: without it the truncating text's intrinsic

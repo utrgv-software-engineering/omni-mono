@@ -117,7 +117,7 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
           ? MESSAGE_TRUNCATE_FOCUSED
           : MESSAGE_TRUNCATE_UNFOCUSED;
         return (
-          <SelectableRow key={n.id} selected={isSelected} focused={focused}>
+          <SelectableRow key={n.id} selected={isSelected}>
             <Text color={Theme.textChrome}>
               {shortMessage(n.message, max)}
             </Text>
