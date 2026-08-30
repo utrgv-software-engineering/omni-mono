@@ -11,7 +11,7 @@ import {
   windowStart,
   type ModelRow,
 } from "./model-picker-model.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const WINDOW = 8;
@@ -176,7 +176,7 @@ export const ModelPickerPanel = React.memo(
           const isSelected = start + i === index;
           return (
             <SelectableRow key={row.id} selected={isSelected}>
-              <Text
+              <RowText
                 color={
                   row.active
                     ? Theme.stateDone
@@ -187,24 +187,24 @@ export const ModelPickerPanel = React.memo(
                 bold={row.active}
               >
                 {row.label}
-              </Text>
+              </RowText>
               {row.provider && (
-                <Text color={Theme.textChrome}>
+                <RowText color={Theme.textChrome}>
                   {" "}
                   · {row.provider}
-                </Text>
+                </RowText>
               )}
               {row.active && (
-                <Text color={Theme.stateDone}> ✔ active</Text>
+                <RowText color={Theme.stateDone}> ✔ active</RowText>
               )}
               {row.isDefault && !row.active && (
-                <Text color={Theme.textChrome}> (default)</Text>
+                <RowText color={Theme.textChrome}> (default)</RowText>
               )}
               {row.reasoningOptions.length > 0 && (
-                <Text color={Theme.textChrome}> ⚙</Text>
+                <RowText color={Theme.textChrome}> ⚙</RowText>
               )}
               {row.note && (
-                <Text color={Theme.stateBlocked}> ⚠ {row.note}</Text>
+                <RowText color={Theme.stateBlocked}> ⚠ {row.note}</RowText>
               )}
             </SelectableRow>
           );

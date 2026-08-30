@@ -32,7 +32,7 @@ import {
   type EditorBuffer,
 } from "./editor-model.js";
 import { EmptyState } from "./shared/EmptyState.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const SIDEBAR_BREAKPOINT = 90;
@@ -719,10 +719,10 @@ export const FilesScreen = ({
               key={row.path}
               selected={isCurrent}
             >
-              <Text color={Theme.textChrome}>
+              <RowText color={Theme.textChrome}>
                 {"  ".repeat(row.depth)}
-              </Text>
-              <Text
+              </RowText>
+              <RowText
                 color={
                   row.type === "directory"
                     ? Theme.stateActive
@@ -730,20 +730,19 @@ export const FilesScreen = ({
                 }
               >
                 {glyph}
-              </Text>
+              </RowText>
               {/* minWidth 0 — a long name must truncate, never wrap
                   into a phantom second line (see ReviewScreen sidebar).
                   The row deliberately carries no trailing column: a size
                   here got squeezed by the deeper indents and wrapped at
                   its own space ("12.3" / "KB"), splitting the row. */}
               <Box flexGrow={1} minWidth={0}>
-                <Text
+                <RowText
                   color={isCurrent ? Theme.textPrimary : Theme.textSecondary}
-                  bold={isCurrent}
                   wrap="truncate-end"
                 >
                   {row.name}
-                </Text>
+                </RowText>
               </Box>
             </SelectableRow>
           );

@@ -11,7 +11,7 @@ import {
   type CommandRow,
 } from "./command-palette-model.js";
 import { windowStart } from "./model-picker-model.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const WINDOW = 8;
@@ -177,17 +177,15 @@ export const CommandPalettePanel = React.memo<Props>(
               key={`${row.source}:${row.name}`}
               selected={isSelected}
             >
-              <Text color={Theme.textPrimary} bold={isSelected}>
-                /{row.name}
-              </Text>
+              <RowText color={Theme.textPrimary}>/{row.name}</RowText>
               {row.takesArgs && (
-                <Text color={Theme.textChrome}> &lt;args&gt;</Text>
+                <RowText color={Theme.textChrome}> &lt;args&gt;</RowText>
               )}
               {row.source === "builtin" && (
-                <Text color={Theme.accentUser}> builtin</Text>
+                <RowText color={Theme.accentUser}> builtin</RowText>
               )}
               {row.description && (
-                <Text color={Theme.textChrome}> · {row.description}</Text>
+                <RowText color={Theme.textChrome}> · {row.description}</RowText>
               )}
             </SelectableRow>
           );

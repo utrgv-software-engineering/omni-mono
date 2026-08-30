@@ -4,7 +4,7 @@ import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { useQueuedMessages } from "../store/appStore.js";
 import { windowStart } from "./model-picker-model.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const MAX_VISIBLE = 5;
@@ -154,12 +154,12 @@ export const QueuedMessages = React.memo<Props>(
           const isSelected = position === index;
           return (
             <SelectableRow key={item.id} selected={isSelected}>
-              <Text color={Theme.textChrome}>{position + 1}. </Text>
-              <Text color={Theme.textPrimary} bold={isSelected}>
+              <RowText color={Theme.textChrome}>{position + 1}. </RowText>
+              <RowText color={Theme.textPrimary}>
                 {item.content.length > 80
                   ? `${item.content.slice(0, 77)}…`
                   : item.content}
-              </Text>
+              </RowText>
             </SelectableRow>
           );
         })}

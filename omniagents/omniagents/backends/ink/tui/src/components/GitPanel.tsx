@@ -25,7 +25,7 @@ import {
   rowColor,
   type GitFileRow,
 } from "./git-model.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const MAX_VISIBLE_FILES = 10;
@@ -928,7 +928,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           )}
           {branches.slice(0, MAX_VISIBLE_FILES).map((branch, idx) => (
             <SelectableRow key={branch.ref} selected={idx === branchIndex && !newBranchMode}>
-              <Text
+              <RowText
                 color={
                   branch.current
                     ? Theme.stateDone
@@ -940,15 +940,15 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
               >
                 {branch.current ? "* " : "  "}
                 {branch.name}
-              </Text>
+              </RowText>
               {branch.upstream && !branch.remote && (
-                <Text color={Theme.textChrome}>
+                <RowText color={Theme.textChrome}>
                   {" "}
                   → {branch.upstream}
-                </Text>
+                </RowText>
               )}
               {branch.category === "worker" && (
-                <Text color={Theme.stateBlocked}> (worker)</Text>
+                <RowText color={Theme.stateBlocked}> (worker)</RowText>
               )}
             </SelectableRow>
           ))}
@@ -983,15 +983,15 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           {logError && <Text color={Theme.stateFailed}>{logError}</Text>}
           {commits.slice(0, MAX_VISIBLE_FILES).map((commit, idx) => (
             <SelectableRow key={commit.oid} selected={idx === logIndex}>
-              <Text color={Theme.stateBlocked}>{commit.short_oid} </Text>
-              <Text color={Theme.textPrimary} wrap="truncate-end">
+              <RowText color={Theme.stateBlocked}>{commit.short_oid} </RowText>
+              <RowText color={Theme.textPrimary} wrap="truncate-end">
                 {commit.subject}
-              </Text>
+              </RowText>
               {commit.refs.length > 0 && (
-                <Text color={Theme.stateDone}>
+                <RowText color={Theme.stateDone}>
                   {" "}
                   ({commit.refs.join(", ")})
-                </Text>
+                </RowText>
               )}
             </SelectableRow>
           ))}
@@ -1077,10 +1077,10 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
         <>
           {rows.slice(0, MAX_VISIBLE_FILES).map((row, idx) => (
             <SelectableRow key={row.path} selected={idx === selectedIndex}>
-              <Text color={rowColor(row)}>{row.xy} </Text>
-              <Text color={Theme.textPrimary}>
+              <RowText color={rowColor(row)}>{row.xy} </RowText>
+              <RowText color={Theme.textPrimary}>
                 {row.renamedFrom ? `${row.renamedFrom} → ${row.path}` : row.path}
-              </Text>
+              </RowText>
             </SelectableRow>
           ))}
           {rows.length > MAX_VISIBLE_FILES && (

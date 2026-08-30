@@ -9,10 +9,10 @@
  */
 
 import React, { useState } from "react";
-import { Box, Text } from "ink";
+import { Box } from "ink";
 import { useKeypress } from "../../hooks/useKeypress.js";
 import { KeypressPriority } from "../../contexts/KeypressContext.js";
-import { SelectableRow } from "./SelectableRow.js";
+import { RowText, SelectableRow } from "./SelectableRow.js";
 import { Theme } from "../../theme.js";
 
 export interface SelectionOption<V extends string> {
@@ -81,13 +81,13 @@ export function BaseSelectionList<V extends string>({
       {options.map((option, index) => (
         <SelectableRow key={option.value} selected={index === selectedIndex}>
           {index === selectedIndex ? (
-            <Text bold color={Theme.focus}>
+            <RowText bold color={Theme.focus}>
               {option.title} - {option.description}
-            </Text>
+            </RowText>
           ) : (
-            <Text color={Theme.textChrome}>
+            <RowText color={Theme.textChrome}>
               {option.title} - {option.description}
-            </Text>
+            </RowText>
           )}
         </SelectableRow>
       ))}

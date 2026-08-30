@@ -21,7 +21,7 @@ import {
   type GitFileRow,
 } from "./git-model.js";
 import { EmptyState } from "./shared/EmptyState.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const PAGE = 12;
@@ -555,18 +555,17 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
             key={file.path}
             selected={isCurrent}
           >
-            <Text color={badge.color}>{badge.text} </Text>
+            <RowText color={badge.color}>{badge.text} </RowText>
             {/* minWidth 0: without it the truncating text's intrinsic
                 width is a floor, an overflowing row wraps to height 2,
                 and the cursor gets squeezed into a phantom blank line. */}
             <Box flexGrow={1} minWidth={0}>
-              <Text
+              <RowText
                 color={isCurrent ? Theme.textPrimary : Theme.textChrome}
-                bold={isCurrent}
                 wrap="truncate-start"
               >
                 {file.path}
-              </Text>
+              </RowText>
             </Box>
             {/* flexShrink 0: the counts are short and fixed-width, so
                 the path column (minWidth 0, truncating) absorbs the
@@ -575,14 +574,14 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
                 between the two counts, splitting the row into two. */}
             {hasStats && (
               <Box flexShrink={0}>
-                <Text>
+                <RowText>
                   {file.additions !== null && (
-                    <Text color={Theme.stateDone}> +{file.additions}</Text>
+                    <RowText color={Theme.stateDone}> +{file.additions}</RowText>
                   )}
                   {file.deletions !== null && (
-                    <Text color={Theme.stateFailed}> −{file.deletions}</Text>
+                    <RowText color={Theme.stateFailed}> −{file.deletions}</RowText>
                   )}
-                </Text>
+                </RowText>
               </Box>
             )}
           </SelectableRow>

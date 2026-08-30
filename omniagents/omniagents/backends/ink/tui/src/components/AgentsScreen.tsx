@@ -9,7 +9,7 @@ import { windowStart } from "./model-picker-model.js";
 import { clampScroll } from "./git-model.js";
 import { buildWorkerDetail } from "./agents-model.js";
 import { EmptyState } from "./shared/EmptyState.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const WIDE_BREAKPOINT = 90;
@@ -234,26 +234,25 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
     return (
       <SelectableRow key={worker.subagent_id} selected={isSelected}>
         {worker.status === "running" ? (
-          <Text color={Theme.stateActive}>
+          <RowText color={Theme.stateActive}>
             <Spinner type="dots" />{" "}
-          </Text>
+          </RowText>
         ) : (
-          <Text color={statusColor(worker)}>
+          <RowText color={statusColor(worker)}>
             {worker.status === "completed" ? "✔ " : "✗ "}
-          </Text>
+          </RowText>
         )}
         {/* minWidth 0 — see ReviewScreen sidebar: overflowing rows
             otherwise wrap to height 2 and eat the cursor. */}
         <Box flexGrow={1} minWidth={0}>
-          <Text
+          <RowText
             color={isSelected ? Theme.textPrimary : Theme.textChrome}
-            bold={isSelected}
             wrap="truncate-end"
           >
             {worker.task.replace(/\s+/g, " ").trim()}
-          </Text>
+          </RowText>
         </Box>
-        <Text color={Theme.textChrome}> {elapsed(worker, nowMs)}</Text>
+        <RowText color={Theme.textChrome}> {elapsed(worker, nowMs)}</RowText>
       </SelectableRow>
     );
   });

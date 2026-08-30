@@ -3,7 +3,7 @@ import { Box, Text } from "ink";
 import { useActions, useNotifications } from "../store/appStore.js";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 const MAX_VISIBLE = 5;
@@ -118,9 +118,9 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
           : MESSAGE_TRUNCATE_UNFOCUSED;
         return (
           <SelectableRow key={n.id} selected={isSelected}>
-            <Text color={Theme.textChrome}>
+            <RowText color={Theme.textChrome}>
               {shortMessage(n.message, max)}
-            </Text>
+            </RowText>
           </SelectableRow>
         );
       })}

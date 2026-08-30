@@ -69,12 +69,34 @@ describe("selected-row pattern", () => {
     ).toEqual([]);
   });
 
-  it("marks selection with the band and nothing else", () => {
-    // A cursor glyph on top of a full-width highlight is belt-and-braces
-    // that costs two columns on every row of every list. The band is the
-    // marker, the way vim's cursorline is.
+  it("marks selection with the band and bold, and no glyph", () => {
+    // neo-tree's NeoTreeCursorLine is CursorLine + bold; matching it
+    // means the band and the weight, not a caret in the gutter.
     const owner = files.find((f) => f.rel === OWNER)!.source;
     expect(owner).toContain("selectionBg");
+    expect(owner).toContain("bold");
     expect(owner).not.toContain("\u25b6");
+  });
+
+  it("renders row text through RowText, so bold reaches the whole row", () => {
+    // Ink cannot cascade bold from a Box, and a row cannot be wrapped in
+    // a Text (it throws on the Box inside). RowText reads the row's
+    // selected state from context instead — a bare Text inside a row
+    // would silently stay unbolded while everything beside it bolds.
+    const offenders: string[] = [];
+    for (const { rel, source } of files) {
+      if (rel === OWNER) continue;
+      const lines = source.split("\n");
+      for (let i = 0; i < lines.length; i += 1) {
+        if (!lines[i]!.includes("<SelectableRow")) continue;
+        for (let j = i + 1; j < lines.length; j += 1) {
+          if (lines[j]!.includes("</SelectableRow>")) break;
+          if (/<Text\b/.test(lines[j]!)) {
+            offenders.push(`${rel}:${j + 1}`);
+          }
+        }
+      }
+    }
+    expect(offenders, "use RowText inside a SelectableRow").toEqual([]);
   });
 });

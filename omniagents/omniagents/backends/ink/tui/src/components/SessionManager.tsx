@@ -23,7 +23,7 @@ import {
   type SessionRow,
 } from "./session-manager-model.js";
 import { windowStart } from "./model-picker-model.js";
-import { SelectableRow } from "./shared/SelectableRow.js";
+import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
 
 /**
@@ -476,26 +476,30 @@ export const SessionManager = React.memo<Props>(
             return (
               <Box key={row.id} flexDirection="column">
                 <SelectableRow selected={isSelected}>
-                  <Text color={Theme.stateBlocked}>
+                  <RowText color={Theme.stateBlocked}>
                     {row.pinned ? "★ " : "  "}
-                  </Text>
+                  </RowText>
                   <Box width={titleWidth}>
-                    <Text
+                    <RowText
                       color={
                         row.archived ? Theme.textChrome : Theme.textPrimary
                       }
-                      bold={isSelected}
                     >
                       {truncate(rowTitle(row), titleWidth - 1)}
-                    </Text>
+                    </RowText>
                   </Box>
-                  <Text color={Theme.textChrome}> {rowMeta(row, now)}</Text>
-                  {row.active && <Text color={Theme.stateActive}> ● live</Text>}
+                  <RowText color={Theme.textChrome}>
+                    {" "}
+                    {rowMeta(row, now)}
+                  </RowText>
+                  {row.active && (
+                    <RowText color={Theme.stateActive}> ● live</RowText>
+                  )}
                   {row.pendingAttention > 0 && (
-                    <Text color={Theme.stateBlocked}>
+                    <RowText color={Theme.stateBlocked}>
                       {" "}
                       ⚠ {row.pendingAttention}
-                    </Text>
+                    </RowText>
                   )}
                 </SelectableRow>
                 {row.preview && (
