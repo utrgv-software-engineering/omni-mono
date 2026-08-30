@@ -84,6 +84,7 @@ type Harness = {
   stdin: FakeStdin;
   reached: ReturnType<typeof vi.fn>;
   onCapturedChange: ReturnType<typeof vi.fn>;
+  onExit: ReturnType<typeof vi.fn>;
   unmount: () => void;
 };
 
@@ -91,6 +92,7 @@ function mount(captured: boolean): Harness {
   const stdin = new FakeStdin();
   const reached = vi.fn();
   const onCapturedChange = vi.fn();
+  const onExit = vi.fn();
 
   // No client: the session never opens, so sendInput is a documented
   // no-op (session.ts guards on phase). Dispatch is what is under test.
@@ -105,6 +107,7 @@ function mount(captured: boolean): Harness {
           sessionId={null}
           captured={captured}
           onCapturedChange={onCapturedChange}
+          onExit={onExit}
         />
       </MouseProvider>
     </KeypressProvider>,
@@ -121,6 +124,7 @@ function mount(captured: boolean): Harness {
     stdin,
     reached,
     onCapturedChange,
+    onExit,
     unmount: () => instance.unmount(),
   };
 }
@@ -195,6 +199,31 @@ describe("terminal screen keyboard ownership", () => {
 
     expect(harness.onCapturedChange).not.toHaveBeenCalled();
     expect(harness.reached).not.toHaveBeenCalled();
+    expect(harness.onExit).not.toHaveBeenCalled();
+  });
+
+  it("leaves on esc, like every other screen", async () => {
+    // The terminal was the only screen Esc did nothing on: it declined
+    // the key and App has no screen-exit branch, so it fell into the void
+    // while every other screen advertised "esc chat".
+    harness = mount(false);
+    await settle();
+
+    harness.stdin.press("\x1b");
+    await settle();
+
+    expect(harness.onExit).toHaveBeenCalled();
+  });
+
+  it("leaves esc to the shell while it owns the keyboard", async () => {
+    // vim needs it.
+    harness = mount(true);
+    await settle();
+
+    harness.stdin.press("\x1b");
+    await settle();
+
+    expect(harness.onExit).not.toHaveBeenCalled();
   });
 
   it("keeps alt+1..5 available as direct jumps while captured", async () => {

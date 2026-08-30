@@ -1252,6 +1252,7 @@ export const App: React.FC<AppProps> = ({
                 sessionId={sessionId ?? null}
                 captured={termCaptured}
                 onCapturedChange={setTermCaptured}
+                onExit={() => setScreen("chat")}
               />
             ) : screen === "files" ? (
               <FilesScreen

@@ -128,6 +128,7 @@ describe("TerminalScreen end-to-end render", () => {
             sessionId="sess-1"
             captured={true}
             onCapturedChange={() => {}}
+            onExit={() => {}}
           />
         </MouseProvider>
       </KeypressProvider>,
@@ -167,6 +168,15 @@ describe("terminal footer hint", () => {
       "ctrl+] release",
     );
     expect(terminalHint({ ...base, captured: false })).not.toContain("ctrl+]");
+  });
+
+  it("names alt+1..5 only while the shell owns Tab and Esc", () => {
+    // Earned while captured — it is the one way out that still works —
+    // and noise otherwise, where Esc leaves like on every other screen.
+    expect(terminalHint({ ...base, captured: true })).toContain("alt+1..5");
+    const free = terminalHint({ ...base, captured: false });
+    expect(free).not.toContain("alt+1..5");
+    expect(free).toContain("esc chat");
   });
 
   it("says release even before the shell has printed anything", () => {

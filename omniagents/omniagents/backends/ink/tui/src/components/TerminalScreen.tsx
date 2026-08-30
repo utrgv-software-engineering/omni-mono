@@ -22,6 +22,8 @@ type Props = {
    *  can show it; App also clears it whenever you leave the screen. */
   captured: boolean;
   onCapturedChange: (captured: boolean) => void;
+  /** Leave the screen. Esc, while the shell does NOT own the keyboard. */
+  onExit: () => void;
 };
 
 // The Terminal screen (tab 5): a real shell, full height, in two states.
@@ -78,9 +80,13 @@ export function terminalHint({
   if (phase === "running" && outputBytes === 0 && !captured) {
     return "attached · no output yet — is the shell alive?";
   }
+  // alt+1..5 is named only while captured, and it is earned there: Tab
+  // and Esc both belong to the shell, so it is the one way out that
+  // still works. Uncaptured, Esc leaves like it does everywhere else and
+  // the reminder would just be noise.
   return captured
     ? `keys → shell (tab too)${release} · alt+1..5 screens · PgUp/PgDn scroll`
-    : "i or enter to type · tab cycles tabs · j/k PgUp/PgDn scroll";
+    : "i or enter to type · j/k PgUp/PgDn scroll · esc chat";
 }
 
 export const TerminalScreen = ({
@@ -90,6 +96,7 @@ export const TerminalScreen = ({
   sessionId,
   captured,
   onCapturedChange,
+  onExit,
 }: Props) => {
   const { stdout } = useStdout();
   const width = stdout?.columns ?? 80;
@@ -189,6 +196,13 @@ export const TerminalScreen = ({
         // one key mean "release" sometimes and "leave the screen" other
         // times, which is the ambiguity it was renamed out of.
         if (backOut) {
+          return true;
+        }
+        // Esc leaves, exactly as it does on every other screen. It can
+        // only mean that while the app owns the keyboard: captured, Esc
+        // belongs to the shell (vim needs it) and never reaches here.
+        if (key.escape) {
+          onExit();
           return true;
         }
         if (phase === "exited" && key.return) {
