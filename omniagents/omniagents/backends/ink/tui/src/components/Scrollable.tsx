@@ -44,6 +44,16 @@ interface ScrollableProps {
   scrollToBottom?: boolean;
   flexGrow?: number;
   contentVersion?: number;
+  /**
+   * Bump to park the view at the bottom and keep it there while the new
+   * content settles.
+   *
+   * For content that re-projects itself — the transcript's ctrl+o — the
+   * old scroll offset means a different place in the new projection, so
+   * there is nothing to preserve. Landing at the bottom is at least a
+   * place the reader can predict.
+   */
+  pinToBottomToken?: number;
 }
 
 export const Scrollable: React.FC<ScrollableProps> = ({
@@ -54,6 +64,7 @@ export const Scrollable: React.FC<ScrollableProps> = ({
   maxHeight,
   hasFocus,
   flexGrow,
+  pinToBottomToken,
 }) => {
   const [scrollTop, setScrollTop] = useState(0);
   const ref = useRef<DOMElement>(null);
@@ -111,9 +122,6 @@ export const Scrollable: React.FC<ScrollableProps> = ({
       Math.abs(prev.innerHeight - innerHeight) > EPS ||
       Math.abs(prev.scrollHeight - scrollHeight) > EPS;
 
-    const contentGrew = scrollHeight - prev.scrollHeight > EPS;
-    const containerShrank = prev.innerHeight - innerHeight > EPS;
-
     if (dimsChanged && !guardTripped) {
       previousSizeRef.current = { innerHeight, scrollHeight };
       setSize({ innerHeight, scrollHeight });
@@ -127,9 +135,15 @@ export const Scrollable: React.FC<ScrollableProps> = ({
     // clears the pin when the user scrolls up via mouse wheel or
     // shift+arrow so streamed events don't yank them back; once they
     // return to bottom the pin re-engages.
+    // A pin means pinned. This used to fire only when the content grew
+    // or the container shrank, so a view that ended up off the bottom
+    // any other way — content re-projected under it, heights landing
+    // late — stayed there with the pin still nominally set. Checking the
+    // position itself is what makes the pin follow through settling
+    // content, which takes several passes.
     if (
-      (contentGrew || containerShrank) &&
       pinToBottomRef.current &&
+      Math.abs(scrollTop - bottom) > EPS &&
       !guardTripped
     ) {
       setScrollTop(bottom);
@@ -148,6 +162,16 @@ export const Scrollable: React.FC<ScrollableProps> = ({
       selfUpdateRef.current = true;
     }
   });
+
+  // Re-arm the pin when the caller says the content has been replaced.
+  // The effect above does the rest, following the bottom as the new
+  // content measures itself.
+  const firstPinToken = useRef(pinToBottomToken);
+  useEffect(() => {
+    if (pinToBottomToken === firstPinToken.current) return;
+    firstPinToken.current = pinToBottomToken;
+    pinToBottomRef.current = true;
+  }, [pinToBottomToken]);
 
   const scrollBy = useCallback(
     (delta: number) => {

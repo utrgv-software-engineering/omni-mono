@@ -30,6 +30,7 @@ import {
   useBashJobs,
   useRunDiff,
   useSubagents,
+  useTranscriptDetail,
   useActions,
 } from "../store/appStore.js";
 import type {
@@ -218,6 +219,12 @@ const ScrollableMessageList: React.FC<{
   const elicitation = useElicitation();
   const preamble = usePreamble();
   const contentVersion = messages.length;
+  // ctrl+o re-projects the transcript into a different row set, so the
+  // scroll offset it was holding points somewhere unrelated afterwards —
+  // pinned at the bottom you landed mid-conversation. There is nothing
+  // to preserve, so land at the bottom: the one position that means the
+  // same thing in both views.
+  const detail = useTranscriptDetail();
   return (
     <Scrollable
       hasFocus={true}
@@ -225,6 +232,7 @@ const ScrollableMessageList: React.FC<{
       maxHeight={availableHeight}
       flexGrow={1}
       contentVersion={contentVersion}
+      pinToBottomToken={detail ? 1 : 0}
     >
       {/* Outer gap={1}: 1-row rhythm between transcript, Thinking…,
           Preamble and approvals — and it is the ONLY thing that spaces
