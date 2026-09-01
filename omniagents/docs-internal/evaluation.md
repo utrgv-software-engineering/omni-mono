@@ -151,3 +151,26 @@ Notes
 
 - Selectors: use `--select/--exclude` with expressions like `name:glob`, `tag:glob`, `measure:glob`.
 - Use `--name` to select the scenario set folder under `artifacts/eval/<name>/`. Prefer explicit paths with `-i/--input` as needed.
+
+## Repeats, intervals, slices and a holdout
+
+An agent's output varies run to run, so a single run is one draw from a pass rate. The pipeline supports the pieces needed to report a rate instead of a verdict, and to compare two runs honestly:
+
+- `evaluation.defaults.runs_per_prompt: N` fans out N runs per scenario; each run record carries `trial` (0-based) and `repeats`.
+- Each run carries `answered` - whether a final answer was produced. Unanswered runs count as failures by default; `answered_rate` (a metric type) reports how many there were, and `exclude_nonresponse: true` on a `pass_rate` metric drops them from that metric's denominator.
+- Every `pass_rate` carries a 95% Wilson `interval`. `slice_by: [expect.skin_tone, tags]` on a metric, or `evaluation.defaults.slice_by`, reports the rate per value of each field under `slices`; the CLI prints one informational line per slice.
+- `results/<run_id>/metadata.json` includes a `manifest`: model, resolved tools, instruction and agent-file hashes, framework version, `select`/`exclude`/`split`, repeats. Compare two runs by their manifests before comparing their numbers.
+- `omniagents eval scenarios holdout --strata expect.skin_tone,expect.malignant --fractions 0.5,0.25,0.25 --seed 42` writes `evaluations/splits/eval/{train,dev,test}.yml` (scenario names) and `manifest.yml` (seed, strata, counts per stratum). `eval suite run --split test` restricts a run to the split and records it in the manifest. This is an *agent-evaluation* holdout; `eval scenarios split` is the judge-training split by failure-category label and is unrelated.
+
+```yaml
+# evaluations/metrics.yml
+metrics:
+  - name: top1_accuracy
+    type: pass_rate
+    source_measure: top1_match
+    slice_by: [expect.skin_tone]
+    target: { op: ">=", value: 0.30 }
+  - name: answered
+    type: answered_rate
+    target: { op: ">=", value: 0.95 }
+```
