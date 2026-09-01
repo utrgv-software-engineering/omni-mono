@@ -17,16 +17,24 @@ welcome_text: |
 additional_tools_dirs:
   - ../../tools
 
-# Voice agent gets a focused subset — file/shell + web/search + slash
-# dispatch + markdown conversion, plus delegation (workers, explore) so
-# long work runs in the background instead of stalling the conversation.
-# No notebook or tasks; voice latency favors a tighter tool surface.
+# Voice reads and delegates, and that is the whole surface: read-only
+# file inspection, slash dispatch, and delegation (`spawn_worker`,
+# `explore`). Everything that writes, runs commands, reaches the
+# network, or converts documents goes to a worker, which has the full
+# filesystem/shell surface behind a single approval.
+#
+# Why each pack is absent, so this doesn't get re-litigated:
+#   filesystem/shell   — write + exec; an approval card is the most
+#                        disruptive interruption in a spoken conversation
+#   web                — `download_file` writes into the workspace, and
+#                        the pack bundles it with `web_fetch`
+#   serpapi/markdown   — their instructions tell the model to reach for
+#                        `web_fetch`/`download_file`, which voice no
+#                        longer has; advertising absent tools invites
+#                        fabricated calls
+#   notebook/tasks     — voice latency favors a tight tool surface
 capabilities:
-  - filesystem
-  - shell
-  - web
-  - serpapi
-  - markdown
+  - filesystem_readonly
   - slash
   - workers
   - exploration
@@ -41,17 +49,21 @@ use_safe_agent: true
 safe_agent_options:
   skip_approvals: false
   halt_on_rejection: true
+  # Every read-only tool voice has, so nothing that cannot change state
+  # ever raises an approval card mid-conversation. Ordered to mirror the
+  # same list in agents/omni/agent.yml so drift between the two reads as
+  # a plain diff. What stays gated is exactly the worker lifecycle:
+  # spawning one, steering it, cancelling it, cleaning up after it.
   safe_tool_names:
+    - read_image
     - read_file
     - list_directory
     - glob_files
     - grep_files
     - dispatch
-    - web_fetch
-    - web_search
-    - youtube_search
-    - scholar_search
-    - convert_to_markdown
+    - explore
+    - get_worker_status
+    - wait_for_workers
 
 # No server_functions: `/help` is carried by the builtin `slash`
 # capability pack this agent activates.
