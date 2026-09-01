@@ -610,12 +610,16 @@ async def _run_scenario(
             session_id=session_id,
         )
 
+        final_text = final_assistant_text(history)
         return {
             "scenario": scenario.get("name", "scenario"),
             "prompt": prompt,
             "session_id": session_id,
             "trace_group_id": trace_group_id,
-            "final_assistant_text": final_assistant_text(history),
+            "final_assistant_text": final_text,
+            # A run with no final answer is a different kind of failure from a
+            # wrong one; it is recorded so aggregation can report it apart.
+            "answered": bool((final_text or "").strip()),
             "measures": measures_out,
             "history_len": len(history),
             "metadata": result_metadata,
@@ -649,6 +653,7 @@ async def run_evaluation_async(
         eval_cfg = (raw or {}).get("evaluation") or {}
     defaults = eval_cfg.get("defaults") or {}
     runs_per = int(defaults.get("runs_per_prompt", 1))
+    slice_by = defaults.get("slice_by")
     scenarios = eval_cfg.get("scenarios") or []
     metrics_cfg = eval_cfg.get("metrics") or []
     fc_map = _failure_category_map(eval_cfg)
@@ -727,7 +732,7 @@ async def run_evaluation_async(
     sem = asyncio.Semaphore(concurrency)
     completed_count = 0
 
-    async def _worker(sc):
+    async def _worker(sc, trial):
         nonlocal completed_count
         async with sem:
             r = await _run_scenario(
@@ -740,6 +745,10 @@ async def run_evaluation_async(
                 project_root=project_root,
             )
             r["scenario_config"] = sc
+            # Which repeat of this scenario the run is (0-based) and how many
+            # there are, so repeats stay distinguishable after flattening.
+            r["trial"] = trial
+            r["repeats"] = runs_per
 
             # Update progress safely
             completed_count += 1
@@ -771,20 +780,25 @@ async def run_evaluation_async(
 
     tasks = []
     for sc in scenarios:
-        for _ in range(runs_per):
-            tasks.append(asyncio.create_task(_worker(sc)))
+        for trial in range(runs_per):
+            tasks.append(asyncio.create_task(_worker(sc, trial)))
 
     if tasks:
         all_runs = await asyncio.gather(*tasks)
     else:
         all_runs = []
 
-    metrics = compute_metrics(all_runs, metrics_cfg)
+    if slice_by:
+        metrics = compute_metrics(all_runs, metrics_cfg, default_slice_by=slice_by)
+    else:
+        metrics = compute_metrics(all_runs, metrics_cfg)
     out = {
         "agent_yaml": str(cfg_path),
         "runs": all_runs,
         "metrics": metrics,
         "stats": {
+            "repeats": runs_per,
+            "answered": sum(1 for r in all_runs if r.get("answered", True)),
             "total_scenarios": original_scenarios_count,
             "included_scenarios": included_scenarios_count,
             "skipped_unmeasured": skipped_unmeasured_count,
@@ -794,6 +808,13 @@ async def run_evaluation_async(
             "unknown_scenarios": unknown_scenarios,
         },
     }
+    if eval_config is not None:
+        try:
+            from omniagents.core.eval.manifest import build_run_manifest
+
+            out["manifest"] = build_run_manifest(eval_config, repeats=runs_per)
+        except Exception:
+            out["manifest"] = None
     return out
 
 

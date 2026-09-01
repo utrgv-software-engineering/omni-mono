@@ -196,14 +196,17 @@ class TestRealSDKIntegration:
             info=RealtimeEventInfo(context=context),
         )
 
-        from omniagents.rpc.realtime_events import map_realtime_session_event_to_rpc
+        from omniagents.rpc.realtime_events import (
+            RealtimeTranscriptDeltaEvent as RpcTranscriptDeltaEvent,
+            map_realtime_session_event_to_rpc,
+        )
 
         rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_123")
 
-        assert isinstance(rpc_event, RpcTranscriptEvent)
-        assert rpc_event.type == "realtime_transcript"
-        assert rpc_event.role == "assistant"
-        assert rpc_event.transcript == "Hello "
+        assert isinstance(rpc_event, RpcTranscriptDeltaEvent)
+        assert rpc_event.type == "realtime_transcript_delta"
+        assert rpc_event.item_id == "item_abc"
+        assert rpc_event.delta == "Hello "
 
     @pytest.mark.asyncio
     async def test_real_sdk_guardrail_event_mapping(self, spec, settings):

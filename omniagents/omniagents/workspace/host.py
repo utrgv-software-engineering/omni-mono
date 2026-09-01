@@ -32,7 +32,23 @@ from .types import (
 
 
 class HostWorkspace(Workspace):
-    """Workspace backed by the local filesystem rooted at ``root``."""
+    """Workspace backed by the local filesystem rooted at ``root``.
+
+    ``root`` anchors relative paths; it is NOT a boundary. This workspace
+    never refuses a path. The agent's file tools reach the whole machine,
+    exactly as its shell already does — ``exec`` hands the command straight
+    to the host and only ever resolves ``cwd``, so fencing the file tools
+    while bash ran free bought no containment, only a disagreement between
+    two tool families about what exists.
+
+    Callers that genuinely need the root boundary — the ``fs_*`` / ``git_*``
+    wire surfaces, which promise clients that every path they touch stays
+    inside it — call :meth:`~omniagents.workspace.base.Workspace.resolve_confined`,
+    which enforces it through :meth:`contains_path` independently of this
+    class. Subclasses whose root is a synthetic namespace rather than a place
+    (:class:`~omniagents.workspace.mounted_host.MountedHostWorkspace`) enforce
+    their own address space in their own ``resolve``.
+    """
 
     supports_direct_host_scan = True
 
@@ -41,7 +57,6 @@ class HostWorkspace(Workspace):
         root: Optional[str] = None,
         *,
         scratch_root: Optional[str] = None,
-        confine: bool = True,
     ) -> None:
         # Direct construction may omit root for low-level/tests convenience.
         # Runtime routing never constructs an implicit HostWorkspace.
@@ -51,21 +66,6 @@ class HostWorkspace(Workspace):
             # But the path must be absolute and parent-traversable.
             resolved.mkdir(parents=True, exist_ok=True)
         self.root = str(resolved)
-
-        # When False, ``resolve`` still anchors relative paths at ``root``
-        # (so cwd ergonomics are unchanged) but does NOT reject paths that
-        # land outside it. This is the "no sandbox" host target: the agent
-        # may read/write anywhere the process can — which its shell already
-        # could, since ``exec`` hands the command straight to the host and
-        # only ever resolves ``cwd``. Fencing the file tools while bash runs
-        # free bought no containment, only a disagreement between two tool
-        # families about what exists.
-        #
-        # Set False by the host execution target (see
-        # ``core/runtime/environment_provisioner``); the default stays True
-        # for every other caller. Wire surfaces that need the boundary
-        # regardless call ``resolve_confined`` rather than ``resolve``.
-        self.confine = confine
 
         # Scratch directory — deliberately outside ``root`` so tool-internal
         # state (worker worktrees, spawn logs, etc.) never mixes with the
@@ -82,11 +82,14 @@ class HostWorkspace(Workspace):
 
     @property
     def enforces_confinement(self) -> bool:
-        return self.confine
+        # ``resolve`` never rejects — see the class docstring. Subclasses that
+        # DO reject (MountedHostWorkspace) override this back to True so
+        # ``resolve_confined`` can skip its redundant containment probe.
+        return False
 
     def _display_path(self, p: Path) -> str:
         """Path shown in discovery results: relative to root when inside it,
-        else the absolute posix path (possible only when unconfined)."""
+        else the absolute posix path."""
         try:
             return p.relative_to(self.root).as_posix()
         except ValueError:
@@ -95,24 +98,12 @@ class HostWorkspace(Workspace):
     def resolve(self, path: str) -> str:
         if not path or path == ".":
             return self.root
-        # Path() resolution differs for absolute vs relative; we want all
-        # paths interpreted relative to root unless they're already inside
-        # root. Absolute paths outside root → escape error.
+        # Relative paths are anchored at ``root``; absolute paths are taken
+        # as given. Nothing is rejected — ``root`` is an anchor, not a fence.
         candidate = Path(path)
         if candidate.is_absolute():
-            full = candidate.resolve()
-        else:
-            full = (Path(self.root) / candidate).resolve()
-        # Defense in depth — make sure we're still inside root. Skipped when
-        # the workspace is unconfined (the "host" no-sandbox target).
-        if self.confine:
-            try:
-                full.relative_to(self.root)
-            except ValueError:
-                raise WorkspaceEscapeError(
-                    f"Path {path!r} resolves to {full!r}, outside workspace root {self.root!r}"
-                ) from None
-        return str(full)
+            return str(candidate.resolve())
+        return str((Path(self.root) / candidate).resolve())
 
     # ----------------------------- file I/O ---------------------------- #
 
@@ -255,10 +246,11 @@ class HostWorkspace(Workspace):
                             size=stat.st_size,
                             mtime=datetime.fromtimestamp(stat.st_mtime),
                             is_symlink=is_symlink,
-                            # Unconfined host workspaces may legitimately
-                            # list outside the root, where no relative
-                            # spelling exists.
-                            allow_absolute=not self.confine,
+                            # Host workspaces may legitimately list outside
+                            # the root, where no relative spelling exists.
+                            # Subclasses that bound their own address space
+                            # (MountedHostWorkspace) report relative only.
+                            allow_absolute=not self.enforces_confinement,
                         )
                     )
                 except ValueError as error:

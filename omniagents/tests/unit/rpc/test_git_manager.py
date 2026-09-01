@@ -1703,7 +1703,7 @@ async def test_a_symlinked_repository_is_refused_even_when_unconfined(tmp_path: 
     workspace_root.mkdir()
     os.symlink(outside, workspace_root / "linked")
 
-    manager = make_manager(HostWorkspace(root=str(workspace_root), confine=False))
+    manager = make_manager(HostWorkspace(root=str(workspace_root)))
     with pytest.raises(GitPathError) as excinfo:
         await manager.status("s1", "linked")
     assert excinfo.value.data["reason"] == "escapes_workspace"

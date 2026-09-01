@@ -370,7 +370,7 @@ async def test_symlink_escape_is_rejected_on_an_unconfined_workspace(tmp_path):
     root = tmp_path / "workspace"
     root.mkdir()
     os.symlink(outside / "secret.txt", root / "link.txt")
-    workspace = HostWorkspace(root=str(root), confine=False)
+    workspace = HostWorkspace(root=str(root))
     manager = make_manager(workspace)
 
     # The agent's own tools reach it — that is the point of the host target.

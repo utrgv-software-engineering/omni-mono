@@ -591,3 +591,48 @@ def test_run_evaluation_with_environment_returns_error_on_failed_build(
     assert "Environment loading failed" in result["warnings"][0]
     # Verify runs are empty since we have no scenarios
     assert result["runs"] == []
+
+
+def test_run_evaluation_async_indexes_repeats_and_records_answered(monkeypatch, tmp_path):
+    config_text = textwrap.dedent("""
+        evaluation:
+          defaults:
+            runs_per_prompt: 3
+            slice_by: [expect.tone]
+          scenarios:
+            - name: Alpha
+              prompt: hi
+              expect: {tone: "12"}
+              measures:
+                - tool_hallucination
+          metrics:
+            - name: rate
+              type: pass_rate
+              source_measure: tool_hallucination
+        """)
+    cfg_path = tmp_path / "compiled.yaml"
+    cfg_path.write_text(config_text)
+    monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
+    monkeypatch.setattr(registry, "_MEASURES", {"tool_hallucination": lambda ctx: {"name": "tool_hallucination", "passed": True}})
+
+    async def fake_run_scenario(agent_yaml, scenario, defaults, eval_cfg, workflow_name, **kw):
+        return {
+            "scenario": scenario["name"],
+            "prompt": scenario["prompt"],
+            "session_id": "s",
+            "final_assistant_text": "done",
+            "answered": True,
+            "measures": [{"name": "tool_hallucination", "passed": True}],
+            "history_len": 1,
+            "metadata": {},
+        }
+
+    monkeypatch.setattr(pipeline, "_run_scenario", fake_run_scenario)
+    result = asyncio.run(pipeline.run_evaluation_async(cfg_path))
+    assert sorted(r["trial"] for r in result["runs"]) == [0, 1, 2]
+    assert all(r["repeats"] == 3 for r in result["runs"])
+    assert result["stats"]["repeats"] == 3
+    assert result["stats"]["answered"] == 3
+    (metric,) = result["metrics"]
+    assert metric["runs"] == 3 and metric["interval"] is not None
+    assert metric["slices"]["expect.tone"]["12"]["runs"] == 3

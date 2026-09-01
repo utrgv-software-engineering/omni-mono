@@ -61,7 +61,13 @@ class RealtimeAudioInterruptedEvent(RealtimeEventBase):
 
 @dataclass
 class RealtimeTranscriptDeltaEvent(RealtimeEventBase):
-    """Incremental transcript update event."""
+    """Incremental assistant transcript update.
+
+    Streamed while the model is speaking; clients accumulate deltas per
+    ``item_id`` into one growing message. The matching
+    :class:`RealtimeTranscriptEvent` (same ``item_id``) is the final,
+    authoritative text for the item.
+    """
 
     item_id: str
     content_index: int
@@ -74,10 +80,17 @@ class RealtimeTranscriptDeltaEvent(RealtimeEventBase):
 
 @dataclass
 class RealtimeTranscriptEvent(RealtimeEventBase):
-    """High-level transcript event for client display."""
+    """Final transcript for one conversation item (both roles).
+
+    User items arrive whole when input transcription completes; assistant
+    items are flushed from accumulated deltas at turn end. ``item_id`` keys
+    the item so clients replace any delta-built text rather than appending
+    a duplicate.
+    """
 
     role: str
     transcript: str
+    item_id: str
 
     def __post_init__(self):
         self.type = "realtime_transcript"
@@ -227,6 +240,23 @@ class RealtimeRawModelEvent(RealtimeEventBase):
     def __post_init__(self):
         """Ensure type is set correctly."""
         self.type = "realtime_raw_model_event"
+
+
+def _history_item_dict(item: Any) -> dict:
+    """Identity + status for one history item.
+
+    ``RealtimeItem`` (message or tool call) names its id ``item_id``; only
+    ``RealtimeResponse`` has a bare ``id``. Reading ``id`` here emitted
+    ``None`` for every item, which made the whole ordering snapshot useless
+    to clients — they key transcript bubbles by ``item_id``, the same field
+    every other realtime event carries.
+    """
+    return {
+        "item_id": getattr(item, "item_id", None) or getattr(item, "id", None),
+        "type": getattr(item, "type", None),
+        "role": getattr(item, "role", None),
+        "status": getattr(item, "status", None),
+    }
 
 
 def map_realtime_session_event_to_rpc(
@@ -427,31 +457,16 @@ def map_realtime_session_event_to_rpc(
     # as they map to RealtimeTurnStartedEvent and RealtimeTurnEndedEvent
 
     elif event_type == "history_updated":
-        # Convert history items to dictionaries
         history = getattr(event, "history", [])
-        history_items = []
-        for item in history:
-            # Extract relevant fields from RealtimeItem
-            item_dict = {
-                "id": getattr(item, "id", None),
-                "type": getattr(item, "type", None),
-                "role": getattr(item, "role", None),
-                "status": getattr(item, "status", None),
-            }
-            history_items.append(item_dict)
-
+        history_items = [_history_item_dict(item) for item in history]
         return RealtimeHistoryUpdatedEvent(run_id=run_id, history_items=history_items)
 
     elif event_type == "history_added":
         item_obj = getattr(event, "item", None)
         if item_obj:
-            item_dict = {
-                "id": getattr(item_obj, "id", None),
-                "type": getattr(item_obj, "type", None),
-                "role": getattr(item_obj, "role", None),
-                "status": getattr(item_obj, "status", None),
-            }
-            return RealtimeHistoryAddedEvent(run_id=run_id, item=item_dict)
+            return RealtimeHistoryAddedEvent(
+                run_id=run_id, item=_history_item_dict(item_obj)
+            )
 
     elif event_type == "raw_model_event":
         data = getattr(event, "data", None)
@@ -466,19 +481,30 @@ def map_realtime_session_event_to_rpc(
                     response_id=response_id,
                 )
 
-            # Synthesize high-level transcript events for the voice client
+            # Assistant transcription streams as per-item deltas; the final
+            # RealtimeTranscriptEvent for the item is flushed by
+            # RealtimeSession at turn end from the accumulated deltas.
             if data_type == "transcript_delta":
-                return RealtimeTranscriptEvent(
+                return RealtimeTranscriptDeltaEvent(
                     run_id=run_id,
-                    role="assistant",
-                    transcript=str(getattr(data, "delta", "")),
+                    item_id=str(getattr(data, "item_id", "")),
+                    content_index=0,
+                    delta=str(getattr(data, "delta", "")),
                 )
             if data_type == "input_audio_transcription_completed":
                 return RealtimeTranscriptEvent(
                     run_id=run_id,
                     role="user",
                     transcript=str(getattr(data, "transcript", "")),
+                    item_id=str(getattr(data, "item_id", "")),
                 )
+
+            # Turn boundaries, for client state (a turn with no audio still
+            # ends deterministically).
+            if data_type == "turn_started":
+                return RealtimeTurnStartedEvent(run_id=run_id)
+            if data_type == "turn_ended":
+                return RealtimeTurnEndedEvent(run_id=run_id)
 
             # Fallback: forward as raw model event for debugging/advanced UIs
             model_event_dict = {

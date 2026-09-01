@@ -20,12 +20,12 @@ The convention, enforced here rather than documented and hoped for:
     on every platform. ``workspace.resolve(entry.path)`` therefore always
     round-trips back to the entry, on every substrate.
 
-    The single exception is an *unconfined* :class:`HostWorkspace` (the
-    "no sandbox" host target, ``confine=False``), which may legitimately
-    list directories outside its root; those entries report the absolute
-    POSIX path and pass ``allow_absolute=True``. Confined workspaces —
-    every sandbox, every pyodide workspace, and the default host
-    workspace — may never emit an absolute path.
+    The single exception is :class:`HostWorkspace` (the "no sandbox" host
+    target), which may legitimately list directories outside its root;
+    those entries report the absolute POSIX path and pass
+    ``allow_absolute=True``. Workspaces that bound their own address space
+    — every sandbox, every pyodide workspace, and the composite
+    :class:`MountedHostWorkspace` — may never emit an absolute path.
 ``is_dir``
     True only for real directories, ``lstat`` semantics: an entry is
     described by *itself*, never by a symlink target. A symlink pointing

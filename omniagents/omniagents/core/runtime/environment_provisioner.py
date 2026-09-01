@@ -562,10 +562,10 @@ class ServeEnvironmentProvisioner:
                 for source in local_sources
             ):
                 workspace = GitMetadataHostWorkspace(
-                    str(workspace_dir), local_sources, confine=False
+                    str(workspace_dir), local_sources
                 )
             else:
-                workspace = HostWorkspace(root=str(workspace_dir), confine=False)
+                workspace = HostWorkspace(root=str(workspace_dir))
             terminal_defaults = TerminalExecutionDefaults(
                 shell=profile.terminal.command,
                 cwd=workspace.root,

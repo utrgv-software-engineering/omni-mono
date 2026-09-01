@@ -139,6 +139,39 @@ def _make_predicate(
     return needs_approval
 
 
+def attach_tool_approval_predicates(
+    tools: Iterable[Any],
+    *,
+    session: Any,
+    safe_tool_names: Iterable[str] | None = None,
+    safe_tool_patterns: Iterable[str] | None = None,
+    skip_approvals: bool = False,
+    exempt: Iterable[Any] = (),
+) -> None:
+    """Attach per-tool ``needs_approval`` predicates to a bare tool list.
+
+    The realtime (voice) pipeline builds its ``RealtimeAgent`` from a flat
+    tool list rather than through :func:`configure_tool_approval`'s agent
+    walk, but the SDK's realtime session honors the same ``needs_approval``
+    contract (``RealtimeSession._maybe_request_tool_approval``). Tools in
+    ``exempt`` (bridged client-tool proxies, already safe-only by
+    construction) and tools with an explicit ``needs_approval`` are left
+    untouched.
+    """
+
+    spec_names: set[str] = set(safe_tool_names or [])
+    spec_patterns: List[Pattern] = [re.compile(p) for p in (safe_tool_patterns or [])]
+    exempt_ids = {id(t) for t in exempt}
+    for tool in tools:
+        if not isinstance(tool, FunctionTool) or id(tool) in exempt_ids:
+            continue
+        if tool.needs_approval not in (False, None):
+            continue
+        tool.needs_approval = _make_predicate(
+            tool.name, session, spec_names, spec_patterns, skip_approvals
+        )
+
+
 def _walk_agents(root: Any) -> Iterable[Any]:
     """Yield ``root`` and every agent reachable via ``handoffs``.
 
@@ -165,6 +198,96 @@ def _walk_agents(root: Any) -> Iterable[Any]:
                 stack.append(target)
 
 
+def _make_attacher(
+    session: Any,
+    spec_names: set[str],
+    spec_patterns: List[Pattern],
+    skip_approvals: bool,
+) -> Callable[[Any], None]:
+    """The per-tool attach step shared by every approval entry point."""
+
+    def _attach(tool: Any) -> None:
+        if not isinstance(tool, FunctionTool):
+            return
+        if tool.needs_approval not in (False, None):
+            return
+        identity = getattr(tool, "_mcp_identity", None)
+        if identity is not None:
+            tool.needs_approval = _make_mcp_predicate(
+                identity, tool.name, session, spec_names, spec_patterns, skip_approvals
+            )
+        else:
+            tool.needs_approval = _make_predicate(
+                tool.name, session, spec_names, spec_patterns, skip_approvals
+            )
+
+    return _attach
+
+
+def _wrap_get_all_tools(
+    agent: Any, attach: Callable[[Any], None], session: Any
+) -> None:
+    """Patch ``agent.get_all_tools`` so lazily-resolved tools are gated.
+
+    Both agent flavors resolve MCP tools inside ``get_all_tools`` on every
+    run — after any pass over the static ``tools`` list — so this is the
+    only point where they can be reached.
+    """
+    original = getattr(agent, "get_all_tools", None)
+    if original is None or getattr(agent, "_omni_approval_patched", False):
+        return
+
+    async def _patched(run_context, *, _orig=original, _agent=agent):  # type: ignore[no-untyped-def]
+        tools = await _orig(run_context)
+        # Pair MCP-derived tools with their (server, original) identity
+        # BEFORE attaching predicates — the attacher branches on it.
+        try:
+            await stamp_mcp_tool_identities(_agent, run_context, tools, session)
+        except Exception:
+            pass
+        for t in tools:
+            attach(t)
+        return tools
+
+    try:
+        agent.get_all_tools = _patched  # type: ignore[assignment]
+        setattr(agent, "_omni_approval_patched", True)
+    except Exception:
+        # Best-effort; some agents have read-only attributes.
+        pass
+
+
+def attach_lazy_tool_approval(
+    agent: Any,
+    *,
+    session: Any,
+    safe_tool_names: Iterable[str] | None = None,
+    safe_tool_patterns: Iterable[str] | None = None,
+    skip_approvals: bool = False,
+) -> None:
+    """Gate the tools an agent resolves lazily at run time (MCP).
+
+    :func:`attach_tool_approval_predicates` only ever sees the STATIC
+    tool list. MCP servers are handed to the agent and their tools are
+    fetched on each run, after that pass, so without this they execute
+    with no approval at all.
+
+    The text path gets this for free from :func:`configure_tool_approval`,
+    which walks the agent. Callers that build their agent themselves —
+    the realtime/voice session builds a ``RealtimeAgent`` directly — must
+    call this once the agent exists. Reaches handoff targets too, since
+    each carries its own MCP servers.
+    """
+    attach = _make_attacher(
+        session,
+        set(safe_tool_names or []),
+        [re.compile(p) for p in (safe_tool_patterns or [])],
+        skip_approvals,
+    )
+    for sub_agent in _walk_agents(agent):
+        _wrap_get_all_tools(sub_agent, attach, session)
+
+
 def configure_tool_approval(
     agent: Any,
     *,
@@ -189,20 +312,7 @@ def configure_tool_approval(
     spec_names: set[str] = set(safe_tool_names or [])
     spec_patterns: List[Pattern] = [re.compile(p) for p in (safe_tool_patterns or [])]
 
-    def _attach(tool: FunctionTool) -> None:
-        if not isinstance(tool, FunctionTool):
-            return
-        if tool.needs_approval not in (False, None):
-            return
-        identity = getattr(tool, "_mcp_identity", None)
-        if identity is not None:
-            tool.needs_approval = _make_mcp_predicate(
-                identity, tool.name, session, spec_names, spec_patterns, skip_approvals
-            )
-        else:
-            tool.needs_approval = _make_predicate(
-                tool.name, session, spec_names, spec_patterns, skip_approvals
-            )
+    _attach = _make_attacher(session, spec_names, spec_patterns, skip_approvals)
 
     for sub_agent in _walk_agents(agent):
         for tool in getattr(sub_agent, "tools", None) or []:
@@ -231,25 +341,4 @@ def configure_tool_approval(
                 except Exception:
                     pass
 
-        original = getattr(sub_agent, "get_all_tools", None)
-        if original is None or getattr(sub_agent, "_omni_approval_patched", False):
-            continue
-
-        async def _patched(run_context, *, _orig=original, _agent=sub_agent):  # type: ignore[no-redef]
-            tools = await _orig(run_context)
-            # Pair MCP-derived tools with their (server, original) identity
-            # BEFORE attaching predicates — _attach branches on it.
-            try:
-                await stamp_mcp_tool_identities(_agent, run_context, tools, session)
-            except Exception:
-                pass
-            for t in tools:
-                _attach(t)
-            return tools
-
-        try:
-            sub_agent.get_all_tools = _patched  # type: ignore[assignment]
-            setattr(sub_agent, "_omni_approval_patched", True)
-        except Exception:
-            # Best-effort; some agents have read-only attributes.
-            pass
+        _wrap_get_all_tools(sub_agent, _attach, session)

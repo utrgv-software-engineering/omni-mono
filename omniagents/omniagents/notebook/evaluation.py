@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import html
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import Tuple, Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -158,6 +158,13 @@ class EvalResult:
     completion_reason: Optional[str] = (
         None  # For synthetic: "done", "give_up", "max_turns"
     )
+    trial: int = 0  # Which repeat of the case this is (EvalSuite.run(repeats=N))
+    metadata: Optional[Dict[str, Any]] = None  # The case's metadata, for slicing
+
+    @property
+    def answered(self) -> bool:
+        """Whether the agent produced a final answer at all."""
+        return bool((self.output or "").strip())
 
     @property
     def tool_calls(self) -> List[ToolCall]:
@@ -574,6 +581,7 @@ class TestCase:
     tags: Optional[List[str]] = None
     description: Optional[str] = None
     max_exchanges: Optional[int] = None  # For multi-turn
+    metadata: Optional[Dict[str, Any]] = None  # Fields to slice results by
 
     @property
     def is_multi_turn(self) -> bool:
@@ -602,6 +610,7 @@ class EvalSuiteResults:
         for r in self.results:
             row = {
                 "name": r.name or "",
+                "trial": r.trial,
                 "input": r.input[:50] + "..." if len(r.input) > 50 else r.input,
                 "passed": r.passed,
                 "tools_used": ", ".join(r.tools_used),
@@ -621,17 +630,81 @@ class EvalSuiteResults:
         return sum(r.passed for r in self.results) / len(self.results)
 
     @property
+    def pass_rate_interval(self) -> Tuple[float, float]:
+        """95% Wilson interval around :attr:`pass_rate`."""
+        from omniagents.core.eval.stats import wilson_interval
+
+        return wilson_interval(sum(r.passed for r in self.results), len(self.results))
+
+    @property
+    def answered_rate(self) -> float:
+        """Fraction of runs that produced a final answer at all."""
+        if not self.results:
+            return 0.0
+        return sum(r.answered for r in self.results) / len(self.results)
+
+    @property
     def summary(self) -> Dict[str, Any]:
         """Summary statistics."""
         passed = sum(r.passed for r in self.results)
         failed = len(self.results) - passed
+        low, high = self.pass_rate_interval
         return {
             "suite_name": self.suite.name,
             "total": len(self.results),
             "passed": passed,
             "failed": failed,
             "pass_rate": self.pass_rate,
+            "interval": (low, high),
+            "answered": sum(r.answered for r in self.results),
         }
+
+    def by_case(self) -> Dict[str, Dict[str, Any]]:
+        """Per case: runs, passes, pass rate and interval across repeats.
+
+        With ``repeats=1`` every case has one run and the rate is 0 or 1;
+        with more, this is where a flaky case (some passes) separates from a
+        broken one (none).
+        """
+        from omniagents.core.eval.stats import wilson_interval
+
+        groups: Dict[str, List[EvalResult]] = {}
+        for r in self.results:
+            groups.setdefault(r.name or "", []).append(r)
+        out: Dict[str, Dict[str, Any]] = {}
+        for name, rs in groups.items():
+            passed = sum(r.passed for r in rs)
+            out[name] = {
+                "runs": len(rs),
+                "passed": passed,
+                "pass_rate": passed / len(rs),
+                "interval": wilson_interval(passed, len(rs)),
+                "answered": sum(r.answered for r in rs),
+            }
+        return out
+
+    def by_field(self, path: str) -> Dict[str, "EvalSuiteResults"]:
+        """Split results by a case metadata field, or by tag.
+
+        ``path`` is a dotted key into each case's ``metadata``
+        (``"skin_tone"``, ``"patient.age_band"``); ``"tags"`` groups by every
+        tag a case carries. Each group is an :class:`EvalSuiteResults`, so
+        ``results.by_field("skin_tone")["56"].pass_rate_interval`` is the
+        subgroup's rate with its interval.
+        """
+        groups: Dict[str, List[EvalResult]] = {}
+        for r in self.results:
+            if path == "tags":
+                case = next((c for c in self.suite.cases if c.name == r.name), None)
+                keys = list(case.tags or []) if case else []
+            else:
+                cur: Any = r.metadata or {}
+                for part in path.split("."):
+                    cur = cur.get(part) if isinstance(cur, dict) else None
+                keys = [] if cur is None else ([str(v) for v in cur] if isinstance(cur, (list, tuple)) else [str(cur)])
+            for key in keys:
+                groups.setdefault(key, []).append(r)
+        return {key: EvalSuiteResults(suite=self.suite, results=rs) for key, rs in sorted(groups.items())}
 
     def failures(self) -> List[EvalResult]:
         """Return only failed results."""
@@ -821,6 +894,7 @@ class EvalSuite:
         name_fn: Optional[Callable[[int, Dict[str, Any]], str]] = None,
         measures: Optional[List[str]] = None,
         judges: Optional[List[Union[str, "Judge"]]] = None,
+        metadata_fn: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> "EvalSuite":
         """Create an EvalSuite from a list of records (dicts).
 
@@ -864,6 +938,7 @@ class EvalSuite:
             input_text = input_fn(record)
             expect = expect_fn(record) if expect_fn else None
             tags = tags_fn(record) if tags_fn else None
+            metadata = metadata_fn(record) if metadata_fn else None
 
             suite.add(
                 name=case_name,
@@ -872,6 +947,7 @@ class EvalSuite:
                 measures=measures,
                 judges=judges,
                 tags=tags,
+                metadata=metadata,
             )
 
         return suite
@@ -890,6 +966,7 @@ class EvalSuite:
         judges: Optional[List[Union[str, "Judge"]]] = None,
         tags: Optional[List[str]] = None,
         description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> "EvalSuite":
         """Add a test case to the suite.
 
@@ -905,6 +982,7 @@ class EvalSuite:
             judges: LLM judges to run for this case (in addition to suite-level)
             tags: Optional tags for filtering
             description: Optional description
+            metadata: Fields to slice results by (``results.by_field("skin_tone")``)
 
         Returns:
             self, for method chaining
@@ -936,6 +1014,7 @@ class EvalSuite:
                 judges=judges,
                 tags=tags,
                 description=description,
+                metadata=metadata,
             )
         )
         return self
@@ -951,6 +1030,7 @@ class EvalSuite:
         tags: Optional[List[str]] = None,
         max_turns: int = 10,
         show_progress: bool = True,
+        repeats: int = 1,
     ) -> EvalSuiteResults:
         """Run all test cases against the agent.
 
@@ -963,6 +1043,10 @@ class EvalSuite:
             tags: Only run cases with these tags (None = all)
             max_turns: Maximum agent turns per case
             show_progress: Show progress indicator
+            repeats: Run every case this many times. A model's output varies
+                run to run, so one run is one draw from a pass rate; with
+                repeats the result carries a rate per case (``by_case()``)
+                and each result's ``trial`` says which repeat it was.
 
         Returns:
             EvalSuiteResults with all test results
@@ -971,11 +1055,12 @@ class EvalSuite:
         cases = self.cases
         if tags:
             cases = [c for c in cases if c.tags and any(t in c.tags for t in tags)]
+        repeats = max(1, int(repeats))
 
         results: List[EvalResult] = []
-        total = len(cases)
+        total = len(cases) * repeats
 
-        for i, case in enumerate(cases):
+        for i, (case, trial) in enumerate((c, t) for c in cases for t in range(repeats)):
             if show_progress:
                 print(f"\rRunning {i + 1}/{total}: {case.name}...", end="", flush=True)
 
@@ -1041,6 +1126,8 @@ class EvalSuite:
                     name=case.name,
                 )
 
+            result.trial = trial
+            result.metadata = case.metadata
             results.append(result)
 
         if show_progress:

@@ -241,7 +241,7 @@ async def test_unconfined_host_may_report_absolute_paths(tmp_path: Path) -> None
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "x.txt").write_text("x", encoding="utf-8")
-    workspace = HostWorkspace(root=str(tmp_path / "root"), confine=False)
+    workspace = HostWorkspace(root=str(tmp_path / "root"))
     entries = await workspace.list_dir(str(outside))
     assert [(e.name, e.path) for e in entries] == [
         ("x.txt", (outside / "x.txt").as_posix())

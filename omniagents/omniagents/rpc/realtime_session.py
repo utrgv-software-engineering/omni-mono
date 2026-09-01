@@ -24,6 +24,7 @@ from omniagents.core.session.audio_storage import (
 from omniagents.core.session import history_db
 from omniagents.rpc.realtime_events import (
     RealtimeEventBase,
+    RealtimeTranscriptEvent,
     map_realtime_session_event_to_rpc,
 )
 
@@ -366,7 +367,9 @@ class RealtimeSession:
         audio_storage: Optional[AudioStorageBackend] = None,
         owner_user_id: Optional[str] = None,
         extra_tools: Optional[list] = None,
-        environment_lease: Optional[Any] = None,
+        request_context: Optional[Any] = None,
+        agent_service: Optional[Any] = None,
+        paired_session: Optional[Any] = None,
     ):
         """Initialize a realtime session.
 
@@ -379,11 +382,22 @@ class RealtimeSession:
             extra_tools: Additional SDK tools appended to the spec's tools —
                 the client-tool proxies bridged from a GUI session sharing
                 this session id (see AgentService.build_realtime_client_tools)
-            environment_lease: EnvironmentLease for the paired GUI session's
-                execution environment. Binds the workspace contextvar and
-                stamps workspace/environment identity on the run context so
-                server-side tools execute where text runs do. Without it,
-                workspace-touching tools raise WorkspaceRootRequiredError.
+            request_context: Routed RequestContext for the paired GUI
+                session (see
+                ``AgentService.prepare_environment_context_for_session``).
+                Its lease binds the workspace contextvar and stamps
+                workspace/environment identity on the run context so
+                server-side tools execute where text runs do, and the
+                context itself is bound for the voice task tree so
+                lease-routed helpers resolve. Without it, workspace-touching
+                tools raise WorkspaceRootRequiredError.
+            agent_service: The deployment's AgentService, when available.
+                Routes voice tool approvals through the text path's
+                ``request_tool_approval`` (prompts render in the chat UI on
+                the shared /ws session channels).
+            paired_session: The GUI ``Session`` sharing this session id.
+                Voice turns persist into its history + canonical thread, and
+                its always-allow state gates tool approvals.
         """
         if not spec.realtime_mode:
             raise ValueError("AgentSpec must have realtime_mode=True")
@@ -393,7 +407,11 @@ class RealtimeSession:
         self.session_id = session_id or str(uuid.uuid4())
         self.owner_user_id = owner_user_id
         self.extra_tools = list(extra_tools or [])
-        self.environment_lease = environment_lease
+        self.request_context = request_context
+        # One source of truth: execution derives from the routed context.
+        self.environment_lease = getattr(request_context, "environment_lease", None)
+        self.agent_service = agent_service
+        self.paired_session = paired_session
 
         # Extract project and agent slugs for database storage
         self._project_slug = getattr(spec, "project_slug", None)
@@ -417,6 +435,13 @@ class RealtimeSession:
         self._api_key: Optional[str] = None
         self._active = False
         self._event_task: Optional[asyncio.Task] = None
+
+        # Voice transcript state: assistant deltas accumulate per item_id
+        # (insertion-ordered) until turn end flushes them as final
+        # transcripts; ``_voice_turn_id`` is the open canonical turn.
+        self._assistant_transcripts: Dict[str, str] = {}
+        self._voice_turn_id: Optional[str] = None
+        self._approval_tasks: set[asyncio.Task] = set()
 
         self._mcp_shutdown: Optional[asyncio.Event] = None
         self._mcp_lifecycle_task: Optional[asyncio.Task] = None
@@ -514,8 +539,8 @@ class RealtimeSession:
         # Build tools if available (spec tools + capability-pack tools + any
         # bridged client tools). Capability packs are normally expanded by
         # build_agent(); realtime builds its agent here, so expand them the
-        # same way. No approval predicates are attached — realtime has no
-        # tool-approval flow yet, so capability tools run ungated.
+        # same way. Approval predicates are attached below, once the full
+        # static list is assembled.
         tools = list(self.spec.available_tools or [])
         resolved_caps = list(getattr(self.spec, "resolved_capabilities", []) or [])
         for cap in resolved_caps:
@@ -550,6 +575,34 @@ class RealtimeSession:
                 )
         if self.extra_tools:
             tools = tools + self.extra_tools
+
+        # Gate tools with the same needs_approval contract text runs use —
+        # the SDK's realtime session honors it and emits
+        # ``tool_approval_required``, which stream_events() routes through
+        # AgentService.request_tool_approval on the paired GUI session (the
+        # approval card renders in the chat UI over /ws). Bridged client
+        # tools are exempt: only ``safe: true`` registrations are bridged.
+        # Without a paired session there is no approval surface, so tools
+        # stay ungated as before (embedded single-user use).
+        safe_opts = getattr(self.spec, "safe_agent_options", None)
+        gate_tools = (
+            getattr(self.spec, "use_safe_agent", False)
+            and not getattr(safe_opts, "skip_approvals", False)
+            and self.agent_service is not None
+            and self.paired_session is not None
+        )
+        if gate_tools:
+            from omniagents.core.agents.approval import (
+                attach_tool_approval_predicates,
+            )
+
+            attach_tool_approval_predicates(
+                tools,
+                session=self.paired_session,
+                safe_tool_names=getattr(safe_opts, "safe_tool_names", None),
+                safe_tool_patterns=getattr(safe_opts, "safe_tool_patterns", None),
+                exempt=self.extra_tools,
+            )
 
         mcp_servers = await self._ensure_mcp_servers()
 
@@ -632,6 +685,20 @@ class RealtimeSession:
         else:
             instructions = raw_instructions
 
+        # Voice joins the ongoing conversation: append a rendered tail of
+        # the shared session's history so the agent knows what was already
+        # discussed (text runs get this for free from the SDK session; the
+        # realtime model starts from instructions alone).
+        tail = self._render_history_tail()
+        if tail:
+            instructions = (
+                (instructions or "").rstrip()
+                + "\n\n# Conversation so far\n"
+                + "You are joining this user's ongoing conversation; earlier "
+                + "turns may have happened in text. Recent history:\n\n"
+                + tail
+            )
+
         # Create agent with realtime configuration
         # RealtimeAgent only takes: name, instructions, tools, handoffs, output_guardrails, hooks
         self._agent = RealtimeAgent(
@@ -643,6 +710,22 @@ class RealtimeSession:
             mcp_servers=list(mcp_servers),
             mcp_config=self.spec.mcp_config or {},
         )
+
+        # MCP tools are not in the static list above: the SDK resolves them
+        # inside RealtimeAgent.get_all_tools on every run, after that pass.
+        # Gating them needs the agent, so it happens here — otherwise every
+        # tool from a user-configured MCP server would execute in a voice
+        # session with no approval, while the same server IS gated in text
+        # (configure_tool_approval's agent walk covers it there).
+        if gate_tools:
+            from omniagents.core.agents.approval import attach_lazy_tool_approval
+
+            attach_lazy_tool_approval(
+                self._agent,
+                session=self.paired_session,
+                safe_tool_names=getattr(safe_opts, "safe_tool_names", None),
+                safe_tool_patterns=getattr(safe_opts, "safe_tool_patterns", None),
+            )
 
         # Create runner with agent
         self._runner = RealtimeRunner(self._agent)
@@ -850,12 +933,27 @@ class RealtimeSession:
         )
 
         # Execution wiring, mirroring the text-run path (runtime/bridge.py +
-        # AgentService context stamping): bind the lease's workspace to the
-        # contextvar so tool bodies route through the right backend, and stamp
-        # workspace/environment identity on the run context so tools can
-        # resolve cwd and scope per-session state. The contextvar is set here,
-        # before __aenter__, so the model's listener task — where the SDK
-        # executes tool calls — inherits it.
+        # AgentService context stamping + start_run's own task bindings):
+        #
+        #   1. the lease's workspace on the contextvar, so tool bodies route
+        #      through the right backend;
+        #   2. workspace/environment identity on the run context, so tools
+        #      resolve cwd and scope per-session state;
+        #   3. the routed request context, so lease-routed helpers
+        #      (``require_environment_lease``, the worker isolation source
+        #      provider) resolve instead of raising "requires a routed
+        #      request context";
+        #   4. the owning AgentService, so ``current_service()`` consumers
+        #      work — without it a spawned worker gets no AgentHost
+        #      resources, builds a private registry, and its run fails with
+        #      "execution environment ... was not found".
+        #
+        # All four are set here, before __aenter__, so the model's listener
+        # task — where the SDK executes tool calls — inherits them. They are
+        # deliberately NOT reset: the event-pump task is created after this
+        # returns and must inherit them too (an approval-gated tool resumes
+        # from THAT tree, via approve_tool_call), and RPC dispatch resets its
+        # own request-context token when this call unwinds.
         run_context: Dict[str, Any] = {"session_id": self.session_id}
         if self.environment_lease is not None:
             from omniagents.workspace import set_requested_cwd, set_workspace
@@ -871,6 +969,14 @@ class RealtimeSession:
                     "environment_generation": lease.generation,
                 }
             )
+        if self.request_context is not None:
+            from omniagents.execution import bind_request_context
+
+            bind_request_context(self.request_context)
+        if self.agent_service is not None:
+            from omniagents.core.agents.service import bind_current_service
+
+            bind_current_service(self.agent_service)
 
         # Get the session from runner.run()
         # This returns a RealtimeSession that needs to be used as async context manager
@@ -902,6 +1008,19 @@ class RealtimeSession:
 
         # Stream events from the realtime session (it's an async iterator)
         async for event in self._realtime_session:
+            # Tool approval pauses live inside the SDK session; route the
+            # decision through the text path's approval flow WITHOUT
+            # blocking this event pump (audio keeps streaming while the
+            # prompt is up in the chat UI).
+            if getattr(event, "type", None) == "tool_approval_required":
+                task = asyncio.create_task(
+                    self._route_tool_approval(event),
+                    name=f"realtime_tool_approval_{str(getattr(event, 'call_id', '') or '')[:12]}",
+                )
+                self._approval_tasks.add(task)
+                task.add_done_callback(self._approval_tasks.discard)
+                continue
+
             # Check for raw model events first to cache tool call arguments
             # This mimics how non-realtime mode extracts arguments from tool_call_item
             if event.type == "raw_model_event":
@@ -928,6 +1047,25 @@ class RealtimeSession:
                 if rpc_event.type == "realtime_tool_end":
                     cache_key = (rpc_event.tool_name, rpc_event.tool_call_id)
                     tool_call_cache.pop(cache_key, None)
+
+                if rpc_event.type == "realtime_transcript_delta":
+                    key = rpc_event.item_id or "__no_item__"
+                    self._assistant_transcripts[key] = (
+                        self._assistant_transcripts.get(key, "") + rpc_event.delta
+                    )
+
+                if (
+                    rpc_event.type == "realtime_transcript"
+                    and rpc_event.role == "user"
+                ):
+                    self._persist_voice_message("user", rpc_event.transcript)
+
+                # Turn end: flush accumulated assistant items as final
+                # transcripts (client replaces delta-built text; history
+                # gains the canonical turn) before the boundary event.
+                if rpc_event.type == "realtime_turn_ended":
+                    for final in self._flush_assistant_transcripts():
+                        yield final
 
                 yield rpc_event
 
@@ -963,6 +1101,266 @@ class RealtimeSession:
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
         )
+
+    # ------------------------------------------------------------------
+    #  Transcript persistence + canonical recording
+    # ------------------------------------------------------------------
+
+    def _flush_assistant_transcripts(self) -> list[RealtimeTranscriptEvent]:
+        """Drain accumulated assistant deltas into final transcript events.
+
+        Called at turn end (yielded to the client) and from stop() for a
+        mid-turn teardown (persist only). Each flushed item is persisted
+        into the shared session history + canonical thread.
+        """
+        finals: list[RealtimeTranscriptEvent] = []
+        for item_id, text in self._assistant_transcripts.items():
+            self._persist_voice_message("assistant", text)
+            finals.append(
+                RealtimeTranscriptEvent(
+                    run_id=self._run_id or "",
+                    role="assistant",
+                    transcript=text,
+                    item_id="" if item_id == "__no_item__" else item_id,
+                )
+            )
+        self._assistant_transcripts = {}
+        return finals
+
+    def _persist_voice_message(self, role: str, text: str) -> None:
+        """Land one voice turn in the session thread text runs share.
+
+        ``Session.append_message`` feeds the SDK history (the next text
+        run's model context and the legacy transcript); the canonical
+        recording mirrors what the notification chokepoint does for text
+        runs, because nothing here broadcasts. Best-effort: a persistence
+        fault must not kill the audio stream.
+        """
+        text = (text or "").strip()
+        if not text:
+            return
+        if role == "user":
+            msg: Dict[str, Any] = {"role": "user", "content": text}
+        else:
+            # Explicit output parts: bare assistant strings get coerced to
+            # input_text by the SDK's input conversion, which
+            # responses.compact rejects.
+            msg = {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
+                "type": "message",
+            }
+        sess = self.paired_session
+        if sess is not None:
+            try:
+                sess.append_message(msg)
+            except Exception:
+                logger.exception(
+                    "voice message not persisted", extra={"session": self.session_id}
+                )
+            self._record_canonical(sess, role, text)
+        else:
+            try:
+                history_db.append_message(
+                    self.session_id,
+                    msg,
+                    project_slug=self._project_slug,
+                    agent_slug=self._agent_slug,
+                )
+            except Exception:
+                logger.exception(
+                    "voice message not persisted", extra={"session": self.session_id}
+                )
+
+    def _record_canonical(self, sess: Any, role: str, text: str) -> None:
+        """Project a voice turn into the canonical conversation store.
+
+        The chat UI loads transcripts canonical-first, so without this the
+        voice conversation would vanish from the thread view even though
+        the SDK history has it. Turn model: a user final opens a voice
+        turn (its prompt), the assistant flush closes it; an assistant
+        reply with no transcribed prompt (transcription lag or text input)
+        opens a promptless turn. A second user utterance into an open turn
+        records as a mid-run user message.
+        """
+        from omniagents.core.conversation.recorder import ensure_conversation_thread
+
+        try:
+            recorder = ensure_conversation_thread(sess)
+        except Exception:
+            recorder = None
+        if recorder is None:
+            return
+        try:
+            if role == "user":
+                if self._voice_turn_id is None:
+                    self._voice_turn_id = f"voice_{uuid.uuid4().hex[:12]}"
+                    recorder.record(
+                        sess.id,
+                        "run_started",
+                        {
+                            "run_id": self._voice_turn_id,
+                            "prompt": text,
+                            "prompt_role": "user",
+                        },
+                    )
+                else:
+                    recorder.record_user_message(
+                        sess.id, run_id=self._voice_turn_id, content=text
+                    )
+            else:
+                turn_id = self._voice_turn_id
+                if turn_id is None:
+                    turn_id = f"voice_{uuid.uuid4().hex[:12]}"
+                    recorder.record(sess.id, "run_started", {"run_id": turn_id})
+                recorder.record(
+                    sess.id, "message_output", {"run_id": turn_id, "content": text}
+                )
+                recorder.record(
+                    sess.id,
+                    "run_end",
+                    {"run_id": turn_id, "end_reason": "completed"},
+                )
+                self._voice_turn_id = None
+        except Exception:
+            logger.exception(
+                "voice canonical recording failed", extra={"session": self.session_id}
+            )
+
+    # ------------------------------------------------------------------
+    #  Text → voice context
+    # ------------------------------------------------------------------
+
+    _HISTORY_TAIL_ITEMS = 30
+    _HISTORY_TAIL_CHARS = 8000
+
+    def _render_history_tail(self) -> str:
+        """Plain-text tail of the shared session's conversation.
+
+        Last ``_HISTORY_TAIL_ITEMS`` message items, capped at
+        ``_HISTORY_TAIL_CHARS`` (oldest dropped first). Non-message items
+        (tool calls, reasoning) are skipped. Empty string when there is no
+        usable history.
+        """
+        history: list = []
+        sess = self.paired_session
+        if sess is not None:
+            history = list(getattr(sess, "history", None) or [])
+        else:
+            try:
+                history = history_db.load_history(
+                    self.session_id,
+                    project_slug=self._project_slug,
+                    agent_slug=self._agent_slug,
+                )
+            except Exception:
+                history = []
+
+        lines: list[str] = []
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            role = item.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            content = item.get("content")
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                parts = [
+                    p.get("text", "")
+                    for p in content
+                    if isinstance(p, dict)
+                    and p.get("type") in ("output_text", "input_text", "text")
+                ]
+                text = "".join(parts)
+            else:
+                continue
+            text = (text or "").strip()
+            if not text:
+                continue
+            label = "User" if role == "user" else "Assistant"
+            lines.append(f"{label}: {text}")
+
+        lines = lines[-self._HISTORY_TAIL_ITEMS :]
+        while lines and sum(len(line) + 1 for line in lines) > self._HISTORY_TAIL_CHARS:
+            lines.pop(0)
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    #  Tool approvals
+    # ------------------------------------------------------------------
+
+    async def _route_tool_approval(self, event: Any) -> None:
+        """Resolve one SDK ``tool_approval_required`` pause.
+
+        The prompt goes through ``AgentService.request_tool_approval`` on
+        the paired GUI session — the same broadcast-and-await the text
+        path uses, so the card renders in the chat UI and "Always" updates
+        the session allow-list the needs_approval predicates consult. The
+        decision resumes the SDK session via approve/reject_tool_call.
+        """
+        call_id = str(getattr(event, "call_id", "") or "")
+        tool = getattr(event, "tool", None)
+        tool_name = str(getattr(tool, "name", "") or "unknown")
+        arguments = str(getattr(event, "arguments", "") or "")
+        rt = self._realtime_session
+        if rt is None or not call_id:
+            return
+
+        svc = self.agent_service
+        sess = self.paired_session
+        if svc is None or sess is None:
+            # Predicates are only attached when both exist (see start()),
+            # so this is a defensive dead end, not a policy decision.
+            await rt.reject_tool_call(
+                call_id,
+                rejection_message="Tool approval is unavailable in this voice session",
+            )
+            return
+
+        try:
+            response = await svc.request_tool_approval(
+                session=sess,
+                call_id=call_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                run_id=self._run_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.exception(
+                "voice tool approval failed", extra={"session": self.session_id}
+            )
+            try:
+                await rt.reject_tool_call(
+                    call_id, rejection_message=f"Approval failed: {exc}"
+                )
+            except Exception:
+                pass
+            return
+
+        decision = response.get("decision") if isinstance(response, dict) else None
+        try:
+            if decision == "approve":
+                await rt.approve_tool_call(
+                    call_id, always=bool(response.get("always_approve"))
+                )
+            else:
+                await rt.reject_tool_call(
+                    call_id,
+                    rejection_message=(
+                        response.get("rejection_message")
+                        if isinstance(response, dict)
+                        else None
+                    ),
+                )
+        except Exception:
+            logger.exception(
+                "voice tool approval decision not applied",
+                extra={"session": self.session_id},
+            )
 
     async def send_audio(self, audio_base64: str, commit: bool = False) -> None:
         """Send audio input to the realtime agent.
@@ -1014,6 +1412,18 @@ class RealtimeSession:
     async def stop(self) -> None:
         """Stop the realtime session and clean up resources."""
         self._active = False
+
+        # A teardown mid-turn still keeps what was said: persist any
+        # accumulated assistant transcript (nobody is left to receive the
+        # final events, so this is persistence-only).
+        try:
+            self._flush_assistant_transcripts()
+        except Exception:
+            pass
+
+        for task in list(self._approval_tasks):
+            task.cancel()
+        self._approval_tasks.clear()
 
         shutdown_event = self._mcp_shutdown
         if shutdown_event:

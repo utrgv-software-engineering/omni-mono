@@ -356,7 +356,6 @@ async def test_host_profile_workspace_is_unconfined(tmp_path):
     provisioned = await provisioner.provision(request())
     workspace = provisioned.workspace
 
-    assert workspace.confine is False
     assert workspace.enforces_confinement is False
     # An absolute path outside the root names what it says.
     assert workspace.resolve("/etc/hostname") == "/etc/hostname"

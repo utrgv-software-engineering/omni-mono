@@ -51,6 +51,7 @@ from omniagents.rpc.auth import (
     ADMIN_ROLE,
     GLOBAL_MUTATING_METHODS,
     OWNER_UNKNOWN,
+    SESSION_CREATING_SERVER_FUNCTIONS,
     AuthorizationDenied,
     AuthorizationPolicy,
 )
@@ -69,6 +70,7 @@ from omniagents.execution import (
     ExistingEnvironment,
     NoEnvironment,
     OperationExecutionDescriptor,
+    RequestContext,
     ThreadRuntimeBinding,
     bind_request_context,
     current_request_context,
@@ -437,6 +439,25 @@ def current_service() -> "AgentService | None":
     tree, or None if no run has activated. Tools should treat None as
     "no host to notify" and drop the call gracefully."""
     return _current_service.get()
+
+
+def bind_current_service(service: "AgentService") -> contextvars.Token:
+    """Mark the current task tree as owned by ``service``.
+
+    ``start_run`` does this for every text Run. Drivers that execute tools
+    OUTSIDE a Run — the realtime (voice) session, whose tool calls run in
+    the SDK's model-listener task — must do it themselves, or every
+    ``current_service()`` consumer degrades silently: worker sub-agents get
+    no AgentHost resources (and their runs then fail to resolve the
+    parent's environment), completion notifications never reach the
+    session, and the subagent event bus drops every relay.
+    """
+    return _current_service.set(service)
+
+
+def reset_current_service(token: contextvars.Token) -> None:
+    """Restore the previous owner bound by :func:`bind_current_service`."""
+    _current_service.reset(token)
 
 
 class AgentService(RpcMethodsBase):
@@ -1176,15 +1197,15 @@ class AgentService(RpcMethodsBase):
 
         return tools
 
-    async def acquire_environment_for_session(
+    async def prepare_environment_context_for_session(
         self,
         session_id: str,
         principal=None,
         default_environment_id: Optional[str] = None,
-    ) -> "EnvironmentLease | None":
-        """Acquire an environment lease for out-of-band execution paired to a
-        GUI session — the realtime (voice) pipeline, which runs outside RPC
-        dispatch and so never gets a routed request context.
+    ) -> "RequestContext | None":
+        """Resolve a routed request context for out-of-band execution paired
+        to a GUI session — the realtime (voice) pipeline, which runs outside
+        RPC dispatch and so never receives one from the endpoint.
 
         Mirrors ``start_run``'s inherit routing: the session's thread binding
         selects the environment (existing or automatic) and ``materialize``
@@ -1195,7 +1216,14 @@ class AgentService(RpcMethodsBase):
         that: it is the same server default the GUI handshake advertises
         (``agent_host.default_environment_id``) and is applied here as an
         explicit selection, exactly as the GUI client would on its first
-        ``start_run``. Returns ``None`` when neither resolves.
+        ``start_run``.
+
+        The WHOLE context is returned, not just its ``environment_lease``:
+        the caller binds it for its task tree (``bind_request_context``) so
+        lease-routed helpers — ``require_environment_lease``, worker
+        isolation sources — resolve there exactly as they do inside a Run.
+        Returns ``None`` when neither the binding nor the default names an
+        environment; a targetless context would only mask that.
         """
         request_context = await self.operation_router.prepare_protocol(
             OPERATION_BY_NAME["start_run"],
@@ -1206,8 +1234,7 @@ class AgentService(RpcMethodsBase):
             principal=principal,
         )
         request_context = await self.operation_router.materialize(request_context)
-        lease = request_context.environment_lease
-        if lease is None and default_environment_id:
+        if request_context.environment_lease is None and default_environment_id:
             request_context = await self.operation_router.prepare_protocol(
                 OPERATION_BY_NAME["start_run"],
                 {
@@ -1219,8 +1246,7 @@ class AgentService(RpcMethodsBase):
                 },
                 principal=principal,
             )
-            lease = request_context.environment_lease
-        return lease
+        return request_context if request_context.environment_lease else None
 
     def build_realtime_client_tools(self, session_id: str, principal=None) -> list:
         """Client tools bridged into a realtime (voice) session that shares
@@ -3618,7 +3644,7 @@ class AgentService(RpcMethodsBase):
             # ``asyncio.create_task`` and will resolve ``current_service()``
             # to the right host even when a worker's ``LocalAgent`` has
             # constructed its own ``AgentService`` in a nested scope.
-            _current_service.set(self)
+            bind_current_service(self)
 
             end_reason = "error"  # Default in case of unexpected exception
             final_details: dict | None = None
@@ -5123,6 +5149,35 @@ class AgentService(RpcMethodsBase):
             )
             return OWNER_UNKNOWN
 
+    def _session_exists(self, session_id: str) -> bool:
+        """Whether *session_id* is known, live or persisted. Fails closed.
+
+        ``_session_owner`` answers ``None`` for two situations that must be
+        authorized differently: a session that exists with no recorded owner
+        (a legacy row — deny, and migrate with
+        ``python -m omniagents.core.session.backfill``), and a session that
+        does not exist at all, where the request IS the creation and the
+        handler will stamp the caller as its owner. This distinguishes them.
+        A lookup that cannot answer reports "exists", so the ownership check
+        still runs.
+        """
+        if self._session_manager.get(session_id) is not None:
+            return True
+        try:
+            from omniagents.core.session.history_db import session_exists
+
+            return session_exists(
+                session_id,
+                project_slug=getattr(self._session_manager, "_project_slug", None),
+                agent_slug=getattr(self._session_manager, "_agent_slug", None),
+            )
+        except Exception:
+            logger.exception(
+                "session existence lookup failed; treating as existing",
+                extra={"session": session_id},
+            )
+            return True
+
     @staticmethod
     def _resource_owner(resource: Any) -> "str | None | _OwnerUnknownType":
         """Owner of a live session-like object, failing closed."""
@@ -5349,6 +5404,31 @@ class AgentService(RpcMethodsBase):
 
         if policy.can_access(principal, owner):
             return
+
+        # Creating a session is not accessing someone else's. ``server_call
+        # {session.ensure}`` names the session it is about to create — a
+        # resident's day session (``resident-<id>-<date>``) is a new id every
+        # day — and the handler stamps the caller as its owner. Without this
+        # the create path could never run under enforced authorization: the
+        # owner lookup answers "unowned", unowned is never consent, and the
+        # very first call of the day is refused.
+        #
+        # Narrow on purpose. Every other session-naming method keeps failing
+        # closed on an id it cannot find, ``resume_session`` above all: its
+        # ``get_or_create`` would re-materialize a deleted session on every
+        # reconnect. An unowned session that DOES exist stays denied either
+        # way — that is the legacy row the backfill is for.
+        if (
+            owner is None
+            and resource in {"session", "thread"}
+            and isinstance(resource_id, str)
+            and resource_id
+            and method == "server_call"
+            and (params or {}).get("function") in SESSION_CREATING_SERVER_FUNCTIONS
+            and not self._session_exists(resource_id)
+        ):
+            return
+
         raise AuthorizationDenied(
             f"Not authorized to access this {resource}",
             resource=resource,

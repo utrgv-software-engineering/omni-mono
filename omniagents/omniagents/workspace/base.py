@@ -125,11 +125,12 @@ class Workspace(abc.ABC):
     def enforces_confinement(self) -> bool:
         """Whether :meth:`resolve` itself refuses paths outside the root.
 
-        True everywhere except an unconfined :class:`HostWorkspace` — the
-        ``host`` (no-sandbox) execution target, where the agent's file tools
-        deliberately reach the whole machine, exactly as its shell already
-        does. Callers that need the boundary regardless use
-        :meth:`resolve_confined`.
+        True everywhere except :class:`~omniagents.workspace.host.HostWorkspace`
+        and its direct-tree subclasses, where the agent's file tools
+        deliberately reach the whole machine, exactly as the shell already
+        does. This is a property of the class, not a setting: there is no
+        "host but fenced" mode to configure. Callers that need the boundary
+        regardless use :meth:`resolve_confined`.
         """
 
         return True

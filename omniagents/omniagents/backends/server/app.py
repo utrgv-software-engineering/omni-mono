@@ -656,12 +656,14 @@ def build_app(
                 ),
                 agent_service=service,
             )
-            # Same server default the GUI handshake advertises — lets a voice
-            # session started before any text run fall back to it for its
-            # execution environment.
-            realtime_service.default_environment_id = getattr(
-                app.state, "default_environment_id", None
-            )
+        # Same server default the GUI handshake advertises — lets a voice
+        # session started before any text run fall back to it for its
+        # execution environment. Both backends need it: the pipeline path
+        # runs `inherit` through start_run, which resolves to nothing on a
+        # session whose thread binding is still targetless.
+        realtime_service.default_environment_id = getattr(
+            app.state, "default_environment_id", None
+        )
         realtime_service.authorization_policy = authenticator.authorization_policy
         app.state.realtime_service = realtime_service
         try:

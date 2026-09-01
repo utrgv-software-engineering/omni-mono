@@ -59,6 +59,7 @@ def save_evaluation_run(
     source: str = "cli",
     scenario_name: Optional[str] = None,
     agent: Optional[str] = None,
+    manifest: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """
     Save evaluation run results with full metadata.
@@ -72,6 +73,10 @@ def save_evaluation_run(
             "baseline"). When ``None`` or empty, the run hit the project's
             entrypoint agent. Surfaced by the Studio Results UI so users can
             tell which agent each historical run was scored against.
+        manifest: What was run - model, tools, instruction and agent-file
+            hashes, framework version, selection, split, repeats - from
+            :func:`omniagents.core.eval.manifest.build_run_manifest`. Stored
+            beside the aggregates so two runs can be compared, or refused.
 
     Returns:
         Path to the saved results.json file
@@ -108,6 +113,8 @@ def save_evaluation_run(
                 entry["failed"] += 1
 
     agent_value = agent.strip() if isinstance(agent, str) and agent.strip() else None
+    answered = sum(1 for r in runs if r.get("answered", True))
+    repeats = max([int(r.get("repeats") or 1) for r in runs] or [1])
 
     metadata = {
         "source": source,
@@ -119,7 +126,11 @@ def save_evaluation_run(
         "total_scenarios": total,
         "passed": passed,
         "failed": failed,
+        "answered": answered,
+        "non_responses": total - answered,
+        "repeats": repeats,
         "per_measure": per_measure,
+        "manifest": manifest or None,
     }
 
     results_path = save_run_results(results_dir, run_id, runs, metadata)
@@ -135,8 +146,12 @@ def save_evaluation_run(
             "total_scenarios": total,
             "passed": passed,
             "failed": failed,
+            "answered": answered,
+            "non_responses": total - answered,
+            "repeats": repeats,
             "per_measure": per_measure,
         },
+        "manifest": manifest or None,
     }
     update_runs_index(results_dir, run_entry)
 

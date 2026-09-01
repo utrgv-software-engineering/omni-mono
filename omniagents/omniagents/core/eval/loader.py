@@ -52,6 +52,12 @@ class EvalConfig:
     the YAML the merge picked the judge up from (last-write-wins, mirroring
     merge order)."""
 
+    split: Optional[str] = None
+    """Holdout split the scenarios were restricted to (``train``/``dev``/``test``), if any."""
+
+    holdout_manifest: Dict[str, Any] = field(default_factory=dict)
+    """The holdout's manifest (seed, strata, counts) when ``split`` is set."""
+
 
 # ---------------------------------------------------------------------------
 # YAML / dict helpers (extracted from compiler.py)
@@ -468,6 +474,7 @@ def load_eval_config(
     select: str | None = None,
     exclude: str | None = None,
     agent_key: Optional[str] = None,
+    split: Optional[str] = None,
 ) -> EvalConfig:
     """Load and merge evaluation config at runtime.
 
@@ -485,6 +492,10 @@ def load_eval_config(
         Comma-separated scenario exclusions.
     agent_key:
         Agent key to resolve.  ``None`` uses the project entrypoint.
+    split:
+        Restrict scenarios to a holdout split (``train``, ``dev`` or ``test``)
+        created by ``omniagents eval scenarios holdout``. Applied after
+        ``select``/``exclude``.
     """
     from omniagents.core.project.runtime import load_project, resolve_agent
 
@@ -551,6 +562,13 @@ def load_eval_config(
     # Filter
     if select or exclude:
         scenarios = filter_scenarios(scenarios, select, exclude)
+    holdout_manifest: Dict[str, Any] = {}
+    if split:
+        from omniagents.core.eval.holdout import load_holdout, scenario_key
+
+        names, holdout_manifest = load_holdout(eval_dir, str(split))
+        wanted = set(names)
+        scenarios = [sc for sc in scenarios if scenario_key(sc) in wanted]
 
     # Validate
     _validate_graph_resources(scenarios, metrics, judges)
@@ -583,6 +601,8 @@ def load_eval_config(
         tracing_config=tracing_config,
         project_config=proj,
         judge_sources=judge_sources,
+        split=(str(split) if split else None),
+        holdout_manifest=holdout_manifest,
     )
 
 

@@ -160,7 +160,8 @@ class RealtimeService(RpcMethodsBase):
         # agent service, no live GUI session, or no safe client tools all
         # mean a plain voice session.
         extra_tools: list = []
-        environment_lease = None
+        request_context = None
+        paired_session = None
         principal = getattr(self.channel, "principal", None) if self.channel else None
         if self._agent_service is not None:
             try:
@@ -170,13 +171,32 @@ class RealtimeService(RpcMethodsBase):
             except Exception:
                 extra_tools = []
 
-            # Acquire the paired GUI session's execution environment so
-            # server-side tools (bash, filesystem, ...) run against the same
-            # workspace/sandbox as text runs. Best-effort: without a lease the
-            # session still starts, but workspace-touching tools will error.
+            # The GUI Session sharing this id: voice turns persist into its
+            # history + canonical thread, tool approvals prompt over its
+            # /ws channels, and its history seeds the voice agent's
+            # conversation context. get_or_create hydrates it if the chat
+            # UI hasn't touched it yet (voice-first sessions).
             try:
-                environment_lease = (
-                    await self._agent_service.acquire_environment_for_session(
+                paired_session = self._agent_service._session_manager.get_or_create(
+                    session_id, user_id=owner_user_id
+                )
+            except Exception:
+                logger.warning(
+                    "Realtime session %s: could not resolve the paired GUI "
+                    "session; voice turns will not persist to the thread",
+                    session_id,
+                    exc_info=True,
+                )
+
+            # Route the paired GUI session's execution environment so
+            # server-side tools (bash, filesystem, workers, ...) run against
+            # the same workspace/sandbox as text runs. The context — not just
+            # its lease — is what the session binds for its task tree.
+            # Best-effort: without it the session still starts, but
+            # workspace-touching tools will error.
+            try:
+                request_context = (
+                    await self._agent_service.prepare_environment_context_for_session(
                         session_id,
                         principal=principal,
                         default_environment_id=self.default_environment_id,
@@ -189,6 +209,16 @@ class RealtimeService(RpcMethodsBase):
                     session_id,
                     exc_info=True,
                 )
+            if request_context is None:
+                # Resolving to nothing is silent otherwise, and the symptom
+                # surfaces much later as a tool error ("workspace_root is
+                # required", "execution environment ... was not found").
+                logger.warning(
+                    "Realtime session %s: no execution environment resolved "
+                    "(thread binding is targetless and no server default is "
+                    "configured); workspace tools and workers will fail",
+                    session_id,
+                )
 
         # Create session bound to the authenticated principal
         session = RealtimeSession(
@@ -197,7 +227,9 @@ class RealtimeService(RpcMethodsBase):
             session_id=session_id,
             owner_user_id=owner_user_id,
             extra_tools=extra_tools,
-            environment_lease=environment_lease,
+            request_context=request_context,
+            agent_service=self._agent_service,
+            paired_session=paired_session,
         )
 
         # Start session
@@ -241,14 +273,19 @@ class RealtimeService(RpcMethodsBase):
             # Task was cancelled during cleanup
             pass
         except Exception as e:
-            # Log error and notify client
+            logger.exception(
+                "Realtime session %s event stream failed", session_id
+            )
+            # Surface the failure on the channel the client actually
+            # listens to — a bare "realtime_error" method has no handler.
             try:
                 if self.channel:
                     await self.channel.async_call(
-                        "realtime_error",
+                        "realtime_event",
                         {
+                            "type": "realtime_error",
                             "session_id": session_id,
-                            "error": str(e),
+                            "error_message": str(e),
                         },
                     )
             except Exception:

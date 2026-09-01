@@ -869,7 +869,7 @@ async def _register_execution_environment(
     workspace = (
         # No session means the host target — the no-sandbox one, so the file
         # tools are unconfined like its shell. Matches the provisioner.
-        HostWorkspace(root=root, confine=False)
+        HostWorkspace(root=root)
         if session is None
         else SandboxWorkspace(
             session=session,

@@ -608,6 +608,11 @@ def main():
     )
     suite_run.add_argument("--select", default="")
     suite_run.add_argument("--exclude", default="")
+    suite_run.add_argument(
+        "--split",
+        default="",
+        help="Restrict to a holdout split (train, dev or test) from `eval scenarios holdout`",
+    )
     suite_run.add_argument("-q", "--quiet", action="count", default=0)
     suite_run.add_argument("-v", "--verbose", action="count", default=0)
     suite_run.add_argument(
@@ -674,6 +679,11 @@ def main():
     )
     scen_run.add_argument("--select", default="")
     scen_run.add_argument("--exclude", default="")
+    scen_run.add_argument(
+        "--split",
+        default="",
+        help="Restrict to a holdout split (train, dev or test) from `eval scenarios holdout`",
+    )
     scen_run.add_argument("-q", "--quiet", action="count", default=0)
     scen_run.add_argument("-v", "--verbose", action="count", default=0)
     scen_run.add_argument(
@@ -735,6 +745,35 @@ def main():
     scen_split.add_argument("--negatives-ratio", type=float, default=None)
     scen_split.add_argument("-q", "--quiet", action="count", default=0)
     scen_split.add_argument("-v", "--verbose", action="count", default=0)
+
+    scen_holdout = scen_sub.add_parser(
+        "holdout",
+        help="Create a seeded, stratified train/dev/test holdout of the scenarios for evaluating an agent",
+    )
+    scen_holdout.add_argument(
+        "--project",
+        "-P",
+        required=False,
+        help="Path to project.yml (defaults to project.yml in CWD)",
+    )
+    scen_holdout.add_argument(
+        "--agent", "-a", default="", help="Agent key (defaults to entrypoint)"
+    )
+    scen_holdout.add_argument("--select", default="")
+    scen_holdout.add_argument("--exclude", default="")
+    scen_holdout.add_argument(
+        "--strata",
+        default="",
+        help="Comma-separated scenario fields to stratify on, e.g. expect.skin_tone,expect.malignant",
+    )
+    scen_holdout.add_argument(
+        "--fractions",
+        default="0.5,0.25,0.25",
+        help="train,dev,test fractions (default 0.5,0.25,0.25)",
+    )
+    scen_holdout.add_argument("--seed", type=int, default=42)
+    scen_holdout.add_argument("-q", "--quiet", action="count", default=0)
+    scen_holdout.add_argument("-v", "--verbose", action="count", default=0)
 
     ls_parser = subparsers.add_parser(
         "ls", help="List compiled resources from target/graph.json"
@@ -1919,6 +1958,7 @@ def main():
                     select=str(args.select or ""),
                     exclude=str(args.exclude or ""),
                     agent_key=(str(getattr(args, "agent", "") or "") or None),
+                    split=(str(getattr(args, "split", "") or "") or None),
                 )
                 from pathlib import Path as _P
 
@@ -2013,6 +2053,12 @@ def main():
                     progress_cb=_progress_cb,
                     eval_config=eval_cfg,
                 )
+                # The manifest says what was run; the CLI knows the selection.
+                run_manifest = data.get("manifest") if isinstance(data, dict) else None
+                if isinstance(run_manifest, dict):
+                    run_manifest["select"] = str(args.select or "") or None
+                    run_manifest["exclude"] = str(args.exclude or "") or None
+                    run_manifest["split"] = str(getattr(args, "split", "") or "") or None
                 # Determine output location
                 out_arg = str(getattr(args, "output", "") or "").strip()
                 yaml_output = (eval_cfg.config or {}).get("output") or ""
@@ -2062,6 +2108,7 @@ def main():
                         source="cli",
                         scenario_name=name_arg or "default",
                         agent=_agent_arg or None,
+                        manifest=run_manifest if isinstance(run_manifest, dict) else None,
                     )
                     print(f"Wrote results: {final_out}")
                 from omniagents.core.eval.measure_tiers import gates_ci, DEFAULT_TIER
@@ -2123,6 +2170,11 @@ def main():
                         if isinstance(value, (int, float))
                         else str(value)
                     )
+                    interval = mt.get("interval")
+                    if isinstance(interval, (list, tuple)) and len(interval) == 2 and all(
+                        isinstance(x, (int, float)) for x in interval
+                    ):
+                        vstr = f"{vstr} [{interval[0]:.3f}-{interval[1]:.3f}]"
                     if has_target:
                         op = str(target.get("op", ">="))
                         desc = (
@@ -2139,6 +2191,24 @@ def main():
                             "reason": "no target" if not has_target else "",
                         }
                     )
+                    # One informational line per slice, so a subgroup that
+                    # differs from the whole is visible without another tool.
+                    for field_name, groups in (mt.get("slices") or {}).items():
+                        for key, g in (groups or {}).items():
+                            gv = g.get("value")
+                            gi = g.get("interval") or [None, None]
+                            gstr = f"{gv:.3f}" if isinstance(gv, (int, float)) else str(gv)
+                            if all(isinstance(x, (int, float)) for x in gi):
+                                gstr = f"{gstr} [{gi[0]:.3f}-{gi[1]:.3f}]"
+                            checks.append(
+                                {
+                                    "type": "metric",
+                                    "desc": f"Metric {name} | {field_name}={key}: {gstr} (n={g.get('runs')})",
+                                    "pass": True,
+                                    "skip": True,
+                                    "reason": "slice",
+                                }
+                            )
                 total = len(checks)
                 stats = data.get("stats") or {}
                 scen_total = stats.get("total_scenarios")
@@ -2675,8 +2745,61 @@ def main():
 
                 traceback.print_exc()
                 sys.exit(1)
+        elif args.eval_cmd == "scenarios" and getattr(args, "scen_cmd", None) == "holdout":
+            try:
+                from omniagents.core.eval.loader import load_eval_config
+                from omniagents.core.eval.holdout import (
+                    create_holdout,
+                    holdout_manifest,
+                    write_holdout,
+                )
+
+                proj_path = getattr(args, "project", None)
+                if not proj_path:
+                    p = Path.cwd() / "project.yml"
+                    if p.is_file():
+                        proj_path = str(p)
+                    else:
+                        print(
+                            "Error: Provide --project <project.yml> (or run from a directory containing a project.yml)."
+                        )
+                        sys.exit(2)
+                eval_cfg = load_eval_config(
+                    str(proj_path),
+                    select=str(args.select or ""),
+                    exclude=str(args.exclude or ""),
+                    agent_key=(str(getattr(args, "agent", "") or "") or None),
+                )
+                scenarios = list((eval_cfg.config or {}).get("scenarios") or [])
+                if not scenarios:
+                    print("Error: no scenarios to hold out (check --select/--exclude).")
+                    sys.exit(2)
+                strata = [x.strip() for x in str(args.strata or "").split(",") if x.strip()]
+                try:
+                    fractions = [float(x) for x in str(args.fractions).split(",")]
+                except ValueError:
+                    print(f"Error: --fractions must be three numbers, got {args.fractions!r}")
+                    sys.exit(2)
+                assignment = create_holdout(
+                    scenarios, strata=strata, fractions=fractions, seed=int(args.seed)
+                )
+                manifest = holdout_manifest(assignment, scenarios, strata, fractions, int(args.seed))
+                paths = write_holdout(eval_cfg.eval_dir, assignment, manifest)
+                counts = manifest["counts"]
+                print(
+                    f"Holdout: train={counts['train']} dev={counts['dev']} test={counts['test']} "
+                    f"(seed {args.seed}, strata {strata or 'none'}) -> {paths['manifest'].parent}"
+                )
+                for stratum, c in manifest["counts_by_stratum"].items():
+                    print(f"  {stratum}: train={c['train']} dev={c['dev']} test={c['test']}")
+                sys.exit(0)
+            except SystemExit:
+                raise
+            except Exception as e:
+                print(f"Error creating holdout: {e}")
+                sys.exit(1)
         elif args.eval_cmd == "scenarios":
-            print("Error: Provide a scenarios subcommand: generate | run | annotate")
+            print("Error: Provide a scenarios subcommand: generate | run | annotate | holdout")
             sys.exit(2)
         elif args.eval_cmd == "judge" and getattr(args, "judge_cmd", None) == "run":
             try:

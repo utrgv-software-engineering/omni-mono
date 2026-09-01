@@ -104,17 +104,21 @@ async def test_start_session(realtime_spec, settings_with_key):
 
 @pytest.mark.asyncio
 async def test_start_session_acquires_environment(realtime_spec, settings_with_key):
-    """With an agent service, start_session acquires the paired GUI session's
-    environment lease and hands it to the RealtimeSession."""
+    """With an agent service, start_session routes the paired GUI session's
+    execution context and hands it to the RealtimeSession, which derives the
+    lease from it."""
     lease = SimpleNamespace(
         workspace=SimpleNamespace(root="/work/repo"),
         workspace_id="ws-1",
         environment_id="env-1",
         generation=1,
     )
+    request_context = SimpleNamespace(environment_lease=lease)
     agent_service = MagicMock()
     agent_service.build_realtime_client_tools = MagicMock(return_value=[])
-    agent_service.acquire_environment_for_session = AsyncMock(return_value=lease)
+    agent_service.prepare_environment_context_for_session = AsyncMock(
+        return_value=request_context
+    )
 
     with (
         patch("agents.realtime.RealtimeAgent", create=True),
@@ -139,10 +143,12 @@ async def test_start_session_acquires_environment(realtime_spec, settings_with_k
         service.default_environment_id = "env-default"
         await service.start_session("test-session-123")
 
-        agent_service.acquire_environment_for_session.assert_awaited_once_with(
+        agent_service.prepare_environment_context_for_session.assert_awaited_once_with(
             "test-session-123", principal=None, default_environment_id="env-default"
         )
-        assert service._sessions["test-session-123"].environment_lease is lease
+        started = service._sessions["test-session-123"]
+        assert started.request_context is request_context
+        assert started.environment_lease is lease
 
 
 @pytest.mark.asyncio
@@ -152,7 +158,7 @@ async def test_start_session_lease_failure_is_nonfatal(
     """A failing environment acquisition logs and continues without a lease."""
     agent_service = MagicMock()
     agent_service.build_realtime_client_tools = MagicMock(return_value=[])
-    agent_service.acquire_environment_for_session = AsyncMock(
+    agent_service.prepare_environment_context_for_session = AsyncMock(
         side_effect=RuntimeError("no binding")
     )
 
@@ -179,7 +185,9 @@ async def test_start_session_lease_failure_is_nonfatal(
         result = await service.start_session("test-session-123")
 
         assert result["session_id"] == "test-session-123"
-        assert service._sessions["test-session-123"].environment_lease is None
+        started = service._sessions["test-session-123"]
+        assert started.request_context is None
+        assert started.environment_lease is None
 
 
 @pytest.mark.asyncio

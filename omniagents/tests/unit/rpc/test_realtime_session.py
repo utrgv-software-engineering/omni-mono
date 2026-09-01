@@ -369,7 +369,9 @@ async def test_connect_binds_environment_lease(realtime_spec, settings_with_key)
         mock_runner.run = AsyncMock(return_value=mock_session)
 
         session = RealtimeSession(
-            realtime_spec, settings=settings_with_key, environment_lease=lease
+            realtime_spec,
+            settings=settings_with_key,
+            request_context=SimpleNamespace(environment_lease=lease),
         )
         await session.start()
         await session.connect()
@@ -382,6 +384,105 @@ async def test_connect_binds_environment_lease(realtime_spec, settings_with_key)
         assert run_context["environment_id"] == "env-1"
         assert run_context["environment_generation"] == 3
         assert run_context["session_id"] == session.session_id
+
+
+@pytest.mark.asyncio
+async def test_connect_binds_request_context_and_service(
+    realtime_spec, settings_with_key
+):
+    """Voice tool calls run in the SDK's listener task, not in a Run, so
+    connect() must bind what start_run binds: the routed request context and
+    the owning service. Without them, lease-routed helpers reject voice tool
+    calls and a spawned worker gets no AgentHost resources — its run then
+    fails with "execution environment ... was not found"."""
+    from omniagents.core.agents.service import current_service
+    from omniagents.execution import current_request_context
+
+    lease = SimpleNamespace(
+        workspace=SimpleNamespace(root="/work/repo"),
+        workspace_id="ws-1",
+        environment_id="env-1",
+        generation=1,
+    )
+    request_context = SimpleNamespace(environment_lease=lease)
+    agent_service = MagicMock()
+    seen: dict = {}
+
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+        patch("omniagents.workspace.set_workspace"),
+        patch("omniagents.workspace.set_requested_cwd"),
+    ):
+        mock_runner = MockRunner.return_value
+
+        async def capture_run(**kwargs):
+            # The SDK creates its model-listener task inside run()/__aenter__,
+            # so whatever is bound at this point is what tool calls inherit.
+            seen["context"] = current_request_context()
+            seen["service"] = current_service()
+            return mock_session
+
+        mock_runner.run = AsyncMock(side_effect=capture_run)
+
+        session = RealtimeSession(
+            realtime_spec,
+            settings=settings_with_key,
+            request_context=request_context,
+            agent_service=agent_service,
+        )
+        await session.start()
+        await session.connect()
+
+    assert seen["context"] is request_context
+    assert seen["service"] is agent_service
+
+
+@pytest.mark.asyncio
+async def test_connect_bindings_reach_tasks_created_after_connect(
+    realtime_spec, settings_with_key
+):
+    """The bindings must survive connect() returning. RealtimeService creates
+    the event-pump task afterwards, and an approval-gated tool call resumes
+    from THAT tree (approve_tool_call enqueues the tool task), so resetting
+    the tokens at the end of connect() would strand exactly the tools that
+    needed a prompt."""
+    from omniagents.core.agents.service import current_service
+    from omniagents.execution import current_request_context
+
+    request_context = SimpleNamespace(environment_lease=None)
+    agent_service = MagicMock()
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+
+    with (
+        patch("agents.realtime.RealtimeAgent", create=True),
+        patch("agents.realtime.RealtimeRunner", create=True) as MockRunner,
+        patch("omniagents.rpc.realtime_session.history_db.register_session"),
+    ):
+        mock_runner = MockRunner.return_value
+        mock_runner.run = AsyncMock(return_value=mock_session)
+
+        session = RealtimeSession(
+            realtime_spec,
+            settings=settings_with_key,
+            request_context=request_context,
+            agent_service=agent_service,
+        )
+        await session.start()
+        await session.connect()
+
+        async def probe():
+            return current_service(), current_request_context()
+
+        service_seen, context_seen = await asyncio.create_task(probe())
+
+    assert service_seen is agent_service
+    assert context_seen is request_context
 
 
 @pytest.mark.asyncio

@@ -453,10 +453,20 @@ def test_map_agent_end_event():
 
 
 def test_map_history_updated_event():
-    """Test mapping history_updated event."""
-    item1 = SimpleNamespace(id="1", type="message", role="user", status="completed")
+    """The snapshot carries each item's ``item_id``, in history order.
+
+    Clients key transcript bubbles by ``item_id`` (the id every other
+    realtime event carries), and this snapshot is the only thing that tells
+    them the model's real order — a user turn is transcribed asynchronously,
+    so it arrives after the reply it prompted. ``RealtimeItem`` has no bare
+    ``id``, so reading one emitted ``None`` for every entry and the snapshot
+    ordered nothing.
+    """
+    item1 = SimpleNamespace(
+        item_id="1", type="message", role="user", status="completed"
+    )
     item2 = SimpleNamespace(
-        id="2", type="message", role="assistant", status="completed"
+        item_id="2", type="message", role="assistant", status="completed"
     )
 
     sdk_event = SimpleNamespace(type="history_updated", history=[item1, item2])
@@ -464,21 +474,20 @@ def test_map_history_updated_event():
     rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_456")
 
     assert isinstance(rpc_event, RealtimeHistoryUpdatedEvent)
-    assert len(rpc_event.history_items) == 2
-    assert rpc_event.history_items[0]["id"] == "1"
+    assert [it["item_id"] for it in rpc_event.history_items] == ["1", "2"]
     assert rpc_event.history_items[1]["role"] == "assistant"
 
 
 def test_map_history_added_event():
-    """Test mapping history_added event."""
-    item = SimpleNamespace(id="1", type="message", role="user", status="completed")
+    """Same identity field as the snapshot — one shape for both events."""
+    item = SimpleNamespace(item_id="1", type="message", role="user", status="completed")
 
     sdk_event = SimpleNamespace(type="history_added", item=item)
 
     rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_456")
 
     assert isinstance(rpc_event, RealtimeHistoryAddedEvent)
-    assert rpc_event.item["id"] == "1"
+    assert rpc_event.item["item_id"] == "1"
     assert rpc_event.item["role"] == "user"
 
 
@@ -514,8 +523,8 @@ def test_map_audio_event_with_no_audio_data():
     assert rpc_event is None
 
 
-def test_map_raw_model_event_transcript_delta_as_transcript():
-    """Test mapping transcript_delta raw model event to high-level transcript event."""
+def test_map_raw_model_event_transcript_delta_as_delta():
+    """Assistant transcript deltas map to keyed delta events, not finals."""
     model_event = SimpleNamespace(
         type="transcript_delta",
         item_id="item_123",
@@ -528,10 +537,46 @@ def test_map_raw_model_event_transcript_delta_as_transcript():
 
     rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_456")
 
+    assert isinstance(rpc_event, RealtimeTranscriptDeltaEvent)
+    assert rpc_event.type == "realtime_transcript_delta"
+    assert rpc_event.item_id == "item_123"
+    assert rpc_event.delta == "Hello"
+
+
+def test_map_raw_model_event_user_transcription_completed():
+    """User transcripts arrive whole, keyed by their item."""
+    model_event = SimpleNamespace(
+        type="input_audio_transcription_completed",
+        item_id="item_user_1",
+        transcript="What time is it?",
+    )
+
+    sdk_event = SimpleNamespace(type="raw_model_event", data=model_event)
+
+    rpc_event = map_realtime_session_event_to_rpc(sdk_event, "run_456")
+
     assert isinstance(rpc_event, RealtimeTranscriptEvent)
-    assert rpc_event.type == "realtime_transcript"
-    assert rpc_event.role == "assistant"
-    assert rpc_event.transcript == "Hello"
+    assert rpc_event.role == "user"
+    assert rpc_event.transcript == "What time is it?"
+    assert rpc_event.item_id == "item_user_1"
+
+
+def test_map_raw_model_event_turn_boundaries():
+    """Raw turn_started/turn_ended model events map to turn events."""
+    started = SimpleNamespace(
+        type="raw_model_event", data=SimpleNamespace(type="turn_started")
+    )
+    ended = SimpleNamespace(
+        type="raw_model_event", data=SimpleNamespace(type="turn_ended")
+    )
+
+    started_event = map_realtime_session_event_to_rpc(started, "run_456")
+    ended_event = map_realtime_session_event_to_rpc(ended, "run_456")
+
+    assert isinstance(started_event, RealtimeTurnStartedEvent)
+    assert started_event.type == "realtime_turn_started"
+    assert isinstance(ended_event, RealtimeTurnEndedEvent)
+    assert ended_event.type == "realtime_turn_ended"
 
 
 def test_map_raw_model_event_with_error():

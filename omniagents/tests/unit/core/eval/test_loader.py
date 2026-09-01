@@ -471,3 +471,29 @@ class TestFilterScenarios:
         filtered = filter_scenarios(scenarios, "id:def456", None)
         assert len(filtered) == 1
         assert filtered[0]["id"] == "def456"
+
+
+def test_load_eval_config_restricts_scenarios_to_a_holdout_split(tmp_path):
+    from omniagents.core.eval.holdout import create_holdout, holdout_manifest, write_holdout
+
+    scenarios = [{"name": f"case-{i}", "description": "d", "expect": {"tone": str(i % 2)}} for i in range(8)]
+    root = _create_project(tmp_path, scenarios=scenarios)
+    assignment = create_holdout(scenarios, strata=["expect.tone"], seed=5)
+    manifest = holdout_manifest(assignment, scenarios, ["expect.tone"], (0.5, 0.25, 0.25), 5)
+    write_holdout(root / "evaluations", assignment, manifest)
+
+    cfg = load_eval_config(str(root / "project.yml"), split="test")
+    names = [sc["name"] for sc in cfg.config["scenarios"]]
+    assert names == sorted(k for k, s in assignment.items() if s == "test")
+    assert cfg.split == "test"
+    assert cfg.holdout_manifest["seed"] == 5
+
+    with pytest.raises(FileNotFoundError):
+        load_eval_config(str(root / "project.yml"), split="dev") if False else load_eval_config(str(tmp_path / "missing" / "project.yml"), split="dev")
+
+
+def test_load_eval_config_without_split_is_unchanged(tmp_path):
+    root = _create_project(tmp_path, scenarios=[{"name": "only", "description": "d"}])
+    cfg = load_eval_config(str(root / "project.yml"))
+    assert cfg.split is None and cfg.holdout_manifest == {}
+    assert [sc["name"] for sc in cfg.config["scenarios"]] == ["only"]

@@ -202,6 +202,19 @@ def principal_can_access(
     return user_id == owner_user_id
 
 
+#: Server functions whose whole job is to bring a session into existence,
+#: dispatched as ``server_call {function: ...}``. Naming a session that does
+#: not exist yet is the point of the call, so the ownership check treats it
+#: as a creation (the handler stamps the caller as owner) instead of a
+#: refused read of an "unowned" resource.
+#:
+#: Deliberately an allowlist and deliberately tiny. Most session-naming
+#: methods must keep failing closed on an unknown id — ``resume_session``
+#: in particular, whose ``get_or_create`` would re-materialize a deleted
+#: session on every reconnect.
+SESSION_CREATING_SERVER_FUNCTIONS = frozenset({"session.ensure"})
+
+
 #: Methods that need no resource and are safe for any authenticated
 #: principal: they are read-only, self-scoped (server-side filtered to the
 #: caller's own resources), per-connection, or create a brand-new resource

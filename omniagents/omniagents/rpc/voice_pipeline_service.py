@@ -121,10 +121,43 @@ class _OmniSingleAgentVoiceWorkflow:
         agent_service: Any,
         session_id: str,
         voice_channel: Any = None,
+        default_environment_id: Optional[str] = None,
     ):
         self._agent_service = agent_service
         self._session_id = session_id
         self._bridge = _VoiceBridgeChannel(voice_channel=voice_channel)
+        self._default_environment_id = default_environment_id
+
+    async def _selection(self) -> Dict[str, Any]:
+        """This turn's environment selection.
+
+        ``inherit`` is right whenever the session already has a thread
+        binding. A voice-first session has a targetless one, so inherit
+        resolves to no environment and every workspace-touching tool (bash,
+        filesystem, spawn_worker) fails — name the server default explicitly
+        instead, exactly as the GUI client would on its first ``start_run``,
+        and exactly what ``RealtimeService`` does for the hosted-voice path.
+
+        Resolved per turn rather than cached: once the first explicit run
+        binds the thread, inherit takes over again and keeps following the
+        environment the user selects in the GUI mid-session.
+        """
+        if not self._default_environment_id or self._agent_service is None:
+            return {"mode": "inherit"}
+        try:
+            inherited = (
+                await self._agent_service.prepare_environment_context_for_session(
+                    self._session_id
+                )
+            )
+        except Exception:
+            inherited = None
+        if inherited is not None:
+            return {"mode": "inherit"}
+        return {
+            "mode": "explicit",
+            "environment_id": self._default_environment_id,
+        }
 
     async def on_start(self) -> AsyncIterator[str]:
         return
@@ -143,7 +176,7 @@ class _OmniSingleAgentVoiceWorkflow:
         try:
             result = await self._agent_service.start_run(
                 transcription,
-                {"mode": "inherit"},
+                await self._selection(),
                 self._session_id,
             )
             if DEBUG_VOICE:
@@ -184,6 +217,7 @@ class VoicePipelineSession:
         session_id: str,
         agent_service: Any,
         voice_channel: Any = None,
+        default_environment_id: Optional[str] = None,
     ):
         self.spec = spec
         self.settings = settings
@@ -191,6 +225,7 @@ class VoicePipelineSession:
         self.run_id = str(uuid.uuid4())
         self._agent_service = agent_service
         self._voice_channel = voice_channel
+        self._default_environment_id = default_environment_id
 
         self._input: Optional[Any] = None
         self._result: Optional[Any] = None
@@ -263,6 +298,7 @@ class VoicePipelineSession:
             agent_service=self._agent_service,
             session_id=self.session_id,
             voice_channel=self._voice_channel,
+            default_environment_id=self._default_environment_id,
         )
 
         audio_input = StreamedAudioInput()
@@ -378,6 +414,11 @@ class VoicePipelineService(RpcMethodsBase):
         self.settings = settings or {}
         self.settings_resolver = settings_resolver
         self._agent_service = agent_service
+        # The server's default environment (same one the GUI handshake
+        # advertises as agent_host.default_environment_id); build_app installs
+        # it. Fallback for voice sessions started before any text run has
+        # bound the session's environment.
+        self.default_environment_id: Optional[str] = None
 
         self._sessions: Dict[str, VoicePipelineSession] = {}
         self._event_tasks: Dict[str, asyncio.Task] = {}
@@ -487,6 +528,7 @@ class VoicePipelineService(RpcMethodsBase):
             session_id=session_id,
             agent_service=self._agent_service,
             voice_channel=voice_channel,
+            default_environment_id=self.default_environment_id,
         )
 
         run_id = await session.start()

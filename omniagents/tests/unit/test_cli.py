@@ -1502,3 +1502,81 @@ def test_run_platform_auth_help_and_unknown(_platform_client, capsys):
 
     assert run_platform_auth_command(["frobnicate"]) == 1
     assert "Unknown auth command" in capsys.readouterr().err
+
+
+def test_eval_scenarios_holdout_writes_split_files(monkeypatch, tmp_path, capsys):
+    import yaml as _yaml
+
+    compiled = tmp_path / "agent.yml"
+    compiled.write_text(
+        _yaml.safe_dump(
+            {
+                "name": "alpha",
+                "evaluation": {
+                    "scenarios": [
+                        {"name": f"case-{i}", "prompt": "hi", "expect": {"tone": str(i % 2)}} for i in range(8)
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", _make_fake_loader_module(compiled))
+    monkeypatch.setattr(
+        sys, "argv", ["omniagents", "eval", "scenarios", "holdout", "--project", str(tmp_path), "--strata", "expect.tone", "--seed", "3"]
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_main()
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "Holdout: train=4 dev=2 test=2" in out
+    split_dir = tmp_path / "splits" / "eval"
+    assert (split_dir / "test.yml").is_file() and (split_dir / "manifest.yml").is_file()
+    manifest = _yaml.safe_load((split_dir / "manifest.yml").read_text())
+    assert manifest["strata"] == ["expect.tone"] and manifest["seed"] == 3
+
+
+def test_eval_suite_run_accepts_split_and_stores_manifest(monkeypatch, tmp_path):
+    import yaml as _yaml
+
+    compiled = tmp_path / "agent.yml"
+    compiled.write_text(_yaml.safe_dump({"name": "alpha", "model": "m", "evaluation": {"scenarios": []}}), encoding="utf-8")
+    fake_loader = _make_fake_loader_module(compiled)
+    seen = {}
+    original_load = fake_loader.load_eval_config
+
+    def spy_load(*args, **kwargs):
+        seen.update(kwargs)
+        return original_load(*args, **kwargs)
+
+    fake_loader.load_eval_config = spy_load
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", fake_loader)
+    pipeline_mod = types.ModuleType("omniagents.core.eval.pipeline")
+
+    def fake_run_evaluation(*args, **kwargs):
+        return {
+            "runs": [],
+            "metrics": [{"name": "r", "label": "r", "type": "pass_rate", "value": 0.5, "interval": [0.2, 0.8], "runs": 4, "target": {"op": ">=", "value": 0.4}, "meets_target": True, "slices": {"expect.tone": {"12": {"value": 1.0, "interval": [0.3, 1.0], "runs": 2}}}}],
+            "stats": {},
+            "manifest": {"agent": "alpha", "model": "m"},
+        }
+
+    pipeline_mod.run_evaluation = fake_run_evaluation
+    pipeline_mod.__package__ = "omniagents.core.eval"
+    monkeypatch.setitem(sys.modules, "omniagents.core.eval.pipeline", pipeline_mod)
+    saved = {}
+
+    def fake_save(**kwargs):
+        saved.update(kwargs)
+        return tmp_path / "results.json"
+
+    monkeypatch.setattr("omniagents.cli.save_evaluation_run", fake_save)
+    monkeypatch.setattr(
+        sys, "argv", ["omniagents", "eval", "suite", "run", "--project", str(tmp_path), "--split", "test", "--reporter", "tap", "--color", "never"]
+    )
+    try:
+        cli_main()
+    except SystemExit as exc:  # a passing suite returns; a failing one exits non-zero
+        assert exc.code in (0, None)
+    assert seen.get("split") == "test"
+    assert saved["manifest"]["split"] == "test" and saved["manifest"]["model"] == "m"

@@ -782,3 +782,92 @@ def test_single_user_mode_keeps_permissive_behavior(monkeypatch):
         rpc.handshake(experimental=("disable_tool",))
         assert rpc.result("get_session_history", session_id="legacy-single") == []
         assert rpc.result("disable_tool", tool_name="bash") in (True, False, None)
+
+
+def test_session_scoped_server_call_may_create_its_own_session(authz_context):
+    """A resident's day session (`resident-<id>-<date>`) is new every day, and
+    `server_call {session.ensure}` is what creates it. The ownership check
+    resolved the not-yet-existing session to "unowned", and unowned is never
+    consent, so the create path was refused outright:
+    `-32014 Not authorized to access this session`.
+    """
+    from omniagents.core.session.history_db import get_session_user_id
+
+    session_id = "resident-chief-of-staff-2026-08-22"
+
+    alice_cm, alice = _connect(authz_context, ALICE)
+    try:
+        result = alice.result(
+            "server_call",
+            function="session.ensure",
+            args={"session_id": session_id, "variables": {"role": "chief"}},
+            session_id=session_id,
+        )
+        assert result["session_id"] == session_id
+        # Creating it made her its owner, so every later call is a plain
+        # ownership match rather than another trip through this exemption.
+        assert get_session_user_id(session_id) == "alice"
+        assert (
+            alice.result(
+                "server_call",
+                function="session.ensure",
+                args={"session_id": session_id},
+                session_id=session_id,
+            )["session_id"]
+            == session_id
+        )
+    finally:
+        alice_cm.__exit__(None, None, None)
+
+    # And it is hers alone from that point on.
+    bob_cm, bob = _connect(authz_context, BOB)
+    try:
+        bob.expect_denied(
+            "server_call",
+            function="session.ensure",
+            args={"session_id": session_id},
+            session_id=session_id,
+        )
+    finally:
+        bob_cm.__exit__(None, None, None)
+
+
+def test_other_session_naming_methods_still_fail_closed(authz_context):
+    """The exemption is for the create call, not for unknown ids in general:
+    `resume_session` on a session that does not exist must stay denied, or a
+    reconnect would re-materialize a deleted session's journal forever.
+    """
+    alice_cm, alice = _connect(authz_context, ALICE)
+    try:
+        alice.expect_denied("resume_session", session_id="never-existed")
+        alice.expect_denied("get_session_history", session_id="never-existed")
+    finally:
+        alice_cm.__exit__(None, None, None)
+
+    # And the exemption stays one named function rather than "any server
+    # function that happens to name a session" — widening it should have to
+    # show up in a diff.
+    from omniagents.rpc.auth import SESSION_CREATING_SERVER_FUNCTIONS
+
+    assert SESSION_CREATING_SERVER_FUNCTIONS == frozenset({"session.ensure"})
+
+
+def test_existing_unowned_session_stays_denied(authz_context):
+    """The exemption is for sessions that do not exist, not for sessions with
+    no owner — a legacy row still needs the documented backfill.
+    """
+    from omniagents.core.session.history_db import get_session_user_id, register_session
+
+    register_session("legacy-ensure")
+
+    alice_cm, alice = _connect(authz_context, ALICE)
+    try:
+        alice.expect_denied(
+            "server_call",
+            function="session.ensure",
+            args={"session_id": "legacy-ensure"},
+            session_id="legacy-ensure",
+        )
+    finally:
+        alice_cm.__exit__(None, None, None)
+    assert get_session_user_id("legacy-ensure") is None

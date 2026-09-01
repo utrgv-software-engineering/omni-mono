@@ -83,6 +83,10 @@ def register_host_environment(
 
     workspace_id = workspace_id or f"workspace_{uuid.uuid4().hex}"
     environment_id = environment_id or f"environment_{uuid.uuid4().hex}"
+    # Unconfined, like every host environment — this is the eager composition
+    # root (ink/web/studio/worker worktrees); ``ServeEnvironmentProvisioner``
+    # is the lazy one. The two must agree on what a host target is, and
+    # HostWorkspace no longer offers a fenced variant to disagree with.
     workspace = HostWorkspace(root=root)
     resources.workspaces.register(
         WorkspaceResource(workspace_id, owner_user_id=owner_user_id)

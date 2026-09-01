@@ -96,50 +96,60 @@ async def test_remove_file_and_dir(host_ws):
 
 
 @pytest.mark.asyncio
-async def test_resolve_rejects_escape(host_ws):
-    """Absolute paths outside root and `..` traversal both raise."""
-    with pytest.raises(WorkspaceEscapeError):
-        host_ws.resolve("/etc/passwd")
-    with pytest.raises(WorkspaceEscapeError):
-        host_ws.resolve("../../outside.txt")
+async def test_exists_returns_false_on_escape(tmp_path: Path):
+    """exists() over a would-escape path returns False rather than raising —
+    friendlier for tools probing optional paths.
 
+    Only workspaces that bound their own address space can escape at all now;
+    a plain HostWorkspace simply answers whether the file is there.
+    """
+    from omniagents.workspace.mounted_host import MountedHostWorkspace
 
-@pytest.mark.asyncio
-async def test_exists_returns_false_on_escape(host_ws):
-    """exists() over a would-escape path returns False rather than
-    raising — friendlier for tools probing optional paths."""
-    assert await host_ws.exists("/etc/passwd") is False
+    (tmp_path / "src").mkdir()
+    bounded = MountedHostWorkspace(
+        str(tmp_path / "logical"),
+        [{"kind": "local", "mountName": "src", "path": str(tmp_path / "src")}],
+    )
+    assert await bounded.exists("/etc/passwd") is False
 
 
 # -- Confinement (the "host" no-sandbox target) ---------------------------
 
 
 @pytest.mark.asyncio
-async def test_confine_false_allows_out_of_root_absolute(tmp_path: Path):
-    """With confine=False (the host target), absolute paths outside root no
-    longer raise — the agent may reach anywhere the process can."""
-    unconfined = HostWorkspace(root=str(tmp_path), confine=False)
+async def test_host_workspace_allows_out_of_root_absolute(tmp_path: Path):
+    """HostWorkspace never fences: absolute paths outside root do not raise —
+    the agent may reach anywhere the process can, as its shell already does."""
+    unconfined = HostWorkspace(root=str(tmp_path))
     # No raise, returns the resolved absolute path verbatim.
     assert unconfined.resolve("/etc/hostname") == "/etc/hostname"
     assert unconfined.resolve("../../outside.txt").endswith("outside.txt")
 
 
 @pytest.mark.asyncio
-async def test_confine_false_anchors_relative_at_root(tmp_path: Path):
-    """confine=False still resolves *relative* paths under root (cwd
-    ergonomics unchanged); only the escape rejection is lifted."""
-    unconfined = HostWorkspace(root=str(tmp_path), confine=False)
+async def test_host_workspace_anchors_relative_at_root(tmp_path: Path):
+    """``root`` is an anchor, not a fence: relative paths still resolve under
+    it (cwd ergonomics unchanged); only the escape rejection is absent."""
+    unconfined = HostWorkspace(root=str(tmp_path))
     resolved = unconfined.resolve("sub/file.txt")
     assert resolved == str((tmp_path / "sub" / "file.txt").resolve())
 
 
 @pytest.mark.asyncio
-async def test_confine_true_is_default_and_still_rejects(tmp_path: Path):
-    """Default stays confined — existing callers are unaffected."""
-    confined = HostWorkspace(root=str(tmp_path))
-    assert confined.confine is True
-    with pytest.raises(WorkspaceEscapeError):
-        confined.resolve("/etc/passwd")
+async def test_host_workspace_has_no_fenced_mode(tmp_path: Path):
+    """There is no "host but fenced" tier to construct.
+
+    The knob that used to select one is gone, not defaulted: a caller cannot
+    reintroduce the split where ``cat /etc/passwd`` works and
+    ``read_file("/etc/passwd")`` raises. Callers needing the root boundary
+    ask for it per-call via ``resolve_confined``.
+    """
+    import inspect
+
+    assert "confine" not in inspect.signature(HostWorkspace.__init__).parameters
+    workspace = HostWorkspace(root=str(tmp_path))
+    assert workspace.enforces_confinement is False
+    assert workspace.resolve("/etc/passwd") == "/etc/passwd"
 
 
 # -- resolve_confined: confinement as the caller's policy -----------------
@@ -153,7 +163,7 @@ async def test_confine_true_is_default_and_still_rejects(tmp_path: Path):
 async def test_resolve_confined_reimposes_the_boundary_when_unconfined(
     tmp_path: Path,
 ):
-    unconfined = HostWorkspace(root=str(tmp_path), confine=False)
+    unconfined = HostWorkspace(root=str(tmp_path))
 
     assert unconfined.resolve("/etc/hostname") == "/etc/hostname"
     with pytest.raises(WorkspaceEscapeError):
@@ -174,7 +184,7 @@ async def test_resolve_confined_catches_a_symlink_out_of_the_root(tmp_path: Path
     root = tmp_path / "workspace"
     root.mkdir()
     os.symlink(outside / "secret.txt", root / "link.txt")
-    unconfined = HostWorkspace(root=str(root), confine=False)
+    unconfined = HostWorkspace(root=str(root))
 
     assert unconfined.resolve("link.txt") == str(outside / "secret.txt")
     with pytest.raises(WorkspaceEscapeError):
@@ -186,11 +196,17 @@ async def test_resolve_confined_is_plain_resolve_when_already_confined(
     tmp_path: Path,
 ):
     """Confined substrates pay nothing: resolve already refused."""
-    confined = HostWorkspace(root=str(tmp_path))
+    from omniagents.workspace.mounted_host import MountedHostWorkspace
+
+    (tmp_path / "src").mkdir()
+    confined = MountedHostWorkspace(
+        str(tmp_path / "logical"),
+        [{"kind": "local", "mountName": "src", "path": str(tmp_path / "src")}],
+    )
 
     assert confined.enforces_confinement is True
     assert confined.resolve_confined("sub/file.txt") == str(
-        (tmp_path / "sub" / "file.txt").resolve()
+        (tmp_path / "logical" / "sub" / "file.txt").resolve()
     )
     with pytest.raises(WorkspaceEscapeError):
         confined.resolve_confined("/etc/passwd")

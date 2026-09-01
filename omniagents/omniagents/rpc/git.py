@@ -2523,7 +2523,14 @@ class GitManager:
             entry = stages[path]
             workspace_path = _join_workspace(repo_id, path)
             try:
-                content = await workspace.read_text(workspace_path)
+                # ``resolve_confined``, not a bare read: the boundary is this
+                # surface's promise to the client, so it is asked for here
+                # rather than inherited from whatever the workspace enforces
+                # (a host workspace enforces nothing). A conflicted path that
+                # symlinks out of the workspace is refused before it is read.
+                content = await workspace.read_text(
+                    workspace.resolve_confined(workspace_path)
+                )
             except (
                 FileNotFoundError,
                 IsADirectoryError,

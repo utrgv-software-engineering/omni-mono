@@ -191,7 +191,7 @@ async def test_stream_agent_preserves_unconfined_host_workspace(monkeypatch, tmp
         async def stream_events(self):
             active = ws.current_workspace()
             captured["root"] = ws.workspace_root()
-            captured["confine"] = getattr(active, "confine", None)
+            captured["confine"] = active.enforces_confinement
             captured["sibling"] = active.resolve(str(tmp_path.parent))
             if False:
                 yield None
@@ -217,7 +217,7 @@ async def test_stream_agent_preserves_unconfined_host_workspace(monkeypatch, tmp
         model_settings=types.SimpleNamespace(max_tokens=None, truncation=None),
     )
 
-    workspace = ws.HostWorkspace(root=str(tmp_path), confine=False)
+    workspace = ws.HostWorkspace(root=str(tmp_path))
     lease = EnvironmentLease(
         ExecutionEnvironmentDescriptor(
             environment_id="environment-unconfined",

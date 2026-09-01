@@ -345,16 +345,35 @@ Agent audio output chunk.
 - Audio chunks are automatically stored to disk with metadata in database
 - `item_id` and `content_index` identify the audio segment
 
+#### realtime_transcript_delta
+
+Incremental assistant transcription, streamed while the model speaks.
+
+```json
+{
+  "type": "realtime_transcript_delta",
+  "run_id": "run-123",
+  "item_id": "item_abc123",
+  "content_index": 0,
+  "delta": "Based on the current "
+}
+```
+
+**Notes:**
+- Assistant-only. Clients accumulate deltas per `item_id` into one
+  growing message — each delta is a fragment, never a standalone message
+- The final `realtime_transcript` with the same `item_id` supersedes the
+  accumulated text
+
 #### realtime_transcript
 
-Transcription of user input or agent output.
+Final transcript for one conversation item (both roles).
 
 ```json
 {
   "type": "realtime_transcript",
   "run_id": "run-123",
   "item_id": "item_abc123",
-  "content_index": 0,
   "role": "assistant",
   "transcript": "Based on the current weather data, it's sunny and 72 degrees.",
   "timestamp": 1234567890.123
@@ -363,8 +382,58 @@ Transcription of user input or agent output.
 
 **Notes:**
 - `role` is either "user" (input) or "assistant" (output)
-- Transcripts are stored in conversation history
-- May arrive before, during, or after corresponding audio
+- User items arrive whole when input transcription completes; assistant
+  items are flushed from accumulated deltas at turn end (before
+  `realtime_turn_ended`)
+- Keyed by `item_id`: replace any delta-built text for the item rather
+  than appending a new message
+- Voice turns persist into the shared session's history and canonical
+  conversation thread, so the paired chat session shows them after the
+  voice session ends and subsequent text runs see them as context
+- User transcription completes asynchronously (Whisper), so a user item
+  may arrive after the assistant's reply started — order the transcript by
+  `realtime_history_updated`, never by arrival
+
+#### realtime_history_updated
+
+The model's conversation history, in order, whenever an existing item is
+revised — notably when input transcription completes.
+
+```json
+{
+  "type": "realtime_history_updated",
+  "run_id": "run-123",
+  "history_items": [
+    { "item_id": "item_user", "type": "message", "role": "user", "status": "completed" },
+    { "item_id": "item_asst", "type": "message", "role": "assistant", "status": "in_progress" }
+  ],
+  "timestamp": 1234567890.123
+}
+```
+
+**Notes:**
+- Identity and order only — no content. Clients already hold the text from
+  `realtime_transcript` / `realtime_transcript_delta`; this says where each
+  `item_id` belongs
+- This is the authoritative answer to the async-transcription ordering
+  problem above: a user turn that lands after the reply it prompted is
+  placed correctly by re-sorting on this snapshot
+- Items a client has no row for are ignored; rows the history never names
+  (tool cards, typed messages) keep their position relative to the item
+  they followed
+- A brand-new item is announced by `realtime_history_added` instead, which
+  carries the item but no ordering — the next snapshot settles it
+
+#### realtime_turn_started / realtime_turn_ended
+
+Model turn boundaries. `realtime_turn_ended` fires after the assistant's
+final transcripts for the turn — a turn that produced no audio still ends
+deterministically, so clients can leave their "thinking" state on it.
+
+```json
+{ "type": "realtime_turn_started", "run_id": "run-123" }
+{ "type": "realtime_turn_ended", "run_id": "run-123" }
+```
 
 #### realtime_tool_called
 
@@ -380,6 +449,15 @@ Agent is calling a tool.
   "timestamp": 1234567890.234
 }
 ```
+
+**Tool approvals:** when the agent spec configures approvals
+(`use_safe_agent` without `skip_approvals`), non-safe tools pause on the
+SDK's `needs_approval` contract. The pause is resolved through the paired
+GUI session's normal `/ws` approval flow (`tool_approval_requested`
+broadcast → `tool_approval_response` RPC) — nothing approval-related is
+sent on `/ws/realtime`, and the audio/event stream keeps flowing while
+the prompt is pending. "Always approve" updates the same session
+allow-list text runs use.
 
 #### realtime_tool_completed
 
