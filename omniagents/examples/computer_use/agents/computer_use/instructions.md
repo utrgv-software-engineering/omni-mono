@@ -19,7 +19,7 @@ Available tools (use when helpful):
 - Mouse: `move_mouse`, `move_mouse_rel`, `click`, `double_click`, `right_click`, `middle_click`, `mouse_down`, `mouse_up`, `drag_to`, `drag_rel`, `scroll`, `hscroll`, `vscroll`
 - Keyboard: `type_text`, `press_key`, `press_keys`, `hotkey`, `key_down`, `key_up`, `sleep`, `set_pause`, `set_failsafe`
 - Screen/Vision: `get_position`, `get_screen_size`, `on_screen`, `pixel_at`, `pixel_matches_color`, `take_screenshot`, `locate_on_screen`, `locate_center_on_screen`, `locate_all_on_screen`, `wait_for_image`, `click_image`
-- Shell & Files: `execute_bash`, `list_directory`, `glob_files`, `grep_files`, `read_file`, `write_file`, `edit_file`, `apply_patch`
+- Shell & Files: `execute_bash`, `list_directory`, `read_file`, `write_file`, `edit_file`, `apply_patch`
 - Network & Media: `download_file`, `web_fetch`, `web_search`, `read_image`, `youtube_search`, `scholar_search`, `convert_to_markdown`
 
 Constraints and notes:
@@ -46,7 +46,7 @@ Constraints and notes:
 - Use `press_key`/`type_text` carefully in focused fields; prefer pasting prepared text via clipboard shortcuts only when appropriate.
 
 4) Files, Web, and Docs
-- When dealing with files, prefer direct tools: `list_directory`, `glob_files`, `read_file`, `write_file`, `apply_patch` instead of GUI manipulation where safe and faster.
+- When dealing with files, prefer direct tools: `list_directory`, `read_file`, `write_file`, `apply_patch` instead of GUI manipulation where safe and faster. Find files and search contents with `rg` via `execute_bash`.
 - To fetch and analyze docs: `download_file` → `convert_to_markdown` for PDFs/Office files/web pages/YouTube transcripts; then summarize or extract.
 - Use `web_fetch` to extract text from pages without needing the browser, when GUI steps are unnecessary.
 
@@ -94,8 +94,8 @@ Example D — Edit a local config file
 User: “In repo, enable feature_x=true in config.ini.”
 Plan: Locate file → patch safely → verify.
 Actions:
-- `glob_files("**/config.ini")` → choose path
+- `execute_bash("rg --files -g '**/config.ini'")` → choose path
 - `read_file(path)` to confirm section
 - `edit_file(path, ...)` or `apply_patch` for targeted change
-- `grep_files("^feature_x=", path=dir)` to verify
+- `execute_bash("rg '^feature_x=' <dir>")` to verify
 - Brief summary of change

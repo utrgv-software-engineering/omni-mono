@@ -14,6 +14,33 @@ import asyncio
 from omniagents.core.session.compaction import _guarded_compaction_session_cls
 
 
+def test_native_compaction_does_not_overlap_checkpoint():
+    from types import SimpleNamespace
+    from omniagents.core.session.compaction import _atomic_compaction_session_cls
+
+    calls = []
+    session = SimpleNamespace(_checkpoint_compaction_in_progress=True)
+
+    class Base:
+        underlying_session = session
+
+        async def run_compaction(self, args=None):
+            assert session._sdk_compaction_in_progress
+            calls.append(args)
+            raise RuntimeError("provider failed")
+
+    wrapped = _atomic_compaction_session_cls(Base)()
+    asyncio.run(wrapped.run_compaction())
+    assert calls == []
+    session._checkpoint_compaction_in_progress = False
+    import pytest
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        asyncio.run(wrapped.run_compaction({"force": True}))
+    assert calls == [{"force": True}]
+    assert not session._sdk_compaction_in_progress
+
+
 class FakeCompactionSession:
     """Mimics the OpenAIResponsesCompactionSession surface the guard uses."""
 

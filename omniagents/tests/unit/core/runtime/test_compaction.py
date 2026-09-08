@@ -302,7 +302,7 @@ def test_auto_compact_hook_custom_command():
     assert service.calls[0]["command"] == "my.compact"
 
 
-def _run_token_hook(hook, service, session, *, total=95, max_input=100):
+def _run_token_hook(hook, service, session, *, total=95, max_input=100, safe=True):
     return asyncio.run(
         hook(
             service=service,
@@ -311,6 +311,7 @@ def _run_token_hook(hook, service, session, *, total=95, max_input=100):
             params={
                 "max_input_tokens": max_input,
                 "delta": {"total_tokens": total},
+                "compaction_safe_boundary": safe,
             },
             event="token",
         )
@@ -330,6 +331,17 @@ def test_auto_compact_token_hook_compacts_above_threshold():
     assert state["context_utilization"] == 0.95
     assert state["context_utilization_run_id"] == "run-1"
     assert state["auto_compact_in_progress"] is False
+
+
+def test_token_notification_never_waits_for_compaction():
+    hook = make_auto_compact_token_hook(state_key="prod")
+    service = _FakeService()
+    session = _FakeSession(
+        [{"type": "function_call", "call_id": "pending", "name": "read_file"}]
+    )
+    _run_token_hook(hook, service, session, safe=False)
+    assert service.calls == []
+    assert session.variables["prod"]["needs_context_compression"] is True
 
 
 def test_auto_compact_token_hook_ignores_below_threshold():

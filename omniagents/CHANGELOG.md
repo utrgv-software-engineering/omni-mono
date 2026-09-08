@@ -39,6 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The serve proxy relays the upstream's WebSocket close code instead of flattening it to 1000/1011, and maps a rejected upstream handshake to a terminal 4401. Proxied clients now see 4401/4403 as terminal, matching the direct-connection contract, instead of treating an authorization refusal as a retryable disconnect.
 - `POST /auth/ws-ticket` is no longer registered when the configured provider declines connect tickets (`proxy_assertion`). Browsers never reach such an upstream, and the ticket would have moved a proxy-derived credential into a query string with a fresh TTL.
 
+## [0.7.33] - 2026-09-08
+
+### Fixed
+- Automatic, manual, and context-overflow compaction use the configured native Responses compactor. Tool results are persisted before compaction, subsequent requests use the compacted context, and model/provider changes rebuild the wrapper. Native failures do not silently fall back to agent summarization.
+- Compaction has a bounded deadline, preserves history on failure, and releases in-progress state on timeout or cancellation. Pending tool calls and overlapping requests cannot race compaction; opaque native compaction items survive session reloads.
+
+### Removed (BREAKING)
+- **The `glob_files` and `grep_files` tools are gone.** They walked the workspace in Python — one `list_dir` per directory and one read per file for content search — which on sandboxed backends is an RPC per file and an order of magnitude slower than shelling out. A ripgrep fast path had been bolted on in front of them; the shell is now the only search surface, so that indirection goes away with the tools. Use `execute_bash` with `rg <pattern>` for content search and `rg --files -g '<glob>'` for file discovery — it is faster and it pipes and chains (`| head`, `| xargs`) in ways a dedicated tool could not. The builtin `filesystem` and `filesystem_readonly` capability packs no longer supply them (their instructions now point at `rg`), and they are no longer exported from `omniagents.builtin.tools`.
+
+  Migration: any agent declaring either tool in an explicit `tools:` list must drop it, and an agent that relied on them for discovery needs a shell capability (`shell` or `shell_readonly`) if it does not already have one. Two consequences worth knowing: the plan reviewer's read-only toolset (`plan_review.reviewer_tools()`) is now `read_file` + `list_directory` only — it deliberately gets no execution tools, so it loses search rather than gaining a shell — and sessions recorded before this release still classify their `glob_files`/`grep_files` calls as SEARCH when rendered, so old transcripts read correctly.
+
 ## [0.7.23] - 2026-07-22
 
 ### Added

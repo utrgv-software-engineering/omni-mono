@@ -299,7 +299,7 @@ class TestReviewerToolset:
         assert kwargs["max_turns"] == plan_review.PLAN_REVIEW_MAX_TURNS
         assert kwargs["workspace_root"] == ws.root
         names = [tool.name for tool in spec.available_tools]
-        assert names == ["read_file", "list_directory", "glob_files", "grep_files"]
+        assert names == ["read_file", "list_directory"]
 
     async def test_toolset_has_no_write_edit_execute_or_web(self):
         names = {tool.name for tool in plan_review.reviewer_tools()}
@@ -369,7 +369,7 @@ def test_review_run_budgets():
 def test_policy_document_covers_readonly_workspace_inspection():
     text = plan_review.plan_review_policy_text()
     assert "read_file" in text
-    assert "grep_files" in text
+    assert "list_directory" in text
     assert "zero tool calls" in text
     assert "never attempt to run commands" in text
     assert "DOER's own run" in text

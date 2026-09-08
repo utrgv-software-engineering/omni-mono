@@ -112,8 +112,8 @@ def plan_review_policy_text() -> str:
 def reviewer_tools() -> list:
     """The reviewer's READ-ONLY workspace toolset.
 
-    File reading and searching only — no write, edit, execute, or web
-    tools. The tool bodies route every filesystem access through the
+    File reading and listing only — no search, write, edit, execute, or
+    web tools. The tool bodies route every filesystem access through the
     ``omniagents.workspace`` contextvar, which the calling run bound to
     its environment lease (host or sandbox), so the reviewer inspects
     exactly the filesystem the doer's tools acted on. Execution tools
@@ -121,13 +121,11 @@ def reviewer_tools() -> list:
     satisfied only by the doer's own run appearing in the transcript.
     """
     from omniagents.builtin.tools.file_tools import (
-        glob_files,
-        grep_files,
         list_directory,
         read_file,
     )
 
-    return [read_file, list_directory, glob_files, grep_files]
+    return [read_file, list_directory]
 
 
 def _bound_workspace_root() -> Optional[str]:

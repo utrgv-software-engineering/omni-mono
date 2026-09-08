@@ -212,6 +212,10 @@ _FILE_TOOLS = frozenset(
         "download_file",
     }
 )
+# ``glob_files``/``grep_files`` were removed as tools (search is `rg` via
+# execute_bash), but stay classified here so sessions recorded before the
+# removal still render their calls as SEARCH rather than falling through
+# to the unknown-tool bucket.
 _SEARCH_TOOLS = frozenset({"glob_files", "grep_files", "list_directory"})
 _WEB_TOOLS = frozenset({"web_search", "web_fetch", "scholar_search", "youtube_search"})
 _PLAN_TOOLS = frozenset(

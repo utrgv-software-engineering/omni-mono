@@ -13,10 +13,16 @@ backwards-compatible.
 from __future__ import annotations
 
 import json
+import asyncio
+import hashlib
+import math
+from contextvars import ContextVar
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("omniagents.session.compaction")
+COMPACTION_TIMEOUT_SECONDS = 45
+explicit_native_compaction = ContextVar("explicit_native_compaction", default=False)
 
 # Knobs we consume locally rather than forward to the SDK constructor.
 _LOCAL_KNOBS = frozenset(
@@ -26,6 +32,7 @@ _LOCAL_KNOBS = frozenset(
         "threshold_tokens",
         "threshold_items",
         "interruption_safe",
+        "timeout_seconds",
     }
 )
 
@@ -78,7 +85,24 @@ def _has_unresolved_function_call(items: List[Any]) -> bool:
             pending_call_ids.add(call_id)
         elif item_type == "function_call_output" and isinstance(call_id, str):
             resolved_call_ids.add(call_id)
+        for call in item.get("tool_calls") or []:
+            if isinstance(call, dict) and isinstance(call.get("id"), str):
+                pending_call_ids.add(call["id"])
+        if item.get("role") == "tool" and isinstance(item.get("tool_call_id"), str):
+            resolved_call_ids.add(item["tool_call_id"])
     return bool(pending_call_ids - resolved_call_ids)
+
+
+def has_pending_compaction_tools(session: Any) -> bool:
+    """Inspect raw active context before API replay repairs missing outputs."""
+    items = getattr(session, "_sdk_history", None)
+    if items is None:
+        items = getattr(session, "history", [])
+    from omniagents.core.runtime.compaction import history_since_last_checkpoint
+
+    return _has_unresolved_function_call(
+        history_since_last_checkpoint(items, include_checkpoint=True)
+    )
 
 
 def _resolve_context_window(model: str) -> Optional[int]:
@@ -176,7 +200,10 @@ def _build_should_trigger_compaction(
             return False
         if threshold_items is not None and len(items) >= threshold_items:
             return True
-        token_estimate = _candidate_token_estimate(items)
+        # User messages and previous compaction items also occupy the window.
+        token_estimate = _candidate_token_estimate(
+            context.get("session_items") or items
+        )
         return token_estimate >= threshold_tokens
 
     return should_trigger
@@ -192,9 +219,47 @@ def _atomic_compaction_session_cls(base: type) -> type:
     if base not in _atomic_session_cls_cache:
 
         class AtomicCompactionSession(base):
+            async def run_compaction(self, args=None):
+                session = self.underlying_session
+                if has_pending_compaction_tools(session):
+                    return
+                if (
+                    getattr(session, "_checkpoint_compaction_in_progress", False)
+                    or getattr(session, "_sdk_compaction_in_progress", False)
+                    or (
+                        getattr(session, "_compact_command_in_progress", False)
+                        and not explicit_native_compaction.get()
+                    )
+                ):
+                    if args and args.get("force"):
+                        raise RuntimeError("Context compaction is already in progress.")
+                    return
+                session._sdk_compaction_in_progress = True
+                try:
+                    # Cancellation repair and commands append directly to the
+                    # underlying session, bypassing the SDK candidate cache.
+                    self._compaction_candidate_items = None
+                    self._session_items = None
+                    return await asyncio.wait_for(
+                        super().run_compaction(args),
+                        timeout=getattr(
+                            self, "_omni_timeout_seconds", COMPACTION_TIMEOUT_SECONDS
+                        ),
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError(
+                        "Native context compaction timed out; history was preserved."
+                    ) from exc
+                finally:
+                    session._sdk_compaction_in_progress = False
+
             async def _replace_underlying_session_items(
                 self, *, output_items, previous_items
             ):
+                if not output_items:
+                    raise RuntimeError(
+                        "Native compaction returned empty context; history was preserved."
+                    )
                 replace = getattr(self.underlying_session, "replace_sdk_items", None)
                 if callable(replace):
                     await replace(output_items)
@@ -289,6 +354,7 @@ def wrap_with_compaction(
 
     if not config or not isinstance(config, dict):
         return session
+
     if not config.get("enabled", False):
         return session
 
@@ -431,14 +497,83 @@ def wrap_with_compaction(
     session_cls = _atomic_compaction_session_cls(session_cls)
 
     try:
-        return session_cls(
+        wrapped = session_cls(
             session_id=session_id,
             underlying_session=session,
             **kwargs,
         )
+        timeout = float(config.get("timeout_seconds", COMPACTION_TIMEOUT_SECONDS))
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("Compaction timeout_seconds must be finite and positive")
+        wrapped._omni_timeout_seconds = timeout
+        return wrapped
     except Exception as exc:
         logger.warning(
             "Failed to wrap session with OpenAIResponsesCompactionSession: %s",
             exc,
         )
         return session
+
+
+def native_compaction_for_session(
+    service: Any, session: Any, *, model_config=None, model_provider=None
+) -> Any:
+    """Resolve native compaction for commands, including freshly loaded sessions.
+
+    A native setup failure is an error, never permission to silently switch
+    an opted-in Responses session to agent summarization.
+    """
+    cached = getattr(session, "_sdk_compaction_session", None)
+    config = getattr(getattr(service, "spec", None), "session_compaction_config", None)
+    if config is None:
+        return cached
+    if not config or not config.get("enabled", False):
+        session._sdk_compaction_session = None
+        return None
+    from omniagents.core.models import (
+        resolve_service_model_runtime,
+        provider_from_runtime,
+    )
+
+    if model_config is None:
+        _, runtime = resolve_service_model_runtime(service, session)
+    else:
+        runtime = model_config
+    if runtime.get("use_responses") is False:
+        session._sdk_compaction_session = None
+        return None
+    signature = hashlib.sha256(
+        json.dumps(
+            [
+                config,
+                runtime,
+                getattr(getattr(service, "spec", None), "model_provider_config", None),
+            ],
+            sort_keys=True,
+            default=repr,
+        ).encode()
+    ).digest()
+    if (
+        cached is not None
+        and getattr(session, "_sdk_compaction_signature", None) == signature
+    ):
+        return cached
+    # Never keep using a former model/provider after a failed reconfiguration.
+    session._sdk_compaction_session = None
+    provider = model_provider
+    if provider is None:
+        provider, _ = provider_from_runtime(runtime)
+    wrapped = wrap_with_compaction(
+        session,
+        config,
+        model_config=runtime,
+        model_provider=provider,
+        parent_model=runtime.get("model"),
+        max_input_tokens=runtime.get("max_input_tokens")
+        or (getattr(session, "model_config", None) or {}).get("max_input_tokens"),
+    )
+    if wrapped is session:
+        raise RuntimeError("Native context compaction could not be initialized.")
+    session._sdk_compaction_session = wrapped
+    session._sdk_compaction_signature = signature
+    return wrapped

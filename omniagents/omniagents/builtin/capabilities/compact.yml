@@ -1,6 +1,5 @@
 name: compact
-# Control-plane only: /compact appends a checkpoint summary marker
-# (summary + resume protocol) to session history. Products install a
-# summarizer via omniagents.core.runtime.compaction.set_compaction_summarizer.
+# Control-plane only: /compact uses configured native Responses compaction.
+# Sessions without native compaction use the product's checkpoint summarizer.
 server_functions:
   - compact

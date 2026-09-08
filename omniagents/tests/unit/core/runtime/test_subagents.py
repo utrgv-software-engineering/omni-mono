@@ -52,7 +52,7 @@ class FakeToolCallItem:
     type = "tool_call_item"
 
     def to_input_item(self):
-        return {"name": "grep_files", "call_id": "inner-1", "arguments": "{}"}
+        return {"name": "read_file", "call_id": "inner-1", "arguments": "{}"}
 
 
 @pytest.mark.asyncio
@@ -82,7 +82,7 @@ async def test_observer_registers_run_and_relays_mapped_events(service):
     assert started["method"] == "run_started"
     mapped = service.calls[2][1]
     assert mapped["method"] == "tool_called"
-    assert mapped["params"]["tool"] == "grep_files"
+    assert mapped["params"]["tool"] == "read_file"
     run = subagents._AGENT_TOOL_RUNS["call-1"]
     assert run.agent == "explorer"
     assert run.status == "running"
@@ -128,9 +128,11 @@ async def test_parent_tool_result_settles_the_run(service):
 @pytest.mark.asyncio
 async def test_snapshot_merges_providers_and_agent_tool_runs():
     subagents.register_snapshot_provider(
-        lambda sid: [{"subagent_id": "w1", "kind": "worker", "status": "running"}]
-        if sid == "sess-1"
-        else []
+        lambda sid: (
+            [{"subagent_id": "w1", "kind": "worker", "status": "running"}]
+            if sid == "sess-1"
+            else []
+        )
     )
     subagents._AGENT_TOOL_RUNS["call-1"] = subagents.SubagentRun(
         subagent_id="call-1",
@@ -173,9 +175,7 @@ def test_task_from_arguments_unwraps_the_json_envelope():
     # A single string field counts even without the canonical name.
     assert _task_from_arguments('{"question": "how?"}') == "how?"
     # Multiple string fields are ambiguous — show the raw JSON.
-    assert (
-        _task_from_arguments('{"a": "x", "b": "y"}') == '{"a": "x", "b": "y"}'
-    )
+    assert _task_from_arguments('{"a": "x", "b": "y"}') == '{"a": "x", "b": "y"}'
     assert _task_from_arguments("not json") == "not json"
     assert _task_from_arguments("") == ""
 

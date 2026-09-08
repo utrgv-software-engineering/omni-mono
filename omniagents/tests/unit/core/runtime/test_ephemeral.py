@@ -33,6 +33,45 @@ class _FakeStream:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_utility_run_cancels_sdk_background_task(monkeypatch):
+    import asyncio
+    import agents
+    import omniagents.core.agents.builder as builder
+    from unittest.mock import AsyncMock
+
+    started, stopped = asyncio.Event(), asyncio.Event()
+
+    async def model_request():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    class PendingStream:
+        def __init__(self):
+            self.task = asyncio.create_task(model_request())
+
+        async def stream_events(self):
+            await asyncio.Event().wait()
+            yield None
+
+        def cancel(self):
+            self.task.cancel()
+
+    monkeypatch.setattr(
+        builder, "_default_build_agent", AsyncMock(return_value="agent")
+    )
+    monkeypatch.setattr(agents.Runner, "run_streamed", lambda *a, **kw: PendingStream())
+    task = asyncio.create_task(run_agent_once(SimpleNamespace(), "summarize"))
+    await asyncio.wait_for(started.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.wait_for(stopped.wait(), 1)
+
+
+@pytest.mark.asyncio
 async def test_run_agent_once_wires_everything(monkeypatch, tmp_path):
     captured = {}
 

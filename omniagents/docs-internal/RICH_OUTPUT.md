@@ -19,7 +19,7 @@ class RichToolOutput:
     def __init__(self, llm_output: str, ui_metadata: Dict[str, Any] = None):
         self.llm_output = llm_output      # Text for LLM context
         self.ui_metadata = ui_metadata     # Metadata for UI rendering
-    
+
     def __str__(self):
         return self.llm_output  # Only returns LLM text when stringified
 ```
@@ -33,7 +33,7 @@ from omniagents.core.tools import rich_function_tool, RichToolOutput
 def my_tool(param: str) -> RichToolOutput:
     # Process the tool logic
     result_data = process_something(param)
-    
+
     # Create UI metadata
     ui_metadata = {
         "value": result_data,
@@ -45,7 +45,7 @@ def my_tool(param: str) -> RichToolOutput:
             # Type-specific fields
         }
     }
-    
+
     # Return RichToolOutput
     return RichToolOutput(llm_text, ui_metadata)
 ```
@@ -73,8 +73,8 @@ ui_metadata = {
 ## Display Types and Patterns
 
 ### 1. command
-**Purpose**: Shell command execution results  
-**Used by**: `execute_bash`  
+**Purpose**: Shell command execution results
+**Used by**: `execute_bash`
 **Metadata fields**:
 - `command`: The executed command
 - `stdout`: Standard output
@@ -85,16 +85,16 @@ ui_metadata = {
 - `preview_lines`: Number of lines in preview
 
 ### 2. error
-**Purpose**: Error conditions in any tool  
-**Used by**: All tools on error  
+**Purpose**: Error conditions in any tool
+**Used by**: All tools on error
 **Metadata fields**:
 - `error_type`: Type of error (e.g., "network_error", "file_not_found")
 - `error`: Error message/description
 - Additional context fields specific to the error
 
 ### 3. search_results
-**Purpose**: Search and listing operations  
-**Used by**: `glob_files`, `grep_files`, `web_search`, `youtube_search`, `scholar_search`  
+**Purpose**: Search and listing operations
+**Used by**: `web_search`, `youtube_search`, `scholar_search`
 **Metadata fields**:
 - `query`: Search query/pattern
 - `result_count`: Total number of results
@@ -105,8 +105,8 @@ ui_metadata = {
 - Additional search-specific filters
 
 ### 4. file_content
-**Purpose**: File reading operations  
-**Used by**: `read_file`  
+**Purpose**: File reading operations
+**Used by**: `read_file`
 **Metadata fields**:
 - `file_path`: Path to the file
 - `line_count`: Number of lines read
@@ -116,8 +116,8 @@ ui_metadata = {
 - `preview_lines`: Number of lines in preview
 
 ### 5. file_edit
-**Purpose**: File modification operations  
-**Used by**: `edit_file`, `write_file`  
+**Purpose**: File modification operations
+**Used by**: `edit_file`, `write_file`
 **Metadata fields**:
 - `file_path`: Path to the file
 - `operation`: Type of operation ("edit", "write", "append")
@@ -126,8 +126,8 @@ ui_metadata = {
 - `line_count`: Number of lines written
 
 ### 6. directory_listing
-**Purpose**: Directory content listings  
-**Used by**: `list_directory`  
+**Purpose**: Directory content listings
+**Used by**: `list_directory`
 **Metadata fields**:
 - `path`: Directory path
 - `file_count`: Number of files
@@ -137,8 +137,8 @@ ui_metadata = {
 - `preview_count`: Number of items in preview
 
 ### 7. web_content
-**Purpose**: Web page fetching  
-**Used by**: `web_fetch`  
+**Purpose**: Web page fetching
+**Used by**: `web_fetch`
 **Metadata fields**:
 - `url`: Source URL
 - `title`: Page title (if available)
@@ -149,8 +149,8 @@ ui_metadata = {
 - `extracted_text`: Whether text was extracted
 
 ### 8. conversion
-**Purpose**: File format conversions  
-**Used by**: `convert_to_markdown`  
+**Purpose**: File format conversions
+**Used by**: `convert_to_markdown`
 **Metadata fields**:
 - `success`: Conversion success indicator
 - `file_path`: Source file path
@@ -158,8 +158,8 @@ ui_metadata = {
 - `content_length`: Length of converted content
 
 ### 9. download
-**Purpose**: File downloads  
-**Used by**: `download_file`  
+**Purpose**: File downloads
+**Used by**: `download_file`
 **Metadata fields**:
 - `success`: Download success indicator
 - `file_path`: Local path where file was saved
@@ -177,13 +177,13 @@ The runtime bridge (`omniagents/core/runtime/bridge.py`) automatically handles R
 if item.type == "tool_call_output_item":
     output = getattr(item, "output", "")
     ui_metadata = {}
-    
+
     # Check if output is a RichToolOutput instance
     from omniagents.core.tools import RichToolOutput
     if isinstance(output, RichToolOutput):
         ui_metadata = output.ui_metadata
         # String conversion will use __str__ which returns only llm_output
-    
+
     payload = {
         "run_id": run_id,
         "tool": getattr(item, "name", "<tool>"),
@@ -228,7 +228,7 @@ def handle_tool_result(event):
     tool_name = event.get("tool")
     output = event.get("output")
     metadata = event.get("metadata")  # May be None or empty dict
-    
+
     if metadata and metadata.get("display_type"):
         # Rich output with metadata
         return format_rich_output(metadata)
@@ -295,13 +295,13 @@ func parseRichMetadata(metadata map[string]interface{}) *RichMetadata {
 
 **Search Results**:
 ```
-⏺ grep_files(pattern="TODO", include="*.py")
-  └─ Found 15 matches for 'TODO' in 5 files
-     src/main.py: 3 matches
-       Line 42: # TODO: implement caching
-     src/utils.py: 2 matches
-       Line 101: # TODO: add error handling
-     ... +3 more files
+⏺ web_search(query="python asyncio task groups")
+  └─ Found 15 results
+     Task Groups — Python docs
+       https://docs.python.org/3/library/asyncio-task.html
+     asyncio.TaskGroup in 3.11 — real-world notes
+       https://example.com/taskgroup-notes
+     ... +13 more results
 ```
 
 ## Creating a Rich Tool
@@ -319,11 +319,11 @@ def run_tests(test_path: str, verbose: bool) -> RichToolOutput:
         # Run the tests
         cmd = f"pytest {test_path}" + (" -v" if verbose else "")
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        
+
         # Parse output for summary
         output = result.stdout + result.stderr
         lines = output.split('\n')
-        
+
         # Extract test summary
         passed = failed = 0
         for line in lines:
@@ -335,13 +335,13 @@ def run_tests(test_path: str, verbose: bool) -> RichToolOutput:
                         passed = int(parts[i-1])
                     if "failed" in part and i > 0:
                         failed = int(parts[i-1])
-        
+
         # Create LLM output
         if result.returncode == 0:
             llm_output = f"Tests passed: {passed} tests executed successfully"
         else:
             llm_output = f"Tests failed: {passed} passed, {failed} failed\n{output}"
-        
+
         # Create UI metadata
         ui_metadata = {
             "value": output,
@@ -358,9 +358,9 @@ def run_tests(test_path: str, verbose: bool) -> RichToolOutput:
                 "line_count": len(lines)
             }
         }
-        
+
         return RichToolOutput(llm_output, ui_metadata)
-        
+
     except Exception as e:
         error_msg = f"Error running tests: {str(e)}"
         ui_metadata = {
@@ -420,7 +420,7 @@ agent = create_agent_from_yaml("config.yaml")
    ```python
    # Before
    return f"Result: {data}"
-   
+
    # After
    ui_metadata = {
        "value": data,

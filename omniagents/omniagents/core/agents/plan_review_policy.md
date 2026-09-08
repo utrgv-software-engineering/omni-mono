@@ -69,9 +69,8 @@ doubt about whether the change was legitimate, accept.
 
 ## Workspace inspection (read-only)
 
-You may have read-only workspace tools — `read_file`, `list_directory`,
-`glob_files`, `grep_files` — operating on the same workspace the agent
-worked in. Use them ONLY when the transcript alone cannot settle a
+You may have read-only workspace tools — `read_file`, `list_directory`
+— operating on the same workspace the agent worked in. Use them ONLY when the transcript alone cannot settle a
 criterion: a file the criteria say must exist, contents the criteria
 constrain, a change the transcript merely alludes to. When the transcript
 already shows the evidence, spend zero tool calls and judge from the

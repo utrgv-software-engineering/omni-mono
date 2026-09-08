@@ -51,8 +51,6 @@ def test_builtin_capabilities_auto_discovered(tmp_path):
         "read_file",
         "read_image",
         "list_directory",
-        "glob_files",
-        "grep_files",
         "write_file",
         "edit_file",
         "apply_patch",
@@ -145,8 +143,6 @@ def test_notebook_readonly_and_slash_builtins(tmp_path):
         "read_file",
         "read_image",
         "list_directory",
-        "glob_files",
-        "grep_files",
     }
     sh_ro_tools = {t.name for t in proj.capability_registry["shell_readonly"].tools()}
     assert sh_ro_tools == {"execute_bash"}

@@ -629,12 +629,10 @@ def make_auto_compact_token_hook(
 ):
     """Build a proactive-compaction ``token`` runtime hook.
 
-    The proactive half of :func:`make_auto_compact_error_hook`: when a
-    run's reported input-token utilization crosses *threshold*, record
-    the pressure flags under ``session.variables[state_key]`` and run
-    the *command* server function (the product's checkpoint-compaction
-    command) before the context actually overflows. Products register
-    the result with ``@runtime_hook("token")`` (or assign it to a
+    Token events only record pressure under ``session.variables[state_key]``.
+    The bridge's model-input filter invokes this hook at a safe boundary,
+    after tool outputs are saved, to run the *command* server function.
+    Products register the result with ``@runtime_hook("token")`` (or assign it to a
     decorated name).
 
     Opt-outs honored via ``session.variables[state_key]``:
@@ -651,8 +649,8 @@ def make_auto_compact_token_hook(
         event: str,
     ) -> None:
         max_input_tokens = params.get("max_input_tokens")
-        delta = params.get("delta") or {}
-        total_tokens = delta.get("total_tokens") or 0
+        usage = params.get("totals") or params.get("delta") or {}
+        total_tokens = usage.get("total_tokens") or 0
         if not max_input_tokens:
             return
 
@@ -677,6 +675,11 @@ def make_auto_compact_token_hook(
         state["context_utilization"] = utilization
         state["context_utilization_run_id"] = run_id
 
+        # Token notifications are consumed before the SDK has finished tools.
+        # Only the model-input boundary may execute proactive compaction.
+        if not params.get("compaction_safe_boundary"):
+            return
+
         if state.get("auto_compact") is False:
             return
 
@@ -689,4 +692,5 @@ def make_auto_compact_token_hook(
         finally:
             state["auto_compact_in_progress"] = False
 
+    setattr(on_token, "compaction_policy", (state_key, command, threshold))
     return on_token

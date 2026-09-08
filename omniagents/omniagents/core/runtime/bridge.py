@@ -623,11 +623,14 @@ async def stream_agent(
     try:
         # Use Runner to run the agent
         from agents import RunConfig
+        from .compaction_boundary import compaction_input_filter
 
         run_config_kwargs = {
             "group_id": group_id or f"session_{session.id}",
             "workflow_name": workflow_name or "omniagents_conversation",
-            "call_model_input_filter": _strip_phase_from_model_input,
+            "call_model_input_filter": compaction_input_filter(
+                session, service, max_input_tokens, _strip_phase_from_model_input
+            ),
         }
         if model_provider is not None:
             run_config_kwargs["model_provider"] = model_provider

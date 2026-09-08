@@ -175,7 +175,7 @@ async def use_pyodide_workspace(
     Example::
 
         async with use_pyodide_workspace("/tmp/agent-workspace") as ws:
-            # All builtin tools (read_file, grep_files, apply_patch, ...)
+            # All builtin tools (read_file, list_directory, apply_patch, ...)
             # now route through pyodide's FS instead of the host disk.
             await runner.run_streamed(agent, input=...)
 
@@ -372,7 +372,7 @@ def scratch_root() -> str:
 
     Tool-internal state (worktrees, spawn logs, etc.) lives under here,
     deliberately outside :func:`workspace_root` so the user's
-    ``glob_files``/``grep_files``/git workflows don't trip over it.
+    ``list_directory``/``rg``/git workflows don't trip over it.
     """
     return current_workspace().scratch_root
 

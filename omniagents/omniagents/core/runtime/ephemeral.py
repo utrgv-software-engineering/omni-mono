@@ -157,8 +157,14 @@ async def run_agent_once(
             max_turns=max_turns,
             run_config=run_config,
         )
-        async for _ in result.stream_events():
-            pass
+        try:
+            async for _ in result.stream_events():
+                pass
+        except BaseException:
+            # Cancelling the consumer alone leaves the SDK's background model
+            # task running, including when checkpoint compaction times out.
+            result.cancel()
+            raise
         return result.final_output_as(str)
 
 
