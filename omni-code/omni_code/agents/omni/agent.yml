@@ -51,8 +51,6 @@ safe_agent_options:
     - read_image
     - read_file
     - list_directory
-    - glob_files
-    - grep_files
     - display_artifact
     - dispatch
     - bash_status

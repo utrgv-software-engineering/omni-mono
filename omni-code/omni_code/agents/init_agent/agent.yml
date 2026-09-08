@@ -7,9 +7,16 @@ welcome_text: |
 
 tools:
   - list_directory
-  - glob_files
-  - grep_files
   - read_file
+  # Search is `rg` via the shell; there are no glob/grep tools.
+  #
+  # NOTE: this shell is UNGATED. /init dispatches through
+  # run_project_agent_once (core/runtime/ephemeral.py), which bypasses
+  # AgentService and therefore never calls configure_tool_approval — the
+  # `use_safe_agent` / `safe_tool_names` block below is inert on this
+  # path, and no approval prompt can be answered from it. The read-only
+  # restriction is carried by instructions.md alone.
+  - execute_bash
   - apply_patch
   - write_file
 
@@ -19,8 +26,6 @@ safe_agent_options:
   halt_on_rejection: true
   safe_tool_names:
     - list_directory
-    - glob_files
-    - grep_files
     - read_file
 
 session:

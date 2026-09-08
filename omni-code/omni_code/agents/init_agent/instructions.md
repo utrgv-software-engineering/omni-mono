@@ -39,7 +39,10 @@ Commit & Pull Request Guidelines
 
 (Optional) Add other sections if relevant, such as Security & Configuration Tips, Architecture Overview, or Agent-Specific Instructions.
 
-- Discover repo structure with list_directory, glob_files, grep_files, read_file.
+- Discover repo structure with list_directory and read_file. For finding files
+  by pattern and searching contents, use execute_bash with `rg --files -g '<glob>'`
+  and `rg <pattern>` — there are no glob/grep tools. `git log`/`git ls-files` are
+  available the same way for history and convention questions.
 - Apply changes using apply_patch or write_file. Deliver a final patch that writes/updates AGENTS.md.
 
 Final response policy:

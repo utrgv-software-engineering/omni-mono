@@ -172,7 +172,7 @@ def test_filesystem_and_shell_resolve_to_builtin_packs():
     }
 
     shell_text = caps["shell"].instructions_text or ""
-    assert shell_text.count("Prefer `rg <pattern>` for text search") == 1
+    assert shell_text.count("`rg` is the only search surface") == 1
 
     fs_text = caps["filesystem"].instructions_text or ""
     assert fs_text.count("`applypatch` or `apply-patch`") == 1
