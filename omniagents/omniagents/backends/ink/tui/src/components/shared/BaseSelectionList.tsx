@@ -1,3 +1,4 @@
+import { useKeyedSelection } from "../../hooks/useKeyedSelection.js";
 /**
  * Selection list used by approval dialogs. Renders a column of options with
  * the current selection highlighted, and (optionally) wires keyboard
@@ -8,7 +9,7 @@
  * and drive the selection externally.
  */
 
-import React, { useState } from "react";
+import React, { useContext, createContext } from "react";
 import { Box } from "ink";
 import { useKeypress } from "../../hooks/useKeypress.js";
 import { KeypressPriority } from "../../contexts/KeypressContext.js";
@@ -20,6 +21,8 @@ export interface SelectionOption<V extends string> {
   description: string;
   value: V;
 }
+
+export const SelectionInputContext = createContext(true);
 
 export interface BaseSelectionListProps<V extends string> {
   options: ReadonlyArray<SelectionOption<V>>;
@@ -39,41 +42,40 @@ export function BaseSelectionList<V extends string>({
   manageInput = true,
   selectedIndex: controlledIndex,
 }: BaseSelectionListProps<V>) {
-  const [uncontrolledIndex, setUncontrolledIndex] = useState(0);
-  const selectedIndex = manageInput
-    ? uncontrolledIndex
-    : (controlledIndex ?? 0);
+  const focused = useContext(SelectionInputContext);
+  const selection = useKeyedSelection(options, (option) => option.value);
+  const selectedIndex = manageInput ? selection.index : (controlledIndex ?? 0);
 
   useKeypress(
     (input, key) => {
+      if (key.paste) return true;
       // Modified keys are chords for the global layer (quit, panel
       // switching) — never mistake Ctrl+X for the letter x.
       if (key.ctrl || (key.meta && !key.escape)) return false;
       if (key.tab) return false; // tab always cycles screens
       if (key.shift && (key.upArrow || key.downArrow)) return false;
       if (key.upArrow) {
-        setUncontrolledIndex((prev) => (prev > 0 ? prev - 1 : prev));
+        selection.move(-1);
         return true;
       }
       if (key.downArrow) {
-        setUncontrolledIndex((prev) =>
-          prev < options.length - 1 ? prev + 1 : prev,
-        );
+        selection.move(1);
         return true;
       }
       if (key.return) {
-        onSelect(options[selectedIndex].value);
+        const option = selection.current();
+        if (option) onSelect(option.value);
         return true;
       }
       // Numeric shortcuts: "1" picks options[0], etc.
-      const n = parseInt(input, 10);
+      const n = /^[1-9]$/.test(input) ? Number(input) : NaN;
       if (!Number.isNaN(n) && n >= 1 && n <= options.length) {
         onSelect(options[n - 1].value);
         return true;
       }
       return false;
     },
-    { isActive: manageInput, priority: KeypressPriority.Critical },
+    { isActive: manageInput && focused, priority: KeypressPriority.Critical },
   );
 
   return (

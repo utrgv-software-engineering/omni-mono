@@ -147,15 +147,7 @@ export const MessageListOptimized = React.memo(() => {
           <StaticRender
             key={row.key}
             width={terminalWidth}
-            deps={[
-              row.type,
-              row.type === "message" ? row.message.content : row.key,
-              row.type === "message" ? row.message.toolCall?.output : undefined,
-              row.type === "message"
-                ? row.message.toolCall?.metadata
-                : undefined,
-              terminalWidth,
-            ]}
+            deps={[row, index, rows.length, terminalWidth]}
           >
             {() => item}
           </StaticRender>

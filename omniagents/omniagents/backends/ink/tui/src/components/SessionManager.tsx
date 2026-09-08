@@ -1,3 +1,8 @@
+import { WorkspaceView } from "./WorkspaceView.js";
+import { useImmediateState } from "../hooks/useImmediateState.js";
+import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
+import { useRequestScope } from "../hooks/useRequestScope.js";
+import { ConnectionClosedError, RpcTimeoutError } from "../rpc/lifecycle.js";
 import React, {
   useCallback,
   useEffect,
@@ -7,11 +12,10 @@ import React, {
 } from "react";
 import { Box, Text, useStdout } from "ink";
 import Spinner from "ink-spinner";
-import { useKeypress } from "../hooks/useKeypress.js";
+import { useKeypress, type Key } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import type { RPCClient } from "../rpc/client.js";
 import {
-  clampIndex,
   filterRows,
   rowMeta,
   rowsFromSearch,
@@ -69,21 +73,30 @@ type Props = {
   onEmpty?: () => void;
 };
 
-export const SessionManager = React.memo<Props>(
+export const SessionManager = React.memo<Props>((props) => (
+  <WorkspaceView client={props.client} active>
+    <SessionManagerContent {...props} />
+  </WorkspaceView>
+));
+const SessionManagerContent = React.memo<Props>(
   ({ client, onOpen, onNew, onEmpty }) => {
+    const requests = useRequestScope([client]);
+    const operationPending = useRef(false);
+    const leaving = useRef(false);
+    const renameTarget = useRef<string | null>(null);
     const { stdout } = useStdout();
     const terminalHeight = stdout?.rows || 24;
     const terminalWidth = stdout?.columns || 80;
     const windowSize = Math.max(4, terminalHeight - CHROME_ROWS);
 
     const [rows, setRows] = useState<SessionRow[]>([]);
-    const [index, setIndex] = useState(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [statusLine, setStatusLine] = useState<string | null>(null);
-    const [mode, setMode] = useState<Mode>("list");
-    const [buffer, setBuffer] = useState("");
-    const [confirm, setConfirm] = useState<PendingConfirm | null>(null);
+    const [mode, setMode, modeRef] = useImmediateState<Mode>("list");
+    const [buffer, setBuffer, bufferRef] = useImmediateState("");
+    const [confirm, setConfirm, confirmRef] =
+      useImmediateState<PendingConfirm | null>(null);
     /** The query the CURRENT rows were drawn under, "" for the full list. */
     const [appliedQuery, setAppliedQuery] = useState("");
     const [now, setNow] = useState(() => Date.now());
@@ -124,6 +137,8 @@ export const SessionManager = React.memo<Props>(
           setLoading(false);
           return;
         }
+        const current = requests.begin("load");
+        appliedQueryRef.current = query;
         setLoading(true);
         setError(null);
         try {
@@ -142,13 +157,14 @@ export const SessionManager = React.memo<Props>(
             next = sortRows(rowsFromSessions(await client.listSessions()));
             if (query !== "") next = filterRows(next, query);
           }
+          if (!current()) return;
           setRows(next);
-          setIndex((prev) => clampIndex(prev, next.length));
           setAppliedQuery(query);
         } catch (e) {
+          if (!current()) return;
           setError((e as Error).message ?? String(e));
         } finally {
-          setLoading(false);
+          if (current()) setLoading(false);
         }
       },
       [client, organized, canSearch],
@@ -156,6 +172,10 @@ export const SessionManager = React.memo<Props>(
 
     // Initial load. `load` is stable for a given client/grant set.
     useEffect(() => {
+      setRows([]);
+      setMode("list");
+      setBuffer("");
+      leaving.current = false;
       void load("");
     }, [load]);
 
@@ -179,19 +199,21 @@ export const SessionManager = React.memo<Props>(
     // query currently applied so the screen never shows a stale title.
     // Held in a ref so the subscription does not churn on every keystroke.
     const appliedQueryRef = useRef(appliedQuery);
-    appliedQueryRef.current = appliedQuery;
     useEffect(() => {
       if (!client) return;
       const refetch = () => {
         void load(appliedQueryRef.current);
       };
       client.on("thread_updated", refetch);
+      client.on("rpc_ready", refetch);
       return () => {
         client.off("thread_updated", refetch);
+        client.off("rpc_ready", refetch);
       };
     }, [client, load]);
 
-    const selected = rows[index];
+    const selection = useKeyedSelection(rows, (row) => row.id);
+    const index = selection.index;
 
     /**
      * Run a mutation, then refetch. Failures land on the status line
@@ -200,15 +222,24 @@ export const SessionManager = React.memo<Props>(
      */
     const mutate = useCallback(
       async (label: string, run: () => Promise<unknown>) => {
+        if (operationPending.current || leaving.current) return;
+        operationPending.current = true;
+        const current = requests.begin("mutation");
         try {
           setStatusLine(`${label}…`);
           await run();
+          if (!current()) return;
           await load(appliedQueryRef.current);
-          setStatusLine(label);
+          if (current()) setStatusLine(label);
         } catch (e) {
+          if (!current()) return;
           setStatusLine(
-            `${label} failed: ${(e as Error).message ?? String(e)}`,
+            e instanceof ConnectionClosedError || e instanceof RpcTimeoutError
+              ? `${label}: outcome unknown; refresh before retrying`
+              : `${label} failed: ${(e as Error).message ?? String(e)}`,
           );
+        } finally {
+          operationPending.current = false;
         }
       },
       [load],
@@ -230,203 +261,253 @@ export const SessionManager = React.memo<Props>(
 
     // ----- list-mode keys -------------------------------------------------
 
-    useKeypress(
-      (input, key) => {
-        // Modified keys are chords for the global layer (quit, panel
-        // switching) — never mistake Ctrl+X for the letter x.
-        if (key.ctrl || (key.meta && !key.escape)) return false;
+    const handleList = (input: string, key: Key): boolean => {
+      if (modeRef.current !== "list") return false;
+      if (leaving.current) return true;
+      if (key.paste) return true;
+      // Modified keys are chords for the global layer (quit, panel
+      // switching) — never mistake Ctrl+X for the letter x.
+      if (key.ctrl || (key.meta && !key.escape)) return false;
 
-        if (key.tab) {
-          onNew();
-          return true;
+      const selected = selection.current();
+      if (key.tab) {
+        leaving.current = true;
+        requests.invalidate();
+        onNew();
+        return true;
+      }
+      if (key.upArrow || input === "k") {
+        selection.move(-1);
+        return true;
+      }
+      if (key.downArrow || input === "j") {
+        selection.move(1);
+        return true;
+      }
+      if (key.return) {
+        if (selected) {
+          leaving.current = true;
+          requests.invalidate();
+          onOpen(selected.id);
         }
-        if (key.upArrow || input === "k") {
-          setIndex((prev) => (prev > 0 ? prev - 1 : prev));
-          return true;
-        }
-        if (key.downArrow || input === "j") {
-          setIndex((prev) => (prev < rows.length - 1 ? prev + 1 : prev));
-          return true;
-        }
-        if (key.return) {
-          if (selected) onOpen(selected.id);
-          return true;
-        }
-        if (input === "/") {
-          setMode("search");
-          setBuffer(appliedQuery);
-          return true;
-        }
-        if (key.escape && appliedQuery !== "") {
-          void load("");
-          return true;
-        }
-        if (!selected) return true;
+        return true;
+      }
+      if (input === "/") {
+        setMode("search");
+        setBuffer(appliedQuery);
+        return true;
+      }
+      if (key.escape && appliedQuery !== "") {
+        void load("");
+        return true;
+      }
+      if (!selected || operationPending.current) return true;
 
-        if (input === "p") {
-          if (!requireOrganize(selected)) return true;
-          void mutate(selected.pinned ? "unpinned" : "pinned", () =>
-            client!.updateThread(selected.id, { pinned: !selected.pinned }),
-          );
+      if (input === "p") {
+        if (!requireOrganize(selected)) return true;
+        void mutate(selected.pinned ? "unpinned" : "pinned", () =>
+          client!.updateThread(selected.id, { pinned: !selected.pinned }),
+        );
+        return true;
+      }
+      if (input === "r") {
+        if (!requireOrganize(selected)) return true;
+        renameTarget.current = selected.id;
+        setMode("rename");
+        setBuffer(selected.title ?? "");
+        return true;
+      }
+      if (input === "a") {
+        if (!requireOrganize(selected)) return true;
+        const next = selected.archived ? "active" : "archived";
+        void mutate(next === "archived" ? "archived" : "unarchived", () =>
+          client!.updateThread(selected.id, { status: next }),
+        );
+        return true;
+      }
+      if (input === "f") {
+        if (!canFork) {
+          setStatusLine("this server does not support forking");
           return true;
         }
-        if (input === "r") {
-          if (!requireOrganize(selected)) return true;
-          setMode("rename");
-          setBuffer(selected.title ?? "");
-          return true;
-        }
-        if (input === "a") {
-          if (!requireOrganize(selected)) return true;
-          const next = selected.archived ? "active" : "archived";
-          void mutate(next === "archived" ? "archived" : "unarchived", () =>
-            client!.updateThread(selected.id, { status: next }),
-          );
-          return true;
-        }
-        if (input === "f") {
-          if (!canFork) {
-            setStatusLine("this server does not support forking");
-            return true;
-          }
-          void (async () => {
-            try {
-              setStatusLine("forking…");
-              const result = await client!.forkSession(selected.id);
-              const forked = result?.new_session_id;
-              if (typeof forked === "string" && forked !== "") {
-                // Opening the child is the whole point of the gesture —
-                // dropping the user back on the list would make them hunt
-                // for a conversation they just created.
-                onOpen(forked);
-                return;
-              }
-              setStatusLine("fork returned no session id");
-            } catch (e) {
-              setStatusLine(
-                `fork failed: ${(e as Error).message ?? String(e)}`,
-              );
+        operationPending.current = true;
+        const current = requests.begin("fork");
+        void (async () => {
+          try {
+            setStatusLine("forking…");
+            const result = await client!.forkSession(selected.id);
+            if (!current() || leaving.current) return;
+            const forked = result?.new_session_id;
+            if (typeof forked === "string" && forked !== "") {
+              // Opening the child is the whole point of the gesture —
+              // dropping the user back on the list would make them hunt
+              // for a conversation they just created.
+              leaving.current = true;
+              onOpen(forked);
+              return;
             }
-          })();
-          return true;
-        }
-        if (input === "h") {
-          if (!canHold) {
-            setStatusLine("this server does not support retention holds");
-            return true;
+            setStatusLine("fork returned no session id");
+          } catch (e) {
+            if (!current()) return;
+            setStatusLine(
+              e instanceof ConnectionClosedError || e instanceof RpcTimeoutError
+                ? "fork: outcome unknown; refresh before retrying"
+                : `fork failed: ${(e as Error).message ?? String(e)}`,
+            );
+          } finally {
+            operationPending.current = false;
           }
-          // Deliberately reported as an ACTION, not toggled state: the
-          // protocol has no read for the hold flag (no `get_session_hold`
-          // RPC, and neither listing returns it), so a badge here would be
-          // a guess. Placing the hold is idempotent, so re-pressing is safe.
-          void mutate("retention hold placed", () =>
-            client!.setSessionHold(selected.id, true),
-          );
+        })();
+        return true;
+      }
+      if (input === "h") {
+        if (!canHold) {
+          setStatusLine("this server does not support retention holds");
           return true;
         }
-        if (input === "d") {
-          setConfirm({
-            label: "delete",
-            message: `Delete "${rowTitle(selected)}" and its history? This cannot be undone.`,
-            run: async () => {
-              await client!.deleteSession(selected.id);
-            },
-          });
-          setMode("confirm");
-          return true;
-        }
-        return true; // full-screen: swallow the rest
-      },
-      { isActive: mode === "list", priority: KeypressPriority.High },
-    );
+        // Deliberately reported as an ACTION, not toggled state: the
+        // protocol has no read for the hold flag (no `get_session_hold`
+        // RPC, and neither listing returns it), so a badge here would be
+        // a guess. Placing the hold is idempotent, so re-pressing is safe.
+        void mutate("retention hold placed", () =>
+          client!.setSessionHold(selected.id, true),
+        );
+        return true;
+      }
+      if (input === "d") {
+        setConfirm({
+          label: "delete",
+          message: `Delete "${rowTitle(selected)}" and its history? This cannot be undone.`,
+          run: async () => {
+            await client!.deleteSession(selected.id);
+          },
+        });
+        setMode("confirm");
+        return true;
+      }
+      return true; // full-screen: swallow the rest
+    };
 
     // ----- search-mode keys ----------------------------------------------
 
-    useKeypress(
-      (input, key) => {
-        if (key.ctrl || (key.meta && !key.escape)) return false;
-        if (key.escape) {
-          setMode("list");
-          setBuffer("");
-          return true;
-        }
-        if (key.return) {
-          setMode("list");
-          void load(buffer.trim());
-          setBuffer("");
-          return true;
-        }
-        if (key.backspace || key.delete) {
-          setBuffer((prev) => prev.slice(0, -1));
-          return true;
-        }
-        if (input) {
-          setBuffer((prev) => prev + input);
-          return true;
-        }
+    const handleSearch = (input: string, key: Key): boolean => {
+      if (modeRef.current !== "search") return false;
+      if (leaving.current) return true;
+      if (key.paste) {
+        setBuffer((prev) => prev + input);
         return true;
-      },
-      { isActive: mode === "search", priority: KeypressPriority.Critical },
-    );
+      }
+      if (key.ctrl || (key.meta && !key.escape)) return false;
+      if (key.escape) {
+        setMode("list");
+        setBuffer("");
+        return true;
+      }
+      if (key.return) {
+        setMode("list");
+        void load(bufferRef.current.trim());
+        setBuffer("");
+        return true;
+      }
+      if (key.backspace || key.delete) {
+        setBuffer((prev) => prev.slice(0, -1));
+        return true;
+      }
+      if (input) {
+        setBuffer((prev) => prev + input);
+        return true;
+      }
+      return true;
+    };
 
     // ----- rename-mode keys ----------------------------------------------
 
-    useKeypress(
-      (input, key) => {
-        if (key.ctrl || (key.meta && !key.escape)) return false;
-        if (key.escape) {
-          setMode("list");
-          setBuffer("");
-          return true;
-        }
-        if (key.return) {
-          const title = buffer.trim();
-          setMode("list");
-          setBuffer("");
-          if (!selected) return true;
-          // An emptied title is a real intent (clear it, falling back to
-          // the id), which the protocol spells as an explicit null —
-          // omitting the key would mean "leave it alone" instead.
-          void mutate(title === "" ? "title cleared" : "renamed", () =>
-            client!.updateThread(selected.id, {
-              title: title === "" ? null : title,
-            }),
-          );
-          return true;
-        }
-        if (key.backspace || key.delete) {
-          setBuffer((prev) => prev.slice(0, -1));
-          return true;
-        }
-        if (input) {
-          setBuffer((prev) => prev + input);
-          return true;
-        }
+    const handleRename = (input: string, key: Key): boolean => {
+      if (modeRef.current !== "rename") return false;
+      if (leaving.current) return true;
+      if (key.paste) {
+        setBuffer((prev) => prev + input);
         return true;
-      },
-      { isActive: mode === "rename", priority: KeypressPriority.Critical },
-    );
+      }
+      if (key.ctrl || (key.meta && !key.escape)) return false;
+      if (key.escape) {
+        setMode("list");
+        setBuffer("");
+        return true;
+      }
+      if (key.return) {
+        const title = bufferRef.current.trim();
+        setMode("list");
+        setBuffer("");
+        const id = renameTarget.current;
+        if (!id) return true;
+        // An emptied title is a real intent (clear it, falling back to
+        // the id), which the protocol spells as an explicit null —
+        // omitting the key would mean "leave it alone" instead.
+        void mutate(title === "" ? "title cleared" : "renamed", () =>
+          client!.updateThread(id, {
+            title: title === "" ? null : title,
+          }),
+        );
+        return true;
+      }
+      if (key.backspace || key.delete) {
+        setBuffer((prev) => prev.slice(0, -1));
+        return true;
+      }
+      if (input) {
+        setBuffer((prev) => prev + input);
+        return true;
+      }
+      return true;
+    };
 
     // ----- confirm-mode keys ---------------------------------------------
 
+    const handleConfirm = (input: string, key: Key): boolean => {
+      if (modeRef.current !== "confirm") return false;
+      if (leaving.current) return true;
+      if (key.paste) return true;
+      if (key.ctrl || (key.meta && !key.escape)) return false;
+      if (input === "y" && confirm && confirmRef.current === confirm) {
+        const pending = confirm;
+        setConfirm(null);
+        setMode("list");
+        void mutate(pending.label, pending.run);
+        return true;
+      }
+      if (key.escape || input === "n") {
+        setConfirm(null);
+        setMode("list");
+        return true;
+      }
+      return true;
+    };
+
     useKeypress(
       (input, key) => {
-        if (key.ctrl || (key.meta && !key.escape)) return false;
-        if (input === "y" && confirm) {
-          const pending = confirm;
-          setConfirm(null);
-          setMode("list");
-          void mutate(pending.label, pending.run);
+        const dispatch = (input: string, key: Key) =>
+          handleConfirm(input, key) ||
+          handleRename(input, key) ||
+          handleSearch(input, key) ||
+          handleList(input, key);
+        if (!key.paste && !key.ctrl && !key.meta && input.length > 1) {
+          // Coalesced command keys are separate gestures; text fields receive the remaining text together.
+          const chars = [...input];
+          for (let i = 0; i < chars.length; i++) {
+            if (
+              !(modeRef.current === "list" || modeRef.current === "confirm")
+            ) {
+              dispatch(chars.slice(i).join(""), key);
+              break;
+            }
+            dispatch(chars[i], { ...key, shift: /^[A-Z]$/.test(chars[i]) });
+          }
           return true;
         }
-        if (key.escape || input === "n") {
-          setConfirm(null);
-          setMode("list");
-          return true;
-        }
-        return true;
+        return dispatch(input, key);
       },
-      { isActive: mode === "confirm", priority: KeypressPriority.Critical },
+      { isActive: true, priority: KeypressPriority.High },
     );
 
     const start = windowStart(index, rows.length, windowSize);

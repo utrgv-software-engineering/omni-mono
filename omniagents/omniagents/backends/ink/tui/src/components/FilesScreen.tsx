@@ -5,7 +5,9 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { createHash } from "node:crypto";
+import { useRequestScope } from "../hooks/useRequestScope.js";
+import { WorkspaceView } from "./WorkspaceView.js";
+import { downloadFile, uploadFile } from "../rpc/file-transfer.js";
 import { Box, Text, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -76,13 +78,22 @@ type Props = {
 // protocol's documented explorer scaling model), chunked fs_download
 // preview, and the same spatial focus grammar as Review/Agents: ←/→
 // switch panes, ↑↓ contextual, enter opens, esc pops.
-export const FilesScreen = ({
+export const FilesScreen = (props: Props) => (
+  <WorkspaceView client={props.client} active={props.active}>
+    <FilesScreenContent {...props} />
+  </WorkspaceView>
+);
+
+const FilesScreenContent = ({
   active,
   height,
   client,
   onExit,
   onMention,
 }: Props) => {
+  const scope = useRequestScope();
+  const pendingWatches = useRef(new Map<string, object>());
+  const saving = useRef(false);
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns ?? 80;
   const actions = useActions();
@@ -117,11 +128,14 @@ export const FilesScreen = ({
   const loadDir = useCallback(
     async (dir: string) => {
       if (!client || !environmentId) return;
+      const current = scope.begin(`list:${dir}`);
       try {
         const result = await client.fsList(environmentId, dir);
+        if (!current()) return;
         setEntriesByDir((prev) => ({ ...prev, [dir]: result.entries }));
         setError(null);
       } catch (e) {
+        if (!current()) return;
         setError((e as Error).message ?? String(e));
       }
     },
@@ -130,22 +144,38 @@ export const FilesScreen = ({
 
   const watchDir = useCallback(
     async (dir: string) => {
-      if (!client || !environmentId) return;
-      if (watchesRef.current[dir]) return;
+      if (
+        !client ||
+        !environmentId ||
+        watchesRef.current[dir] ||
+        pendingWatches.current.has(dir)
+      )
+        return;
+      const token = {};
+      pendingWatches.current.set(dir, token);
+      const current = scope.begin(`watch:${dir}`);
       try {
         const result = await client.fsWatch(environmentId, dir, {
           recursive: false,
         });
+        if (!current() || pendingWatches.current.get(dir) !== token) {
+          void client.fsUnwatch(environmentId, result.watch_id).catch(() => {});
+          return;
+        }
         watchesRef.current[dir] = result.watch_id;
       } catch {
-        // Watching is a freshness nicety; browsing works without it.
+        /* Browsing still works without watches. */
+      } finally {
+        if (pendingWatches.current.get(dir) === token)
+          pendingWatches.current.delete(dir);
       }
     },
-    [client, environmentId],
+    [client, environmentId, scope],
   );
 
   const unwatchDir = useCallback(
     (dir: string) => {
+      pendingWatches.current.delete(dir);
       const watchId = watchesRef.current[dir];
       if (!watchId) return;
       delete watchesRef.current[dir];
@@ -169,6 +199,7 @@ export const FilesScreen = ({
     void loadDir(".");
     void watchDir(".");
     return () => {
+      pendingWatches.current.clear();
       for (const dir of Object.keys(watchesRef.current)) {
         unwatchDir(dir);
       }
@@ -182,9 +213,7 @@ export const FilesScreen = ({
   useEffect(() => {
     if (!client || !active) return;
     const dirOf = (watchId: unknown) =>
-      Object.entries(watchesRef.current).find(
-        ([, id]) => id === watchId,
-      )?.[0];
+      Object.entries(watchesRef.current).find(([, id]) => id === watchId)?.[0];
     const onEvents = (params: { watch_id?: string }) => {
       const dir = dirOf(params?.watch_id);
       if (dir !== undefined) void loadDir(dir);
@@ -193,9 +222,24 @@ export const FilesScreen = ({
       const dir = dirOf(params?.watch_id);
       if (dir !== undefined) void loadDir(dir);
     };
+    const onReady = () => {
+      const dirs = new Set([
+        ".",
+        ...Object.keys(watchesRef.current),
+        ...pendingWatches.current.keys(),
+      ]);
+      pendingWatches.current.clear();
+      watchesRef.current = {};
+      for (const dir of dirs) {
+        void loadDir(dir);
+        void watchDir(dir);
+      }
+    };
+    client.on("rpc_ready", onReady);
     client.on("fs_events", onEvents);
     client.on("fs_rescan_required", onRescan);
     return () => {
+      client.off("rpc_ready", onReady);
       client.off("fs_events", onEvents);
       client.off("fs_rescan_required", onRescan);
     };
@@ -221,7 +265,10 @@ export const FilesScreen = ({
           const next = new Set(prev);
           next.delete(row.path);
           // Collapsing prunes descendants' watches too.
-          for (const dir of Object.keys(watchesRef.current)) {
+          for (const dir of new Set([
+            ...Object.keys(watchesRef.current),
+            ...pendingWatches.current.keys(),
+          ])) {
             if (dir === row.path || dir.startsWith(row.path + "/")) {
               unwatchDir(dir);
             }
@@ -240,44 +287,22 @@ export const FilesScreen = ({
     [entriesByDir, loadDir, watchDir, unwatchDir],
   );
 
-  const downloadAll = useCallback(
-    async (path: string, cap: number) => {
-      if (!client || !environmentId) return null;
-      const open = await client.fsDownloadOpen(environmentId, path);
-      if (open.size > cap) {
-        throw new Error(
-          `${baseName(path)} is ${formatSize(open.size)} — too large (cap ${formatSize(cap)})`,
-        );
-      }
-      let received = Buffer.alloc(0);
-      let offset = 0;
-      while (offset < open.size) {
-        const chunk = await client.fsDownloadRead(
-          environmentId,
-          open.transfer_id,
-          { offset },
-        );
-        received = Buffer.concat([
-          received,
-          Buffer.from(chunk.data, "base64"),
-        ]);
-        offset = chunk.offset + chunk.bytes;
-        if (chunk.eof) break;
-      }
-      void client
-        .fsDownloadClose(environmentId, open.transfer_id)
-        .catch(() => {});
-      return { bytes: received, sha: open.sha256, size: open.size };
-    },
-    [client, environmentId],
-  );
-
   const startEdit = useCallback(
     async (path: string) => {
       if (busy || edit) return;
+      if (!client || !environmentId) return;
+      const current = scope.begin("file");
       setBusy(true);
       try {
-        const result = await downloadAll(path, EDIT_CAP);
+        const result = await downloadFile(
+          client,
+          environmentId,
+          path,
+          EDIT_CAP,
+          false,
+          current,
+        );
+        if (!current()) return;
         if (!result) return;
         if (sniffBinary(result.bytes)) {
           setError(`${baseName(path)} is binary — not editable here`);
@@ -294,43 +319,31 @@ export const FilesScreen = ({
         setPane("preview");
         setError(null);
       } catch (e) {
+        if (!current()) return;
         setError((e as Error).message ?? String(e));
       } finally {
-        setBusy(false);
+        if (current()) setBusy(false);
       }
     },
-    [busy, edit, downloadAll],
+    [busy, edit, client, environmentId, scope],
   );
 
   const saveEdit = useCallback(async () => {
-    if (!client || !environmentId || !edit || edit.saving) return;
+    if (!client || !environmentId || !edit || saving.current) return;
+    saving.current = true;
+    const current = scope.begin("save");
     setEdit((prev) => (prev ? { ...prev, saving: true, notice: null } : prev));
     try {
       const bytes = Buffer.from(toText(edit.buffer), "utf8");
-      const sha = createHash("sha256").update(bytes).digest("hex");
-      const open = await client.fsUploadOpen(
+      const sha = await uploadFile(
+        client,
         environmentId,
         edit.path,
-        bytes.length,
-        { sha256: sha, expectedSha256: edit.sha, overwrite: true },
+        bytes,
+        edit.sha,
+        current,
       );
-      const chunkSize = open.chunk_size > 0 ? open.chunk_size : 64 * 1024;
-      try {
-        for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-          await client.fsUploadChunk(
-            environmentId,
-            open.transfer_id,
-            offset,
-            bytes.subarray(offset, offset + chunkSize).toString("base64"),
-          );
-        }
-        await client.fsUploadCommit(environmentId, open.transfer_id);
-      } catch (e) {
-        void client
-          .fsUploadAbort(environmentId, open.transfer_id)
-          .catch(() => {});
-        throw e;
-      }
+      if (!current()) return;
       // Saved: the new content is the next edit's baseline.
       setEdit((prev) =>
         prev
@@ -339,18 +352,24 @@ export const FilesScreen = ({
               sha,
               saving: false,
               notice: "saved",
-              buffer: { ...prev.buffer, dirty: false },
+              buffer: {
+                ...prev.buffer,
+                dirty: toText(prev.buffer) !== toText(edit.buffer),
+              },
             }
           : prev,
       );
       setPreview(null); // stale — re-enter to re-read
     } catch (e) {
+      if (!current()) return;
       const message = (e as Error).message ?? String(e);
       setEdit((prev) =>
         prev ? { ...prev, saving: false, notice: message } : prev,
       );
+    } finally {
+      saving.current = false;
     }
-  }, [client, environmentId, edit]);
+  }, [client, environmentId, edit, scope]);
 
   useEffect(() => {
     if (!edit) {
@@ -386,43 +405,35 @@ export const FilesScreen = ({
   const openPreview = useCallback(
     async (row: TreeRow) => {
       if (!client || !environmentId || busy) return;
+      const current = scope.begin("file");
       setBusy(true);
       try {
-        const open = await client.fsDownloadOpen(environmentId, row.path);
-        let received = Buffer.alloc(0);
-        let offset = 0;
-        const limit = Math.min(open.size, PREVIEW_CAP);
-        while (offset < limit) {
-          const chunk = await client.fsDownloadRead(
-            environmentId,
-            open.transfer_id,
-            { offset },
-          );
-          received = Buffer.concat([
-            received,
-            Buffer.from(chunk.data, "base64"),
-          ]);
-          offset = chunk.offset + chunk.bytes;
-          if (chunk.eof) break;
-        }
-        void client
-          .fsDownloadClose(environmentId, open.transfer_id)
-          .catch(() => {});
+        const result = await downloadFile(
+          client,
+          environmentId,
+          row.path,
+          PREVIEW_CAP,
+          true,
+          current,
+        );
+        if (!current()) return;
+        const received = result.bytes;
         const binary = sniffBinary(received);
         setPreview({
           path: row.path,
-          size: open.size,
+          size: result.size,
           binary,
-          truncated: !binary && received.length < open.size,
+          truncated: !binary && received.length < result.size,
           text: binary ? "" : received.toString("utf8"),
         });
         setPreviewScroll(0);
         setPane("preview");
         setError(null);
       } catch (e) {
+        if (!current()) return;
         setError((e as Error).message ?? String(e));
       } finally {
-        setBusy(false);
+        if (current()) setBusy(false);
       }
     },
     [client, environmentId, busy],
@@ -542,6 +553,7 @@ export const FilesScreen = ({
           setDiscardArm(true);
           return true;
         }
+        scope.begin("save");
         setEdit(null);
         setDiscardArm(false);
         return true;
@@ -553,16 +565,7 @@ export const FilesScreen = ({
           ? {
               ...prev,
               notice: null,
-              // Ink names the 0x7f byte — what Backspace actually
-              // sends — "delete" (and the forward-Delete CSI too, so
-              // the two are indistinguishable here). Users pressing
-              // that key mean backward-delete.
-              buffer: applyEdit(
-                prev.buffer,
-                input,
-                { ...key, backspace: key.backspace || key.delete, delete: false },
-                editRows,
-              ),
+              buffer: applyEdit(prev.buffer, input, key, editRows),
             }
           : prev,
       );
@@ -658,8 +661,7 @@ export const FilesScreen = ({
       }
       // m mentions the file in chat: `@path` lands in the composer.
       if (input === "m") {
-        const target =
-          previewFocused && preview ? preview.path : current?.path;
+        const target = previewFocused && preview ? preview.path : current?.path;
         if (target) onMention(target);
         return true;
       }
@@ -675,9 +677,7 @@ export const FilesScreen = ({
       <Box flexDirection="column" height={height} width="100%" flexGrow={1}>
         <EmptyState
           title="files unavailable"
-          lines={[
-            "this server did not grant the experimental fs_* operations",
-          ]}
+          lines={["this server did not grant the experimental fs_* operations"]}
           actions={[{ keys: "esc", label: "back to chat" }]}
         />
         <Text color={Theme.textChrome}>esc chat</Text>
@@ -714,9 +714,7 @@ export const FilesScreen = ({
         )}
       </Text>
       {rows.length === 0 ? (
-        <Text color={Theme.textChrome}>
-          {error ?? "(empty directory)"}
-        </Text>
+        <Text color={Theme.textChrome}>{error ?? "(empty directory)"}</Text>
       ) : (
         visibleRows.map((row, i) => {
           const index = listStart + i;
@@ -727,10 +725,7 @@ export const FilesScreen = ({
             ? iconFor(row.name, row.type, row.expanded)
             : null;
           return (
-            <SelectableRow
-              key={row.path}
-              selected={isCurrent}
-            >
+            <SelectableRow key={row.path} selected={isCurrent}>
               <RowText color={Theme.textChrome}>
                 {"  ".repeat(row.depth)}
               </RowText>
@@ -743,9 +738,7 @@ export const FilesScreen = ({
               >
                 {glyph}
               </RowText>
-              {icon && (
-                <RowText color={icon.color}>{icon.glyph} </RowText>
-              )}
+              {icon && <RowText color={icon.color}>{icon.glyph} </RowText>}
               {/* minWidth 0 — a long name must truncate, never wrap
                   into a phantom second line (see ReviewScreen sidebar).
                   The row deliberately carries no trailing column: a size
@@ -851,10 +844,7 @@ export const FilesScreen = ({
                 <Box key={row}>
                   <Text color={Theme.focus}>{gutter} </Text>
                   <Box flexGrow={1} flexBasis={0} minWidth={0}>
-                    <Text
-                      color={Theme.textPrimary}
-                      wrap="truncate-end"
-                    >
+                    <Text color={Theme.textPrimary} wrap="truncate-end">
                       {pre}
                       <Text inverse>{at}</Text>
                       {post}
@@ -876,11 +866,7 @@ export const FilesScreen = ({
                 <Text color={Theme.textChrome}>{line.gutter} </Text>
               )}
               <Box flexGrow={1} flexBasis={0} minWidth={0}>
-                <Text
-                  color={line.color}
-                  bold={line.bold}
-                  wrap="truncate-end"
-                >
+                <Text color={line.color} bold={line.bold} wrap="truncate-end">
                   {line.text.length > 0 ? line.text : " "}
                 </Text>
               </Box>
@@ -889,8 +875,8 @@ export const FilesScreen = ({
           {previewLines.length > previewWindow && (
             <Text color={Theme.textChrome}>
               {previewScroll + 1}–
-              {Math.min(previewScroll + previewWindow, previewLines.length)}{" "}
-              of {previewLines.length}
+              {Math.min(previewScroll + previewWindow, previewLines.length)} of{" "}
+              {previewLines.length}
             </Text>
           )}
         </>

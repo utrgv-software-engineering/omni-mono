@@ -11,6 +11,9 @@
 // how Neovim's own :terminal behaves.
 
 export type InkKey = {
+  paste?: boolean;
+  home?: boolean;
+  end?: boolean;
   escape?: boolean;
   return?: boolean;
   backspace?: boolean;
@@ -39,7 +42,20 @@ export type InkKey = {
 // transitions — forwarded, the shell echoes them as typed garbage.
 const TERMINAL_REPORT = /^\[(?:<\d+;\d+;\d+[Mm]|M[\s\S]{0,3}|I|O)$/;
 
-export function keyToBytes(input: string, key: InkKey): string | null {
+export function keyToBytes(
+  input: string,
+  key: InkKey,
+  modes?: {
+    bracketedPasteMode: boolean;
+    applicationCursorKeysMode: boolean;
+  },
+): string | null {
+  if (key.paste) {
+    const text = input.replace(/\r?\n/g, "\r");
+    return modes?.bracketedPasteMode
+      ? `\x1b[200~${text.replace(/\x1b/g, "")}\x1b[201~`
+      : text;
+  }
   // Ctrl+] is the detach chord (the telnet convention) — never
   // forwarded. PgUp/PgDn belong to our scrollback.
   if ((key.ctrl && input === "]") || input === "\u001d") return null;
@@ -47,7 +63,27 @@ export function keyToBytes(input: string, key: InkKey): string | null {
   if (TERMINAL_REPORT.test(input)) return null;
 
   if (key.return) return "\r";
-  if (key.backspace || key.delete) return "\x7f";
+  if (key.backspace) return key.meta ? "\x1b\x7f" : "\x7f";
+  const modifier =
+    1 + (key.shift ? 1 : 0) + (key.meta ? 2 : 0) + (key.ctrl ? 4 : 0);
+  if (key.delete) return modifier === 1 ? "\x1b[3~" : `\x1b[3;${modifier}~`;
+  const cursor = key.upArrow
+    ? "A"
+    : key.downArrow
+      ? "B"
+      : key.rightArrow
+        ? "C"
+        : key.leftArrow
+          ? "D"
+          : key.home
+            ? "H"
+            : key.end
+              ? "F"
+              : null;
+  if (cursor)
+    return modifier > 1
+      ? `\x1b[1;${modifier}${cursor}`
+      : `\x1b${modes?.applicationCursorKeysMode ? "O" : "["}${cursor}`;
   if (key.tab) return key.shift ? "\x1b[Z" : "\t";
   if (key.upArrow) return "\x1b[A";
   if (key.downArrow) return "\x1b[B";

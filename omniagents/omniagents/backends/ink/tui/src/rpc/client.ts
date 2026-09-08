@@ -3,6 +3,7 @@
  */
 
 import WebSocket from "ws";
+import { Submissions } from "./submissions.js";
 import { EventEmitter } from "events";
 import type {
   JSONRPCRequest,
@@ -23,6 +24,7 @@ import type {
 import { GUI_PROTOCOL_VERSION, isGuiInitializeResult, supportsGuiProtocolVersion } from "../protocol/generated/gui-v2.js";
 import {
   classifyCloseCode,
+  classifyRpcErrorCode,
   ConnectionClosedError,
   DEFAULT_LIFECYCLE_POLICY,
   ReconnectController,
@@ -186,6 +188,30 @@ export class RPCClient extends EventEmitter {
   private registeredClientFunctions = new Map<string, ClientFunction>();
   private reconnectCtrl: ReconnectController;
   private closedByUser = false;
+  private submissions = new Submissions(
+    (method, params) => this.request(method, params),
+    () => this.waitUntilReady(),
+  );
+
+  waitUntilReady(): Promise<void> {
+    if (this.closedByUser) return Promise.reject(new ConnectionClosedError("Client disconnected", { permanent: true }));
+    if (this.negotiatedInitialization && this.ws?.readyState === WebSocket.OPEN) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off("rpc_ready", ready);
+        this.off("reconnect_failed", failed);
+        this.off("disconnected", disconnected);
+      };
+      const ready = () => { cleanup(); resolve(); };
+      const failed = () => { cleanup(); reject(new Error("Submission confirmation unavailable; reconnect and retry to check its outcome")); };
+      const disconnected = () => { if (this.closedByUser) failed(); };
+      const timer = setTimeout(failed, this.policy.rpcTimeoutMs);
+      this.once("rpc_ready", ready);
+      this.once("reconnect_failed", failed);
+      this.on("disconnected", disconnected);
+    });
+  }
   private handshakeRejected = false;
   private negotiatedInitialization: InitializeResult | null = null;
   // The experimental operations to request at the next handshake. Starts
@@ -196,6 +222,16 @@ export class RPCClient extends EventEmitter {
     ...REQUESTED_EXPERIMENTAL_OPERATIONS,
   ];
   private replay: SessionReplayCoordinator;
+  private cancelConnect: (() => void) | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private pongTimer: ReturnType<typeof setTimeout> | null = null;
+  private activeSessionId: string | undefined;
+  private sessionSelection = 0;
+  private pendingNewRun: JSONRPCNotification[] | null = null;
+  private sessionBuffers = new Map<string, JSONRPCNotification[]>();
+  private responseOutbox = new Map<string, { ok: boolean; result?: Record<string, unknown>; error?: Record<string, unknown> }>();
+  private clientResponses = new Map<string, Promise<void>>();
   private ackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /**
@@ -217,12 +253,10 @@ export class RPCClient extends EventEmitter {
     this.replay = new SessionReplayCoordinator(
       (sessionId, streamId, afterSeq) =>
         this.resumeSession(sessionId, streamId ?? undefined, afterSeq),
-      (method, params) =>
-        this.deliverNotification({
-          jsonrpc: "2.0",
-          method,
-          params,
-        } as JSONRPCNotification),
+      (method, params) => {
+        this.deliverNotification({ jsonrpc: "2.0", method, params });
+        this.scheduleAck(params);
+      },
       (sessionId) => this.onResyncRequired(sessionId),
     );
   }
@@ -311,11 +345,21 @@ export class RPCClient extends EventEmitter {
       | "disconnected"
       | "error"
       | "reconnecting"
-      | "reconnect_failed",
+      | "reconnect_failed"
+      | "client_response_failed",
     listener: (...args: any[]) => void,
   ): this;
   override on(event: string, listener: (...args: any[]) => void): this {
     return super.on(event, listener);
+  }
+
+  hasQueuedClientResponse(requestId: string): boolean {
+    return this.responseOutbox.has(requestId);
+  }
+
+  setActiveSession(sessionId: string | undefined): void {
+    this.activeSessionId = sessionId;
+    this.sessionSelection++;
   }
 
   /**
@@ -346,6 +390,9 @@ export class RPCClient extends EventEmitter {
    * Connect to the WebSocket server
    */
   async connect(): Promise<void> {
+    if (this.ws) this.closeConnection(false);
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
     this.closedByUser = false;
     this.handshakeRejected = false;
     this.negotiatedInitialization = null;
@@ -362,15 +409,20 @@ export class RPCClient extends EventEmitter {
         let ready = false;
 
         const connectTimer = setTimeout(() => {
-          if (ready) return;
+          if (ready || this.ws !== socket) return;
           this.log("Connect timed out");
           try {
-            this.ws?.close();
+            socket.terminate();
           } catch {
             /* ignore */
           }
           reject(new RpcTimeoutError("connect", this.policy.connectTimeoutMs));
         }, this.policy.connectTimeoutMs);
+
+        this.cancelConnect = () => {
+          clearTimeout(connectTimer);
+          reject(new ConnectionClosedError("Connection attempt cancelled", { permanent: true }));
+        };
 
         this.ws.on("message", (data: WebSocket.Data) => {
           if (this.ws !== socket) return;
@@ -384,17 +436,24 @@ export class RPCClient extends EventEmitter {
         });
 
         this.ws.on("open", async () => {
+          if (this.ws !== socket) return;
           this.log("Connected to server");
           this.emit("connected");
 
           try {
             // The connect timer bounds the whole attempt.
             this.negotiatedInitialization = await this.performInitialize();
+            if (this.ws !== socket || this.closedByUser) return;
             this.sendNotification("initialized", {});
             ready = true;
             clearTimeout(connectTimer);
+            this.cancelConnect = null;
             this.reconnectCtrl.recordSuccess();
+            this.startHeartbeat(socket);
             this.emit("rpc_ready");
+            for (const requestId of this.responseOutbox.keys()) {
+              void this.flushClientResponse(requestId).catch(error => this.reportResponseFailure(error));
+            }
             this.log("RPC ready");
             resolve();
           } catch (error) {
@@ -402,7 +461,10 @@ export class RPCClient extends EventEmitter {
             // loop on it. Closing the socket routes the close handler
             // into the permanent-failure path.
             clearTimeout(connectTimer);
-            this.handshakeRejected = true;
+            reject(error);
+            if (this.ws !== socket) return;
+            this.cancelConnect = null;
+            this.handshakeRejected = error instanceof JSONRPCError;
             try {
               this.ws?.close();
             } catch {
@@ -414,6 +476,10 @@ export class RPCClient extends EventEmitter {
 
         this.ws.on("close", (code?: number, reason?: Buffer) => {
           clearTimeout(connectTimer);
+          if (this.ws !== socket) return;
+          this.stopHeartbeat();
+          this.cancelConnect = null;
+          this.negotiatedInitialization = null;
           this.log("Disconnected from server");
           this.emit("disconnected");
           const reasonText = reason?.toString() || undefined;
@@ -438,10 +504,12 @@ export class RPCClient extends EventEmitter {
               reason: reasonText,
             }),
           );
+          if (!ready) reject(new ConnectionClosedError(reasonText || "Connection closed", { permanent, closeCode: code }));
           this.attemptReconnect(permanent);
         });
 
         this.ws.on("error", (error) => {
+          if (this.ws !== socket) return;
           this.log("WebSocket error:", error);
           this.emit("error", error);
           reject(error);
@@ -456,16 +524,52 @@ export class RPCClient extends EventEmitter {
    * Disconnect from the server
    */
   disconnect(): void {
-    this.closedByUser = true;
+    this.closeConnection(true);
+  }
+
+  private closeConnection(byUser: boolean): void {
+    this.closedByUser = byUser;
+    this.cancelConnect?.();
+    this.cancelConnect = null;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.stopHeartbeat();
+    for (const timer of this.ackTimers.values()) clearTimeout(timer);
+    this.ackTimers.clear();
     this.rejectAllPending(
-      new ConnectionClosedError("Connection closed by client", {
-        permanent: true,
+      new ConnectionClosedError(byUser ? "Connection closed by client" : "Connection replaced", {
+        permanent: byUser,
       }),
     );
     if (this.ws) {
       this.ws.close();
       this.ws = null;
+      this.negotiatedInitialization = null;
+      this.emit("disconnected");
     }
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.pongTimer) clearTimeout(this.pongTimer);
+    this.heartbeatTimer = this.pongTimer = null;
+  }
+
+  private startHeartbeat(socket: WebSocket): void {
+    this.stopHeartbeat();
+    socket.on("pong", () => {
+      if (this.ws !== socket) return;
+      if (this.pongTimer) clearTimeout(this.pongTimer);
+      this.pongTimer = null;
+    });
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws !== socket || socket.readyState !== WebSocket.OPEN || this.pongTimer) return;
+      this.pongTimer = setTimeout(() => {
+        if (this.ws === socket) socket.terminate();
+      }, this.policy.pingTimeoutMs);
+      socket.ping();
+    }, this.policy.pingIntervalMs);
+    this.heartbeatTimer.unref?.();
   }
 
   private rejectAllPending(error: ConnectionClosedError): void {
@@ -496,10 +600,19 @@ export class RPCClient extends EventEmitter {
     if (variables) {
       params.variables = variables;
     }
-    return this.call(
-      "start_run",
-      params as unknown as RpcMethodMap["start_run"]["params"],
-    );
+    const selection = this.sessionSelection;
+    const held = sessionId ? null : [] as JSONRPCNotification[];
+    if (held) this.pendingNewRun = held;
+    try {
+      const result = await this.submissions.send<RpcMethodMap["start_run"]["result"]>("start_run", params);
+      if (held && selection === this.sessionSelection) this.setActiveSession(result.session_id);
+      return result;
+    } finally {
+      if (held && this.pendingNewRun === held) {
+        this.pendingNewRun = null;
+        for (const event of held) this.handleMessage(event);
+      }
+    }
   }
 
   defaultEnvironmentSelection(): EnvironmentSelection {
@@ -630,6 +743,100 @@ export class RPCClient extends EventEmitter {
       "resume_session",
       params as unknown as RpcMethodMap["resume_session"]["params"],
     )) as ResumeResult;
+  }
+
+  /** Subscribe and hydrate at an atomic server watermark, holding concurrent events. */
+  async synchronizeSession(
+    sessionId: string,
+    apply: (snapshot: SessionSnapshot) => void,
+    isCurrent: () => boolean = () => true,
+    retries = 1,
+  ): Promise<void> {
+    const socket = this.ws;
+    const held: JSONRPCNotification[] = [];
+    this.sessionBuffers.set(sessionId, held);
+    try {
+      const result = this.isGranted("queue_status")
+        ? await this.call("queue_status", { session_id: sessionId, include_snapshot: true }) as unknown as SessionSnapshot
+        : await this.readLegacySnapshot(sessionId, held, () => isCurrent() && this.ws === socket);
+      if (!isCurrent() || this.ws !== socket || this.sessionBuffers.get(sessionId) !== held) return;
+      if (!result.snapshot?.stream_id) throw new Error("Server did not return a session snapshot");
+      apply(result);
+      const tracker = this.replay.tracker(sessionId);
+      tracker.streamId = result.snapshot.stream_id;
+      tracker.lastSeq = result.snapshot.last_seq;
+      // Restore only controls that still have a live waiter, never historical commands.
+      for (const item of result.snapshot.restore_item_controls === false ? [] : result.snapshot.items) {
+        if (item.status !== "started") continue;
+        const c = item.content;
+        const method = item.kind === "approval"
+          ? c.approval_kind === "mcp" ? "mcp_approval_requested" : "tool_approval_requested"
+          : item.kind === "elicitation" ? "elicitation_requested" : null;
+        if (method) this.deliverNotification({ jsonrpc: "2.0", method, params: {
+          ...c, session_id: sessionId, run_id: item.turn_id,
+          tool_name: c.tool, kind: c.elicitation_kind ?? c.approval_kind,
+        }});
+      }
+      for (const event of result.snapshot.state_events ?? []) {
+        if (event.method === "client_request" && ["ui.set_session_state", "ui.set_status"].includes(String(event.params.function))) {
+          const handler = this.registeredClientFunctions.get(String(event.params.function));
+          if (handler) void handler({ ...(event.params.args as Record<string, unknown>), session_id: sessionId }).catch(error => this.reportResponseFailure(error));
+        } else this.deliverNotification({ jsonrpc: "2.0", ...event });
+      }
+      for (const params of result.snapshot.pending_requests ?? []) this.deliverNotification({ jsonrpc: "2.0", method: "client_request", params });
+      const resumed = await this.resumeSession(sessionId, tracker.streamId, tracker.lastSeq);
+      if (!isCurrent() || this.ws !== socket || this.sessionBuffers.get(sessionId) !== held) return;
+      for (const event of tracker.applyResume(resumed)) this.deliverNotification({ jsonrpc: "2.0", ...event });
+      this.scheduleAck({ session_id: sessionId, seq: tracker.lastSeq });
+    } catch (error) {
+      if (retries > 0 && error instanceof JSONRPCError && error.code === -32030 && isCurrent() && this.ws === socket) {
+        await this.synchronizeSession(sessionId, apply, isCurrent, retries - 1);
+      } else throw error;
+    } finally {
+      if (this.sessionBuffers.get(sessionId) === held) {
+        this.sessionBuffers.delete(sessionId);
+        if (isCurrent() && this.ws === socket) for (const event of held) this.handleMessage(event);
+      }
+    }
+  }
+
+  /** Stable fallback: repeat reads if the event watermark moved during hydration. */
+  private async readLegacySnapshot(
+    sessionId: string,
+    held: JSONRPCNotification[],
+    isCurrent: () => boolean,
+  ): Promise<SessionSnapshot> {
+    const readCursor = async (streamId?: string, seq = 0) => {
+      try {
+        return await this.resumeSession(sessionId, streamId, seq) as ResumeResult & { active_run_id?: string | null };
+      } catch (error) {
+        if (!(error instanceof JSONRPCError) || error.code !== -32030) throw error;
+        const data = error.data as { stream_id: string; retained_last_seq: number };
+        return await this.resumeSession(sessionId, data.stream_id, data.retained_last_seq) as ResumeResult & { active_run_id?: string | null };
+      }
+    };
+    let cursor = await readCursor();
+    while (isCurrent()) {
+      const offset = held.length;
+      await this.getSessionHistory(sessionId); // subscribes and re-pushes live prompts
+      const items = await this.listAllItems(sessionId);
+      const queue = await this.listQueue(sessionId);
+      const next = await readCursor(cursor.stream_id, cursor.last_seq);
+      if (next.stream_id === cursor.stream_id && next.last_seq === cursor.last_seq) {
+        const controls = new Set(["tool_approval_requested", "mcp_approval_requested", "elicitation_requested", "run_status", "client_request"]);
+        return {
+          active_run_id: next.active_run_id ?? null,
+          run_active: !!next.active_run_id,
+          snapshot: {
+            stream_id: next.stream_id!, last_seq: next.last_seq ?? 0, items, queue: queue.items,
+            restore_item_controls: false,
+            state_events: held.slice(offset).filter(event => controls.has(event.method)).map(event => ({ method: event.method, params: event.params as Record<string, unknown> })),
+          },
+        };
+      }
+      cursor = next;
+    }
+    throw new ConnectionClosedError("Session hydration superseded", { permanent: true });
   }
 
   /** Acknowledge applied events so the server can compact its journal. */
@@ -846,9 +1053,8 @@ export class RPCClient extends EventEmitter {
     if (opts?.safeToolOverrides)
       params.safe_tool_overrides = opts.safeToolOverrides;
     if (opts?.source) params.source = opts.source;
-    return this.call(
-      "enqueue_message",
-      params as unknown as RpcMethodMap["enqueue_message"]["params"],
+    return this.submissions.send(
+      "enqueue_message", params,
     ) as Promise<{
       ok: boolean;
       id?: string;
@@ -2135,6 +2341,14 @@ export class RPCClient extends EventEmitter {
     // Handle server events (notifications)
     if ("method" in message && !("id" in message)) {
       const notification = message as JSONRPCNotification;
+      const sessionId = (notification.params as { session_id?: string })?.session_id;
+      if (sessionId && this.pendingNewRun) {
+        this.pendingNewRun.push(notification);
+        return;
+      }
+      if (sessionId && this.sessionSelection > 0 && sessionId !== this.activeSessionId) return;
+      const held = sessionId && this.sessionBuffers.get(sessionId);
+      if (held) { held.push(notification); return; }
       // Sequence-aware dedup / gap recovery: drops duplicate deliveries
       // (a replayed client_request must not re-execute the function),
       // backfills gaps via resume_session, and reports unrecoverable
@@ -2159,8 +2373,24 @@ export class RPCClient extends EventEmitter {
   private deliverNotification(notification: JSONRPCNotification): void {
     // Check if it's a client_request notification (special case)
     if (notification.method === "client_request") {
-      this.handleClientRequest(notification);
+      const sessionId = (notification.params as { session_id?: string }).session_id;
+      // Leave another session's pending request unanswered. Its authoritative
+      // snapshot will restore it when selected; acknowledging it here loses it.
+      if (sessionId && this.activeSessionId && sessionId !== this.activeSessionId) return;
+      const requestId = (notification.params as { request_id: string }).request_id;
+      if (!this.clientResponses.has(requestId)) {
+        const response = this.handleClientRequest(notification).catch((error) => {
+          this.reportResponseFailure(error);
+        });
+        this.clientResponses.set(requestId, response);
+      } else if (this.responseOutbox.has(requestId)) {
+        void this.flushClientResponse(requestId).catch(error => this.reportResponseFailure(error));
+      }
       return;
+    }
+    if (notification.method === "client_request_resolved") {
+      const id = (notification.params as { request_id: string }).request_id;
+      this.responseOutbox.delete(id);
     }
     this.handleNotification(notification);
   }
@@ -2196,6 +2426,7 @@ export class RPCClient extends EventEmitter {
     }
 
     this.pendingRequests.delete(response.id);
+    pending.cleanup();
 
     if (response.error) {
       pending.reject(new JSONRPCError(response.error));
@@ -2241,35 +2472,42 @@ export class RPCClient extends EventEmitter {
     const { request_id, function: funcName, args } = params;
 
     const handler = this.registeredClientFunctions.get(funcName);
+    let result: unknown;
+    let failure: Record<string, unknown> | undefined;
     if (!handler) {
-      this.log(`Client function not found: ${funcName}`);
-      // Send error response via client_response RPC method
-      await this.clientResponse(request_id, false, undefined, {
-        code: -32601,
-        message: `Function not found: ${funcName}`,
-      });
-      return;
+      failure = { code: -32601, message: `Function not found: ${funcName}` };
+    } else {
+      try {
+        result = await handler({ ...args, request_id, session_id: params.session_id, run_id: params.run_id });
+      } catch (error) {
+        failure = { code: -32603, message: `Function execution failed: ${String(error)}` };
+      }
     }
+    this.responseOutbox.set(request_id, { ok: !failure, result: result as Record<string, unknown>, error: failure });
+    await this.flushClientResponse(request_id);
+  }
 
+  private reportResponseFailure(error: unknown): void {
+    this.log("Client response delivery failed:", error);
+    this.emit("client_response_failed", error);
+  }
+
+  private async flushClientResponse(requestId: string): Promise<void> {
+    const response = this.responseOutbox.get(requestId);
+    if (!response) return;
     try {
-      const result = await handler({
-        ...args,
-        request_id,
-        session_id: params.session_id,
-        run_id: params.run_id,
-      });
-      // Send success response via client_response RPC method
-      await this.clientResponse(
-        request_id,
-        true,
-        result as Record<string, unknown>,
-      );
+      await this.clientResponse(requestId, response.ok, response.result, response.error);
     } catch (error) {
-      // Send error response via client_response RPC method
-      await this.clientResponse(request_id, false, undefined, {
-        code: -32603,
-        message: `Function execution failed: ${(error as Error).message}`,
-      });
+      if (error instanceof JSONRPCError && classifyRpcErrorCode(error.code) === "permanent") this.responseOutbox.delete(requestId);
+      throw error;
+    }
+    this.responseOutbox.delete(requestId);
+    // Bound completed-request dedup, while retaining undelivered responses.
+    if (this.clientResponses.size > 2048) {
+      for (const id of this.clientResponses.keys()) {
+        if (!this.responseOutbox.has(id)) this.clientResponses.delete(id);
+        if (this.clientResponses.size <= 2048) break;
+      }
     }
   }
 
@@ -2292,7 +2530,9 @@ export class RPCClient extends EventEmitter {
 
     this.emit("reconnecting", decision.attempt);
 
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.closedByUser) return;
       this.connect().catch(() => {
         // Connection failed, will retry via close event
       });
@@ -2862,4 +3102,18 @@ export type GitOperationProgressPayload = {
   operation: "fetch" | "pull" | "push"
   phase: "started" | "completed" | "failed"
   detail?: Record<string, unknown>
+}
+
+export interface SessionSnapshot {
+  active_run_id: string | null;
+  run_active: boolean;
+  snapshot: {
+    stream_id: string;
+    last_seq: number;
+    restore_item_controls?: boolean;
+    items: ConversationItem[];
+    queue: unknown[];
+    pending_requests?: Record<string, unknown>[];
+    state_events?: Array<{ method: string; params: Record<string, unknown> }>;
+  };
 }

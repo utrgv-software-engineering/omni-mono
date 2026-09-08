@@ -1,15 +1,16 @@
 /**
  * Optimized multi-line input with atomic state updates
- * Uses useReducer to batch cursor + content updates in single render
+ * Applies edits synchronously and batches display updates in React
  */
 
 import React, {
-  useReducer,
+  useState,
   useCallback,
   useEffect,
   useLayoutEffect,
 } from "react";
-import { Box, Text } from "ink";
+import { Box, Text, ResizeObserver, useStdout, type DOMElement } from "ink";
+import { layoutInput, columnAtCell } from "./input-layout.js";
 import chalk from "chalk";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
@@ -24,6 +25,14 @@ interface InputState {
   draft: string;
 }
 
+export interface ComposerDraft {
+  id?: number;
+  current?: InputState;
+  pending?: boolean;
+  notify?: (state: InputState) => void;
+  release?: () => void;
+}
+
 const codePointLength = (value: string) => Array.from(value).length;
 
 const stripAnsi = (value: string) => {
@@ -35,6 +44,7 @@ const stripAnsi = (value: string) => {
 };
 
 type InputAction =
+  | { type: "SET_CURSOR"; row: number; col: number }
   | { type: "INSERT_TEXT"; text: string }
   | { type: "INSERT_CHAR"; char: string }
   | { type: "INSERT_NEWLINE" }
@@ -50,8 +60,9 @@ type InputAction =
   | { type: "UPDATE_HISTORY_INDEX"; index: number }
   | { type: "SAVE_DRAFT"; draft: string };
 
-interface MultiLineInputProps {
-  onSubmit: (value: string) => void;
+export interface MultiLineInputProps {
+  onSubmit: (value: string) => void | boolean | Promise<void | boolean>;
+  draft?: ComposerDraft;
   onEscape?: () => void;
   disabled?: boolean;
   placeholder?: string;
@@ -69,21 +80,33 @@ interface MultiLineInputProps {
  * Reducer handles ALL state updates atomically
  * Single update = single render (no cursor flicker)
  */
-function inputReducer(state: InputState, action: InputAction): InputState {
+export function inputReducer(
+  state: InputState,
+  action: InputAction,
+): InputState {
   switch (action.type) {
+    case "SET_CURSOR":
+      return { ...state, cursorRow: action.row, cursorCol: action.col };
     case "INSERT_TEXT": {
-      let nextState = state;
-      const normalized = action.text
-        .replace(/\r\n/g, "\n")
-        .replace(/\r/g, "\n");
-      for (const char of normalized) {
-        if (char === "\n") {
-          nextState = inputReducer(nextState, { type: "INSERT_NEWLINE" });
-        } else {
-          nextState = inputReducer(nextState, { type: "INSERT_CHAR", char });
-        }
-      }
-      return nextState;
+      if (!action.text) return state;
+      const chunks = action.text.replace(/\r\n?/g, "\n").split("\n");
+      const chars = Array.from(state.lines[state.cursorRow] ?? "");
+      const before = chars.slice(0, state.cursorCol).join("");
+      const after = chars.slice(state.cursorCol).join("");
+      const col =
+        chunks.length === 1
+          ? state.cursorCol + codePointLength(chunks[0])
+          : codePointLength(chunks[chunks.length - 1]);
+      chunks[0] = before + chunks[0];
+      chunks[chunks.length - 1] += after;
+      return {
+        ...state,
+        lines: state.lines
+          .slice(0, state.cursorRow)
+          .concat(chunks, state.lines.slice(state.cursorRow + 1)),
+        cursorRow: state.cursorRow + chunks.length - 1,
+        cursorCol: col,
+      };
     }
 
     case "INSERT_CHAR": {
@@ -300,15 +323,83 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     disableSubmit = false,
     pendingInsert = null,
     onInsertConsumed,
+    draft: suppliedDraft,
   }) => {
-    const [state, dispatch] = useReducer(inputReducer, {
-      lines: [""],
-      cursorRow: 0,
-      cursorCol: 0,
-      scrollOffset: 0,
-      historyIndex: history.length,
-      draft: "",
-    });
+    const localDraft = React.useRef<ComposerDraft>({});
+    const draft = suppliedDraft ?? localDraft.current;
+    const [state, setState] = useState<InputState>(
+      () =>
+        draft.current ?? {
+          lines: [""],
+          cursorRow: 0,
+          cursorCol: 0,
+          scrollOffset: 0,
+          historyIndex: history.length,
+          draft: "",
+        },
+    );
+
+    const stateRef = draft as ComposerDraft & { current: InputState };
+    stateRef.current ??= state;
+    useLayoutEffect(() => {
+      draft.notify = setState;
+      return () => {
+        if (draft.notify === setState) draft.notify = undefined;
+        draft.release?.();
+      };
+    }, [draft]);
+    // Input events can arrive back-to-back before React commits. Apply each
+    // edit once, synchronously, then let React batch the display updates.
+    const dispatch = useCallback(
+      (action: InputAction) => {
+        const next = inputReducer(stateRef.current, action);
+        stateRef.current = next;
+        draft.notify?.(next);
+      },
+      [draft],
+    );
+    const { stdout } = useStdout();
+    const element = React.useRef<DOMElement>(null);
+    const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
+    const [terminalRows, setTerminalRows] = useState(stdout.rows ?? 24);
+    useLayoutEffect(() => {
+      const observer = new ResizeObserver((entries) => {
+        for (const entry of entries) setMeasuredWidth(entry.contentRect.width);
+      });
+      if (element.current) observer.observe(element.current);
+      const resize = () => setTerminalRows(stdout.rows ?? 24);
+      stdout.on("resize", resize);
+      return () => {
+        observer.disconnect();
+        stdout.off("resize", resize);
+      };
+    }, [stdout]);
+    // Border (2), padding (2), and the prompt gutter (2).
+    const columns = Math.max(1, (measuredWidth ?? stdout.columns ?? 80) - 6);
+    const layout = React.useMemo(
+      () => layoutInput(state.lines, state.cursorRow, state.cursorCol, columns),
+      [state.lines, state.cursorRow, state.cursorCol, columns],
+    );
+    const moveVertical = (direction: -1 | 1) => {
+      const current = stateRef.current;
+      const now = layoutInput(
+        current.lines,
+        current.cursorRow,
+        current.cursorCol,
+        columns,
+      );
+      const next = now.rows[now.cursorRow + direction];
+      if (!next) return false;
+      dispatch({
+        type: "SET_CURSOR",
+        row: next.line,
+        col: Math.min(
+          codePointLength(current.lines[next.line]),
+          columnAtCell(next, now.cursorCell),
+        ),
+      });
+      return true;
+    };
 
     // One-shot external insertion (Files screen mention bridge): text
     // arrives via props, lands at the cursor, and is acknowledged so
@@ -319,16 +410,9 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
         onInsertConsumed?.();
       }
     }, [pendingInsert]);
-    const stateRef = React.useRef(state);
-
     // Update history index when history changes
     // But DON'T reset cursor/content - that's only for arrow key navigation
     const prevHistoryLengthRef = React.useRef(history.length);
-    const pasteModeRef = React.useRef(false);
-
-    useLayoutEffect(() => {
-      stateRef.current = state;
-    }, [state]);
 
     useEffect(() => {
       // Only update historyIndex, don't touch lines or cursor
@@ -362,12 +446,46 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     );
 
     const handleSubmit = useCallback(() => {
+      if (draft.pending) return;
       const value = getValue().trim();
       if (value) {
-        onSubmit(value);
+        const submitted = stateRef.current;
         dispatch({ type: "CLEAR" });
+        const restore = () => {
+          const current = stateRef.current;
+          const next =
+            current.lines.join("\n") === ""
+              ? submitted
+              : {
+                  ...current,
+                  lines: [...submitted.lines, ...current.lines],
+                  cursorRow: submitted.lines.length + current.cursorRow,
+                };
+          stateRef.current = next;
+          draft.notify?.(next);
+        };
+        draft.pending = true;
+        try {
+          const result = onSubmit(value);
+          if (result && typeof result === "object" && "then" in result) {
+            void result
+              .then((ok) => {
+                if (ok === false) restore();
+              }, restore)
+              .finally(() => {
+                draft.pending = false;
+                draft.release?.();
+              });
+          } else {
+            if (result === false) restore();
+            draft.pending = false;
+          }
+        } catch {
+          restore();
+          draft.pending = false;
+        }
       }
-    }, [onSubmit, getValue]);
+    }, [onSubmit, getValue, draft]);
 
     const handleHistoryUp = useCallback(() => {
       if (history.length === 0) return;
@@ -415,6 +533,14 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     useKeypress(
       (input, key) => {
         const current = stateRef.current;
+        if (key.paste) {
+          insertText(
+            stripAnsi(input)
+              .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
+              .replace(/\t/g, "    "),
+          );
+          return true;
+        }
 
         // Tab belongs to the global screen switcher — never a literal
         // character in the composer.
@@ -428,7 +554,7 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
         }
 
         if (key.return) {
-          if (key.meta || key.ctrl) {
+          if (key.meta || key.ctrl || key.shift) {
             dispatch({ type: "INSERT_NEWLINE" });
           } else {
             if (!disableSubmit) {
@@ -438,41 +564,31 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
         } else if (key.backspace) {
           dispatch({ type: "DELETE_CHAR" });
         } else if (key.delete) {
-          dispatch({ type: "DELETE_CHAR" });
+          dispatch({ type: "DELETE_CHAR_FORWARD" });
         } else if (key.ctrl && input === "d") {
           dispatch({ type: "DELETE_CHAR_FORWARD" });
+        } else if (key.home || key.end) {
+          dispatch({
+            type: "SET_CURSOR",
+            row: current.cursorRow,
+            col: key.home
+              ? 0
+              : codePointLength(current.lines[current.cursorRow]),
+          });
         } else if (key.upArrow) {
-          if (key.shift) {
-            if (current.cursorRow > 0) {
-              dispatch({ type: "MOVE_UP" });
-            }
-          } else if (current.cursorRow === 0) {
-            handleHistoryUp();
-          } else {
-            dispatch({ type: "MOVE_UP" });
-          }
+          if (!moveVertical(-1) && !key.shift) handleHistoryUp();
         } else if (key.downArrow) {
-          if (key.shift) {
-            if (current.cursorRow < current.lines.length - 1) {
-              dispatch({ type: "MOVE_DOWN" });
-            }
-          } else if (current.cursorRow === current.lines.length - 1) {
-            handleHistoryDown();
-          } else {
-            dispatch({ type: "MOVE_DOWN" });
-          }
+          if (!moveVertical(1) && !key.shift) handleHistoryDown();
         } else if (key.leftArrow) {
           dispatch({ type: "MOVE_LEFT" });
         } else if (key.rightArrow) {
           dispatch({ type: "MOVE_RIGHT" });
         } else if (input && !key.ctrl && !key.meta) {
           if (input === "\x1b[200~" || input === "[200~") {
-            pasteModeRef.current = true;
             return;
           }
 
           if (input === "\x1b[201~" || input === "[201~") {
-            pasteModeRef.current = false;
             return;
           }
 
@@ -498,35 +614,45 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
             return;
           }
 
-          const clean = stripAnsi(withoutMouse);
+          const clean = stripAnsi(withoutMouse)
+            .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
+            .replace(/\t/g, "    ");
           if (clean) {
             insertText(clean);
           }
+        } else {
+          return false;
         }
-        return;
+        return true;
       },
       { isActive: !disabled, priority: KeypressPriority.Normal },
     );
 
-    // Calculate visible lines (only render what fits on screen)
-    const visibleHeight = Math.min(state.lines.length, maxHeight);
-    const scrollOffset = React.useMemo(() => {
-      // Auto-scroll to keep cursor visible
-      if (state.cursorRow < state.scrollOffset) {
-        return state.cursorRow;
-      } else if (state.cursorRow >= state.scrollOffset + visibleHeight) {
-        return state.cursorRow - visibleHeight + 1;
-      }
-      return state.scrollOffset;
-    }, [state.cursorRow, state.scrollOffset, visibleHeight]);
-
-    // Only render visible lines (huge perf improvement)
-    const visibleLines = React.useMemo(() => {
-      return state.lines.slice(scrollOffset, scrollOffset + visibleHeight);
-    }, [state.lines, scrollOffset, visibleHeight]);
+    const visibleHeight = Math.max(
+      1,
+      Math.min(maxHeight, terminalRows - 8, layout.rows.length),
+    );
+    const scrollRef = React.useRef(0);
+    const scrollOffset = Math.max(
+      0,
+      Math.min(
+        layout.cursorRow < scrollRef.current
+          ? layout.cursorRow
+          : Math.max(scrollRef.current, layout.cursorRow - visibleHeight + 1),
+        layout.rows.length - visibleHeight,
+      ),
+    );
+    useLayoutEffect(() => {
+      scrollRef.current = scrollOffset;
+    }, [scrollOffset]);
+    const visibleLines = layout.rows.slice(
+      scrollOffset,
+      scrollOffset + visibleHeight,
+    );
 
     return (
       <Box
+        ref={element}
         borderStyle="single"
         borderColor={Theme.borderAmbient}
         paddingX={1}
@@ -534,10 +660,12 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
         minHeight={1}
         width="100%"
       >
-        {visibleLines.map((line, visibleIdx) => {
+        {visibleLines.map((row, visibleIdx) => {
+          const line = row.text;
           const actualIdx = scrollOffset + visibleIdx;
-          const isCurrentRow = actualIdx === state.cursorRow;
+          const isCurrentRow = actualIdx === layout.cursorRow;
           const showPrompt = actualIdx === 0;
+          const localCol = state.cursorCol - row.start;
 
           const prompt = showPrompt ? "> " : "  ";
           const textColor = chalk.hex(Theme.textPrimary);
@@ -545,12 +673,10 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
           let lineDisplay: string;
           if (isCurrentRow) {
             const chars = Array.from(line);
-            const beforeRaw = chars.slice(0, state.cursorCol).join("");
-            const cursorRaw = chars[state.cursorCol];
+            const beforeRaw = chars.slice(0, localCol).join("");
+            const cursorRaw = chars[localCol];
             const afterRaw =
-              cursorRaw === undefined
-                ? ""
-                : chars.slice(state.cursorCol + 1).join("");
+              cursorRaw === undefined ? "" : chars.slice(localCol + 1).join("");
             const beforeColored = beforeRaw ? textColor(beforeRaw) : "";
             const cursorColored = chalk.inverse(cursorRaw ?? " ");
             const afterColored = afterRaw ? textColor(afterRaw) : "";
@@ -566,7 +692,7 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
           return (
             <Box key={actualIdx}>
               <Text color={Theme.accentUser}>{prompt}</Text>
-              <Text>{lineDisplay}</Text>
+              <Text wrap="truncate">{lineDisplay}</Text>
             </Box>
           );
         })}
@@ -577,13 +703,16 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     // Re-render if any props that are used in the useInput closure change
     // This prevents stale closures when callbacks are recreated with new dependencies
     return (
-      (prevProps.history?.length ?? 0) === (nextProps.history?.length ?? 0) &&
+      prevProps.history === nextProps.history &&
+      prevProps.draft === nextProps.draft &&
       prevProps.placeholder === nextProps.placeholder &&
       prevProps.maxHeight === nextProps.maxHeight &&
       prevProps.disabled === nextProps.disabled &&
       prevProps.disableSubmit === nextProps.disableSubmit &&
       prevProps.onSubmit === nextProps.onSubmit &&
-      prevProps.onEscape === nextProps.onEscape
+      prevProps.onEscape === nextProps.onEscape &&
+      prevProps.pendingInsert === nextProps.pendingInsert &&
+      prevProps.onInsertConsumed === nextProps.onInsertConsumed
     );
   },
 );

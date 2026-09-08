@@ -8,6 +8,10 @@ import { Terminal } from "@xterm/headless";
 import type { IBufferCell, IBufferLine } from "@xterm/headless";
 
 export interface TerminalState {
+  inputModes?(): {
+    bracketedPasteMode: boolean;
+    applicationCursorKeysMode: boolean;
+  };
   feed(data: string | Uint8Array): void;
   resize(cols: number, rows: number): void;
   /** Styled (ANSI SGR) text for buffer rows [start, start+count). */
@@ -40,8 +44,16 @@ function styleKey(cell: IBufferCell): string {
     !!cell.isUnderline(),
     !!cell.isInverse(),
     !!cell.isStrikethrough(),
-    cell.isFgDefault() ? "d" : cell.isFgRGB() ? `r${cell.getFgColor()}` : `p${cell.getFgColor()}`,
-    cell.isBgDefault() ? "d" : cell.isBgRGB() ? `r${cell.getBgColor()}` : `p${cell.getBgColor()}`,
+    cell.isFgDefault()
+      ? "d"
+      : cell.isFgRGB()
+        ? `r${cell.getFgColor()}`
+        : `p${cell.getFgColor()}`,
+    cell.isBgDefault()
+      ? "d"
+      : cell.isBgRGB()
+        ? `r${cell.getBgColor()}`
+        : `p${cell.getBgColor()}`,
   ].join("|");
 }
 
@@ -56,7 +68,13 @@ function sgrFor(cell: IBufferCell): string {
   if (!cell.isFgDefault()) {
     const color = cell.getFgColor();
     if (cell.isFgRGB()) {
-      parts.push("38", "2", String((color >> 16) & 0xff), String((color >> 8) & 0xff), String(color & 0xff));
+      parts.push(
+        "38",
+        "2",
+        String((color >> 16) & 0xff),
+        String((color >> 8) & 0xff),
+        String(color & 0xff),
+      );
     } else if (color < 8) {
       parts.push(String(30 + color));
     } else if (color < 16) {
@@ -68,7 +86,13 @@ function sgrFor(cell: IBufferCell): string {
   if (!cell.isBgDefault()) {
     const color = cell.getBgColor();
     if (cell.isBgRGB()) {
-      parts.push("48", "2", String((color >> 16) & 0xff), String((color >> 8) & 0xff), String(color & 0xff));
+      parts.push(
+        "48",
+        "2",
+        String((color >> 16) & 0xff),
+        String((color >> 8) & 0xff),
+        String(color & 0xff),
+      );
     } else if (color < 8) {
       parts.push(String(40 + color));
     } else if (color < 16) {
@@ -104,7 +128,9 @@ function lineToAnsi(
   }
   if (styled) out += "\x1b[0m";
   // Trailing blank cells are structural, not content.
-  return styled ? out.replace(/ +\x1b\[0m$/, "\x1b[0m") : out.replace(/ +$/, "");
+  return styled
+    ? out.replace(/ +\x1b\[0m$/, "\x1b[0m")
+    : out.replace(/ +$/, "");
 }
 
 export class XtermTerminalState implements TerminalState {
@@ -134,6 +160,10 @@ export class XtermTerminalState implements TerminalState {
       this.pending = false;
       for (const listener of this.listeners) listener();
     }, 16);
+  }
+
+  inputModes() {
+    return this.term.modes;
   }
 
   feed(data: string | Uint8Array): void {

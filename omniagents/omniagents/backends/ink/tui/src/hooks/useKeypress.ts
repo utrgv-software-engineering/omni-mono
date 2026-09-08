@@ -2,12 +2,12 @@
  * Hook for handling keyboard input.
  *
  * If a <KeypressProvider> is mounted upstream, the handler subscribes to the
- * priority-based dispatch context. Otherwise it falls back to ink's `useInput`
+ * priority-based dispatch context. Otherwise it subscribes to the same terminal parser
  * directly so the hook is safe to use in tests or in isolated component trees.
  */
 
-import { useEffect, useRef } from "react";
-import { useInput } from "ink";
+import { useLayoutEffect, useRef } from "react";
+import { useTerminalInput } from "./useTerminalInput.js";
 import {
   useKeypressContext,
   type KeypressPriority,
@@ -29,6 +29,9 @@ export interface Key {
   delete: boolean;
   meta: boolean;
   name?: string;
+  paste?: boolean;
+  home?: boolean;
+  end?: boolean;
 }
 
 export interface UseKeypressOptions {
@@ -71,22 +74,17 @@ export function useKeypress(
   const handlerRef = useRef(onKeypress);
   handlerRef.current = onKeypress;
 
-  useEffect(() => {
+  // Focus changes must take effect in the same commit as the visible panel.
+  // A passive effect leaves a window where its first key goes to the old panel.
+  useLayoutEffect(() => {
     if (!ctx || !isActive) return;
-    const handler = (input: string, key: Key) =>
-      handlerRef.current(input, key);
+    const handler = (input: string, key: Key) => handlerRef.current(input, key);
     ctx.subscribe(handler, priority);
     return () => {
       ctx.unsubscribe(handler);
     };
   }, [ctx, isActive, priority]);
 
-  // Fallback path when no provider is mounted (tests, partial trees).
-  // Re-uses ink's useInput which is a no-op when isActive is false.
-  useInput(
-    (input, key) => {
-      onKeypress(input, key as Key);
-    },
-    { isActive: !ctx && isActive },
-  );
+  // Isolated components use the same framing as the root provider.
+  useTerminalInput(onKeypress, !ctx && isActive);
 }

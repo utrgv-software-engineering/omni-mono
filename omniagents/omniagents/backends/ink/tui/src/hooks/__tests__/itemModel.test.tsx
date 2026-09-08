@@ -8,7 +8,7 @@
 
 import React from "react";
 import { EventEmitter } from "node:events";
-import { describe, expect, it, beforeAll, afterEach } from "vitest";
+import { describe, expect, it, beforeAll, afterEach, vi } from "vitest";
 
 import type { RPCClient } from "../../rpc/client.js";
 import { useAppStore } from "../../store/appStore.js";
@@ -457,6 +457,119 @@ describe("client_request_resolved", () => {
     await flush();
 
     expect(useAppStore.getState().escalation).toBeNull();
+  });
+});
+
+describe("session isolation", () => {
+  it("ignores messages, run starts and prompts for another session", async () => {
+    const client = new FakeClient();
+    mount(client, "selected");
+    await flush();
+    client.emit("run_started", {
+      session_id: "other",
+      run_id: "foreign",
+      prompt: "wrong",
+    });
+    client.emit("message_output", { session_id: "other", content: "wrong" });
+    client.emit("tool_called", {
+      session_id: "other",
+      tool: "bash",
+      call_id: "foreign",
+    });
+    client.emit("tool_approval_requested", {
+      session_id: "other",
+      call_id: "foreign",
+      tool_name: "bash",
+    });
+    client.emit("run_end", {
+      session_id: "other",
+      run_id: "foreign",
+      end_reason: "completed",
+    });
+    await flush();
+    expect(useAppStore.getState().messages).toEqual([]);
+    expect(useAppStore.getState().currentRunId).toBeNull();
+    expect(useAppStore.getState().approval).toBeNull();
+  });
+
+  it("does not overwrite live messages with an older hydration response", async () => {
+    const client = new FakeClient();
+    let complete!: (items: ConversationItem[]) => void;
+    client.listAllItems = () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      });
+    mount(client, "sess");
+    await flush();
+    client.emit("run_started", { session_id: "sess", run_id: "run" });
+    client.emit("message_output", {
+      session_id: "sess",
+      content: "new message",
+    });
+    client.emit("run_end", {
+      session_id: "sess",
+      run_id: "run",
+      end_reason: "completed",
+    });
+    await flush();
+    complete([]);
+    await flush();
+    expect(
+      useAppStore.getState().messages.some((m) => m.content === "new message"),
+    ).toBe(true);
+  });
+
+  it("invalidates reads when a session is switched without unmounting", async () => {
+    const client = new FakeClient();
+    let finishOld!: (items: ConversationItem[]) => void;
+    client.listAllItems = (id) =>
+      id === "old"
+        ? new Promise((resolve) => {
+            finishOld = resolve;
+          })
+        : Promise.resolve([
+            item({ item_id: "new", content: { text: "new session" } }),
+          ]);
+    const Harness = ({ id }: { id: string }) => {
+      useMessagesOptimized({
+        client: client as unknown as RPCClient,
+        sessionId: id,
+        rpcReady: true,
+      });
+      return <Text>ok</Text>;
+    };
+    const instance = inkRender(<Harness id="old" />, {
+      exitOnCtrlC: false,
+      patchConsole: false,
+    });
+    instances.push(instance);
+    await flush();
+    instance.rerender(<Harness id="new" />);
+    await flush();
+    finishOld([item({ item_id: "old", content: { text: "old session" } })]);
+    await flush();
+    expect(
+      useAppStore.getState().conversationItems.map((i) => i.item_id),
+    ).toEqual(["new"]);
+  });
+
+  it("hydrates again when replay requests a resync", async () => {
+    const client = new FakeClient();
+    const sync = vi.fn(async (_id: string, apply: (value: any) => void) =>
+      apply({
+        active_run_id: null,
+        run_active: false,
+        snapshot: { items: [], queue: [] },
+      }),
+    );
+    (client as any).synchronizeSession = sync;
+    mount(client, "sess");
+    await flush();
+    expect(sync).toHaveBeenCalledTimes(1);
+    (client as any).onResyncRequired("sess");
+    await flush();
+    expect(sync).toHaveBeenCalledTimes(2);
+    expect(useAppStore.getState().thinking).toBe(false);
   });
 });
 

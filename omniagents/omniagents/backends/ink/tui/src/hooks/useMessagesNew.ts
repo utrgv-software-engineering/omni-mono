@@ -48,7 +48,11 @@ export interface UseMessagesOptions {
 export function useMessagesOptimized(options: UseMessagesOptions) {
   const { client, sessionId, rpcReady } = options;
   const actions = useActions();
-  const batcher = useRef(new EventBatcher()).current;
+  const sharedBatcher = useRef(new EventBatcher()).current;
+  const batcher = sharedBatcher;
+  const responsesInFlight = useRef(new Set<string>());
+  const activeSessionRef = useRef(sessionId);
+  activeSessionRef.current = sessionId;
   const approvalQueueRef = useRef<ApprovalInfo[]>([]);
   const currentApprovalCallIdRef = useRef<string | null>(null);
   // Hosted-MCP approvals queue/state — independent from function-tool
@@ -74,6 +78,60 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
 
   useEffect(() => {
     if (!client || !rpcReady) return;
+    client.setActiveSession?.(sessionId);
+    let alive = true;
+    let revision = 0;
+    const current = () => alive && activeSessionRef.current === sessionId;
+    const batcher = {
+      add: (fn: () => void) =>
+        sharedBatcher.add(() => {
+          if (current()) fn();
+        }),
+    };
+    const listeners: Array<[string, (params: any) => void]> = [];
+    const listen = (event: string, handler: (params: any) => void) => {
+      const guarded = (params: any) => {
+        if (
+          !current() ||
+          (sessionId && params?.session_id && params.session_id !== sessionId)
+        )
+          return;
+        revision++;
+        handler(params);
+      };
+      listeners.push([event, guarded]);
+      client.on(event as any, guarded);
+    };
+    const register = (
+      name: string,
+      handler: (args: Record<string, unknown>) => Promise<unknown>,
+    ) => {
+      client.registerClientFunction(name, async (args) => {
+        if (
+          !current() ||
+          (sessionId && args.session_id && args.session_id !== sessionId)
+        )
+          return { ignored: true };
+        return handler(args);
+      });
+    };
+    const resetPrompts = () => {
+      approvalQueueRef.current = [];
+      mcpApprovalQueueRef.current = [];
+      elicitationQueueRef.current = [];
+      currentApprovalCallIdRef.current = null;
+      currentMcpApprovalRequestIdRef.current = null;
+      currentElicitationIdRef.current = null;
+      actions.setApproval(null);
+      actions.setMcpApproval(null);
+      actions.setElicitation(null);
+      actions.setEscalation(null);
+      messageBufferRef.current = [];
+      actions.setPreamble(null);
+    };
+    const hasSnapshot =
+      !!sessionId && typeof client.synchronizeSession === "function";
+    const hydrationRevision = revision;
 
     // Load history if we have a session ID, UNLESS App just minted this
     // id from a sendMessage response — in that case our local optimistic
@@ -83,6 +141,11 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     const skipHistoryLoad =
       !!sessionId &&
       useAppStore.getState().actions.consumeMintedSession(sessionId);
+    if (!skipHistoryLoad) {
+      resetPrompts();
+      actions.setCurrentRunId(null);
+      actions.setThinking(false, null);
+    }
     // Legacy hydration: fold the raw session-history message list into the
     // store's Message shape. Only used when the canonical item read fails
     // (older server, or a session with no materialized thread).
@@ -90,6 +153,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       client
         .getSessionHistory(sessionId!)
         .then((history) => {
+          if (!current() || revision !== hydrationRevision) return;
           const msgs: Message[] = [];
           const toolCallMap = new Map<string, Message>();
 
@@ -180,13 +244,14 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         })
         .catch(console.error);
 
-    if (sessionId && !skipHistoryLoad) {
+    if (sessionId && !skipHistoryLoad && !hasSnapshot) {
       // Canonical hydration: the persisted item model (thread_id ==
       // session_id). One paginated walk, then a pure projection — the
       // item's recorded status answers "still running?", no event folding.
       client
         .listAllItems(sessionId)
         .then((items) => {
+          if (!current() || revision !== hydrationRevision) return;
           actions.setConversationItems(items);
           actions.setMessages(normalizeItems(items));
           debugLog(
@@ -197,7 +262,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           // Older server or a session without a materialized thread —
           // fall back to the legacy history fold.
           debugLog(`list_items hydration failed, using legacy history: ${err}`);
-          void loadLegacyHistory();
+          if (current()) void loadLegacyHistory();
         });
       // Seed the docked task list from the durable plan (when granted).
       // The tasks_snapshot tool side-channel and live `plan` item updates
@@ -206,6 +271,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         client
           .getPlan(sessionId)
           .then((result) => {
+            if (!current() || revision !== hydrationRevision) return;
             const tasks = planStepsToTasks(result.plan?.steps);
             if (tasks) actions.setTasks(tasks);
           })
@@ -216,8 +282,14 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       // non-fatal — the panel just stays empty until the next broadcast.
       client
         .listQueue(sessionId)
-        .then((snap) => actions.setQueuedMessages(snap.items as any))
-        .catch(() => actions.setQueuedMessages([]));
+        .then((snap) => {
+          if (current() && revision === hydrationRevision)
+            actions.setQueuedMessages(snap.items as any);
+        })
+        .catch(() => {
+          if (current() && revision === hydrationRevision)
+            actions.setQueuedMessages([]);
+        });
     } else if (!sessionId) {
       // No active session — clear any leftover queue state from a prior one.
       actions.setQueuedMessages([]);
@@ -615,9 +687,13 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       // first; this fetch is the safety net. On top of the strip token,
       // the run leaves one transcript line recording what it changed.
       if (sessionId && client.isGranted("get_run_diff")) {
+        const requestRevision = revision;
         client
           .getRunDiff(sessionId)
           .then((result) => {
+            if (!current() || revision !== requestRevision) return;
+            const activeRun = useAppStore.getState().currentRunId;
+            if (activeRun && activeRun !== params.run_id) return;
             const diff = result.run_diff;
             if (!diff) return;
             actions.setRunDiff(diff);
@@ -710,6 +786,11 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       };
       if (!approvalInfo.call_id) return;
 
+      if (
+        currentApprovalCallIdRef.current === approvalInfo.call_id ||
+        approvalQueueRef.current.some((a) => a.call_id === approvalInfo.call_id)
+      )
+        return;
       approvalQueueRef.current.push(approvalInfo);
 
       if (!currentApprovalCallIdRef.current) {
@@ -749,6 +830,13 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       };
       if (!approvalInfo.request_id) return;
 
+      if (
+        currentMcpApprovalRequestIdRef.current === approvalInfo.request_id ||
+        mcpApprovalQueueRef.current.some(
+          (a) => a.request_id === approvalInfo.request_id,
+        )
+      )
+        return;
       mcpApprovalQueueRef.current.push(approvalInfo);
 
       if (!currentMcpApprovalRequestIdRef.current) {
@@ -792,6 +880,13 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       };
       if (!info.elicitation_id) return;
 
+      if (
+        currentElicitationIdRef.current === info.elicitation_id ||
+        elicitationQueueRef.current.some(
+          (a) => a.elicitation_id === info.elicitation_id,
+        )
+      )
+        return;
       elicitationQueueRef.current.push(info);
 
       if (!currentElicitationIdRef.current) {
@@ -1026,24 +1121,24 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       });
     };
 
-    client.on("message_output", handleMessageOutput);
-    client.on("tool_called", handleToolCalled);
-    client.on("tool_result", handleToolResult);
-    client.on("run_started", handleRunStarted);
-    client.on("run_end", handleRunEnd);
-    client.on("run_status", handleRunStatus);
-    client.on("token", handleTokenUsage);
-    client.on("tool_approval_requested", handleToolApprovalRequested);
-    client.on("tool_approval_resolved", handleToolApprovalResolved);
-    client.on("mcp_approval_requested", handleMcpApprovalRequested);
-    client.on("mcp_approval_resolved", handleMcpApprovalResolved);
-    client.on("elicitation_requested", handleElicitationRequested);
-    client.on("elicitation_resolved", handleElicitationResolved);
-    client.on("queue_changed", handleQueueChanged);
-    client.on("item_updated", handleItemUpdated);
-    client.on("client_request_resolved", handleClientRequestResolved);
-    client.on("tool_approval_reviewed", handleToolApprovalReviewed);
-    client.on("plan_completion_reviewed", handlePlanCompletionReviewed);
+    listen("message_output", handleMessageOutput);
+    listen("tool_called", handleToolCalled);
+    listen("tool_result", handleToolResult);
+    listen("run_started", handleRunStarted);
+    listen("run_end", handleRunEnd);
+    listen("run_status", handleRunStatus);
+    listen("token", handleTokenUsage);
+    listen("tool_approval_requested", handleToolApprovalRequested);
+    listen("tool_approval_resolved", handleToolApprovalResolved);
+    listen("mcp_approval_requested", handleMcpApprovalRequested);
+    listen("mcp_approval_resolved", handleMcpApprovalResolved);
+    listen("elicitation_requested", handleElicitationRequested);
+    listen("elicitation_resolved", handleElicitationResolved);
+    listen("queue_changed", handleQueueChanged);
+    listen("item_updated", handleItemUpdated);
+    listen("client_request_resolved", handleClientRequestResolved);
+    listen("tool_approval_reviewed", handleToolApprovalReviewed);
+    listen("plan_completion_reviewed", handlePlanCompletionReviewed);
 
     // Agent emitted an artifact (``display_artifact`` / the artifact
     // bridge). Upserting is the contract: re-issuing the same
@@ -1077,42 +1172,93 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     };
 
     // Register client functions
-    client.registerClientFunction("ui.set_status", handleSetStatus);
-    client.registerClientFunction(
-      "ui.set_session_state",
-      handleSetSessionState,
+    register("ui.set_status", handleSetStatus);
+    register("ui.set_session_state", handleSetSessionState);
+    register("ui.bash_jobs.update", handleBashJobsUpdate);
+    register("ui.subagents.update", handleSubagentsUpdate);
+    register("ui.subagent.event", handleSubagentEvent);
+    register("ui.goal.update", handleGoalUpdate);
+    register("ui.wakeup.update", handleWakeupUpdate);
+    register("ui.loop.update", handleLoopUpdate);
+    register("notify", handleNotify);
+    register("ui.recap", handleRecap);
+    register("ui.add_artifact", handleAddArtifact);
+    register("escalate", handleEscalate);
+
+    let recovering = false;
+    const resync = (id: string) => {
+      if (!current() || id !== sessionId || recovering) return;
+      recovering = true;
+      void client
+        .synchronizeSession(
+          id,
+          (result) => {
+            if (!current()) return;
+            resetPrompts();
+            // A parked escalation keeps its resolver while another session is
+            // selected. Restore the banner without executing the function twice.
+            for (const request of result.snapshot.pending_requests ?? []) {
+              const requestId = String(request.request_id ?? "");
+              if (request.function === "escalate" && requestId && !client.hasQueuedClientResponse?.(requestId)) {
+                actions.setEscalation({
+                  request_id: requestId,
+                  message: String((request.args as Record<string, unknown>)?.message ?? ""),
+                  session_id: id,
+                  run_id: request.run_id as string | undefined,
+                });
+              }
+            }
+            const items = result.snapshot.items;
+            actions.setConversationItems(items);
+            actions.setMessages(normalizeItems(items));
+            actions.setQueuedMessages(result.snapshot.queue as any);
+            actions.setCurrentRunId(
+              result.run_active ? result.active_run_id : null,
+            );
+            actions.setThinking(result.run_active, null);
+            actions.setTasks([]);
+            actions.setRunDiff(null);
+            for (const item of items) {
+              if (item.kind === "plan") {
+                const tasks = planStepsToTasks(item.content.steps);
+                if (tasks) actions.setTasks(tasks);
+              }
+              if (item.kind === "run_diff")
+                actions.setRunDiff(
+                  item.content as unknown as ConversationRunDiff,
+                );
+            }
+          },
+          current,
+        )
+        .catch((error) => {
+          if (current())
+            actions.setStatus(
+              `Session recovery failed: ${String(error)}`,
+              "error",
+              false,
+            );
+        })
+        .finally(() => {
+          recovering = false;
+        });
+    };
+    client.onResyncRequired = resync;
+    listen("client_response_failed", (error) =>
+      actions.setStatus(
+        `Response delivery failed: ${String(error)}`,
+        "error",
+        false,
+      ),
     );
-    client.registerClientFunction("ui.bash_jobs.update", handleBashJobsUpdate);
-    client.registerClientFunction("ui.subagents.update", handleSubagentsUpdate);
-    client.registerClientFunction("ui.subagent.event", handleSubagentEvent);
-    client.registerClientFunction("ui.goal.update", handleGoalUpdate);
-    client.registerClientFunction("ui.wakeup.update", handleWakeupUpdate);
-    client.registerClientFunction("ui.loop.update", handleLoopUpdate);
-    client.registerClientFunction("notify", handleNotify);
-    client.registerClientFunction("ui.recap", handleRecap);
-    client.registerClientFunction("ui.add_artifact", handleAddArtifact);
-    client.registerClientFunction("escalate", handleEscalate);
+    if (hasSnapshot && !skipHistoryLoad) resync(sessionId!);
 
     // Cleanup
     return () => {
-      client.off("message_output", handleMessageOutput);
-      client.off("tool_called", handleToolCalled);
-      client.off("tool_result", handleToolResult);
-      client.off("run_started", handleRunStarted);
-      client.off("run_end", handleRunEnd);
-      client.off("run_status", handleRunStatus);
-      client.off("token", handleTokenUsage);
-      client.off("tool_approval_requested", handleToolApprovalRequested);
-      client.off("tool_approval_resolved", handleToolApprovalResolved);
-      client.off("mcp_approval_requested", handleMcpApprovalRequested);
-      client.off("mcp_approval_resolved", handleMcpApprovalResolved);
-      client.off("elicitation_requested", handleElicitationRequested);
-      client.off("elicitation_resolved", handleElicitationResolved);
-      client.off("queue_changed", handleQueueChanged);
-      client.off("item_updated", handleItemUpdated);
-      client.off("client_request_resolved", handleClientRequestResolved);
-      client.off("tool_approval_reviewed", handleToolApprovalReviewed);
-      client.off("plan_completion_reviewed", handlePlanCompletionReviewed);
+      alive = false;
+      for (const [event, handler] of listeners) client.off(event, handler);
+      if (client.onResyncRequired === resync)
+        client.onResyncRequired = () => {};
 
       // Cleanup registered client functions
       client.unregisterClientFunction("ui.add_artifact");
@@ -1130,113 +1276,117 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     };
   }, [client, sessionId, rpcReady, batcher]);
 
-  // Return approval handler function — sends the user's decision over the
-  // wire and advances to the next queued prompt, if any.
-  const approveToolCall = async (approved: boolean, alwaysApprove: boolean) => {
-    const currentCallId = currentApprovalCallIdRef.current;
-    if (!currentCallId || !client) return;
+  // Keep the control visible until delivery is acknowledged. A failed send can
+  // be retried by the user with the same correlation id (server-idempotent).
+  const respond = async (
+    id: string,
+    send: () => Promise<unknown>,
+    done: () => void,
+  ) => {
+    if (responsesInFlight.current.has(id)) return false;
+    responsesInFlight.current.add(id);
+    const selected = activeSessionRef.current;
+    try {
+      await send();
+      if (selected !== activeSessionRef.current) return false;
+      done();
+      return true;
+    } catch (error) {
+      const stillPending = currentApprovalCallIdRef.current === id ||
+        currentMcpApprovalRequestIdRef.current === id ||
+        currentElicitationIdRef.current === id;
+      if (selected === activeSessionRef.current && stillPending) {
+        actions.setStatus(
+          `Could not send response. Please retry: ${String(error)}`,
+          "error",
+          false,
+        );
+      }
+      return false;
+    } finally {
+      responsesInFlight.current.delete(id);
+    }
+  };
 
-    // When the user picks "always" for tool X, the server-side allow-set
-    // only covers FUTURE tool calls — sibling approvals already in the
-    // queue (typical for parallel calls like three execute_bash in one
-    // turn) would still prompt. Drain matching siblings here and approve
-    // them too, so the user really only answers once.
-    const currentTool = useAppStore.getState().approval?.tool;
-    let siblings: ApprovalInfo[] = [];
-    if (approved && alwaysApprove && currentTool) {
-      siblings = approvalQueueRef.current.filter((a) => a.tool === currentTool);
+  const approveToolCall = async (approved: boolean, alwaysApprove: boolean, expectedId?: string) => {
+    const id = currentApprovalCallIdRef.current;
+    if (!id || !client || (expectedId !== undefined && expectedId !== id)) return;
+    const selectedSession = activeSessionRef.current;
+    const tool = useAppStore.getState().approval?.tool;
+    const siblings =
+      approved && alwaysApprove
+        ? approvalQueueRef.current.filter((a) => a.tool === tool)
+        : [];
+    const advance = (callId: string) => {
       approvalQueueRef.current = approvalQueueRef.current.filter(
-        (a) => a.tool !== currentTool,
+        (a) => a.call_id !== callId,
       );
-    }
-
-    const next = approvalQueueRef.current.shift() || null;
-    currentApprovalCallIdRef.current = next ? next.call_id : null;
-
-    // Clear approval and restore thinking state
-    // The server will decide via events whether the run continues or stops
-    batcher.add(() => {
+      if (currentApprovalCallIdRef.current !== callId) return;
+      const next = approvalQueueRef.current.shift() ?? null;
+      currentApprovalCallIdRef.current = next?.call_id ?? null;
       actions.setApproval(next);
-      actions.setThinking(!next);
-    });
-
-    try {
-      await client.toolApprovalResponse(
-        currentCallId,
-        approved ? "approve" : "reject",
-        approved && alwaysApprove,
-        approved ? undefined : "User rejected tool call",
-      );
-    } catch (err) {
-      // Best-effort; if the response fails the server will eventually time
-      // out the future or the run will be cancelled.
-    }
-
-    // Fire-and-forget approve for each sibling — they share the tool
-    // name of the just-approved call so "always" intent covers them.
-    // Failures here are non-fatal (server times out the call's future
-    // if no response arrives).
+    };
+    const sent = await respond(
+      id,
+      () =>
+        client.toolApprovalResponse(
+          id,
+          approved ? "approve" : "reject",
+          approved && alwaysApprove,
+          approved ? undefined : "User rejected tool call",
+        ),
+      () => advance(id),
+    );
+    if (!sent) return;
     for (const sibling of siblings) {
-      client
-        .toolApprovalResponse(sibling.call_id, "approve", true)
-        .catch(() => {});
+      if (activeSessionRef.current !== selectedSession) return;
+      await respond(
+        sibling.call_id,
+        () => client.toolApprovalResponse(sibling.call_id, "approve", true),
+        () => advance(sibling.call_id),
+      );
     }
   };
 
-  // Hosted-MCP approval handler — parallel to ``approveToolCall`` but
-  // sends ``mcp_approval_response`` and intentionally does not accept
-  // ``alwaysApprove`` (no SDK-level always-allow on this path).
-  const approveMcpToolCall = async (approved: boolean) => {
-    const currentRequestId = currentMcpApprovalRequestIdRef.current;
-    if (!currentRequestId || !client) return;
-
-    const next = mcpApprovalQueueRef.current.shift() || null;
-    currentMcpApprovalRequestIdRef.current = next ? next.request_id : null;
-
-    batcher.add(() => {
-      actions.setMcpApproval(next);
-      actions.setThinking(!next);
-    });
-
-    try {
-      await client.mcpApprovalResponse(
-        currentRequestId,
-        approved ? "approve" : "reject",
-        approved ? undefined : "User rejected MCP tool call",
-      );
-    } catch (err) {
-      // Best-effort — server will eventually time out / cancel the run.
-    }
+  const approveMcpToolCall = async (approved: boolean, expectedId?: string) => {
+    const id = currentMcpApprovalRequestIdRef.current;
+    if (!id || !client || (expectedId !== undefined && expectedId !== id)) return;
+    await respond(
+      id,
+      () =>
+        client.mcpApprovalResponse(
+          id,
+          approved ? "approve" : "reject",
+          approved ? undefined : "User rejected MCP tool call",
+        ),
+      () => {
+        if (currentMcpApprovalRequestIdRef.current !== id) return;
+        const next = mcpApprovalQueueRef.current.shift() ?? null;
+        currentMcpApprovalRequestIdRef.current = next?.request_id ?? null;
+        actions.setMcpApproval(next);
+      },
+    );
   };
 
-  // Elicitation responder — sends the answer for the currently displayed
-  // prompt and advances to the next queued one. A typed rejection
-  // (-32050 not-found / -32051 already-resolved: another client won the
-  // race) is expected and non-fatal; the resolved broadcast has already
-  // dismissed or will dismiss the prompt.
-  const respondElicitation = async (answer: ElicitationAnswer) => {
-    const currentId = currentElicitationIdRef.current;
-    if (!currentId || !client) return;
-
-    const next = elicitationQueueRef.current.shift() || null;
-    currentElicitationIdRef.current = next ? next.elicitation_id : null;
-
-    batcher.add(() => {
-      actions.setElicitation(next);
-      actions.setThinking(!next);
-    });
-
-    try {
-      await client.elicitationResponse(
-        currentId,
-        answer.action,
-        answer.value,
-        answer.reason,
-      );
-    } catch (err) {
-      // Best-effort: duplicates/expiry reject with typed errors and the
-      // server's elicitation_resolved broadcast keeps state converged.
-    }
+  const respondElicitation = async (answer: ElicitationAnswer, expectedId?: string) => {
+    const id = currentElicitationIdRef.current;
+    if (!id || !client || (expectedId !== undefined && expectedId !== id)) return false;
+    return await respond(
+      id,
+      () =>
+        client.elicitationResponse(
+          id,
+          answer.action,
+          answer.value,
+          answer.reason,
+        ),
+      () => {
+        if (currentElicitationIdRef.current !== id) return;
+        const next = elicitationQueueRef.current.shift() ?? null;
+        currentElicitationIdRef.current = next?.elicitation_id ?? null;
+        actions.setElicitation(next);
+      },
+    );
   };
 
   const cancelRun = async (runId: string) => {

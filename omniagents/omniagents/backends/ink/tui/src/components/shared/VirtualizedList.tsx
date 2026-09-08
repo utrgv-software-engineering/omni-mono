@@ -68,6 +68,7 @@ export function VirtualizedList<T>({
   // Measured heights keyed by the same key keyExtractor returns. Survives
   // re-renders so once an item scrolls off we still know how tall it was.
   const heights = useRef<Map<string, number>>(new Map()).current;
+  const measuredWidth = useRef(width);
   const itemRefs = useRef<Map<string, DOMElement>>(new Map()).current;
   // Bump to force a re-render when measurements change. `measureVersion` is
   // also a dependency of the offsets memo below — `heights` is a mutated-in-
@@ -121,15 +122,25 @@ export function VirtualizedList<T>({
 
   // Build cumulative offsets using measured-or-estimated heights.
   const { offsets, totalHeight, itemHeights } = useMemo(() => {
+    // Wrapping changes heights, including rows currently off-screen.
+    if (measuredWidth.current !== width) {
+      heights.clear();
+      measuredWidth.current = width;
+    }
+    const liveKeys = new Set<string>();
     const off: number[] = new Array(data.length + 1);
     const heightsArr: number[] = new Array(data.length);
     off[0] = 0;
     for (let i = 0; i < data.length; i++) {
       const key = keyExtractor(data[i], i);
+      liveKeys.add(key);
       const h = heights.get(key) ?? estimatedItemHeight;
       heightsArr[i] = h;
       off[i + 1] = off[i] + h;
     }
+    // Session switches and removed rows must not accumulate measurements.
+    for (const key of heights.keys())
+      if (!liveKeys.has(key)) heights.delete(key);
     return {
       offsets: off,
       totalHeight: off[data.length],
@@ -141,7 +152,7 @@ export function VirtualizedList<T>({
     // at `estimatedItemHeight` for every row measured since the last `data`
     // change — which puts this list's coordinate space out of sync with the
     // parent Scrollable's measured `scrollTop` and blanks the viewport.
-  }, [data, keyExtractor, estimatedItemHeight, measureVersion]);
+  }, [data, keyExtractor, estimatedItemHeight, measureVersion, width]);
 
   // Visible range. With containerHeight <= 0, fall back to rendering all
   // items (see top-of-file comment on the 0-height pitfall).
@@ -245,7 +256,7 @@ export function VirtualizedList<T>({
             {staticThisItem ? (
               <StaticRender
                 width={width}
-                deps={[key, width, itemHeights[index]]}
+                deps={[key, width, itemHeights[index], item, index, renderItem]}
               >
                 {() => <>{content}</>}
               </StaticRender>

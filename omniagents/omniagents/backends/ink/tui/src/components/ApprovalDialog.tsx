@@ -53,6 +53,16 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
       [metadata],
     );
 
+    // Memoize arguments parsing
+    const argsDisplay = React.useMemo(() => {
+      try {
+        const parsed = JSON.parse(args);
+        return JSON.stringify(parsed, null, 2);
+      } catch (e) {
+        return args;
+      }
+    }, [args]);
+
     if (richMetadata?.display_type === "diff") {
       return (
         <DiffApproval
@@ -84,16 +94,6 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
       );
     }
 
-    // Memoize arguments parsing
-    const argsDisplay = React.useMemo(() => {
-      try {
-        const parsed = JSON.parse(args);
-        return JSON.stringify(parsed, null, 2);
-      } catch (e) {
-        return args;
-      }
-    }, [args]);
-
     return (
       <DialogShell
         title={`Tool Approval: ${tool}`}
@@ -109,14 +109,6 @@ export const ApprovalDialog = React.memo<ApprovalDialogProps>(
         </Box>
         <BaseSelectionList options={DEFAULT_OPTIONS} onSelect={onApprove} />
       </DialogShell>
-    );
-  },
-  (prevProps, nextProps) => {
-    // Only re-render if tool, arguments, or metadata actually changed
-    return (
-      prevProps.tool === nextProps.tool &&
-      prevProps.arguments === nextProps.arguments &&
-      JSON.stringify(prevProps.metadata) === JSON.stringify(nextProps.metadata)
     );
   },
 );

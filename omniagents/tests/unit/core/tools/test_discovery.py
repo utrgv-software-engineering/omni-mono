@@ -9,7 +9,7 @@ import uuid
 import pytest
 from pathlib import Path
 
-from omniagents.core.runtime.bridge import _stream_event_payload
+from omniagents.core.runtime.bridge import stream_event_payload
 from omniagents.core.tools import discovery
 from omniagents.core.tools.discovery import RichToolOutput
 from omniagents.core.debug import Debug
@@ -442,7 +442,7 @@ def test_stream_event_payload_rich_tool_output_includes_metadata():
             return {"call_id": "call-1"}
 
     item = DummyItem(RichToolOutput("summary", {"rows": 3}))
-    method, payload = _stream_event_payload(item, "run-1", session_id="sess-1")
+    method, payload = stream_event_payload(item, "run-1", session_id="sess-1")
     assert method == "tool_result"
     assert payload["metadata"] == {"rows": 3}
     assert payload["output"] == "summary"
@@ -461,7 +461,7 @@ def test_stream_event_payload_plain_output_omits_metadata():
             return {"call_id": "call-2"}
 
     item = DummyItem("plain")
-    method, payload = _stream_event_payload(item, "run-2", session_id="sess-2")
+    method, payload = stream_event_payload(item, "run-2", session_id="sess-2")
     assert method == "tool_result"
     assert "metadata" not in payload
     assert payload["output"] == "plain"

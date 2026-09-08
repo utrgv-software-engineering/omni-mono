@@ -89,14 +89,18 @@ export function normalizeOptions(
 
 /** What this TUI can do with a prompt. ``question`` is handled by the
  *  banner path, so it never reaches the dialog. */
-export function dialogSupport(
-  elicitation: ElicitationInfo,
-): { supported: boolean; reason?: string } {
+export function dialogSupport(elicitation: ElicitationInfo): {
+  supported: boolean;
+  reason?: string;
+} {
   if (elicitation.kind === "confirm") return { supported: true };
   if (elicitation.kind === "select") {
     return normalizeOptions(elicitation.options)
       ? { supported: true }
-      : { supported: false, reason: "select prompt carries no renderable options" };
+      : {
+          supported: false,
+          reason: "select prompt carries no renderable options",
+        };
   }
   if (elicitation.kind === "url") {
     return elicitation.url
@@ -171,10 +175,7 @@ export const ElicitationDialog = React.memo<ElicitationDialogProps>(
 
     if (elicitation.kind === "confirm") {
       return (
-        <DialogShell
-          title={title}
-          footer="Use ↑↓ to navigate, Enter to select"
-        >
+        <DialogShell title={title} footer="Use ↑↓ to navigate, Enter to select">
           {body}
           <BaseSelectionList
             options={CONFIRM_OPTIONS}
@@ -198,9 +199,7 @@ export const ElicitationDialog = React.memo<ElicitationDialogProps>(
           footer="Open the link in your browser, then select an option"
         >
           {body}
-          <Text color={Theme.focus}>
-            {elicitation.url}
-          </Text>
+          <Text color={Theme.focus}>{elicitation.url}</Text>
           <BaseSelectionList
             options={URL_OPTIONS}
             onSelect={(choice) =>
@@ -218,7 +217,7 @@ export const ElicitationDialog = React.memo<ElicitationDialogProps>(
     const options: SelectionOption<string>[] = entries.map((entry, index) => ({
       title: `${index + 1}. ${entry.label}`,
       description: entry.description || String(entry.value),
-      value: String(index),
+      value: JSON.stringify(entry.value),
     }));
     options.push({
       title: `${entries.length + 1}. Decline`,
@@ -235,15 +234,18 @@ export const ElicitationDialog = React.memo<ElicitationDialogProps>(
               onRespond({ action: "decline" });
               return;
             }
-            const entry = entries[parseInt(choice, 10)];
+            const entry = entries.find(
+              (entry) => JSON.stringify(entry.value) === choice,
+            );
             if (entry) {
-              onRespond({ action: "accept", value: { selected: [entry.value] } });
+              onRespond({
+                action: "accept",
+                value: { selected: [entry.value] },
+              });
             }
           }}
         />
       </DialogShell>
     );
   },
-  (prev, next) =>
-    prev.elicitation.elicitation_id === next.elicitation.elicitation_id,
 );

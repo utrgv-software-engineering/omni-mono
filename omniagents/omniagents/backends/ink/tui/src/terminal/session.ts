@@ -32,6 +32,28 @@ class TerminalSession {
   outputBytes = 0;
   framesReceived = 0;
 
+  private generation = 0;
+  private owner: {
+    client: RPCClient;
+    sessionId: string;
+    environmentId: string | null;
+  } | null = null;
+  private releaseTerminal: (() => void) | null = null;
+
+  belongsTo(client: RPCClient, sessionId: string): boolean {
+    return (
+      this.owner?.client === client &&
+      this.owner.sessionId === sessionId &&
+      this.owner.environmentId === client.defaultEnvironmentId()
+    );
+  }
+
+  private releaseOwnedTerminal(): void {
+    const release = this.releaseTerminal;
+    this.releaseTerminal = null;
+    release?.();
+  }
+
   private socket: WebSocket | null = null;
   private version = 0;
   private listeners = new Set<() => void>();
@@ -55,9 +77,18 @@ class TerminalSession {
     cols: number,
     rows: number,
   ): Promise<void> {
-    if (this.phase === "connecting" || this.phase === "running") return;
-    this.disposeSocket();
-    this.state?.dispose();
+    if (
+      this.belongsTo(client, sessionId) &&
+      (this.phase === "connecting" || this.phase === "running")
+    ) {
+      this.resize(cols, rows);
+      return;
+    }
+    this.close();
+    const generation = this.generation;
+    const current = () => this.generation === generation;
+    const environmentId = client.defaultEnvironmentId();
+    this.owner = { client, sessionId, environmentId };
     this.state = new XtermTerminalState(cols, rows);
     this.stateUnsub = this.state.onUpdate(() => this.bump());
     this.phase = "connecting";
@@ -71,7 +102,6 @@ class TerminalSession {
       // Environment-scoped like every git_*/fs_* call — a fresh session
       // has no thread binding yet, so the routed environment must be
       // named explicitly.
-      const environmentId = client.defaultEnvironmentId();
       const created = (await client.serverCall(
         "terminal.create",
         { cols, rows },
@@ -89,6 +119,22 @@ class TerminalSession {
       if (!terminalId || !token) {
         throw new Error("terminal.create returned no terminal");
       }
+
+      const release = () => {
+        void client
+          .serverCall(
+            "terminal.close",
+            { terminal_id: terminalId },
+            created.session_id ?? sessionId,
+            environmentId ? { environmentId } : undefined,
+          )
+          .catch(() => {});
+      };
+      if (!current()) {
+        release();
+        return;
+      }
+      this.releaseTerminal = release;
 
       // Same-origin as the main RPC socket; node's ws supports the
       // Bearer header directly (no browser ticket dance needed).
@@ -110,6 +156,9 @@ class TerminalSession {
       socket.on(
         "unexpected-response",
         (_req: unknown, res: { statusCode?: number }) => {
+          if (!current()) return;
+          this.releaseOwnedTerminal();
+          socket.terminate();
           this.error = `terminal socket rejected: HTTP ${res?.statusCode ?? "?"}`;
           debugLog(`[term] ${this.error}`);
           this.phase = "error";
@@ -118,6 +167,7 @@ class TerminalSession {
       );
 
       socket.on("open", () => {
+        if (!current()) return;
         debugLog("[term] socket open, sending attach+resize");
         socket.send(
           JSON.stringify({
@@ -127,12 +177,19 @@ class TerminalSession {
             terminal_token: token,
           }),
         );
-        socket.send(JSON.stringify({ type: "resize", cols, rows }));
+        socket.send(
+          JSON.stringify({
+            type: "resize",
+            cols: this.state!.cols(),
+            rows: this.state!.rows(),
+          }),
+        );
         this.phase = "running";
         this.bump();
       });
 
       socket.on("message", (raw: WebSocket.RawData) => {
+        if (!current()) return;
         let frame: { type?: string; data?: string; code?: number };
         try {
           frame = JSON.parse(String(raw));
@@ -149,20 +206,6 @@ class TerminalSession {
             );
           }
           this.state?.feed(bytes);
-          if (this.framesReceived <= 5) {
-            const st = this.state;
-            if (st) {
-              setTimeout(() => {
-                const sample = st
-                  .readLines(0, 3)
-                  .map((l) => l.replace(/\x1b\[[0-9;]*m/g, ""))
-                  .join("|");
-                debugLog(
-                  `[term] grid: lines=${st.lineCount()} base=${st.baseY()} cols=${st.cols()} rows=${st.rows()} head=${JSON.stringify(sample.slice(0, 100))}`,
-                );
-              }, 50);
-            }
-          }
         } else if (frame.type === "exit") {
           debugLog(`[term] exit frame code=${frame.code}`);
           this.exitCode = typeof frame.code === "number" ? frame.code : null;
@@ -172,6 +215,8 @@ class TerminalSession {
       });
 
       socket.on("close", (code: number, reason: Buffer) => {
+        if (!current()) return;
+        this.releaseOwnedTerminal();
         debugLog(`[term] socket close code=${code} reason=${String(reason)}`);
         if (this.phase === "running" || this.phase === "connecting") {
           this.error = code === 1000 ? null : `socket closed (${code})`;
@@ -181,6 +226,8 @@ class TerminalSession {
       });
 
       socket.on("error", (err: Error) => {
+        if (!current()) return;
+        this.releaseOwnedTerminal();
         debugLog(`[term] socket error: ${err.message}`);
         // unexpected-response already classified HTTP rejects.
         if (this.phase !== "error") {
@@ -190,6 +237,8 @@ class TerminalSession {
         }
       });
     } catch (e) {
+      if (!current()) return;
+      this.releaseOwnedTerminal();
       this.error = (e as Error).message ?? String(e);
       this.phase = "error";
       this.bump();
@@ -197,7 +246,8 @@ class TerminalSession {
   }
 
   sendInput(bytes: string): void {
-    if (this.phase !== "running" || !this.socket) return;
+    if (this.phase !== "running" || this.socket?.readyState !== WebSocket.OPEN)
+      return;
     this.socket.send(
       JSON.stringify({
         type: "input",
@@ -208,20 +258,30 @@ class TerminalSession {
 
   resize(cols: number, rows: number): void {
     this.state?.resize(cols, rows);
-    if (this.phase === "running" && this.socket) {
+    if (
+      this.phase === "running" &&
+      this.socket?.readyState === WebSocket.OPEN
+    ) {
       this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
     }
   }
 
   close(): void {
-    if (this.socket && this.phase === "running") {
+    this.generation++;
+    this.owner = null;
+    if (this.socket?.readyState === WebSocket.OPEN) {
       try {
         this.socket.send(JSON.stringify({ type: "close" }));
       } catch {
         // closing anyway
       }
+    } else {
+      this.releaseOwnedTerminal();
     }
+    this.releaseTerminal = null;
     this.disposeSocket();
+    this.state?.dispose();
+    this.state = null;
     this.phase = "idle";
     this.bump();
   }
@@ -231,6 +291,8 @@ class TerminalSession {
     this.stateUnsub = null;
     if (this.socket) {
       this.socket.removeAllListeners();
+      // ws emits an asynchronous error when closed during its handshake.
+      this.socket.on("error", () => {});
       try {
         this.socket.close();
       } catch {

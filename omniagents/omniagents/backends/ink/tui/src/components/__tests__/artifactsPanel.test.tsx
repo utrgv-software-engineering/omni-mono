@@ -145,6 +145,7 @@ describe("ArtifactsPanel list", () => {
     const { stdin, onUnfocus } = mount([entry()]);
     await settle();
     stdin.press(KEY.escape);
+    await new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
     expect(onUnfocus).toHaveBeenCalled();
   });
@@ -179,6 +180,7 @@ describe("ArtifactsPanel preview", () => {
     stdin.press(KEY.enter);
     await settle();
     stdin.press(KEY.escape);
+    await new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
     expect(onUnfocus).not.toHaveBeenCalled();
     expect(stdout.lastFrame()).toContain("enter preview");

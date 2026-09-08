@@ -274,6 +274,39 @@ const renderScrollable = async (data: Row[], height: number) =>
   );
 
 describe("Scrollable + VirtualizedList", () => {
+  it("bounds the first render before a long transcript has been measured", async () => {
+    const data = rows(2000, 2);
+    const rendered = new Set<string>();
+    function Transcript() {
+      const viewport = useScrollViewport();
+      return (
+        <VirtualizedList<Row>
+          data={data}
+          keyExtractor={(row) => row.key}
+          estimatedItemHeight={2}
+          containerHeight={viewport?.innerHeight ?? 0}
+          scrollTop={viewport?.scrollTop ?? 0}
+          width={80}
+          renderItem={(row) => {
+            rendered.add(row.key);
+            return renderRow(row);
+          }}
+        />
+      );
+    }
+    const frame = await mount(
+      <MouseProvider>
+        <ScrollProvider>
+          <Scrollable hasFocus={false} maxHeight={20} flexGrow={1}>
+            <Transcript />
+          </Scrollable>
+        </ScrollProvider>
+      </MouseProvider>,
+    );
+    expect(frame).toContain("item-1999");
+    expect(rendered.size).toBeLessThan(100);
+  });
+
   it("shows the tail of a long message instead of blanking", async () => {
     // The reported bug: a message long enough to scroll blanked the screen.
     // Pin-to-bottom must land on the end of the tall row, and the frame

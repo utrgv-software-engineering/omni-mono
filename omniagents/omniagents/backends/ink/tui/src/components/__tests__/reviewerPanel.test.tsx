@@ -248,6 +248,7 @@ describe("ReviewerPanel writes", () => {
     const stub = makeClient();
     const { stdin, onClose } = await mount("approvals", stub);
     stdin.press(KEY.escape);
+    await new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
     expect(onClose).toHaveBeenCalled();
     expect(stub.setSessionApprovals).not.toHaveBeenCalled();

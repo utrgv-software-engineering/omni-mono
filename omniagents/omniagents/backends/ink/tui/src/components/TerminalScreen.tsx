@@ -75,6 +75,7 @@ export function terminalHint({
   exitCode: number | null;
   error?: string | null;
 }): string {
+  if (phase === "error") return "terminal failed · enter restart";
   if (phase === "exited") {
     const code = exitCode !== null ? ` ${exitCode}` : "";
     const why = error ? ` (${error})` : "";
@@ -126,23 +127,48 @@ export const TerminalScreen = ({
   // message — ensure one server-side rather than silently doing
   // nothing (the web terminal's idiom).
   useEffect(() => {
-    if (!active || !client) return;
+    if (!client || !sessionId) {
+      if (terminalSession.phase !== "idle") terminalSession.close();
+    }
+    if (!client) return;
+    if (
+      sessionId &&
+      terminalSession.phase !== "idle" &&
+      !terminalSession.belongsTo(client, sessionId)
+    ) {
+      terminalSession.close();
+      onCapturedChange(false);
+    }
+    if (!active) return;
+    let cancelled = false;
     if (!sessionId) {
       void client
         .serverCall("session.ensure", {})
         .then((res) => {
           const sid = (res as { session_id?: string })?.session_id;
-          if (typeof sid === "string" && sid) actions.setSessionId(sid);
+          if (!cancelled && typeof sid === "string" && sid)
+            actions.setSessionId(sid);
         })
         .catch(() => {});
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
     if (terminalSession.phase === "idle") {
       void terminalSession.open(client, sessionId, cols, rows);
     } else {
       terminalSession.resize(cols, rows);
     }
-  }, [active, client, sessionId, cols, rows, actions]);
+    return undefined;
+  }, [
+    active,
+    client,
+    sessionId,
+    cols,
+    rows,
+    actions,
+    client?.defaultEnvironmentId(),
+  ]);
 
   useEffect(() => {
     if (!active) setScrollUp(0);
@@ -214,7 +240,7 @@ export const TerminalScreen = ({
           onExit();
           return true;
         }
-        if (phase === "exited" && key.return) {
+        if ((phase === "exited" || phase === "error") && key.return) {
           restart();
           return true;
         }
@@ -266,12 +292,21 @@ export const TerminalScreen = ({
         setScrollUp((prev) => Math.max(0, prev - PAGE));
         return true;
       }
-      if (phase === "exited" && key.return) {
+      if ((phase === "exited" || phase === "error") && key.return) {
         restart();
         return true;
       }
-      const bytes = keyToBytes(input, key);
-      if (bytes !== null) {
+      const bytes = keyToBytes(
+        input,
+        key,
+        terminalSession.state?.inputModes?.(),
+      );
+      if (
+        bytes !== null &&
+        client &&
+        sessionId &&
+        terminalSession.belongsTo(client, sessionId)
+      ) {
         setScrollUp(0);
         terminalSession.sendInput(bytes);
       }

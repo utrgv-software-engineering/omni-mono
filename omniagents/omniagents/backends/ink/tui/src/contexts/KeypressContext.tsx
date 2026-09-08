@@ -1,7 +1,7 @@
 /**
  * Priority-based keypress dispatch.
  *
- * Wraps ink's `useInput` once at the root and broadcasts to subscribers in
+ * Frames raw terminal input once at the root and broadcasts to subscribers in
  * priority order. A handler returning `true` stops propagation, so a modal
  * dialog registered with `Critical` priority always wins Escape over a
  * background scroll handler registered with `Normal`.
@@ -11,8 +11,7 @@
  * that the topmost dialog/panel handles keys before its ancestors.
  *
  * Ported from gemini-cli's KeypressContext (the priority-subscription pattern
- * only — gemini-cli additionally re-parses raw stdin for paste / Kitty proto
- * support, which we do not yet do here).
+ * only). TerminalInputParser preserves paste and escape-sequence boundaries.
  */
 
 import React, {
@@ -22,7 +21,7 @@ import React, {
   useMemo,
   useRef,
 } from "react";
-import { useInput } from "ink";
+import { useTerminalInput } from "../hooks/useTerminalInput.js";
 import type { Key } from "../hooks/useKeypress.js";
 
 export enum KeypressPriority {
@@ -81,7 +80,7 @@ export function KeypressProvider({ children }: { children: React.ReactNode }) {
     [subscribers],
   );
 
-  useInput((input, rawKey) => {
+  useTerminalInput((input, key) => {
     if (subscribers.size === 0) return;
 
     if (prioritiesDirty.current) {
@@ -91,7 +90,6 @@ export function KeypressProvider({ children }: { children: React.ReactNode }) {
       prioritiesDirty.current = false;
     }
 
-    const key = rawKey as Key;
     for (const priority of sortedPriorities.current) {
       // Collect handlers at this priority, newest-first.
       const handlers: KeypressHandler[] = [];

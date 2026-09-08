@@ -69,6 +69,41 @@ def test_durable_items_and_resolved_decisions_survive_restart():
     )
 
 
+@pytest.mark.parametrize(
+    "kind,content,field,details",
+    [
+        (
+            "approval",
+            {"call_id": "a"},
+            "pending_tool_approvals",
+            {
+                "metadata": {"diff": "+new"},
+                "server_label": "server",
+                "tool_label": "edit",
+            },
+        ),
+        (
+            "elicitation",
+            {"elicitation_id": "a"},
+            "pending_elicitations",
+            {"expires_at": "2026-09-07T12:00:00Z", "persist_response": False},
+        ),
+    ],
+)
+def test_live_prompt_details_survive_snapshot_without_changing_history(
+    kind, content, field, details
+):
+    item = {"kind": kind, "status": "started", "content": content}
+    session = SimpleNamespace(**{field: {"a": details}})
+    runtime = SimpleNamespace(
+        **{"_" + field: {"a": (Mock(done=lambda: False), session)}}
+    )
+    restored = reconcile_runtime_controls([item], session, runtime)[0]
+    assert restored["content"] == {**content, **details}
+    assert item["content"] == content
+    assert reconcile_runtime_controls([item], session, None)[0]["status"] == "failed"
+
+
 def test_interrupted_tool_is_uncertain_without_rewriting_shared_history():
     item = {
         "kind": "tool_call",

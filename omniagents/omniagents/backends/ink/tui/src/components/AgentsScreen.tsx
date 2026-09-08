@@ -1,9 +1,14 @@
+import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
 import React, { useEffect, useMemo, useState } from "react";
 import { Box, Text, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
-import { useActions, useSubagentEvents, useSubagents } from "../store/appStore.js";
+import {
+  useActions,
+  useSubagentEvents,
+  useSubagents,
+} from "../store/appStore.js";
 import type { SubagentSummary } from "../store/appStore.js";
 import { windowStart } from "./model-picker-model.js";
 import { clampScroll } from "./git-model.js";
@@ -61,7 +66,6 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
   const subagentEvents = useSubagentEvents();
   const actions = useActions();
 
-  const [index, setIndex] = useState(0);
   const [detailScroll, setDetailScroll] = useState(0);
   // Which pane owns ↑↓. Only meaningful in the wide split — narrow
   // mode stacks both panes and keeps the combined keys.
@@ -76,11 +80,8 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
     return [...running, ...done];
   }, [workers]);
 
-  useEffect(() => {
-    setIndex((prev) =>
-      ordered.length === 0 ? 0 : Math.min(prev, ordered.length - 1),
-    );
-  }, [ordered.length]);
+  const selection = useKeyedSelection(ordered, (worker) => worker.subagent_id);
+  const index = selection.index;
 
   useEffect(() => {
     if (active) setPane("list");
@@ -151,8 +152,15 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
     ? Math.max(3, bodyHeight - 2)
     : Math.max(3, bodyHeight - listRows - 2);
 
+  useEffect(() => {
+    setDetailScroll((prev) =>
+      clampScroll(prev, detailLines.length, detailWindow),
+    );
+  }, [detailLines.length, detailWindow, detailWidth]);
+
   useKeypress(
     (input, key) => {
+      if (key.paste) return true;
       if (key.ctrl || (key.meta && !key.escape)) return false;
       if (key.tab) return false; // tab always cycles screens
       if (key.escape || input === "q") {
@@ -187,7 +195,7 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
             clampScroll(prev + 1, detailLines.length, detailWindow),
           );
         } else if (ordered.length > 0) {
-          setIndex((prev) => Math.min(ordered.length - 1, prev + 1));
+          selection.move(1);
         }
         return true;
       }
@@ -197,7 +205,7 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
             clampScroll(prev - 1, detailLines.length, detailWindow),
           );
         } else if (ordered.length > 0) {
-          setIndex((prev) => Math.max(0, prev - 1));
+          selection.move(-1);
         }
         return true;
       }

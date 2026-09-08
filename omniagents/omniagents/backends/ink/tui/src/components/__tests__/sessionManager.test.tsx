@@ -1,3 +1,4 @@
+import { ConnectionClosedError } from "../../rpc/lifecycle.js";
 import React from "react";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -111,6 +112,7 @@ function thread(id: string, overrides: Record<string, unknown> = {}) {
 
 function makeClient(grants: string[] = ALL_GRANTS) {
   return {
+    events: new EventEmitter(),
     granted: new Set(grants),
     listThreads: vi.fn(async () => ({ threads: [thread("a"), thread("b")] })),
     searchThreads: vi.fn(async () => ({
@@ -137,9 +139,10 @@ type ClientStub = ReturnType<typeof makeClient>;
 function asClient(stub: ClientStub): RPCClient {
   return {
     ...stub,
+    defaultEnvironmentId: () => null,
     isGranted: (op: string) => stub.granted.has(op),
-    on: () => undefined,
-    off: () => undefined,
+    on: stub.events.on.bind(stub.events),
+    off: stub.events.off.bind(stub.events),
   } as unknown as RPCClient;
 }
 
@@ -190,7 +193,7 @@ async function mount(
   );
   instances.push(instance);
   await settle();
-  return { stdout, stdin };
+  return { stdout, stdin, instance };
 }
 
 // ---------------------------------------------------------------------
@@ -370,6 +373,7 @@ describe("SessionManager search", () => {
     stdin.press("q");
     await settle();
     stdin.press(KEY.escape);
+    await new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
     expect(stub.searchThreads).not.toHaveBeenCalled();
     // Proves escape actually left search mode rather than doing nothing:
@@ -379,4 +383,108 @@ describe("SessionManager search", () => {
     expect(onOpen).toHaveBeenCalledWith("a");
     expect(stub.searchThreads).not.toHaveBeenCalled();
   });
+});
+
+describe("SessionManager races", () => {
+  it("uses the new selection for an arrow-and-Enter burst", async () => {
+    const stub = makeClient();
+    const onOpen = vi.fn();
+    const { stdin } = await mount(stub, { onOpen });
+    stdin.press(KEY.down + KEY.enter);
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith("b"));
+  });
+  it("does not treat pasted commands as actions", async () => {
+    const stub = makeClient();
+    const { stdin } = await mount(stub);
+    for (const command of ["p", "a", "f", "d"])
+      stdin.press(`\x1b[200~${command}\x1b[201~`);
+    await settle();
+    expect(stub.updateThread).not.toHaveBeenCalled();
+    expect(stub.forkSession).not.toHaveBeenCalled();
+    expect(stub.deleteSession).not.toHaveBeenCalled();
+  });
+  it("reads a whole rename-and-submit burst without dropping characters", async () => {
+    const stub = makeClient();
+    const { stdin } = await mount(stub);
+    stdin.press("r!" + KEY.enter);
+    await waitFor(() =>
+      expect(stub.updateThread).toHaveBeenCalledWith("a", {
+        title: "Thread a!",
+      }),
+    );
+  });
+  it("does not duplicate forks or open a late result after leaving", async () => {
+    const stub = makeClient();
+    let resolve!: (value: { new_session_id: string }) => void;
+    stub.forkSession.mockReturnValue(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
+    const onOpen = vi.fn(),
+      onNew = vi.fn();
+    const { stdin } = await mount(stub, { onOpen, onNew });
+    stdin.press("ff" + KEY.tab);
+    await settle();
+    expect(stub.forkSession).toHaveBeenCalledTimes(1);
+    resolve({ new_session_id: "late" });
+    await settle();
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onNew).toHaveBeenCalledTimes(1);
+  });
+});
+
+it("keeps the rename target when a refresh removes it from the list", async () => {
+  const stub = makeClient();
+  const { stdin } = await mount(stub);
+  stdin.press("r");
+  await settle();
+  stub.listThreads.mockResolvedValue({ threads: [thread("b")] });
+  stub.events.emit("thread_updated", {});
+  await settle();
+  stdin.press("!" + KEY.enter);
+  await waitFor(() =>
+    expect(stub.updateThread).toHaveBeenCalledWith("a", { title: "Thread a!" }),
+  );
+});
+
+it("ignores an earlier list response after a search finishes", async () => {
+  const stub = makeClient();
+  let resolve!: (value: { threads: ReturnType<typeof thread>[] }) => void;
+  stub.listThreads.mockReturnValueOnce(
+    new Promise((r) => {
+      resolve = r;
+    }),
+  );
+  const { stdin, stdout } = await mount(stub);
+  stdin.press("/match" + KEY.enter);
+  await settle();
+  resolve({ threads: [thread("a")] });
+  await settle();
+  expect(stdout.lastFrame()).toContain("Thread b");
+  expect(stdout.lastFrame()).not.toContain("Thread a");
+});
+
+it("does not reuse an old delete confirmation during a cancel/select/delete/yes burst", async () => {
+  const stub = makeClient();
+  const { stdin } = await mount(stub);
+  stdin.press("d");
+  await settle();
+  stdin.press("n" + KEY.down + "dy");
+  await settle();
+  expect(stub.deleteSession).not.toHaveBeenCalled();
+  stdin.press("y");
+  await waitFor(() => expect(stub.deleteSession).toHaveBeenCalledWith("b"));
+});
+
+it("reports an uncertain fork without replaying it after reconnect", async () => {
+  const stub = makeClient();
+  stub.forkSession.mockRejectedValue(new ConnectionClosedError("lost reply"));
+  const { stdin, stdout } = await mount(stub);
+  stdin.press("f");
+  await settle();
+  stub.events.emit("rpc_ready");
+  await settle();
+  expect(stub.forkSession).toHaveBeenCalledTimes(1);
+  expect(stdout.lastFrame()).toContain("outcome unknown");
 });

@@ -33,7 +33,10 @@ vi.mock("ws", () => {
     static readonly OPEN = 1;
     readonly readyState = MockWebSocket.OPEN;
     readonly sent: string[] = [];
-    private listeners = new Map<string, Array<(...values: unknown[]) => void>>();
+    private listeners = new Map<
+      string,
+      Array<(...values: unknown[]) => void>
+    >();
 
     constructor(readonly url: string) {
       mockSockets.push(this);
@@ -65,7 +68,16 @@ vi.mock("ws", () => {
       };
       if (request.method === "initialize") {
         if (mockSocketConfig.earlyNotification) {
-          queueMicrotask(() => this.emit('message', JSON.stringify({ jsonrpc: '2.0', method: 'message_output', params: { content: 'untrusted' } })));
+          queueMicrotask(() =>
+            this.emit(
+              "message",
+              JSON.stringify({
+                jsonrpc: "2.0",
+                method: "message_output",
+                params: { content: "untrusted" },
+              }),
+            ),
+          );
         }
         const rejected = mockSocketConfig.rejectCapabilities;
         if (rejected) {
@@ -115,11 +127,13 @@ vi.mock("ws", () => {
                   experimental_operations: [...requested].sort(),
                   disabled_notifications: [],
                 },
-                agent_host: mockSocketConfig.incompleteHandshake ? null : {
-                  agent_host_id: "agent-host-1",
-                  default_workspace_id: "workspace-1",
-                  default_environment_id: "environment-1",
-                },
+                agent_host: mockSocketConfig.incompleteHandshake
+                  ? null
+                  : {
+                      agent_host_id: "agent-host-1",
+                      default_workspace_id: "workspace-1",
+                      default_environment_id: "environment-1",
+                    },
               },
             }),
           ),
@@ -127,6 +141,12 @@ vi.mock("ws", () => {
       }
     }
 
+    ping(): void {
+      this.emit("pong");
+    }
+    terminate(): void {
+      this.emit("close", 1006);
+    }
     close(): void {}
   }
 
@@ -207,6 +227,280 @@ describe("RPCClient", () => {
     await client.connect();
     expect(client.initializeResult?.protocol_version).toBe(version);
     client.disconnect();
+  });
+
+  it("cancels queued reconnects on explicit disconnect", async () => {
+    vi.useFakeTimers();
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    await client.connect();
+    mockSockets[0]!.emit("close", 1006);
+    client.disconnect();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(mockSockets).toHaveLength(1);
+  });
+
+  it("cleans deadlines and abort listeners on successful responses", async () => {
+    vi.useFakeTimers();
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    await client.connect();
+    const abort = new AbortController();
+    const remove = vi.spyOn(abort.signal, "removeEventListener");
+    const promise = client.serverCall("probe", {}, undefined, {
+      signal: abort.signal,
+    });
+    const request = JSON.parse(mockSockets[0]!.sent.at(-1)!);
+    mockSockets[0]!.emit(
+      "message",
+      JSON.stringify({ jsonrpc: "2.0", id: request.id, result: {} }),
+    );
+    await promise;
+    expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+    client.disconnect();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("terminates a socket that stops answering heartbeat pings", async () => {
+    vi.useFakeTimers();
+    const client = new RPCClient({
+      url: "ws://example.test/ws",
+      policy: {
+        ...DEFAULT_LIFECYCLE_POLICY,
+        pingIntervalMs: 100,
+        pingTimeoutMs: 50,
+      },
+    });
+    await client.connect();
+    const socket = mockSockets[0] as any;
+    socket.ping = vi.fn();
+    const terminate = vi.spyOn(socket, "terminate");
+    await vi.advanceTimersByTimeAsync(151);
+    expect(terminate).toHaveBeenCalledOnce();
+    client.disconnect();
+  });
+
+  it("retains the exact client response after a send failure without re-execution", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const handler = vi.fn(async () => ({ ack: true }));
+    client.registerClientFunction("probe", handler);
+    const send = vi
+      .spyOn(client, "clientResponse")
+      .mockRejectedValueOnce(new Error("disconnected"))
+      .mockResolvedValue(undefined);
+    const failed = vi.fn();
+    client.on("client_response_failed", failed);
+    const event = {
+      jsonrpc: "2.0",
+      method: "client_request",
+      params: { request_id: "r", function: "probe", args: {} },
+    };
+    (client as any).handleMessage(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(failed).toHaveBeenCalledOnce();
+    (client as any).handleMessage(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(handler).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenNthCalledWith(
+      2,
+      "r",
+      true,
+      { ack: true },
+      undefined,
+    );
+    expect((client as any).responseOutbox.size).toBe(0);
+  });
+
+  it("hydrates at a snapshot cursor, restores prompts and applies later events once", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    vi.spyOn(client, "isGranted").mockReturnValue(true);
+    let snapshot!: (value: unknown) => void;
+    vi.spyOn(client as any, "call").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          snapshot = resolve;
+        }),
+    );
+    const replay = vi
+      .spyOn(client, "resumeSession")
+      .mockResolvedValue({
+        stream_id: "epoch",
+        last_seq: 11,
+        events: [
+          {
+            method: "run_end",
+            params: {
+              session_id: "s",
+              stream_id: "epoch",
+              seq: 11,
+              run_id: "run",
+            },
+          },
+        ],
+      });
+    const ended = vi.fn();
+    const approval = vi.fn();
+    client.on("run_end", ended);
+    client.on("tool_approval_requested", approval);
+    const apply = vi.fn();
+    const syncing = client.synchronizeSession("s", apply);
+    (client as any).handleMessage({
+      jsonrpc: "2.0",
+      method: "run_end",
+      params: { session_id: "s", stream_id: "epoch", seq: 11, run_id: "run" },
+    });
+    expect(ended).not.toHaveBeenCalled();
+    snapshot({
+      run_active: true,
+      active_run_id: "run",
+      snapshot: {
+        stream_id: "epoch",
+        last_seq: 10,
+        queue: [],
+        items: [
+          {
+            kind: "approval",
+            status: "started",
+            turn_id: "run",
+            content: {
+              approval_kind: "tool",
+              call_id: "call",
+              tool: "bash",
+              arguments: "{}",
+            },
+          },
+        ],
+      },
+    });
+    await syncing;
+    expect(apply).toHaveBeenCalledOnce();
+    expect(approval).toHaveBeenCalledOnce();
+    expect(replay).toHaveBeenCalledWith("s", "epoch", 10);
+    expect(ended).toHaveBeenCalledOnce();
+    client.disconnect();
+  });
+
+  it("does not apply hydration after the selected session changes", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    vi.spyOn(client, "isGranted").mockReturnValue(true);
+    let resolve!: (value: unknown) => void;
+    vi.spyOn(client as any, "call").mockImplementation(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    let current = true;
+    const apply = vi.fn();
+    const syncing = client.synchronizeSession("s", apply, () => current);
+    current = false;
+    resolve({});
+    await syncing;
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it("restarts hydration at a new epoch when replay requires resync", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    vi.spyOn(client, "isGranted").mockReturnValue(true);
+    const snapshot = (stream_id: string, last_seq: number) => ({
+      run_active: false,
+      active_run_id: null,
+      snapshot: { stream_id, last_seq, items: [], queue: [] },
+    });
+    vi.spyOn(client as any, "call")
+      .mockResolvedValueOnce(snapshot("old", 90))
+      .mockResolvedValueOnce(snapshot("new", 1));
+    vi.spyOn(client, "resumeSession")
+      .mockRejectedValueOnce(
+        new JSONRPCError({ code: -32030, message: "epoch changed" }),
+      )
+      .mockResolvedValueOnce({
+        stream_id: "new",
+        last_seq: 2,
+        events: [
+          {
+            method: "run_end",
+            params: {
+              session_id: "s",
+              stream_id: "new",
+              seq: 2,
+              run_id: "run",
+            },
+          },
+        ],
+      });
+    const ended = vi.fn();
+    client.on("run_end", ended);
+    await client.synchronizeSession("s", () => {});
+    expect(ended).toHaveBeenCalledOnce();
+    expect((client as any).replay.tracker("s").lastSeq).toBe(2);
+    client.disconnect();
+  });
+
+  it("uses stable reads when snapshot capability is absent and retries raced reads", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const call = vi.spyOn(client as any, "call");
+    const history = vi.spyOn(client, "getSessionHistory").mockResolvedValue([]);
+    vi.spyOn(client, "listAllItems").mockResolvedValue([]);
+    vi.spyOn(client, "listQueue").mockResolvedValue({
+      session_id: "s",
+      depth: 0,
+      items: [],
+    });
+    vi.spyOn(client, "resumeSession")
+      .mockResolvedValueOnce({ stream_id: "epoch", last_seq: 10, events: [] })
+      .mockResolvedValue({ stream_id: "epoch", last_seq: 11, events: [] });
+    const apply = vi.fn();
+    await client.synchronizeSession("s", apply);
+    expect(history).toHaveBeenCalledTimes(2);
+    expect(call).not.toHaveBeenCalled();
+    expect(apply.mock.calls[0]![0].snapshot.last_seq).toBe(11);
+    client.disconnect();
+  });
+
+  it("leaves another session's client requests pending instead of acknowledging them", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    client.setActiveSession("selected");
+    const handler = vi.fn(async () => ({}));
+    client.registerClientFunction("escalate", handler);
+    const response = vi.spyOn(client, "clientResponse");
+    (client as any).handleMessage({
+      jsonrpc: "2.0",
+      method: "client_request",
+      params: {
+        session_id: "other",
+        request_id: "r",
+        function: "escalate",
+        args: {},
+      },
+    });
+    await Promise.resolve();
+    expect(handler).not.toHaveBeenCalled();
+    expect(response).not.toHaveBeenCalled();
+  });
+
+  it("rejects an in-flight connect when explicitly disconnected before open", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const connecting = client.connect();
+    client.disconnect();
+    await expect(connecting).rejects.toBeInstanceOf(ConnectionClosedError);
+  });
+
+  it("isolates a new empty session and buffers its early run events until its id is known", async () => {
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    client.setActiveSession(undefined);
+    let finish!: (value: unknown) => void;
+    vi.spyOn(client, "request").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const started = vi.fn();
+    client.on("run_started", started);
+    const event = (session_id: string) => ({ jsonrpc: "2.0", method: "run_started", params: { session_id, run_id: session_id } });
+    (client as any).handleMessage(event("old"));
+    const run = client.startRun("hello", { mode: "none" });
+    (client as any).handleMessage(event("old"));
+    (client as any).handleMessage(event("new"));
+    expect(started).not.toHaveBeenCalled();
+    finish({ session_id: "new", run_id: "new" });
+    await run;
+    expect(started).toHaveBeenCalledOnce();
+    expect(started).toHaveBeenCalledWith({ session_id: "new", run_id: "new" });
   });
 
   afterEach(() => {

@@ -1,10 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRequestScope } from "../hooks/useRequestScope.js";
+import { useImmediateState } from "../hooks/useImmediateState.js";
+import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
+import { WorkspaceView } from "./WorkspaceView.js";
+import { ConnectionClosedError, RpcTimeoutError } from "../rpc/lifecycle.js";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, Text, useStdout } from "ink";
 import Spinner from "ink-spinner";
-import { useKeypress } from "../hooks/useKeypress.js";
+import { useKeypress, type Key } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import type { GitDiffFile, GitRepository, RPCClient } from "../rpc/client.js";
-import { useActions, useRunDiff } from "../store/appStore.js";
+import { useActions, useRunDiff, useSessionId } from "../store/appStore.js";
 import {
   buildReviewView,
   fileBadge,
@@ -58,7 +69,18 @@ type PendingConfirmation = {
 // working scope is everything uncommitted, staging state as a per-row
 // badge (git's XY code), space toggling it, x discarding, c committing.
 // Both render ONE scrollable unified numbered diff beside the list.
-export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
+export const ReviewScreen = (props: Props) => {
+  const session = useSessionId();
+  return (
+    <WorkspaceView active={props.active} client={props.client}>
+      <ReviewContent key={session} {...props} />
+    </WorkspaceView>
+  );
+};
+const ReviewContent = ({ active, height, client, onExit }: Props) => {
+  const requests = useRequestScope();
+  const operationPending = useRef(false);
+  const loadPending = useRef(false);
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns ?? 80;
   const actions = useActions();
@@ -71,17 +93,20 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scroll, setScroll] = useState(0);
-  const [fileIndex, setFileIndex] = useState(0);
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [commitMode, setCommitMode] = useState(false);
-  const [commitMessage, setCommitMessage] = useState("");
-  const [confirm, setConfirm] = useState<PendingConfirmation | null>(null);
+  const [commitMode, setCommitMode, commitModeRef] = useImmediateState(false);
+  const [commitMessage, setCommitMessage, commitMessageRef] =
+    useImmediateState("");
+  const [confirm, setConfirm, confirmRef] =
+    useImmediateState<PendingConfirmation | null>(null);
   // Which pane owns ↑↓: the file list or the diff. ←/→ (and h/l)
   // switch; enter on a file focuses the diff, esc pops back —
   // lazygit's spatial model. Only meaningful when the sidebar shows.
-  const [pane, setPane] = useState<"files" | "diff">("files");
-  const [scope, setScope] = useState<"working" | "turn">("turn");
+  const [pane, setPane, paneRef] = useImmediateState<"files" | "diff">("files");
+  const [scope, setScope, scopeRef] = useImmediateState<"working" | "turn">(
+    "turn",
+  );
   const windowRef = useRef(10);
 
   const environmentId = client?.defaultEnvironmentId() ?? null;
@@ -92,12 +117,15 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
 
   const load = useCallback(async () => {
     if (!client || !environmentId || !gitGranted) return;
+    const current = requests.begin("load");
+    loadPending.current = true;
     setLoading(true);
     setError(null);
     try {
       let repoList = repos;
       if (repoList.length === 0) {
         const listed = await client.gitListRepositories(environmentId);
+        if (!current()) return;
         repoList = listed.repositories;
         setRepos(repoList);
       }
@@ -111,18 +139,24 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
       const status = await client.gitStatus(environmentId, target, {
         includeUntracked: true,
       });
-      setWorkingRows(buildFileRows(status));
+      if (!current()) return;
       const result = await client.gitDiff(environmentId, target, {
         mode: "head",
         includeUntracked: true,
       });
+      if (!current()) return;
+      setWorkingRows(buildFileRows(status));
       setGitFiles(result.files);
     } catch (e) {
+      if (!current()) return;
       setError((e as Error).message ?? String(e));
       setWorkingRows([]);
       setGitFiles([]);
     } finally {
-      setLoading(false);
+      if (current()) {
+        loadPending.current = false;
+        setLoading(false);
+      }
     }
   }, [client, environmentId, gitGranted, repoIndex, repos]);
 
@@ -134,7 +168,7 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
       return;
     }
     setScroll(0);
-    setFileIndex(0);
+    selection.reset();
     setPane("files");
     // Open on the turn diff when there is one; a chat-only turn (or a
     // fresh session) falls back to the working tree instead of showing
@@ -146,6 +180,17 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
     // Deps intentionally omit load: fetch on entry/repo change; 'r'
     // refreshes after that.
   }, [active, repoIndex]);
+
+  useEffect(() => {
+    if (!client) return;
+    const refresh = () => {
+      void load();
+    };
+    client.on("rpc_ready", refresh);
+    return () => {
+      client.off("rpc_ready", refresh);
+    };
+  }, [client, load]);
 
   // ----- projections -----
 
@@ -185,6 +230,8 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
   );
 
   const files = scope === "working" ? workingFiles : turnFiles;
+  const selection = useKeyedSelection(files, (file) => file.path);
+  const fileIndex = selection.index;
 
   const view = useMemo(() => {
     if (scope === "turn") {
@@ -222,11 +269,6 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
     });
   }, [scope, workingFiles, turnFiles, turnRaw, gitFiles]);
 
-  useEffect(() => {
-    setFileIndex((prev) =>
-      files.length === 0 ? 0 : Math.min(prev, files.length - 1),
-    );
-  }, [files.length]);
   const current = view.sections[fileIndex] ?? null;
 
   // Publish the focus path to the status bar: the screen while the
@@ -266,27 +308,29 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
 
   const moveCursor = useCallback(
     (delta: number) => {
-      setFileIndex((prev) => {
-        const next = Math.max(0, Math.min(files.length - 1, prev + delta));
-        const offset = view.sections[next]?.offset ?? 0;
-        setScroll(clampScroll(offset, view.lines.length, windowRef.current));
-        return next;
-      });
+      const next = selection.move(delta);
+      const offset = view.sections[next]?.offset ?? 0;
+      setScroll(clampScroll(offset, view.lines.length, windowRef.current));
     },
-    [files.length, view],
+    [selection, view],
   );
 
   // ----- ops (stage/unstage/discard/commit with -32093 confirm) -----
 
   const runOp = useCallback(
     async (label: string, op: (token?: string) => Promise<unknown>) => {
+      if (operationPending.current) return;
+      operationPending.current = true;
+      const current = requests.begin("operation");
       setBusy(true);
       setStatusLine(`${label}…`);
       try {
         await op();
+        if (!current()) return;
         setStatusLine(`${label}: done`);
-        void load();
+        await load();
       } catch (e) {
+        if (!current()) return;
         const confirmation = confirmationOf(e);
         if (confirmation !== null) {
           setConfirm({
@@ -299,9 +343,14 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
           setStatusLine(null);
           return;
         }
-        setStatusLine(`${label} failed: ${(e as Error).message ?? String(e)}`);
+        setStatusLine(
+          e instanceof ConnectionClosedError || e instanceof RpcTimeoutError
+            ? `${label}: outcome unknown; refresh before retrying`
+            : `${label} failed: ${(e as Error).message ?? String(e)}`,
+        );
       } finally {
-        setBusy(false);
+        operationPending.current = false;
+        if (current()) setBusy(false);
       }
     },
     [load],
@@ -321,197 +370,220 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
   // diff's first line with the sidebar's title row (the border owns
   // row 0).
   const chromeRows =
-    2 +
-    (statusLine ? 1 : 0) +
-    (confirm ? 2 : 0) +
-    (commitMode ? 1 : 0);
+    2 + (statusLine ? 1 : 0) + (confirm ? 2 : 0) + (commitMode ? 1 : 0);
   const window = Math.max(4, height - chromeRows);
   windowRef.current = window;
 
+  useEffect(() => {
+    setScroll((prev) => clampScroll(prev, view.lines.length, window));
+  }, [view.lines.length, window]);
+
   // ----- keyboard -----
 
-  useKeypress(
-    (input, key) => {
-      if (key.ctrl || (key.meta && !key.escape)) return false;
-      if (key.tab) return false; // tab always cycles screens
-      const diffFocused = showSidebarLayout && pane === "diff";
-      if (key.escape || input === "q") {
-        // Esc pops one level: diff pane → file list → chat.
-        if (diffFocused) {
-          setPane("files");
-        } else {
-          onExit();
-        }
-        return true;
-      }
-      if (input === "r") {
-        void load();
-        return true;
-      }
-      if (input === "]" && repos.length > 1) {
-        setRepoIndex((prev) => (prev + 1) % repos.length);
-        return true;
-      }
-      // t flips the scope: working tree ↔ the last turn's run diff.
-      if (input === "t") {
-        setScope((prev) => (prev === "working" ? "turn" : "working"));
-        setScroll(0);
-        setFileIndex(0);
-        return true;
-      }
-      // ←/→ (h/l) move focus between the file list and the diff.
-      if (showSidebarLayout && (key.leftArrow || input === "h")) {
+  const handleList = (input: string, key: Key): boolean => {
+    if (key.paste) return true;
+    if (key.ctrl || (key.meta && !key.escape)) return false;
+    if (key.tab) return false; // tab always cycles screens
+    if (commitModeRef.current || confirmRef.current) return false;
+    const diffFocused = showSidebarLayout && paneRef.current === "diff";
+    if (key.escape || input === "q") {
+      // Esc pops one level: diff pane → file list → chat.
+      if (diffFocused) {
         setPane("files");
-        return true;
+      } else {
+        onExit();
       }
-      if (showSidebarLayout && (key.rightArrow || input === "l")) {
-        setPane("diff");
-        return true;
+      return true;
+    }
+    if (input === "r") {
+      void load();
+      return true;
+    }
+    if (input === "]" && repos.length > 1 && !operationPending.current) {
+      loadPending.current = true;
+      requests.begin("load");
+      setWorkingRows([]);
+      setGitFiles([]);
+      setRepoIndex((prev) => (prev + 1) % repos.length);
+      return true;
+    }
+    // t flips the scope: working tree ↔ the last turn's run diff.
+    if (input === "t") {
+      setScope((prev) => (prev === "working" ? "turn" : "working"));
+      setScroll(0);
+      selection.reset();
+      return true;
+    }
+    // ←/→ (h/l) move focus between the file list and the diff.
+    if (showSidebarLayout && (key.leftArrow || input === "h")) {
+      setPane("files");
+      return true;
+    }
+    if (showSidebarLayout && (key.rightArrow || input === "l")) {
+      setPane("diff");
+      return true;
+    }
+    // Enter on a file opens (focuses) its diff.
+    if (key.return && showSidebarLayout && pane === "files") {
+      setPane("diff");
+      return true;
+    }
+    // ↑↓/j/k: file cursor when the list owns focus (or in narrow
+    // mode), diff scrolling when the diff owns it.
+    if (key.downArrow || input === "j") {
+      if (diffFocused) {
+        setScroll((prev) => clampScroll(prev + 1, view.lines.length, window));
+      } else if (files.length > 0) {
+        moveCursor(1);
       }
-      // Enter on a file opens (focuses) its diff.
-      if (key.return && showSidebarLayout && pane === "files") {
-        setPane("diff");
-        return true;
+      return true;
+    }
+    if (key.upArrow || input === "k") {
+      if (diffFocused) {
+        setScroll((prev) => clampScroll(prev - 1, view.lines.length, window));
+      } else if (files.length > 0) {
+        moveCursor(-1);
       }
-      // ↑↓/j/k: file cursor when the list owns focus (or in narrow
-      // mode), diff scrolling when the diff owns it.
-      if (key.downArrow || input === "j") {
-        if (diffFocused) {
-          setScroll((prev) =>
-            clampScroll(prev + 1, view.lines.length, window),
+      return true;
+    }
+    // PgUp/PgDn (and J/K) always page the diff.
+    if (key.pageDown || input === "J") {
+      setScroll((prev) => clampScroll(prev + PAGE, view.lines.length, window));
+      return true;
+    }
+    if (key.pageUp || input === "K") {
+      setScroll((prev) => clampScroll(prev - PAGE, view.lines.length, window));
+      return true;
+    }
+    const selected = selection.current();
+    // Staging verbs only exist on the working scope — the turn diff
+    // is a read-only record of what the agent changed.
+    if (
+      !loadPending.current &&
+      !operationPending.current &&
+      scopeRef.current === scope &&
+      scopeRef.current === "working" &&
+      client &&
+      environmentId &&
+      repo &&
+      selected
+    ) {
+      const path = selected.path;
+      // Space toggles the selected file's index state — fully staged
+      // files unstage, everything else stages. Per-row, lazygit-style.
+      if (input === " ") {
+        if (selected.staged && !selected.unstaged) {
+          void runOp(`unstage ${path}`, () =>
+            client.gitUnstage(environmentId, repo, { paths: [path] }),
           );
-        } else if (files.length > 0) {
-          moveCursor(1);
+        } else {
+          void runOp(`stage ${path}`, () =>
+            client.gitStage(environmentId, repo, { paths: [path] }),
+          );
         }
         return true;
       }
-      if (key.upArrow || input === "k") {
-        if (diffFocused) {
-          setScroll((prev) =>
-            clampScroll(prev - 1, view.lines.length, window),
-          );
-        } else if (files.length > 0) {
-          moveCursor(-1);
-        }
-        return true;
-      }
-      // PgUp/PgDn (and J/K) always page the diff.
-      if (key.pageDown || input === "J") {
-        setScroll((prev) =>
-          clampScroll(prev + PAGE, view.lines.length, window),
+      if (input === "x") {
+        void runOp(`discard ${path}`, (token) =>
+          client.gitDiscard(environmentId, repo, {
+            paths: [path],
+            confirmationToken: token,
+          }),
         );
         return true;
       }
-      if (key.pageUp || input === "K") {
-        setScroll((prev) =>
-          clampScroll(prev - PAGE, view.lines.length, window),
-        );
+      if (input === "c") {
+        setCommitMode(true);
         return true;
       }
-      const selected = files[fileIndex];
-      // Staging verbs only exist on the working scope — the turn diff
-      // is a read-only record of what the agent changed.
-      if (scope === "working" && client && environmentId && repo && selected) {
-        const path = selected.path;
-        // Space toggles the selected file's index state — fully staged
-        // files unstage, everything else stages. Per-row, lazygit-style.
-        if (input === " ") {
-          if (selected.staged && !selected.unstaged) {
-            void runOp(`unstage ${path}`, () =>
-              client.gitUnstage(environmentId, repo, { paths: [path] }),
-            );
-          } else {
-            void runOp(`stage ${path}`, () =>
-              client.gitStage(environmentId, repo, { paths: [path] }),
-            );
-          }
-          return true;
-        }
-        if (input === "x") {
-          void runOp(`discard ${path}`, (token) =>
-            client.gitDiscard(environmentId, repo, {
-              paths: [path],
-              confirmationToken: token,
-            }),
-          );
-          return true;
-        }
-        if (input === "c") {
-          setCommitMode(true);
-          return true;
-        }
-      }
-      return false;
-    },
-    {
-      isActive: active && !commitMode && !confirm,
-      priority: KeypressPriority.High,
-    },
-  );
+    }
+    return false;
+  };
 
   // Commit-message input.
-  useKeypress(
-    (input, key) => {
-      if (key.escape) {
-        setCommitMode(false);
-        setCommitMessage("");
+  const handleCommit = (input: string, key: Key): boolean => {
+    if (!commitModeRef.current) return false;
+    if (key.paste) {
+      setCommitMessage((prev) => prev + input);
+      return true;
+    }
+    if (key.escape) {
+      setCommitMode(false);
+      setCommitMessage("");
+      return true;
+    }
+    if (key.return) {
+      const message = commitMessageRef.current.trim();
+      if (!message) {
+        setStatusLine("commit message is empty");
         return true;
       }
-      if (key.return) {
-        const message = commitMessage.trim();
-        if (!message) {
-          setStatusLine("commit message is empty");
-          return true;
-        }
-        setCommitMode(false);
-        setCommitMessage("");
-        if (client && environmentId && repo) {
-          void runOp("commit", (token) =>
-            client.gitCommit(environmentId, repo, message, {
-              confirmationToken: token,
-            }),
-          );
-        }
-        return true;
-      }
-      if (key.ctrl || key.meta) return false;
-      if (key.tab) return true;
-      if (key.backspace || key.delete) {
-        setCommitMessage((prev) => prev.slice(0, -1));
-        return true;
-      }
-      if (input) {
-        setCommitMessage((prev) => prev + input);
-        return true;
+      setCommitMode(false);
+      setCommitMessage("");
+      if (client && environmentId && repo) {
+        void runOp("commit", (token) =>
+          client.gitCommit(environmentId, repo, message, {
+            confirmationToken: token,
+          }),
+        );
       }
       return true;
-    },
-    { isActive: active && commitMode, priority: KeypressPriority.Critical },
-  );
+    }
+    if (key.ctrl || key.meta) return false;
+    if (key.tab) return true;
+    if (key.backspace || key.delete) {
+      setCommitMessage((prev) => prev.slice(0, -1));
+      return true;
+    }
+    if (input) {
+      setCommitMessage((prev) => prev + input);
+      return true;
+    }
+    return true;
+  };
 
   // Destructive-op confirmation.
+  const handleConfirm = (input: string, key: Key): boolean => {
+    if (!confirmRef.current) return false;
+    if (key.paste) return true;
+    if (key.ctrl || (key.meta && !key.escape)) return false;
+    if (key.tab) return false;
+    if (!confirm) return true;
+    if (input === "y" && confirmRef.current === confirm) {
+      const pending = confirm;
+      setConfirm(null);
+      void runOp(pending.label, () => pending.run(pending.token));
+      return true;
+    }
+    if (input === "n" || key.escape) {
+      setConfirm(null);
+      setStatusLine(`${confirm.label}: cancelled`);
+      return true;
+    }
+    return true;
+  };
+
   useKeypress(
     (input, key) => {
-      if (key.ctrl || (key.meta && !key.escape)) return false;
-      if (key.tab) return false;
-      if (!confirm) return true;
-      if (input === "y") {
-        const pending = confirm;
-        setConfirm(null);
-        void runOp(pending.label, () => pending.run(pending.token));
+      const dispatch = (input: string, key: Key) =>
+        handleConfirm(input, key) ||
+        handleCommit(input, key) ||
+        handleList(input, key);
+      if (!key.paste && !key.ctrl && !key.meta && input.length > 1) {
+        // Coalesced command keys are separate gestures; text fields receive the remaining text together.
+        const chars = [...input];
+        for (let i = 0; i < chars.length; i++) {
+          if (!!commitModeRef.current) {
+            dispatch(chars.slice(i).join(""), key);
+            break;
+          }
+          dispatch(chars[i], { ...key, shift: /^[A-Z]$/.test(chars[i]) });
+        }
         return true;
       }
-      if (input === "n" || key.escape) {
-        setConfirm(null);
-        setStatusLine(`${confirm.label}: cancelled`);
-        return true;
-      }
-      return true;
+      return dispatch(input, key);
     },
-    {
-      isActive: active && confirm !== null,
-      priority: KeypressPriority.Critical,
-    },
+    { isActive: active, priority: KeypressPriority.High },
   );
 
   if (!active) return null;
@@ -551,10 +623,7 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
         const badge = fileBadge(file);
         const hasStats = file.additions !== null || file.deletions !== null;
         return (
-          <SelectableRow
-            key={file.path}
-            selected={isCurrent}
-          >
+          <SelectableRow key={file.path} selected={isCurrent}>
             <RowText color={badge.color}>{badge.text} </RowText>
             {/* minWidth 0: without it the truncating text's intrinsic
                 width is a floor, an overflowing row wraps to height 2,
@@ -576,10 +645,16 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
               <Box flexShrink={0}>
                 <RowText>
                   {file.additions !== null && (
-                    <RowText color={Theme.stateDone}> +{file.additions}</RowText>
+                    <RowText color={Theme.stateDone}>
+                      {" "}
+                      +{file.additions}
+                    </RowText>
                   )}
                   {file.deletions !== null && (
-                    <RowText color={Theme.stateFailed}> −{file.deletions}</RowText>
+                    <RowText color={Theme.stateFailed}>
+                      {" "}
+                      −{file.deletions}
+                    </RowText>
                   )}
                 </RowText>
               </Box>
@@ -590,8 +665,7 @@ export const ReviewScreen = ({ active, height, client, onExit }: Props) => {
       {files.length > sidebarRows && (
         <Text color={Theme.textChrome}>
           {sidebarStart + 1}–
-          {Math.min(sidebarStart + sidebarRows, files.length)} of{" "}
-          {files.length}
+          {Math.min(sidebarStart + sidebarRows, files.length)} of {files.length}
         </Text>
       )}
     </Box>

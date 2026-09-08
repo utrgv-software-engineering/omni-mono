@@ -94,3 +94,25 @@ describe("detach chord byte forms", () => {
     expect(keyToBytes("\u001d", {})).toBeNull();
   });
 });
+
+it("preserves forward delete, home/end, modifiers, application cursors, and paste framing", () => {
+  expect(keyToBytes("", { delete: true })).toBe("\x1b[3~");
+  expect(keyToBytes("", { home: true })).toBe("\x1b[H");
+  expect(keyToBytes("", { end: true, ctrl: true })).toBe("\x1b[1;5F");
+  expect(keyToBytes("", { leftArrow: true, meta: true })).toBe("\x1b[1;3D");
+  expect(
+    keyToBytes(
+      "",
+      { upArrow: true },
+      { applicationCursorKeysMode: true, bracketedPasteMode: false },
+    ),
+  ).toBe("\x1bOA");
+  expect(
+    keyToBytes(
+      "one\ntwo",
+      { paste: true },
+      { applicationCursorKeysMode: false, bracketedPasteMode: true },
+    ),
+  ).toBe("\x1b[200~one\rtwo\x1b[201~");
+  expect(keyToBytes("[I", { paste: true })).toBe("[I");
+});

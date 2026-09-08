@@ -210,6 +210,7 @@ describe("terminal screen keyboard ownership", () => {
     await settle();
 
     harness.stdin.press("\x1b");
+    await new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
 
     expect(harness.onExit).toHaveBeenCalled();
@@ -221,6 +222,7 @@ describe("terminal screen keyboard ownership", () => {
     await settle();
 
     harness.stdin.press("\x1b");
+    await new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
 
     expect(harness.onExit).not.toHaveBeenCalled();

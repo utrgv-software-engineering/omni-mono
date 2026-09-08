@@ -69,7 +69,17 @@ export const Scrollable: React.FC<ScrollableProps> = ({
   const [scrollTop, setScrollTop] = useState(0);
   const ref = useRef<DOMElement>(null);
   const [size, setSize] = useState({
-    innerHeight: 0,
+    // Bootstrap virtualization from the available height. Starting at zero
+    // makes descendants lay out the entire transcript before our first
+    // measurement, blocking input when a long session opens. Layout replaces
+    // this estimate with the actual constrained height on the first commit.
+    innerHeight: Math.max(
+      0,
+      Math.min(
+        typeof height === "number" ? height : (maxHeight ?? 0),
+        maxHeight ?? Infinity,
+      ),
+    ),
     scrollHeight: 0,
   });
   const sizeRef = useRef(size);

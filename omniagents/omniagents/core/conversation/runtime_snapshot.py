@@ -90,13 +90,44 @@ def reconcile_runtime_controls(
                 }
         pending = None
         request_id = None
+        payloads = {}
         if item.get("kind") == "approval":
             mcp = content.get("approval_kind") == "mcp"
             pending = mcp_requests if mcp else tools
             request_id = content.get("request_id" if mcp else "call_id")
+            payloads = getattr(
+                session,
+                "pending_mcp_approvals" if mcp else "pending_tool_approvals",
+                {},
+            )
         elif item.get("kind") == "elicitation":
             pending = elicitations
             request_id = content.get("elicitation_id")
+            payloads = getattr(session, "pending_elicitations", {})
+        if (
+            item.get("status") == "started"
+            and pending is not None
+            and request_id in pending
+        ):
+            # The durable item is a history projection, not the full live
+            # prompt. Preserve presentation and expiry details on reconnect
+            # without mutating history or resurrecting an unavailable waiter.
+            payload = payloads.get(request_id, {})
+            details = {
+                key: payload[key]
+                for key in (
+                    "metadata",
+                    "server_label",
+                    "tool_label",
+                    "expires_at",
+                    "timeout_ms",
+                    "persist_response",
+                    "item_id",
+                )
+                if key in payload
+            }
+            if details:
+                item = {**item, "content": {**content, **details}}
         if (
             item.get("status") == "started"
             and pending is not None

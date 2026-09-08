@@ -55,8 +55,7 @@ export const McpApprovalDialog = React.memo<McpApprovalDialogProps>(
       >
         <Box>
           <Text color={Theme.textChrome}>
-            Server:{" "}
-            <Text color={Theme.textSecondary}>{serverLabel}</Text>
+            Server: <Text color={Theme.textSecondary}>{serverLabel}</Text>
           </Text>
         </Box>
 
@@ -71,13 +70,6 @@ export const McpApprovalDialog = React.memo<McpApprovalDialogProps>(
 
         <BaseSelectionList options={DEFAULT_OPTIONS} onSelect={onApprove} />
       </DialogShell>
-    );
-  },
-  (prevProps, nextProps) => {
-    return (
-      prevProps.tool === nextProps.tool &&
-      prevProps.serverLabel === nextProps.serverLabel &&
-      prevProps.arguments === nextProps.arguments
     );
   },
 );

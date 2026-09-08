@@ -42,7 +42,8 @@
     "slice-ansi": "^9.0.0",
     "wrap-ansi": "^9.0.0",
     "ws": "^8.18.0",
-    "zustand": "^5.0.8"
+    "zustand": "^5.0.8",
+    "string-width": "8.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.19",

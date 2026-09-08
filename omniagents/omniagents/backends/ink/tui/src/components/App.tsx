@@ -32,6 +32,7 @@ import {
   useSubagents,
   useTranscriptDetail,
   useActions,
+  useAppStore,
 } from "../store/appStore.js";
 import type {
   ApprovalInfo,
@@ -42,7 +43,8 @@ import { Header } from "./Header.js";
 import { Logo } from "./Logo.js";
 import { MessageListOptimized } from "./MessageListOptimized.js";
 import { StatusIndicator } from "./StatusIndicator.js";
-import { MultiLineInputOptimized } from "./MultiLineInputOptimized.js";
+import { SessionComposer, ComposerDrafts } from "./SessionComposer.js";
+import { SelectionInputContext } from "./shared/BaseSelectionList.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";
 import { McpApprovalDialog } from "./McpApprovalDialog.js";
 import { Preamble } from "./Preamble.js";
@@ -80,7 +82,7 @@ import { Theme } from "../theme.js";
  */
 const ApprovalDialogWrapper = React.memo<{
   approval: ApprovalInfo | null;
-  onApprove: (value: "yes" | "always" | "no") => void;
+  onApprove: (value: "yes" | "always" | "no", requestId?: string) => void;
 }>(
   ({ approval, onApprove }) => {
     if (!approval) {
@@ -90,18 +92,13 @@ const ApprovalDialogWrapper = React.memo<{
 
     return (
       <ApprovalDialog
+        key={approval.call_id}
         tool={approval.tool}
         arguments={approval.arguments}
         metadata={approval.metadata}
-        onApprove={onApprove}
+        onApprove={value => onApprove(value, approval.call_id)}
       />
     );
-  },
-  (prev, next) => {
-    // Only re-render if approval actually changed
-    if (prev.approval === next.approval) return true;
-    if (!prev.approval || !next.approval) return false;
-    return prev.approval.call_id === next.approval.call_id;
   },
 );
 
@@ -112,7 +109,7 @@ const ApprovalDialogWrapper = React.memo<{
  */
 const McpApprovalDialogWrapper = React.memo<{
   approval: McpApprovalInfo | null;
-  onApprove: (value: "yes" | "no") => void;
+  onApprove: (value: "yes" | "no", requestId?: string) => void;
 }>(
   ({ approval, onApprove }) => {
     if (!approval) {
@@ -120,17 +117,13 @@ const McpApprovalDialogWrapper = React.memo<{
     }
     return (
       <McpApprovalDialog
+        key={approval.request_id}
         tool={approval.tool}
         serverLabel={approval.server_label}
         arguments={approval.arguments}
-        onApprove={onApprove}
+        onApprove={value => onApprove(value, approval.request_id)}
       />
     );
-  },
-  (prev, next) => {
-    if (prev.approval === next.approval) return true;
-    if (!prev.approval || !next.approval) return false;
-    return prev.approval.request_id === next.approval.request_id;
   },
 );
 
@@ -141,20 +134,19 @@ const McpApprovalDialogWrapper = React.memo<{
  */
 const ElicitationDialogWrapper = React.memo<{
   elicitation: ElicitationInfo | null;
-  onRespond: (answer: ElicitationAnswer) => void;
+  onRespond: (answer: ElicitationAnswer, requestId?: string) => void;
 }>(
   ({ elicitation, onRespond }) => {
     if (!elicitation || elicitation.kind === "question") {
       return null;
     }
     return (
-      <ElicitationDialog elicitation={elicitation} onRespond={onRespond} />
+      <ElicitationDialog
+        key={elicitation.elicitation_id}
+        elicitation={elicitation}
+        onRespond={answer => onRespond(answer, elicitation.elicitation_id)}
+      />
     );
-  },
-  (prev, next) => {
-    if (prev.elicitation === next.elicitation) return true;
-    if (!prev.elicitation || !next.elicitation) return false;
-    return prev.elicitation.elicitation_id === next.elicitation.elicitation_id;
   },
 );
 
@@ -209,9 +201,9 @@ const InlineStatusIndicator = React.memo(() => {
  */
 const ScrollableMessageList: React.FC<{
   availableHeight: number;
-  onApprove: (value: "yes" | "always" | "no") => void;
-  onMcpApprove: (value: "yes" | "no") => void;
-  onElicit: (answer: ElicitationAnswer) => void;
+  onApprove: (value: "yes" | "always" | "no", requestId?: string) => void;
+  onMcpApprove: (value: "yes" | "no", requestId?: string) => void;
+  onElicit: (answer: ElicitationAnswer, requestId?: string) => void;
 }> = ({ availableHeight, onApprove, onMcpApprove, onElicit }) => {
   const messages = useMessages();
   const approval = useApproval();
@@ -367,6 +359,45 @@ export const App: React.FC<AppProps> = ({
   // Text queued for the composer (the Files screen's @path mention
   // bridge): consumed by MultiLineInputOptimized on the next render.
   const [pendingInsert, setPendingInsert] = useState<string | null>(null);
+  const composerDrafts = React.useRef(new ComposerDrafts()).current;
+  const promptId =
+    approval?.call_id ??
+    mcpApproval?.request_id ??
+    (elicitation?.kind !== "question"
+      ? elicitation?.elicitation_id
+      : undefined);
+  const promptKey = JSON.stringify([sessionId, promptId]);
+  const promptAttention = React.useRef({ key: "", held: false });
+  if (promptAttention.current.key !== promptKey) {
+    promptAttention.current = {
+      key: promptKey,
+      held:
+        !!promptId &&
+        !!composerDrafts
+          .get(sessionId)
+          .current?.lines.some((line) => line.length > 0),
+    };
+  }
+  const [focusedPrompt, setFocusedPrompt] = useState<string | null>(null);
+  const promptNeedsFocus =
+    promptAttention.current.held && focusedPrompt !== promptKey;
+  useKeypress(
+    (input, key) => {
+      if (key.ctrl && input === "y") {
+        setFocusedPrompt(promptKey);
+        return true;
+      }
+      return false;
+    },
+    {
+      isActive:
+        promptNeedsFocus &&
+        screen === "chat" &&
+        activePanel === null &&
+        !panelMenuOpen,
+      priority: KeypressPriority.High,
+    },
+  );
 
   // Unread stars per tab — "changed since you last looked", the
   // browser/IDE modified-dot. Distinct from ⚠ (needs a decision).
@@ -441,14 +472,14 @@ export const App: React.FC<AppProps> = ({
   // loop broadcasts ui.goal.update on every state change, but if a goal
   // is already running when the TUI reconnects we'd otherwise show an
   // empty panel until the next turn boundary. One read-only RPC fills it.
-  const goalSeedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!client || !connected || !sessionId) return;
-    if (goalSeedRef.current === sessionId) return;
-    goalSeedRef.current = sessionId;
+    if (!client || !rpcReady || !sessionId) return;
+    let cancelled = false;
+    const previous = useAppStore.getState().goal;
     client
       .serverCall("goal.status", {}, sessionId)
       .then((res) => {
+        if (cancelled || useAppStore.getState().goal !== previous) return;
         const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
         if (snap === null || snap === undefined) {
           actions.setGoal(null);
@@ -459,22 +490,25 @@ export const App: React.FC<AppProps> = ({
       .catch(() => {
         // goal.status may not be registered on every agent — silently
         // ignore so the panel just stays empty.
-        goalSeedRef.current = null;
+        // A later reconnect will retry this read.
       });
-  }, [client, connected, sessionId, actions]);
+    return () => {
+      cancelled = true;
+    };
+  }, [client, rpcReady, sessionId, actions]);
 
   // Seed the wakeup panel on connect / session-switch. Same rationale
   // as the goal seed above — picks up an active schedule that was
   // already running before we attached. wakeup.status may not be
   // registered on every agent; silently ignore so the panel stays empty.
-  const wakeupSeedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!client || !connected || !sessionId) return;
-    if (wakeupSeedRef.current === sessionId) return;
-    wakeupSeedRef.current = sessionId;
+    if (!client || !rpcReady || !sessionId) return;
+    let cancelled = false;
+    const previous = useAppStore.getState().wakeup;
     client
       .serverCall("wakeup.status", {}, sessionId)
       .then((res) => {
+        if (cancelled || useAppStore.getState().wakeup !== previous) return;
         const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
         if (snap === null || snap === undefined) {
           actions.setWakeup(null);
@@ -483,40 +517,46 @@ export const App: React.FC<AppProps> = ({
         }
       })
       .catch(() => {
-        wakeupSeedRef.current = null;
+        // A later reconnect will retry this read.
       });
-  }, [client, connected, sessionId, actions]);
+    return () => {
+      cancelled = true;
+    };
+  }, [client, rpcReady, sessionId, actions]);
 
-  const loopSeedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!client || !connected || !sessionId) return;
-    if (loopSeedRef.current === sessionId) return;
-    loopSeedRef.current = sessionId;
+    if (!client || !rpcReady || !sessionId) return;
+    let cancelled = false;
+    const previous = useAppStore.getState().loops;
     client
       .serverCall("loop.status", {}, sessionId)
       .then((res) => {
+        if (cancelled || useAppStore.getState().loops !== previous) return;
         const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
         if (Array.isArray(snap)) {
           actions.setLoops(snap as any);
         }
       })
       .catch(() => {
-        loopSeedRef.current = null;
+        // A later reconnect will retry this read.
       });
-  }, [client, connected, sessionId, actions]);
+    return () => {
+      cancelled = true;
+    };
+  }, [client, rpcReady, sessionId, actions]);
 
   // Seed the workers panel on connect / session-switch. Same rationale
   // as the goal seed above — picks up workers that were already running
   // before we attached. workers.list may not be registered on every
   // agent; silently ignore so the panel stays empty.
-  const workersSeedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!client || !connected || !sessionId) return;
-    if (workersSeedRef.current === sessionId) return;
-    workersSeedRef.current = sessionId;
+    if (!client || !rpcReady || !sessionId) return;
+    let cancelled = false;
+    const previous = useAppStore.getState().subagents;
     client
       .serverCall("workers.list", {}, sessionId)
       .then((res) => {
+        if (cancelled || useAppStore.getState().subagents !== previous) return;
         const snap = (res as { snapshot?: unknown } | undefined)?.snapshot;
         if (Array.isArray(snap)) {
           actions.setSubagents(snap as any);
@@ -525,9 +565,12 @@ export const App: React.FC<AppProps> = ({
         }
       })
       .catch(() => {
-        workersSeedRef.current = null;
+        // A later reconnect will retry this read.
       });
-  }, [client, connected, sessionId, actions]);
+    return () => {
+      cancelled = true;
+    };
+  }, [client, rpcReady, sessionId, actions]);
 
   // Reset dock dismissal sets on session change so the freshly bound
   // session starts with the panels showing their full server-side
@@ -674,30 +717,30 @@ export const App: React.FC<AppProps> = ({
 
   // Handle approval
   const handleApproval = useCallback(
-    (value: "yes" | "always" | "no") => {
+    (value: "yes" | "always" | "no", requestId?: string) => {
       const approved = value !== "no";
       const alwaysApprove = value === "always";
-      approveToolCall(approved, alwaysApprove);
+      approveToolCall(approved, alwaysApprove, requestId ?? approval?.call_id);
     },
-    [approveToolCall],
+    [approveToolCall, approval?.call_id],
   );
 
   // Hosted-MCP approval — parallel handler. No "always" affordance.
   const handleMcpApproval = useCallback(
-    (value: "yes" | "no") => {
-      approveMcpToolCall(value === "yes");
+    (value: "yes" | "no", requestId?: string) => {
+      approveMcpToolCall(value === "yes", requestId ?? mcpApproval?.request_id);
     },
-    [approveMcpToolCall],
+    [approveMcpToolCall, mcpApproval?.request_id],
   );
 
   // Structured user elicitation — dialog answers (confirm/select/url and
   // typed declines for unsupported kinds) route straight through; the
   // question kind is answered by the submit interceptor below.
   const handleElicitation = useCallback(
-    (answer: ElicitationAnswer) => {
-      respondElicitation(answer);
+    (answer: ElicitationAnswer, requestId?: string) => {
+      respondElicitation(answer, requestId ?? elicitation?.elicitation_id);
     },
-    [respondElicitation],
+    [respondElicitation, elicitation?.elicitation_id],
   );
 
   // Handle slash commands
@@ -834,9 +877,9 @@ export const App: React.FC<AppProps> = ({
 
   // Handle user input
   const handleSubmit = useCallback(
-    async (message: string) => {
+    async (message: string): Promise<boolean | void> => {
       if (!client || !connected) {
-        return;
+        return false;
       }
 
       // Snapshot every currently-terminal dock item into the dismissed
@@ -880,11 +923,10 @@ export const App: React.FC<AppProps> = ({
           content: message,
           timestamp: new Date(),
         });
-        await respondElicitation({
+        return await respondElicitation({
           action: "accept",
           value: { text: message },
         });
-        return;
       }
 
       // Check for slash command
@@ -922,15 +964,19 @@ export const App: React.FC<AppProps> = ({
       // sendMessage's mint-on-first-call only works for direct starts.
       if ((thinking || queuedMessages.length > 0) && sessionId) {
         try {
-          await client.enqueueMessage(sessionId, message, {
+          const queued = await client.enqueueMessage(sessionId, message, {
             triggerRun: true,
             role: "user",
             source: "ink",
           });
+          if (!queued.ok) throw new Error(queued.reason || "Message was not queued");
         } catch (err) {
           const errorMessage =
             err instanceof Error ? err.message : "Failed to enqueue message";
-          actions.setThinking(false, `Error: ${errorMessage}`);
+          if (useAppStore.getState().sessionId === sessionId) {
+            actions.setStatus(`Error: ${errorMessage}`, "error", false);
+          }
+          return false;
         }
         return;
       }
@@ -951,20 +997,27 @@ export const App: React.FC<AppProps> = ({
           // history-load fetch — the server may not have persisted the
           // user message yet, and an empty fetch would clobber the
           // optimistic addMessage above.
-          actions.markSessionAsMinted(response.session_id);
-          actions.setSessionId(response.session_id);
+          composerDrafts.adoptSession(response.session_id);
+          if (useAppStore.getState().sessionId === sessionId) {
+            actions.markSessionAsMinted(response.session_id);
+            actions.setSessionId(response.session_id);
+          }
         }
       } catch (err) {
         // Show error in status indicator instead of just logging
         const errorMessage =
           err instanceof Error ? err.message : "Failed to send message";
-        actions.setThinking(false, `Error: ${errorMessage}`);
+        if (useAppStore.getState().sessionId === sessionId) {
+          actions.setThinking(false, `Error: ${errorMessage}`);
+        }
+        return false;
       }
     },
     [
       client,
       connected,
       sendMessage,
+      composerDrafts,
       sessionId,
       handleSlashCommand,
       thinking,
@@ -1291,12 +1344,18 @@ export const App: React.FC<AppProps> = ({
                 />
               </Box>
             ) : (
-              <ScrollableMessageList
-                availableHeight={availableTerminalHeight}
-                onApprove={handleApproval}
-                onMcpApprove={handleMcpApproval}
-                onElicit={handleElicitation}
-              />
+              <SelectionInputContext.Provider
+                value={
+                  !promptNeedsFocus && activePanel === null && !panelMenuOpen
+                }
+              >
+                <ScrollableMessageList
+                  availableHeight={availableTerminalHeight}
+                  onApprove={handleApproval}
+                  onMcpApprove={handleMcpApproval}
+                  onElicit={handleElicitation}
+                />
+              </SelectionInputContext.Provider>
             )}
           </Box>
 
@@ -1320,20 +1379,33 @@ export const App: React.FC<AppProps> = ({
                 keyboard-driven and reclaims the rows. */}
             {screen === "chat" && (
               <Box paddingRight={1}>
-                <MultiLineInputOptimized
+                <SessionComposer
+                  drafts={composerDrafts}
+                  sessionId={sessionId}
+                  replyId={
+                    escalation
+                      ? `escalation:${escalation.request_id}`
+                      : elicitation?.kind === "question"
+                        ? `question:${elicitation.elicitation_id}`
+                        : undefined
+                  }
                   onSubmit={handleSubmit}
                   disabled={
-                    !connected ||
-                    !!approval ||
-                    !!mcpApproval ||
+                    (!!promptId && !promptNeedsFocus) ||
                     activePanel !== null ||
                     panelMenuOpen
                   }
                   history={messageHistory}
+                  disableSubmit={!rpcReady}
                   pendingInsert={pendingInsert}
                   onInsertConsumed={() => setPendingInsert(null)}
                 />
               </Box>
+            )}
+            {screen === "chat" && promptNeedsFocus && (
+              <Text color={Theme.textSecondary}>
+                A decision is waiting — Ctrl+Y to review. Your draft is saved.
+              </Text>
             )}
 
             {/* Blocking prompts render BELOW the input — they are the

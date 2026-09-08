@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { EventEmitter } from "node:events";
-import { describe, expect, it, beforeAll, afterEach } from "vitest";
+import { describe, expect, it, beforeAll, afterEach, vi } from "vitest";
 
 import type { RPCClient } from "../../rpc/client.js";
 import { useAppStore } from "../../store/appStore.js";
@@ -60,7 +60,7 @@ afterEach(() => {
 
 function mountHarness(client: FakeClient) {
   let respondElicitation:
-    | ((answer: ElicitationAnswer) => Promise<void>)
+    | ((answer: ElicitationAnswer, expectedId?: string) => Promise<boolean>)
     | null = null;
   const Harness = ({ rpcClient }: { rpcClient: RPCClient }) => {
     const api = useMessagesOptimized({ client: rpcClient, rpcReady: true });
@@ -85,6 +85,56 @@ function mountHarness(client: FakeClient) {
 }
 
 describe("elicitation queue", () => {
+  it("ignores a late rejection after another client resolves the prompt", async () => {
+    const client = new FakeClient();
+    const getRespond = mountHarness(client);
+    await flush();
+    client.emit("elicitation_requested", { elicitation_id: "race", kind: "confirm", message: "Proceed?", session_id: "s" });
+    await flush();
+    let reject!: (error: Error) => void;
+    vi.spyOn(client, "elicitationResponse").mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    const sending = getRespond()!({ action: "accept" });
+    client.emit("elicitation_resolved", { elicitation_id: "race", status: "accepted", session_id: "s" });
+    await flush();
+    const status = useAppStore.getState().status;
+    reject(new Error("Already resolved by another client"));
+    await sending;
+    expect(useAppStore.getState().elicitation).toBeNull();
+    expect(useAppStore.getState().status).toBe(status);
+  });
+  it("does not answer a newer prompt through a callback bound to the old one", async () => {
+    const client = new FakeClient(); const getRespond = mountHarness(client); await flush();
+    client.emit("elicitation_requested", { elicitation_id: "old", kind: "confirm", message: "old" });
+    client.emit("elicitation_requested", { elicitation_id: "new", kind: "confirm", message: "new" });
+    await flush();
+    client.emit("elicitation_resolved", { elicitation_id: "old", status: "accepted" });
+    await getRespond()!({ action: "accept" }, "old");
+    expect(client.elicitationResponses).toHaveLength(0);
+    expect(useAppStore.getState().elicitation?.elicitation_id).toBe("new");
+  });
+
+  it("keeps an answerable prompt after a failed send and allows retry", async () => {
+    const client = new FakeClient();
+    const getRespond = mountHarness(client);
+    await flush();
+    client.emit("elicitation_requested", {
+      elicitation_id: "retry",
+      kind: "confirm",
+      message: "Proceed?",
+      session_id: "s",
+    });
+    await flush();
+    const send = vi
+      .spyOn(client, "elicitationResponse")
+      .mockRejectedValueOnce(new Error("connection lost"));
+    await getRespond()!({ action: "accept" });
+    expect(useAppStore.getState().elicitation?.elicitation_id).toBe("retry");
+    expect(useAppStore.getState().status).toContain("Please retry");
+    await getRespond()!({ action: "accept" });
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(useAppStore.getState().elicitation).toBeNull();
+  });
+
   it("queues prompts, answers in order, and advances on resolution", async () => {
     const client = new FakeClient();
     const getRespond = mountHarness(client);

@@ -1,4 +1,7 @@
-import React, { useCallback, useEffect, useState } from "react";
+import { ConnectionClosedError, RpcTimeoutError } from "../rpc/lifecycle.js";
+import { useRequestScope } from "../hooks/useRequestScope.js";
+import { WorkspaceView } from "./WorkspaceView.js";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -58,7 +61,15 @@ const MAX_IMPACT_PATHS = 8;
 // git_confirmation_required` with a single-use token; the y/n prompt here
 // echoes it back. Discard/reset stay agent-side for now — the panel only
 // exposes non-destructive writes.
-export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
+export const GitPanel = (props: Props) => (
+  <WorkspaceView client={props.client} active={props.focused}>
+    <GitPanelContent {...props} />
+  </WorkspaceView>
+);
+
+const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
+  const scope = useRequestScope();
+  const operationPending = useRef(false);
   const [repos, setRepos] = useState<GitRepository[]>([]);
   const [repoIndex, setRepoIndex] = useState(0);
   const [status, setStatus] = useState<GitStatusResult | null>(null);
@@ -109,6 +120,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
   const loadStatus = useCallback(
     async (repoOverride?: string) => {
       if (!client || !environmentId) return;
+      const current = scope.begin("status");
       const target = repoOverride ?? repo;
       setLoading(true);
       setError(null);
@@ -116,6 +128,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
         let repoList = repos;
         if (repoList.length === 0 || repoOverride === undefined) {
           const listed = await client.gitListRepositories(environmentId);
+          if (!current()) return;
           repoList = listed.repositories;
           setRepos(repoList);
         }
@@ -128,21 +141,35 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
         const result = await client.gitStatus(environmentId, statusRepo, {
           includeUntracked: true,
         });
+        if (!current()) return;
         setStatus(result);
       } catch (e) {
+        if (!current()) return;
         setError((e as Error).message ?? String(e));
       } finally {
-        setLoading(false);
+        if (current()) setLoading(false);
       }
     },
     [client, environmentId, repo, repos],
   );
+
+  useEffect(() => {
+    if (!client) return;
+    const refresh = () => {
+      void loadStatus();
+    };
+    client.on("rpc_ready", refresh);
+    return () => {
+      client.off("rpc_ready", refresh);
+    };
+  }, [client, loadStatus]);
 
   // Load on focus; drop the stale view on unfocus so reopening refetches.
   useEffect(() => {
     if (!focused) {
       setDiffFile(null);
       setDiffForPath(null);
+      scope.begin("diff");
       setDiffError(null);
       setConflict(null);
       setBranchMode(false);
@@ -173,6 +200,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
   const loadDiff = useCallback(
     async (row: GitFileRow) => {
       if (!client || !environmentId || !repo) return;
+      const current = scope.begin("diff");
       setDiffForPath(row.path);
       setDiffFile(null);
       setDiffError(null);
@@ -190,6 +218,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           const result = await client.gitConflicts(environmentId, repo, [
             row.path,
           ]);
+          if (!current()) return;
           const found =
             result.conflicts.find((c) => c.path === row.path) ??
             result.conflicts[0] ??
@@ -200,9 +229,10 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
             setConflict(found);
           }
         } catch (e) {
+          if (!current()) return;
           setDiffError((e as Error).message ?? String(e));
         } finally {
-          setDiffLoading(false);
+          if (current()) setDiffLoading(false);
         }
         return;
       }
@@ -216,6 +246,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           mode,
           paths: [row.renamedFrom ?? row.path, row.path],
         });
+        if (!current()) return;
         const file =
           result.files.find((f) => f.path === row.path) ??
           result.files[0] ??
@@ -226,9 +257,10 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           setDiffFile(file);
         }
       } catch (e) {
+        if (!current()) return;
         setDiffError((e as Error).message ?? String(e));
       } finally {
-        setDiffLoading(false);
+        if (current()) setDiffLoading(false);
       }
     },
     [client, environmentId, repo],
@@ -252,14 +284,19 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
   // phase in the status row while the panel is open.
   useEffect(() => {
     if (!focused || !client) return;
-    const onProgress = (params: { operation: string; phase: string }) => {
+    const onProgress = (params: {
+      operation: string;
+      phase: string;
+      repo?: string;
+    }) => {
+      if (!operationPending.current || params.repo !== repo) return;
       setStatusLine(`${params.operation}: ${params.phase}`);
     };
     client.on("git_operation_progress", onProgress);
     return () => {
       client.off("git_operation_progress", onProgress);
     };
-  }, [focused, client]);
+  }, [focused, client, repo]);
 
   /**
    * Run a write/network operation: report progress, refresh status on
@@ -268,13 +305,19 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
    */
   const runOp = useCallback(
     async (label: string, op: (token?: string) => Promise<unknown>) => {
+      if (operationPending.current) return;
+      operationPending.current = true;
+      const current = scope.begin("operation");
       setBusy(true);
       setStatusLine(`${label}…`);
       try {
         await op();
+        if (!current()) return;
         setStatusLine(`${label}: done`);
         await loadStatus();
+        if (!current()) return;
       } catch (e) {
+        if (!current()) return;
         const confirmation = confirmationOf(e);
         if (confirmation !== null) {
           setConfirm({
@@ -287,9 +330,14 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           setStatusLine(null);
           return;
         }
-        setStatusLine(`${label} failed: ${(e as Error).message ?? String(e)}`);
+        setStatusLine(
+          e instanceof ConnectionClosedError || e instanceof RpcTimeoutError
+            ? `${label}: outcome unknown; refresh status before retrying`
+            : `${label} failed: ${(e as Error).message ?? String(e)}`,
+        );
       } finally {
-        setBusy(false);
+        operationPending.current = false;
+        if (current()) setBusy(false);
       }
     },
     [loadStatus],
@@ -297,17 +345,20 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
 
   const openBranches = useCallback(async () => {
     if (!client || !environmentId || !repo) return;
+    const current = scope.begin("branches");
     setBranchMode(true);
     setBranchIndex(0);
     setBranchError(null);
     setBranchLoading(true);
     try {
       const result = await client.gitListBranches(environmentId, repo);
+      if (!current()) return;
       setBranches(orderBranches(result.branches));
     } catch (e) {
+      if (!current()) return;
       setBranchError((e as Error).message ?? String(e));
     } finally {
-      setBranchLoading(false);
+      if (current()) setBranchLoading(false);
     }
   }, [client, environmentId, repo]);
 
@@ -416,6 +467,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
 
   const openLog = useCallback(async () => {
     if (!client || !environmentId || !repo) return;
+    const current = scope.begin("log");
     setLogMode(true);
     setLogIndex(0);
     setLogDetail(false);
@@ -425,11 +477,13 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
       const result = await client.gitLog(environmentId, repo, {
         maxCount: 30,
       });
+      if (!current()) return;
       setCommits(result.commits);
     } catch (e) {
+      if (!current()) return;
       setLogError((e as Error).message ?? String(e));
     } finally {
-      setLogLoading(false);
+      if (current()) setLogLoading(false);
     }
   }, [client, environmentId, repo]);
 
@@ -527,16 +581,19 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
 
   const openWorktrees = useCallback(async () => {
     if (!client || !environmentId || !repo) return;
+    const current = scope.begin("worktrees");
     setWorktreesMode(true);
     setWorktreesError(null);
     setWorktreesLoading(true);
     try {
       const result = await client.gitListWorktrees(environmentId, repo);
+      if (!current()) return;
       setWorktrees(result.worktrees);
     } catch (e) {
+      if (!current()) return;
       setWorktreesError((e as Error).message ?? String(e));
     } finally {
-      setWorktreesLoading(false);
+      if (current()) setWorktreesLoading(false);
     }
   }, [client, environmentId, repo]);
 
@@ -648,6 +705,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
       if (key.escape || input === "q") {
         setDiffFile(null);
         setDiffForPath(null);
+        scope.begin("diff");
         setDiffError(null);
         setConflict(null);
         return true;
@@ -688,8 +746,9 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
         void loadStatus();
         return true;
       }
-      if (input === "]" && repos.length > 1) {
+      if (input === "]" && repos.length > 1 && !operationPending.current) {
         const next = (repoIndex + 1) % repos.length;
+        setStatus(null);
         setRepoIndex(next);
         setSelectedIndex(0);
         void loadStatus(repos[next]!.repo);
@@ -835,9 +894,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
             {repo === "." ? (repos[repoIndex]?.root ?? ".") : repo}
           </Text>
         )}
-        {status && (
-          <Text color={Theme.textChrome}> {headline(status)}</Text>
-        )}
+        {status && <Text color={Theme.textChrome}> {headline(status)}</Text>}
         {loading && (
           <Text color={Theme.stateActive}>
             {" "}
@@ -854,9 +911,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           <Text color={Theme.textChrome}> staged · </Text>
           <Text color={Theme.stateActive}>{counts.unstaged}</Text>
           <Text color={Theme.textChrome}> unstaged · </Text>
-          <Text color={Theme.textChrome}>
-            {counts.untracked} untracked
-          </Text>
+          <Text color={Theme.textChrome}>{counts.untracked} untracked</Text>
           {counts.conflicted > 0 && (
             <>
               <Text color={Theme.textChrome}> · </Text>
@@ -923,11 +978,12 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
               </Text>
             )}
           </Box>
-          {branchError && (
-            <Text color={Theme.stateFailed}>{branchError}</Text>
-          )}
+          {branchError && <Text color={Theme.stateFailed}>{branchError}</Text>}
           {branches.slice(0, MAX_VISIBLE_FILES).map((branch, idx) => (
-            <SelectableRow key={branch.ref} selected={idx === branchIndex && !newBranchMode}>
+            <SelectableRow
+              key={branch.ref}
+              selected={idx === branchIndex && !newBranchMode}
+            >
               <RowText
                 color={
                   branch.current
@@ -942,10 +998,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
                 {branch.name}
               </RowText>
               {branch.upstream && !branch.remote && (
-                <RowText color={Theme.textChrome}>
-                  {" "}
-                  → {branch.upstream}
-                </RowText>
+                <RowText color={Theme.textChrome}> → {branch.upstream}</RowText>
               )}
               {branch.category === "worker" && (
                 <RowText color={Theme.stateBlocked}> (worker)</RowText>
@@ -1015,8 +1068,8 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           )}
           {resetPrompt && commits[logIndex] ? (
             <Text color={Theme.stateBlocked}>
-              reset to {commits[logIndex]!.short_oid}: s soft · m mixed · h
-              hard · esc cancel
+              reset to {commits[logIndex]!.short_oid}: s soft · m mixed · h hard
+              · esc cancel
             </Text>
           ) : (
             <Text color={Theme.textChrome}>
@@ -1055,9 +1108,7 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
                   locked{wt.lock_reason ? `: ${wt.lock_reason}` : ""}
                 </Text>
               )}
-              {wt.prunable && (
-                <Text color={Theme.stateBlocked}> prunable</Text>
-              )}
+              {wt.prunable && <Text color={Theme.stateBlocked}> prunable</Text>}
               {wt.category === "worker" && (
                 <Text color={Theme.stateBlocked}> (worker)</Text>
               )}
@@ -1079,7 +1130,9 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
             <SelectableRow key={row.path} selected={idx === selectedIndex}>
               <RowText color={rowColor(row)}>{row.xy} </RowText>
               <RowText color={Theme.textPrimary}>
-                {row.renamedFrom ? `${row.renamedFrom} → ${row.path}` : row.path}
+                {row.renamedFrom
+                  ? `${row.renamedFrom} → ${row.path}`
+                  : row.path}
               </RowText>
             </SelectableRow>
           ))}
@@ -1091,8 +1144,8 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
           {!commitMode && !confirm && (
             <Text color={Theme.textChrome}>
               ↑↓ select · enter diff · s stage · u unstage · x discard · c
-              commit · b branches · l log · w worktrees · f fetch · p pull ·
-              P push · r refresh
+              commit · b branches · l log · w worktrees · f fetch · p pull · P
+              push · r refresh
               {repos.length > 1 ? " · ] repo" : ""} · esc exit
             </Text>
           )}
@@ -1103,16 +1156,12 @@ export const GitPanel = React.memo(({ focused, onUnfocus, client }: Props) => {
             <Text color={Theme.stateActive} bold>
               {diffForPath}
             </Text>
-            {conflict && (
-              <Text color={Theme.stateFailed}> conflict</Text>
-            )}
+            {conflict && <Text color={Theme.stateFailed}> conflict</Text>}
             {diffFile && (
               <Text color={Theme.textChrome}>
                 {"  "}
                 {diffFile.added_lines != null && (
-                  <Text color={Theme.stateDone}>
-                    +{diffFile.added_lines}
-                  </Text>
+                  <Text color={Theme.stateDone}>+{diffFile.added_lines}</Text>
                 )}{" "}
                 {diffFile.deleted_lines != null && (
                   <Text color={Theme.stateFailed}>
@@ -1166,7 +1215,12 @@ const Panel = ({
   borderColor: string;
   children: React.ReactNode;
 }) => (
-  <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor={borderColor}>
+  <Box
+    flexDirection="column"
+    paddingX={1}
+    borderStyle="round"
+    borderColor={borderColor}
+  >
     {children}
   </Box>
 );
