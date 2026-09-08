@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -54,6 +55,34 @@ def test_v2_generation_is_separate_and_checked_in():
     assert document["info"]["version"] == GUI_PROTOCOL_VERSION
     assert "/v2/" in schema["$id"]
     assert "environment_selection" in schema["$defs"]["start_run"]["required"]
+
+
+def test_generated_typescript_supports_strict_indexed_access():
+    ui = ROOT / "omniagents/backends/web/ui"
+    compiler = ui / "node_modules/.bin/tsc"
+    if not compiler.exists():
+        pytest.skip("Install web UI dependencies to verify generated TypeScript")
+    result = subprocess.run(
+        [
+            str(compiler),
+            "--noEmit",
+            "--strict",
+            "--noUncheckedIndexedAccess",
+            "--skipLibCheck",
+            "--target",
+            "esnext",
+            "--moduleResolution",
+            "bundler",
+            "--module",
+            "esnext",
+            "src/protocol/generated/gui-v2.ts",
+        ],
+        cwd=ui,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_legacy_v1_candidate_generation_remains_unchanged():

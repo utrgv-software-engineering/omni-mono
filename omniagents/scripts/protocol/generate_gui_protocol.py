@@ -2372,8 +2372,12 @@ export function supportsGuiProtocolVersion(serverVersion: unknown): boolean {
   if (typeof serverVersion !== "string" || serverVersion.trim() !== serverVersion || !/^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$/.test(serverVersion)) return false;
   const server = serverVersion.split(".").map(Number);
   const client = GUI_PROTOCOL_VERSION.split(".").map(Number);
-  if (!server.every(Number.isSafeInteger) || server[0] !== client[0]) return false;
-  return server[1] > client[1] || (server[1] === client[1] && server[2] >= client[2]);
+  const [serverMajor, serverMinor, serverPatch] = server;
+  const [clientMajor, clientMinor, clientPatch] = client;
+  if (serverMajor === undefined || serverMinor === undefined || serverPatch === undefined ||
+      clientMajor === undefined || clientMinor === undefined || clientPatch === undefined) return false;
+  if (!server.every(Number.isSafeInteger) || serverMajor !== clientMajor) return false;
+  return serverMinor > clientMinor || (serverMinor === clientMinor && serverPatch >= clientPatch);
 }
 
 /** Validate the required handshake shape before reading capabilities. */
