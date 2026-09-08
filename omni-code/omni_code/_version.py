@@ -1,2 +1,2 @@
-__version__ = "0.6.28"
+__version__ = "0.6.29"
 __version_info__ = tuple(int(x) for x in __version__.split("."))
