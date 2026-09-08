@@ -235,3 +235,39 @@ async def test_host_stop_terminates_shell_children_that_ignore_sigterm(tmp_path,
         if task is not None:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Uses Linux subreaper")
+@pytest.mark.asyncio
+async def test_stop_reaps_descendant_that_started_its_own_session(tmp_path, owner):
+    workspace = HostWorkspace(str(tmp_path), scratch_root=str(tmp_path / "scratch"))
+    pidfile = tmp_path / "escaped.pid"
+    child = (
+        "import os,sys,time; from pathlib import Path; "
+        "Path(sys.argv[1]).write_text(str(os.getpid())); time.sleep(30)"
+    )
+    parent = (
+        "import subprocess,sys,time; "
+        "subprocess.Popen([sys.executable,'-c',sys.argv[1],sys.argv[2]], start_new_session=True); "
+        "time.sleep(30)"
+    )
+    task = asyncio.create_task(
+        workspace.exec([sys.executable, "-c", parent, child, str(pidfile)], shell=False)
+    )
+    try:
+        async with asyncio.timeout(5):
+            while not pidfile.exists():
+                await asyncio.sleep(0.01)
+        task.cancel()
+        owner.release()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 10)
+        assert not running(int(pidfile.read_text()))
+        assert owner.released
+        reserve_run(owner.store, "thread").release()
+    finally:
+        if pidfile.exists() and running(int(pidfile.read_text())):
+            os.kill(int(pidfile.read_text()), signal.SIGKILL)
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

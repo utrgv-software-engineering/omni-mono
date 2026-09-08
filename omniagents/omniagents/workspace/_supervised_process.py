@@ -6,6 +6,7 @@ does not mean an operation had no effects. Nothing here releases a run owner.
 
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -37,6 +38,15 @@ class SupervisedProcess:
     async def _close_when_finished(self):
         try:
             await self._process.wait()
+            if self._owner is not None and self._owner.closing:
+                # A bounded stop may return before the supervisor finishes.
+                # Its eventual durable reaping evidence can retire the owner.
+                try:
+                    self._owner.release()
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "Command stopped but run ownership release needs retry"
+                    )
         finally:
             if self._control is not None:
                 os.close(self._control)
@@ -108,6 +118,8 @@ async def supervised_process(command, *, scratch_root, **kwargs):
         return journal
 
     journal = await asyncio.to_thread(prepare)
+    if owner is not None:
+        owner.record_recovery_scope("host", journal=journal)
     control_read = control_write = ready_read = ready_write = None
     process = None
     adapter = None

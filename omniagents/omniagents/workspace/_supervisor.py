@@ -100,6 +100,12 @@ def supervise(control, ready, path, command):
                 if pid != child.pid:
                     waited, _ = os.waitpid(pid, os.WNOHANG)
                     remaining |= waited == 0
+                    if waited == 0 and reason is not None:
+                        # A child may have called setsid(), escaping the
+                        # command group. As subreaper we still own adopted
+                        # descendants. An unreaped direct child pins its PID;
+                        # no other waiter can recycle it between wait and kill.
+                        os.kill(pid, signal.SIGKILL)
             if root is not None and not remaining:
                 # Orphans are adopted before their parent's exit is observable.
                 # Re-snapshot after reaping parents: a grandchild may have just
@@ -121,7 +127,10 @@ def supervise(control, ready, path, command):
             if deadline is not None and time.monotonic() >= deadline:
                 record.update(state="cleanup_unconfirmed", reason=reason)
                 save(path, record)
-                return
+                # Keep supervising until every descendant is actually reaped.
+                # A temporary cleanup delay must not discard the only executor
+                # capable of proving that the session can be recovered.
+                deadline = None
     except BaseException as error:
         record.update(
             state="cleanup_unconfirmed" if child else "not_started",

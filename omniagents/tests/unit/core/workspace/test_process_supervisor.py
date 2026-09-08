@@ -130,12 +130,19 @@ asyncio.run(main())
         await eventually(lambda: not running(final["supervisor_pid"]))
         assert not running(child)
         assert not running(final["command_pid"])
-        # Cleanup evidence is NOT authority to repeat an operation with unknown
-        # effects. A newly started runtime still cannot seize this session.
+        # A bare reservation still cannot steal ownership. Recovery verifies
+        # process death plus cleanup, and permits a new run without replay.
         store = SqliteConversationStore(path=str(tmp_path / "owner.db"))
         try:
             with pytest.raises(RuntimeError, match="unresolved runtime owner"):
                 reserve_run(store, "thread")
+            from omniagents.core.runtime.ownership_recovery import recover_runtime_owner
+
+            result = recover_runtime_owner(store, "thread")
+            assert result["recovered"] and result["mode"] == "verified"
+            next_owner = reserve_run(store, "thread")
+            assert next_owner.generation == 2
+            next_owner.release()
         finally:
             store.close()
     finally:
@@ -256,7 +263,7 @@ async def test_cancellation_during_supervisor_publication_retires_command(
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_detached_survivor_is_unknown_and_blocks_run_release(tmp_path):
+async def test_detached_descendant_is_reaped_and_run_releases(tmp_path):
     store = SqliteConversationStore(path=str(tmp_path / "owner.db"))
     ConversationRecorder(store).ensure_thread("thread", project_legacy_history=False)
     owner = reserve_run(store, "thread")
@@ -279,17 +286,13 @@ async def test_detached_survivor_is_unknown_and_blocks_run_release(tmp_path):
         )
         detached_pid = int((tmp_path / "detached.pid").read_text())
         task.cancel()
-        with pytest.raises(RuntimeError, match="outcome is unknown"):
+        with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 8)
-        assert running(detached_pid)
+        assert not running(detached_pid)
         owner.release()
-        assert owner.execution_uncertain and not owner.released
-        with pytest.raises(RuntimeError, match="unresolved runtime owner"):
-            reserve_run(store, "thread")
-        await eventually(
-            lambda: json.loads(journals(tmp_path)[0].read_text())["state"]
-            == "cleanup_unconfirmed"
-        )
+        assert owner.released
+        reserve_run(store, "thread").release()
+        assert json.loads(journals(tmp_path)[0].read_text())["descendants_reaped"]
     finally:
         if detached_pid is not None and running(detached_pid):
             # This test's 90-second child is still alive throughout the bounded

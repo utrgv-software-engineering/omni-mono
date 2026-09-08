@@ -1,8 +1,7 @@
 """Exclusive durable run reservations, not time-based leases.
 
-Only the holder can release a reservation after its worker stops. A crash leaves
-it reserved: elapsed time, a missing local task, or a terminal UI projection are
-not evidence that a remote process can no longer execute. No takeover API exists.
+Ordinary retirement belongs to the holder. Recovery uses durable process identity
+and executor cleanup evidence, never elapsed time or a terminal UI projection.
 """
 
 from contextvars import ContextVar
@@ -64,6 +63,18 @@ class RunOwnership:
         if self.released:
             return
         self.closing = True
+        if self.execution_uncertain and not self.active_operations:
+            from .ownership_recovery import cleanup_confirmed, recovery_snapshot
+
+            snapshot = recovery_snapshot(self.store, self.thread_id)
+            recovery = snapshot["recovery"]
+            if (
+                self._matches(snapshot["owner"])
+                and recovery
+                and recovery.get("executions")
+                and cleanup_confirmed(recovery, snapshot["owner"], self.thread_id)
+            ):
+                self.execution_uncertain = False
         if self.active_operations or self.execution_uncertain:
             # Closing rejects new work immediately. The last admitted operation
             # releases only if cleanup is confirmed; a coroutine ending is not
@@ -79,10 +90,31 @@ class RunOwnership:
                 raise RuntimeError("Cannot release another runtime's run reservation")
             state["last_runtime_owner"] = state["runtime_owner"]
             state["runtime_owner"] = None
+            state["runtime_recovery"] = None
             return None, None
 
         self.store.mutate_queue(self.thread_id, finish)
         self.released = True
+
+    def record_recovery_scope(self, scope, *, journal=None):
+        def update(state, receipt):
+            if (
+                self.closing
+                or self.released
+                or not self._matches(state.get("runtime_owner"))
+            ):
+                raise RuntimeError(
+                    "Run ownership is no longer current; execution refused"
+                )
+            recovery = state["runtime_recovery"]
+            # Once remote/untracked execution was admitted it cannot become host-only.
+            if recovery["scope"] != "remote":
+                recovery["scope"] = scope
+            if journal is not None:
+                recovery["executions"].append(str(journal))
+            return None, None
+
+        self.store.mutate_queue(self.thread_id, update)
 
 
 def reserve_run(store, thread_id):
@@ -90,6 +122,9 @@ def reserve_run(store, thread_id):
 
     owner = uuid.uuid4().hex
     run_id = f"run_{uuid.uuid4().hex}"
+    from .ownership_recovery import process_identity
+
+    identity = process_identity()
 
     def claim(state, receipt):
         if state.get("archived"):
@@ -97,7 +132,8 @@ def reserve_run(store, thread_id):
         if state.get("runtime_owner") is not None:
             raise RuntimeError(
                 "Session has an active or unresolved runtime owner; "
-                "starting another run could duplicate actions"
+                "starting another run could duplicate actions. "
+                "Use /recover to inspect and recover the interrupted run."
             )
         for entry in state["items"]:
             if entry["owner"] is not None and current_dispatch.get() != (
@@ -115,6 +151,11 @@ def reserve_run(store, thread_id):
             "run_id": run_id,
             "owner": owner,
             "generation": generation,
+        }
+        state["runtime_recovery"] = {
+            "process": identity,
+            "scope": "preparing",
+            "executions": [],
         }
         return generation, None
 

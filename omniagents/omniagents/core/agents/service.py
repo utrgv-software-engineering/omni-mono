@@ -767,6 +767,21 @@ class AgentService(RpcMethodsBase):
             strict=False,
         )
 
+        self.register_server_function(
+            "recover",
+            self._sf_session_recover,
+            resource_scope=ResourceScope.THREAD,
+            execution_requirements=ExecutionRequirement.NONE,
+            description="Recover an interrupted session without replaying its old actions.",
+            params_schema={
+                "type": "object",
+                "properties": {"abandon_unknown_run": {"type": "boolean"}},
+                "additionalProperties": False,
+            },
+            result_schema={"type": "object"},
+            strict=False,
+        )
+
         # MCP resource access (SDK 0.16): list/read MCP resources from servers
         # already attached to the agent via ``mcp_servers:`` in YAML.
         self.register_server_function(
@@ -1923,6 +1938,53 @@ class AgentService(RpcMethodsBase):
                 context=context_value,
                 variables=variables_value,
             )
+
+    async def _sf_session_recover(
+        self, session: Session | None, args: dict | None = None
+    ) -> dict:
+        if session is None:
+            raise ValueError("Recovery requires a session")
+        payload = args or {}
+        abandon = payload.get("abandon_unknown_run", False)
+        if type(abandon) is not bool:
+            raise ValueError("abandon_unknown_run must be a boolean")
+        task = session.current_task
+        if task is not None and not task.done():
+            await self._session_manager.cancel(task.get_name())
+            if not task.done():
+                return {
+                    "recovered": False,
+                    "reason": "stopping",
+                    "message": "The old run is still stopping; recovery has not released it.",
+                }
+        self._recover_local_run_ownership(session)
+        from omniagents.core.runtime.ownership_recovery import recover_runtime_owner
+
+        result = recover_runtime_owner(
+            self._queue_store(session), session.id, abandon_unknown=abandon
+        )
+        if result.get("recovered"):
+            result["message"] = (
+                "Session recovered. Previous actions may have taken effect; inspect their results before retrying."
+            )
+            self._refresh_queue(session)
+            await self._broadcast_queue_changed(session)
+        elif result.get("reason") == "legacy_owner_unverifiable":
+            result["message"] = (
+                "This older run has no executor identity. Recovery cannot prove its commands stopped. "
+                'After stopping them, /recover {"abandon_unknown_run":true} explicitly abandons '
+                "the old run without replaying it. Its uncertain tool records are preserved."
+            )
+        elif result.get("reason") == "cleanup_unconfirmed":
+            result["message"] = (
+                "The previous command is still stopping or cleanup could not be verified. "
+                "The session remains protected; previous actions have not been replayed."
+            )
+        elif result.get("reason") == "runtime_alive_or_unverifiable":
+            result["message"] = (
+                "Another runtime may still be executing this run. Recovery has not replaced it."
+            )
+        return result
 
     def _sf_session_ensure(
         self, session: Session | None, args: dict | None = None
@@ -3688,6 +3750,9 @@ class AgentService(RpcMethodsBase):
         if sess.current_task is not None and not sess.current_task.done():
             raise RuntimeError("Run already active in this session")
         self._recover_local_run_ownership(sess)
+        from omniagents.core.runtime.ownership_recovery import recover_runtime_owner
+
+        recover_runtime_owner(self._queue_store(sess), sess.id)
         ownership = reserve_run(self._queue_store(sess), sess.id)
         sess.runtime_ownership = ownership
         try:
@@ -3747,6 +3812,12 @@ class AgentService(RpcMethodsBase):
             )
         request_context = await self.operation_router.materialize(request_context)
         environment_lease = request_context.environment_lease
+        ownership.record_recovery_scope(
+            "host"
+            if environment_lease is not None
+            and isinstance(environment_lease.workspace, HostWorkspace)
+            else "remote"
+        )
         # Reject before changing the active run's binding, cancellation flags
         # or stream handle (including while its request cleanup is finishing).
         if sess.current_task is not None and not sess.current_task.done():
@@ -6311,7 +6382,6 @@ class AgentService(RpcMethodsBase):
             ownership is not None
             and ownership.closing
             and not ownership.released
-            and not ownership.execution_uncertain
             and ownership.active_operations == 0
             and (task is None or task.done())
         ):

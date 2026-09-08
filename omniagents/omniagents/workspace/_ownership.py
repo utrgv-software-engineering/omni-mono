@@ -18,6 +18,11 @@ def guard_operation(method):
         owner = current_ownership.get()
         if owner is None:
             return await method(*args, **kwargs)
+        from .host import HostWorkspace
+
+        owner.record_recovery_scope(
+            "host" if isinstance(args[0], HostWorkspace) else "remote"
+        )
         with owner.operation():
             if method.__name__ in ("write_text", "write_bytes", "mkdir", "remove"):
                 # Host writes use to_thread: cancelling their await does not

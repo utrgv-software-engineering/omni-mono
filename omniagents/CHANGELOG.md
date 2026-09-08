@@ -39,6 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The serve proxy relays the upstream's WebSocket close code instead of flattening it to 1000/1011, and maps a rejected upstream handshake to a terminal 4401. Proxied clients now see 4401/4403 as terminal, matching the direct-connection contract, instead of treating an authorization refusal as a retryable disconnect.
 - `POST /auth/ws-ticket` is no longer registered when the configured provider declines connect tickets (`proxy_assertion`). Browsers never reach such an upstream, and the ticket would have moved a proxy-derived credential into a query string with a fresh TTL.
 
+## [0.7.36] - 2026-09-08
+
+### Fixed
+- Stopping a foreground host command now kills and reaps adopted descendants that escaped its process group with `setsid`. The Linux supervisor keeps supervising delayed cleanup rather than abandoning it after a short deadline.
+- Local run reservations record process identity (machine, boot, PID namespace, PID and start time) and command journals. A new run can recover a dead host owner after verified cleanup; a host reboot also establishes executor retirement. Late cleanup can release an interrupted local run. Live, foreign, or unverified owners remain protected; recovery never silently replays claimed tools or queued work.
+- Added `/recover` to stop/reconcile an interrupted session. For legacy locks lacking executor identity, explicit `/recover {"abandon_unknown_run":true}` abandons the old run while preserving uncertain tool outcomes; it does not claim that unknown external commands stopped. Claimed queued work is marked failed for inspection instead of replayed.
+
 ## [0.7.35] - 2026-09-08
 
 ### Fixed
