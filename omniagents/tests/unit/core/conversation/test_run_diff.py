@@ -21,6 +21,7 @@ from omniagents.core.conversation.run_diff import (
 from omniagents.core.conversation.store import SqliteConversationStore
 from omniagents.workspace import (
     HostWorkspace,
+    MountedHostWorkspace,
     WorkspaceEscapeError,
     reset_mutation_observer,
     reset_workspace,
@@ -665,8 +666,39 @@ class TestObservation:
         assert [r for r in caplog.records if r.levelname == "WARNING"] == []
 
     @pytest.mark.asyncio
-    async def test_a_path_outside_the_workspace_is_never_captured(
-        self, tmp_path, observed
+    @pytest.mark.parametrize("spelling", ["absolute", "relative", "symlink"])
+    async def test_host_edits_outside_the_root_are_captured(
+        self, tmp_path, workspace, observed, spelling
+    ):
+        """The host root anchors paths; it does not restrict agent file I/O."""
+        observer, published = observed
+        outside = tmp_path / "outside.txt"
+        outside.write_text("before\n")
+        (workspace / "link.txt").symlink_to(outside)
+        path = {
+            "absolute": str(outside),
+            "relative": "../outside.txt",
+            "symlink": "link.txt",
+        }[spelling]
+
+        await ws.write_text(path, "after\n")
+        assert outside.read_text() == "after\n"
+        assert published[-1]["files"][0]["path"] == "../outside.txt"
+        assert "-before" in published[-1]["diff"]
+        assert "+after" in published[-1]["diff"]
+
+        # Final reconciliation must resolve the stored relative key to the
+        # same external file, rather than losing the edit at run completion.
+        outside.write_text("settled\n")
+        await observer.finalize()
+        assert "+settled" in published[-1]["diff"]
+        assert "+after" not in published[-1]["diff"]
+        assert published[-1]["stats"]["files_changed"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("spelling", ["absolute", "relative", "symlink"])
+    async def test_a_path_outside_a_confined_workspace_is_never_captured(
+        self, tmp_path, workspace, observed, spelling, monkeypatch
     ):
         """The observer reads content back through the workspace, so it
         inherits the same boundary the tools do — an escaping path is
@@ -674,8 +706,28 @@ class TestObservation:
         observer, published = observed
         outside = tmp_path / "outside.txt"
         outside.write_text("secret\n")
-        with pytest.raises(WorkspaceEscapeError):
-            await ws.write_text(str(outside), "clobbered\n")
+        (workspace / "link.txt").symlink_to(outside)
+        confined = MountedHostWorkspace(
+            str(tmp_path / "logical"),
+            [{"kind": "local", "mountName": "src", "path": str(workspace)}],
+        )
+        path = {
+            "absolute": str(outside),
+            "relative": "../outside.txt",
+            "symlink": "src/link.txt",
+        }[spelling]
+        from unittest.mock import AsyncMock
+
+        read = AsyncMock(wraps=confined.read_bytes)
+        monkeypatch.setattr(confined, "read_bytes", read)
+        token = set_workspace(confined)
+        try:
+            with pytest.raises(WorkspaceEscapeError):
+                await ws.write_text(path, "clobbered\n")
+            await observer.finalize()
+        finally:
+            reset_workspace(token)
+        read.assert_not_awaited()
         assert published == []
         assert observer.accumulator.entries == {}
         assert outside.read_text() == "secret\n"

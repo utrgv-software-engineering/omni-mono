@@ -294,14 +294,22 @@ def compare_protocols(
 
 
 def _read_protocol(root: Path) -> tuple[dict, dict, dict, str]:
-    openrpc_path = root / "omniagents-gui-v1.json"
-    schema_path = root / "schemas/gui-v1.schema.json"
     manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    version = manifest["protocol_version"]
+    if not isinstance(version, str):
+        raise ValueError(f"Invalid protocol version in {manifest_path}")
+    major = version.split(".")[0]
+    if major not in ("1", "2"):
+        raise ValueError(f"Unsupported GUI protocol version: {version}")
+    openrpc_path = root / f"omniagents-gui-v{major}.json"
+    schema_path = root / f"schemas/gui-v{major}.schema.json"
     openrpc_bytes = openrpc_path.read_bytes()
     schema_bytes = schema_path.read_bytes()
     document = json.loads(openrpc_bytes)
     schema = json.loads(schema_bytes)
-    manifest = json.loads(manifest_path.read_text())
+    if document["info"]["version"] != version:
+        raise ValueError(f"Protocol version mismatch in {manifest_path}")
     digest = hashlib.sha256(openrpc_bytes + schema_bytes).hexdigest()
     if manifest["canonical_sha256"] != digest:
         raise ValueError(

@@ -108,7 +108,48 @@ async def test_offline_devbox_auto_approves_without_prompting():
     payload = broadcasts[0][1]
     assert payload["reviewer"] == "sandbox-policy"
     assert payload["outcome"] == "allow"
-    assert payload["call_id"] == "call-1"
+    assert payload["source_call_id"] == "call-1"
+    assert payload["call_id"] != "call-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["tool", "mcp"])
+async def test_automatic_approval_fails_closed_and_reused_provider_ids_are_distinct(
+    monkeypatch, kind
+):
+    from omniagents.core.conversation.recorder import (
+        ConversationRecorder,
+        recorder_for_session,
+    )
+
+    service = make_service()
+    await bind_environment(service, "thread-1", network=False)
+    session = session_for(service)
+    session.approvals_reviewer = "auto"
+    broadcasts = capture_broadcasts(service)
+    args = dict(session=session, tool_name="example", arguments="{}", run_id="run-1")
+    args.update(
+        {"call_id": "same"}
+        if kind == "tool"
+        else {"request_id": "same", "server_label": "server"}
+    )
+    invoke = getattr(service, f"request_{kind}_approval")
+    original = ConversationRecorder.commit_reviewed_approval
+
+    def fail(*args, **kwargs):
+        raise OSError("storage unavailable")
+
+    monkeypatch.setattr(ConversationRecorder, "commit_reviewed_approval", fail)
+    with pytest.raises(OSError, match="storage unavailable"):
+        await invoke(**args)
+    assert not broadcasts
+    monkeypatch.setattr(ConversationRecorder, "commit_reviewed_approval", original)
+    assert (await invoke(**args))["decision"] == "approve"
+    assert (await invoke(**args))["decision"] == "approve"
+    assert broadcasts[0][1]["call_id"] != broadcasts[1][1]["call_id"]
+    items = recorder_for_session(session).store.list_items(session.id, limit=10)
+    assert len(items) == 2
+    assert all(item.content["outcome"] == "allow" for item in items)
 
 
 @pytest.mark.asyncio
@@ -118,8 +159,9 @@ async def test_networked_devbox_prompts_the_human_by_default():
     broadcasts = capture_broadcasts(service)
     session = session_for(service)
 
-    async def respond_immediately(*args, **kwargs):
-        future, _ = service._pending_tool_approvals["call-1"]
+    async def respond_immediately(payload):
+        assert payload["source_call_id"] == "call-1"
+        future, _ = service._pending_tool_approvals[payload["call_id"]]
         future.set_result({"decision": "reject", "always_approve": False})
         return None
 
@@ -128,7 +170,7 @@ async def test_networked_devbox_prompts_the_human_by_default():
     async def record_and_respond(sess, method, payload, **kwargs):
         await original(sess, method, payload, **kwargs)
         if method == "tool_approval_requested":
-            await respond_immediately()
+            await respond_immediately(payload)
 
     service._broadcast_session = record_and_respond
 
@@ -154,8 +196,9 @@ async def test_offline_devbox_still_prompts_under_ask_me_first():
     broadcasts = capture_broadcasts(service)
     session = session_for(service)
 
-    async def respond_immediately(*args, **kwargs):
-        future, _ = service._pending_tool_approvals["call-1"]
+    async def respond_immediately(payload):
+        assert payload["source_call_id"] == "call-1"
+        future, _ = service._pending_tool_approvals[payload["call_id"]]
         future.set_result({"decision": "approve", "always_approve": False})
         return None
 
@@ -164,7 +207,7 @@ async def test_offline_devbox_still_prompts_under_ask_me_first():
     async def record_and_respond(sess, method, payload, **kwargs):
         await original(sess, method, payload, **kwargs)
         if method == "tool_approval_requested":
-            await respond_immediately()
+            await respond_immediately(payload)
 
     service._broadcast_session = record_and_respond
 

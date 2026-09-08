@@ -6,7 +6,10 @@ from importlib.metadata import version
 import platform
 from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
 
+from pydantic import ValidationError
+
 from .base import RpcMethodsBase
+from .version import supports_gui_version
 from .lifecycle import (
     DEFAULT_LIFECYCLE_POLICY,
     LifecyclePolicy,
@@ -42,7 +45,7 @@ class RpcError(Exception):
 
 
 if TYPE_CHECKING:
-    from .generated.gui_v1 import InitializeResult
+    from .generated.gui_v2 import InitializeResult
     from .transport import Transport
 
 
@@ -189,14 +192,19 @@ class JsonRpcClient:
             await self._transport.disconnect()
 
     async def _connect_and_handshake(self) -> None:
+        self.initialize_result = None
         await self._transport.connect()
         self._recv_task = asyncio.create_task(self._recv_loop())
         if self._gui_handshake:
-            from .generated.gui_v1 import InitializeParams, InitializeResult
+            from .generated.gui_v2 import (
+                GUI_PROTOCOL_VERSION,
+                InitializeParams,
+                InitializeResult,
+            )
 
             initialize = InitializeParams.model_validate(
                 {
-                    "protocol_version": "1.0.0",
+                    "protocol_version": GUI_PROTOCOL_VERSION,
                     "identity": self._client_info,
                     "platform": {
                         "os": platform.system().lower(),
@@ -211,7 +219,29 @@ class JsonRpcClient:
             result = await self.request(
                 "initialize", initialize.model_dump(), timeout=None
             )
-            self.initialize_result = InitializeResult.model_validate(result)
+            server_version = (
+                result.get("protocol_version") if isinstance(result, dict) else None
+            )
+            if not supports_gui_version(server_version, GUI_PROTOCOL_VERSION):
+                raise RpcError(
+                    -32012,
+                    "Incompatible GUI protocol. Update the client and server together.",
+                    {
+                        "kind": "protocol_version_mismatch",
+                        "client_version": GUI_PROTOCOL_VERSION,
+                        "server_version": server_version,
+                    },
+                )
+            try:
+                self.initialize_result = InitializeResult.model_validate(
+                    result, strict=True, extra="ignore"
+                )
+            except ValidationError as exc:
+                raise RpcError(
+                    -32602,
+                    "Invalid GUI initialize response. Update the client and server together.",
+                    {"kind": "invalid_initialize_result"},
+                ) from exc
             await self.notify("initialized")
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -266,6 +296,8 @@ class JsonRpcClient:
                     continue
 
                 if "method" in data:
+                    if self._gui_handshake and self.initialize_result is None:
+                        continue
                     func = getattr(self._methods, data["method"], None)
                     if func:
                         params = data.get("params") or {}

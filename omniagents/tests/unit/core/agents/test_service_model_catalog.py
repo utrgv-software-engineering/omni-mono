@@ -95,6 +95,30 @@ def attach_session_state_capture(service):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method,field,value",
+    [
+        ("set_session_approvals", "approvals_reviewer", "auto"),
+        ("set_session_workflow", "workflow_reviewer", "off"),
+    ],
+)
+async def test_reviewer_changes_notify_other_session_clients(
+    service, method, field, value
+):
+    calls = attach_session_state_capture(service)
+    result = await getattr(service, method)("shared-session", value)
+    assert result["ok"] is True
+    assert len(calls) == 1
+    assert calls[0]["function"] == "ui.set_session_state"
+    assert calls[0]["payload"][field] == value
+    refused = await getattr(service, method)("shared-session", "invalid")
+    assert refused["ok"] is False
+    assert len(calls) == 1
+    session = service._session_manager.get_or_create("shared-session")
+    assert getattr(session, field) == value
+
+
+@pytest.mark.asyncio
 async def test_list_models_returns_catalog_with_session_context(service, store):
     result = await service.list_models(session_id="sess-1")
     ids = [m["id"] for m in result["models"]]

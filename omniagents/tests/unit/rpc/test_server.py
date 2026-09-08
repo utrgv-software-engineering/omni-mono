@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import AsyncMock
 
 from omniagents.rpc.base import RpcMethodsBase
-from omniagents.rpc.generated.gui_v1.models import (
+from omniagents.rpc.generated.gui_v2.models import (
     CLIENT_REQUEST_MODELS,
     SERVER_NOTIFICATION_MODELS,
 )
@@ -89,7 +89,7 @@ def gui_channel(transport=None):
 
 def initialize_message(call_id=1, **overrides):
     params = {
-        "protocol_version": "1.0.0",
+        "protocol_version": "2.0.0",
         "identity": {"name": "test-client", "version": "2.0.0"},
         "platform": {"os": "linux", "arch": "x86_64"},
         "capabilities": {
@@ -471,20 +471,45 @@ async def test_gui_endpoint_requires_initialize_then_initialized():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("version", ["2.0.0", "1.0.1", "invalid"])
+@pytest.mark.parametrize(
+    "version", ["1.0.0", "3.0.0", "2.0.1", "invalid", "2.0.0-dev", "02.0.0"]
+)
 async def test_initialize_rejects_incompatible_protocol_versions(version):
     transport = TransportStub()
-    endpoint = gui_endpoint()
+    methods = DummyMethods()
+    endpoint = gui_endpoint(methods)
+    channel = gui_channel(transport)
     await endpoint._process_message(
-        gui_channel(transport), initialize_message(protocol_version=version)
+        channel, initialize_message(protocol_version=version)
     )
     error = transport.send_json.await_args.args[0]["error"]
     assert error["code"] == -32012
     assert error["data"] == {
         "kind": "protocol_version_mismatch",
         "client_version": version,
-        "server_version": "1.0.0",
+        "server_version": "2.0.0",
     }
+    assert channel.initialization_state == "new"
+    await endpoint._process_message(
+        channel,
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "echo",
+            "params": {"value": "must not run"},
+        },
+    )
+    assert transport.send_json.await_args.args[0]["error"]["code"] == -32010
+    assert methods.calls == []
+
+    # An initialized notification cannot bypass a rejected version check.
+    await endpoint._process_message(
+        channel, {"jsonrpc": "2.0", "method": "initialized", "params": {}}
+    )
+    assert channel.initialization_state == "new"
+    # No poisoned session state: an explicitly corrected handshake is allowed.
+    await endpoint._process_message(channel, initialize_message(call_id=3))
+    assert channel.initialization_state == "initialize_accepted"
 
 
 @pytest.mark.asyncio
@@ -494,7 +519,7 @@ async def test_initialize_returns_identity_and_capability_intersection():
     endpoint = gui_endpoint(realtime=True, replay=True, terminal=False)
     await endpoint._process_message(channel, initialize_message())
     result = transport.send_json.await_args.args[0]["result"]
-    assert result["protocol_version"] == "1.0.0"
+    assert result["protocol_version"] == "2.0.0"
     assert result["identity"]["name"] == "omniagents"
     assert result["identity"]["version"]
     assert result["platform"]["os"]

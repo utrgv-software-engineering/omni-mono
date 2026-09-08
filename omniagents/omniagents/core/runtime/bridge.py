@@ -323,11 +323,13 @@ def stream_event_payload(
         # name (the call_tool wrapper sees originals), while the stream
         # carries the prefixed public name — translate via the identity
         # map before the lookup.
-        label_fields = (
-            _mcp_label_fields(session, tool_name) if include_mcp_ui else {}
-        )
+        label_fields = _mcp_label_fields(session, tool_name) if include_mcp_ui else {}
         mcp_ui_payload = (
-            mcp_ui.pop(label_fields.get("tool_label", tool_name))
+            mcp_ui.pop(
+                label_fields.get("tool_label", tool_name),
+                label_fields.get("server_label"),
+                call_id,
+            )
             if include_mcp_ui
             else None
         )
@@ -443,6 +445,7 @@ async def stream_agent(
     )
 
     session_id_token = _set_current_session_id(getattr(session, "id", None))
+    mcp_ui_token = mcp_ui.begin_run_scope()
 
     # Aggregate this run's file edits into a run-level unified diff
     # (tkt_FqUypyxF2tzC). Bound AFTER the workspace so the observer reads
@@ -659,6 +662,11 @@ async def stream_agent(
         result = None
 
         while True:
+            from omniagents.core.runtime.ownership import current_ownership
+
+            ownership = current_ownership.get()
+            if ownership is not None:
+                ownership.assert_current()
             run_kwargs: dict[str, Any] = {
                 "max_turns": max_turns,
                 "run_config": run_config,
@@ -674,7 +682,13 @@ async def stream_agent(
                 run_kwargs["context"] = context
             if error_handlers:
                 run_kwargs["error_handlers"] = error_handlers
-            if run_hooks is not None:
+            if session is not None:
+                from omniagents.core.runtime.tool_durability import DurableToolHooks
+
+                run_kwargs["hooks"] = DurableToolHooks(
+                    session, asyncio.current_task().get_name(), run_hooks
+                )
+            elif run_hooks is not None:
                 run_kwargs["hooks"] = run_hooks
             # Always hand the SDK a session it can read/write through.
             # ``sdk_session`` is the spec-supplied backend or compaction
@@ -858,9 +872,7 @@ async def stream_agent(
                             note_parent_tool_result,
                         )
 
-                        await note_parent_tool_result(
-                            payload["call_id"], payload
-                        )
+                        await note_parent_tool_result(payload["call_id"], payload)
                     except Exception:
                         pass
 
@@ -1311,6 +1323,10 @@ async def stream_agent(
                     "tool": tool_name,
                     "output": "[Cancelled by user]",
                     "call_id": call_id,
+                    "metadata": {
+                        "display_type": "error",
+                        "execution_interrupted": True,
+                    },
                 }
                 try:
                     await _broadcast(session, "tool_result", cancelled_payload)
@@ -1341,6 +1357,7 @@ async def stream_agent(
             f"[srv] ◀ end_run    session={session.id[:8]} hist={len(session.history)})"
         )
 
+        mcp_ui.end_run_scope(mcp_ui_token)
         if token is not None:
             try:
                 reset_artifact_callback(token)

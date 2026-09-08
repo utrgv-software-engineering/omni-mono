@@ -11,6 +11,8 @@ import contextvars
 import time
 import uuid
 import copy
+import hashlib
+import json
 import logging
 from contextlib import AsyncExitStack
 from types import SimpleNamespace
@@ -585,12 +587,21 @@ class AgentService(RpcMethodsBase):
         # Optional capability registry per connected channel
         self._client_capabilities: dict[Any, dict] = {}
         self._client_request_sessions: dict[str, Session] = {}
-        # Tool-approval futures keyed by call_id (SDK 0.16 interruption flow)
+        # Bounded, service-lifetime receipts: response fingerprint (None for
+        # cancellation) and lightweight ownership, never a retained Session.
+        self._resolved_client_requests: dict[str, tuple[str | None, Any]] = {}
+        # Approval correlation IDs are server-issued tokens, never provider IDs.
+        # The tuple binds each token to exactly one session and waiter.
         self._pending_tool_approvals: dict[str, tuple[asyncio.Future, Session]] = {}
-        # MCP-approval futures keyed by request_id (hosted MCP approvals from
+        # MCP-approval futures keyed by opaque request_id tokens (approvals from
         # SDK 0.16 ``HostedMCPTool``). Tracked separately from function-tool
         # approvals so the wire format stays clean.
         self._pending_mcp_approvals: dict[str, tuple[asyncio.Future, Session]] = {}
+        # Bounded retry receipts, including the owner for authorization after
+        # waiter cleanup. Missing/expired receipts fail closed, never retarget.
+        self._resolved_approvals: dict[
+            tuple[str, str], tuple[dict, SimpleNamespace]
+        ] = {}
         # Structured user-elicitation futures keyed by elicitation_id
         # (tkt_F9tu2m9PjdpY). Parallel non-security input lane — see
         # omniagents.core.agents.elicitation.
@@ -946,15 +957,63 @@ class AgentService(RpcMethodsBase):
                         e,
                     )
 
-    async def _ensure_session_mcp_servers(self, session: Session) -> list[Any]:
+    async def _ensure_session_mcp_servers(
+        self, session: Session, environment_lease: EnvironmentLease | None = None
+    ) -> list[Any]:
+        if environment_lease is None:
+            context = current_request_context()
+            environment_lease = context.environment_lease if context else None
+        owner = (
+            (environment_lease.environment_id, environment_lease.generation)
+            if environment_lease is not None
+            else None
+        )
+        lock = getattr(session, "_mcp_start_lock", None)
+        if lock is None:
+            lock = session._mcp_start_lock = asyncio.Lock()
+        async with lock:
+            task = getattr(session, "_mcp_lifecycle_task", None)
+            if task is not None and not task.done():
+                if getattr(session, "_mcp_owner", None) == owner:
+                    await self._wait_session_mcp_ready(session, task)
+                    return session._mcp_servers_active
+                # A Thread moving to another lease must not reuse workers
+                # configured against its previous workspace/environment.
+                await self._close_session_mcp_task(session._mcp_shutdown, task)
+            return await self._start_session_mcp_servers(session, environment_lease)
+
+    @staticmethod
+    async def _close_session_mcp_task(shutdown_event, task) -> None:
+        shutdown_event.set()
+        # Do not cancel AnyIO's owner task from a second caller or erase a
+        # timed-out worker. Environment retirement retains it for retry.
+        _, pending = await asyncio.wait({task}, timeout=5.0)
+        if pending:
+            raise RuntimeError("MCP resource cleanup is still pending")
+        await task
+
+    @staticmethod
+    async def _wait_session_mcp_ready(session, task) -> None:
+        ready = asyncio.create_task(session._mcp_ready.wait())
+        try:
+            await asyncio.wait({ready, task}, return_when=asyncio.FIRST_COMPLETED)
+            if task.done():
+                await task
+        finally:
+            ready.cancel()
+            await asyncio.gather(ready, return_exceptions=True)
+
+    async def _start_session_mcp_servers(
+        self, session: Session, environment_lease: EnvironmentLease | None
+    ) -> list[Any]:
         """Ensure MCP servers are initialized and running for this session.
 
         Creates a dedicated asyncio task to manage the MCP lifecycle, ensuring
         that AsyncExitStack.__aenter__ and __aexit__ are called from the same
         task. This prevents AnyIO "cancel scope in different task" violations.
 
-        Servers are created once per session and reused across all runs until
-        the session is archived.
+        Servers are reused within a session's exact execution lease. The
+        environment owns their retirement even when the GUI archives locally.
 
         Args:
             session: The session to initialize MCP servers for
@@ -962,10 +1021,6 @@ class AgentService(RpcMethodsBase):
         Returns:
             List of active MCP server instances
         """
-        # Already initialized?
-        if hasattr(session, "_mcp_servers_active") and session._mcp_servers_active:
-            return session._mcp_servers_active
-
         # Merge spec-level and session-level (dynamic) MCP server configs
         dynamic_cfgs: list = getattr(session, "_dynamic_mcp_servers", None) or []
         if not self.spec.mcp_servers and not dynamic_cfgs:
@@ -973,6 +1028,8 @@ class AgentService(RpcMethodsBase):
 
         # Create Event to signal when servers are ready
         servers_ready = asyncio.Event()
+        shutdown_event = asyncio.Event()
+        session._mcp_ready = servers_ready
         active_servers_holder = {"servers": []}
 
         async def mcp_lifecycle_manager():
@@ -1096,31 +1153,58 @@ class AgentService(RpcMethodsBase):
                     servers_ready.set()
 
                     # Keep this task alive until shutdown signal
-                    shutdown_event = getattr(session, "_mcp_shutdown", None)
-                    if shutdown_event:
-                        await shutdown_event.wait()
+                    await shutdown_event.wait()
 
                 except Exception as e:
                     # If initialization fails catastrophically, signal error state
-                    session._mcp_servers_active = []
+                    if (
+                        getattr(session, "_mcp_lifecycle_task", None)
+                        is asyncio.current_task()
+                    ):
+                        session._mcp_servers_active = []
                     active_servers_holder["servers"] = []
                     servers_ready.set()
                     raise
 
                 finally:
                     # AsyncExitStack cleanup happens here when context exits
-                    session._mcp_servers_active = []
+                    if (
+                        getattr(session, "_mcp_lifecycle_task", None)
+                        is asyncio.current_task()
+                    ):
+                        session._mcp_servers_active = []
 
         # Create shutdown event for this session
-        session._mcp_shutdown = asyncio.Event()
+        session._mcp_shutdown = shutdown_event
+        session._mcp_owner = (
+            (environment_lease.environment_id, environment_lease.generation)
+            if environment_lease is not None
+            else None
+        )
 
-        # Start the lifecycle manager task
-        session._mcp_lifecycle_task = asyncio.create_task(
-            mcp_lifecycle_manager(), name=f"mcp_lifecycle_{session.id[:8]}"
+        task = None
+
+        def start_task():
+            nonlocal task
+            task = asyncio.create_task(
+                mcp_lifecycle_manager(), name=f"mcp_lifecycle_{session.id[:8]}"
+            )
+            session._mcp_lifecycle_task = task
+            return task
+
+        async def close_task():
+            await self._close_session_mcp_task(shutdown_event, task)
+
+        task = (
+            start_task()
+            if environment_lease is None
+            else await self.environment_manager.start_resource_task(
+                environment_lease, start_task, close_task
+            )
         )
 
         # Wait for servers to be initialized
-        await servers_ready.wait()
+        await self._wait_session_mcp_ready(session, task)
 
         return active_servers_holder["servers"]
 
@@ -1323,6 +1407,7 @@ class AgentService(RpcMethodsBase):
         approval_callback,
         *,
         spec: AgentSpec | None = None,
+        environment_lease: EnvironmentLease | None = None,
     ) -> Any:
         build_spec = spec or self.spec
         stub_app = SimpleNamespace(
@@ -1337,7 +1422,9 @@ class AgentService(RpcMethodsBase):
         settings = dict(self._default_settings)
 
         # Use session-scoped MCP servers (managed by dedicated task)
-        active_servers = await self._ensure_session_mcp_servers(session)
+        active_servers = await self._ensure_session_mcp_servers(
+            session, environment_lease
+        )
 
         setattr(stub_app, "mcp_servers", active_servers)
 
@@ -2116,7 +2203,7 @@ class AgentService(RpcMethodsBase):
         session.active_run_set_status_payload = None
         session.active_session_state_payload = None
         for req_id in list(session.pending_client_requests.keys()):
-            self._client_request_sessions.pop(req_id, None)
+            self._retire_client_request(req_id)
         session.pending_client_requests.clear()
         if hasattr(session, "pending_tool_approvals"):
             session.pending_tool_approvals.clear()
@@ -2161,6 +2248,50 @@ class AgentService(RpcMethodsBase):
         pending = getattr(sess, "pending_client_requests", None) if sess else None
         if pending is not None:
             pending.pop(request_id, None)
+
+    def _remember_client_response(self, request_id, fingerprint, session):
+        receipts = getattr(self, "_resolved_client_requests", None)
+        if receipts is None:
+            receipts = self._resolved_client_requests = {}
+        owner = (
+            SimpleNamespace(
+                id=session.id,
+                user_id=getattr(session, "user_id", None),
+                owner_lookup_failed=getattr(session, "owner_lookup_failed", False),
+            )
+            if session is not None
+            else None
+        )
+        receipts[request_id] = (fingerprint, owner)
+        while len(receipts) > 2048:
+            receipts.pop(next(iter(receipts)))
+
+    def _retire_client_request(self, request_id):
+        """Remove all pending ownership synchronously before any notification."""
+        fut = self._pending_client_requests.pop(request_id, None)
+        session = self._client_request_sessions.get(request_id)
+        self._forget_pending_request(request_id)
+        if fut is not None:
+            self._remember_client_response(request_id, None, session)
+            if not fut.done():
+                fut.cancel()
+        return session
+
+    async def _cancel_client_request(self, request_id, reason):
+        session = self._retire_client_request(request_id)
+        if session is not None:
+            try:
+                await self._broadcast_session(
+                    session,
+                    "client_request_resolved",
+                    {
+                        "request_id": request_id,
+                        "session_id": session.id,
+                        "reason": reason,
+                    },
+                )
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     #  Helper: best-effort async_call that tolerates disconnected sockets.
@@ -2273,6 +2404,75 @@ class AgentService(RpcMethodsBase):
     #  approval prompt.  Resolves the Future we saved when we asked.
     # ------------------------------------------------------------------
 
+    def _claim_approval(self, kind: str, token: str, response: dict):
+        """Synchronous first-writer-wins boundary, before ANY permission effect.
+
+        Exact retries acknowledge the original decision without repeating effects.
+        Conflicting retries fail, even while the original waiter is resuming.
+        """
+        if response["decision"] not in ("approve", "reject"):
+            raise ValueError("Approval decision must be approve or reject")
+        receipts = getattr(self, "_resolved_approvals", None)
+        if receipts is None:
+            receipts = self._resolved_approvals = {}
+        previous = receipts.get((kind, token))
+        if previous is not None:
+            if previous[0] != response:
+                raise ValueError("Approval already resolved with a different decision")
+            return previous[1], False
+        pending = (
+            self._pending_tool_approvals
+            if kind == "tool"
+            else self._pending_mcp_approvals
+        )
+        entry = pending.get(token)
+        if entry is None or entry[0].cancelled():
+            return None
+        fut, session = entry
+        if fut.done():
+            if fut.result() != response:
+                raise ValueError("Approval already resolved with a different decision")
+            return session, False
+        # No await between durable commit and local claim. Persistence failure
+        # leaves the original future and permission state untouched for retry.
+        self._persist_approval_decision(session, kind, token, response)
+        # Receipts need only identity/ownership, not a retained Session with
+        # its transcript, runtime, channels and tool caches.
+        owner = SimpleNamespace(
+            id=session.id,
+            user_id=getattr(session, "user_id", None),
+            owner_lookup_failed=getattr(session, "owner_lookup_failed", False),
+        )
+        receipts[(kind, token)] = (dict(response), owner)
+        while len(receipts) > 2048:
+            receipts.pop(next(iter(receipts)))
+        fut.set_result(response)
+        return session, True
+
+    def _persist_approval_decision(self, session, kind, token, response):
+        from omniagents.core.conversation.recorder import recorder_for_session
+        from omniagents.core.conversation.model import derive_item_id
+
+        recorder = recorder_for_session(session, service=self)
+        if recorder is None:
+            raise RuntimeError(
+                "Cannot persist approval decision; retry when storage is available"
+            )
+        item_id = derive_item_id(session.id, f"approval:{kind}:{token}")
+        if recorder.store.get_item(session.id, item_id) is None:
+            # A prior best-effort request projection may have failed. Repair
+            # only this live prompt from its server-owned replay payload.
+            payload = getattr(session, f"pending_{kind}_approvals", {}).get(token)
+            if payload is not None:
+                if recorder.store.get_thread(session.id) is None:
+                    recorder.ensure_thread(
+                        session.id, user_id=getattr(session, "user_id", None)
+                    )
+                recorder.record(session.id, f"{kind}_approval_requested", payload)
+        recorder.commit_approval_decision(
+            session.id, approval_kind=kind, resource_id=token, response=response
+        )
+
     async def tool_approval_response(
         self,
         call_id: str,
@@ -2285,7 +2485,8 @@ class AgentService(RpcMethodsBase):
         Parameters
         ----------
         call_id : str
-            Identifier of the tool call that paused the run.
+            Opaque server-issued approval token from tool_approval_requested.
+            The provider's tool call ID is metadata, not an approval identity.
         decision : str
             Either ``"approve"`` or ``"reject"``.
         always_approve : bool, optional
@@ -2305,10 +2506,22 @@ class AgentService(RpcMethodsBase):
                 "rejection_message": rejection_message,
             },
         )
-        entry = self._pending_tool_approvals.get(call_id)
-        if entry is None:
+        claim = self._claim_approval(
+            "tool",
+            call_id,
+            {
+                "decision": decision,
+                "always_approve": (
+                    bool(always_approve) if decision == "approve" else False
+                ),
+                "rejection_message": rejection_message,
+            },
+        )
+        if claim is None:
             return False
-        fut, sess = entry
+        sess, claimed = claim
+        if not claimed:
+            return True
 
         if decision == "approve" and always_approve:
             tool_ref = getattr(sess, "_pending_approval_tool_names", {}).get(call_id)
@@ -2324,31 +2537,6 @@ class AgentService(RpcMethodsBase):
                     allow_set = set()
                     setattr(sess, "always_allow_tools", allow_set)
                 allow_set.add(tool_ref)
-
-        if not fut.done():
-            fut.set_result(
-                {
-                    "decision": decision,
-                    "always_approve": bool(always_approve),
-                    "rejection_message": rejection_message,
-                }
-            )
-
-        # Attach the decision to the canonical approval item BEFORE the
-        # resolved broadcast drives it terminal — ``tool_approval_resolved``
-        # carries only the correlation id on the wire, so this handler is
-        # the only place that knows what the user actually chose.
-        self._record_conversation(
-            sess,
-            lambda rec: rec.record_approval_decision(
-                sess.id,
-                approval_kind="tool",
-                resource_id=call_id,
-                decision=decision,
-                rejection_message=rejection_message,
-                always_approve=always_approve,
-            ),
-        )
 
         # Notify any other connected channels (multi-tab / voice + chat) so
         # their UI can dismiss any visible approval prompt.
@@ -2393,13 +2581,38 @@ class AgentService(RpcMethodsBase):
         error: dict | None = None,
     ) -> bool:  # noqa: D401
         _debug_rpc("client_response", {"request_id": request_id, "ok": ok})
+        envelope = {"ok": ok, "result": result, "error": error}
+        fingerprint = hashlib.sha256(
+            json.dumps(envelope, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        receipt = getattr(self, "_resolved_client_requests", {}).get(request_id)
+        if receipt is not None:
+            if receipt[0] is None:
+                return False
+            if receipt[0] != fingerprint:
+                raise ValueError(
+                    "Client request already resolved with a different response"
+                )
+            return True
+        fut = self._pending_client_requests.get(request_id)
+        if fut is None or fut.done():
+            return False
         # Look up the session BEFORE forgetting the request so we can
         # broadcast a dismissal event to all channels (voice + chat).
         sess = self._client_request_sessions.get(request_id)
-        fut = self._pending_client_requests.pop(request_id, None)
-        if fut and not fut.done():
-            # Store a simple envelope
-            fut.set_result({"ok": ok, "result": result, "error": error})
+        if ok and isinstance(result, dict) and result.get("input_content"):
+            pending = getattr(sess, "pending_client_requests", {}).get(request_id, {})
+            if pending.get("function") == "escalate":
+                from omniagents.core.tools.client_function import human_reply_outputs
+
+                human_reply_outputs(
+                    result
+                )  # Validate before consuming the pending question.
+        # First response wins before yielding. Retries remain authorized and
+        # acknowledge the same result even after the waiter has resumed.
+        self._remember_client_response(request_id, fingerprint, sess)
+        self._pending_client_requests.pop(request_id, None)
+        fut.set_result(envelope)
         self._forget_pending_request(request_id)
         # Notify all channels that this approval request was resolved
         # so any UI showing it can dismiss the dialog.
@@ -2464,55 +2677,39 @@ class AgentService(RpcMethodsBase):
         else:
             channels = [self.channel]
 
-        delivered_any = False
-        for ch in channels:
-            try:
-                ok = await self._safe_notify(ch, "client_request", payload)
-                delivered_any = delivered_any or ok
-            except Exception:
-                pass
-
-        if not expect_result:
-            return delivered_any
-
-        # Await response with optional timeout
-        fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._pending_client_requests[req_id] = fut
-        # Track the pending request on the session so reconnecting clients
-        # replay it (``_replay_live_state`` / ``resume_session``) and so
-        # ``client_response`` can broadcast ``client_request_resolved``.
-        if session is not None:
-            self._client_request_sessions[req_id] = session
-            pending_requests = getattr(session, "pending_client_requests", None)
-            if pending_requests is not None:
-                pending_requests[req_id] = dict(payload)
+        # Publish only after the waiter and its authorization/replay ownership
+        # exist. Notification delivery may yield to an immediate client reply.
+        fut = None
+        if expect_result:
+            fut = asyncio.get_running_loop().create_future()
+            self._pending_client_requests[req_id] = fut
+            if session is not None:
+                self._client_request_sessions[req_id] = session
+                pending = getattr(session, "pending_client_requests", None)
+                if pending is not None:
+                    pending[req_id] = dict(payload)
+        reason = "cancelled"
         try:
+            delivered_any = False
+            for ch in channels:
+                try:
+                    delivered = await self._safe_notify(ch, "client_request", payload)
+                    delivered_any = delivered_any or delivered
+                except Exception:
+                    pass
+            if not expect_result:
+                return delivered_any
             if timeout_ms is not None and timeout_ms > 0:
                 res = await asyncio.wait_for(fut, timeout=timeout_ms / 1000.0)
             else:
                 res = await fut
             return res
         except asyncio.TimeoutError:
-            # Clean up and return None on timeout
-            self._pending_client_requests.pop(req_id, None)
-            self._forget_pending_request(req_id)
-            # Journal (and broadcast) the resolution so a client resuming
-            # within the retention window never replays a dangling
-            # ``client_request`` that no live future backs any more.
-            if session is not None:
-                try:
-                    await self._broadcast_session(
-                        session,
-                        "client_request_resolved",
-                        {
-                            "request_id": req_id,
-                            "session_id": session.id,
-                            "reason": "timeout",
-                        },
-                    )
-                except Exception:
-                    pass
+            reason = "timeout"
             return None
+        finally:
+            if fut is not None and req_id in self._pending_client_requests:
+                await self._cancel_client_request(req_id, reason)
 
     # ------------------------------------------------------------------
     #  Session variables — mutate + broadcast.
@@ -2644,6 +2841,7 @@ class AgentService(RpcMethodsBase):
                 server_label=server_label,
                 run_id=run_id,
                 reviewer="sandbox-policy",
+                arguments=arguments,
                 outcome="allow",
                 risk_level=None,
                 rationale=rationale,
@@ -2672,14 +2870,12 @@ class AgentService(RpcMethodsBase):
         if assessment is None:
             return None
         if assessment.allowed:
-            guardian.record_allow(session, run_id)
             response = {
                 "decision": "approve",
                 "always_approve": False,
                 "rejection_message": None,
             }
         else:
-            guardian.record_denial(session, run_id)
             response = {
                 "decision": "reject",
                 "always_approve": False,
@@ -2695,10 +2891,15 @@ class AgentService(RpcMethodsBase):
             server_label=server_label,
             run_id=run_id,
             reviewer="guardian",
+            arguments=arguments,
             outcome=assessment.outcome,
             risk_level=assessment.risk_level,
             rationale=assessment.rationale,
         )
+        if assessment.allowed:
+            guardian.record_allow(session, run_id)
+        else:
+            guardian.record_denial(session, run_id)
         return response
 
     async def _record_reviewed_approval(
@@ -2711,13 +2912,16 @@ class AgentService(RpcMethodsBase):
         server_label: str | None,
         run_id: str | None,
         reviewer: str,
+        arguments: str | None,
         outcome: str,
         risk_level: str | None,
         rationale: str,
     ) -> None:
         """Broadcast + audit one reviewer/sandbox-resolved approval decision."""
         payload: dict[str, Any] = {
-            "call_id": call_id,
+            "call_id": f"apr_{uuid.uuid4().hex}",
+            "source_call_id": call_id,
+            "arguments": arguments,
             "kind": kind,
             "tool_name": tool_name,
             "session_id": session.id,
@@ -2731,6 +2935,16 @@ class AgentService(RpcMethodsBase):
             payload["run_id"] = run_id
         if risk_level is not None:
             payload["risk_level"] = risk_level
+        from omniagents.core.conversation.recorder import recorder_for_session
+
+        recorder = recorder_for_session(session, service=self)
+        if recorder is None:
+            raise RuntimeError("Cannot persist automatic approval decision")
+        if recorder.store.get_thread(session.id) is None:
+            recorder.ensure_thread(
+                session.id, user_id=getattr(session, "user_id", None)
+            )
+        recorder.commit_reviewed_approval(session.id, payload)
         try:
             await self._broadcast_session(
                 session,
@@ -2824,6 +3038,12 @@ class AgentService(RpcMethodsBase):
         )
         if resolved is not None:
             return resolved
+
+        # Keep provider correlation as metadata; only the new token authorizes
+        # a decision. Reused provider IDs (even within one session) cannot alias.
+        payload["source_call_id"] = call_id
+        call_id = f"apr_{uuid.uuid4().hex}"
+        payload["call_id"] = call_id
 
         if Debug.enabled():
             logger.debug(
@@ -2965,12 +3185,14 @@ class AgentService(RpcMethodsBase):
 
         payload: dict[str, Any] = {
             "kind": "mcp",
-            "request_id": request_id,
+            "source_request_id": request_id,
             "server_label": server_label,
             "tool_name": tool_name,
             "arguments": arguments or "",
             "session_id": session.id,
         }
+        request_id = f"apr_{uuid.uuid4().hex}"
+        payload["request_id"] = request_id
         if run_id is not None:
             payload["run_id"] = run_id
 
@@ -3061,8 +3283,8 @@ class AgentService(RpcMethodsBase):
         Parameters
         ----------
         request_id : str
-            Identifier from the matching ``mcp_approval_requested`` event
-            (corresponds to ``McpApprovalRequest.id`` from the model).
+            Opaque server-issued token from mcp_approval_requested, not the
+            provider's McpApprovalRequest.id (available as source_request_id).
         decision : str
             Either ``"approve"`` or ``"reject"``.
         rejection_message : str | None, optional
@@ -3077,31 +3299,19 @@ class AgentService(RpcMethodsBase):
                 "rejection_message": rejection_message,
             },
         )
-        entry = self._pending_mcp_approvals.get(request_id)
-        if entry is None:
-            return False
-        fut, sess = entry
-
-        if not fut.done():
-            fut.set_result(
-                {
-                    "decision": decision,
-                    "rejection_message": rejection_message,
-                }
-            )
-
-        # Same ordering rule as tool approvals: record the decision while
-        # the canonical item is still non-terminal.
-        self._record_conversation(
-            sess,
-            lambda rec: rec.record_approval_decision(
-                sess.id,
-                approval_kind="mcp",
-                resource_id=request_id,
-                decision=decision,
-                rejection_message=rejection_message,
-            ),
+        claim = self._claim_approval(
+            "mcp",
+            request_id,
+            {
+                "decision": decision,
+                "rejection_message": rejection_message,
+            },
         )
+        if claim is None:
+            return False
+        sess, claimed = claim
+        if not claimed:
+            return True
 
         # Notify all channels so multi-tab UIs can dismiss any visible
         # prompt for the same request_id.
@@ -3440,10 +3650,80 @@ class AgentService(RpcMethodsBase):
         safe_tool_overrides: dict | None = None,
         approvals_reviewer: str | None = None,
         prompt_role: str = "user",
+        submission_id: str | None = None,
     ) -> dict:  # noqa: D401
         sess: Session = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
         )
+        if submission_id is not None:
+            from omniagents.core.session.submissions import submit_once
+
+            params = dict(
+                prompt=prompt,
+                environment_selection=environment_selection,
+                session_id=sess.id,
+                variables=variables,
+                context=context,
+                content=content,
+                workflow_name=workflow_name,
+                group_id=group_id,
+                safe_tool_overrides=safe_tool_overrides,
+                approvals_reviewer=approvals_reviewer,
+                prompt_role=prompt_role,
+            )
+            return await submit_once(
+                sess,
+                self._conversation_service().store,
+                submission_id,
+                {"method": "start_run", **params},
+                lambda: self.start_run(**params),
+            )
+        from omniagents.core.runtime.ownership import reserve_run
+
+        if sess.current_task is not None and not sess.current_task.done():
+            raise RuntimeError("Run already active in this session")
+        self._recover_local_run_ownership(sess)
+        ownership = reserve_run(self._queue_store(sess), sess.id)
+        sess.runtime_ownership = ownership
+        try:
+            sess.refresh_owned_history(ownership)
+            return await self._start_owned_run(
+                sess,
+                ownership,
+                prompt,
+                environment_selection,
+                variables=variables,
+                context=context,
+                content=content,
+                workflow_name=workflow_name,
+                group_id=group_id,
+                safe_tool_overrides=safe_tool_overrides,
+                approvals_reviewer=approvals_reviewer,
+                prompt_role=prompt_role,
+                session_id=session_id,
+            )
+        finally:
+            # Preparation failure/cancellation never dispatched a worker.
+            if not ownership.transferred:
+                ownership.release()
+
+    async def _start_owned_run(
+        self,
+        sess,
+        ownership,
+        prompt,
+        environment_selection,
+        *,
+        variables,
+        context,
+        content,
+        workflow_name,
+        group_id,
+        safe_tool_overrides,
+        approvals_reviewer,
+        prompt_role,
+        session_id,
+    ):
         channel = getattr(self, "channel", None)
 
         # The endpoint's OperationRouter resolves the run selection before
@@ -3462,6 +3742,10 @@ class AgentService(RpcMethodsBase):
             )
         request_context = await self.operation_router.materialize(request_context)
         environment_lease = request_context.environment_lease
+        # Reject before changing the active run's binding, cancellation flags
+        # or stream handle (including while its request cleanup is finishing).
+        if sess.current_task is not None and not sess.current_task.done():
+            raise RuntimeError("Run already active in this session")
         selection_mode = environment_selection.get("mode")
         if selection_mode == "explicit":
             if environment_lease is None:
@@ -3613,7 +3897,9 @@ class AgentService(RpcMethodsBase):
             sess.pending_events = still_pending
 
         run_spec = self._spec_for_environment(environment_lease)
-        agent = await self._build_agent_for_session(sess, None, spec=run_spec)
+        agent = await self._build_agent_for_session(
+            sess, None, spec=run_spec, environment_lease=environment_lease
+        )
 
         # When the caller supplies a non-user prompt role, write the
         # message to history with that role and tell the worker to
@@ -3979,8 +4265,6 @@ class AgentService(RpcMethodsBase):
                         pass
                 sess.cancel_requested = False
                 sess.cancel_end_reason = None
-                if sess.current_task is task:
-                    sess.current_task = None
                 if sess.current_stream_result is not None:
                     sess.current_stream_result = None
                 # Terminal-resolve pending elicitations BEFORE clearing
@@ -3991,7 +4275,15 @@ class AgentService(RpcMethodsBase):
                     await self._resolve_session_elicitations(sess, status="cancelled")
                 except Exception:
                     pass
+                for request_id in list(sess.pending_client_requests):
+                    await self._cancel_client_request(request_id, "run_ended")
                 self._clear_live_state(sess)
+                # Keep the session occupied through the awaited request
+                # cleanup above: a new run's requests must not be cleared by
+                # its predecessor. Release it before broadcasting run_end.
+                if sess.current_task is task:
+                    ownership.release()
+                    sess.current_task = None
 
                 # Debug log the payload for visibility when debugging (single source)
                 _debug_rpc("run_end", payload)
@@ -4021,7 +4313,7 @@ class AgentService(RpcMethodsBase):
                 except Exception:
                     pass
 
-        task_name = f"run_{uuid.uuid4().hex}"
+        task_name = ownership.run_id
         _debug_rpc(
             "start_run",
             {
@@ -4039,13 +4331,43 @@ class AgentService(RpcMethodsBase):
             # explicitly so tools and child tasks always see the same immutable
             # Workspace/Environment lease.
             token = bind_request_context(request_context)
+            from omniagents.core.runtime.ownership import current_ownership
+
+            ownership.entered = True
+            owner_token = current_ownership.set(ownership)
             try:
+                ownership.assert_current()
                 await _worker()
             finally:
                 reset_request_context(token)
+                current_ownership.reset(owner_token)
+                ownership.release()
 
-        task = asyncio.create_task(_routed_worker(), name=task_name)
-        self._session_manager.bind_task(task, sess)
+        def start_task() -> asyncio.Task:
+            # Preparation above can await; another start may have won since
+            # the initial session check. Publish exactly one task per session.
+            if sess.current_task is not None and not sess.current_task.done():
+                raise RuntimeError("Run already active in this session")
+            created = asyncio.create_task(_routed_worker(), name=task_name)
+            self._session_manager.bind_task(created, sess)
+            ownership.transferred = True
+
+            def release_unstarted(done):
+                # Cancellation before the coroutine enters skips its finally.
+                if not ownership.entered:
+                    ownership.release()
+
+            created.add_done_callback(release_unstarted)
+            return created
+
+        if environment_lease is None:
+            task = start_task()
+        else:
+            task = await self.environment_manager.start_run_task(
+                environment_lease,
+                start_task,
+                lambda: self._session_manager.cancel(task_name),
+            )
         if channel is not None:
             sess.run_channels[task_name] = channel
         # Proactively notify clients that the run has started so UIs can
@@ -4104,27 +4426,26 @@ class AgentService(RpcMethodsBase):
         # recorder handle is resolved here for the explicit item below.
         from omniagents.core.conversation.recorder import ensure_conversation_thread
 
-        try:
-            recorder = ensure_conversation_thread(sess)
-        except Exception:
-            logger.exception(
-                "conversation thread not materialized for send_user_message",
-                extra={"session": sess.id},
-            )
-            recorder = None
-        sess.append_message(msg)
-        # Mid-run user messages append to history WITHOUT broadcasting, so
-        # they never reach the notification chokepoint the domain recorder
-        # listens on. Record them explicitly or the canonical transcript
-        # would silently drop them.
-        if recorder is not None:
-            try:
-                recorder.record_user_message(sess.id, run_id=run_id, content=content)
-            except Exception:
-                logger.exception(
-                    "mid-run user message not recorded",
-                    extra={"session": sess.id},
-                )
+        recorder = ensure_conversation_thread(sess)
+        if recorder is None:
+            raise RuntimeError("Cannot persist message: canonical thread unavailable")
+        # Drain first so identical consecutive messages reserve different
+        # occurrence identities even after an interrupted projection.
+        recorder.recover_pending_messages(sess.id)
+        from omniagents.core.conversation.model import content_key
+
+        natural_key = recorder._next_occurrence_key(
+            sess.id, f"user:{run_id}:{content_key(content)}"
+        )
+        sess.append_message(
+            msg,
+            projection={
+                "version": 1,
+                "kind": "user_message",
+                "run_id": run_id,
+                "natural_key": natural_key,
+            },
+        )
         # No immediate return value; next assistant chunk will arrive via stream.
 
     async def get_run_state(self, session_id: str) -> dict:
@@ -5217,16 +5538,25 @@ class AgentService(RpcMethodsBase):
         call_id = params.get("call_id")
         if isinstance(call_id, str) and call_id:
             entry = self._pending_tool_approvals.get(call_id)
+            if entry is None:
+                entry = getattr(self, "_resolved_approvals", {}).get(("tool", call_id))
             owner = self._resource_owner(entry[1] if entry is not None else None)
             return owner, "tool_approval", call_id
         request_id = params.get("request_id")
         if isinstance(request_id, str) and request_id:
             entry = self._pending_mcp_approvals.get(request_id)
+            if entry is None:
+                entry = getattr(self, "_resolved_approvals", {}).get(
+                    ("mcp", request_id)
+                )
             if entry is not None:
                 return self._resource_owner(entry[1]), "mcp_approval", request_id
             sess = self._client_request_sessions.get(request_id)
             if sess is not None:
                 return self._resource_owner(sess), "client_request", request_id
+            receipt = getattr(self, "_resolved_client_requests", {}).get(request_id)
+            if receipt is not None:
+                return self._resource_owner(receipt[1]), "client_request", request_id
             return OWNER_UNKNOWN, "request", request_id
         elicitation_id = params.get("elicitation_id")
         if isinstance(elicitation_id, str) and elicitation_id:
@@ -5830,6 +6160,9 @@ class AgentService(RpcMethodsBase):
             session_id, user_id=self._current_user_id()
         )
         sess.approvals_reviewer = reviewer
+        from omniagents.core.server_functions.helpers import notify_session_state
+
+        await notify_session_state(self, sess)
         return {"ok": True, "session_id": sess.id, "reviewer": reviewer}
 
     async def set_session_workflow(self, session_id: str, reviewer: str) -> dict:
@@ -5853,6 +6186,9 @@ class AgentService(RpcMethodsBase):
             session_id, user_id=self._current_user_id()
         )
         sess.workflow_reviewer = reviewer
+        from omniagents.core.server_functions.helpers import notify_session_state
+
+        await notify_session_state(self, sess)
         return {"ok": True, "session_id": sess.id, "reviewer": reviewer}
 
     async def set_session_reasoning(self, session_id: str, effort: str) -> dict:
@@ -5902,6 +6238,8 @@ class AgentService(RpcMethodsBase):
         variables: dict | None = None,
         safe_tool_overrides: dict | None = None,
         source: str | None = None,
+        input_content: Any | None = None,
+        submission_id: str | None = None,
     ) -> dict:  # noqa: D401
         """Queue a message for serialized processing on a session.
 
@@ -5930,46 +6268,199 @@ class AgentService(RpcMethodsBase):
         # The recursive enqueue_message call from _flush_notifications
         # uses source="notifications:batch" and is skipped here, so no
         # infinite loop.
+        self._refresh_queue(sess)
         if source != "notifications:batch" and sess.pending_notifications:
             await self._flush_notifications(sess)
-        if len(sess.message_queue) >= sess.message_queue_max:
-            return {
-                "ok": False,
-                "reason": "queue_full",
-                "depth": len(sess.message_queue),
-                "session_id": sess.id,
-            }
         item = QueuedItem(
             content=content,
+            input_content=input_content,
             role=role,
             trigger_run=trigger_run,
             variables=variables,
             safe_tool_overrides=safe_tool_overrides,
             source=source,
         )
-        sess.message_queue.append(item)
+        from omniagents.core.session import queue_inbox
+
+        result = queue_inbox.accept(
+            self._queue_store(sess),
+            sess.id,
+            item.to_dict(),
+            submission_id=submission_id,
+            payload={
+                "method": "enqueue_message",
+                "session_id": session_id,
+                "content": content,
+                "role": role,
+                "trigger_run": trigger_run,
+                "variables": variables,
+                "safe_tool_overrides": safe_tool_overrides,
+                "source": source,
+                "input_content": input_content,
+            },
+            limit=sess.message_queue_max,
+        )
+        self._refresh_queue(sess)
         await self._broadcast_queue_changed(sess)
         self._ensure_drainer(sess)
-        return {
-            "ok": True,
-            "id": item.id,
-            "depth": len(sess.message_queue),
-            "session_id": sess.id,
-            "enqueued_at": item.enqueued_at,
-        }
+        return result
 
-    async def queue_status(self, session_id: str) -> dict:  # noqa: D401
+    def _queue_store(self, sess):
+        from omniagents.core.conversation.recorder import recorder_for_session
+
+        recorder = recorder_for_session(sess)
+        if recorder is None:
+            raise RuntimeError(
+                "Cannot accept queued work: canonical thread unavailable"
+            )
+        if recorder.store.get_thread(sess.id) is None:
+            recorder.ensure_thread(
+                sess.id, user_id=sess.user_id, archived=sess.archived
+            )
+        else:
+            recorder.recover_pending_messages(sess.id)
+        return recorder.store
+
+    @staticmethod
+    def _recover_local_run_ownership(sess):
+        """Retry only this process's proven-finished release, never foreign takeover."""
+        ownership = getattr(sess, "runtime_ownership", None)
+        task = getattr(sess, "current_task", None)
+        if (
+            ownership is not None
+            and ownership.closing
+            and not ownership.released
+            and not ownership.execution_uncertain
+            and ownership.active_operations == 0
+            and (task is None or task.done())
+        ):
+            ownership.release()
+
+    def _refresh_queue(self, sess, *, reveal_claims=False):
+        from omniagents.core.session import queue_inbox
+        from omniagents.core.conversation.model import derive_item_id
+
+        self._recover_local_run_ownership(sess)
+        store = self._queue_store(sess)
+        sess.archived = store.get_thread(sess.id).status.value == "archived"
+        sess.pending_notifications = queue_inbox.notifications(store, sess.id)
+        if sess.pending_notifications and not sess.archived:
+            sess.notification_signal.set()
+            self._ensure_notification_flusher(sess)
+        visible = []
+        runtime_owner = queue_inbox.runtime_owner(store, sess.id)
+        for entry in queue_inbox.entries(store, sess.id):
+            item = dict(entry["item"])
+            owner = entry["owner"]
+            if (
+                owner is None
+                and item.get("state", "pending") == "pending"
+                and runtime_owner is not None
+                and (sess.current_task is None or sess.current_task.done())
+            ):
+                item["error"] = (
+                    "Waiting for the previous runtime to finish or be reconciled. "
+                    "This message has not started."
+                )
+            if owner is not None and item["trigger_run"]:
+                receipt = store.submission_receipt(
+                    sess.id, f"queue-dispatch:{item['id']}"
+                )
+                if receipt and receipt.get("status") == "completed":
+                    run = store.get_turn(sess.id, receipt["result"].get("run_id"))
+                    if run is not None and run.status.value != "running":
+                        queue_inbox.finish(store, sess.id, item["id"], owner)
+                        continue
+                elif receipt and receipt.get("status") == "failed":
+                    queue_inbox.fail(
+                        store,
+                        sess.id,
+                        item["id"],
+                        owner,
+                        receipt.get("error", "Run was rejected"),
+                    )
+                    item.update(state="failed", error=receipt.get("error"))
+                    owner = None
+            if owner is not None and not item["trigger_run"]:
+                # A canonical queued item proves the append committed. The
+                # thread ensure above has already drained history intents.
+                recorded = store.get_item(
+                    sess.id, derive_item_id(sess.id, f"queue:{item['id']}")
+                )
+                if recorded is not None:
+                    queue_inbox.finish(store, sess.id, item["id"], owner)
+                    continue
+            if owner is not None:
+                if (
+                    not reveal_claims
+                    and owner == sess.queue_owner
+                    and sess.drainer_task
+                    and not sess.drainer_task.done()
+                ):
+                    continue
+                item["state"] = "dispatch_uncertain"
+            visible.append(QueuedItem(**item))
+        sess.message_queue = visible
+
+    async def queue_status(
+        self,
+        session_id: str,
+        include_snapshot: bool = False,
+        submission_id: str | None = None,
+    ) -> dict:  # noqa: D401
         """Return the queue/run state for a session."""
         sess = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
         )
-        return {
+        self._refresh_queue(sess)
+        self._ensure_drainer(sess)
+        result = {
             "session_id": sess.id,
             "depth": len(sess.message_queue),
             "draining": bool(sess.drainer_task and not sess.drainer_task.done()),
             "run_active": bool(sess.current_task and not sess.current_task.done()),
             "active_run_id": sess.active_run_id,
         }
+        if include_snapshot:
+            # The database pins item/inbox reads against other processes; no
+            # await pins this serving runtime's state and event watermark.
+            import copy
+            from omniagents.core.conversation.recorder import ensure_conversation_thread
+            from omniagents.core.conversation.runtime_snapshot import (
+                reconcile_runtime_controls,
+                snapshot_queue,
+                snapshot_state_events,
+            )
+
+            ensure_conversation_thread(sess)
+
+            stored = self._conversation_service().store.read_snapshot(sess.id)
+            items = [item.to_dict() for item in stored["items"]]
+            queue = snapshot_queue(stored["inbox"], sess)
+            result["depth"] = len(queue)
+            if self.channel is not None and self.channel not in sess.channels:
+                sess.channels.append(self.channel)
+            self._register_replay_consumers(sess)
+            result["snapshot"] = copy.deepcopy(
+                {
+                    "items": reconcile_runtime_controls(items, sess, self),
+                    "queue": queue,
+                    "pending_requests": list(sess.pending_client_requests.values()),
+                    "state_events": snapshot_state_events(sess),
+                    "stream_id": sess.event_log.stream_id,
+                    "last_seq": sess.event_log.last_seq,
+                }
+            )
+        if submission_id is not None:
+            receipt = self._conversation_service().store.submission_receipt(
+                sess.id, submission_id
+            )
+            result["submission"] = (
+                {key: value for key, value in receipt.items() if key != "owner"}
+                if receipt
+                else None
+            )
+        return result
 
     async def list_queue(self, session_id: str) -> dict:  # noqa: D401
         """Return the current queue contents for a session.
@@ -5980,6 +6471,8 @@ class AgentService(RpcMethodsBase):
         sess = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
         )
+        self._refresh_queue(sess)
+        self._ensure_drainer(sess)
         return {
             "session_id": sess.id,
             "depth": len(sess.message_queue),
@@ -5991,19 +6484,19 @@ class AgentService(RpcMethodsBase):
     ) -> dict:  # noqa: D401
         """Remove a queued item by id.
 
-        Returns ``{ok: false, reason: "not_found"}`` if the item has already
-        been popped by the drainer (running or completed) — cancelling an
-        actively-running turn requires ``stop_run`` instead.
+        Claimed commands return ``dispatch_uncertain``; completed/absent
+        commands return ``not_found``. Cancelling a known actively-running
+        turn requires ``stop_run`` instead.
         """
         sess = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
         )
-        for i, item in enumerate(sess.message_queue):
-            if item.id == item_id:
-                del sess.message_queue[i]
-                await self._broadcast_queue_changed(sess)
-                return {"ok": True, "id": item_id, "depth": len(sess.message_queue)}
-        return {"ok": False, "reason": "not_found", "id": item_id}
+        from omniagents.core.session import queue_inbox
+
+        result = queue_inbox.cancel(self._queue_store(sess), sess.id, item_id)
+        self._refresh_queue(sess)
+        await self._broadcast_queue_changed(sess)
+        return result
 
     async def _broadcast_queue_changed(self, sess: Session) -> None:
         """Fan a full snapshot of the queue out to every connected channel.
@@ -6031,7 +6524,13 @@ class AgentService(RpcMethodsBase):
         Self-scheduling: the drainer exits when the queue empties and is
         respawned by the next ``enqueue_message`` call. No teardown needed.
         """
+        if sess.archived:
+            return
         if sess.drainer_task and not sess.drainer_task.done():
+            return
+        if not any(item.state == "pending" for item in sess.message_queue) or any(
+            item.state == "dispatch_uncertain" for item in sess.message_queue
+        ):
             return
         sess.drainer_task = asyncio.create_task(
             self._drain_queue(sess), name=f"drain-{sess.id[:8]}"
@@ -6077,9 +6576,20 @@ class AgentService(RpcMethodsBase):
             # while we were waiting — re-check before popping.
             if not sess.message_queue:
                 break
-            item = sess.message_queue.pop(0)
-            await self._broadcast_queue_changed(sess)
+            from omniagents.core.session import queue_inbox
+
+            item = next(
+                (item for item in sess.message_queue if item.state == "pending"), None
+            )
+            if item is None:
+                return
+            store = self._queue_store(sess)
+            if not queue_inbox.claim(store, sess.id, item.id, sess.queue_owner):
+                self._refresh_queue(sess)
+                return
+            sess.message_queue.remove(item)
             try:
+                await self._broadcast_queue_changed(sess)
                 if item.trigger_run:
                     # start_run appends the prompt to history AND drives a
                     # turn. Don't pre-append — that would duplicate.
@@ -6087,14 +6597,22 @@ class AgentService(RpcMethodsBase):
                     # role batches from _notification_flusher) land in
                     # history with their real role while still triggering
                     # a run via the resume-from-history path.
-                    await self.start_run(
-                        prompt=item.content,
-                        environment_selection={"mode": "inherit"},
-                        session_id=sess.id,
-                        variables=item.variables,
-                        safe_tool_overrides=item.safe_tool_overrides,
-                        prompt_role=item.role,
+                    dispatch_token = queue_inbox.current_dispatch.set(
+                        (sess.id, item.id, sess.queue_owner)
                     )
+                    try:
+                        await self.start_run(
+                            prompt=item.content,
+                            content=item.input_content,
+                            environment_selection={"mode": "inherit"},
+                            session_id=sess.id,
+                            variables=item.variables,
+                            safe_tool_overrides=item.safe_tool_overrides,
+                            prompt_role=item.role,
+                            submission_id=f"queue-dispatch:{item.id}",
+                        )
+                    finally:
+                        queue_inbox.current_dispatch.reset(dispatch_token)
                     # Shepherd the run we just scheduled to completion
                     # before exiting the drainer. The loop's outer wait
                     # at the top would catch this on the next iteration
@@ -6102,13 +6620,36 @@ class AgentService(RpcMethodsBase):
                     # otherwise exit while the run was still in flight.
                     await _wait_for_current_task()
                 else:
+                    # Materialize BEFORE the history append so legacy
+                    # projection cannot duplicate this new canonical item.
+                    from omniagents.core.conversation.recorder import (
+                        ensure_conversation_thread,
+                    )
+
+                    recorder = ensure_conversation_thread(sess)
                     sess.append_message(
                         {
                             "role": item.role,
                             "content": item.content,
                             "type": "message",
-                        }
+                        },
+                        projection={
+                            "version": 1,
+                            "kind": "queued_message",
+                            "queue_id": item.id,
+                        },
                     )
+                    if recorder is not None:
+                        recorded = recorder.record_queued_message(
+                            sess.id,
+                            queue_id=item.id,
+                            role=item.role,
+                            content=item.content,
+                        )
+                        if recorded is not None:
+                            await self.notify_item_updated(sess, recorded)
+                queue_inbox.finish(store, sess.id, item.id, sess.queue_owner)
+                self._refresh_queue(sess)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -6116,6 +6657,16 @@ class AgentService(RpcMethodsBase):
                     "drain failed",
                     extra={"session": sess.id, "source": item.source},
                 )
+                self._refresh_queue(sess, reveal_claims=True)
+                await self._broadcast_queue_changed(sess)
+                # A durable rejection is known not to have started work;
+                # preserve it visibly but let subsequent commands proceed.
+                if any(
+                    entry.id == item.id and entry.state == "failed"
+                    for entry in sess.message_queue
+                ):
+                    continue
+                return
 
     # ------------------------------------------------------------------
     #  Background notifications (batched, role="assistant").
@@ -6156,21 +6707,20 @@ class AgentService(RpcMethodsBase):
         sess = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
         )
-        sess.pending_notifications.append(
+        from omniagents.core.session import queue_inbox
+
+        result = queue_inbox.buffer_notification(
+            self._queue_store(sess),
+            sess.id,
             {
                 "content": content,
                 "source": source,
                 "safe_tool_overrides": safe_tool_overrides,
                 "enqueued_at": time.time(),
-            }
+            },
         )
-        sess.notification_signal.set()
-        self._ensure_notification_flusher(sess)
-        return {
-            "ok": True,
-            "buffered": len(sess.pending_notifications),
-            "session_id": sess.id,
-        }
+        self._refresh_queue(sess)
+        return result
 
     def _ensure_notification_flusher(self, sess: Session) -> None:
         if sess.notification_flusher_task and not sess.notification_flusher_task.done():
@@ -6190,20 +6740,24 @@ class AgentService(RpcMethodsBase):
         fresh user turn, so the notification reads as the agent
         observing its own background activity rather than as fake user
         input."""
-        if not sess.pending_notifications:
-            return
-        items = sess.pending_notifications[:]
-        sess.pending_notifications.clear()
-        combined = self._format_notification_batch(items)
-        safe_tool_overrides = self._merge_notification_safe_tool_overrides(items)
-        await self.enqueue_message(
-            session_id=sess.id,
-            content=combined,
-            role="assistant",
-            trigger_run=True,
-            source="notifications:batch",
-            safe_tool_overrides=safe_tool_overrides,
+        from omniagents.core.session import queue_inbox
+
+        def make_item(items):
+            return QueuedItem(
+                content=self._format_notification_batch(items),
+                role="assistant",
+                trigger_run=True,
+                source="notifications:batch",
+                safe_tool_overrides=self._merge_notification_safe_tool_overrides(items),
+            ).to_dict()
+
+        promoted = queue_inbox.promote_notifications(
+            self._queue_store(sess), sess.id, make_item, limit=sess.message_queue_max
         )
+        self._refresh_queue(sess)
+        if promoted:
+            await self._broadcast_queue_changed(sess)
+            self._ensure_drainer(sess)
 
     def _merge_notification_safe_tool_overrides(self, items: list[dict]) -> dict | None:
         names: list[Any] = []

@@ -38,6 +38,301 @@ def make_thread(thread_id="t1", **overrides):
     return Thread(**base)
 
 
+class TestRunOwnership:
+    def test_snapshot_reads_all_items_and_inbox_without_mutating(self, store):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        recorder = ConversationRecorder(store)
+        recorder.ensure_thread("snapshot", project_legacy_history=False)
+        for index in range(503):
+            recorder.record(
+                "snapshot",
+                "message_output",
+                {"run_id": "run", "message_id": str(index), "content": str(index)},
+            )
+        store.mutate_queue(
+            "snapshot", lambda state, receipt: (state.update(marker="stable"), None)
+        )
+        first = store.read_snapshot("snapshot")
+        second = store.read_snapshot("snapshot")
+        assert first == second
+        assert len(first["items"]) == 503
+        assert first["inbox"]["marker"] == "stable"
+        assert [item.seq for item in first["items"]] == sorted(
+            item.seq for item in first["items"]
+        )
+        first["inbox"]["marker"] = "client mutation"
+        assert store.read_snapshot("snapshot")["inbox"]["marker"] == "stable"
+
+    def test_unconfirmed_execution_cannot_be_released_or_retried(self, store):
+        from omniagents.core.runtime.ownership import reserve_run
+
+        store.upsert_thread(make_thread())
+        owner = reserve_run(store, "t1")
+        owner.execution_uncertain = True
+        for _ in range(2):
+            owner.release()
+            assert owner.closing and not owner.released
+            with pytest.raises(RuntimeError, match="no longer current"):
+                owner.assert_current()
+            with pytest.raises(RuntimeError, match="unresolved runtime owner"):
+                reserve_run(store, "t1")
+
+    def test_closing_waits_for_admitted_operations_before_releasing(self, store):
+        from omniagents.core.runtime.ownership import reserve_run
+
+        store.upsert_thread(make_thread())
+        owner = reserve_run(store, "t1")
+        with owner.operation():
+            owner.release()
+            assert owner.closing and not owner.released
+            with pytest.raises(RuntimeError, match="no longer current"):
+                owner.assert_current()
+            with pytest.raises(RuntimeError, match="unresolved runtime owner"):
+                reserve_run(store, "t1")
+        assert owner.released
+        reserve_run(store, "t1").release()
+
+    def test_release_can_retry_a_lost_commit_acknowledgment(self, store, monkeypatch):
+        from omniagents.core.runtime.ownership import reserve_run
+
+        store.upsert_thread(make_thread())
+        owner = reserve_run(store, "t1")
+        mutate = store.mutate_queue
+
+        def lost_ack(*args, **kwargs):
+            mutate(*args, **kwargs)
+            raise RuntimeError("lost acknowledgment")
+
+        monkeypatch.setattr(store, "mutate_queue", lost_ack)
+        with pytest.raises(RuntimeError, match="lost acknowledgment"):
+            owner.release()
+        monkeypatch.setattr(store, "mutate_queue", mutate)
+        owner.release()
+        reserve_run(store, "t1").release()
+
+    def test_run_and_queue_dispatch_cannot_overtake_each_other(self, store):
+        from omniagents.core.runtime.ownership import reserve_run
+        from omniagents.core.session import queue_inbox
+
+        store.upsert_thread(make_thread())
+        queue_inbox.accept(store, "t1", {"id": "q", "enqueued_at": 1})
+        owner = reserve_run(store, "t1")
+        assert not queue_inbox.claim(store, "t1", "q", "dispatcher")
+        owner.release()
+        assert queue_inbox.claim(store, "t1", "q", "dispatcher")
+        with pytest.raises(RuntimeError, match="queue dispatcher"):
+            reserve_run(store, "t1")
+        token = queue_inbox.current_dispatch.set(("t1", "q", "dispatcher"))
+        try:
+            owner = reserve_run(store, "t1")
+        finally:
+            queue_inbox.current_dispatch.reset(token)
+        owner.release()
+        assert queue_inbox.finish(store, "t1", "q", "dispatcher")
+
+    def test_one_runtime_wins_and_stale_generation_cannot_execute_or_release(
+        self, store
+    ):
+        from dataclasses import replace
+        from omniagents.core.runtime.ownership import reserve_run
+
+        store.upsert_thread(make_thread())
+
+        def claim(_):
+            try:
+                return reserve_run(store, "t1")
+            except RuntimeError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            owners = [owner for owner in pool.map(claim, range(8)) if owner]
+        assert len(owners) == 1
+        owner = owners[0]
+        stale = replace(owner)
+        owner.assert_current()
+        owner.release()
+        owner.release()
+        next_owner = reserve_run(store, "t1")
+        assert next_owner.generation == owner.generation + 1
+        with pytest.raises(RuntimeError, match="no longer current"):
+            stale.assert_current()
+        with pytest.raises(RuntimeError, match="another runtime"):
+            stale.release()
+        next_owner.assert_current()
+        next_owner.release()
+
+    def test_archived_thread_cannot_be_reserved(self, store):
+        from omniagents.core.runtime.ownership import reserve_run
+
+        store.upsert_thread(make_thread(status=ThreadStatus.ARCHIVED))
+        with pytest.raises(RuntimeError, match="archived"):
+            reserve_run(store, "t1")
+
+
+class TestToolExecution:
+    @pytest.mark.parametrize("interruption", ["event", "turn_end"])
+    def test_interruption_is_uncertain_and_late_result_does_not_reopen(
+        self, store, interruption
+    ):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        store.upsert_thread(make_thread())
+        recorder = ConversationRecorder(store)
+        recorder.record("t1", "run_started", {"run_id": "run", "prompt": "go"})
+        payload = {"run_id": "run", "call_id": "call", "tool": "effect", "input": "{}"}
+        item = recorder.claim_tool_execution("t1", payload, "owner")
+        if interruption == "event":
+            recorder.record(
+                "t1",
+                "tool_result",
+                {
+                    **payload,
+                    "output": "[Cancelled by user]",
+                    "metadata": {
+                        "display_type": "error",
+                        "execution_interrupted": True,
+                    },
+                },
+            )
+        recorder.record("t1", "run_end", {"run_id": "run", "end_reason": "cancelled"})
+        interrupted = store.get_item("t1", item.item_id)
+        assert interrupted.is_terminal
+        assert interrupted.content["execution_state"] == "uncertain"
+        assert "outcome unknown" in interrupted.content["output"]
+        with pytest.raises(RuntimeError):
+            recorder.claim_tool_execution("t1", payload, "replacement")
+        completed = recorder.complete_tool_execution(
+            "t1", {**payload, "output": "actual external result"}, "owner"
+        )
+        assert completed.status == interrupted.status
+        assert completed.content["execution_state"] == "completed"
+        assert completed.content["output"] == "actual external result"
+
+    def test_concurrent_dispatch_has_one_owner_and_completion_is_idempotent(
+        self, store
+    ):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        store.upsert_thread(make_thread())
+        recorder = ConversationRecorder(store)
+        payload = {"run_id": "run", "call_id": "call", "tool": "effect", "input": "{}"}
+
+        def claim(index):
+            try:
+                recorder.claim_tool_execution("t1", payload, str(index))
+                return str(index)
+            except RuntimeError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            owners = [owner for owner in pool.map(claim, range(8)) if owner is not None]
+        assert len(owners) == 1
+        result = {**payload, "output": "saved"}
+        with pytest.raises(RuntimeError, match="another dispatcher"):
+            recorder.complete_tool_execution("t1", result, "foreign")
+        item = recorder.complete_tool_execution("t1", result, owners[0])
+        assert item.status == ItemStatus.COMPLETED
+        assert recorder.complete_tool_execution("t1", result, owners[0]) == item
+        with pytest.raises(ValueError, match="conflicts"):
+            recorder.complete_tool_execution(
+                "t1", {**result, "output": "different"}, owners[0]
+            )
+        recorder.claim_tool_execution("t1", {**payload, "run_id": "next"}, "next")
+        assert len(store.list_items("t1", limit=10)) == 2
+
+
+class TestApprovalDecisions:
+    @pytest.mark.parametrize("kind", ["tool", "mcp"])
+    def test_decision_is_first_writer_wins_and_survives_terminal_retry(
+        self, store, kind
+    ):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        store.upsert_thread(make_thread())
+        recorder = ConversationRecorder(store)
+        payload = {"call_id": "token", "request_id": "token", "tool_name": "tool"}
+        recorder.record("t1", f"{kind}_approval_requested", payload)
+
+        def commit(index):
+            response = {"decision": "approve" if index % 2 else "reject"}
+            try:
+                recorder.commit_approval_decision(
+                    "t1", approval_kind=kind, resource_id="token", response=response
+                )
+                return response
+            except ValueError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(commit, range(8)))
+        accepted = [result for result in results if result is not None]
+        assert len(accepted) == 4 and all(value == accepted[0] for value in accepted)
+        recorder.record("t1", f"{kind}_approval_resolved", payload)
+        item = recorder.commit_approval_decision(
+            "t1", approval_kind=kind, resource_id="token", response=accepted[0]
+        )
+        assert item.status == ItemStatus.COMPLETED
+        assert item.content["approval_response"] == accepted[0]
+
+    def test_missing_and_retired_prompt_cannot_authorize(self, store):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        store.upsert_thread(make_thread())
+        recorder = ConversationRecorder(store)
+        args = dict(
+            approval_kind="tool", resource_id="token", response={"decision": "approve"}
+        )
+        with pytest.raises(RuntimeError, match="not durably recorded"):
+            recorder.commit_approval_decision("t1", **args)
+        recorder.record("t1", "tool_approval_requested", {"call_id": "token"})
+        recorder.record("t1", "tool_approval_resolved", {"call_id": "token"})
+        with pytest.raises(RuntimeError, match="no longer pending"):
+            recorder.commit_approval_decision("t1", **args)
+
+
+class TestSubmissionReceipts:
+    def test_concurrent_claims_share_one_owner_and_completed_receipt(self, store):
+        from threading import Barrier
+
+        store.upsert_thread(make_thread("racing"))
+        barrier = Barrier(8)
+
+        def claim(index):
+            barrier.wait(timeout=10)
+            return store.submission_receipt(
+                "racing",
+                "same-submission",
+                claim={"status": "pending", "owner": str(index)},
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            receipts = list(pool.map(claim, range(8)))
+        assert all(receipt == receipts[0] for receipt in receipts)
+        completed = {"status": "completed", "result": {"run_id": "one-run"}}
+        store.submission_receipt("racing", "same-submission", result=completed)
+        assert (
+            store.submission_receipt(
+                "racing",
+                "same-submission",
+                claim={"status": "pending", "owner": "late"},
+            )
+            == completed
+        )
+
+    def test_claim_is_atomic_and_receipt_is_session_scoped(self, store):
+        store.upsert_thread(make_thread("A"))
+        store.upsert_thread(make_thread("B"))
+        first = {"status": "pending", "owner": "first"}
+        assert store.submission_receipt("A", "key", claim=first) == first
+        assert store.submission_receipt("A", "key", claim={"owner": "second"}) == first
+        assert store.submission_receipt("B", "key") is None
+        done = {"status": "completed", "result": {"run_id": "one"}}
+        assert store.submission_receipt("A", "key", result=done) == done
+        store.delete_thread("A")
+        assert store.submission_receipt("A", "key") is None
+
+
 def make_turn(thread_id="t1", turn_id="run1", ordinal=1, **overrides):
     base = dict(
         thread_id=thread_id,
@@ -64,6 +359,295 @@ def make_item(seq, thread_id="t1", turn_id="run1", **overrides):
     )
     base.update(overrides)
     return Item(**base)
+
+
+class TestQueueInbox:
+    def item(self, identity="q"):
+        return {
+            "id": identity,
+            "content": identity,
+            "role": "user",
+            "trigger_run": True,
+            "enqueued_at": 1,
+            "state": "pending",
+            "input_content": [
+                {"type": "input_image", "image_url": "data:image/png;base64,AA=="}
+            ],
+        }
+
+    def test_acceptance_and_receipt_are_one_idempotent_transaction(self, store):
+        from omniagents.core.session import queue_inbox as inbox
+
+        store.upsert_thread(make_thread())
+        item = self.item()
+        result = inbox.accept(
+            store, "t1", item, submission_id="send", payload={"content": "q"}
+        )
+        item["input_content"].clear()
+        assert (
+            inbox.accept(
+                store,
+                "t1",
+                self.item("other"),
+                submission_id="send",
+                payload={"content": "q"},
+            )
+            == result
+        )
+        assert len(inbox.entries(store, "t1")) == 1
+        assert inbox.entries(store, "t1")[0]["item"]["input_content"]
+        assert store.submission_receipt("t1", "send")["result"] == result
+        with pytest.raises(ValueError, match="different content"):
+            inbox.accept(
+                store,
+                "t1",
+                self.item(),
+                submission_id="send",
+                payload={"content": "different"},
+            )
+
+    def test_competing_acceptance_and_dispatch_have_one_winner(self, store):
+        from omniagents.core.session import queue_inbox as inbox
+
+        store.upsert_thread(make_thread())
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(
+                pool.map(
+                    lambda i: inbox.accept(
+                        store,
+                        "t1",
+                        self.item(str(i)),
+                        submission_id="send",
+                        payload={"same": True},
+                    ),
+                    range(8),
+                )
+            )
+        assert all(result == results[0] for result in results)
+        item_id = results[0]["id"]
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            claims = list(
+                pool.map(lambda i: inbox.claim(store, "t1", item_id, str(i)), range(8))
+            )
+        assert sum(claims) == 1
+        assert not inbox.finish(store, "t1", item_id, "foreign")
+        assert inbox.cancel(store, "t1", item_id)["reason"] == "dispatch_uncertain"
+        assert len(inbox.entries(store, "t1")) == 1
+
+    def test_receipt_failure_rolls_back_inbox(self, store):
+        store.upsert_thread(make_thread())
+
+        def invalid(state, receipt):
+            state["items"].append({"item": self.item(), "owner": None})
+            return None, {"invalid": {1}}
+
+        with pytest.raises(TypeError):
+            store.mutate_queue("t1", invalid, submission_id="bad")
+        from omniagents.core.session import queue_inbox as inbox
+
+        assert inbox.entries(store, "t1") == []
+        assert store.submission_receipt("t1", "bad") is None
+
+    def test_capacity_cancel_and_archive_are_durable(self, store):
+        from omniagents.core.session import queue_inbox as inbox
+
+        store.upsert_thread(make_thread())
+        inbox.accept(store, "t1", self.item(), limit=1)
+        assert (
+            inbox.accept(store, "t1", self.item("extra"), limit=1)["reason"]
+            == "queue_full"
+        )
+        store.mutate_thread(
+            "t1", lambda thread: setattr(thread, "status", ThreadStatus.ARCHIVED)
+        )
+        assert not inbox.claim(store, "t1", "q", "owner")
+        assert inbox.cancel(store, "t1", "q")["ok"]
+        assert inbox.entries(store, "t1") == []
+
+    def test_buffer_promotion_rolls_back_and_never_drops_on_full_queue(self, store):
+        from omniagents.core.session import queue_inbox as inbox
+
+        store.upsert_thread(make_thread())
+        inbox.buffer_notification(store, "t1", {"content": "keep", "source": "job"})
+
+        def fail(items):
+            raise OSError("failed conversion")
+
+        with pytest.raises(OSError):
+            inbox.promote_notifications(store, "t1", fail)
+        assert len(inbox.notifications(store, "t1")) == 1
+        inbox.accept(store, "t1", self.item())
+        assert not inbox.promote_notifications(
+            store, "t1", lambda items: self.item("batch"), limit=1
+        )
+        assert len(inbox.notifications(store, "t1")) == 1
+        inbox.cancel(store, "t1", "q")
+        assert inbox.promote_notifications(
+            store, "t1", lambda items: self.item("batch")
+        )
+        assert inbox.notifications(store, "t1") == []
+        assert inbox.entries(store, "t1")[0]["item"]["id"] == "batch"
+        store.delete_thread("t1")
+        store.upsert_thread(make_thread())
+        assert inbox.entries(store, "t1") == []
+
+
+class TestAtomicMutations:
+    def test_in_place_position_mutation_is_rejected_and_rolled_back(self, store):
+        store.upsert_thread(make_thread())
+        original = store.append_item(make_item(0, turn_id=None))
+
+        def move(item):
+            item.seq += 10
+            return item
+
+        with pytest.raises(ValueError, match="position"):
+            store.mutate_item("t1", original.item_id, move)
+        assert store.get_item("t1", original.item_id).to_dict() == original.to_dict()
+
+    def test_competing_item_completion_keeps_first_terminal_result(self, store):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+        from omniagents.core.conversation.model import derive_item_id
+
+        store.upsert_thread(make_thread())
+        item = make_item(
+            0,
+            item_id=derive_item_id("t1", "tool:call"),
+            status=ItemStatus.STARTED,
+            turn_id=None,
+        )
+        store.append_item(item)
+
+        def finish(index):
+            return ConversationRecorder(store)._update_item(
+                "t1",
+                "tool:call",
+                status=ItemStatus.COMPLETED if index % 2 else ItemStatus.FAILED,
+                content={"output": str(index)},
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(finish, range(32)))
+        assert all(item.to_dict() == results[0].to_dict() for item in results)
+        assert results[0].revision == 1
+
+    def test_concurrent_appends_and_turn_updates_keep_counts(self, store):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        recorder = ConversationRecorder(store)
+        recorder.ensure_thread("t1", project_legacy_history=False)
+        recorder.open_turn("t1", "run1", prompt="p", prompt_role="user")
+
+        def write(index):
+            if index % 2:
+                store.append_item(make_item(index))
+            else:
+                recorder.record(
+                    "t1", "run_status", {"run_id": "run1", "attempt": index}
+                )
+                store.mutate_thread(
+                    "t1", lambda thread: setattr(thread, "pinned", True)
+                )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(write, range(32)))
+        thread = store.get_thread("t1")
+        turn = store.get_turn("t1", "run1")
+        assert thread.item_count == turn.item_count == 17
+        assert (thread.last_seq, turn.first_seq, turn.last_seq) == (17, 1, 17)
+        assert turn.attempts == 30
+        assert thread.pinned
+
+    def test_concurrent_thread_patches_preserve_all_fields(self, store):
+        store.upsert_thread(make_thread())
+
+        def patch(index):
+            def update(thread):
+                thread.metadata[str(index)] = index
+
+            store.mutate_thread("t1", update)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(patch, range(32)))
+        assert store.get_thread("t1").metadata == {str(i): i for i in range(32)}
+
+    def test_concurrent_item_revisions_are_not_lost(self, store):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+        from omniagents.core.conversation.model import derive_item_id
+
+        store.upsert_thread(make_thread())
+        item = make_item(0, item_id=derive_item_id("t1", "artifact"), turn_id=None)
+        store.append_item(item)
+
+        def revise(index):
+            ConversationRecorder(store)._revise_item(
+                "t1", "artifact", content={str(index): index}
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(revise, range(32)))
+        result = store.get_item("t1", item.item_id)
+        assert result.revision == 32
+        assert all(result.content[str(i)] == i for i in range(32))
+
+    def test_turn_claims_and_prompts_commit_once(self, store):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        store.upsert_thread(make_thread())
+
+        def start(index):
+            return ConversationRecorder(store).open_turn(
+                "t1", f"run{index % 4}", prompt=f"p{index % 4}", prompt_role="user"
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(start, range(32)))
+        turns = store.list_turns("t1", limit=10)
+        assert [turn.ordinal for turn in turns] == [1, 2, 3, 4]
+        assert all(turn.item_count == 1 for turn in turns)
+        assert store.get_thread("t1").turn_count == 4
+        assert store.get_thread("t1").item_count == 4
+        assert len(store.list_items("t1", limit=10)) == 4
+
+    def test_late_token_and_status_do_not_rewrite_settled_turn(self, store):
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        recorder = ConversationRecorder(store)
+        recorder.ensure_thread("t1", project_legacy_history=False)
+        recorder.open_turn("t1", "run", prompt="p", prompt_role="user")
+        end = dict(
+            end_reason="completed",
+            error=None,
+            usage={"total_tokens": 10},
+            model="final",
+            model_ref=None,
+        )
+
+        def finish(_):
+            recorder.close_turn("t1", "run", **end)
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(finish, range(8)))
+        before = store.get_turn("t1", "run").to_dict()
+        recorder.record(
+            "t1",
+            "token",
+            {"run_id": "run", "totals": {"total_tokens": 2}, "model": "stale"},
+        )
+        recorder.record("t1", "run_status", {"run_id": "run", "attempt": 9})
+        assert store.get_turn("t1", "run").to_dict() == before
+        assert store.get_thread("t1").usage == {"total_tokens": 10}
+
+    def test_mutation_failure_rolls_back(self, store):
+        store.upsert_thread(make_thread())
+
+        def fail(thread):
+            thread.title = "not committed"
+            raise OSError("write failure")
+
+        with pytest.raises(OSError):
+            store.mutate_thread("t1", fail)
+        assert store.get_thread("t1").title is None
 
 
 class TestThreads:
@@ -128,6 +712,48 @@ class TestSeqAllocation:
         store.upsert_thread(make_thread())
         with pytest.raises(ValueError):
             store.allocate_seq("t1", 0)
+
+
+class TestAtomicAppend:
+    @pytest.mark.parametrize("same_identity", [False, True])
+    def test_concurrent_append_keeps_items_cursors_and_counts_together(
+        self, store, same_identity
+    ):
+        from threading import Barrier
+
+        store.upsert_thread(make_thread())
+        store.upsert_turn(make_turn())
+        barrier = Barrier(8)
+
+        def append(index):
+            barrier.wait(timeout=10)
+            return store.append_item(
+                make_item(999, item_id="same" if same_identity else str(index))
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(append, range(8)))
+        count = 1 if same_identity else 8
+        assert sorted({item.seq for item in results}) == list(range(1, count + 1))
+        thread = store.get_thread("t1")
+        turn = store.get_turn("t1", "run1")
+        assert thread.last_seq == thread.item_count == store.count_items("t1") == count
+        assert turn.item_count == count
+        assert (turn.first_seq, turn.last_seq) == (1, count)
+
+    def test_redelivery_preserves_existing_content_and_all_counts(self, store):
+        store.upsert_thread(make_thread())
+        store.upsert_turn(make_turn())
+        first = store.append_item(make_item(999, content={"text": "original"}))
+        assert store.append_item(make_item(999, content={"text": "changed"})) == first
+        assert store.get_thread("t1").item_count == 1
+        assert store.get_turn("t1", "run1").item_count == 1
+        assert store.allocate_seq("t1") == 2
+
+    def test_missing_thread_does_not_leave_an_orphan(self, store):
+        with pytest.raises(KeyError):
+            store.append_item(make_item(999))
+        assert store.count_items("t1") == 0
 
 
 class TestTurns:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from functools import partial
 import uuid
@@ -200,6 +201,70 @@ class ExecutionEnvironmentManager:
         ] = {}
         self._shutting_down = False
         self._lock = asyncio.Lock()
+        self._run_tasks: dict[
+            str, dict[asyncio.Task, Callable[[], Awaitable[object]]]
+        ] = {}
+        self._resource_tasks: dict[
+            str, dict[asyncio.Task, Callable[[], Awaitable[object]]]
+        ] = {}
+        self._stop_tasks: dict[str, asyncio.Task[ExecutionEnvironmentDescriptor]] = {}
+
+    async def start_run_task(
+        self,
+        lease: EnvironmentLease,
+        start: Callable[[], asyncio.Task],
+        cancel: Callable[[], Awaitable[object]],
+    ) -> asyncio.Task:
+        """Register a run atomically with the environment's shutdown fence.
+
+        The caller may have acquired its lease before an intervening await.
+        Revalidate it here, before constructing or publishing the task. The
+        cancellation callback must address this exact run, not its session.
+        """
+        return await self._start_owned_task(lease, start, cancel, self._run_tasks)
+
+    async def start_resource_task(
+        self,
+        lease: EnvironmentLease,
+        start: Callable[[], asyncio.Task],
+        close: Callable[[], Awaitable[object]],
+    ) -> asyncio.Task:
+        """Own an auxiliary worker until retirement, after runs finish.
+
+        Resource creation shares the run admission fence. A resource belongs
+        to an exact lease, never to whichever environment a Thread selects
+        later. Its close callback must finish the task or raise for retry.
+        """
+        return await self._start_owned_task(lease, start, close, self._resource_tasks)
+
+    async def _start_owned_task(self, lease, start, close, registry) -> asyncio.Task:
+        async with self._lock:
+            descriptor = self._record(lease.environment_id).descriptor
+            if self._shutting_down or descriptor.state is not EnvironmentState.READY:
+                raise EnvironmentUnavailableError(
+                    lease.environment_id, descriptor.state.value
+                )
+            if descriptor.generation != lease.generation:
+                raise EnvironmentChangedError(
+                    lease.environment_id, lease.generation, descriptor.generation
+                )
+            task = start()
+            tasks = registry.setdefault(lease.environment_id, {})
+            tasks[task] = close
+
+            def finished(done: asyncio.Task) -> None:
+                if registry is self._resource_tasks and (
+                    done.cancelled() or done.exception() is not None
+                ):
+                    # A failed owner task is not proof that its external
+                    # resources closed. Keep its failure visible to stop.
+                    return
+                tasks.pop(done, None)
+                if not tasks and registry.get(lease.environment_id) is tasks:
+                    registry.pop(lease.environment_id, None)
+
+            task.add_done_callback(finished)
+            return task
 
     def set_provisioner(self, provisioner: EnvironmentProvisioner) -> None:
         """Install the AgentHost's product provisioner during composition."""
@@ -586,16 +651,40 @@ class ExecutionEnvironmentManager:
             return transitioned
 
     async def stop(self, environment_id: str) -> ExecutionEnvironmentDescriptor:
+        """Join retirement; disconnecting a caller must not interrupt cleanup."""
+        task = self._stop_tasks.get(environment_id)
+        if task is None:
+            task = asyncio.create_task(self._stop_environment(environment_id))
+            self._stop_tasks[environment_id] = task
+
+            def finished(done: asyncio.Task) -> None:
+                if self._stop_tasks.get(environment_id) is done:
+                    self._stop_tasks.pop(environment_id, None)
+                if not done.cancelled():
+                    done.exception()  # Observe failures even after caller disconnect.
+
+            task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def _stop_environment(
+        self, environment_id: str
+    ) -> ExecutionEnvironmentDescriptor:
         closing_lease: EnvironmentLease
         async with self._lock:
             current = self._record(environment_id)
             descriptor = current.descriptor
-            if descriptor.state is not EnvironmentState.READY:
+            if descriptor.state not in {
+                EnvironmentState.READY,
+                EnvironmentState.STOPPING,
+            }:
                 raise EnvironmentUnavailableError(
                     environment_id, descriptor.state.value
                 )
             closing_lease = EnvironmentLease(
-                descriptor,
+                # A retry uses the same resources/generation as the original
+                # ready lease. This private teardown snapshot never republishes
+                # READY or permits a new acquire against the STOPPING record.
+                replace(descriptor, state=EnvironmentState.READY),
                 current.workspace,
                 current.lifecycle_controller,
                 current.sandbox_runtime,
@@ -609,21 +698,55 @@ class ExecutionEnvironmentManager:
                 current.sandbox_runtime,
                 current.terminal_defaults,
             )
+            runs = tuple(self._run_tasks.get(environment_id, {}).items())
+            resources = tuple(self._resource_tasks.get(environment_id, {}).items())
 
         close = getattr(closing_lease.lifecycle_controller, "close", None)
-        if callable(close):
-            try:
+        workers_finished = False
+        try:
+            # STOPPING is already visible: no late start can escape this
+            # snapshot. Finish run cleanup (including approval resolutions)
+            # before closing the resources those workers still own.
+            results = await asyncio.gather(
+                *(cancel() for task, cancel in runs if not task.done()),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+            if any(not task.done() for task, _ in runs):
+                raise RuntimeError("environment runs did not finish cancellation")
+            # MCP/other auxiliary workers can still be serving the cancelled
+            # run's cleanup. Close them only once all run tasks have joined.
+            results = await asyncio.gather(
+                *(release() for _, release in resources),
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+            if any(not task.done() for task, _ in resources):
+                raise RuntimeError("environment resource workers did not finish")
+            workers_finished = True
+            if callable(close):
                 await close(closing_lease)
-            except Exception:
-                async with self._lock:
-                    failed_current = self._record(environment_id)
-                    failed = replace(
-                        failed_current.descriptor, state=EnvironmentState.FAILED
-                    )
-                    self._environments[environment_id] = replace(
-                        failed_current, descriptor=failed
-                    )
-                raise
+        except BaseException:
+            async with self._lock:
+                failed_current = self._record(environment_id)
+                failed = replace(
+                    failed_current.descriptor,
+                    # A live run is not a retired environment. Keep starts
+                    # fenced and allow a subsequent stop to retry cancellation.
+                    state=(
+                        EnvironmentState.FAILED
+                        if workers_finished
+                        else EnvironmentState.STOPPING
+                    ),
+                )
+                self._environments[environment_id] = replace(
+                    failed_current, descriptor=failed
+                )
+            raise
 
         async with self._lock:
             current = self._record(environment_id)
@@ -657,7 +780,8 @@ class ExecutionEnvironmentManager:
             environment_ids = tuple(
                 environment_id
                 for environment_id, record in self._environments.items()
-                if record.descriptor.state is EnvironmentState.READY
+                if record.descriptor.state
+                in {EnvironmentState.READY, EnvironmentState.STOPPING}
             )
 
         stopped: list[ExecutionEnvironmentDescriptor] = []

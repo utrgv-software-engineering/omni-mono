@@ -19,10 +19,11 @@ The contract:
 
 * All operations are ``async``. Host-side wraps blocking stdlib calls in
   :func:`asyncio.to_thread`; sandbox-side awaits the SDK session.
-* Path arguments are interpreted relative to ``workspace_root()``. Absolute
-  paths and ``..`` traversal that escape the root raise
-  :class:`WorkspaceEscapeError` (host); the sandbox session enforces the
-  same boundary via its manifest path policy.
+* Relative path arguments are anchored at ``workspace_root()``. Plain host
+  workspaces allow access outside that root, subject to OS permissions;
+  mounted and sandbox workspaces enforce their own address spaces. Callers
+  requiring a root boundary (such as filesystem and Git RPCs) must use
+  :meth:`Workspace.resolve_confined` before I/O.
 * ``exec(..., user="alice")`` maps to sandbox ``run_as`` and is ignored
   host-side (we don't change identity on the host).
 * ``spawn(..., pty=True)`` raises :class:`WorkspaceFeatureUnavailable`

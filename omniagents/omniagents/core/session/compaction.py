@@ -184,6 +184,28 @@ def _build_should_trigger_compaction(
 
 _guarded_session_cls_cache: Dict[type, type] = {}
 
+_atomic_session_cls_cache: Dict[type, type] = {}
+
+
+def _atomic_compaction_session_cls(base: type) -> type:
+    """Avoid the SDK's clear/add crash window on our durable context view."""
+    if base not in _atomic_session_cls_cache:
+
+        class AtomicCompactionSession(base):
+            async def _replace_underlying_session_items(
+                self, *, output_items, previous_items
+            ):
+                replace = getattr(self.underlying_session, "replace_sdk_items", None)
+                if callable(replace):
+                    await replace(output_items)
+                else:
+                    await super()._replace_underlying_session_items(
+                        output_items=output_items, previous_items=previous_items
+                    )
+
+        _atomic_session_cls_cache[base] = AtomicCompactionSession
+    return _atomic_session_cls_cache[base]
+
 
 def _guarded_compaction_session_cls(base: type) -> type:
     """Subclass *base* so ``run_compaction`` itself refuses to compact over
@@ -406,6 +428,7 @@ def wrap_with_compaction(
     session_cls: Any = OpenAIResponsesCompactionSession
     if bool(config.get("interruption_safe", True)):
         session_cls = _guarded_compaction_session_cls(OpenAIResponsesCompactionSession)
+    session_cls = _atomic_compaction_session_cls(session_cls)
 
     try:
         return session_cls(

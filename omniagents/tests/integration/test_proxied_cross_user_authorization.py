@@ -201,7 +201,7 @@ class ProxiedRpc:
     async def handshake(self, experimental=()):
         await self.result(
             "initialize",
-            protocol_version="1.0.0",
+            protocol_version="2.0.0",
             identity={"name": "proxy-authz-tests", "version": "0.0.0"},
             platform={"os": "linux", "arch": "x86_64"},
             capabilities={

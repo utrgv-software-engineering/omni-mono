@@ -36,7 +36,7 @@ from omniagents.rpc.transport.inmemory import InMemoryTransport
 ROOT = Path(__file__).resolve().parents[3]
 
 INITIALIZE_RESULT = {
-    "protocol_version": "1.0.0",
+    "protocol_version": "2.0.0",
     "identity": {"name": "omniagents", "version": "0.0.0"},
     "platform": {"os": "linux", "arch": "x86_64"},
     "agent_host": {

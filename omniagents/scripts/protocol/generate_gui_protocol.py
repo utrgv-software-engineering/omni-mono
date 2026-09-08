@@ -216,6 +216,7 @@ OPTIONAL_FIELDS = {
         "safe_tool_overrides",
         "approvals_reviewer",
         "prompt_role",
+        "submission_id",
     ),
     "list_sessions": ("limit", "offset"),
     "get_user_history": ("limit", "include_archived"),
@@ -223,6 +224,7 @@ OPTIONAL_FIELDS = {
     "mcp_approval_response": ("rejection_message",),
     "client_functions": ("version",),
     "client_response": ("result", "error"),
+    "queue_status": ("include_snapshot", "submission_id"),
     "server_call": (
         "args",
         "session_id",
@@ -231,7 +233,9 @@ OPTIONAL_FIELDS = {
         "environment_generation",
     ),
     "enqueue_message": (
+        "submission_id",
         "role",
+        "input_content",
         "trigger_run",
         "variables",
         "safe_tool_overrides",
@@ -265,7 +269,7 @@ OPTIONAL_FIELDS = {
         "truncation",
         "error",
     ),
-    "tool_approval_requested": ("metadata", "session_id", "run_id"),
+    "tool_approval_requested": ("metadata", "session_id", "run_id", "source_call_id"),
     "tool_approval_resolved": ("session_id", "reason"),
     "tool_approval_reviewed": (
         "kind",
@@ -281,7 +285,7 @@ OPTIONAL_FIELDS = {
         "rationale",
         "run_id",
     ),
-    "mcp_approval_requested": ("session_id", "run_id"),
+    "mcp_approval_requested": ("session_id", "run_id", "source_request_id"),
     "mcp_approval_resolved": ("session_id", "reason"),
     "client_request": ("session_id", "idempotency_key", "run_id"),
     "client_request_resolved": ("session_id", "reason"),
@@ -435,6 +439,7 @@ ARRAY_FIELDS = {
     "sources",
 }
 BOOLEAN_FIELDS = {
+    "include_snapshot",
     "allow_empty",
     "cascade",
     "dry_run",
@@ -546,11 +551,26 @@ OBJECT_FIELDS = {
 #: to three stable methods, so the exception is declared per operation and
 #: stays visible here rather than being smuggled in as a renamed wire field.
 OPERATION_FIELD_TYPES = {
+    ("start_run", "content"): "message_content",
+    ("enqueue_message", "input_content"): "array",
     ("item_updated", "content"): "object",
     ("start_run", "environment_selection"): "environment_selection",
 }
 
 OPERATION_FIELD_SCHEMAS = {
+    ("start_run", "content"): {
+        "oneOf": [
+            {"type": "string"},
+            {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": True},
+            },
+        ]
+    },
+    ("enqueue_message", "input_content"): {
+        "type": "array",
+        "items": {"type": "object", "additionalProperties": True},
+    },
     ("agent_host_register_workspace", "sources"): {
         "type": "array",
         "items": {"type": "object"},
@@ -682,6 +702,7 @@ def _field_kind(operation_name: str, field: str) -> str:
 
 
 _PYTHON_TYPES = {
+    "message_content": "str | list[dict[str, Any]]",
     "array": "list[Any]",
     "boolean": "bool",
     "integer": "int",
@@ -693,6 +714,7 @@ _PYTHON_TYPES = {
 }
 
 _TYPESCRIPT_TYPES = {
+    "message_content": "string | Record<string, unknown>[]",
     "array": "unknown[]",
     "boolean": "boolean",
     "integer": "number",
@@ -1613,9 +1635,9 @@ def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
 
 
-def _operation_schema(name: str) -> dict:
+def _operation_schema(name: str, major: int = 1) -> dict:
     return {
-        "$ref": f"./schemas/gui-v1.schema.json#/$defs/{name}",
+        "$ref": f"./schemas/gui-v{major}.schema.json#/$defs/{name}",
     }
 
 
@@ -1628,7 +1650,7 @@ def _execution_requirement_names(operation) -> list[str]:
     ]
 
 
-def build_openrpc() -> dict:
+def build_openrpc(major: int = 1) -> dict:
     methods = []
     for operation in OPERATIONS:
         required_fields = REQUIRED_FIELDS.get(operation.name, ())
@@ -1643,7 +1665,7 @@ def build_openrpc() -> dict:
                     "required": True,
                     "schema": {
                         "$ref": (
-                            "./schemas/gui-v1.schema.json#/$defs/"
+                            f"./schemas/gui-v{major}.schema.json#/$defs/"
                             f"{operation.name}/properties/{field}"
                         )
                     },
@@ -1656,7 +1678,7 @@ def build_openrpc() -> dict:
                     "required": False,
                     "schema": {
                         "$ref": (
-                            "./schemas/gui-v1.schema.json#/$defs/"
+                            f"./schemas/gui-v{major}.schema.json#/$defs/"
                             f"{operation.name}/properties/{field}"
                         )
                     },
@@ -1668,16 +1690,16 @@ def build_openrpc() -> dict:
                 "schema": (
                     {
                         "$ref": (
-                            "./schemas/gui-v1.schema.json#/$defs/initializeResult"
+                            f"./schemas/gui-v{major}.schema.json#/$defs/initializeResult"
                             if operation.name == "initialize"
-                            else "./schemas/gui-v1.schema.json#/$defs/result"
+                            else f"./schemas/gui-v{major}.schema.json#/$defs/result"
                         )
                     }
                     if operation.kind == "request"
                     else {"type": "null"}
                 ),
             },
-            "x-omni-params-schema": _operation_schema(operation.name),
+            "x-omni-params-schema": _operation_schema(operation.name, major),
             "x-omni-direction": operation.direction,
             "x-omni-kind": operation.kind,
             "x-omni-stability": operation.stability,
@@ -1799,9 +1821,9 @@ def build_openrpc() -> dict:
         "openrpc": "1.3.2",
         "info": {
             "title": "OmniAgents GUI Protocol",
-            "version": "1.0.0",
+            "version": f"{major}.0.0",
             "description": "JSON-RPC 2.0 protocol for the main OmniAgents /ws endpoint.",
-            "x-omni-compatibility": "additive-only-v1",
+            "x-omni-compatibility": f"additive-only-v{major}",
         },
         "methods": methods,
         "components": {
@@ -1818,7 +1840,7 @@ def build_openrpc() -> dict:
     }
 
 
-def build_schema() -> dict:
+def build_schema(major: int = 1) -> dict:
     definitions = {
         "result": {},
         "identity": IDENTITY_SCHEMA,
@@ -1871,7 +1893,7 @@ def build_schema() -> dict:
             definitions[operation.name]["required"] = required
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "$id": "https://omniagents.dev/protocol/gui/v1/schema.json",
+        "$id": f"https://omniagents.dev/protocol/gui/v{major}/schema.json",
         "$defs": definitions,
         "oneOf": [{"$ref": f"#/$defs/{operation.name}"} for operation in OPERATIONS],
     }
@@ -2208,7 +2230,8 @@ def build_pinned_tool_outputs(schema: dict) -> tuple[bytes, bytes]:
 
 
 def validate_external_references(document: dict, schema: dict) -> None:
-    prefix = "./schemas/gui-v1.schema.json#/$defs/"
+    major = document["info"]["version"].split(".")[0]
+    prefix = f"./schemas/gui-v{major}.schema.json#/$defs/"
     definitions = schema["$defs"]
     for method in document["methods"]:
         references = [method["x-omni-params-schema"]["$ref"]]
@@ -2226,9 +2249,26 @@ def validate_external_references(document: dict, schema: dict) -> None:
                 raise ValueError(f"Missing schema property: {reference}")
 
 
-def render() -> dict[Path, bytes]:
-    openrpc = build_openrpc()
-    schema = build_schema()
+def artifact_path(path: Path, major: int) -> Path:
+    """Separate candidates; never target an immutable release baseline."""
+    if major == 1:
+        return path
+    if major != 2:
+        raise ValueError(f"Unsupported GUI protocol major: {major}")
+    relative = str(path.relative_to(ROOT))
+    relative = relative.replace("protocol/openrpc/", "protocol/openrpc/v2/")
+    relative = relative.replace("gui-v1", "gui-v2").replace("gui_v1", "gui_v2")
+    relative = relative.replace(
+        "generated/schema-types.ts", "generated/schema-types-v2.ts"
+    )
+    return ROOT / relative
+
+
+def render(major: int = 1) -> dict[Path, bytes]:
+    if major not in (1, 2):
+        raise ValueError(f"Unsupported GUI protocol major: {major}")
+    openrpc = build_openrpc(major)
+    schema = build_schema(major)
     validate_external_references(openrpc, schema)
     generated_python_schema, generated_typescript_schema = build_pinned_tool_outputs(
         schema
@@ -2302,7 +2342,7 @@ def render() -> dict[Path, bytes]:
         },
         "excluded_surfaces": ["/ws/realtime", "/ws/terminal"],
     }
-    return {
+    outputs = {
         OPENRPC_PATH: _json_bytes(openrpc),
         SCHEMA_PATH: _json_bytes(schema),
         PYTHON_PATH: build_python(),
@@ -2314,6 +2354,46 @@ def render() -> dict[Path, bytes]:
         MANIFEST_PATH: _json_bytes(manifest),
         INVENTORY_PATH: _json_bytes(inventory),
     }
+    if major == 2:
+        manifest["generator_version"] = "2"
+        manifest["artifacts"] = [
+            str(artifact_path(ROOT / path, major).relative_to(ROOT))
+            for path in manifest["artifacts"]
+        ]
+        outputs[MANIFEST_PATH] = _json_bytes(manifest)
+        outputs[PYTHON_PATH] += b'\nGUI_PROTOCOL_VERSION = "2.0.0"\n'
+        for path in (TYPESCRIPT_PATH, INK_TYPESCRIPT_PATH):
+            outputs[
+                path
+            ] += b'\nexport const GUI_PROTOCOL_VERSION = "2.0.0" as const;\n'
+            outputs[path] += b"""
+/** A successful initialize reply must still prove version compatibility. */
+export function supportsGuiProtocolVersion(serverVersion: unknown): boolean {
+  if (typeof serverVersion !== "string" || serverVersion.trim() !== serverVersion || !/^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$/.test(serverVersion)) return false;
+  const server = serverVersion.split(".").map(Number);
+  const client = GUI_PROTOCOL_VERSION.split(".").map(Number);
+  if (!server.every(Number.isSafeInteger) || server[0] !== client[0]) return false;
+  return server[1] > client[1] || (server[1] === client[1] && server[2] >= client[2]);
+}
+
+/** Validate the required handshake shape before reading capabilities. */
+export function isGuiInitializeResult(value: unknown): value is InitializeResult {
+  const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  const strings = (v: unknown): boolean => Array.isArray(v) && v.every(item => typeof item === "string");
+  if (!object(value) || !supportsGuiProtocolVersion(value.protocol_version)) return false;
+  const { identity, platform, capabilities, agent_host: host } = value;
+  if (!object(identity) || typeof identity.name !== "string" || typeof identity.version !== "string") return false;
+  if (!object(platform) || typeof platform.os !== "string" || typeof platform.arch !== "string") return false;
+  if (!object(host) || typeof host.agent_host_id !== "string" || !host.agent_host_id) return false;
+  for (const key of ["default_workspace_id", "default_environment_id"]) {
+    if (host[key] !== undefined && host[key] !== null && typeof host[key] !== "string") return false;
+  }
+  if (!object(capabilities)) return false;
+  if (!["realtime", "mcp_apps", "client_functions", "approvals", "artifacts", "replay", "terminal"].every(key => typeof capabilities[key] === "boolean")) return false;
+  return strings(capabilities.experimental_operations) && strings(capabilities.disabled_notifications);
+}
+"""
+    return {artifact_path(path, major): content for path, content in outputs.items()}
 
 
 def write_outputs(outputs: dict[Path, bytes]) -> None:
@@ -2338,8 +2418,9 @@ def check_outputs(outputs: dict[Path, bytes]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--major", type=int, choices=(1, 2), default=2)
     args = parser.parse_args()
-    outputs = render()
+    outputs = render(args.major)
     if args.check:
         check_outputs(outputs)
     else:

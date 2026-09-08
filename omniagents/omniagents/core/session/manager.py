@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import inspect
 import time
 import uuid
@@ -11,6 +12,8 @@ from omniagents.core.debug import Debug
 from .event_log import MemoryEventLogStore, SessionEventLog
 from .history_db import (
     load_history,
+    load_sdk_context,
+    replace_sdk_context,
     register_session,
     get_archived,
     set_archived,
@@ -47,6 +50,7 @@ class QueuedItem:
     """
 
     content: str
+    input_content: Any | None = None
     role: str = "user"
     trigger_run: bool = False
     variables: Optional[Dict[str, Any]] = None
@@ -54,18 +58,23 @@ class QueuedItem:
     source: Optional[str] = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     enqueued_at: float = field(default_factory=time.time)
+    state: str = "pending"
+    error: str | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON-safe wire shape for ``list_queue`` and ``queue_changed``."""
         return {
             "id": self.id,
             "content": self.content,
+            "input_content": self.input_content,
             "role": self.role,
             "trigger_run": self.trigger_run,
             "variables": self.variables,
             "safe_tool_overrides": self.safe_tool_overrides,
             "source": self.source,
             "enqueued_at": self.enqueued_at,
+            "state": self.state,
+            "error": self.error,
         }
 
 
@@ -113,6 +122,47 @@ def _is_model_output_message(item: dict) -> bool:
     return isinstance(msg_id, str) and msg_id.startswith("msg_")
 
 
+def _history_run_id(item: dict) -> str | None:
+    namespace = item.get("omniagents")
+    run_id = namespace.get("run_id") if isinstance(namespace, dict) else None
+    return run_id if isinstance(run_id, str) and run_id else None
+
+
+def _scope_reused_call_ids(history: list[dict]) -> list[dict]:
+    """Keep distinct recorded runs distinct in the provider's flat call namespace."""
+    import hashlib
+    import json
+
+    runs: dict[str, set[str]] = {}
+    for item in history:
+        run_id = _history_run_id(item)
+        call_id = item.get("call_id")
+        if (
+            item.get("type") == "function_call"
+            and isinstance(run_id, str)
+            and isinstance(call_id, str)
+        ):
+            runs.setdefault(call_id, set()).add(run_id)
+    result = []
+    for item in history:
+        run_id = _history_run_id(item)
+        call_id = item.get("call_id")
+        if (
+            item.get("type") in ("function_call", "function_call_output")
+            and isinstance(run_id, str)
+            and isinstance(call_id, str)
+            and len(runs.get(call_id, ())) > 1
+        ):
+            identity = hashlib.sha256(
+                json.dumps([run_id, call_id]).encode()
+            ).hexdigest()[:32]
+            item = {**item, "call_id": f"call_run_{identity}"}
+            if item["type"] == "function_call":
+                item["id"] = f"fc_synth_{identity}"
+        result.append(item)
+    return result
+
+
 def filter_history_for_api(history: list[dict]) -> list[dict]:
     """Reorder history items to match OpenAI API requirements.
 
@@ -131,6 +181,7 @@ def filter_history_for_api(history: list[dict]) -> list[dict]:
     "Item 'rs_xxx' of type 'reasoning' was provided without its required following item."
     "No tool call found for function call output with call_id xxx"
     """
+    history = _scope_reused_call_ids(history)
     reordered: list[dict] = []
     i = 0
     consumed_indices: set[int] = set()
@@ -706,9 +757,16 @@ class Session:  # noqa: D101
             if session_id
             else []
         )
+        # Model context is a replaceable view, not the append-only transcript.
+        # None means no SDK rewrite has occurred; [] means intentionally empty.
+        self._sdk_history = (
+            load_sdk_context(self.id, project_slug=project_slug, agent_slug=agent_slug)
+            if session_id
+            else None
+        )
         t_after_history = time.perf_counter()
-        if session_id:
-            self._repair_history_after_unclean_shutdown()
+        # Loading is not proof of a crash: another runtime may own the run.
+        # Repair only after acquiring exclusive durable run ownership.
         t_after_repair = time.perf_counter()
         self.current_task: Optional[asyncio.Task] = None
         self.current_stream_result: Any | None = None
@@ -786,16 +844,17 @@ class Session:  # noqa: D101
         # Background-injected messages awaiting serialized processing.
         # Drained by AgentService._drain_queue, which serializes against
         # ``current_task`` so queued runs never collide with user-initiated ones.
-        # Backed by a list (not asyncio.Queue) so clients can list/cancel
-        # items by id via ``list_queue`` / ``cancel_queued_message``.
+        # This list is a projection of the durable command inbox. Service
+        # reads hydrate it; acceptance/claims/cancellation commit in the store.
         self.message_queue: list[QueuedItem] = []
+        self.queue_owner = uuid.uuid4().hex
         self.message_queue_max: int = 100
         self.drainer_task: Optional[asyncio.Task] = None
         # Background-notification batching. Sources that produce
         # automated notifications (bash jobs exiting, workers
         # completing, webhooks) call AgentService.enqueue_notification
-        # instead of enqueue_message. Those notifications buffer here
-        # and are coalesced into ONE combined QueuedItem (trigger_run=
+        # instead of enqueue_message. This projects the durable notification
+        # buffer, coalesced into ONE combined QueuedItem (trigger_run=
         # True, role="assistant") by _notification_flusher at the next
         # safe boundary: active run ends, short debounce when idle, or
         # immediately when a real user message is enqueued.
@@ -839,7 +898,7 @@ class Session:  # noqa: D101
             f"history_items={len(self.history)}"
         )
 
-    def append_message(self, message: dict) -> None:
+    def append_message(self, message: dict, *, projection: dict | None = None) -> None:
         """Add a message to this session and persist it."""
         # Materialize the canonical thread BEFORE the row lands in history.
         #
@@ -851,14 +910,71 @@ class Session:  # noqa: D101
         # was clear the guard belongs HERE, at the single point every
         # history write passes through, rather than at each call site.
         recorder = _materialize_conversation_thread(self)
-        self.history.append(message)
+        if message.get("type") in ("function_call", "function_call_output"):
+            run_id = getattr(self, "active_run_id", None)
+            if isinstance(run_id, str) and run_id:
+                message = dict(message)
+                message["omniagents"] = {
+                    "run_id": run_id,
+                    **(message.get("omniagents") or {}),
+                }
+        # SDK retries can re-save old input rows. A legacy projection/fork
+        # has different canonical item IDs, so provider-key dedupe alone
+        # cannot prevent such old outputs being recorded as new responses.
+        message_id = message.get("id")
+        already_persisted = (
+            message.get("role") == "assistant"
+            and isinstance(message_id, str)
+            and bool(message_id)
+            and any(
+                row.get("id") == message_id
+                for row in self.history
+                if isinstance(row, dict)
+            )
+        )
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        if projection is not None:
+            if recorder is None:
+                raise RuntimeError(
+                    "Cannot persist message: canonical thread unavailable"
+                )
+            ConversationRecorder.validate_projection(message, projection)
+        if (
+            projection is None
+            and not already_persisted
+            and not getattr(self, "_skip_conversation_materialization", False)
+            and ConversationRecorder.is_persisted_message(message)
+        ):
+            # Do not accept a durable response without a recoverable owner.
+            if recorder is None:
+                raise RuntimeError(
+                    "Cannot persist response: canonical thread unavailable"
+                )
+            projection = {"version": 1, "run_id": getattr(self, "active_run_id", None)}
         db_append_message(
             self.id,
             message,
             project_slug=self._project_slug,
             agent_slug=self._agent_slug,
+            **({"projection": projection} if projection is not None else {}),
         )
+        # A failed write must not leave a phantom input visible to the next
+        # SDK turn or convince retry deduplication that it was persisted.
+        self.history.append(message)
+        if self._sdk_history is not None:
+            self._sdk_history.append(message)
         _record_reasoning_item(self, recorder, message)
+        # SDK session persistence can succeed before stream_events raises
+        # and discards an undelivered message_output. Record provider output
+        # here as well, using the same stable identity as the event path.
+        if recorder is not None and projection is not None:
+            try:
+                recorder.recover_pending_messages(self.id)
+            except Exception:
+                Debug.log(
+                    f"[session] message projection pending recovery for {self.id!r}"
+                )
 
     # ------------------------------------------------------------------
     # Session variables — mutable, persisted, broadcast-on-change dict
@@ -1030,7 +1146,7 @@ class Session:  # noqa: D101
         the same reorder/strip helpers the bridge used to apply manually so
         the SDK's ``prepare_input_with_session`` receives clean history.
         """
-        items = list(self.history)
+        items = list(self.history if self._sdk_history is None else self._sdk_history)
         # Honor the legacy ``context_summary`` marker (a no-op for newly
         # created sessions which never write one).
         items = _apply_legacy_compaction_window(items)
@@ -1038,7 +1154,7 @@ class Session:  # noqa: D101
         # for the API and strip output-only metadata.
         items = strip_internal_keys_for_api(filter_history_for_api(items))
         if limit is not None and limit >= 0:
-            items = items[-limit:]
+            items = items[-limit:] if limit else []
         return items
 
     async def add_items(self, items: list[dict]) -> None:
@@ -1055,44 +1171,69 @@ class Session:  # noqa: D101
             self.append_message(item)
 
     async def pop_item(self) -> dict | None:
-        """SDK Session protocol: remove and return the most recent item.
-
-        Note: persistence-layer pop is not currently exposed by history_db,
-        so this only mutates in-memory history. Resumed sessions will see
-        the popped item again. Suitable for SDK-internal rewinds within a
-        single run.
-        """
-        if not self.history:
+        """Durably rewind model context without deleting transcript records."""
+        items = self.history if self._sdk_history is None else self._sdk_history
+        if not items:
             return None
-        return self.history.pop()
+        popped = items[-1]
+        await self.replace_sdk_items(items[:-1])
+        return popped
 
     async def clear_session(self) -> None:
-        """SDK Session protocol: clear the in-memory conversation.
+        """Durably clear model context, retaining the user's transcript."""
+        await self.replace_sdk_items([])
 
-        Persistent rows are NOT deleted; use the CLI / archive flow if you
-        need a hard wipe. This matches the existing OmniAgents semantics
-        where archival is a metadata flag rather than a destructive op.
-        """
-        self.history.clear()
+    async def replace_sdk_items(self, items: list[dict]) -> None:
+        """Atomic SDK compaction replacement; failure leaves both views intact."""
+        self._replace_sdk_items(items)
+
+    def _replace_sdk_items(self, items: list[dict]) -> None:
+        snapshot = deepcopy(items)
+        for item in snapshot:
+            _normalize_assistant_message_parts_inplace(item)
+        replace_sdk_context(
+            self.id,
+            snapshot,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+        )
+        self._sdk_history = snapshot
+
+    def refresh_owned_history(self, ownership) -> None:
+        """Refresh and repair only while this runtime exclusively owns the session."""
+        if ownership.thread_id != self.id:
+            raise RuntimeError("History refresh belongs to a different session")
+        ownership.assert_current()
+        history = load_history(
+            self.id, project_slug=self._project_slug, agent_slug=self._agent_slug
+        )
+        sdk_history = load_sdk_context(
+            self.id, project_slug=self._project_slug, agent_slug=self._agent_slug
+        )
+        self.history, self._sdk_history = history, sdk_history
+        self._repair_history_after_unclean_shutdown()
 
     def _repair_history_after_unclean_shutdown(self) -> None:
-        response_call_ids_in_order: list[str] = []
-        response_call_ids_seen: set[str] = set()
-        response_outputs_seen: set[str] = set()
+        pending_responses: list[tuple[str | None, str, dict]] = []
 
         chat_tool_call_ids_in_order: list[str] = []
         chat_tool_call_ids_seen: set[str] = set()
         chat_tool_outputs_seen: set[str] = set()
 
-        for item in self.history:
+        for item in (self.history if self._sdk_history is None else self._sdk_history):
             if not isinstance(item, dict):
                 continue
 
             item_type = item.get("type")
             if isinstance(item_type, str) and item_type.endswith("_call_output"):
                 call_id = item.get("call_id")
-                if isinstance(call_id, str) and call_id:
-                    response_outputs_seen.add(call_id)
+                run_id = _history_run_id(item)
+                for index, (pending_run, pending_call, _) in enumerate(
+                    pending_responses
+                ):
+                    if (pending_run, pending_call) == (run_id, call_id):
+                        pending_responses.pop(index)
+                        break
                 continue
 
             if (
@@ -1101,13 +1242,9 @@ class Session:  # noqa: D101
                 and not item_type.endswith("_call_output")
             ):
                 call_id = item.get("call_id")
-                if (
-                    isinstance(call_id, str)
-                    and call_id
-                    and call_id not in response_call_ids_seen
-                ):
-                    response_call_ids_seen.add(call_id)
-                    response_call_ids_in_order.append(call_id)
+                if isinstance(call_id, str) and call_id:
+                    run_id = _history_run_id(item)
+                    pending_responses.append((run_id, call_id, item))
                 continue
 
             role = item.get("role")
@@ -1133,17 +1270,37 @@ class Session:  # noqa: D101
                     chat_tool_outputs_seen.add(tool_call_id)
                 continue
 
-        missing_responses = [
-            cid
-            for cid in response_call_ids_in_order
-            if cid not in response_outputs_seen
-        ]
-        for call_id in missing_responses:
+        from omniagents.core.conversation.recorder import recorder_for_session
+        from omniagents.core.conversation.model import derive_item_id
+
+        recorder = recorder_for_session(self)
+        for run_id, call_id, call in pending_responses:
+            if call.get("type") != "function_call":
+                # Other SDK tools have different output schemas. Do not invent
+                # a function output for e.g. a computer or hosted-shell call.
+                continue
+            output = (
+                "[Missing tool output: execution outcome unknown. "
+                "Do not assume it is safe to repeat the action.]"
+            )
+            if recorder is not None and run_id:
+                key = recorder._tool_natural_key({"run_id": run_id, "call_id": call_id})
+                recorded = recorder.store.get_item(
+                    self.id, derive_item_id(self.id, key)
+                )
+                if (
+                    recorded is not None
+                    and recorded.content.get("execution_state") == "completed"
+                    and recorded.content.get("tool") == call.get("name")
+                    and recorded.content.get("input") == call.get("arguments")
+                ):
+                    output = recorded.content["output"]
             self.append_message(
                 {
                     "type": "function_call_output",
                     "call_id": call_id,
-                    "output": "[Missing tool output: previous process terminated]",
+                    "output": output,
+                    "omniagents": {"run_id": run_id, "recovered_tool_output": True},
                 }
             )
 
@@ -1157,7 +1314,7 @@ class Session:  # noqa: D101
                 {
                     "role": "tool",
                     "tool_call_id": tool_call_id,
-                    "content": "[Missing tool output: previous process terminated]",
+                    "content": "[Missing tool output: execution outcome unknown. Do not assume it is safe to repeat the action.]",
                 }
             )
 
@@ -1172,6 +1329,8 @@ class SessionManager:  # noqa: D101
         self._agent_slug = agent_slug
         self._by_id: Dict[str, Session] = {}
         self._task_map: Dict[str, Session] = {}
+        self._run_tasks: Dict[str, asyncio.Task] = {}
+        self._cancel_tasks: Dict[str, asyncio.Task[bool]] = {}
 
     # ---------------------------------------------------------------------
     # Session lifecycle helpers
@@ -1264,6 +1423,10 @@ class SessionManager:  # noqa: D101
                     continue
         finally:
             new_session._skip_conversation_materialization = False
+        # A full fork inherits compacted model context; a branch-point fork
+        # must instead use its historical prefix, never the parent's future.
+        if history is None and source_session._sdk_history is not None:
+            new_session._replace_sdk_items(source_session._sdk_history)
         new_session.context = context if context is not None else source_session.context
         new_session.variables = (
             variables if variables is not None else source_session.variables
@@ -1281,34 +1444,57 @@ class SessionManager:  # noqa: D101
     def bind_task(self, task: asyncio.Task, session: Session) -> None:  # noqa: D401
         run_id = task.get_name()
         self._task_map[run_id] = session
+        self._run_tasks[run_id] = task
         session.current_task = task
         session.current_stream_result = None
         session.cancel_requested = False
         session.cancel_end_reason = None
         task.add_done_callback(lambda _: self._task_map.pop(run_id, None))
+        task.add_done_callback(lambda _: self._run_tasks.pop(run_id, None))
 
     def get_by_run_id(self, run_id: str) -> Optional[Session]:  # noqa: D401
         return self._task_map.get(run_id)
 
     async def cancel(self, run_id: str, *, timeout: float = 5.0) -> bool:  # noqa: D401
+        # A UI stop and environment retirement may arrive together. Repeated
+        # task.cancel() would interrupt the worker's awaited finally cleanup.
+        # Join one cancellation attempt, even if its original caller disconnects.
+        pending = self._cancel_tasks.get(run_id)
+        if pending is None:
+            pending = asyncio.create_task(self._cancel_run(run_id, timeout=timeout))
+            self._cancel_tasks[run_id] = pending
+
+            def finished(done: asyncio.Task) -> None:
+                if self._cancel_tasks.get(run_id) is done:
+                    self._cancel_tasks.pop(run_id, None)
+                if not done.cancelled():
+                    done.exception()
+
+            pending.add_done_callback(finished)
+        return await asyncio.shield(pending)
+
+    async def _cancel_run(self, run_id: str, *, timeout: float) -> bool:
         sess = self._task_map.get(run_id)
         if not sess:
             return False
-        task = sess.current_task
+        task = self._run_tasks.get(run_id)
         if task is None:
             self._task_map.pop(run_id, None)
             return False
         if task.done():
             self._task_map.pop(run_id, None)
-            sess.current_task = None
-            sess.current_stream_result = None
+            self._run_tasks.pop(run_id, None)
+            if sess.current_task is task:
+                sess.current_task = None
+                sess.current_stream_result = None
             return False
 
-        sess.cancel_requested = True
-        if not sess.cancel_end_reason:
-            sess.cancel_end_reason = "cancelled"
+        if sess.current_task is task:
+            sess.cancel_requested = True
+            if not sess.cancel_end_reason:
+                sess.cancel_end_reason = "cancelled"
 
-        stream = getattr(sess, "current_stream_result", None)
+        stream = sess.current_stream_result if sess.current_task is task else None
         force_cancel = False
 
         if stream and hasattr(stream, "cancel"):
@@ -1322,30 +1508,28 @@ class SessionManager:  # noqa: D101
             force_cancel = True
 
         if not force_cancel and not task.done():
-            try:
-                await asyncio.wait_for(task, timeout)
-            except asyncio.TimeoutError:
-                force_cancel = True
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
+            done, _ = await asyncio.wait({task}, timeout=timeout)
+            force_cancel = not done
 
         if force_cancel and not task.done():
-            if not task.cancelled():
+            # A retry may arrive after an earlier attempt timed out while
+            # finally blocks are still cleaning up. Do not cancel those again.
+            if not task.cancelling():
                 task.cancel()
-            try:
-                await asyncio.wait_for(task, timeout)
-            except asyncio.TimeoutError:
-                pass
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                pass
+            # wait_for cancels again on timeout and then waits indefinitely
+            # if the worker suppresses cancellation. Keep its identity for
+            # retry and never publish a still-running task as stopped.
+            await asyncio.wait({task}, timeout=timeout)
 
-        sess.current_task = None
-        sess.current_stream_result = None
+        if not task.done():
+            return False
+        if not task.cancelled():
+            task.exception()
+        if sess.current_task is task:
+            sess.current_task = None
+            sess.current_stream_result = None
         self._task_map.pop(run_id, None)
+        self._run_tasks.pop(run_id, None)
         return True
 
     def archive_session(self, session_id: str) -> bool:  # noqa: D401

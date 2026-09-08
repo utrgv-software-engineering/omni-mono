@@ -29,7 +29,14 @@ from omniagents.core.conversation.recorder import ConversationRecorder
 from omniagents.core.conversation.service import ConversationService
 
 from .test_store import (  # noqa: F401 — re-run against the PG backend
+    TestAtomicAppend,
+    TestApprovalDecisions,
+    TestToolExecution,
+    TestRunOwnership,
+    TestQueueInbox,
+    TestAtomicMutations,
     TestItems,
+    TestSubmissionReceipts,
     TestProjectionWrite,
     TestSeqAllocation,
     TestPageCounts,

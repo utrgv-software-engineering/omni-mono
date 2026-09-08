@@ -37,7 +37,7 @@ import type {
 import type {
   ClientRequestResolvedParams,
   ItemUpdatedParams,
-} from "../protocol/generated/gui-v1.js";
+} from "../protocol/generated/gui-v2.js";
 
 export interface UseMessagesOptions {
   client: RPCClient | null;

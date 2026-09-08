@@ -22,6 +22,176 @@ from omniagents.core.agents import service as service_module
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.session.manager import QueuedItem
+from omniagents.rpc.generated.gui_v2.models import StartRunParams, EnqueueMessageParams
+
+
+def test_protocol_accepts_direct_and_queued_attachment_parts():
+    parts = [{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]
+    direct = StartRunParams.model_validate(
+        {"prompt": "image", "environment_selection": {"mode": "none"}, "content": parts}
+    )
+    queued = EnqueueMessageParams.model_validate(
+        {"session_id": "a", "content": "image", "input_content": parts}
+    )
+    assert direct.content == parts
+    assert queued.input_content == parts
+    assert (
+        QueuedItem(content="image", input_content=parts).to_dict()["input_content"]
+        == parts
+    )
+    assert (
+        StartRunParams.model_validate(
+            {
+                "prompt": "text",
+                "environment_selection": {"mode": "none"},
+                "content": "plain text",
+            }
+        ).content
+        == "plain text"
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_acceptance_survives_session_reload_and_lost_reply(monkeypatch):
+    service = make_service(monkeypatch)
+    with monkeypatch.context() as patcher:
+        patcher.setattr(service, "_ensure_drainer", lambda session: None)
+        accepted = await service.enqueue_message(
+            "restart-queue", "survive", submission_id="send"
+        )
+    service._session_manager.drop("restart-queue")
+    snapshot = await service.list_queue("restart-queue")
+    assert [item["content"] for item in snapshot["items"]] == ["survive"]
+    session = service._session_manager.get("restart-queue")
+    await asyncio.wait_for(session.drainer_task, timeout=2)
+    assert (
+        await service.enqueue_message("restart-queue", "survive", submission_id="send")
+        == accepted
+    )
+    assert len(session.history) == 1
+    assert (await service.list_queue(session.id))["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_foreign_claim_survives_reload_without_dispatch(monkeypatch):
+    from omniagents.core.session import queue_inbox
+
+    service = make_service(monkeypatch)
+    with monkeypatch.context() as patcher:
+        patcher.setattr(service, "_ensure_drainer", lambda session: None)
+        accepted = await service.enqueue_message(
+            "foreign-queue", "do not replay", trigger_run=True
+        )
+    session = service._session_manager.get("foreign-queue")
+    assert queue_inbox.claim(
+        service._queue_store(session), session.id, accepted["id"], "dead-owner"
+    )
+    service._session_manager.drop(session.id)
+    snapshot = await service.list_queue(session.id)
+    replacement = service._session_manager.get(session.id)
+    assert snapshot["items"][0]["state"] == "dispatch_uncertain"
+    assert replacement.drainer_task is None
+    assert not (await service.cancel_queued_message(session.id, accepted["id"]))["ok"]
+
+
+@pytest.mark.asyncio
+async def test_buffered_notification_survives_reload(monkeypatch):
+    service = make_service(monkeypatch)
+    monkeypatch.setattr(service, "_ensure_notification_flusher", lambda session: None)
+    result = await service.enqueue_notification(
+        "buffer-reload", "survive notification", source="test"
+    )
+    assert result["ok"]
+    service._session_manager.drop("buffer-reload")
+    await service.list_queue("buffer-reload")
+    session = service._session_manager.get("buffer-reload")
+    assert len(session.pending_notifications) == 1
+    assert "survive notification" in str(session.pending_notifications)
+
+
+@pytest.mark.asyncio
+async def test_queue_refresh_does_not_unarchive_canonical_thread(monkeypatch):
+    from omniagents.core.conversation.model import ThreadStatus
+
+    service = make_service(monkeypatch)
+    monkeypatch.setattr(service, "_ensure_drainer", lambda session: None)
+    await service.enqueue_message("archive-queue", "pending")
+    session = service._session_manager.get("archive-queue")
+    store = service._queue_store(session)
+    store.mutate_thread(
+        session.id, lambda thread: setattr(thread, "status", ThreadStatus.ARCHIVED)
+    )
+    assert not session.archived
+    assert (await service.enqueue_message(session.id, "rejected"))[
+        "reason"
+    ] == "session_archived"
+    assert session.archived
+    assert store.get_thread(session.id).status == ThreadStatus.ARCHIVED
+
+
+@pytest.mark.asyncio
+async def test_durable_rejection_is_visible_without_blocking_later_work(monkeypatch):
+    from omniagents.core.session.submissions import submit_once
+
+    service = make_service(monkeypatch)
+    calls = []
+
+    async def fake_start_run(prompt, session_id=None, submission_id=None, **kwargs):
+        session = service._session_manager.get(session_id)
+
+        async def invoke():
+            calls.append(prompt)
+            if prompt == "reject":
+                raise ValueError("configuration invalid")
+            return {"run_id": "ok", "session_id": session_id}
+
+        return await submit_once(
+            session,
+            service._queue_store(session),
+            submission_id,
+            {"prompt": prompt},
+            invoke,
+        )
+
+    service.start_run = fake_start_run
+    await service.enqueue_message("reject-queue", "reject", trigger_run=True)
+    await service.enqueue_message("reject-queue", "after", trigger_run=True)
+    session = service._session_manager.get("reject-queue")
+    await asyncio.wait_for(session.drainer_task, timeout=2)
+    assert calls == ["reject", "after"]
+    items = (await service.list_queue(session.id))["items"]
+    assert len(items) == 1 and items[0]["state"] == "failed"
+    assert "configuration invalid" in items[0]["error"]
+    assert (await service.cancel_queued_message(session.id, items[0]["id"]))["ok"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_includes_one_history_queue_and_journal_boundary(monkeypatch):
+    service = make_service(monkeypatch)
+    session = service._session_manager.get_or_create("snapshot")
+    session.append_message({"role": "user", "content": "existing"})
+    from omniagents.core.conversation.recorder import ensure_conversation_thread
+
+    ensure_conversation_thread(session).record_user_message(
+        session.id, run_id=None, content="existing"
+    )
+    monkeypatch.setattr(service, "_ensure_drainer", lambda session: None)
+    await service.enqueue_message(session.id, "next")
+    session.pending_client_requests["q"] = {
+        "request_id": "q",
+        "session_id": session.id,
+        "function": "escalate",
+        "args": {"message": "question"},
+    }
+    result = await service.queue_status(session.id, include_snapshot=True)
+    snapshot = result["snapshot"]
+    assert snapshot["items"]
+    assert snapshot["queue"][0]["content"] == "next"
+    assert snapshot["pending_requests"][0]["request_id"] == "q"
+    assert snapshot["stream_id"] == session.event_log.stream_id
+    assert snapshot["last_seq"] == session.event_log.last_seq
+    session.pending_client_requests["q"]["args"]["message"] = "changed"
+    assert snapshot["pending_requests"][0]["args"]["message"] == "question"
 
 
 @dataclass
@@ -91,6 +261,67 @@ def make_service(monkeypatch, stream_result=None, stream_side_effect=None):
 
 # ---------------------------------------------------------------------------
 # Append-only path
+# Attachments must reach the run without becoming queue display text.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["user", "assistant", "system"])
+async def test_append_only_queue_records_and_pushes_each_message(monkeypatch, role):
+    service = make_service(monkeypatch)
+    events = attach_capture(service)
+    session = service._session_manager.get_or_create("canonical-queue")
+    ids = []
+    for _ in range(2):
+        result = await service.enqueue_message(session.id, "same text", role=role)
+        ids.append(result["id"])
+        await asyncio.wait_for(session.drainer_task, timeout=2)
+    snapshot = (await service.queue_status(session.id, include_snapshot=True))[
+        "snapshot"
+    ]
+    items = snapshot["items"]
+    assert len(items) == 2
+    assert len({item["item_id"] for item in items}) == 2
+    assert [item["role"] for item in items] == [role, role]
+    assert [item["content"]["text"] for item in items] == ["same text"] * 2
+    assert [item["source_ref"]["queue_id"] for item in items] == ids
+    assert all(item["turn_id"] is None for item in items)
+    pushes = [event["payload"] for event in events if event["method"] == "item_updated"]
+    assert [item["item_id"] for item in pushes] == [item["item_id"] for item in items]
+    assert all(item["session_id"] == session.id for item in pushes)
+    from omniagents.core.conversation.recorder import ensure_conversation_thread
+
+    recorder = ensure_conversation_thread(session)
+    replayed = recorder.record_queued_message(
+        session.id, queue_id=ids[0], role=role, content="same text"
+    )
+    assert replayed.item_id == items[0]["item_id"]
+    replay_snapshot = await service.queue_status(session.id, include_snapshot=True)
+    assert len(replay_snapshot["snapshot"]["items"]) == 2
+    other = await service.queue_status("other-session", include_snapshot=True)
+    assert other["snapshot"]["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_queued_attachments_reach_run(monkeypatch):
+    service = make_service(monkeypatch)
+    captured = []
+
+    async def start(**kwargs):
+        captured.append(kwargs)
+        return {"run_id": "queued-attachment"}
+
+    service.start_run = start
+    content = [{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]
+    result = await service.enqueue_message(
+        "attachments", "Describe this", trigger_run=True, input_content=content
+    )
+    assert result["ok"]
+    session = service._session_manager.get_or_create("attachments")
+    await asyncio.wait_for(session.drainer_task, timeout=1)
+    assert captured[0]["content"] == content
+    assert captured[0]["prompt"] == "Describe this"
+
+
 # ---------------------------------------------------------------------------
 
 
@@ -212,12 +443,8 @@ async def test_flush_notifications_preserves_safe_tool_overrides(monkeypatch):
         return {"run_id": "r1", "session_id": session_id}
 
     service.start_run = fake_start_run  # type: ignore[assignment]
-    sess.pending_notifications.append(
-        {
-            "content": "tick",
-            "source": "goal.tick",
-            "safe_tool_overrides": {"safe_tool_patterns": [".*"]},
-        }
+    await service.enqueue_notification(
+        sess.id, "tick", "goal.tick", safe_tool_overrides={"safe_tool_patterns": [".*"]}
     )
 
     await service._flush_notifications(sess)
@@ -337,7 +564,7 @@ async def test_queue_full_returns_error(monkeypatch):
 
     # Pre-fill the queue to capacity.
     for i in range(sess.message_queue_max):
-        sess.message_queue.append(QueuedItem(content=f"msg-{i}"))
+        await service.enqueue_message(sess_id, f"msg-{i}")
 
     res = await service.enqueue_message(sess_id, "overflow")
     assert res["ok"] is False
@@ -393,7 +620,9 @@ async def test_queue_status_reflects_state(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_drainer_survives_failing_item(monkeypatch):
+async def test_drainer_preserves_uncertain_item_and_does_not_start_later_work(
+    monkeypatch,
+):
     service = make_service(monkeypatch)
     sess_id = "sess-resilient"
 
@@ -413,8 +642,13 @@ async def test_drainer_survives_failing_item(monkeypatch):
     sess = service._session_manager.get_or_create(sess_id)
     await asyncio.wait_for(sess.drainer_task, timeout=1)
 
-    assert calls == ["boom", "ok"]
-    assert not sess.message_queue
+    assert calls == ["boom"]
+    snapshot = await service.list_queue(sess_id)
+    assert [item["state"] for item in snapshot["items"]] == [
+        "dispatch_uncertain",
+        "pending",
+    ]
+    assert len(sess.message_queue) == 2
 
 
 # ---------------------------------------------------------------------------

@@ -130,7 +130,14 @@ def client_function_tool(
                         "ok": False,
                         "error": raw.get("error") or "client rejected",
                     }
-                return {"ok": True, "result": raw.get("result")}
+                result = raw.get("result")
+                if (
+                    dispatch_name == "escalate"
+                    and isinstance(result, dict)
+                    and result.get("input_content")
+                ):
+                    return human_reply_outputs(result)
+                return {"ok": True, "result": result}
             return {"ok": True, "result": raw}
 
         # ``functools.wraps`` set __name__, __doc__, __qualname__,
@@ -158,3 +165,29 @@ def client_function_tool(
 
 
 __all__ = ["client_function_tool"]
+
+
+def human_reply_outputs(result: dict) -> list:
+    """Keep human attachments multimodal through the SDK tool-result boundary."""
+    from agents.tool import ToolOutputText, ToolOutputImage, ToolOutputFileContent
+
+    outputs = []
+    for part in result["input_content"]:
+        kind = part.get("type")
+        if kind == "input_text":
+            outputs.append(ToolOutputText(text=part["text"]))
+        elif kind == "input_image":
+            outputs.append(
+                ToolOutputImage(
+                    image_url=part["image_url"], detail=part.get("detail", "auto")
+                )
+            )
+        elif kind == "input_file":
+            outputs.append(
+                ToolOutputFileContent(
+                    file_data=part.get("file_data"), filename=part.get("filename")
+                )
+            )
+        else:
+            raise ValueError(f"Unsupported human reply content: {kind}")
+    return outputs

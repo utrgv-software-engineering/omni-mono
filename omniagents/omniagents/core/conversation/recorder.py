@@ -9,26 +9,28 @@ broadcast, and ``request_client_function``), with no new fan-out to keep in
 sync. Replay paths re-send *stored* payloads and never call the chokepoint
 again, so a reconnecting client cannot double-record.
 
-Two events reach the recorder outside that chokepoint, because they are
+Several facts reach the recorder outside that chokepoint, because they are
 persistence facts rather than notifications:
 
 * ``send_user_message`` — appends to history mid-run without broadcasting.
 * the compaction checkpoint — ``run_checkpoint_compaction`` appends a
   summary item to history directly.
+* persisted reasoning and completed provider messages — SDK persistence
+  can precede (or outlive) delivery of the corresponding stream event.
 
-Both call :class:`ConversationRecorder` explicitly.
+These call :class:`ConversationRecorder` explicitly.
 
-Failure policy: recording is best-effort *for the run*. A storage fault
-must never abort a user's turn, so every public entry point swallows and
-logs. It does not swallow silently — ``logger.exception`` fires, and the
-absence of rows is what the tests assert against, so a broken recorder
-fails the suite rather than passing it quietly.
+Event projection callers log storage failures on a best-effort basis. Explicit
+durability boundaries, including ``commit_approval_decision``, instead propagate
+failure. A human approval must commit before its waiter can authorize execution.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import time
+from dataclasses import replace
 from typing import Any, Callable, Dict, Optional
 
 from .model import (
@@ -136,6 +138,89 @@ class ConversationRecorder:
         #: forever and only converge on a refetch. Never raises: see
         #: :func:`recorder_for_session`.
         self._on_settled = on_settled
+        self._recovering_messages = False
+
+    def recover_pending_messages(self, thread_id: str) -> None:
+        """Drain durable history-write intents before later canonical items.
+
+        The history row and intent commit together. Item identity, ordinal
+        and counters commit together in the domain store. A crash before the
+        final acknowledgement simply replays the same identity on next read
+        or write. Only new writes opt in; this is not historical backfill.
+        """
+        if self._recovering_messages:
+            return
+        from omniagents.core.session.history_db import (
+            pending_projections,
+            acknowledge_projection,
+        )
+
+        self._recovering_messages = True
+        try:
+            pending = pending_projections(
+                thread_id, project_slug=self._project_slug, agent_slug=self._agent_slug
+            )
+            if pending and self._store.get_thread(thread_id) is None:
+                raise RuntimeError("Pending projection has no canonical thread")
+            for entry in pending:
+                intent = entry["intent"]
+                message = entry["message"]
+                self.validate_projection(message, intent)
+                if intent.get("kind") == "queued_message":
+                    recorded = self.record_queued_message(
+                        thread_id,
+                        queue_id=intent["queue_id"],
+                        role=message["role"],
+                        content=message["content"],
+                    )
+                    self._settled(recorded)
+                elif intent.get("kind") == "user_message":
+                    recorded = self._append_item(
+                        thread_id,
+                        natural_key=intent["natural_key"],
+                        kind=ItemKind.USER_MESSAGE,
+                        turn_id=intent.get("run_id"),
+                        status=ItemStatus.COMPLETED,
+                        role="user",
+                        content={"text": message["content"]},
+                        source_ref={
+                            "event": "send_user_message",
+                            "run_id": intent.get("run_id"),
+                        },
+                    )
+                    self._settled(recorded)
+                else:
+                    self.record_persisted_message(
+                        thread_id, run_id=intent.get("run_id"), item=message
+                    )
+                acknowledge_projection(
+                    thread_id,
+                    entry["row_id"],
+                    project_slug=self._project_slug,
+                    agent_slug=self._agent_slug,
+                )
+        finally:
+            self._recovering_messages = False
+
+    @classmethod
+    def validate_projection(cls, message: dict, intent: dict) -> None:
+        kind = intent.get("kind")
+        valid = intent.get("version") == 1
+        if kind in ("queued_message", "user_message"):
+            identity = intent.get(
+                "queue_id" if kind == "queued_message" else "natural_key"
+            )
+            valid = valid and isinstance(identity, str) and bool(identity)
+            valid = valid and isinstance(message.get("content"), str)
+            valid = valid and message.get("role") in (
+                ("user", "assistant", "system", "developer")
+                if kind == "queued_message"
+                else ("user",)
+            )
+        else:
+            valid = valid and kind is None and cls.is_persisted_message(message)
+        if not valid:
+            raise RuntimeError("Unsupported pending history projection")
 
     @property
     def store(self) -> ConversationStore:
@@ -215,17 +300,24 @@ class ConversationRecorder:
                 if projected is not None:
                     thread = projected
         if thread is not None:
-            changed = False
-            if user_id and thread.user_id != user_id:
-                thread.user_id = user_id
-                changed = True
-            status = ThreadStatus.ARCHIVED if archived else ThreadStatus.ACTIVE
-            if thread.status is not status:
-                thread.status = status
-                changed = True
-            if changed:
-                thread.updated_at = _now()
-                self._store.upsert_thread(thread)
+            self.recover_pending_messages(thread_id)
+            thread = self._store.get_thread(thread_id)
+            assert thread is not None
+
+            def update(current):
+                changed = False
+                if user_id and current.user_id != user_id:
+                    current.user_id = user_id
+                    changed = True
+                status = ThreadStatus.ARCHIVED if archived else ThreadStatus.ACTIVE
+                if current.status is not status:
+                    current.status = status
+                    changed = True
+                if changed:
+                    current.updated_at = _now()
+
+            thread = self._store.mutate_thread(thread_id, update)
+            assert thread is not None
             return thread
         now = created_at if created_at is not None else _now()
         thread = Thread(
@@ -243,24 +335,6 @@ class ConversationRecorder:
         )
         self._store.upsert_thread(thread)
         return thread
-
-    def _touch_thread(
-        self,
-        thread_id: str,
-        *,
-        item_delta: int = 0,
-        turn_delta: int = 0,
-        usage: Dict[str, Any] | None = None,
-    ) -> None:
-        thread = self._store.get_thread(thread_id)
-        if thread is None:
-            return
-        thread.item_count += item_delta
-        thread.turn_count += turn_delta
-        if usage:
-            thread.usage = _merge_usage(thread.usage, usage)
-        thread.updated_at = _now()
-        self._store.upsert_thread(thread)
 
     # -- items ----------------------------------------------------------
 
@@ -310,20 +384,18 @@ class ConversationRecorder:
         free of phantom duplicates.
         """
         item_id = derive_item_id(thread_id, natural_key)
+        self.recover_pending_messages(thread_id)
         existing = self._store.get_item(thread_id, item_id)
         if existing is not None:
             return existing
-        try:
-            seq = self._store.allocate_seq(thread_id)
-        except KeyError:
+        if self._store.get_thread(thread_id) is None:
             self.ensure_thread(thread_id)
-            seq = self._store.allocate_seq(thread_id)
         now = _now()
         item = Item(
             item_id=item_id,
             thread_id=thread_id,
             turn_id=turn_id,
-            seq=seq,
+            seq=0,  # Assigned with the item/counters in one store transaction.
             kind=kind,
             status=status,
             role=role,
@@ -335,10 +407,7 @@ class ConversationRecorder:
             source_ref=_as_dict(source_ref),
             long_lived=long_lived,
         )
-        self._store.upsert_item(item)
-        self._touch_thread(thread_id, item_delta=1)
-        self._extend_turn_window(thread_id, turn_id, seq)
-        return item
+        return self._store.append_item(item)
 
     def _revise_item(
         self,
@@ -358,33 +427,19 @@ class ConversationRecorder:
         while ``status``/``completed_at`` stay untouched.
         """
         item_id = derive_item_id(thread_id, natural_key)
-        existing = self._store.get_item(thread_id, item_id)
-        if existing is None:
-            return None
-        merged = {**existing.content, **content}
-        if merged == existing.content:
-            return existing
-        now = _now()
-        revised = Item(
-            item_id=existing.item_id,
-            thread_id=existing.thread_id,
-            turn_id=existing.turn_id,
-            seq=existing.seq,
-            kind=existing.kind,
-            status=existing.status,
-            role=existing.role,
-            created_at=existing.created_at,
-            updated_at=now,
-            completed_at=existing.completed_at,
-            revision=existing.revision + 1,
-            content=merged,
-            source_ref=dict(existing.source_ref),
-            long_lived=existing.long_lived,
-            source=existing.source,
-            schema_version=existing.schema_version,
-        )
-        self._store.upsert_item(revised)
-        return revised
+
+        def revise(existing):
+            merged = {**existing.content, **content}
+            if merged == existing.content:
+                return existing
+            return replace(
+                existing,
+                updated_at=_now(),
+                revision=existing.revision + 1,
+                content=merged,
+            )
+
+        return self._store.mutate_item(thread_id, item_id, revise)
 
     def _update_item(
         self,
@@ -396,29 +451,13 @@ class ConversationRecorder:
     ) -> Optional[Item]:
         """Advance an existing item. No-op when the item is unknown."""
         item_id = derive_item_id(thread_id, natural_key)
-        existing = self._store.get_item(thread_id, item_id)
-        if existing is None:
-            return None
-        updated = existing.with_transition(status=status, content=content, now=_now())
-        if updated is existing:
-            # Terminal already: the first terminal state wins, by contract.
-            return existing
-        self._store.upsert_item(updated)
-        return updated
-
-    def _extend_turn_window(
-        self, thread_id: str, turn_id: str | None, seq: int
-    ) -> None:
-        if not turn_id:
-            return
-        turn = self._store.get_turn(thread_id, turn_id)
-        if turn is None:
-            return
-        turn.item_count += 1
-        turn.first_seq = seq if turn.first_seq is None else min(turn.first_seq, seq)
-        turn.last_seq = seq if turn.last_seq is None else max(turn.last_seq, seq)
-        turn.updated_at = _now()
-        self._store.upsert_turn(turn)
+        return self._store.mutate_item(
+            thread_id,
+            item_id,
+            lambda current: current.with_transition(
+                status=status, content=content, now=_now()
+            ),
+        )
 
     # -- turns ----------------------------------------------------------
 
@@ -432,34 +471,36 @@ class ConversationRecorder:
         user_id: str | None = None,
     ) -> Turn:
         self.ensure_thread(thread_id, user_id=user_id)
-        existing = self._store.get_turn(thread_id, turn_id)
-        if existing is not None:
-            return existing
         now = _now()
-        ordinal = self._store.max_turn_ordinal(thread_id) + 1
-        turn = Turn(
-            turn_id=turn_id,
-            thread_id=thread_id,
-            ordinal=ordinal,
-            status=TurnStatus.RUNNING,
-            created_at=now,
-            updated_at=now,
-            prompt=prompt,
-            prompt_role=prompt_role,
-        )
-        self._store.upsert_turn(turn)
-        self._touch_thread(thread_id, turn_delta=1)
+        role = prompt_role or "user"
+
+        def start(thread, existing, ordinal):
+            if existing is not None:
+                return existing
+            thread.turn_count += 1
+            thread.updated_at = now
+            if prompt and ordinal == 1 and role == "user" and not thread.title:
+                thread.title = derive_title(prompt)
+            return Turn(
+                turn_id=turn_id,
+                thread_id=thread_id,
+                ordinal=ordinal,
+                status=TurnStatus.RUNNING,
+                created_at=now,
+                updated_at=now,
+                prompt=prompt,
+                prompt_role=prompt_role,
+            )
+
+        initial_item = None
         if prompt:
-            role = prompt_role or "user"
-            if ordinal == 1 and role == "user":
-                thread = self._store.get_thread(thread_id)
-                if thread is not None and not thread.title:
-                    thread.title = derive_title(prompt)
-                    thread.updated_at = now
-                    self._store.upsert_thread(thread)
-            self._append_item(
-                thread_id,
-                natural_key=f"prompt:{turn_id}",
+            initial_item = Item(
+                thread_id=thread_id,
+                item_id=derive_item_id(thread_id, f"prompt:{turn_id}"),
+                seq=0,
+                created_at=now,
+                updated_at=now,
+                completed_at=now,
                 kind=(
                     ItemKind.USER_MESSAGE if role == "user" else ItemKind.AGENT_MESSAGE
                 ),
@@ -469,6 +510,10 @@ class ConversationRecorder:
                 content={"text": prompt, "origin": "prompt"},
                 source_ref={"event": "run_started", "run_id": turn_id},
             )
+        turn = self._store.mutate_turn(
+            thread_id, turn_id, start, initial_item=initial_item
+        )
+        assert turn is not None
         return turn
 
     def close_turn(
@@ -491,7 +536,7 @@ class ConversationRecorder:
         (the run died) with ``finalized_by="run_end"`` recorded, so a reader
         can tell an inferred terminal state from an observed one.
         """
-        turn = self._store.get_turn(thread_id, turn_id)
+        self.recover_pending_messages(thread_id)
         status = terminal_status_for_end_reason(end_reason)
         now = _now()
         # Settle the run's diff snapshot BEFORE the orphan sweep. The
@@ -523,38 +568,47 @@ class ConversationRecorder:
                 # Deliberately outlives its turn; the owning subsystem
                 # lands it terminally (see Item.long_lived).
                 continue
-            self._store.upsert_item(
-                item.with_transition(
+            self._store.mutate_item(
+                thread_id,
+                item.item_id,
+                lambda current: current.with_transition(
                     status=orphan_status,
-                    content={"finalized_by": "run_end", "end_reason": end_reason},
+                    content={
+                        "finalized_by": "run_end",
+                        "end_reason": end_reason,
+                        **(
+                            {
+                                "execution_state": "uncertain",
+                                "output": "Execution outcome unknown after interruption; do not assume it is safe to repeat.",
+                                "metadata": {"display_type": "error"},
+                            }
+                            if current.content.get("execution_state") == "claimed"
+                            else {}
+                        ),
+                    },
                     now=now,
-                )
+                ),
             )
-        if turn is None:
-            return
-        if turn.status in (
-            TurnStatus.COMPLETED,
-            TurnStatus.FAILED,
-            TurnStatus.CANCELLED,
-        ):
-            return
-        turn.status = status
-        turn.end_reason = end_reason
-        turn.error = error
-        turn.completed_at = now
-        turn.updated_at = now
-        if usage:
-            # ``run_end.usage`` is the run's FINAL total, not a delta, and
-            # so are the ``token`` totals it supersedes — merging them would
-            # double-count every turn. Replace, then roll the settled turn
-            # total up into the thread.
-            turn.usage = dict(usage)
-        if model:
-            turn.model = model
-        if model_ref:
-            turn.model_ref = model_ref
-        self._store.upsert_turn(turn)
-        self._touch_thread(thread_id, usage=turn.usage or None)
+
+        def finish(thread, turn, ordinal):
+            if turn is None or turn.status != TurnStatus.RUNNING:
+                return None
+            turn.status = status
+            turn.end_reason = end_reason
+            turn.error = error
+            turn.completed_at = now
+            turn.updated_at = now
+            if usage:
+                turn.usage = dict(usage)
+            if model:
+                turn.model = model
+            if model_ref:
+                turn.model_ref = model_ref
+            thread.usage = _merge_usage(thread.usage, turn.usage)
+            thread.updated_at = now
+            return turn
+
+        self._store.mutate_turn(thread_id, turn_id, finish)
 
     # -- event dispatch --------------------------------------------------
 
@@ -584,14 +638,17 @@ class ConversationRecorder:
         run_id = payload.get("run_id")
         if not isinstance(run_id, str):
             return
-        turn = self._store.get_turn(thread_id, run_id)
-        if turn is None:
-            return
-        attempt = payload.get("attempt")
-        if isinstance(attempt, int):
-            turn.attempts = max(turn.attempts, attempt)
-        turn.updated_at = _now()
-        self._store.upsert_turn(turn)
+
+        def update(thread, turn, ordinal):
+            if turn is None or turn.status != TurnStatus.RUNNING:
+                return None
+            attempt = payload.get("attempt")
+            if isinstance(attempt, int):
+                turn.attempts = max(turn.attempts, attempt)
+            turn.updated_at = _now()
+            return turn
+
+        self._store.mutate_turn(thread_id, run_id, update)
 
     @staticmethod
     def message_natural_key(
@@ -613,11 +670,55 @@ class ConversationRecorder:
             return f"message:{message_id}"
         return f"message:{turn_id}:{content_key(content)}:{occurrence}"
 
-    def _on_message_output(self, thread_id: str, payload: Dict[str, Any]) -> None:
+    @staticmethod
+    def is_persisted_message(item: Dict[str, Any]) -> bool:
+        from .adapter import _checkpoint_kind
+
+        return (
+            (item.get("type") or "message") == "message"
+            and item.get("role") == "assistant"
+            and item.get("status") == "completed"
+            and isinstance(item.get("id"), str)
+            and bool(item["id"])
+            and _checkpoint_kind(item) is None
+        )
+
+    def record_persisted_message(
+        self, thread_id: str, *, run_id: str | None, item: Dict[str, Any]
+    ) -> Optional[Item]:
+        """Record completed provider output independently of SDK event delivery.
+
+        Stable provider identity lets persistence and notification converge in
+        either order. Do not infer identity for injected prompts, checkpoints,
+        partial output or ID-less messages: those have other recording paths.
+        This runs at the history write, before a later checkpoint can land.
+        """
+        from .adapter import _message_text
+
+        message_id = item.get("id")
+        if not self.is_persisted_message(item):
+            return None
+        recorded = self._on_message_output(
+            thread_id,
+            {
+                "run_id": run_id,
+                "message_id": message_id,
+                "content": _message_text(item.get("content")),
+            },
+        )
+        # Publish even when the stream recorded it first: a client may have
+        # missed that event. Repeated notifications carry the same canonical
+        # identity/revision and are safe to adopt idempotently.
+        self._settled(recorded)
+        return recorded
+
+    def _on_message_output(
+        self, thread_id: str, payload: Dict[str, Any]
+    ) -> Optional[Item]:
         run_id = payload.get("run_id")
         content = payload.get("content")
         if not isinstance(content, str):
-            return
+            return None
         turn_id = run_id if isinstance(run_id, str) else None
         message_id = payload.get("message_id")
         natural_key = (
@@ -627,7 +728,7 @@ class ConversationRecorder:
                 thread_id, f"message:{turn_id}:{content_key(content)}"
             )
         )
-        self._append_item(
+        return self._append_item(
             thread_id,
             natural_key=natural_key,
             kind=ItemKind.AGENT_MESSAGE,
@@ -649,6 +750,9 @@ class ConversationRecorder:
     def _tool_natural_key(payload: Dict[str, Any]) -> Optional[str]:
         call_id = payload.get("call_id")
         if isinstance(call_id, str) and call_id:
+            run_id = payload.get("run_id")
+            if isinstance(run_id, str) and run_id:
+                return f"tool:{content_key(run_id, call_id)}"
             return f"tool:{call_id}"
         # A tool event with no call_id cannot be correlated to its result;
         # recording a half of the pair would produce an item that can never
@@ -717,32 +821,132 @@ class ConversationRecorder:
         # without metadata must not leave "Running…" phrasing on a
         # finished item.
         content["metadata"] = metadata
-        self._update_item(
-            thread_id,
-            key,
-            status=ItemStatus.FAILED if failed else ItemStatus.COMPLETED,
-            content=content,
+
+        # The invocation hook may have committed the result before the SDK
+        # stream delivers richer UI metadata. Enrich only that same result;
+        # never let replay change its output, owner, or terminal outcome.
+        def enrich(current):
+            if current.content.get("execution_state") == "claimed" and metadata.get(
+                "execution_interrupted"
+            ):
+                return current.with_transition(
+                    status=ItemStatus.FAILED,
+                    content={
+                        "execution_state": "uncertain",
+                        "output": "Execution outcome unknown after interruption; do not assume it is safe to repeat.",
+                        "metadata": metadata,
+                    },
+                    now=_now(),
+                )
+            if current.content.get(
+                "execution_state"
+            ) == "completed" and current.content.get("output") == payload.get("output"):
+                return replace(
+                    current,
+                    content={
+                        **current.content,
+                        "metadata": {**current.content.get("metadata", {}), **metadata},
+                    },
+                    updated_at=_now(),
+                )
+            return current.with_transition(
+                status=ItemStatus.FAILED if failed else ItemStatus.COMPLETED,
+                content=content,
+                now=_now(),
+            )
+
+        self._store.mutate_item(thread_id, derive_item_id(thread_id, key), enrich)
+
+    def claim_tool_execution(self, thread_id: str, payload: dict, owner: str) -> Item:
+        key = self._tool_natural_key(payload)
+        if key is None or not payload.get("run_id"):
+            raise ValueError("Tool execution requires run and call identities")
+        self._on_tool_called(thread_id, payload)
+
+        def claim(current):
+            if current.is_terminal or current.content.get("execution_state"):
+                raise RuntimeError(
+                    "Tool dispatch already claimed; refusing duplicate execution"
+                )
+            if current.content.get("tool") != payload.get(
+                "tool"
+            ) or current.content.get("input") != payload.get("input"):
+                raise ValueError("Tool call identity reused for different content")
+            return replace(
+                current,
+                content={**current.content, "execution_state": "claimed"},
+                source_ref={**current.source_ref, "execution_owner": owner},
+                updated_at=_now(),
+            )
+
+        item = self._store.mutate_item(thread_id, derive_item_id(thread_id, key), claim)
+        if item is None:
+            raise RuntimeError("Tool dispatch was not durably recorded")
+        return item
+
+    def complete_tool_execution(
+        self, thread_id: str, payload: dict, owner: str
+    ) -> Item:
+        key = self._tool_natural_key(payload)
+        if key is None:
+            raise ValueError("Tool completion requires a call identity")
+        metadata = _as_dict(payload.get("metadata"))
+
+        def complete(current):
+            if current.source_ref.get("execution_owner") != owner:
+                raise RuntimeError("Tool completion belongs to another dispatcher")
+            if current.content.get("execution_state") == "completed":
+                if current.content.get("output") != payload.get("output"):
+                    raise ValueError(
+                        "Tool completion conflicts with its durable result"
+                    )
+                return current
+            content = {
+                **current.content,
+                "execution_state": "completed",
+                "output": payload.get("output"),
+                "metadata": metadata,
+            }
+            if current.is_terminal:
+                # A cancelled turn may finish while its tool is winding down.
+                # Retain the real result without changing the turn's outcome.
+                return replace(current, content=content, updated_at=_now())
+            return current.with_transition(
+                status=(
+                    ItemStatus.FAILED
+                    if metadata.get("display_type") == "error"
+                    else ItemStatus.COMPLETED
+                ),
+                content=content,
+                now=_now(),
+            )
+
+        item = self._store.mutate_item(
+            thread_id, derive_item_id(thread_id, key), complete
         )
+        if item is None:
+            raise RuntimeError("Tool completion has no durable dispatch")
+        return item
 
     def _on_token(self, thread_id: str, payload: Dict[str, Any]) -> None:
         run_id = payload.get("run_id")
         if not isinstance(run_id, str):
             return
-        turn = self._store.get_turn(thread_id, run_id)
-        if turn is None:
-            return
-        totals = _as_dict(payload.get("totals"))
-        if totals:
-            # ``totals`` are cumulative for the run, so they REPLACE rather
-            # than accumulate — adding them would multiply the run's usage
-            # by the number of streamed deltas.
-            turn.usage = dict(totals)
-        for field_name in ("model", "model_ref"):
-            value = payload.get(field_name)
-            if isinstance(value, str) and value:
-                setattr(turn, field_name, value)
-        turn.updated_at = _now()
-        self._store.upsert_turn(turn)
+
+        def update(thread, turn, ordinal):
+            if turn is None or turn.status != TurnStatus.RUNNING:
+                return None
+            totals = _as_dict(payload.get("totals"))
+            if totals:
+                turn.usage = dict(totals)
+            for field_name in ("model", "model_ref"):
+                value = payload.get(field_name)
+                if isinstance(value, str) and value:
+                    setattr(turn, field_name, value)
+            turn.updated_at = _now()
+            return turn
+
+        self._store.mutate_turn(thread_id, run_id, update)
 
     def _on_run_end(self, thread_id: str, payload: Dict[str, Any]) -> None:
         run_id = payload.get("run_id")
@@ -793,6 +997,7 @@ class ConversationRecorder:
                 ).value,
                 "arguments": payload.get("arguments"),
                 "call_id": call_id,
+                "source_call_id": payload.get("source_call_id"),
             },
             source_ref={"event": "tool_approval_requested", "call_id": call_id},
         )
@@ -880,6 +1085,8 @@ class ConversationRecorder:
                 # Same identity field the matching *_approval_requested
                 # handler would have written, so the two shapes agree.
                 ("request_id" if approval_kind == "mcp" else "call_id"): call_id,
+                "source_call_id": payload.get("source_call_id"),
+                "arguments": payload.get("arguments"),
                 **verdict,
             },
             source_ref={"event": "tool_approval_reviewed", "call_id": call_id},
@@ -908,6 +1115,7 @@ class ConversationRecorder:
                 "tool": payload.get("tool_name"),
                 "arguments": payload.get("arguments"),
                 "request_id": request_id,
+                "source_request_id": payload.get("source_request_id"),
             },
             source_ref={"event": "mcp_approval_requested", "request_id": request_id},
         )
@@ -1366,6 +1574,25 @@ class ConversationRecorder:
         """
         return f"user:{run_id}:{content_key(content)}:{occurrence}"
 
+    def record_queued_message(
+        self, thread_id: str, *, queue_id: str, role: str, content: str
+    ) -> Optional[Item]:
+        """Record an append-only queue item, outside any completed run.
+
+        Queue identity makes retries idempotent without collapsing distinct
+        injections that happen to contain the same text.
+        """
+        return self._append_item(
+            thread_id,
+            natural_key=f"queue:{queue_id}",
+            kind=ItemKind.USER_MESSAGE if role == "user" else ItemKind.AGENT_MESSAGE,
+            turn_id=None,
+            status=ItemStatus.COMPLETED,
+            role=role,
+            content={"text": content},
+            source_ref={"event": "enqueue_message", "queue_id": queue_id},
+        )
+
     def record_user_message(
         self, thread_id: str, *, run_id: str | None, content: str
     ) -> Optional[Item]:
@@ -1382,6 +1609,76 @@ class ConversationRecorder:
             content={"text": content},
             source_ref={"event": "send_user_message", "run_id": run_id},
         )
+
+    def commit_reviewed_approval(self, thread_id: str, payload: dict) -> Item:
+        """Persist an automatic verdict before it may authorize execution."""
+        if payload.get("kind") not in ("tool", "mcp") or payload.get("outcome") not in (
+            "allow",
+            "deny",
+        ):
+            raise ValueError("Invalid automatic approval decision")
+        token = payload.get("call_id")
+        if not isinstance(token, str) or not token:
+            raise ValueError("Automatic approval requires an identity")
+        self._on_tool_approval_reviewed(thread_id, payload)
+        item = self._store.get_item(
+            thread_id, derive_item_id(thread_id, f"approval:{payload['kind']}:{token}")
+        )
+        if item is None or item.status != ItemStatus.COMPLETED:
+            raise RuntimeError("Automatic approval was not durably recorded")
+        for key in ("reviewer", "outcome", "rationale", "arguments", "source_call_id"):
+            if item.content.get(key) != payload.get(key):
+                raise ValueError(
+                    "Automatic approval identity already has a different decision"
+                )
+        return item
+
+    def commit_approval_decision(
+        self, thread_id: str, *, approval_kind: str, resource_id: str, response: dict
+    ) -> Item:
+        """Durable first-writer-wins decision, required before releasing a waiter.
+
+        Exact retries are safe even if commit succeeded but its acknowledgement
+        was lost. Missing/retired prompts fail closed; never invent authorization.
+        """
+        if approval_kind not in ("tool", "mcp") or response.get("decision") not in (
+            "approve",
+            "reject",
+        ):
+            raise ValueError("Invalid approval decision")
+        frozen = json.loads(json.dumps(response))
+
+        def update(current):
+            previous = current.content.get("approval_response")
+            if previous is not None:
+                if previous != frozen:
+                    raise ValueError(
+                        "Approval already resolved with a different decision"
+                    )
+                return current
+            if current.status != ItemStatus.STARTED:
+                raise RuntimeError("Approval request is no longer pending")
+            if (
+                "decision" in current.content
+                and current.content["decision"] != frozen["decision"]
+            ):
+                raise ValueError("Approval already resolved with a different decision")
+            return current.with_transition(
+                status=ItemStatus.COMPLETED,
+                content={**frozen, "approval_response": frozen},
+                now=_now(),
+            )
+
+        item = self._store.mutate_item(
+            thread_id,
+            derive_item_id(thread_id, f"approval:{approval_kind}:{resource_id}"),
+            update,
+        )
+        if item is None:
+            raise RuntimeError(
+                "Approval request is not durably recorded; retry the decision"
+            )
+        return item
 
     def record_approval_decision(
         self,
@@ -1441,24 +1738,28 @@ class ConversationRecorder:
         )
         if item is None:
             return None
-        thread = self._store.get_thread(thread_id)
-        if thread is not None:
+
+        def update(thread):
+            # An older concurrent checkpoint must not move the floor back.
+            if thread.compaction.get("checkpoint_seq", 0) >= item.seq:
+                return
             thread.compaction = {
                 "checkpoint_item_id": item.item_id,
                 "checkpoint_seq": item.seq,
                 "compacted_below_seq": item.seq,
             }
             thread.updated_at = _now()
-            self._store.upsert_thread(thread)
+
+        self._store.mutate_thread(thread_id, update)
         return item
 
     def record_archived(self, thread_id: str, archived: bool) -> None:
-        thread = self._store.get_thread(thread_id)
-        if thread is None:
+        def update(thread):
+            thread.status = ThreadStatus.ARCHIVED if archived else ThreadStatus.ACTIVE
+            thread.updated_at = _now()
+
+        if self._store.mutate_thread(thread_id, update) is None:
             return
-        thread.status = ThreadStatus.ARCHIVED if archived else ThreadStatus.ACTIVE
-        thread.updated_at = _now()
-        self._store.upsert_thread(thread)
         if archived:
             # Archiving is the end of the conversation, which is the end of
             # anything that outlives its turns. Without this the thread's
@@ -1518,18 +1819,23 @@ class ConversationRecorder:
         for item in self._store.open_items(thread_id):
             if item.kind is not ItemKind.PLAN:
                 continue
-            steps = item.content.get("steps")
-            steps = steps if isinstance(steps, list) else []
-            finished = bool(steps) and all(
-                isinstance(step, dict) and step.get("status") == "completed"
-                for step in steps
-            )
-            updated = item.with_transition(
-                status=ItemStatus.COMPLETED if finished else ItemStatus.CANCELLED,
-                content={"finalized_by": reason},
-                now=now,
-            )
-            self._store.upsert_item(updated)
+
+            def finalize(current):
+                steps = current.content.get("steps")
+                steps = steps if isinstance(steps, list) else []
+                finished = bool(steps) and all(
+                    isinstance(step, dict) and step.get("status") == "completed"
+                    for step in steps
+                )
+                return current.with_transition(
+                    status=ItemStatus.COMPLETED if finished else ItemStatus.CANCELLED,
+                    content={"finalized_by": reason},
+                    now=now,
+                )
+
+            updated = self._store.mutate_item(thread_id, item.item_id, finalize)
+            if updated is None:
+                continue
             self._settled(updated)
             landed.append(updated)
         return landed
@@ -1589,13 +1895,13 @@ class ConversationRecorder:
         half-finished plan.
         """
         key = self.run_diff_natural_key(turn_id)
-        item = self._store.get_item(thread_id, derive_item_id(thread_id, key))
-        if item is None or item.is_terminal:
-            return item
-        settled = item.with_transition(
-            status=status, now=now if now is not None else _now()
+        settled = self._store.mutate_item(
+            thread_id,
+            derive_item_id(thread_id, key),
+            lambda current: current.with_transition(
+                status=status, now=now if now is not None else _now()
+            ),
         )
-        self._store.upsert_item(settled)
         self._settled(settled)
         return settled
 

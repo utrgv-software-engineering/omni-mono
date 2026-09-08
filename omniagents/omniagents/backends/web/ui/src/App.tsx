@@ -933,7 +933,7 @@ export function App() {
             })
             return {
               filePart: { type: 'input_image', image_url: dataUrl, detail: 'auto' },
-              attachment: { type: 'image', url: dataUrl, filename: f.name, mime: f.type, size: f.size },
+              attachment: { type: 'image' as const, url: dataUrl, filename: f.name, mime: f.type, size: f.size },
             }
           } else {
             const base64 = await new Promise<string>((resolve, reject) => {
@@ -956,7 +956,7 @@ export function App() {
             if (f.name) param.filename = f.name
             return {
               filePart: param,
-              attachment: { type: 'file', filename: f.name, mime: f.type, size: f.size },
+              attachment: { type: 'file' as const, filename: f.name, mime: f.type, size: f.size },
             }
           }
         }))

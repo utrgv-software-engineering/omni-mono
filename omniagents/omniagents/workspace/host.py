@@ -22,6 +22,8 @@ from typing import Any, Dict, List, Literal, Optional, Sequence, Union
 
 from ._entries import log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace
+from ._process import await_cleanup, finish_cleanup, stop_process
+from ._supervised_process import create_host_process
 from .types import (
     ExecResult,
     FileEntry,
@@ -357,8 +359,10 @@ class HostWorkspace(Workspace):
         start = time.perf_counter()
         if shell:
             cmd_str = command if isinstance(command, str) else shlex.join(command)
-            proc = await asyncio.create_subprocess_shell(
+            proc = await create_host_process(
+                asyncio.create_subprocess_shell,
                 cmd_str,
+                scratch_root=self.scratch_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd_resolved,
@@ -366,28 +370,26 @@ class HostWorkspace(Workspace):
             )
         else:
             args = [command] if isinstance(command, str) else list(command)
-            proc = await asyncio.create_subprocess_exec(
+            proc = await create_host_process(
+                asyncio.create_subprocess_exec,
                 *args,
+                scratch_root=self.scratch_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd_resolved,
                 env=merged_env,
             )
 
+        communication = asyncio.create_task(proc.communicate())
         try:
             stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
+                asyncio.shield(communication), timeout=timeout
             )
             exit_code = proc.returncode if proc.returncode is not None else -1
         except asyncio.TimeoutError:
-            proc.terminate()
-            try:
-                stdout_b, stderr_b = await asyncio.wait_for(
-                    proc.communicate(), timeout=2.0
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                stdout_b, stderr_b = await proc.communicate()
+            stdout_b, stderr_b = await await_cleanup(
+                asyncio.create_task(stop_process(proc, communication))
+            )
             exit_code = -1
             wall = time.perf_counter() - start
             return ExecResult(
@@ -398,6 +400,9 @@ class HostWorkspace(Workspace):
                 wall_time_seconds=wall,
                 truncated=False,
             )
+        except asyncio.CancelledError:
+            await finish_cleanup(asyncio.create_task(stop_process(proc, communication)))
+            raise
 
         wall = time.perf_counter() - start
         stdout_str = _safe_decode(stdout_b)
@@ -442,8 +447,10 @@ class HostWorkspace(Workspace):
 
         if shell:
             cmd_str = command if isinstance(command, str) else shlex.join(command)
-            proc = await asyncio.create_subprocess_shell(
+            proc = await create_host_process(
+                asyncio.create_subprocess_shell,
                 cmd_str,
+                scratch_root=self.scratch_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.PIPE,
@@ -452,8 +459,10 @@ class HostWorkspace(Workspace):
             )
         else:
             args = [command] if isinstance(command, str) else list(command)
-            proc = await asyncio.create_subprocess_exec(
+            proc = await create_host_process(
+                asyncio.create_subprocess_exec,
                 *args,
+                scratch_root=self.scratch_root,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 stdin=asyncio.subprocess.PIPE,
@@ -474,6 +483,11 @@ class _HostProcessHandle(ProcessHandle):
         self._stdout_buf = bytearray()
         self._stderr_buf = bytearray()
         self._reader_task = asyncio.create_task(self._drain())
+        self._completion = asyncio.create_task(self._complete())
+
+    async def _complete(self):
+        await self._proc.wait()
+        await self._reader_task
 
     async def _drain(self) -> None:
         async def _pump(stream, buf):
@@ -494,7 +508,7 @@ class _HostProcessHandle(ProcessHandle):
         self,
     ) -> Literal["running", "completed", "killed", "failed"]:
         rc = self._proc.returncode
-        if rc is None:
+        if rc is None or not self._completion.done():
             return "running"
         if rc == 0:
             return "completed"
@@ -519,7 +533,7 @@ class _HostProcessHandle(ProcessHandle):
 
     async def wait(self, timeout: Optional[float] = None) -> ExecResult:
         try:
-            await asyncio.wait_for(self._proc.wait(), timeout=timeout)
+            await asyncio.wait_for(asyncio.shield(self._completion), timeout=timeout)
         except asyncio.TimeoutError:
             return ExecResult(
                 stdout=_safe_decode(bytes(self._stdout_buf)),
@@ -528,7 +542,6 @@ class _HostProcessHandle(ProcessHandle):
                 wall_time_seconds=time.perf_counter() - self._start,
                 truncated=False,
             )
-        await self._reader_task
         return ExecResult(
             stdout=_safe_decode(bytes(self._stdout_buf)),
             stderr=_safe_decode(bytes(self._stderr_buf)),
@@ -540,20 +553,16 @@ class _HostProcessHandle(ProcessHandle):
         )
 
     async def terminate(self, *, force_after: float = 5.0) -> None:
-        if self._proc.returncode is not None:
+        if self._completion.done():
             return
+        cleanup = asyncio.create_task(
+            stop_process(self._proc, self._completion, grace=force_after)
+        )
         try:
-            self._proc.terminate()
-        except ProcessLookupError:
-            return
-        try:
-            await asyncio.wait_for(self._proc.wait(), timeout=force_after)
-        except asyncio.TimeoutError:
-            try:
-                self._proc.kill()
-            except ProcessLookupError:
-                pass
-            await self._proc.wait()
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            await finish_cleanup(cleanup)
+            raise
 
 
 def _safe_decode(data: bytes) -> str:

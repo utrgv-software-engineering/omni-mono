@@ -14,8 +14,9 @@ Two properties make the projection trustworthy rather than a guess:
 * **Ids are derived the same way.** The adapter mints item ids with the
   same :func:`~omniagents.core.conversation.model.derive_item_id` the
   recorder uses, keyed on the same natural keys where the raw data supports
-  it (``tool:<call_id>``). A tool call recorded live and the same tool call
-  projected from history therefore land on the same ``item_id``.
+  it (legacy ``tool:<call_id>``). Modern live records include the run ID;
+  raw legacy history cannot reconstruct that identity. Projection is a fallback,
+  never a merge into a recorded thread.
 * **Inference is labelled.** Legacy history has no run correlation, so turn
   boundaries are *inferred* — a new turn opens at each user message. Those
   turns get ``source="adapter"`` and a ``trn_legacy_`` id prefix, so nothing
@@ -211,6 +212,7 @@ def project_thread(
     # rows but ONE domain item, so calls are indexed by call_id while the
     # scan runs and completed in place when the output row arrives.
     calls_by_id: Dict[str, Item] = {}
+    seen_call_ids: set[str] = set()
 
     def open_turn() -> Turn:
         nonlocal turn_ordinal, current_turn
@@ -387,9 +389,11 @@ def project_thread(
             name = raw.get("name")
             natural_key = (
                 f"tool:{call_id}"
-                if isinstance(call_id, str) and call_id
+                if isinstance(call_id, str) and call_id and call_id not in seen_call_ids
                 else f"legacy:{index}"
             )
+            if isinstance(call_id, str) and call_id:
+                seen_call_ids.add(call_id)
             projected = emit(
                 natural_key=natural_key,
                 kind=ItemKind.TOOL_CALL,

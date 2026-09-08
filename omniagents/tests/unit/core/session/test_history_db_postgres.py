@@ -20,6 +20,14 @@ import uuid
 
 import pytest
 
+from .test_projection_outbox import TestProjectionOutbox  # noqa: F401
+
+
+@pytest.fixture
+def projection_db(pg_history_db):
+    return pg_history_db
+
+
 PG_URL = os.getenv("OMNIAGENTS_TEST_PG_URL")
 pytestmark = pytest.mark.skipif(not PG_URL, reason="OMNIAGENTS_TEST_PG_URL not set")
 

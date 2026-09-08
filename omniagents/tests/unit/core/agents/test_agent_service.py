@@ -157,10 +157,10 @@ async def test_request_tool_approval_queues_and_adds_safe():
 
     async def responder():
         # Wait until the request has been queued before responding.
-        while "call_xyz" not in session.pending_tool_approvals:
+        while not session.pending_tool_approvals:
             await asyncio.sleep(0)
         await service.tool_approval_response(
-            call_id="call_xyz",
+            call_id=next(iter(session.pending_tool_approvals)),
             decision="approve",
             always_approve=True,
         )
@@ -178,8 +178,8 @@ async def test_request_tool_approval_queues_and_adds_safe():
     assert response["rejection_message"] is None
     assert "tool_name" in session.always_allow_tools
     # Pending tracking is cleared once resolved.
-    assert "call_xyz" not in session.pending_tool_approvals
-    assert "call_xyz" not in service._pending_tool_approvals
+    assert not session.pending_tool_approvals
+    assert not service._pending_tool_approvals
 
 
 @pytest.mark.asyncio
@@ -291,17 +291,19 @@ async def test_request_mcp_approval_still_broadcasts_for_non_allowlisted_tool():
 
     method, payload = recorder.calls[0]
     assert method == "mcp_approval_requested"
-    assert payload["request_id"] == "mcp_req_pending"
+    assert payload["source_request_id"] == "mcp_req_pending"
+    token = payload["request_id"]
+    assert token != "mcp_req_pending"
     assert payload["server_label"] == "github"
     assert payload["tool_name"] == "create_issue"
-    assert "mcp_req_pending" in session.pending_mcp_approvals
+    assert token in session.pending_mcp_approvals
 
-    assert await service.mcp_approval_response("mcp_req_pending", "approve") is True
+    assert await service.mcp_approval_response(token, "approve") is True
     response = await approval_task
 
     assert response["decision"] == "approve"
-    assert "mcp_req_pending" not in service._pending_mcp_approvals
-    assert "mcp_req_pending" not in session.pending_mcp_approvals
+    assert token not in service._pending_mcp_approvals
+    assert token not in session.pending_mcp_approvals
     assert [method for method, _ in recorder.calls] == [
         "mcp_approval_requested",
         "mcp_approval_resolved",

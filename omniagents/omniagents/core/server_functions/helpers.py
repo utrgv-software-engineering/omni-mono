@@ -40,6 +40,8 @@ async def notify_session_state(service: Any, session: Any) -> bool:
         "max_input_tokens": model_config.get("max_input_tokens"),
         "max_output_tokens": model_config.get("max_output_tokens"),
         "reasoning_effort": getattr(session, "reasoning_effort", None),
+        "approvals_reviewer": getattr(session, "approvals_reviewer", None),
+        "workflow_reviewer": getattr(session, "workflow_reviewer", None),
     }
     return await request_client_function_safe(
         service,

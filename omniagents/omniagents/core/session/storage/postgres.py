@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     PRIMARY KEY (tenant_id, project_slug, agent_slug, session_id)
 );
 
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS sdk_context JSONB;
+
 CREATE INDEX IF NOT EXISTS idx_sessions_created_at
     ON sessions (tenant_id, project_slug, agent_slug, created_at DESC);
 
@@ -79,6 +81,21 @@ CREATE TABLE IF NOT EXISTS history (
 
 CREATE INDEX IF NOT EXISTS idx_history_session
     ON history (tenant_id, project_slug, agent_slug, session_id, id);
+
+CREATE TABLE IF NOT EXISTS history_projection_outbox (
+    history_id BIGINT PRIMARY KEY REFERENCES history(id) ON DELETE CASCADE,
+    intent JSONB NOT NULL
+);
+ALTER TABLE history_projection_outbox ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname=current_schema()
+        AND tablename='history_projection_outbox' AND policyname='tenant_isolation') THEN
+        CREATE POLICY tenant_isolation ON history_projection_outbox USING (
+            EXISTS (SELECT 1 FROM history h WHERE h.id=history_id
+                AND h.tenant_id=current_setting('app.current_tenant', true))
+        );
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS audio_metadata (
     id             BIGSERIAL   PRIMARY KEY,
@@ -364,6 +381,34 @@ class PgSessionStorage(SessionStorageBackend):
     # History
     # ------------------------------------------------------------------
 
+    def load_sdk_context(
+        self, session_id: str, *, project_slug=None, agent_slug=None
+    ) -> list[dict] | None:
+        ps, ags = _slugs(project_slug, agent_slug)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT sdk_context FROM sessions WHERE tenant_id=%s AND project_slug=%s AND agent_slug=%s AND session_id=%s",
+                    (conn.tenant_id, ps, ags, session_id),
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+
+    def replace_sdk_context(
+        self, session_id: str, items: list[dict], *, project_slug=None, agent_slug=None
+    ) -> None:
+        from psycopg.types.json import Jsonb
+
+        ps, ags = _slugs(project_slug, agent_slug)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO sessions(tenant_id,project_slug,agent_slug,session_id,sdk_context) VALUES (%s,%s,%s,%s,%s) "
+                    "ON CONFLICT(tenant_id,project_slug,agent_slug,session_id) DO UPDATE SET sdk_context=excluded.sdk_context",
+                    (conn.tenant_id, ps, ags, session_id, Jsonb(items)),
+                )
+            conn.commit()
+
     def load_history(
         self,
         session_id: str,
@@ -399,6 +444,7 @@ class PgSessionStorage(SessionStorageBackend):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        projection: dict | None = None,
     ) -> None:
         from psycopg.types.json import Jsonb
 
@@ -409,9 +455,51 @@ class PgSessionStorage(SessionStorageBackend):
                     """
                     INSERT INTO history (tenant_id, project_slug, agent_slug,
                                          session_id, msg)
-                    VALUES (%s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id
                     """,
                     (conn.tenant_id, ps, ags, session_id, Jsonb(message)),
+                )
+                row_id = cur.fetchone()[0]
+                cur.execute(
+                    "UPDATE sessions SET sdk_context=sdk_context || %s WHERE tenant_id=%s AND project_slug=%s AND agent_slug=%s AND session_id=%s AND sdk_context IS NOT NULL",
+                    (Jsonb([message]), conn.tenant_id, ps, ags, session_id),
+                )
+                if projection is not None:
+                    cur.execute(
+                        "INSERT INTO history_projection_outbox(history_id,intent) VALUES (%s,%s)",
+                        (row_id, Jsonb(projection)),
+                    )
+            conn.commit()
+
+    def pending_projections(
+        self, session_id: str, *, project_slug=None, agent_slug=None
+    ) -> list[dict]:
+        ps, ags = _slugs(project_slug, agent_slug)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT h.id,h.msg,o.intent FROM history h "
+                    "JOIN history_projection_outbox o ON o.history_id=h.id "
+                    "WHERE h.tenant_id=%s AND h.project_slug=%s AND h.agent_slug=%s "
+                    "AND h.session_id=%s ORDER BY h.id",
+                    (conn.tenant_id, ps, ags, session_id),
+                )
+                return [
+                    {"row_id": row[0], "message": row[1], "intent": row[2]}
+                    for row in cur.fetchall()
+                ]
+
+    def acknowledge_projection(
+        self, session_id: str, row_id: int, *, project_slug=None, agent_slug=None
+    ) -> None:
+        ps, ags = _slugs(project_slug, agent_slug)
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM history_projection_outbox o USING history h "
+                    "WHERE o.history_id=h.id AND h.id=%s AND h.tenant_id=%s "
+                    "AND h.project_slug=%s AND h.agent_slug=%s AND h.session_id=%s",
+                    (row_id, conn.tenant_id, ps, ags, session_id),
                 )
             conn.commit()
 

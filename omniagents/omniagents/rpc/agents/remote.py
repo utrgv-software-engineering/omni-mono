@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from omniagents.rpc import RpcMethodsBase, JsonRpcClient, RpcError
 from omniagents.core.interfaces.agent import UnifiedAgentBase
-from omniagents.rpc.generated.gui_v1 import (
+from omniagents.rpc.generated.gui_v2 import (
     CLIENT_REQUEST_MODELS,
     SERVER_NOTIFICATION_MODELS,
 )

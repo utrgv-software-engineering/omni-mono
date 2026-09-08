@@ -225,7 +225,7 @@ class RpcWs:
     def handshake(self, experimental=EXPERIMENTAL):
         self.result(
             "initialize",
-            protocol_version="1.0.0",
+            protocol_version="2.0.0",
             identity={"name": "plan-tests", "version": "0.0.0"},
             platform={"os": "linux", "arch": "x86_64"},
             capabilities={

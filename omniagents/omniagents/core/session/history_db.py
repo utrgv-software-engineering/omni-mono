@@ -103,6 +103,22 @@ def set_encryption_provider(provider) -> None:
     _sqlite_set_encryption_provider(provider)
 
 
+def load_sdk_context(
+    session_id: str, *, project_slug=None, agent_slug=None
+) -> list[dict] | None:
+    return _resolve_backend().load_sdk_context(
+        session_id, project_slug=project_slug, agent_slug=agent_slug
+    )
+
+
+def replace_sdk_context(
+    session_id: str, items: list[dict], *, project_slug=None, agent_slug=None
+) -> None:
+    _resolve_backend().replace_sdk_context(
+        session_id, items, project_slug=project_slug, agent_slug=agent_slug
+    )
+
+
 # ---------------------------------------------------------------------------
 # Retention + hold
 # ---------------------------------------------------------------------------
@@ -171,9 +187,30 @@ def append_message(
     *,
     project_slug: str | None = None,
     agent_slug: str | None = None,
+    projection: dict | None = None,
 ) -> None:
     return _resolve_backend().append_message(
-        session_id, message, project_slug=project_slug, agent_slug=agent_slug
+        session_id,
+        message,
+        project_slug=project_slug,
+        agent_slug=agent_slug,
+        projection=projection,
+    )
+
+
+def pending_projections(
+    session_id: str, *, project_slug=None, agent_slug=None
+) -> list[dict]:
+    return _resolve_backend().pending_projections(
+        session_id, project_slug=project_slug, agent_slug=agent_slug
+    )
+
+
+def acknowledge_projection(
+    session_id: str, row_id: int, *, project_slug=None, agent_slug=None
+) -> None:
+    _resolve_backend().acknowledge_projection(
+        session_id, row_id, project_slug=project_slug, agent_slug=agent_slug
     )
 
 

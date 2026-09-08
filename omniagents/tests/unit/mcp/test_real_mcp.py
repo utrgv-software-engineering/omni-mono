@@ -1,96 +1,37 @@
-"""
-Test CLI mode with REAL MCPServerStdio to reproduce the actual AnyIO error.
-"""
+"""Exercise actual stdio handshakes and cleanup, not an always-skipped stub."""
 
 import asyncio
-import os
 import sys
 from contextlib import AsyncExitStack
+from pathlib import Path
 
 import pytest
-
-# Skip if agents library not available
-pytest.importorskip("agents")
-
 from agents.mcp import MCPServerStdio
 
 
 @pytest.mark.asyncio
-async def test_real_mcp_stdio_server_reuse_across_contexts():
-    """
-    Test with REAL MCPServerStdio to see if recreating instances works.
-
-    This simulates what the fixed CLI mode does:
-    - Create MCP server instance
-    - Enter it into AsyncExitStack
-    - Use it
-    - Exit the stack
-    - Repeat for next message
-    """
-
-    # Use a simple echo server command for testing
-    # This will fail if there's no suitable MCP server, but that's ok for this test
+@pytest.mark.parametrize("separate_tasks", [False, True])
+async def test_real_mcp_stdio_fresh_instances_across_contexts(separate_tasks):
+    """Each CLI message owns its connection and AnyIO cleanup scope."""
     params = {
         "command": sys.executable,
-        "args": ["-c", "print('test')"],  # Simple command that exits immediately
+        "args": [str(Path(__file__).with_name("stdio_echo_server.py"))],
     }
+    instances = []
 
-    # First message
-    try:
-        async with AsyncExitStack() as stack1:
-            server1 = MCPServerStdio(params, name="test-server-1")
-            entered_server1 = await stack1.enter_async_context(server1)
-            # Server entered successfully
+    async def message(number):
+        async with AsyncExitStack() as stack:
+            server = MCPServerStdio(params, name=f"test-server-{number}")
+            instances.append(server)
+            await stack.enter_async_context(server)
+            assert "echo" in {tool.name for tool in await server.list_tools()}
+            result = await server.call_tool("echo", {"text": f"message-{number}"})
+            assert not result.isError
+            assert [block.text for block in result.content] == [f"message-{number}"]
 
-        # Stack exited cleanly
-
-    except Exception as e:
-        # Some commands might not work as MCP servers, that's ok
-        pytest.skip(f"Could not create test MCP server: {e}")
-
-    # Second message - create NEW server instance
-    try:
-        async with AsyncExitStack() as stack2:
-            server2 = MCPServerStdio(params, name="test-server-2")
-            entered_server2 = await stack2.enter_async_context(server2)
-            # Server entered successfully
-
-        # Stack exited cleanly
-
-        # Servers are different instances
-        assert server1 is not server2
-
-    except Exception as e:
-        pytest.skip(f"Could not create second test MCP server: {e}")
-
-
-@pytest.mark.asyncio
-async def test_real_mcp_stdio_server_reuse_same_instance_fails():
-    """
-    Test that reusing the SAME MCPServerStdio instance causes issues.
-
-    This simulates the BROKEN behavior.
-    """
-
-    params = {
-        "command": sys.executable,
-        "args": ["-c", "print('test')"],
-    }
-
-    server = MCPServerStdio(params, name="test-server")
-
-    try:
-        # First use
-        async with AsyncExitStack() as stack1:
-            await stack1.enter_async_context(server)
-        # Exited
-
-        # Try to reuse the SAME instance
-        # This should cause issues
-        async with AsyncExitStack() as stack2:
-            await stack2.enter_async_context(server)
-        # This might fail or succeed depending on the implementation
-
-    except Exception as e:
-        # Expected to fail in some way
-        print(f"Got expected error: {e}")
+    for number in (1, 2):
+        if separate_tasks:
+            await asyncio.wait_for(asyncio.create_task(message(number)), timeout=20)
+        else:
+            await message(number)
+    assert instances[0] is not instances[1]

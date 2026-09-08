@@ -44,6 +44,16 @@ class SessionStorageBackend(ABC):
     def close(self) -> None:
         """Release any pooled resources. Idempotent."""
 
+    @abstractmethod
+    def load_sdk_context(
+        self, session_id: str, *, project_slug=None, agent_slug=None
+    ) -> list[dict] | None: ...
+
+    @abstractmethod
+    def replace_sdk_context(
+        self, session_id: str, items: list[dict], *, project_slug=None, agent_slug=None
+    ) -> None: ...
+
     # ------------------------------------------------------------------
     # Retention + legal hold
     # ------------------------------------------------------------------
@@ -111,6 +121,17 @@ class SessionStorageBackend(ABC):
         *,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        projection: dict | None = None,
+    ) -> None: ...
+
+    @abstractmethod
+    def pending_projections(
+        self, session_id: str, *, project_slug=None, agent_slug=None
+    ) -> list[dict]: ...
+
+    @abstractmethod
+    def acknowledge_projection(
+        self, session_id: str, row_id: int, *, project_slug=None, agent_slug=None
     ) -> None: ...
 
     # ------------------------------------------------------------------

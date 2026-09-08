@@ -465,7 +465,15 @@ class ConversationService:
         """
         thread = self.store.get_thread(thread_id)
         if thread is not None:
-            return thread
+            from .recorder import ConversationRecorder
+
+            ConversationRecorder(
+                self.store, project_slug=self._project_slug, agent_slug=self._agent_slug
+            ).recover_pending_messages(thread_id)
+            recovered = self.store.get_thread(thread_id)
+            if recovered is None:
+                raise ThreadNotFound(thread_id)
+            return recovered
         history = self._load_legacy_history(thread_id)
         if history:
             metadata = self._legacy_metadata(thread_id)
@@ -485,8 +493,8 @@ class ConversationService:
     def get_thread(self, thread_id: str) -> Dict[str, Any]:
         thread = self.ensure_thread(thread_id)
         payload = thread.to_dict()
-        # The stored counters are maintained by non-transactional
-        # read-modify-write and can drift under concurrent turns. They are
+        # Older stores can retain counter drift from non-transactional
+        # writes. New item creation is atomic, but counts remain
         # a bookkeeping convenience, not a source of truth, so the WIRE
         # value is counted at read time — a client sizing a scrollbar from
         # ``item_count`` must not be handed a stale number.
@@ -973,25 +981,28 @@ class ConversationService:
         cascaded: List[str] = []
         inaccessible = 0
 
-        if not isinstance(title, _Unset):
-            new_title = derive_title(title) if isinstance(title, str) else None
-            if new_title != thread.title:
-                thread.title = new_title
-                changed.append("title")
-        if pinned is not None and bool(pinned) != thread.pinned:
-            thread.pinned = bool(pinned)
-            changed.append("pinned")
-        if metadata is not None:
-            merged = dict(thread.metadata)
-            for key, value in metadata.items():
-                if value is None:
-                    merged.pop(key, None)
-                else:
-                    merged[key] = value
-            _validate_metadata(merged)
-            if merged != thread.metadata:
-                thread.metadata = merged
-                changed.append("metadata")
+        def update(current):
+            if not isinstance(title, _Unset):
+                new_title = derive_title(title) if isinstance(title, str) else None
+                if new_title != current.title:
+                    current.title = new_title
+                    changed.append("title")
+            if pinned is not None and bool(pinned) != current.pinned:
+                current.pinned = bool(pinned)
+                changed.append("pinned")
+            if metadata is not None:
+                merged = dict(current.metadata)
+                for key, value in metadata.items():
+                    if value is None:
+                        merged.pop(key, None)
+                    else:
+                        merged[key] = value
+                _validate_metadata(merged)
+                if merged != current.metadata:
+                    current.metadata = merged
+                    changed.append("metadata")
+            if changed:
+                current.updated_at = _now()
 
         target_status: ThreadStatus | None = None
         if status is not None:
@@ -1002,9 +1013,9 @@ class ConversationService:
                     f"Unknown thread status: {status}", status=status
                 ) from exc
 
-        if changed:
-            thread.updated_at = _now()
-            self.store.upsert_thread(thread)
+        thread = self.store.mutate_thread(thread_id, update)
+        if thread is None:
+            raise ThreadNotFound(thread_id)
 
         if target_status is not None and target_status is not thread.status:
             outcome = self.set_status(thread_id, target_status, can_access=can_access)
@@ -1068,13 +1079,17 @@ class ConversationService:
         now = _now()
 
         def apply(target: str) -> bool:
-            thread = self.store.get_thread(target)
-            if thread is None or thread.status is status:
-                return False
-            thread.status = status
-            thread.updated_at = now
-            self.store.upsert_thread(thread)
-            return True
+            changed = False
+
+            def update(current):
+                nonlocal changed
+                if current.status is not status:
+                    current.status = status
+                    current.updated_at = now
+                    changed = True
+
+            self.store.mutate_thread(target, update)
+            return changed
 
         # The named thread's access was decided by the RPC gate before this
         # was called; the descendants' has not been decided anywhere yet.

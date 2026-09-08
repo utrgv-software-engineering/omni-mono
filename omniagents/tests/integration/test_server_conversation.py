@@ -144,7 +144,7 @@ class RpcWs:
     def handshake(self, experimental=()):
         self.result(
             "initialize",
-            protocol_version="1.0.0",
+            protocol_version="2.0.0",
             identity={"name": "conversation-tests", "version": "0.0.0"},
             platform={"os": "linux", "arch": "x86_64"},
             capabilities={
@@ -213,6 +213,49 @@ def connect(context, headers, experimental=()):
     rpc = RpcWs(cm.__enter__())
     rpc.handshake(experimental=experimental)
     return cm, rpc
+
+
+def test_v1_peer_cannot_start_work_on_v2_endpoint(context, monkeypatch):
+    from unittest.mock import AsyncMock
+
+    start = AsyncMock()
+    monkeypatch.setattr(context.service, "start_run", start)
+    with context.client.websocket_connect("/ws", headers=ALICE) as ws:
+        rpc = RpcWs(ws)
+        error = rpc.error(
+            "initialize",
+            protocol_version="1.0.0",
+            identity={"name": "legacy-client", "version": "1"},
+            platform={"os": "linux", "arch": "x86_64"},
+            capabilities={
+                **{
+                    key: False
+                    for key in (
+                        "realtime",
+                        "mcp_apps",
+                        "client_functions",
+                        "approvals",
+                        "artifacts",
+                        "replay",
+                        "terminal",
+                    )
+                },
+                "experimental_operations": [],
+                "disabled_notifications": [],
+            },
+        )
+        assert error["code"] == -32012
+        assert error["data"]["server_version"] == "2.0.0"
+        ws.send_json({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        assert (
+            rpc.error(
+                "start_run",
+                prompt="must not execute",
+                environment_selection={"mode": "none"},
+            )["code"]
+            == -32010
+        )
+    start.assert_not_awaited()
 
 
 def run_turn(rpc, prompt, session_id=None):

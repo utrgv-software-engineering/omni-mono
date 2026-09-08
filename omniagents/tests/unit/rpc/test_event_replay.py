@@ -218,7 +218,9 @@ async def test_pending_approval_replay_carries_replay_envelope():
         )
     )
     await asyncio.sleep(0.05)
-    stored = sess.pending_tool_approvals["call-1"]
+    token = next(iter(sess.pending_tool_approvals))
+    stored = sess.pending_tool_approvals[token]
+    assert stored["source_call_id"] == "call-1"
     assert stored["seq"] == 1
     assert stored["stream_id"] == sess.event_log.stream_id
     # Replaying the stored payload through a cursor is a duplicate.
@@ -227,7 +229,7 @@ async def test_pending_approval_replay_carries_replay_envelope():
     assert cursor.observe(live) == "deliver"
     assert cursor.observe(stored) == "duplicate"
 
-    assert await service.tool_approval_response("call-1", "reject")
+    assert await service.tool_approval_response(token, "reject")
     assert (await task)["decision"] == "reject"
 
 
@@ -255,7 +257,8 @@ async def test_client_request_resolution_is_journaled():
 
 
 @pytest.mark.asyncio
-async def test_timed_out_client_request_is_resolved_in_journal():
+@pytest.mark.parametrize("reason", ["timeout", "cancelled"])
+async def test_terminal_client_request_is_resolved_in_journal(reason):
     """Regression: a client_request that times out must journal a
     ``client_request_resolved`` so resumes within the retention window
     never replay a dangling prompt that no live future backs."""
@@ -264,10 +267,22 @@ async def test_timed_out_client_request_is_resolved_in_journal():
     channel = RecordingChannel()
     sess.channels.append(channel)
 
-    result = await service.request_client_function(
-        "ui.ask", {"q": "?"}, session=sess, expect_result=True, timeout_ms=20
-    )
-    assert result is None
+    if reason == "timeout":
+        result = await service.request_client_function(
+            "ui.ask", {"q": "?"}, session=sess, expect_result=True, timeout_ms=20
+        )
+        assert result is None
+    else:
+        task = asyncio.create_task(
+            service.request_client_function(
+                "ui.ask", {"q": "?"}, session=sess, expect_result=True
+            )
+        )
+        await asyncio.sleep(0)
+        assert sess.pending_client_requests
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
     assert sess.pending_client_requests == {}
     events = [
         (method, payload) for _, method, payload in sess.event_log.retained_events()
@@ -277,7 +292,7 @@ async def test_timed_out_client_request_is_resolved_in_journal():
         "client_request_resolved",
     ]
     request_payload, resolved_payload = events[0][1], events[1][1]
-    assert resolved_payload["reason"] == "timeout"
+    assert resolved_payload["reason"] == reason
     assert resolved_payload["request_id"] == request_payload["request_id"]
     # Live channels received the dismissal too.
     assert ("client_request_resolved", 2) in channel.sequenced()

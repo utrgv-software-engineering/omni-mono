@@ -106,16 +106,9 @@ class TestProjection:
         assert tools[0].content["output"] == "a\nb"
         assert tools[0].content["tool_kind"] == "command"
 
-    def test_projected_tool_ids_match_the_recorder_ids(self, store):
-        """Both producers, one call, one id.
-
-        This drives the RECORDER over the live notifications for a tool
-        call, and the ADAPTER over the history rows that same call leaves
-        behind, then asserts the two ids are equal. Asserting the adapter
-        against a hardcoded key would still pass if the recorder's
-        derivation changed — which is exactly the property being
-        guaranteed, so both producers have to run.
-        """
+    @pytest.mark.parametrize("run_id", [None, "r1"])
+    def test_projected_tool_ids_preserve_legacy_identity(self, store, run_id):
+        """Legacy identity matches unscoped events, not modern run-scoped ones."""
         from omniagents.core.conversation.recorder import ConversationRecorder
 
         recorder = ConversationRecorder(store)
@@ -125,7 +118,7 @@ class TestProjection:
             (
                 "tool_called",
                 {
-                    "run_id": "r1",
+                    "run_id": run_id,
                     "tool": "read_file",
                     "input": "{}",
                     "call_id": "c1",
@@ -133,7 +126,7 @@ class TestProjection:
             ),
             (
                 "tool_result",
-                {"run_id": "r1", "tool": "read_file", "output": "x", "call_id": "c1"},
+                {"run_id": run_id, "tool": "read_file", "output": "x", "call_id": "c1"},
             ),
         ]:
             recorder.record(THREAD, method, {"session_id": THREAD, **payload})
@@ -148,8 +141,24 @@ class TestProjection:
         )
         projected = next(i for i in projected_items if i.kind is ItemKind.TOOL_CALL)
 
-        assert projected.item_id == recorded.item_id
+        assert (projected.item_id == recorded.item_id) is (run_id is None)
         assert projected.item_id == derive_item_id(THREAD, "tool:c1")
+
+    def test_repeated_provider_ids_keep_distinct_legacy_tool_results(self):
+        _, _, items = project_thread(
+            THREAD,
+            [
+                user("first"),
+                call("read_file", "c1"),
+                output("c1", "first"),
+                user("second"),
+                call("read_file", "c1"),
+                output("c1", "second"),
+            ],
+        )
+        tools = [item for item in items if item.kind is ItemKind.TOOL_CALL]
+        assert len({item.item_id for item in tools}) == 2
+        assert [item.content["output"] for item in tools] == ["first", "second"]
 
     def test_a_call_with_no_output_row_is_failed_not_started(self):
         """It never returned; leaving it at 'started' would make a completed

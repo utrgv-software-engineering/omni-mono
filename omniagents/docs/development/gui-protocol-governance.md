@@ -2,6 +2,20 @@
 
 The OmniAgents repository is the canonical source for the versioned GUI JSON-RPC protocol used by maintained clients, including Omni Desktop. The OpenRPC document, JSON Schema, generated models, inventory, and manifest under `protocol/openrpc/` are generated from `omniagents.rpc.protocol_catalog.OPERATIONS` and the protocol generator.
 
+## V2 Migration Candidate
+
+The active GUI runtime and bundled Python, web and Ink clients now use the v2
+candidate in `protocol/openrpc/v2/`. See
+[the migration record](gui-protocol-v2-migration.md) for status and release gates.
+Desktop has not yet completed its reviewed-source sync. This is not a paired
+Desktop/server release: v1 clients receive `-32012` from this runtime.
+
+The default generator target is v2 (`--major 2`). `--major 1` reproduces the
+preserved legacy candidate; it does not repair or certify that candidate as
+compatible with released v1. The immutable v1 baseline remains untouched.
+There is no v2 release baseline yet. Do not compare v2 with itself and call that
+release-compatibility proof, or create a baseline just to make CI green.
+
 ## Version 1 Compatibility
 
 Version 1 is additive-only. Once an operation is stable, changes must preserve existing clients and servers:
@@ -66,16 +80,28 @@ npm ci --prefix omniagents/backends/web/ui
 Regenerate all canonical and generated artifacts after editing the protocol catalog or generator:
 
 ```bash
-python -m scripts.protocol.generate_gui_protocol
+python -m scripts.protocol.generate_gui_protocol --major 2
 ```
 
 Run the same checks enforced by the repository test workflow:
 
 ```bash
-python -m scripts.protocol.generate_gui_protocol --check
-python -m scripts.protocol.check_gui_protocol_compatibility --baseline-root protocol/openrpc/baseline/1.0.0 --candidate-root protocol/openrpc
-python -m pytest tests/unit/rpc/test_gui_protocol_schema.py tests/unit/rpc/test_gui_protocol_compatibility.py
+python -m scripts.protocol.generate_gui_protocol --major 2 --check
+python -m pytest tests/unit/rpc/test_gui_protocol_schema.py tests/unit/rpc/test_gui_protocol_compatibility.py tests/unit/rpc/test_gui_protocol_v2.py
 ```
+
+During migration, the tests validate the v2 candidate, preserve the v1 baseline
+digest, and explicitly assert that the v1-to-v2 changes are breaking. The
+following diagnostic is expected to report a break and exit nonzero; it is not
+a within-major release gate:
+
+```bash
+python -m scripts.protocol.check_gui_protocol_compatibility --baseline-root protocol/openrpc/baseline/1.0.0 --candidate-root protocol/openrpc/v2
+```
+
+Once an approved v2 baseline is published at release, require compatibility
+against that baseline for subsequent v2 candidates. The existing v1 sync example
+below applies only to reviewed v1 releases, not the current v2 runtime.
 
 Commit source changes and regenerated outputs together. Do not hand-edit generated files.
 

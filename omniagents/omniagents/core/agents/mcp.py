@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -45,7 +46,7 @@ async def _capture_ui_after_call(
     server_name = getattr(server, "name", "") or ""
 
     # Resource-URI form: prefer this when we have a cached URI for the tool.
-    cached = mcp_ui.lookup_tool_ui_resource(tool_name)
+    cached = mcp_ui.lookup_tool_ui_resource(tool_name, server_name)
     if cached is not None:
         structured = getattr(result, "structuredContent", None)
         if structured is None and isinstance(result, dict):
@@ -151,12 +152,27 @@ def _attach_ui_capture(server: MCPServer) -> MCPServer:
         return server
 
     async def call_tool(tool_name, arguments=None, *args, **kwargs):
-        result = await original(tool_name, arguments, *args, **kwargs)
-        await _capture_ui_after_call(server, tool_name, result)
-        return result
+        try:
+            result = await original(tool_name, arguments, *args, **kwargs)
+            await _capture_ui_after_call(server, tool_name, result)
+            return result
+        finally:
+            mcp_ui.set_invocation_id(None)
+
+    original_resolver = getattr(server, "tool_meta_resolver", None)
+
+    async def resolve_meta(context):
+        # Runs in the SDK invocation task, unlike parallel lifecycle hooks.
+        # Keep correlation local; no internal identifiers are sent to MCP.
+        mcp_ui.set_invocation_id(getattr(context.run_context, "tool_call_id", None))
+        if original_resolver is not None:
+            value = original_resolver(context)
+            return await value if inspect.isawaitable(value) else value
+        return None
 
     try:
         server.call_tool = call_tool  # type: ignore[method-assign]
+        server.tool_meta_resolver = resolve_meta
     except (AttributeError, TypeError):
         # Server type doesn't allow attribute reassignment (e.g. frozen
         # dataclass). Fall back to the original method — losing UI capture

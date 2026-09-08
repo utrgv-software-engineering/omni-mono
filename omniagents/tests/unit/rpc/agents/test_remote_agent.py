@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from omniagents.rpc.agents.remote import RemoteAgent, _ClientEventMethods
-from omniagents.rpc.generated.gui_v1 import SERVER_NOTIFICATION_MODELS
+from omniagents.rpc.generated.gui_v2 import SERVER_NOTIFICATION_MODELS
 
 
 @pytest.mark.asyncio

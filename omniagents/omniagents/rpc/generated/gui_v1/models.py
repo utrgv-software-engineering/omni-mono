@@ -88,12 +88,13 @@ class StartRunParams(BaseModel):
     session_id: str | None = None
     variables: dict[str, Any] | None = None
     context: dict[str, Any] | None = None
-    content: str | None = None
+    content: str | list[dict[str, Any]] | None = None
     workflow_name: str | None = None
     group_id: str | None = None
     safe_tool_overrides: dict[str, Any] | None = None
     approvals_reviewer: str | None = None
     prompt_role: str | None = None
+    submission_id: str | None = None
 
 
 class StartRunResult(BaseModel):
@@ -249,7 +250,9 @@ class EnqueueMessageParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
     content: str
+    submission_id: str | None = None
     role: str | None = None
+    input_content: list[Any] | None = None
     trigger_run: bool | None = None
     variables: dict[str, Any] | None = None
     safe_tool_overrides: dict[str, Any] | None = None
@@ -690,6 +693,8 @@ class SetSessionHoldResult(RootModel[dict[str, Any]]):
 class QueueStatusParams(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str
+    include_snapshot: bool | None = None
+    submission_id: str | None = None
 
 
 class QueueStatusResult(RootModel[dict[str, Any]]):
@@ -1490,6 +1495,7 @@ class ToolApprovalRequestedParams(BaseModel):
     metadata: dict[str, Any] | None = None
     session_id: str | None = None
     run_id: str | None = None
+    source_call_id: str | None = None
     seq: int | None = None
     stream_id: str | None = None
 
@@ -1512,6 +1518,7 @@ class McpApprovalRequestedParams(BaseModel):
     arguments: str
     session_id: str | None = None
     run_id: str | None = None
+    source_request_id: str | None = None
     seq: int | None = None
     stream_id: str | None = None
 

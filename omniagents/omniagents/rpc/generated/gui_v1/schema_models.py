@@ -342,10 +342,12 @@ class EnqueueMessage(BaseModel):
         extra="forbid",
     )
     content: str
+    input_content: list[dict[str, Any]] | None = None
     role: str | None = None
     safe_tool_overrides: dict[str, Any] | None = None
     session_id: str
     source: str | None = None
+    submission_id: str | None = None
     trigger_run: bool | None = None
     variables: dict[str, Any] | None = None
 
@@ -1049,6 +1051,7 @@ class McpApprovalRequested(BaseModel):
     seq: int | None = None
     server_label: str
     session_id: str | None = None
+    source_request_id: str | None = None
     stream_id: str | None = None
     tool_name: str
 
@@ -1249,7 +1252,9 @@ class QueueStatus(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
+    include_snapshot: bool | None = None
     session_id: str
+    submission_id: str | None = None
 
 
 class ReportIncident(BaseModel):
@@ -1462,7 +1467,7 @@ class StartRun(BaseModel):
         extra="forbid",
     )
     approvals_reviewer: str | None = None
-    content: str | None = None
+    content: str | list[dict[str, Any]] | None = None
     context: dict[str, Any] | None = None
     environment_selection: (
         EnvironmentSelection3 | EnvironmentSelection4 | EnvironmentSelection5
@@ -1472,6 +1477,7 @@ class StartRun(BaseModel):
     prompt_role: str | None = None
     safe_tool_overrides: dict[str, Any] | None = None
     session_id: str | None = None
+    submission_id: str | None = None
     variables: dict[str, Any] | None = None
     workflow_name: str | None = None
 
@@ -1524,6 +1530,7 @@ class ToolApprovalRequested(BaseModel):
     run_id: str | None = None
     seq: int | None = None
     session_id: str | None = None
+    source_call_id: str | None = None
     stream_id: str | None = None
     tool_name: str
 

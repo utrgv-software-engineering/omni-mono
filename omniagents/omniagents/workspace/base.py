@@ -32,6 +32,14 @@ class ProcessHandle(abc.ABC):
     of handles and not care about the backend.
     """
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        from ._ownership import guard_operation
+
+        method = cls.__dict__.get("write_stdin")
+        if method is not None and not getattr(method, "__isabstractmethod__", False):
+            setattr(cls, "write_stdin", guard_operation(method))
+
     process_id: str
     """An opaque identifier unique within this process. Always set."""
 
@@ -62,11 +70,22 @@ class Workspace(abc.ABC):
     """Async filesystem + shell interface used by sandbox-aware tools.
 
     Path semantics: relative paths are resolved against ``self.root``.
-    Absolute paths and ``..`` traversals that escape the root raise
-    :class:`~omniagents.workspace.types.WorkspaceEscapeError` regardless
-    of backend — host implementations enforce this in software, sandbox
-    implementations get it for free from the manifest mount.
+    Confinement depends on the backend: plain host workspaces allow paths
+    outside the root, while mounted and sandbox workspaces enforce their
+    address spaces. Call :meth:`resolve_confined` when the caller requires
+    a workspace boundary regardless of backend.
     """
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        from ._ownership import guard_operation
+
+        for name in ("write_text", "write_bytes", "mkdir", "remove", "exec", "spawn"):
+            method = cls.__dict__.get(name)
+            if method is not None and not getattr(
+                method, "__isabstractmethod__", False
+            ):
+                setattr(cls, name, guard_operation(method))
 
     root: str
     """Filesystem-absolute path of the workspace root in whichever backend
@@ -337,9 +356,12 @@ class Workspace(abc.ABC):
 
     @abc.abstractmethod
     def resolve(self, path: str) -> str:
-        """Resolve *path* against ``self.root`` into an absolute path within
-        the workspace. Raises :class:`WorkspaceEscapeError` when the result
-        would step outside ``self.root``."""
+        """Resolve *path* against ``self.root`` into an absolute path.
+
+        Backends with :attr:`enforces_confinement` reject paths outside their
+        address space with :class:`WorkspaceEscapeError`. Plain host paths
+        are not confined; use :meth:`resolve_confined` to require a boundary.
+        """
 
     def relative_to_workspace(self, path: str) -> str:
         """Inverse of :meth:`resolve` — return *path* relative to ``root``."""

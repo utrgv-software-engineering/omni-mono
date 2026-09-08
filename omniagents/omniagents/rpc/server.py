@@ -24,18 +24,19 @@ from omniagents.core.debug import Debug
 
 from .auth import RPC_ERROR_AUTHORIZATION_DENIED, AuthorizationDenied
 from .base import RpcMethodsBase
-from .generated.gui_v1.models import (
+from .generated.gui_v2.models import (
     CLIENT_REQUEST_MODELS,
     CLIENT_RESULT_MODELS,
     SERVER_NOTIFICATION_MODELS,
+    GUI_PROTOCOL_VERSION,
     InitializeParams,
     InitializeResult,
 )
 from .protocol_catalog import EXPERIMENTAL_NOTIFICATIONS, EXPERIMENTAL_REQUESTS
+from .version import supports_gui_version
 
 DEBUG_SERVER = os.getenv("OMNIAGENTS_SERVER_DEBUG", "0").lower() in ("1", "true")
 GUI_RPC_METHODS = frozenset(CLIENT_REQUEST_MODELS)
-GUI_PROTOCOL_VERSION = "1.0.0"
 GUI_EXPERIMENTAL_REQUESTS = frozenset(EXPERIMENTAL_REQUESTS)
 GUI_EXPERIMENTAL_NOTIFICATIONS = frozenset(EXPERIMENTAL_NOTIFICATIONS)
 GUI_OPTIONAL_NOTIFICATIONS = frozenset(
@@ -118,16 +119,6 @@ GUI_CAPABILITY_NAMES = frozenset(
 # value type so class-level pydantic API (model_validate/model_fields) checks.
 _REQUEST_MODELS = cast("Mapping[str, type[BaseModel]]", CLIENT_REQUEST_MODELS)
 _RESULT_MODELS = cast("Mapping[str, type[BaseModel]]", CLIENT_RESULT_MODELS)
-
-
-def _parse_semver(value: Any) -> Optional[tuple[int, int, int]]:
-    if not isinstance(value, str):
-        return None
-    core = value.split("+", 1)[0].split("-", 1)[0]
-    parts = core.split(".")
-    if len(parts) != 3 or any(not part.isdigit() for part in parts):
-        return None
-    return tuple(int(part) for part in parts)  # type: ignore[return-value]
 
 
 class JsonRpcChannel:
@@ -741,14 +732,7 @@ class JsonRpcEndpoint:
             return
 
         client_version = initialize.protocol_version
-        parsed_client_version = _parse_semver(client_version)
-        parsed_server_version = _parse_semver(GUI_PROTOCOL_VERSION)
-        if (
-            parsed_client_version is None
-            or parsed_server_version is None
-            or parsed_client_version[0] != parsed_server_version[0]
-            or parsed_client_version > parsed_server_version
-        ):
+        if not supports_gui_version(GUI_PROTOCOL_VERSION, client_version):
             await channel.send_error(
                 call_id,
                 -32012,

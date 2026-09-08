@@ -5,7 +5,8 @@ import type {
   InitializeResult,
   RpcMethodMap,
   RpcNotificationMap,
-} from '../protocol/generated/gui-v1'
+} from '../protocol/generated/gui-v2'
+import { GUI_PROTOCOL_VERSION, isGuiInitializeResult, supportsGuiProtocolVersion } from '../protocol/generated/gui-v2'
 import {
   classifyCloseCode,
   ConnectionClosedError,
@@ -332,6 +333,7 @@ export class RPCClient {
    * HTTP and only the ticket ever appears in the URL.
    */
   private async dialSocket(): Promise<void> {
+    this.negotiatedInitialization = null
     let wsUrl: string
     try {
       wsUrl = await withConnectTicket(this.url, this.token)
@@ -397,7 +399,10 @@ export class RPCClient {
     }, this.policy.connectTimeoutMs)
 
     ws.onmessage = (ev) => {
-      this.handleMessage(JSON.parse(ev.data as string) as JSONRPCResponse | JSONRPCNotification)
+      if (this.ws !== ws) return
+      const message = JSON.parse(ev.data as string) as JSONRPCResponse | JSONRPCNotification
+      if (!ready && 'method' in message) return
+      this.handleMessage(message)
     }
     ws.onerror = () => {
       if (!ready) fail(new ConnectionClosedError('WebSocket error'))
@@ -416,7 +421,7 @@ export class RPCClient {
       try {
         const attempt = (operations: readonly string[]): Promise<InitializeResult> => {
           const initialize: InitializeParams = {
-            protocol_version: '1.0.0',
+            protocol_version: GUI_PROTOCOL_VERSION,
             identity: { name: 'omniagents-web-ui', version: '0.0.0' },
             platform: { os: 'browser', arch: 'unknown' },
             capabilities: { ...CLIENT_CAPABILITIES, experimental_operations: [...operations] },
@@ -436,6 +441,16 @@ export class RPCClient {
           if (!unsupported) throw e
           this.experimentalToRequest = this.experimentalToRequest.filter((name) => !unsupported.has(name))
           result = await attempt(this.experimentalToRequest)
+        }
+        if (!supportsGuiProtocolVersion(result?.protocol_version)) {
+          throw new JSONRPCError(-32012, 'Incompatible GUI protocol. Update the client and server together.', {
+            kind: 'protocol_version_mismatch',
+            client_version: GUI_PROTOCOL_VERSION,
+            server_version: result?.protocol_version,
+          })
+        }
+        if (!isGuiInitializeResult(result)) {
+          throw new JSONRPCError(-32602, 'Invalid GUI initialize response.', { kind: 'invalid_initialize_result' })
         }
         this.negotiatedInitialization = result
         this.sendNotification('initialized', {})

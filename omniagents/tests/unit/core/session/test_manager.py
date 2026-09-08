@@ -14,6 +14,19 @@ def make_manager():
     return SessionManager("proj", "agent")
 
 
+def refresh_owned(session):
+    from omniagents.core.conversation.recorder import recorder_for_session
+    from omniagents.core.runtime.ownership import reserve_run
+
+    recorder = recorder_for_session(session)
+    recorder.ensure_thread(session.id)
+    owner = reserve_run(recorder.store, session.id)
+    try:
+        session.refresh_owned_history(owner)
+    finally:
+        owner.release()
+
+
 def test_get_or_create_reuses_existing_session():
     manager = make_manager()
     session = manager.get_or_create()
@@ -151,6 +164,8 @@ def test_get_or_create_repairs_missing_tool_outputs_after_crash(temp_history_db)
     )
 
     reloaded = make_manager().get_or_create(session.id)
+    assert reloaded.history == session.history  # Merely reading must not repair.
+    refresh_owned(reloaded)
     assert any(
         item.get("type") == "function_call_output"
         and item.get("call_id") == "call_1"
@@ -177,12 +192,117 @@ def test_get_or_create_repairs_missing_chat_completions_tool_outputs(temp_histor
     )
 
     reloaded = make_manager().get_or_create(session.id)
+    assert reloaded.history == session.history
+    refresh_owned(reloaded)
     assert any(
         item.get("role") == "tool"
         and item.get("tool_call_id") == "call_1"
         and "Missing tool output" in (item.get("content") or "")
         for item in reloaded.history
     )
+
+
+def test_owned_refresh_recovers_exact_durable_result_for_reused_call_id(
+    temp_history_db,
+):
+    from omniagents.core.conversation.recorder import recorder_for_session
+
+    session = make_manager().get_or_create()
+    recorder = recorder_for_session(session)
+    recorder.ensure_thread(session.id)
+    stale = make_manager().get_or_create(session.id)
+    for run_id in ("first", "second"):
+        session.active_run_id = run_id
+        call = {
+            "type": "function_call",
+            "call_id": "reused",
+            "name": "alpha",
+            "arguments": "{}",
+        }
+        session.append_message(call)
+        payload = {
+            "run_id": run_id,
+            "call_id": "reused",
+            "tool": "alpha",
+            "input": "{}",
+        }
+        recorder.claim_tool_execution(session.id, payload, run_id)
+        recorder.complete_tool_execution(
+            session.id, {**payload, "output": run_id}, run_id
+        )
+        if run_id == "first":
+            session.append_message(
+                {"type": "function_call_output", "call_id": "reused", "output": "first"}
+            )
+    assert stale.history == []
+    refresh_owned(stale)
+    assert [
+        row["output"]
+        for row in stale.history
+        if row.get("type") == "function_call_output"
+    ] == ["first", "second"]
+    refresh_owned(stale)
+    assert len(stale.history) == 4
+
+
+def test_refresh_preserves_deliberately_empty_model_context(temp_history_db):
+    session = make_manager().get_or_create()
+    stale = make_manager().get_or_create(session.id)
+    session.append_message({"role": "user", "content": "not in current context"})
+    asyncio.run(session.replace_sdk_items([]))
+    refresh_owned(stale)
+    assert len(stale.history) == 1
+    assert asyncio.run(stale.get_items()) == []
+
+
+def test_model_context_keeps_outputs_from_reused_call_ids_in_different_runs():
+    from copy import deepcopy
+
+    history = []
+    for run in ("first", "second"):
+        history.extend(
+            [
+                {"role": "user", "content": run},
+                {
+                    "type": "function_call",
+                    "call_id": "reused",
+                    "name": "alpha",
+                    "arguments": "{}",
+                    "omniagents": {"run_id": run},
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "reused",
+                    "output": run,
+                    "omniagents": {"run_id": run},
+                },
+            ]
+        )
+    original = deepcopy(history)
+    context = strip_internal_keys_for_api(filter_history_for_api(history))
+    calls = [row for row in context if row.get("type") == "function_call"]
+    outputs = [row for row in context if row.get("type") == "function_call_output"]
+    assert [row["output"] for row in outputs] == ["first", "second"]
+    assert len({row["call_id"] for row in calls}) == 2
+    assert [row["call_id"] for row in calls] == [row["call_id"] for row in outputs]
+    assert all("omniagents" not in row for row in context)
+    assert history == original
+
+
+def test_owned_refresh_does_not_invent_function_outputs_for_other_tool_families(
+    temp_history_db,
+):
+    session = make_manager().get_or_create()
+    session.append_message(
+        {
+            "type": "computer_call",
+            "call_id": "computer",
+            "action": {"type": "screenshot"},
+        }
+    )
+    refresh_owned(session)
+    assert len(session.history) == 1
+    assert session.history[0]["type"] == "computer_call"
 
 
 # ---------------------------------------------------------------------

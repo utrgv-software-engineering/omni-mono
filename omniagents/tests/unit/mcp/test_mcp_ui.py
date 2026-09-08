@@ -112,6 +112,50 @@ def test_record_and_pop_round_trip():
     assert payload["resource"]["resource"]["uri"] == "ui://demo/widget"
 
 
+@pytest.mark.asyncio
+async def test_concurrent_runs_and_out_of_order_calls_cannot_share_ui():
+    import asyncio
+
+    barrier = asyncio.Barrier(2)
+
+    async def run(label):
+        token = mcp_ui.begin_run_scope()
+        try:
+            mcp_ui.remember_call("same", label)
+            mcp_ui.register_tool_ui_resource("server", "tool", f"ui://{label}")
+            for call in ("second", "first"):
+                mcp_ui.set_invocation_id(call)
+                mcp_ui.record("server", "tool", {"owner": label, "call": call})
+            mcp_ui.set_invocation_id(None)
+            await barrier.wait()
+            assert mcp_ui.lookup_tool_name("same") == label
+            assert (
+                mcp_ui.lookup_tool_ui_resource("tool", "server")["resource_uri"]
+                == f"ui://{label}"
+            )
+            for call in ("first", "second"):
+                assert mcp_ui.pop("tool", "server", call)["resource"] == {
+                    "owner": label,
+                    "call": call,
+                }
+        finally:
+            mcp_ui.end_run_scope(token)
+
+    await asyncio.gather(run("a"), run("b"))
+    assert mcp_ui.lookup_tool_name("same") is None
+
+
+def test_same_named_servers_require_explicit_resource_owner():
+    for server in ("a", "b"):
+        mcp_ui.register_tool_ui_resource(server, "tool", f"ui://{server}")
+        mcp_ui.record(server, "tool", {"owner": server})
+    assert mcp_ui.lookup_tool_ui_resource("tool") is None
+    assert mcp_ui.pop("tool") is None
+    for server in ("a", "b"):
+        assert mcp_ui.lookup_tool_ui_resource("tool", server)["server_name"] == server
+        assert mcp_ui.pop("tool", server)["resource"]["owner"] == server
+
+
 def test_pop_returns_none_when_empty():
     assert mcp_ui.pop("nope") is None
 

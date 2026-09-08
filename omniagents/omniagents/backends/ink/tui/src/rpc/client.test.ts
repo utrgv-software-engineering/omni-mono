@@ -17,6 +17,9 @@ const { mockSockets, mockSocketConfig } = vi.hoisted(() => ({
   }>,
   mockSocketConfig: {
     failConnects: false,
+    serverVersion: '2.0.0',
+    incompleteHandshake: false,
+    earlyNotification: false,
     // One-shot (or persistent, below): the next initialize is rejected
     // with the typed capability_not_negotiated error naming these
     // operations.
@@ -61,6 +64,9 @@ vi.mock("ws", () => {
         params?: { capabilities?: { experimental_operations?: string[] } };
       };
       if (request.method === "initialize") {
+        if (mockSocketConfig.earlyNotification) {
+          queueMicrotask(() => this.emit('message', JSON.stringify({ jsonrpc: '2.0', method: 'message_output', params: { content: 'untrusted' } })));
+        }
         const rejected = mockSocketConfig.rejectCapabilities;
         if (rejected) {
           if (!mockSocketConfig.rejectCapabilitiesPersistent) {
@@ -95,7 +101,7 @@ vi.mock("ws", () => {
               jsonrpc: "2.0",
               id: request.id,
               result: {
-                protocol_version: "1.0.0",
+                protocol_version: mockSocketConfig.serverVersion,
                 identity: { name: "omniagents", version: "1.2.3" },
                 platform: { os: "linux", arch: "x86_64" },
                 capabilities: {
@@ -109,7 +115,7 @@ vi.mock("ws", () => {
                   experimental_operations: [...requested].sort(),
                   disabled_notifications: [],
                 },
-                agent_host: {
+                agent_host: mockSocketConfig.incompleteHandshake ? null : {
                   agent_host_id: "agent-host-1",
                   default_workspace_id: "workspace-1",
                   default_environment_id: "environment-1",
@@ -164,9 +170,51 @@ function connectedClient(sent: string[]): TestClient {
 }
 
 describe("RPCClient", () => {
+  it('does not deliver events before the handshake is accepted', async () => {
+    mockSocketConfig.earlyNotification = true;
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const output = vi.fn();
+    client.on('message_output', output);
+    await client.connect();
+    expect(output).not.toHaveBeenCalled();
+    client.disconnect();
+  });
+  it.each(['1.0.0', '3.0.0', 'invalid', '2.0.0-dev', '02.0.0', '', '2.0.0\n'])('rejects a successful but incompatible %s handshake', async (version) => {
+    mockSocketConfig.serverVersion = version;
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    const ready = vi.fn();
+    client.on("rpc_ready", ready);
+    await expect(client.connect()).rejects.toMatchObject({ code: -32012 });
+    expect(ready).not.toHaveBeenCalled();
+    expect(client.initializeResult).toBeNull();
+    expect(mockSockets).toHaveLength(1);
+    expect(mockSockets[0]!.sent.map((value) => JSON.parse(value).method)).toEqual(['initialize']);
+    client.disconnect();
+  });
+
+  it('rejects an incomplete successful handshake before initialized', async () => {
+    mockSocketConfig.incompleteHandshake = true;
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    await expect(client.connect()).rejects.toMatchObject({ code: -32602 });
+    expect(client.initializeResult).toBeNull();
+    expect(mockSockets[0]!.sent.map((value) => JSON.parse(value).method)).toEqual(['initialize']);
+    client.disconnect();
+  });
+
+  it.each(['2.0.1', '2.1.0'])('accepts compatible newer server %s', async (version) => {
+    mockSocketConfig.serverVersion = version;
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    await client.connect();
+    expect(client.initializeResult?.protocol_version).toBe(version);
+    client.disconnect();
+  });
+
   afterEach(() => {
     mockSockets.length = 0;
     mockSocketConfig.failConnects = false;
+    mockSocketConfig.serverVersion = '2.0.0';
+    mockSocketConfig.incompleteHandshake = false;
+    mockSocketConfig.earlyNotification = false;
     mockSocketConfig.rejectCapabilities = null;
     mockSocketConfig.rejectCapabilitiesPersistent = false;
     vi.useRealTimers();
@@ -188,7 +236,7 @@ describe("RPCClient", () => {
         id: 1,
         method: "initialize",
         params: {
-          protocol_version: "1.0.0",
+          protocol_version: "2.0.0",
           identity: { name: "omniagents-ink", version: "0.1.0" },
           platform: { os: process.platform, arch: process.arch },
           capabilities: {
@@ -207,7 +255,7 @@ describe("RPCClient", () => {
       { jsonrpc: "2.0", method: "initialized", params: {} },
     ]);
     expect(ready).toHaveBeenCalledTimes(1);
-    expect(client.initializeResult?.protocol_version).toBe("1.0.0");
+    expect(client.initializeResult?.protocol_version).toBe("2.0.0");
     expect(client.defaultEnvironmentSelection()).toEqual({
       mode: "explicit",
       environment_id: "environment-1",

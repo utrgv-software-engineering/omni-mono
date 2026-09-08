@@ -8,10 +8,10 @@ from scripts.protocol.generate_gui_protocol import ROOT
 
 
 def _documents() -> tuple[dict, dict]:
-    protocol_root = ROOT / "protocol/openrpc"
+    protocol_root = ROOT / "protocol/openrpc/v2"
     return (
-        json.loads((protocol_root / "omniagents-gui-v1.json").read_text()),
-        json.loads((protocol_root / "schemas/gui-v1.schema.json").read_text()),
+        json.loads((protocol_root / "omniagents-gui-v2.json").read_text()),
+        json.loads((protocol_root / "schemas/gui-v2.schema.json").read_text()),
     )
 
 
@@ -404,8 +404,8 @@ def test_released_baseline_matches_manifest_digest():
     assert baseline_manifest["protocol_version"] == "1.0.0"
 
 
-def test_candidate_protocol_records_intentional_environment_selection_break():
-    """The unreleased protocol intentionally requires explicit placement."""
+def test_v2_explicitly_records_the_break_from_released_v1():
+    """Breaking inputs belong to a new major, never an exception inside v1."""
     baseline_root = ROOT / "protocol/openrpc/baseline/1.0.0"
     baseline_document = json.loads(
         (baseline_root / "omniagents-gui-v1.json").read_text()
@@ -418,6 +418,9 @@ def test_candidate_protocol_records_intentional_environment_selection_break():
         baseline_document, baseline_schema, candidate_document, candidate_schema
     )
     assert report.classification == "breaking"
+    assert report.baseline_version == "1.0.0"
+    assert report.candidate_version == "2.0.0"
     assert report.violations == (
+        "start_run.params.content added oneOf constraint to unconstrained input",
         "start_run.params.environment_selection added as required",
     )

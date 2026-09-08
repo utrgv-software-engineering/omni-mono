@@ -130,7 +130,7 @@ class LocalAgent(RemoteAgent):
         await self._server_transport.connect()
 
         # Create the channel first
-        from omniagents.rpc.generated.gui_v1 import SERVER_NOTIFICATION_MODELS
+        from omniagents.rpc.generated.gui_v2 import SERVER_NOTIFICATION_MODELS
         from omniagents.rpc.server import JsonRpcChannel
 
         channel = JsonRpcChannel(
@@ -146,9 +146,11 @@ class LocalAgent(RemoteAgent):
         self._channel = channel
         self._agent_service = AgentService(
             self.spec,
-            self._host_resources
-            if self._host_resources is not None
-            else AgentHostResources.create(f"local-agent-{secrets.token_hex(8)}"),
+            (
+                self._host_resources
+                if self._host_resources is not None
+                else AgentHostResources.create(f"local-agent-{secrets.token_hex(8)}")
+            ),
         )
         self._agent_service.channel = channel
 

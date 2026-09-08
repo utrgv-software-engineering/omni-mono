@@ -170,7 +170,11 @@ export interface Platform {
 }
 export interface StartRun {
   approvals_reviewer?: string;
-  content?: string;
+  content?:
+    | string
+    | {
+        [k: string]: unknown;
+      }[];
   context?: {
     [k: string]: unknown;
   };
@@ -193,6 +197,7 @@ export interface StartRun {
     [k: string]: unknown;
   };
   session_id?: string;
+  submission_id?: string;
   variables?: {
     [k: string]: unknown;
   };
@@ -262,12 +267,16 @@ export interface ServerCall {
 }
 export interface EnqueueMessage {
   content: string;
+  input_content?: {
+    [k: string]: unknown;
+  }[];
   role?: string;
   safe_tool_overrides?: {
     [k: string]: unknown;
   };
   session_id: string;
   source?: string;
+  submission_id?: string;
   trigger_run?: boolean;
   variables?: {
     [k: string]: unknown;
@@ -478,7 +487,9 @@ export interface SetSessionHold {
   session_id: string;
 }
 export interface QueueStatus {
+  include_snapshot?: boolean;
   session_id: string;
+  submission_id?: string;
 }
 export interface EnqueueNotification {
   content: string;
@@ -961,6 +972,7 @@ export interface ToolApprovalRequested {
   run_id?: string;
   seq?: number;
   session_id?: string;
+  source_call_id?: string;
   stream_id?: string;
   tool_name: string;
 }
@@ -979,6 +991,7 @@ export interface McpApprovalRequested {
   seq?: number;
   server_label: string;
   session_id?: string;
+  source_request_id?: string;
   stream_id?: string;
   tool_name: string;
 }

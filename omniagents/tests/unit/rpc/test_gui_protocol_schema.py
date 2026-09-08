@@ -28,7 +28,7 @@ def _load(path: Path) -> dict:
 
 
 def test_openrpc_inventory_matches_explicit_catalog():
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     actual = {
         (
             method["name"],
@@ -46,7 +46,7 @@ def test_openrpc_inventory_matches_explicit_catalog():
 
 
 def test_openrpc_publishes_resource_and_execution_metadata():
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     actual = {
         method["name"]: (
             method["x-omni-resource-scope"],
@@ -69,7 +69,7 @@ def test_openrpc_publishes_resource_and_execution_metadata():
 
 
 def test_json_schema_uses_valid_draft_2020_12():
-    schema = _load(ROOT / "protocol/openrpc/schemas/gui-v1.schema.json")
+    schema = _load(ROOT / "protocol/openrpc/v2/schemas/gui-v2.schema.json")
     Draft202012Validator.check_schema(schema)
 
 
@@ -88,12 +88,12 @@ def _validate_openrpc(path: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_openrpc_matches_reference_meta_schema():
-    result = _validate_openrpc(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    result = _validate_openrpc(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     assert result.returncode == 0, result.stderr
 
 
 def test_malformed_openrpc_fails_reference_meta_schema(tmp_path):
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     del document["openrpc"]
     malformed = tmp_path / "malformed.json"
     malformed.write_text(json.dumps(document))
@@ -102,14 +102,14 @@ def test_malformed_openrpc_fails_reference_meta_schema(tmp_path):
 
 
 def test_all_external_schema_references_resolve():
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
-    schema = _load(ROOT / "protocol/openrpc/schemas/gui-v1.schema.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
+    schema = _load(ROOT / "protocol/openrpc/v2/schemas/gui-v2.schema.json")
     definitions = schema["$defs"]
     for method in document["methods"]:
         refs = [method["x-omni-params-schema"]["$ref"]]
         refs.extend(param["schema"]["$ref"] for param in method["params"])
         for reference in refs:
-            prefix = "./schemas/gui-v1.schema.json#/$defs/"
+            prefix = "./schemas/gui-v2.schema.json#/$defs/"
             assert reference.startswith(prefix)
             path = reference.removeprefix(prefix).split("/")
             assert path[0] in definitions
@@ -119,17 +119,17 @@ def test_all_external_schema_references_resolve():
 
 
 def test_malformed_external_reference_fails_validation():
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
-    schema = _load(ROOT / "protocol/openrpc/schemas/gui-v1.schema.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
+    schema = _load(ROOT / "protocol/openrpc/v2/schemas/gui-v2.schema.json")
     document["methods"][0]["params"][0]["schema"][
         "$ref"
-    ] = "./schemas/gui-v1.schema.json#/$defs/start_run/properties/missing"
+    ] = "./schemas/gui-v2.schema.json#/$defs/start_run/properties/missing"
     with pytest.raises(ValueError, match="Missing schema property"):
         validate_external_references(document, schema)
 
 
 def test_every_nonempty_payload_declares_required_fields():
-    schema = _load(ROOT / "protocol/openrpc/schemas/gui-v1.schema.json")
+    schema = _load(ROOT / "protocol/openrpc/v2/schemas/gui-v2.schema.json")
     assert schema["$defs"]["start_run"]["required"] == [
         "prompt",
         "environment_selection",
@@ -153,7 +153,7 @@ def test_every_nonempty_payload_declares_required_fields():
 
 
 def test_fs_and_git_operations_are_environment_addressed():
-    schema = _load(ROOT / "protocol/openrpc/schemas/gui-v1.schema.json")
+    schema = _load(ROOT / "protocol/openrpc/v2/schemas/gui-v2.schema.json")
     environment_operations = [
         operation
         for operation in OPERATIONS
@@ -184,9 +184,9 @@ def test_fs_and_git_operations_are_environment_addressed():
 
 
 def test_initialize_handshake_has_strict_negotiated_models():
-    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v2")
     params = {
-        "protocol_version": "1.0.0",
+        "protocol_version": "2.0.0",
         "identity": {"name": "omni-desktop", "version": "1.2.3"},
         "platform": {"os": "linux", "arch": "x86_64"},
         "capabilities": {
@@ -221,7 +221,7 @@ def test_initialize_handshake_has_strict_negotiated_models():
 
 
 def test_initialized_is_stable_client_notification():
-    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v2")
     operation = next(item for item in OPERATIONS if item.name == "initialized")
     assert operation.direction == "client_to_server"
     assert operation.kind == "notification"
@@ -234,7 +234,7 @@ def test_initialized_is_stable_client_notification():
 
 
 def test_protocol_errors_have_reserved_codes_and_exact_overload_shape():
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     errors = document["components"]["errors"]
     assert {
         errors[name]["code"]
@@ -270,7 +270,7 @@ def test_protocol_errors_have_reserved_codes_and_exact_overload_shape():
 
 
 def test_client_request_is_correlated_notification_without_wire_id():
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     method = next(
         item for item in document["methods"] if item["name"] == "client_request"
     )
@@ -283,7 +283,7 @@ def test_client_request_is_correlated_notification_without_wire_id():
 
 
 def test_experimental_names_are_preserved():
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     experimental = {
         method["name"]
         for method in document["methods"]
@@ -295,31 +295,31 @@ def test_experimental_names_are_preserved():
 
 
 def test_generation_is_deterministic_and_checked_in():
-    first = render()
-    second = render()
+    first = render(major=2)
+    second = render(major=2)
     assert first == second
     for path, content in first.items():
         assert path.read_bytes() == content
 
 
 def test_ink_and_web_consume_identical_generated_protocol_maps():
-    web = ROOT / "omniagents/backends/web/ui/src/protocol/generated/gui-v1.ts"
-    ink = ROOT / "omniagents/backends/ink/tui/src/protocol/generated/gui-v1.ts"
+    web = ROOT / "omniagents/backends/web/ui/src/protocol/generated/gui-v2.ts"
+    ink = ROOT / "omniagents/backends/ink/tui/src/protocol/generated/gui-v2.ts"
     assert ink.read_bytes() == web.read_bytes()
 
 
 def test_manifest_digest_matches_canonical_documents():
-    manifest = _load(ROOT / "protocol/openrpc/manifest.json")
-    openrpc = (ROOT / "protocol/openrpc/omniagents-gui-v1.json").read_bytes()
-    schema = (ROOT / "protocol/openrpc/schemas/gui-v1.schema.json").read_bytes()
-    assert manifest["protocol_version"] == "1.0.0"
+    manifest = _load(ROOT / "protocol/openrpc/v2/manifest.json")
+    openrpc = (ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json").read_bytes()
+    schema = (ROOT / "protocol/openrpc/v2/schemas/gui-v2.schema.json").read_bytes()
+    assert manifest["protocol_version"] == "2.0.0"
     assert manifest["toolchain"]["python"]["version"] == "0.71.0"
     assert manifest["toolchain"]["typescript"]["version"] == "15.0.4"
     assert manifest["canonical_sha256"] == hashlib.sha256(openrpc + schema).hexdigest()
 
 
 def test_inventory_reports_generated_request_allowlist():
-    inventory = _load(ROOT / "protocol/openrpc/inventory.json")
+    inventory = _load(ROOT / "protocol/openrpc/v2/inventory.json")
     assert inventory["source"] == "omniagents.rpc.protocol_catalog.OPERATIONS"
     assert inventory["router_mode"] == "generated_request_allowlist"
     assert len(inventory["requests"]["stable"]) == 49
@@ -398,14 +398,14 @@ def test_source_drift_check_is_sensitive_to_new_client_surface(tmp_path):
 
 
 def test_generated_python_imports():
-    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v2")
     assert generated.CLIENT_REQUEST_MODELS["start_run"]
     assert "client_request" in generated.STABLE_NOTIFICATIONS
     assert generated.CLIENT_NOTIFICATION_MODELS["initialized"]
 
 
 def test_generated_models_reject_missing_required_fields():
-    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v2")
     with pytest.raises(ValidationError):
         generated.CLIENT_REQUEST_MODELS["start_run"].model_validate({})
     with pytest.raises(ValidationError):
@@ -421,7 +421,7 @@ def test_generated_models_reject_missing_required_fields():
 
 
 def test_start_run_environment_selection_is_a_strict_union():
-    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v2")
     model = generated.CLIENT_REQUEST_MODELS["start_run"]
 
     explicit = model.model_validate(
@@ -455,7 +455,7 @@ def test_start_run_environment_selection_is_a_strict_union():
 
 
 def test_generated_models_type_optional_wire_fields():
-    generated = importlib.import_module("omniagents.rpc.generated.gui_v1")
+    generated = importlib.import_module("omniagents.rpc.generated.gui_v2")
     model = generated.CLIENT_REQUEST_MODELS["server_call"]
     valid = model.model_validate(
         {"function": "session.ensure", "args": {}, "session_id": "session"}
@@ -470,10 +470,10 @@ def test_generated_models_type_optional_wire_fields():
 
 def test_pinned_tool_outputs_include_optional_fields():
     python_output = (
-        ROOT / "omniagents/rpc/generated/gui_v1/schema_models.py"
+        ROOT / "omniagents/rpc/generated/gui_v2/schema_models.py"
     ).read_text()
     typescript_output = (
-        ROOT / "omniagents/backends/web/ui/src/protocol/generated/schema-types.ts"
+        ROOT / "omniagents/backends/web/ui/src/protocol/generated/schema-types-v2.ts"
     ).read_text()
     assert "class ServerCall" in python_output
     assert "args: dict[str, Any] | None = None" in python_output
@@ -508,7 +508,7 @@ def test_raised_typed_errors_validate_against_their_published_schema():
         ThreadOnLegalHold,
     )
 
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     components = _error_component_by_code(document)
 
     raised = [
@@ -632,7 +632,7 @@ def _emitted_error_fields() -> dict[int, set[str]]:
 def test_every_declared_error_property_is_reachable_from_code():
     """The other direction: a declared field nothing can emit is a promise
     the server does not keep."""
-    document = _load(ROOT / "protocol/openrpc/omniagents-gui-v1.json")
+    document = _load(ROOT / "protocol/openrpc/v2/omniagents-gui-v2.json")
     emitted = _emitted_error_fields()
 
     for entry in _error_component_by_code(document).values():

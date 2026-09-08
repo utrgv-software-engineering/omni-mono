@@ -9,7 +9,7 @@ import {
 import { REQUESTED_EXPERIMENTAL_OPERATIONS } from '../protocol/experimental'
 
 const initializeResult = {
-  protocol_version: '1.0.0',
+  protocol_version: '2.0.0',
   identity: { name: 'omniagents', version: '1.2.3' },
   platform: { os: 'linux', arch: 'x86_64' },
   capabilities: {
@@ -35,6 +35,7 @@ class MockWebSocket {
   static instances: MockWebSocket[] = []
   static initializeError: { code: number; message: string; data?: unknown } | null = null
   static failConnects = false
+  static earlyNotification = false
 
   readonly sent: string[] = []
   readonly readyState = MockWebSocket.OPEN
@@ -56,6 +57,9 @@ class MockWebSocket {
     this.sent.push(data)
     const request = JSON.parse(data) as { id?: number; method: string }
     if (request.method !== 'initialize') return
+    if (MockWebSocket.earlyNotification) {
+      queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({ jsonrpc: '2.0', method: 'message_output', params: { content: 'untrusted' } }) }))
+    }
     const response = MockWebSocket.initializeError
       ? { jsonrpc: '2.0', id: request.id, error: MockWebSocket.initializeError }
       : { jsonrpc: '2.0', id: request.id, result: initializeResult }
@@ -90,14 +94,56 @@ vi.stubGlobal('fetch', async (url: string | URL, init?: RequestInit) => {
 })
 
 afterEach(() => {
+  initializeResult.protocol_version = '2.0.0'
   MockWebSocket.instances = []
   MockWebSocket.initializeError = null
   ticketRequests.length = 0
   MockWebSocket.failConnects = false
+  MockWebSocket.earlyNotification = false
   vi.useRealTimers()
 })
 
 describe('RPCClient initialization', () => {
+  it('does not deliver events before the handshake is accepted', async () => {
+    MockWebSocket.earlyNotification = true
+    const client = new RPCClient('ws://example.test/ws')
+    const output = vi.fn()
+    client.on('message_output', output)
+    await client.connect()
+    expect(output).not.toHaveBeenCalled()
+    client.disconnect()
+  })
+  it.each(['1.0.0', '3.0.0', 'invalid', '2.0.0-dev', '02.0.0', '', '2.0.0\n'])('rejects a successful but incompatible %s handshake', async (version) => {
+    initializeResult.protocol_version = version
+    const client = new RPCClient('ws://example.test/ws')
+    await expect(client.connect()).rejects.toMatchObject({ code: -32012 })
+    expect(client.initializeResult).toBeNull()
+    expect(MockWebSocket.instances).toHaveLength(1)
+    expect(MockWebSocket.instances[0]!.sent.map((value) => JSON.parse(value).method)).toEqual(['initialize'])
+    client.disconnect()
+  })
+
+  it('rejects an incomplete successful handshake before initialized', async () => {
+    const original = initializeResult.capabilities
+    try {
+      initializeResult.capabilities = {} as typeof original
+      const client = new RPCClient('ws://example.test/ws')
+      await expect(client.connect()).rejects.toMatchObject({ code: -32602 })
+      expect(client.initializeResult).toBeNull()
+      expect(MockWebSocket.instances[0]!.sent.map((value) => JSON.parse(value).method)).toEqual(['initialize'])
+      client.disconnect()
+    } finally {
+      initializeResult.capabilities = original
+    }
+  })
+
+  it.each(['2.0.1', '2.1.0'])('accepts a compatible newer server %s', async (version) => {
+    initializeResult.protocol_version = version
+    const client = new RPCClient('ws://example.test/ws')
+    await client.connect()
+    expect(client.initializeResult?.protocol_version).toBe(version)
+    client.disconnect()
+  })
   it('negotiates capabilities and notifies initialized before becoming ready', async () => {
     const client = new RPCClient('ws://example.test/ws', 'secret')
 
@@ -120,7 +166,7 @@ describe('RPCClient initialization', () => {
         id: 1,
         method: 'initialize',
         params: {
-          protocol_version: '1.0.0',
+          protocol_version: '2.0.0',
           identity: { name: 'omniagents-web-ui', version: '0.0.0' },
           platform: { os: 'browser', arch: 'unknown' },
           capabilities: {

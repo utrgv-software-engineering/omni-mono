@@ -19,7 +19,8 @@ import type {
   InitializeResult,
   RpcMethodMap as GeneratedRpcMethodMap,
   RpcNotificationMap as GeneratedRpcNotificationMap,
-} from "../protocol/generated/gui-v1.js";
+} from "../protocol/generated/gui-v2.js";
+import { GUI_PROTOCOL_VERSION, isGuiInitializeResult, supportsGuiProtocolVersion } from "../protocol/generated/gui-v2.js";
 import {
   classifyCloseCode,
   ConnectionClosedError,
@@ -257,9 +258,9 @@ export class RPCClient extends EventEmitter {
    * cleanly on the first attempt.
    */
   private async performInitialize(): Promise<InitializeResult> {
-    const attempt = (operations: string[]): Promise<InitializeResult> => {
+    const attempt = async (operations: string[]): Promise<InitializeResult> => {
       const initialize: InitializeParams = {
-        protocol_version: "1.0.0",
+        protocol_version: GUI_PROTOCOL_VERSION,
         identity: { name: "omniagents-ink", version: "0.1.0" },
         platform: { os: process.platform, arch: process.arch },
         capabilities: {
@@ -267,9 +268,24 @@ export class RPCClient extends EventEmitter {
           experimental_operations: operations,
         },
       };
-      return this.sendRequest<InitializeResult>("initialize", initialize, {
+      const result = await this.sendRequest<InitializeResult>("initialize", initialize, {
         timeoutMs: null,
       });
+      if (!supportsGuiProtocolVersion(result?.protocol_version)) {
+        throw new JSONRPCError({
+          code: -32012,
+          message: "Incompatible GUI protocol. Update the client and server together.",
+          data: {
+            kind: "protocol_version_mismatch",
+            client_version: GUI_PROTOCOL_VERSION,
+            server_version: result?.protocol_version,
+          },
+        });
+      }
+      if (!isGuiInitializeResult(result)) {
+        throw new JSONRPCError({ code: -32602, message: "Invalid GUI initialize response.", data: { kind: "invalid_initialize_result" } });
+      }
+      return result;
     };
     try {
       return await attempt(this.experimentalToRequest);
@@ -332,6 +348,7 @@ export class RPCClient extends EventEmitter {
   async connect(): Promise<void> {
     this.closedByUser = false;
     this.handshakeRejected = false;
+    this.negotiatedInitialization = null;
     return new Promise((resolve, reject) => {
       try {
         // The token travels as an Authorization header (never in the
@@ -341,6 +358,7 @@ export class RPCClient extends EventEmitter {
               headers: { Authorization: `Bearer ${this.token}` },
             })
           : new WebSocket(this.url);
+        const socket = this.ws;
         let ready = false;
 
         const connectTimer = setTimeout(() => {
@@ -355,8 +373,10 @@ export class RPCClient extends EventEmitter {
         }, this.policy.connectTimeoutMs);
 
         this.ws.on("message", (data: WebSocket.Data) => {
+          if (this.ws !== socket) return;
           try {
             const message = JSON.parse(data.toString()) as WebSocketMessage;
+            if (!ready && "method" in message) return;
             this.handleMessage(message);
           } catch (error) {
             this.log("Failed to parse message:", error);

@@ -274,7 +274,7 @@ async def test_ensure_client_completes_gui_handshake_end_to_end():
             await agent._ensure_client()
         result = agent._client.initialize_result
         assert result is not None
-        assert result.protocol_version == "1.0.0"
+        assert result.protocol_version == "2.0.0"
         assert result.identity.name == "omniagents"
         # Intersection of REMOTE_AGENT_CAPABILITIES with the endpoint grants.
         assert result.capabilities.client_functions is True

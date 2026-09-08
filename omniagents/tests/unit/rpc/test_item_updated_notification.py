@@ -15,7 +15,7 @@ import pytest
 
 from omniagents.core.agents.service import AgentService
 from omniagents.core.conversation.model import Item, ItemKind, ItemStatus
-from omniagents.rpc.generated.gui_v1 import SERVER_NOTIFICATION_MODELS
+from omniagents.rpc.generated.gui_v2 import SERVER_NOTIFICATION_MODELS
 from omniagents.rpc.protocol_catalog import EXPERIMENTAL_NOTIFICATIONS
 
 

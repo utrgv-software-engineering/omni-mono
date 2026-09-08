@@ -7,6 +7,8 @@ request sent before ``initialize``/``initialized`` is answered with a
 protocol must perform this handshake right after connecting.
 """
 
+from omniagents.rpc.generated.gui_v2 import GUI_PROTOCOL_VERSION
+
 GUI_HANDSHAKE_CALL_ID = "__gui_handshake__"
 
 
@@ -18,7 +20,7 @@ def perform_gui_handshake(ws, *, experimental=()):
             "id": GUI_HANDSHAKE_CALL_ID,
             "method": "initialize",
             "params": {
-                "protocol_version": "1.0.0",
+                "protocol_version": GUI_PROTOCOL_VERSION,
                 "identity": {"name": "integration-tests", "version": "0.0.0"},
                 "platform": {"os": "linux", "arch": "x86_64"},
                 "capabilities": {
@@ -40,5 +42,6 @@ def perform_gui_handshake(ws, *, experimental=()):
         if message.get("id") == GUI_HANDSHAKE_CALL_ID:
             break
     assert "result" in message, f"initialize failed: {message}"
+    assert message["result"]["protocol_version"] == GUI_PROTOCOL_VERSION
     ws.send_json({"jsonrpc": "2.0", "method": "initialized", "params": {}})
     return message["result"]

@@ -16,23 +16,24 @@ Postgres and its domain objects in SQLite:
   identical across both backends), row-level security pre-positioned on the
   ``app.current_tenant`` GUC.
 
-The store is deliberately dumb: it persists and queries rows. Lifecycle
+The store persists and queries rows. Lifecycle
 rules (terminal-once transitions, ordinal allocation policy) live in
 :mod:`~omniagents.core.conversation.model` and
-:mod:`~omniagents.core.conversation.recorder`. The one exception is
-:meth:`ConversationStore.allocate_seq`, which must be atomic with respect to
-concurrent writers and therefore belongs in SQL.
+:mod:`~omniagents.core.conversation.recorder`. Runtime append and mutation
+operations own the SQL transactions so identity, counters and transitions
+cannot be torn apart or overwritten by stale reads.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import replace
 import json
 import logging
 import os
 import sqlite3
 from threading import Lock
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from omniagents.core.paths import get_sessions_db_path
 
@@ -53,6 +54,18 @@ from .model import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _attach_initial_item(thread: Thread, turn: Turn, item: Item) -> Item:
+    if item.thread_id != thread.thread_id or item.turn_id != turn.turn_id:
+        raise ValueError("Initial item must belong to its turn")
+    thread.last_seq += 1
+    thread.item_count += 1
+    turn.item_count += 1
+    turn.first_seq = min(turn.first_seq or thread.last_seq, thread.last_seq)
+    turn.last_seq = max(turn.last_seq or thread.last_seq, thread.last_seq)
+    return replace(item, seq=thread.last_seq)
+
 
 __all__ = [
     "ConversationStore",
@@ -101,6 +114,34 @@ def _optional_loads(raw: Any) -> Optional[Dict[str, Any]]:
 
 
 class ConversationStore(ABC):
+    def read_snapshot(self, thread_id: str) -> dict:
+        """Read all conversation items and the inbox in one database snapshot.
+
+        This is a full hydration boundary, not independently paginated reads.
+        Runtime/event-journal state is still owned by the serving process.
+        """
+        raise NotImplementedError("This store does not support consistent snapshots")
+
+    @abstractmethod
+    def mutate_queue(
+        self, thread_id: str, update: Callable, *, submission_id: str | None = None
+    ) -> Any:
+        """Atomically mutate the durable inbox and an optional submission receipt.
+
+        Callback(state, receipt) returns (result, replacement_receipt). It
+        may modify state but must not perform I/O or call the store.
+        """
+
+    def submission_receipt(
+        self,
+        thread_id: str,
+        submission_id: str,
+        claim: dict | None = None,
+        result: dict | None = None,
+    ) -> dict | None:
+        """Atomically reserve a submission or read/update its durable receipt."""
+        raise NotImplementedError
+
     """Backend interface for the conversation domain objects.
 
     Project/agent (and, on Postgres, tenant) scoping is fixed at
@@ -119,6 +160,12 @@ class ConversationStore(ABC):
 
     @abstractmethod
     def upsert_thread(self, thread: Thread) -> None: ...
+
+    @abstractmethod
+    def mutate_thread(
+        self, thread_id: str, update: Callable[[Thread], None]
+    ) -> Optional[Thread]:
+        """Apply an in-memory mutation to the locked current thread."""
 
     @abstractmethod
     def delete_thread(self, thread_id: str) -> bool:
@@ -191,9 +238,9 @@ class ConversationStore(ABC):
     def count_items_for_threads(self, thread_ids: Sequence[str]) -> Dict[str, int]:
         """Exact item counts for a whole PAGE, in one statement.
 
-        The stored ``Thread.item_count`` is maintained by non-transactional
-        read-modify-write and drifts under concurrent turns, and a listing
-        is the surface a client sizes its UI from. Counting per row would
+        Older writers maintained ``Thread.item_count`` non-transactionally,
+        so historical counters can drift. A listing is the surface a client
+        sizes its UI from. Counting per row would
         be N round trips for a page of N; one grouped count is two.
         """
 
@@ -274,6 +321,23 @@ class ConversationStore(ABC):
     def upsert_turn(self, turn: Turn) -> None: ...
 
     @abstractmethod
+    def mutate_turn(
+        self,
+        thread_id: str,
+        turn_id: str,
+        update: Callable[[Thread, Optional[Turn], int], Optional[Turn]],
+        *,
+        initial_item: Optional[Item] = None,
+    ) -> Optional[Turn]:
+        """Read/modify a turn and its thread in one transaction.
+
+        The callback receives the locked current thread, current turn and
+        next available ordinal. It must not call storage or perform I/O.
+        Raw upserts remain for projection/import; runtime uses this method
+        so stale metadata cannot overwrite item counters or settled state.
+        """
+
+    @abstractmethod
     def list_turns(
         self,
         thread_id: str,
@@ -297,6 +361,21 @@ class ConversationStore(ABC):
 
     @abstractmethod
     def upsert_item(self, item: Item) -> None: ...
+
+    @abstractmethod
+    def append_item(self, item: Item) -> Item:
+        """Atomically create an item, allocate its sequence and update counts.
+
+        An existing identity is returned unchanged, without advancing cursors
+        or counts. The caller's proposed sequence is ignored for new items.
+        """
+
+    @abstractmethod
+    def mutate_item(
+        self, thread_id: str, item_id: str, update: Callable[[Item], Item]
+    ) -> Optional[Item]:
+        """Apply an in-memory revision/transition to the locked current item."""
+        ...
 
     @abstractmethod
     def list_items(
@@ -638,6 +717,8 @@ _TERMINAL_STATUS_VALUES = tuple(
 # ---------------------------------------------------------------------
 
 _SQLITE_SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS command_inboxes (thread_id TEXT PRIMARY KEY, state TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS submission_receipts (thread_id TEXT NOT NULL, submission_id TEXT NOT NULL, receipt TEXT NOT NULL, PRIMARY KEY(thread_id, submission_id))",
     """
     CREATE TABLE IF NOT EXISTS threads (
         thread_id             TEXT PRIMARY KEY,
@@ -941,6 +1022,69 @@ class SqliteConversationStore(ConversationStore):
 
     # -- threads -------------------------------------------------------
 
+    def mutate_queue(self, thread_id, update, *, submission_id=None):
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                thread_row = conn.execute(
+                    "SELECT status FROM threads WHERE thread_id=?", (thread_id,)
+                ).fetchone()
+                if thread_row is None:
+                    raise KeyError(f"Unknown thread: {thread_id}")
+                row = conn.execute(
+                    "SELECT state FROM command_inboxes WHERE thread_id=?", (thread_id,)
+                ).fetchone()
+                state = json.loads(row[0]) if row else {"version": 1, "items": []}
+                state["archived"] = thread_row[0] == "archived"
+                row = (
+                    conn.execute(
+                        "SELECT receipt FROM submission_receipts WHERE thread_id=? AND submission_id=?",
+                        (thread_id, submission_id),
+                    ).fetchone()
+                    if submission_id
+                    else None
+                )
+                result, receipt = update(state, _loads(row[0]) if row else None)
+                conn.execute(
+                    "INSERT INTO command_inboxes VALUES (?,?) ON CONFLICT(thread_id) DO UPDATE SET state=excluded.state",
+                    (thread_id, json.dumps(state)),
+                )
+                if receipt is not None:
+                    if submission_id is None:
+                        raise ValueError("Receipt requires submission identity")
+                    conn.execute(
+                        "INSERT INTO submission_receipts VALUES (?,?,?)",
+                        (thread_id, submission_id, json.dumps(receipt)),
+                    )
+                return result
+
+    def submission_receipt(
+        self,
+        thread_id: str,
+        submission_id: str,
+        claim: dict | None = None,
+        result: dict | None = None,
+    ) -> dict | None:
+        with self._lock:
+            conn = self._connect()
+            if claim is not None:
+                conn.execute(
+                    "INSERT OR IGNORE INTO submission_receipts VALUES (?, ?, ?)",
+                    (thread_id, submission_id, _dumps(claim)),
+                )
+            if result is not None:
+                conn.execute(
+                    "UPDATE submission_receipts SET receipt = ? WHERE thread_id = ? AND submission_id = ?",
+                    (_dumps(result), thread_id, submission_id),
+                )
+            row = conn.execute(
+                "SELECT receipt FROM submission_receipts WHERE thread_id = ? AND submission_id = ?",
+                (thread_id, submission_id),
+            ).fetchone()
+            conn.commit()
+            return _loads(row[0]) if row else None
+
     def get_thread(self, thread_id: str) -> Optional[Thread]:
         with self._lock:
             row = (
@@ -960,6 +1104,24 @@ class SqliteConversationStore(ConversationStore):
             conn.execute(_SQLITE_UPSERT_THREAD, _thread_values(thread))
             conn.commit()
 
+    def mutate_thread(self, thread_id, update):
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    f"SELECT {', '.join(_THREAD_COLUMNS)} FROM threads WHERE thread_id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                thread = _thread_from_row(row)
+                update(thread)
+                if thread.thread_id != thread_id:
+                    raise ValueError("Thread mutation cannot change identity")
+                conn.execute(_SQLITE_UPSERT_THREAD, _thread_values(thread))
+                return thread
+
     def delete_thread(self, thread_id: str) -> bool:
         with self._lock:
             conn = self._connect()
@@ -968,6 +1130,12 @@ class SqliteConversationStore(ConversationStore):
             )
             conn.execute("DELETE FROM turns WHERE thread_id = ?", (thread_id,))
             conn.execute("DELETE FROM items WHERE thread_id = ?", (thread_id,))
+            conn.execute(
+                "DELETE FROM command_inboxes WHERE thread_id = ?", (thread_id,)
+            )
+            conn.execute(
+                "DELETE FROM submission_receipts WHERE thread_id = ?", (thread_id,)
+            )
             conn.commit()
             return cursor.rowcount > 0
 
@@ -1309,6 +1477,48 @@ class SqliteConversationStore(ConversationStore):
             conn.execute(_SQLITE_UPSERT_TURN, _turn_values(turn))
             conn.commit()
 
+    def mutate_turn(self, thread_id, turn_id, update, *, initial_item=None):
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    f"SELECT {', '.join(_THREAD_COLUMNS)} FROM threads WHERE thread_id = ?",
+                    (thread_id,),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"Unknown thread: {thread_id}")
+                thread = _thread_from_row(row)
+                row = conn.execute(
+                    f"SELECT {', '.join(_TURN_COLUMNS)} FROM turns WHERE thread_id = ? AND turn_id = ?",
+                    (thread_id, turn_id),
+                ).fetchone()
+                ordinal = conn.execute(
+                    "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM turns WHERE thread_id = ?",
+                    (thread_id,),
+                ).fetchone()[0]
+                turn = update(
+                    thread, _turn_from_row(row) if row else None, int(ordinal)
+                )
+                if turn is not None:
+                    if (
+                        turn.thread_id != thread_id
+                        or turn.turn_id != turn_id
+                        or thread.thread_id != thread_id
+                    ):
+                        raise ValueError("Turn mutation cannot change identity")
+                    if initial_item is not None:
+                        exists = conn.execute(
+                            "SELECT 1 FROM items WHERE thread_id = ? AND item_id = ?",
+                            (thread_id, initial_item.item_id),
+                        ).fetchone()
+                        if not exists:
+                            item = _attach_initial_item(thread, turn, initial_item)
+                            conn.execute(_SQLITE_UPSERT_ITEM, _item_values(item))
+                    conn.execute(_SQLITE_UPSERT_TURN, _turn_values(turn))
+                    conn.execute(_SQLITE_UPSERT_THREAD, _thread_values(thread))
+                return turn
+
     def list_turns(
         self,
         thread_id: str,
@@ -1383,6 +1593,72 @@ class SqliteConversationStore(ConversationStore):
             conn.execute(_SQLITE_UPSERT_ITEM, _item_values(item))
             conn.commit()
 
+    def append_item(self, item: Item) -> Item:
+        with self._lock:
+            conn = self._connect()
+            # Protect the identity check across independent store instances,
+            # not merely callers sharing this object's Python lock.
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items "
+                    "WHERE thread_id = ? AND item_id = ?",
+                    (item.thread_id, item.item_id),
+                ).fetchone()
+                if row is not None:
+                    return _item_from_row(row)
+                row = conn.execute(
+                    "UPDATE threads SET last_seq = last_seq + 1, "
+                    "item_count = item_count + 1, updated_at = ? "
+                    "WHERE thread_id = ? RETURNING last_seq",
+                    (item.updated_at, item.thread_id),
+                ).fetchone()
+                if row is None:
+                    raise KeyError(f"Unknown thread: {item.thread_id}")
+                created = replace(item, seq=int(row[0]))
+                conn.execute(_SQLITE_UPSERT_ITEM, _item_values(created))
+                if created.turn_id:
+                    conn.execute(
+                        "UPDATE turns SET item_count = item_count + 1, "
+                        "first_seq = CASE WHEN first_seq IS NULL THEN ? ELSE MIN(first_seq, ?) END, "
+                        "last_seq = CASE WHEN last_seq IS NULL THEN ? ELSE MAX(last_seq, ?) END, "
+                        "updated_at = ? WHERE thread_id = ? AND turn_id = ?",
+                        (
+                            created.seq,
+                            created.seq,
+                            created.seq,
+                            created.seq,
+                            created.updated_at,
+                            created.thread_id,
+                            created.turn_id,
+                        ),
+                    )
+            return created
+
+    def mutate_item(self, thread_id, item_id, update):
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items WHERE thread_id = ? AND item_id = ?",
+                    (thread_id, item_id),
+                ).fetchone()
+                if row is None:
+                    return None
+                existing = _item_from_row(row)
+                identity = (thread_id, item_id, existing.seq, existing.turn_id)
+                updated = update(existing)
+                if (
+                    updated.thread_id,
+                    updated.item_id,
+                    updated.seq,
+                    updated.turn_id,
+                ) != identity:
+                    raise ValueError("Item mutation cannot change identity or position")
+                conn.execute(_SQLITE_UPSERT_ITEM, _item_values(updated))
+                return updated
+
     def _item_predicate(
         self,
         thread_id: str,
@@ -1436,6 +1712,23 @@ class SqliteConversationStore(ConversationStore):
                 .fetchall()
             )
         return [_item_from_row(row) for row in rows]
+
+    def read_snapshot(self, thread_id: str) -> dict:
+        with self._lock:
+            conn = self._connect()
+            with conn:
+                conn.execute("BEGIN")
+                rows = conn.execute(
+                    f"SELECT {', '.join(_ITEM_COLUMNS)} FROM items WHERE thread_id=? ORDER BY seq",
+                    (thread_id,),
+                ).fetchall()
+                inbox = conn.execute(
+                    "SELECT state FROM command_inboxes WHERE thread_id=?", (thread_id,)
+                ).fetchone()
+        return {
+            "items": [_item_from_row(row) for row in rows],
+            "inbox": _loads(inbox[0]) if inbox else {"version": 1, "items": []},
+        }
 
     def count_items(
         self,
@@ -1530,6 +1823,8 @@ def _strip_headline_markers(text: str) -> str:
 
 
 _PG_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS conversation_inboxes (tenant_id TEXT NOT NULL, project_slug TEXT NOT NULL, agent_slug TEXT NOT NULL, thread_id TEXT NOT NULL, state JSONB NOT NULL, PRIMARY KEY(tenant_id, project_slug, agent_slug, thread_id));
+CREATE TABLE IF NOT EXISTS conversation_submissions (tenant_id TEXT NOT NULL, project_slug TEXT NOT NULL, agent_slug TEXT NOT NULL, thread_id TEXT NOT NULL, submission_id TEXT NOT NULL, receipt JSONB NOT NULL, PRIMARY KEY(tenant_id, project_slug, agent_slug, thread_id, submission_id));
 CREATE TABLE IF NOT EXISTS conversation_threads (
     tenant_id             TEXT   NOT NULL,
     project_slug          TEXT   NOT NULL,
@@ -1684,13 +1979,14 @@ CREATE INDEX IF NOT EXISTS idx_conversation_turns_model
 ALTER TABLE conversation_threads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversation_turns   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE conversation_items   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conversation_inboxes ENABLE ROW LEVEL SECURITY;
 
 DO $$
 DECLARE
     target TEXT;
 BEGIN
     FOREACH target IN ARRAY ARRAY[
-        'conversation_threads', 'conversation_turns', 'conversation_items'
+        'conversation_threads', 'conversation_turns', 'conversation_items', 'conversation_inboxes'
     ] LOOP
         IF NOT EXISTS (
             SELECT 1 FROM pg_policies WHERE schemaname = current_schema()
@@ -1800,11 +2096,15 @@ class PgConversationStore(ConversationStore):
     def _scope(self) -> Tuple[str, str, str]:
         return (self._tenant_id, self._project, self._agent)
 
-    def _conn(self):
+    def _conn(self, *, snapshot=False):
         cm = self._pool.connection()
         conn = cm.__enter__()
         try:
             with conn.cursor() as cur:
+                if snapshot:
+                    cur.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+                    )
                 cur.execute(
                     "SELECT set_config('app.current_tenant', %s, true)",
                     (self._tenant_id,),
@@ -1827,6 +2127,81 @@ class PgConversationStore(ConversationStore):
     #: The shard predicate without the per-thread term, for listings.
     _SHARD_SCOPE = "tenant_id = %s AND project_slug = %s AND agent_slug = %s"
 
+    def mutate_queue(self, thread_id, update, *, submission_id=None):
+        from psycopg.types.json import Jsonb
+
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                scope = (*self._scope, thread_id)
+                cur.execute(
+                    f"{self._THREAD_SELECT} WHERE {self._THREAD_SCOPE} FOR UPDATE",
+                    scope,
+                )
+                thread_row = cur.fetchone()
+                if thread_row is None:
+                    raise KeyError(f"Unknown thread: {thread_id}")
+                cur.execute(
+                    f"SELECT state FROM conversation_inboxes WHERE {self._THREAD_SCOPE}",
+                    scope,
+                )
+                row = cur.fetchone()
+                state = row[0] if row else {"version": 1, "items": []}
+                state["archived"] = (
+                    _thread_from_row(thread_row).status is ThreadStatus.ARCHIVED
+                )
+                receipt = None
+                if submission_id:
+                    cur.execute(
+                        f"SELECT receipt FROM conversation_submissions WHERE {self._THREAD_SCOPE} AND submission_id=%s FOR UPDATE",
+                        (*scope, submission_id),
+                    )
+                    row = cur.fetchone()
+                    receipt = row[0] if row else None
+                result, receipt = update(state, receipt)
+                cur.execute(
+                    "INSERT INTO conversation_inboxes VALUES (%s,%s,%s,%s,%s) ON CONFLICT(tenant_id,project_slug,agent_slug,thread_id) DO UPDATE SET state=excluded.state",
+                    (*scope, Jsonb(state)),
+                )
+                if receipt is not None:
+                    if submission_id is None:
+                        raise ValueError("Receipt requires submission identity")
+                    cur.execute(
+                        "INSERT INTO conversation_submissions VALUES (%s,%s,%s,%s,%s,%s)",
+                        (*scope, submission_id, Jsonb(receipt)),
+                    )
+            conn.commit()
+            return result
+
+    def submission_receipt(
+        self,
+        thread_id: str,
+        submission_id: str,
+        claim: dict | None = None,
+        result: dict | None = None,
+    ) -> dict | None:
+        from psycopg.types.json import Jsonb
+
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                scope = (*self._scope, thread_id, submission_id)
+                if claim is not None:
+                    cur.execute(
+                        "INSERT INTO conversation_submissions VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                        (*scope, Jsonb(claim)),
+                    )
+                where = self._THREAD_SCOPE + " AND submission_id = %s"
+                if result is not None:
+                    cur.execute(
+                        f"UPDATE conversation_submissions SET receipt = %s WHERE {where}",
+                        (Jsonb(result), *scope),
+                    )
+                cur.execute(
+                    f"SELECT receipt FROM conversation_submissions WHERE {where}", scope
+                )
+                row = cur.fetchone()
+            conn.commit()
+            return row[0] if row else None
+
     def get_thread(self, thread_id: str) -> Optional[Thread]:
         with self._conn() as conn:
             with conn.cursor() as cur:
@@ -1842,6 +2217,24 @@ class PgConversationStore(ConversationStore):
             with conn.cursor() as cur:
                 self._upsert_thread(cur, thread)
             conn.commit()
+
+    def mutate_thread(self, thread_id, update):
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"{self._THREAD_SELECT} WHERE {self._THREAD_SCOPE} FOR UPDATE",
+                    (*self._scope, thread_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                thread = _thread_from_row(row)
+                update(thread)
+                if thread.thread_id != thread_id:
+                    raise ValueError("Thread mutation cannot change identity")
+                self._upsert_thread(cur, thread)
+            conn.commit()
+            return thread
 
     def _upsert_thread(self, cur: Any, thread: Thread) -> None:
         from psycopg.types.json import Jsonb
@@ -1910,6 +2303,8 @@ class PgConversationStore(ConversationStore):
                 for table in (
                     "conversation_items",
                     "conversation_turns",
+                    "conversation_submissions",
+                    "conversation_inboxes",
                 ):
                     cur.execute(
                         f"DELETE FROM {table} WHERE {self._THREAD_SCOPE}",
@@ -2312,6 +2707,50 @@ class PgConversationStore(ConversationStore):
                 self._upsert_turn(cur, turn)
             conn.commit()
 
+    def mutate_turn(self, thread_id, turn_id, update, *, initial_item=None):
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"{self._THREAD_SELECT} WHERE {self._THREAD_SCOPE} FOR UPDATE",
+                    (*self._scope, thread_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise KeyError(f"Unknown thread: {thread_id}")
+                thread = _thread_from_row(row)
+                cur.execute(
+                    f"{self._TURN_SELECT} WHERE {self._THREAD_SCOPE} AND turn_id = %s FOR UPDATE",
+                    (*self._scope, thread_id, turn_id),
+                )
+                row = cur.fetchone()
+                cur.execute(
+                    "SELECT COALESCE(MAX(ordinal), 0) + 1 FROM conversation_turns "
+                    f"WHERE {self._THREAD_SCOPE}",
+                    (*self._scope, thread_id),
+                )
+                ordinal = int(cur.fetchone()[0])
+                turn = update(thread, _turn_from_row(row) if row else None, ordinal)
+                if turn is not None:
+                    if (
+                        turn.thread_id != thread_id
+                        or turn.turn_id != turn_id
+                        or thread.thread_id != thread_id
+                    ):
+                        raise ValueError("Turn mutation cannot change identity")
+                    if initial_item is not None:
+                        cur.execute(
+                            "SELECT 1 FROM conversation_items "
+                            f"WHERE {self._THREAD_SCOPE} AND item_id = %s",
+                            (*self._scope, thread_id, initial_item.item_id),
+                        )
+                        if cur.fetchone() is None:
+                            item = _attach_initial_item(thread, turn, initial_item)
+                            self._upsert_item(cur, item)
+                    self._upsert_turn(cur, turn)
+                    self._upsert_thread(cur, thread)
+            conn.commit()
+            return turn
+
     def list_turns(
         self,
         thread_id: str,
@@ -2441,6 +2880,82 @@ class PgConversationStore(ConversationStore):
                 self._upsert_item(cur, item)
             conn.commit()
 
+    def append_item(self, item: Item) -> Item:
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                # Serialize writers for this thread before checking identity.
+                cur.execute(
+                    "SELECT last_seq FROM conversation_threads "
+                    f"WHERE {self._THREAD_SCOPE} FOR UPDATE",
+                    (*self._scope, item.thread_id),
+                )
+                thread = cur.fetchone()
+                if thread is None:
+                    raise KeyError(f"Unknown thread: {item.thread_id}")
+                cur.execute(
+                    f"{self._ITEM_SELECT} WHERE {self._THREAD_SCOPE} AND item_id = %s",
+                    (*self._scope, item.thread_id, item.item_id),
+                )
+                existing = cur.fetchone()
+                if existing is not None:
+                    return _item_from_row(existing)
+                created = replace(item, seq=int(thread[0]) + 1)
+                self._upsert_item(cur, created)
+                cur.execute(
+                    "UPDATE conversation_threads SET last_seq = %s, "
+                    "item_count = item_count + 1, updated_at = %s "
+                    f"WHERE {self._THREAD_SCOPE}",
+                    (created.seq, created.updated_at, *self._scope, created.thread_id),
+                )
+                if created.turn_id:
+                    cur.execute(
+                        "UPDATE conversation_turns SET item_count = item_count + 1, "
+                        "first_seq = LEAST(first_seq, %s), last_seq = GREATEST(last_seq, %s), "
+                        "updated_at = %s "
+                        f"WHERE {self._THREAD_SCOPE} AND turn_id = %s",
+                        (
+                            created.seq,
+                            created.seq,
+                            created.updated_at,
+                            *self._scope,
+                            created.thread_id,
+                            created.turn_id,
+                        ),
+                    )
+            conn.commit()
+            return created
+
+    def mutate_item(self, thread_id, item_id, update):
+        with self._conn() as conn:
+            with conn.cursor() as cur:
+                # All runtime writers take thread then item/turn locks.
+                cur.execute(
+                    f"{self._THREAD_SELECT} WHERE {self._THREAD_SCOPE} FOR UPDATE",
+                    (*self._scope, thread_id),
+                )
+                if cur.fetchone() is None:
+                    return None
+                cur.execute(
+                    f"{self._ITEM_SELECT} WHERE {self._THREAD_SCOPE} AND item_id = %s FOR UPDATE",
+                    (*self._scope, thread_id, item_id),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                existing = _item_from_row(row)
+                identity = (thread_id, item_id, existing.seq, existing.turn_id)
+                updated = update(existing)
+                if (
+                    updated.thread_id,
+                    updated.item_id,
+                    updated.seq,
+                    updated.turn_id,
+                ) != identity:
+                    raise ValueError("Item mutation cannot change identity or position")
+                self._upsert_item(cur, updated)
+            conn.commit()
+            return updated
+
     def _item_predicate(
         self,
         thread_id: str,
@@ -2490,6 +3005,25 @@ class PgConversationStore(ConversationStore):
                 )
                 rows = cur.fetchall()
         return [_item_from_row(row) for row in rows]
+
+    def read_snapshot(self, thread_id: str) -> dict:
+        with self._conn(snapshot=True) as conn:
+            with conn.cursor() as cur:
+                scope = (*self._scope, thread_id)
+                cur.execute(
+                    f"{self._ITEM_SELECT} WHERE {self._THREAD_SCOPE} ORDER BY seq",
+                    scope,
+                )
+                rows = cur.fetchall()
+                cur.execute(
+                    f"SELECT state FROM conversation_inboxes WHERE {self._THREAD_SCOPE}",
+                    scope,
+                )
+                inbox = cur.fetchone()
+        return {
+            "items": [_item_from_row(row) for row in rows],
+            "inbox": _loads(inbox[0]) if inbox else {"version": 1, "items": []},
+        }
 
     def count_items(
         self,
