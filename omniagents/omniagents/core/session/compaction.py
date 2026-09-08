@@ -21,7 +21,8 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("omniagents.session.compaction")
-COMPACTION_TIMEOUT_SECONDS = 45
+# Codex's unary /responses/compact budget is four times its 300s idle timeout.
+COMPACTION_TIMEOUT_SECONDS = 20 * 60
 explicit_native_compaction = ContextVar("explicit_native_compaction", default=False)
 
 # Knobs we consume locally rather than forward to the SDK constructor.
@@ -506,6 +507,9 @@ def wrap_with_compaction(
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("Compaction timeout_seconds must be finite and positive")
         wrapped._omni_timeout_seconds = timeout
+        # The HTTP client's shorter read timeout must not preempt this budget.
+        if callable(getattr(wrapped.client, "with_options", None)):
+            wrapped._client = wrapped.client.with_options(timeout=timeout)
         return wrapped
     except Exception as exc:
         logger.warning(

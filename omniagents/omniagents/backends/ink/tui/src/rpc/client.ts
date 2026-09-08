@@ -1020,7 +1020,12 @@ export class RPCClient extends EventEmitter {
     if (opts?.workspaceId) params.workspace_id = opts.workspaceId;
     if (opts?.environmentGeneration !== undefined)
       params.environment_generation = opts.environmentGeneration;
-    return this.sendRequest<Record<string, unknown>>("server_call", params, opts);
+    // Compaction owns its backend deadline (20 minutes by default).
+    return this.sendRequest<Record<string, unknown>>(
+      "server_call",
+      params,
+      func === "compact" ? { timeoutMs: null, ...opts } : opts,
+    );
   }
 
   // ---------------------------------------------------------------------

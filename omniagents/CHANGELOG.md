@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The serve proxy relays the upstream's WebSocket close code instead of flattening it to 1000/1011, and maps a rejected upstream handshake to a terminal 4401. Proxied clients now see 4401/4403 as terminal, matching the direct-connection contract, instead of treating an authorization refusal as a retryable disconnect.
 - `POST /auth/ws-ticket` is no longer registered when the configured provider declines connect tickets (`proxy_assertion`). Browsers never reach such an upstream, and the ticket would have moved a proxy-derived credential into a query string with a fresh TTL.
 
+## [0.7.34] - 2026-09-08
+
+### Fixed
+- Native Responses compaction now uses Codex's 20-minute default deadline, including the HTTP client. Manual native compaction no longer inherits the 45-second checkpoint deadline, and Web/Ink clients let the backend own the `/compact` deadline.
+
 ## [0.7.33] - 2026-09-08
 
 ### Fixed

@@ -706,7 +706,10 @@ export class RPCClient {
     const params: Record<string, unknown> = { function: func }
     if (args) params.args = args
     if (sessionId) params.session_id = sessionId
-    return this.sendRequest<Record<string, unknown>>('server_call', params, opts)
+    // Compaction owns its backend deadline (20 minutes by default).
+    return this.sendRequest<Record<string, unknown>>(
+      'server_call', params, func === 'compact' ? { timeoutMs: null, ...opts } : opts
+    )
   }
 
   async clientFunctions(version: number, functions: Array<{ name: string; description?: string }>): Promise<void> {

@@ -127,10 +127,15 @@ async def compact(service: Any, session: Session) -> str:
                 await run_checkpoint_compaction(session, _summarize)
 
         try:
-            await asyncio.wait_for(
-                _compact(),
-                timeout=COMPACTION_TIMEOUT_SECONDS,
-            )
+            if native is not None:
+                # Native compaction owns its configurable deadline. Do not
+                # truncate it to the checkpoint summarizer's shorter budget.
+                await _compact()
+            else:
+                await asyncio.wait_for(
+                    _compact(),
+                    timeout=COMPACTION_TIMEOUT_SECONDS,
+                )
         except asyncio.TimeoutError as exc:
             raise RuntimeError(
                 f"Context compaction timed out after {COMPACTION_TIMEOUT_SECONDS}s; "

@@ -220,3 +220,15 @@ async def test_sdk_post_response_compaction_respects_response_storage(store):
         assert "previous_response_id" not in kwargs
     assert await session.get_items() == [{"role": "user", "content": "short"}]
     assert session.history == original
+
+
+def test_native_timeout_matches_codex_and_reaches_http_client():
+    client = AsyncOpenAI(api_key="test-key", timeout=45)
+    native = wrap_with_compaction(
+        Session("native", "timeout-budget"),
+        {"enabled": True, "client": client},
+        parent_model="gpt-6-astra",
+    )
+    assert native._omni_timeout_seconds == 1200
+    assert native.client.timeout == 1200
+    assert client.timeout == 45

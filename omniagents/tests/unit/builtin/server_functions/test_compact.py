@@ -267,3 +267,22 @@ def test_native_resolution_on_reopened_session(monkeypatch, setup_fails):
     else:
         assert compaction.native_compaction_for_session(service, session) is wrapper
         assert session._sdk_compaction_session is wrapper
+
+
+@pytest.mark.asyncio
+async def test_native_command_does_not_inherit_checkpoint_timeout(monkeypatch):
+    import importlib
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    module = importlib.import_module("omniagents.builtin.server_functions.compact")
+    monkeypatch.setattr(module, "COMPACTION_TIMEOUT_SECONDS", 0.001)
+
+    async def native_compact(args):
+        await asyncio.sleep(0.02)
+
+    native = SimpleNamespace(run_compaction=AsyncMock(side_effect=native_compact))
+    session = _FakeSession([{"role": "user", "content": "history"}])
+    session._sdk_compaction_session = native
+    assert await compact(_FakeService(), session) == "Context compacted."
+    native.run_compaction.assert_awaited_once()
