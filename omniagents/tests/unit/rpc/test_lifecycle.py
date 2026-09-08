@@ -560,3 +560,37 @@ class TestTypescriptTwins:
         assert ts_set("PERMANENT_RPC_ERROR_CODES") == PERMANENT_RPC_ERROR_CODES
         assert ts_set("RETRYABLE_RPC_ERROR_CODES") == RETRYABLE_RPC_ERROR_CODES
         assert ts_set("PERMANENT_CLOSE_CODES") == PERMANENT_CLOSE_CODES
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ["call", "request"])
+async def test_compaction_uses_backend_deadline(entry, fast_policy):
+    client, server = await _connected_client(fast_policy)
+    try:
+        if entry == "call":
+            task = asyncio.create_task(client.call("server_call", function="compact"))
+        else:
+            task = asyncio.create_task(
+                client.request("server_call", {"function": "compact"})
+            )
+        request = await server.receive_json()
+        await asyncio.sleep(fast_policy.rpc_timeout * 1.5)
+        assert not task.done()
+        await server.send_json(
+            {"jsonrpc": "2.0", "id": request["id"], "result": {"ok": True}}
+        )
+        assert await task == {"ok": True}
+        assert not client._pending
+    finally:
+        await client.__aexit__(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_compaction_explicit_rpc_deadline_still_applies(fast_policy):
+    client, server = await _connected_client(fast_policy)
+    try:
+        with pytest.raises(RpcTimeoutError):
+            await client.request("server_call", {"function": "compact"}, timeout=0.01)
+        assert not client._pending
+    finally:
+        await client.__aexit__(None, None, None)

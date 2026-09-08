@@ -63,6 +63,12 @@ async def test_native_failure_preserves_context_and_releases_guard(exit_kind):
             await task
     if exit_kind != "empty":
         assert cancelled.is_set()
+    if exit_kind == "timeout":
+        from omniagents.core.agents.service import _is_retryable_error
+        from omniagents.core.session.compaction import NativeCompactionTimeoutError
+
+        assert isinstance(task.exception(), NativeCompactionTimeoutError)
+        assert not _is_retryable_error(task.exception())
     assert await session.get_items() == original
     assert await Session("native", "failure", session.id).get_items() == original
     assert session.history == original

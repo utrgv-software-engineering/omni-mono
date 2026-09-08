@@ -18,10 +18,13 @@ from omniagents.core.runtime.compaction import (
     run_checkpoint_compaction,
 )
 from omniagents.core.session.manager import Session
+from omniagents.core.session.compaction import (
+    COMPACTION_TIMEOUT_SECONDS,
+    CompactionTimeoutError,
+)
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 logger = logging.getLogger(__name__)
-COMPACTION_TIMEOUT_SECONDS = 45
 
 
 @server_function(
@@ -137,7 +140,7 @@ async def compact(service: Any, session: Session) -> str:
                     timeout=COMPACTION_TIMEOUT_SECONDS,
                 )
         except asyncio.TimeoutError as exc:
-            raise RuntimeError(
+            raise CompactionTimeoutError(
                 f"Context compaction timed out after {COMPACTION_TIMEOUT_SECONDS}s; "
                 "conversation history was preserved."
             ) from exc

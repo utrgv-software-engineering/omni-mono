@@ -544,7 +544,8 @@ export class RPCClient {
     const id = ++this.nextId
     const req: JSONRPCRequest = { jsonrpc: '2.0', id, method }
     if (params !== undefined) req.params = params
-    const timeoutMs = opts.timeoutMs === undefined ? this.policy.rpcTimeoutMs : opts.timeoutMs
+    const isCompaction = method === 'server_call' && (params as { function?: unknown } | undefined)?.function === 'compact'
+    const timeoutMs = opts.timeoutMs === undefined ? (isCompaction ? null : this.policy.rpcTimeoutMs) : opts.timeoutMs
     const response = new Promise<Result>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | null = null
       const onAbort = (): void => {
@@ -706,10 +707,7 @@ export class RPCClient {
     const params: Record<string, unknown> = { function: func }
     if (args) params.args = args
     if (sessionId) params.session_id = sessionId
-    // Compaction owns its backend deadline (20 minutes by default).
-    return this.sendRequest<Record<string, unknown>>(
-      'server_call', params, func === 'compact' ? { timeoutMs: null, ...opts } : opts
-    )
+    return this.sendRequest<Record<string, unknown>>('server_call', params, opts)
   }
 
   async clientFunctions(version: number, functions: Array<{ name: string; description?: string }>): Promise<void> {

@@ -190,6 +190,26 @@ function connectedClient(sent: string[]): TestClient {
 }
 
 describe("RPCClient", () => {
+  it.each(["helper", "raw"])("lets the backend own the %s compaction deadline", async (entry) => {
+    vi.useFakeTimers();
+    const client = new RPCClient({ url: "ws://example.test/ws" });
+    await client.connect();
+    try {
+      const pending = entry === "helper"
+        ? client.serverCall("compact", {}, "session")
+        : client.request("server_call", { function: "compact", session_id: "session" });
+      let settled = false;
+      void pending.then(() => { settled = true; }, () => { settled = true; });
+      const request = JSON.parse(mockSockets[0]!.sent.at(-1)!);
+      await vi.advanceTimersByTimeAsync(21 * 60_000);
+      expect(settled).toBe(false);
+      mockSockets[0]!.emit("message", JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { ok: true } }));
+      await expect(pending).resolves.toEqual({ ok: true });
+    } finally {
+      client.disconnect();
+    }
+  });
+
   it('does not deliver events before the handshake is accepted', async () => {
     mockSocketConfig.earlyNotification = true;
     const client = new RPCClient({ url: "ws://example.test/ws" });

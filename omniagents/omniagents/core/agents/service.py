@@ -237,6 +237,11 @@ def _is_retryable_error(ex: Exception) -> bool:
     Uses exception types first (reliable), falls back to string matching
     for unknown errors.
     """
+    from omniagents.core.session.compaction import CompactionTimeoutError
+
+    if isinstance(ex, CompactionTimeoutError):
+        return False
+
     # Never retry AgentsException types - these are permanent failures
     if isinstance(ex, AgentsException):
         return False

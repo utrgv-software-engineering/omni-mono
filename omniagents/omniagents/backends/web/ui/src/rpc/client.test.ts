@@ -218,6 +218,27 @@ describe('RPCClient initialization', () => {
 })
 
 describe('RPCClient lifecycle', () => {
+  it.each(['helper', 'raw'])('lets the backend own the %s compaction deadline', async (entry) => {
+    vi.useFakeTimers()
+    const client = new RPCClient('ws://example.test/ws')
+    await client.connect()
+    try {
+      const socket = MockWebSocket.instances.at(-1)!
+      const pending = entry === 'helper'
+        ? client.serverCall('compact', {}, 'session')
+        : client.request('server_call', { function: 'compact', session_id: 'session' })
+      let settled = false
+      void pending.then(() => { settled = true }, () => { settled = true })
+      const request = JSON.parse(socket.sent.at(-1)!)
+      await vi.advanceTimersByTimeAsync(21 * 60_000)
+      expect(settled).toBe(false)
+      socket.onmessage?.({ data: JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { ok: true } }) })
+      await expect(pending).resolves.toEqual({ ok: true })
+    } finally {
+      client.disconnect()
+    }
+  })
+
   async function connectedClient(): Promise<{ client: RPCClient; socket: MockWebSocket }> {
     const client = new RPCClient('ws://example.test/ws')
     await client.connect()

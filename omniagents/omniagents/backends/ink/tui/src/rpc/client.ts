@@ -1020,12 +1020,7 @@ export class RPCClient extends EventEmitter {
     if (opts?.workspaceId) params.workspace_id = opts.workspaceId;
     if (opts?.environmentGeneration !== undefined)
       params.environment_generation = opts.environmentGeneration;
-    // Compaction owns its backend deadline (20 minutes by default).
-    return this.sendRequest<Record<string, unknown>>(
-      "server_call",
-      params,
-      func === "compact" ? { timeoutMs: null, ...opts } : opts,
-    );
+    return this.sendRequest<Record<string, unknown>>("server_call", params, opts);
   }
 
   // ---------------------------------------------------------------------
@@ -2294,8 +2289,13 @@ export class RPCClient extends EventEmitter {
       method,
     };
     if (params !== undefined) request.params = params;
+    const isCompaction =
+      method === "server_call" &&
+      (params as { function?: unknown } | undefined)?.function === "compact";
     const timeoutMs =
-      opts.timeoutMs === undefined ? this.policy.rpcTimeoutMs : opts.timeoutMs;
+      opts.timeoutMs === undefined
+        ? (isCompaction ? null : this.policy.rpcTimeoutMs)
+        : opts.timeoutMs;
 
     return new Promise<Result>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | null = null;

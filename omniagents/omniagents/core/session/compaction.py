@@ -25,6 +25,15 @@ logger = logging.getLogger("omniagents.session.compaction")
 COMPACTION_TIMEOUT_SECONDS = 20 * 60
 explicit_native_compaction = ContextVar("explicit_native_compaction", default=False)
 
+
+class CompactionTimeoutError(RuntimeError):
+    """The full compaction budget expired; do not restart the enclosing run."""
+
+
+class NativeCompactionTimeoutError(CompactionTimeoutError):
+    """The native endpoint did not finish within its configured budget."""
+
+
 # Knobs we consume locally rather than forward to the SDK constructor.
 _LOCAL_KNOBS = frozenset(
     {
@@ -248,7 +257,7 @@ def _atomic_compaction_session_cls(base: type) -> type:
                         ),
                     )
                 except asyncio.TimeoutError as exc:
-                    raise RuntimeError(
+                    raise NativeCompactionTimeoutError(
                         "Native context compaction timed out; history was preserved."
                     ) from exc
                 finally:

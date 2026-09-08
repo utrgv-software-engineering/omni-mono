@@ -351,7 +351,11 @@ class JsonRpcClient:
                 caller cancels via task cancellation instead).
         """
         if isinstance(timeout, _Unset):
-            timeout = self._policy.rpc_timeout
+            # Compaction owns its configurable backend deadline.
+            is_compaction = (
+                method == "server_call" and (params or {}).get("function") == "compact"
+            )
+            timeout = None if is_compaction else self._policy.rpc_timeout
         if self._closed or not self._transport.is_connected():
             raise RpcConnectionClosedError("Transport is not connected")
         self._id += 1
