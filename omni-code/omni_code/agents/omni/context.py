@@ -74,12 +74,10 @@ install_project_worker_defaults()
 # EnvironmentLease from the routed RequestContext — no providers or
 # process-global serve state are installed here.
 
-# Slash commands executed by the builtin `dispatch` tool (slash pack):
-# declared, not registered. The manifest's `slash_commands:` section
-# binds /init to the packaged init_agent; the framework's default slash
-# registry falls back to manifest bindings (via the generic
-# omniagents.core.runtime.slash_agents runner) whenever no Python
-# handler is registered — nothing to wire here.
+# Slash commands: declared, not registered. The manifest's
+# `slash_commands:` section binds /init to the packaged init_agent; the
+# framework registers it as a server function with a slash declaration
+# (omniagents.core.runtime.slash_agents runs it) — nothing to wire here.
 
 
 def build_available_skills_block(variables: Dict[str, Any]) -> str:

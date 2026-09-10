@@ -41,6 +41,7 @@ omni serve --profile my-sandbox-profile.yml
 Type these while the assistant is running:
 
 - `/help` - Show available commands
+- `/init` - Create or update AGENTS.md for this repository
 - `/models` - List available models and current session state
 - `/model <name>` - Switch models for this session
 - `/reasoning <low|medium|high>` - Set reasoning effort level

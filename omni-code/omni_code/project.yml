@@ -39,14 +39,17 @@ sessions:
 paths:
   evaluations: ../evaluations
   target: ../target
-# Declarative slash → project-agent bindings, executed by the framework's
-# generic runner (omniagents.core.runtime.slash_agents) over
-# run_project_agent_once. The final-line protocol (the exact status
+# Declarative slash → project-agent bindings. The framework registers each
+# as a server function carrying a slash declaration, so clients list it in
+# the slash catalog and run it directly (omniagents.core.runtime.slash_agents
+# over run_project_agent_once); the model is never involved. The final-line protocol (the exact status
 # strings below) is declared in agents/init_agent/instructions.md; this
 # binding is only the dispatch + response formatting.
 slash_commands:
   init:
     agent: init_agent
+    description: Create or update AGENTS.md for this repository
+    usage: ""
     prompt: begin
     max_turns: 1000
     # Historical behavior for this path: the init agent takes the

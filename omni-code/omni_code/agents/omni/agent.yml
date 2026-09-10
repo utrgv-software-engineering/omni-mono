@@ -21,7 +21,6 @@ capabilities:
   - workers       # spawn_worker family
   - tasks         # task_create / list / get / update
   - skills        # load_skill
-  - slash         # dispatch
   - artifacts     # display_artifact (builtin)
   - exploration   # explorer subagent exposed as `explore`
   - goal          # goal_complete (signals /goal autopilot stop)
@@ -52,7 +51,6 @@ safe_agent_options:
     - read_file
     - list_directory
     - display_artifact
-    - dispatch
     - bash_status
     - bash_logs
     - web_fetch

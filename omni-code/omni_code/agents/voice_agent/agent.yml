@@ -18,7 +18,7 @@ additional_tools_dirs:
   - ../../tools
 
 # Voice reads and delegates, and that is the whole surface: read-only
-# file inspection, slash dispatch, and delegation (`spawn_worker`,
+# file inspection and delegation (`spawn_worker`,
 # `explore`). Everything that writes, runs commands, reaches the
 # network, or converts documents goes to a worker, which has the full
 # filesystem/shell surface behind a single approval.
@@ -35,7 +35,6 @@ additional_tools_dirs:
 #   notebook/tasks     — voice latency favors a tight tool surface
 capabilities:
   - filesystem_readonly
-  - slash
   - workers
   - exploration
   - feedback      # /good /bad /note /notes (builtin, control-plane only)
@@ -58,13 +57,12 @@ safe_agent_options:
     - read_image
     - read_file
     - list_directory
-    - dispatch
     - explore
     - get_worker_status
     - wait_for_workers
 
-# No server_functions: `/help` is carried by the builtin `slash`
-# capability pack this agent activates.
+# No server_functions: `/help` and the slash catalog are framework
+# builtins, registered on every AgentService.
 
 context: build_voice_context
 model_config_resolver: resolve_default_model
