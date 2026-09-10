@@ -1199,10 +1199,16 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
             // selected. Restore the banner without executing the function twice.
             for (const request of result.snapshot.pending_requests ?? []) {
               const requestId = String(request.request_id ?? "");
-              if (request.function === "escalate" && requestId && !client.hasQueuedClientResponse?.(requestId)) {
+              if (
+                request.function === "escalate" &&
+                requestId &&
+                !client.hasQueuedClientResponse?.(requestId)
+              ) {
                 actions.setEscalation({
                   request_id: requestId,
-                  message: String((request.args as Record<string, unknown>)?.message ?? ""),
+                  message: String(
+                    (request.args as Record<string, unknown>)?.message ?? "",
+                  ),
                   session_id: id,
                   run_id: request.run_id as string | undefined,
                 });
@@ -1292,7 +1298,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       done();
       return true;
     } catch (error) {
-      const stillPending = currentApprovalCallIdRef.current === id ||
+      const stillPending =
+        currentApprovalCallIdRef.current === id ||
         currentMcpApprovalRequestIdRef.current === id ||
         currentElicitationIdRef.current === id;
       if (selected === activeSessionRef.current && stillPending) {
@@ -1308,9 +1315,14 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     }
   };
 
-  const approveToolCall = async (approved: boolean, alwaysApprove: boolean, expectedId?: string) => {
+  const approveToolCall = async (
+    approved: boolean,
+    alwaysApprove: boolean,
+    expectedId?: string,
+  ) => {
     const id = currentApprovalCallIdRef.current;
-    if (!id || !client || (expectedId !== undefined && expectedId !== id)) return;
+    if (!id || !client || (expectedId !== undefined && expectedId !== id))
+      return;
     const selectedSession = activeSessionRef.current;
     const tool = useAppStore.getState().approval?.tool;
     const siblings =
@@ -1350,7 +1362,8 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
 
   const approveMcpToolCall = async (approved: boolean, expectedId?: string) => {
     const id = currentMcpApprovalRequestIdRef.current;
-    if (!id || !client || (expectedId !== undefined && expectedId !== id)) return;
+    if (!id || !client || (expectedId !== undefined && expectedId !== id))
+      return;
     await respond(
       id,
       () =>
@@ -1368,9 +1381,13 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     );
   };
 
-  const respondElicitation = async (answer: ElicitationAnswer, expectedId?: string) => {
+  const respondElicitation = async (
+    answer: ElicitationAnswer,
+    expectedId?: string,
+  ) => {
     const id = currentElicitationIdRef.current;
-    if (!id || !client || (expectedId !== undefined && expectedId !== id)) return false;
+    if (!id || !client || (expectedId !== undefined && expectedId !== id))
+      return false;
     return await respond(
       id,
       () =>

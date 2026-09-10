@@ -1,33 +1,78 @@
-"""Exclusive durable run reservations, not time-based leases.
+"""Exclusive run reservation with a heartbeat lease.
 
-Ordinary retirement belongs to the holder. Recovery uses durable process identity
-and executor cleanup evidence, never elapsed time or a terminal UI projection.
+One runtime at a time executes a session's run. The holder records a
+reservation in the session's durable inbox and refreshes its heartbeat while
+the run is alive. A reservation whose heartbeat is older than ``LEASE_TTL``
+belongs to a runtime that died; the next runtime takes it over, marks the
+interrupted work, and proceeds. Nothing waits for an operator.
+
+What survives a takeover is the transcript: dangling tool calls are closed as
+"outcome unknown" (see ``Session.refresh_owned_history`` and
+``AgentService._close_interrupted_run``) so the model is told, once, that a
+command may have partially run. That is the whole recovery story.
 """
 
+from __future__ import annotations
+
+import asyncio
 from contextvars import ContextVar
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import time
+from typing import Any
 import uuid
 
 current_ownership = ContextVar("runtime_ownership", default=None)
 
+#: A reservation is presumed dead once its heartbeat is this old.
+LEASE_TTL = 30.0
+#: How often a live holder refreshes its heartbeat.
+HEARTBEAT_INTERVAL = 5.0
+
+_IDENTITY_KEYS = ("run_id", "owner", "generation")
+
+
+def lease_expired(record, now: float | None = None) -> bool:
+    """True when ``record`` (an owner or claim) has no fresh heartbeat."""
+    if not isinstance(record, dict):
+        return True
+    stamp = record.get("heartbeat")
+    if not isinstance(stamp, (int, float)):
+        # A record written by an older build carries no heartbeat. That
+        # runtime cannot refresh one either, so it is stale by definition.
+        return True
+    return (time.time() if now is None else now) - stamp > LEASE_TTL
+
+
+def _identity(record):
+    return (
+        {key: record.get(key) for key in _IDENTITY_KEYS}
+        if isinstance(record, dict)
+        else None
+    )
+
 
 @dataclass
 class RunOwnership:
-    store: object
+    store: Any
     thread_id: str
     run_id: str
     owner: str
     generation: int
+    #: The reservation this one displaced because its heartbeat had lapsed.
+    took_over_from: dict | None = None
     transferred: bool = False
     entered: bool = False
     released: bool = False
     closing: bool = False
     active_operations: int = 0
+    #: Informational: a supervised command could not confirm its cleanup.
+    #: It no longer blocks release; the transcript carries the uncertainty.
     execution_uncertain: bool = False
+    _heartbeat_task: asyncio.Task | None = field(default=None, repr=False)
 
     def _matches(self, record):
-        return record == {
+        return _identity(record) == {
             "run_id": self.run_id,
             "owner": self.owner,
             "generation": self.generation,
@@ -47,6 +92,44 @@ class RunOwnership:
 
         self.store.mutate_queue(self.thread_id, check)
 
+    def heartbeat(self) -> bool:
+        """Refresh the lease. False when the reservation is no longer ours."""
+        if self.released:
+            return False
+
+        def touch(state, receipt):
+            owner = state.get("runtime_owner")
+            if not self._matches(owner):
+                return False, None
+            owner["heartbeat"] = time.time()
+            return True, None
+
+        return self.store.mutate_queue(self.thread_id, touch)
+
+    def start_heartbeat(self) -> None:
+        """Keep the lease fresh from the running event loop until release."""
+        if self._heartbeat_task is not None or self.released:
+            return
+
+        async def beat():
+            while True:
+                await asyncio.sleep(HEARTBEAT_INTERVAL)
+                try:
+                    if not await asyncio.to_thread(self.heartbeat):
+                        return
+                except Exception:
+                    # Storage hiccup: keep trying; the TTL is generous.
+                    continue
+
+        self._heartbeat_task = asyncio.create_task(
+            beat(), name=f"lease-heartbeat:{self.run_id}"
+        )
+
+    def _stop_heartbeat(self) -> None:
+        task, self._heartbeat_task = self._heartbeat_task, None
+        if task is not None and not task.done():
+            task.cancel()
+
     @contextmanager
     def operation(self):
         """Track admitted local I/O until it settles, even during cancellation."""
@@ -63,22 +146,9 @@ class RunOwnership:
         if self.released:
             return
         self.closing = True
-        if self.execution_uncertain and not self.active_operations:
-            from .ownership_recovery import cleanup_confirmed, recovery_snapshot
-
-            snapshot = recovery_snapshot(self.store, self.thread_id)
-            recovery = snapshot["recovery"]
-            if (
-                self._matches(snapshot["owner"])
-                and recovery
-                and recovery.get("executions")
-                and cleanup_confirmed(recovery, snapshot["owner"], self.thread_id)
-            ):
-                self.execution_uncertain = False
-        if self.active_operations or self.execution_uncertain:
-            # Closing rejects new work immediately. The last admitted operation
-            # releases only if cleanup is confirmed; a coroutine ending is not
-            # an I/O fence. Unknown execution must survive local release retries.
+        if self.active_operations:
+            # Closing rejects new work immediately; the last admitted
+            # operation performs the release when it settles.
             return
 
         def finish(state, receipt):
@@ -87,34 +157,20 @@ class RunOwnership:
             ):
                 return None, None  # Commit succeeded but its acknowledgment was lost.
             if not self._matches(state.get("runtime_owner")):
-                raise RuntimeError("Cannot release another runtime's run reservation")
-            state["last_runtime_owner"] = state["runtime_owner"]
+                # Our lease lapsed and another runtime took the session.
+                # There is nothing of ours left to release.
+                return None, None
+            state["last_runtime_owner"] = _identity(state["runtime_owner"])
             state["runtime_owner"] = None
-            state["runtime_recovery"] = None
             return None, None
 
         self.store.mutate_queue(self.thread_id, finish)
+        self._stop_heartbeat()
         self.released = True
 
     def record_recovery_scope(self, scope, *, journal=None):
-        def update(state, receipt):
-            if (
-                self.closing
-                or self.released
-                or not self._matches(state.get("runtime_owner"))
-            ):
-                raise RuntimeError(
-                    "Run ownership is no longer current; execution refused"
-                )
-            recovery = state["runtime_recovery"]
-            # Once remote/untracked execution was admitted it cannot become host-only.
-            if recovery["scope"] != "remote":
-                recovery["scope"] = scope
-            if journal is not None:
-                recovery["executions"].append(str(journal))
-            return None, None
-
-        self.store.mutate_queue(self.thread_id, update)
+        """Kept for call sites that fence I/O on a current reservation."""
+        self.assert_current()
 
 
 def reserve_run(store, thread_id):
@@ -122,42 +178,56 @@ def reserve_run(store, thread_id):
 
     owner = uuid.uuid4().hex
     run_id = f"run_{uuid.uuid4().hex}"
-    from .ownership_recovery import process_identity
-
-    identity = process_identity()
 
     def claim(state, receipt):
         if state.get("archived"):
             raise RuntimeError("Session is archived")
-        if state.get("runtime_owner") is not None:
-            raise RuntimeError(
-                "Session has an active or unresolved runtime owner; "
-                "starting another run could duplicate actions. "
-                "Use /recover to inspect and recover the interrupted run."
-            )
+        now = time.time()
+        previous = state.get("runtime_owner")
+        displaced = None
+        if previous is not None:
+            if not lease_expired(previous, now):
+                raise RuntimeError(
+                    "Session has an active runtime owner; a run is already executing"
+                )
+            # The holder stopped heartbeating: it is gone. Take over. Queue
+            # items it had claimed go back to pending so they dispatch again;
+            # whether their run started is settled by their receipt on the
+            # next refresh, not guessed here.
+            displaced = _identity(previous)
+            state["last_runtime_owner"] = displaced
+            for entry in state["items"]:
+                if entry.get("owner") is not None:
+                    entry["owner"] = None
+                    entry.pop("claimed_at", None)
         for entry in state["items"]:
-            if entry["owner"] is not None and current_dispatch.get() != (
+            if entry.get("owner") is None:
+                continue
+            if current_dispatch.get() == (
                 thread_id,
                 entry["item"]["id"],
                 entry["owner"],
             ):
-                raise RuntimeError(
-                    "Session has an active or unresolved queue dispatcher; "
-                    "starting another run could duplicate actions"
-                )
+                continue
+            if lease_expired({"heartbeat": entry.get("claimed_at")}, now):
+                entry["owner"] = None
+                entry.pop("claimed_at", None)
+                continue
+            raise RuntimeError(
+                "Session has an active queue dispatcher; a run is about to start"
+            )
         generation = state.get("runtime_generation", 0) + 1
         state["runtime_generation"] = generation
         state["runtime_owner"] = {
             "run_id": run_id,
             "owner": owner,
             "generation": generation,
+            "heartbeat": now,
         }
-        state["runtime_recovery"] = {
-            "process": identity,
-            "scope": "preparing",
-            "executions": [],
-        }
-        return generation, None
+        state.pop("runtime_recovery", None)
+        return (generation, displaced), None
 
-    generation = store.mutate_queue(thread_id, claim)
-    return RunOwnership(store, thread_id, run_id, owner, generation)
+    generation, displaced = store.mutate_queue(thread_id, claim)
+    return RunOwnership(
+        store, thread_id, run_id, owner, generation, took_over_from=displaced
+    )

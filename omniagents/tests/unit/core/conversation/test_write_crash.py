@@ -9,8 +9,9 @@ from omniagents.core.conversation.recorder import ConversationRecorder
 from omniagents.core.conversation.store import SqliteConversationStore
 
 
-def test_process_death_does_not_release_runtime_ownership(tmp_path):
+def test_process_death_releases_runtime_ownership_once_the_lease_lapses(tmp_path):
     from omniagents.core.runtime.ownership import reserve_run
+    from ..runtime.lease_support import expire_lease
 
     path = tmp_path / "ownership.db"
     store = SqliteConversationStore(path=str(path))
@@ -33,8 +34,14 @@ os._exit(74)
         timeout=30,
     )
     assert child.returncode == 74, child.stderr
-    with pytest.raises(RuntimeError, match="unresolved runtime owner"):
+    # Within the TTL the dead process still looks alive: refused.
+    with pytest.raises(RuntimeError, match="active runtime owner"):
         reserve_run(store, "t")
+    # Once its heartbeat lapses the session is simply taken over.
+    expire_lease(store, "t")
+    replacement = reserve_run(store, "t")
+    assert replacement.generation == 2 and replacement.took_over_from is not None
+    replacement.release()
 
 
 @pytest.mark.parametrize("boundary", ["claiming", "claimed", "completed"])

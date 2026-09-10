@@ -16,6 +16,7 @@ import {
   BaseSelectionList,
   type SelectionOption,
 } from "./shared/BaseSelectionList.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 export type ApprovalOption = SelectionOption<"yes" | "always" | "no">;
 
@@ -45,7 +46,7 @@ const DEFAULT_OPTIONS: ApprovalOption[] = [
   },
 ];
 
-export const ApprovalDialog = React.memo<ApprovalDialogProps>(
+export const ApprovalDialog = themedMemo<ApprovalDialogProps>(
   ({ tool, arguments: args, metadata, onApprove }) => {
     // Memoize rich metadata parsing
     const richMetadata = React.useMemo(

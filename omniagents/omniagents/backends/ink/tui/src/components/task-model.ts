@@ -12,7 +12,7 @@
 
 import type { TaskStatus, TaskSummary } from "../store/appStore.js";
 import type { PlanStep } from "../types/conversation.js";
-import { Theme } from "../theme.js";
+import { roleMap } from "../theme.js";
 
 export const TASK_STATUSES: readonly TaskStatus[] = [
   "in_progress",
@@ -28,12 +28,12 @@ export const STATUS_GLYPH: Record<TaskStatus, string> = {
   completed: "✔",
 };
 
-export const STATUS_COLOR: Record<TaskStatus, string> = {
-  in_progress: Theme.stateActive,
-  blocked: Theme.stateBlocked,
-  pending: Theme.textChrome,
-  completed: Theme.stateDone,
-};
+export const STATUS_COLOR: Record<TaskStatus, string> = roleMap({
+  in_progress: "stateActive",
+  blocked: "stateBlocked",
+  pending: "textChrome",
+  completed: "stateDone",
+});
 
 /** Tasks in dock order: active work first, finished work last. */
 export function orderTasks(tasks: TaskSummary[]): TaskSummary[] {

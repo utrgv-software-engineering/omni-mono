@@ -88,10 +88,14 @@ async def test_foreign_claim_survives_reload_without_dispatch(monkeypatch):
     )
     service._session_manager.drop(session.id)
     snapshot = await service.list_queue(session.id)
-    replacement = service._session_manager.get(session.id)
-    assert snapshot["items"][0]["state"] == "dispatch_uncertain"
-    assert replacement.drainer_task is None
-    assert not (await service.cancel_queued_message(session.id, accepted["id"]))["ok"]
+    # A live foreign claim is a run about to start: listed plainly as pending,
+    # never dispatched a second time from here, and still cancellable.
+    assert snapshot["items"][0]["state"] == "pending"
+    assert "error" not in snapshot["items"][0] or snapshot["items"][0]["error"] is None
+    assert not queue_inbox.claim(
+        service._queue_store(session), session.id, accepted["id"], "second-dispatcher"
+    )
+    assert (await service.cancel_queued_message(session.id, accepted["id"]))["ok"]
 
 
 @pytest.mark.asyncio
@@ -620,7 +624,7 @@ async def test_queue_status_reflects_state(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_drainer_preserves_uncertain_item_and_does_not_start_later_work(
+async def test_drainer_marks_a_failed_dispatch_and_continues_with_later_work(
     monkeypatch,
 ):
     service = make_service(monkeypatch)
@@ -642,13 +646,12 @@ async def test_drainer_preserves_uncertain_item_and_does_not_start_later_work(
     sess = service._session_manager.get_or_create(sess_id)
     await asyncio.wait_for(sess.drainer_task, timeout=1)
 
-    assert calls == ["boom"]
+    # The failed item stays visible with its reason; the next one still runs.
+    assert calls == ["boom", "ok"]
     snapshot = await service.list_queue(sess_id)
-    assert [item["state"] for item in snapshot["items"]] == [
-        "dispatch_uncertain",
-        "pending",
-    ]
-    assert len(sess.message_queue) == 2
+    assert [item["state"] for item in snapshot["items"]] == ["failed"]
+    assert "nope" in snapshot["items"][0]["error"]
+    assert len(sess.message_queue) == 1
 
 
 # ---------------------------------------------------------------------------

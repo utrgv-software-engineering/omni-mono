@@ -370,7 +370,7 @@ async function workspace(): Promise<void> {
   );
   await client.fsUploadAbort(env, interrupted.transfer_id).catch(() => {});
   await fetch(base + "/test/lose/fs_upload_commit", { method: "POST" });
-  assert.equal(
+  assert.deepEqual(
     await uploadFile(
       client,
       env,
@@ -378,7 +378,7 @@ async function workspace(): Promise<void> {
       Buffer.from("committed"),
       sha("original"),
     ),
-    sha("committed"),
+    { kind: "saved", sha: sha("committed") },
   );
   assert.equal(
     (await downloadFile(client, env, path, 1024)).bytes.toString(),

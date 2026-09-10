@@ -9,16 +9,20 @@ import {
 } from "../store/appStore.js";
 import type { BashJobSummary } from "../store/appStore.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
+import {
+  Clip,
+  Fixed,
+  oneLine,
+  useDrawerBudget,
+} from "./shared/drawer-layout.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 const RUNNING_GLYPH = "◐";
 const SUCCESS_GLYPH = "✔";
 const FAILURE_GLYPH = "✗";
 
 const MAX_VISIBLE = 5;
-const COMMAND_TRUNCATE_FOCUSED = 50;
-const COMMAND_TRUNCATE_UNFOCUSED = 60;
-const LOGS_PREVIEW_LINES = 18;
 const LOGS_TAIL_REQUEST_LINES = 200;
 
 function statusGlyph(job: BashJobSummary): string {
@@ -29,12 +33,6 @@ function statusGlyph(job: BashJobSummary): string {
 function statusColor(job: BashJobSummary): string {
   if (job.running) return Theme.stateActive;
   return job.exit_code === 0 ? Theme.stateDone : Theme.stateFailed;
-}
-
-function shortCommand(command: string, max: number): string {
-  const oneLine = command.replace(/\s+/g, " ").trim();
-  if (oneLine.length <= max) return oneLine;
-  return oneLine.slice(0, max - 1) + "…";
 }
 
 function formatElapsed(ms: number): string {
@@ -72,7 +70,7 @@ type Props = {
 // the unfocused presentation; adds keyboard-driven navigation when the
 // parent App flips ``focused`` (Ctrl+B chord). Server-side kill/tail are
 // reused via the same callbacks the web buttons use.
-export const BashJobs = React.memo(
+export const BashJobs = themedMemo(
   ({ focused, onUnfocus, onKill, onTail }: Props) => {
     const allJobs = useBashJobs();
     const dismissed = useDismissedJobIds();
@@ -129,6 +127,7 @@ export const BashJobs = React.memo(
     const [logsLoading, setLogsLoading] = useState<boolean>(false);
     const [logsError, setLogsError] = useState<string | null>(null);
     const [statusLine, setStatusLine] = useState<string | null>(null);
+    const logPreviewLines = useDrawerBudget();
 
     // Auto-clear transient status messages after a short window.
     useEffect(() => {
@@ -190,10 +189,10 @@ export const BashJobs = React.memo(
 
     useKeypress(
       (input, key) => {
-      // Modified keys are chords for the global layer (quit, panel
-      // switching) — never mistake Ctrl+X for the letter x.
-      if (key.ctrl || (key.meta && !key.escape)) return false;
-      if (key.tab) return false; // tab always cycles screens
+        // Modified keys are chords for the global layer (quit, panel
+        // switching) — never mistake Ctrl+X for the letter x.
+        if (key.ctrl || (key.meta && !key.escape)) return false;
+        if (key.tab) return false; // tab always cycles screens
         if (key.escape) {
           onUnfocus();
           return true;
@@ -264,9 +263,7 @@ export const BashJobs = React.memo(
           <Text color={Theme.textChrome}>Bash jobs </Text>
           <Text color={Theme.stateActive}>{running.length}</Text>
           <Text color={Theme.textChrome}> running · </Text>
-          <Text color={Theme.stateDone}>
-            {exited.length - failed.length}
-          </Text>
+          <Text color={Theme.stateDone}>{exited.length - failed.length}</Text>
           <Text color={Theme.textChrome}> done · </Text>
           <Text color={Theme.stateFailed}>{failed.length}</Text>
           <Text color={Theme.textChrome}> failed</Text>
@@ -276,24 +273,24 @@ export const BashJobs = React.memo(
           const elapsed = formatElapsed(liveElapsedMs(j, nowMs));
           const tail = j.running ? elapsed : `exit ${j.exit_code} · ${elapsed}`;
           const isSelected = focused && idx === selectedIndex;
-          const max = focused
-            ? COMMAND_TRUNCATE_FOCUSED
-            : COMMAND_TRUNCATE_UNFOCUSED;
           return (
             <SelectableRow key={j.job_id} selected={isSelected}>
-              <RowText color={statusColor(j)}>{statusGlyph(j)} </RowText>
-              <RowText color={Theme.textChrome}>{j.job_id} </RowText>
-              <RowText
-                color={
-                  j.running
-                    ? Theme.textPrimary
-                    : Theme.textSecondary
-                }
-                strikethrough={!j.running}
-              >
-                {shortCommand(j.command, max)}
-              </RowText>
-              <RowText color={Theme.textChrome}> {tail}</RowText>
+              <Fixed>
+                <RowText color={statusColor(j)}>{statusGlyph(j)} </RowText>
+                <RowText color={Theme.textChrome}>{j.job_id} </RowText>
+              </Fixed>
+              <Clip>
+                <RowText
+                  color={j.running ? Theme.textPrimary : Theme.textSecondary}
+                  strikethrough={!j.running}
+                  wrap="truncate-end"
+                >
+                  {oneLine(j.command)}
+                </RowText>
+              </Clip>
+              <Fixed>
+                <RowText color={Theme.textChrome}> {tail}</RowText>
+              </Fixed>
             </SelectableRow>
           );
         })}
@@ -330,7 +327,7 @@ export const BashJobs = React.memo(
                   ? "loading…"
                   : logsError
                     ? "error"
-                    : `${logsText.split("\n").slice(-LOGS_PREVIEW_LINES).length} of ${logsTotalLines} lines`}
+                    : `${logsText.split("\n").slice(-logPreviewLines).length} of ${logsTotalLines} lines`}
               </Text>
             </Box>
             {logsError ? (
@@ -343,10 +340,14 @@ export const BashJobs = React.memo(
               <Box flexDirection="column">
                 {logsText
                   .split("\n")
-                  .slice(-LOGS_PREVIEW_LINES)
+                  .slice(-logPreviewLines)
                   .map((line, i) => (
-                    <Text key={i} color={Theme.textSecondary}>
-                      {line}
+                    <Text
+                      key={i}
+                      color={Theme.textSecondary}
+                      wrap="truncate-end"
+                    >
+                      {line || " "}
                     </Text>
                   ))}
               </Box>

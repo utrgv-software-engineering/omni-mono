@@ -1,77 +1,80 @@
 /**
  * The design system's single source of color truth.
  *
- * Two layers, LazyVim-style: a private PALETTE (raw Tokyo Night hexes —
- * nothing outside this file may name a hex) and public SEMANTIC ROLES.
- * Components speak roles, never colors, so "what does cyan mean" has
- * exactly one answer:
+ * Components speak semantic ROLES, never colors, so "what does cyan
+ * mean" has exactly one answer:
  *
  *   text*    — content tiers: primary payload, secondary values, chrome
  *   state*   — lifecycle: active (running NOW), done, failed, blocked
  *              (waiting on a human), idle (not started)
  *   accent*  — who is speaking: the user, the agent
- *   focus    — keyboard focus. Purple, deliberately ≠ active cyan.
+ *   focus    — keyboard focus. Deliberately ≠ active.
  *   border*  — ambient chrome vs focused vs blocking surfaces
  *   bar*     — the filled top/bottom bars and their active tab block
  *
  * Diff additions are ALWAYS stateDone green and deletions stateFailed
  * red — no surface may invent its own diff colors.
+ *
+ * Which colors the roles resolve to is a THEME: an Omarchy `colors.toml`
+ * palette mapped through `theme/roles.ts`. `Theme` reads the palette
+ * that is current at render time, so `Theme.textPrimary` in a component
+ * needs no change when the theme does; what the switch needs is a
+ * re-render, which `themedMemo` and the store's theme version provide.
+ * Nothing outside `theme/` may name a hex.
  */
 
-const palette = {
-  fg: "#c0caf5",
-  fgDim: "#7f8ab0",
-  fgMuted: "#565f89",
-  bgHighlight: "#24283b",
-  bgDark: "#1a1b26",
-  borderLine: "#3b4261",
-  blue: "#7aa2f7",
-  cyan: "#7dcfff",
-  purple: "#bb9af7",
-  green: "#9ece6a",
-  red: "#f7768e",
-  yellow: "#e0af68",
-} as const;
+import { resolvePalette } from "./theme/palette.js";
+import { rolesFromPalette, type ThemeRoles } from "./theme/roles.js";
+import { BUNDLED_THEMES } from "./theme/bundled.js";
 
-export const Theme = {
-  // Content tiers
-  textPrimary: palette.fg,
-  textSecondary: palette.fgDim,
-  textChrome: palette.fgMuted,
+export type { ThemeRole, ThemeRoles } from "./theme/roles.js";
 
-  // Lifecycle states
-  stateActive: palette.cyan,
-  stateDone: palette.green,
-  stateFailed: palette.red,
-  stateBlocked: palette.yellow,
-  stateIdle: palette.fgMuted,
+/** The palette the TUI shipped with, and the fallback when nothing else resolves. */
+export const DEFAULT_THEME_ID = "tokyo-night";
 
-  // Voices
-  accentUser: palette.purple,
-  accentAgent: palette.blue,
+let current: ThemeRoles = rolesFromPalette(
+  resolvePalette(BUNDLED_THEMES.find((t) => t.id === DEFAULT_THEME_ID)!.colors),
+);
 
-  // Keyboard focus — never cyan, so focus ≠ activity
-  focus: palette.purple,
+/** Replace the live roles. Callers bump the store's theme version after. */
+export function setThemeRoles(roles: ThemeRoles): void {
+  current = roles;
+}
 
-  // Chrome
-  borderAmbient: palette.borderLine,
-  borderFocus: palette.purple,
-  borderBlocking: palette.yellow,
+export function currentThemeRoles(): ThemeRoles {
+  return current;
+}
 
-  // Selected row in any list or sidebar. Deliberately a MUTED band
-  // rather than a saturated fill: every list already picks its own
-  // foreground per row (state colors, dimmed paths, diff green/red), and
-  // a bright background would have required re-checking contrast at
-  // fourteen call sites. bgHighlight sits one step off the terminal
-  // ground, so every existing foreground still reads on it.
-  //
-  // The band is never the ONLY signal — see shared/SelectableRow: the
-  // glyph and bold ride along, because chalk drops backgrounds entirely
-  // under NO_COLOR and a colour-only selection would vanish there.
-  selectionBg: palette.bgHighlight,
+/**
+ * Live role lookup. A plain object whose properties are getters over the
+ * current roles: reads look like constants, resolve like calls.
+ */
+export const Theme: Readonly<ThemeRoles> = Object.freeze(
+  Object.defineProperties(
+    {},
+    Object.fromEntries(
+      (Object.keys(current) as Array<keyof ThemeRoles>).map((role) => [
+        role,
+        { get: () => current[role], enumerable: true },
+      ]),
+    ),
+  ),
+) as Readonly<ThemeRoles>;
 
-  // Filled bars (top tabs / bottom status)
-  barBg: palette.bgHighlight,
-  barActiveBg: palette.blue,
-  barActiveFg: palette.bgDark,
-} as const;
+/**
+ * A map from your own keys to roles, resolved lazily. For module-level
+ * tables like `STATUS_COLOR`: captured `Theme.x` values would freeze the
+ * palette at import time, these read it per access.
+ */
+export function roleMap<K extends string>(
+  spec: Record<K, keyof ThemeRoles>,
+): Record<K, string> {
+  return Object.defineProperties(
+    {},
+    Object.fromEntries(
+      (Object.entries(spec) as Array<[K, keyof ThemeRoles]>).map(
+        ([key, role]) => [key, { get: () => current[role], enumerable: true }],
+      ),
+    ),
+  ) as Record<K, string>;
+}

@@ -1,3 +1,4 @@
+import { Theme } from "../theme.js";
 /**
  * ASCII art generator - creates block-letter art from text
  * Matches Bubbletea implementation
@@ -122,8 +123,8 @@ function interpolateColor(
  */
 export function applyGradient(
   lines: string[],
-  startColor: string = "#bb9af7",
-  endColor: string = "#7aa2f7",
+  startColor: string = Theme.accentUser,
+  endColor: string = Theme.accentAgent,
 ): string[] {
   return lines.map((line) => {
     let result = "";

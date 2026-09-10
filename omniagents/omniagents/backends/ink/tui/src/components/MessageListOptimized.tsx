@@ -21,7 +21,11 @@
 import React, { useCallback, useMemo } from "react";
 import { Box, Text, StaticRender, useStdout } from "ink";
 import Spinner from "ink-spinner";
-import { useMessages, useTranscriptDetail } from "../store/appStore.js";
+import {
+  useMessages,
+  useThemeVersion,
+  useTranscriptDetail,
+} from "../store/appStore.js";
 import type { Message, ToolCallInfo } from "../store/appStore.js";
 import type { ConversationRunDiff } from "../types/conversation.js";
 import { changeColor, changeGlyph } from "./review-model.js";
@@ -40,6 +44,7 @@ import {
   type BeatSegment,
   type TranscriptRow,
 } from "./transcript-model.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 /**
  * Rows that belong to the same activity block and therefore pack tight
@@ -50,8 +55,9 @@ function isBeatRow(row: TranscriptRow | undefined): boolean {
   return row !== undefined && row.type === "beats";
 }
 
-export const MessageListOptimized = React.memo(() => {
+export const MessageListOptimized = themedMemo(() => {
   const messages = useMessages();
+  const themeVersion = useThemeVersion();
   const detail = useTranscriptDetail();
   const { stdout } = useStdout();
   const terminalWidth = stdout?.columns ?? 80;
@@ -120,6 +126,7 @@ export const MessageListOptimized = React.memo(() => {
   if (viewport && viewport.innerHeight > 0) {
     return (
       <VirtualizedList<TranscriptRow>
+        key={themeVersion}
         data={rows}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
@@ -157,7 +164,7 @@ export const MessageListOptimized = React.memo(() => {
   );
 });
 
-const TranscriptRowItem = React.memo<{
+const TranscriptRowItem = themedMemo<{
   row: TranscriptRow;
   tight: boolean;
   isLast: boolean;
@@ -203,7 +210,7 @@ const EXPAND_HINT = " (ctrl+o to expand)";
  * The spinner becomes the `●` bullet in place — same column, dim like
  * the line it marks.
  */
-const BeatsRow = React.memo<{
+const BeatsRow = themedMemo<{
   segments: BeatSegment[];
   running: ToolCallInfo[];
   reviewed: number;
@@ -245,7 +252,7 @@ const BeatsRow = React.memo<{
 /** A failed or cancelled call — never aggregated, capped detail inline. */
 
 // Individual message memoized with deep equality check
-const MessageItem = React.memo<{ message: Message }>(
+const MessageItem = themedMemo<{ message: Message }>(
   ({ message }) => {
     switch (message.role) {
       case "user":
@@ -255,6 +262,8 @@ const MessageItem = React.memo<{ message: Message }>(
       case "system":
         if (message.runDiff) return <RunDiffCard diff={message.runDiff} />;
         return <SystemMessage message={message} />;
+      case "command":
+        return <CommandOutput message={message} />;
       case "tool_call":
         // Tools can opt out of the conversation log by setting
         // ui_metadata.hidden = true (e.g. task_* tools rendered by
@@ -293,7 +302,7 @@ const MessageItem = React.memo<{ message: Message }>(
   },
 );
 
-const UserMessage = React.memo<{ message: Message }>(
+const UserMessage = themedMemo<{ message: Message }>(
   ({ message }) => {
     const prefix = "> ";
     const prefixWidth = prefix.length;
@@ -325,7 +334,7 @@ const UserMessage = React.memo<{ message: Message }>(
   (prev, next) => prev.message.content === next.message.content,
 );
 
-const AssistantMessage = React.memo<{ message: Message }>(
+const AssistantMessage = themedMemo<{ message: Message }>(
   ({ message }) => {
     const prefix = "● ";
     const prefixWidth = prefix.length;
@@ -368,7 +377,7 @@ const AssistantMessage = React.memo<{ message: Message }>(
  * renders these: the beat span counts verdicts rather than listing
  * them, so this is where the rationale finally has room.
  */
-const ReviewRow = React.memo<{ message: Message }>(({ message }) => {
+const ReviewRow = themedMemo<{ message: Message }>(({ message }) => {
   const review = message.review;
   if (!review) return null;
   // Only a blocking review stopped something. The beat renderer never
@@ -405,7 +414,7 @@ const ReviewRow = React.memo<{ message: Message }>(({ message }) => {
   );
 });
 
-const SystemMessage = React.memo<{ message: Message }>(
+const SystemMessage = themedMemo<{ message: Message }>(
   ({ message }) => {
     const firstLine = (message.content ?? "").split("\n")[0] ?? "";
     if (!firstLine.trim()) return null;
@@ -423,6 +432,40 @@ const SystemMessage = React.memo<{ message: Message }>(
   (prev, next) => prev.message.content === next.message.content,
 );
 
+/**
+ * What a typed `/verb` printed: its own row, in chrome, headed by the
+ * verb. Not the agent's voice, so it never wears the agent's color or
+ * label, and `/copy` never picks it up. The body goes through the
+ * markdown renderer because `/help` and the model verbs use markdown on
+ * purpose; plain text comes out unchanged, column spacing included.
+ */
+const CommandOutput = themedMemo<{ message: Message }>(
+  ({ message }) => {
+    const rendered = useMemo(
+      () => renderMarkdownCached(message.content ?? ""),
+      [message.content],
+    );
+    const lines = useMemo(() => rendered.split("\n"), [rendered]);
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row">
+          <Text>{ACTIVITY_INDENT}</Text>
+          <Text color={Theme.textChrome}>/{message.command ?? "command"}</Text>
+        </Box>
+        {lines.map((line, index) => (
+          <Box key={index} flexDirection="row">
+            <Text>{ACTIVITY_INDENT}</Text>
+            <Text color={Theme.textSecondary}>{line || " "}</Text>
+          </Box>
+        ))}
+      </Box>
+    );
+  },
+  (prev, next) =>
+    prev.message.content === next.message.content &&
+    prev.message.command === next.message.command,
+);
+
 const DIFF_CARD_FILES = 5;
 const DIFF_CARD_PATH_MAX = 44;
 
@@ -433,7 +476,7 @@ function pathTail(path: string, max = DIFF_CARD_PATH_MAX): string {
 // The run's receipt: what this turn changed, as a card instead of a
 // log line. Diffstat headline, the first few files, and the breadcrumb
 // to the Review tab (which opens on exactly this diff).
-const RunDiffCard = React.memo<{ diff: ConversationRunDiff }>(
+const RunDiffCard = themedMemo<{ diff: ConversationRunDiff }>(
   ({ diff }) => {
     const shown = diff.files.slice(0, DIFF_CARD_FILES);
     const extra = diff.files.length - shown.length;
@@ -484,7 +527,7 @@ const RunDiffCard = React.memo<{ diff: ConversationRunDiff }>(
     prev.diff.revision === next.diff.revision,
 );
 
-const ToolCallMessage = React.memo<{ message: Message }>(
+const ToolCallMessage = themedMemo<{ message: Message }>(
   ({ message }) => {
     if (!message.toolCall) return null;
 

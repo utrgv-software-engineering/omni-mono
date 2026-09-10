@@ -21,7 +21,11 @@ import type {
   RpcMethodMap as GeneratedRpcMethodMap,
   RpcNotificationMap as GeneratedRpcNotificationMap,
 } from "../protocol/generated/gui-v2.js";
-import { GUI_PROTOCOL_VERSION, isGuiInitializeResult, supportsGuiProtocolVersion } from "../protocol/generated/gui-v2.js";
+import {
+  GUI_PROTOCOL_VERSION,
+  isGuiInitializeResult,
+  supportsGuiProtocolVersion,
+} from "../protocol/generated/gui-v2.js";
 import {
   classifyCloseCode,
   classifyRpcErrorCode,
@@ -89,9 +93,11 @@ function unsupportedCapabilitiesOf(error: unknown): Set<string> | null {
     | undefined;
   if (data?.kind !== "capability_not_negotiated") return null;
   if (!Array.isArray(data.unsupported_capabilities)) return null;
-  return new Set(data.unsupported_capabilities.filter(
-    (name): name is string => typeof name === "string",
-  ));
+  return new Set(
+    data.unsupported_capabilities.filter(
+      (name): name is string => typeof name === "string",
+    ),
+  );
 }
 
 /**
@@ -194,8 +200,12 @@ export class RPCClient extends EventEmitter {
   );
 
   waitUntilReady(): Promise<void> {
-    if (this.closedByUser) return Promise.reject(new ConnectionClosedError("Client disconnected", { permanent: true }));
-    if (this.negotiatedInitialization && this.ws?.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (this.closedByUser)
+      return Promise.reject(
+        new ConnectionClosedError("Client disconnected", { permanent: true }),
+      );
+    if (this.negotiatedInitialization && this.ws?.readyState === WebSocket.OPEN)
+      return Promise.resolve();
     return new Promise((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
@@ -203,9 +213,21 @@ export class RPCClient extends EventEmitter {
         this.off("reconnect_failed", failed);
         this.off("disconnected", disconnected);
       };
-      const ready = () => { cleanup(); resolve(); };
-      const failed = () => { cleanup(); reject(new Error("Submission confirmation unavailable; reconnect and retry to check its outcome")); };
-      const disconnected = () => { if (this.closedByUser) failed(); };
+      const ready = () => {
+        cleanup();
+        resolve();
+      };
+      const failed = () => {
+        cleanup();
+        reject(
+          new Error(
+            "Submission confirmation unavailable; reconnect and retry to check its outcome",
+          ),
+        );
+      };
+      const disconnected = () => {
+        if (this.closedByUser) failed();
+      };
       const timer = setTimeout(failed, this.policy.rpcTimeoutMs);
       this.once("rpc_ready", ready);
       this.once("reconnect_failed", failed);
@@ -230,7 +252,14 @@ export class RPCClient extends EventEmitter {
   private sessionSelection = 0;
   private pendingNewRun: JSONRPCNotification[] | null = null;
   private sessionBuffers = new Map<string, JSONRPCNotification[]>();
-  private responseOutbox = new Map<string, { ok: boolean; result?: Record<string, unknown>; error?: Record<string, unknown> }>();
+  private responseOutbox = new Map<
+    string,
+    {
+      ok: boolean;
+      result?: Record<string, unknown>;
+      error?: Record<string, unknown>;
+    }
+  >();
   private clientResponses = new Map<string, Promise<void>>();
   private ackTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -302,13 +331,18 @@ export class RPCClient extends EventEmitter {
           experimental_operations: operations,
         },
       };
-      const result = await this.sendRequest<InitializeResult>("initialize", initialize, {
-        timeoutMs: null,
-      });
+      const result = await this.sendRequest<InitializeResult>(
+        "initialize",
+        initialize,
+        {
+          timeoutMs: null,
+        },
+      );
       if (!supportsGuiProtocolVersion(result?.protocol_version)) {
         throw new JSONRPCError({
           code: -32012,
-          message: "Incompatible GUI protocol. Update the client and server together.",
+          message:
+            "Incompatible GUI protocol. Update the client and server together.",
           data: {
             kind: "protocol_version_mismatch",
             client_version: GUI_PROTOCOL_VERSION,
@@ -317,7 +351,11 @@ export class RPCClient extends EventEmitter {
         });
       }
       if (!isGuiInitializeResult(result)) {
-        throw new JSONRPCError({ code: -32602, message: "Invalid GUI initialize response.", data: { kind: "invalid_initialize_result" } });
+        throw new JSONRPCError({
+          code: -32602,
+          message: "Invalid GUI initialize response.",
+          data: { kind: "invalid_initialize_result" },
+        });
       }
       return result;
     };
@@ -421,7 +459,11 @@ export class RPCClient extends EventEmitter {
 
         this.cancelConnect = () => {
           clearTimeout(connectTimer);
-          reject(new ConnectionClosedError("Connection attempt cancelled", { permanent: true }));
+          reject(
+            new ConnectionClosedError("Connection attempt cancelled", {
+              permanent: true,
+            }),
+          );
         };
 
         this.ws.on("message", (data: WebSocket.Data) => {
@@ -452,7 +494,9 @@ export class RPCClient extends EventEmitter {
             this.startHeartbeat(socket);
             this.emit("rpc_ready");
             for (const requestId of this.responseOutbox.keys()) {
-              void this.flushClientResponse(requestId).catch(error => this.reportResponseFailure(error));
+              void this.flushClientResponse(requestId).catch((error) =>
+                this.reportResponseFailure(error),
+              );
             }
             this.log("RPC ready");
             resolve();
@@ -487,7 +531,10 @@ export class RPCClient extends EventEmitter {
             this.closedByUser ||
             this.handshakeRejected ||
             classifyCloseCode(code) === "permanent";
-          if (code === WS_CLOSE_UNAUTHENTICATED || code === WS_CLOSE_FORBIDDEN) {
+          if (
+            code === WS_CLOSE_UNAUTHENTICATED ||
+            code === WS_CLOSE_FORBIDDEN
+          ) {
             // Credentials are the problem: surface it distinctly so the UI
             // can prompt instead of reporting a generic drop. The 44xx range
             // already classifies as permanent, so no reconnect is attempted.
@@ -504,7 +551,13 @@ export class RPCClient extends EventEmitter {
               reason: reasonText,
             }),
           );
-          if (!ready) reject(new ConnectionClosedError(reasonText || "Connection closed", { permanent, closeCode: code }));
+          if (!ready)
+            reject(
+              new ConnectionClosedError(reasonText || "Connection closed", {
+                permanent,
+                closeCode: code,
+              }),
+            );
           this.attemptReconnect(permanent);
         });
 
@@ -537,9 +590,12 @@ export class RPCClient extends EventEmitter {
     for (const timer of this.ackTimers.values()) clearTimeout(timer);
     this.ackTimers.clear();
     this.rejectAllPending(
-      new ConnectionClosedError(byUser ? "Connection closed by client" : "Connection replaced", {
-        permanent: byUser,
-      }),
+      new ConnectionClosedError(
+        byUser ? "Connection closed by client" : "Connection replaced",
+        {
+          permanent: byUser,
+        },
+      ),
     );
     if (this.ws) {
       this.ws.close();
@@ -563,7 +619,12 @@ export class RPCClient extends EventEmitter {
       this.pongTimer = null;
     });
     this.heartbeatTimer = setInterval(() => {
-      if (this.ws !== socket || socket.readyState !== WebSocket.OPEN || this.pongTimer) return;
+      if (
+        this.ws !== socket ||
+        socket.readyState !== WebSocket.OPEN ||
+        this.pongTimer
+      )
+        return;
       this.pongTimer = setTimeout(() => {
         if (this.ws === socket) socket.terminate();
       }, this.policy.pingTimeoutMs);
@@ -601,11 +662,14 @@ export class RPCClient extends EventEmitter {
       params.variables = variables;
     }
     const selection = this.sessionSelection;
-    const held = sessionId ? null : [] as JSONRPCNotification[];
+    const held = sessionId ? null : ([] as JSONRPCNotification[]);
     if (held) this.pendingNewRun = held;
     try {
-      const result = await this.submissions.send<RpcMethodMap["start_run"]["result"]>("start_run", params);
-      if (held && selection === this.sessionSelection) this.setActiveSession(result.session_id);
+      const result = await this.submissions.send<
+        RpcMethodMap["start_run"]["result"]
+      >("start_run", params);
+      if (held && selection === this.sessionSelection)
+        this.setActiveSession(result.session_id);
       return result;
     } finally {
       if (held && this.pendingNewRun === held) {
@@ -654,9 +718,9 @@ export class RPCClient extends EventEmitter {
   async getSessionHistory(
     sessionId: string,
   ): Promise<Array<{ role: string; content: unknown; timestamp: string }>> {
-    return this.call("get_session_history", { session_id: sessionId }) as Promise<
-      Array<{ role: string; content: unknown; timestamp: string }>
-    >;
+    return this.call("get_session_history", {
+      session_id: sessionId,
+    }) as Promise<Array<{ role: string; content: unknown; timestamp: string }>>;
   }
 
   /**
@@ -757,45 +821,106 @@ export class RPCClient extends EventEmitter {
     this.sessionBuffers.set(sessionId, held);
     try {
       const result = this.isGranted("queue_status")
-        ? await this.call("queue_status", { session_id: sessionId, include_snapshot: true }) as unknown as SessionSnapshot
-        : await this.readLegacySnapshot(sessionId, held, () => isCurrent() && this.ws === socket);
-      if (!isCurrent() || this.ws !== socket || this.sessionBuffers.get(sessionId) !== held) return;
-      if (!result.snapshot?.stream_id) throw new Error("Server did not return a session snapshot");
+        ? ((await this.call("queue_status", {
+            session_id: sessionId,
+            include_snapshot: true,
+          })) as unknown as SessionSnapshot)
+        : await this.readLegacySnapshot(
+            sessionId,
+            held,
+            () => isCurrent() && this.ws === socket,
+          );
+      if (
+        !isCurrent() ||
+        this.ws !== socket ||
+        this.sessionBuffers.get(sessionId) !== held
+      )
+        return;
+      if (!result.snapshot?.stream_id)
+        throw new Error("Server did not return a session snapshot");
       apply(result);
       const tracker = this.replay.tracker(sessionId);
       tracker.streamId = result.snapshot.stream_id;
       tracker.lastSeq = result.snapshot.last_seq;
       // Restore only controls that still have a live waiter, never historical commands.
-      for (const item of result.snapshot.restore_item_controls === false ? [] : result.snapshot.items) {
+      for (const item of result.snapshot.restore_item_controls === false
+        ? []
+        : result.snapshot.items) {
         if (item.status !== "started") continue;
         const c = item.content;
-        const method = item.kind === "approval"
-          ? c.approval_kind === "mcp" ? "mcp_approval_requested" : "tool_approval_requested"
-          : item.kind === "elicitation" ? "elicitation_requested" : null;
-        if (method) this.deliverNotification({ jsonrpc: "2.0", method, params: {
-          ...c, session_id: sessionId, run_id: item.turn_id,
-          tool_name: c.tool, kind: c.elicitation_kind ?? c.approval_kind,
-        }});
+        const method =
+          item.kind === "approval"
+            ? c.approval_kind === "mcp"
+              ? "mcp_approval_requested"
+              : "tool_approval_requested"
+            : item.kind === "elicitation"
+              ? "elicitation_requested"
+              : null;
+        if (method)
+          this.deliverNotification({
+            jsonrpc: "2.0",
+            method,
+            params: {
+              ...c,
+              session_id: sessionId,
+              run_id: item.turn_id,
+              tool_name: c.tool,
+              kind: c.elicitation_kind ?? c.approval_kind,
+            },
+          });
       }
       for (const event of result.snapshot.state_events ?? []) {
-        if (event.method === "client_request" && ["ui.set_session_state", "ui.set_status"].includes(String(event.params.function))) {
-          const handler = this.registeredClientFunctions.get(String(event.params.function));
-          if (handler) void handler({ ...(event.params.args as Record<string, unknown>), session_id: sessionId }).catch(error => this.reportResponseFailure(error));
+        if (
+          event.method === "client_request" &&
+          ["ui.set_session_state", "ui.set_status"].includes(
+            String(event.params.function),
+          )
+        ) {
+          const handler = this.registeredClientFunctions.get(
+            String(event.params.function),
+          );
+          if (handler)
+            void handler({
+              ...(event.params.args as Record<string, unknown>),
+              session_id: sessionId,
+            }).catch((error) => this.reportResponseFailure(error));
         } else this.deliverNotification({ jsonrpc: "2.0", ...event });
       }
-      for (const params of result.snapshot.pending_requests ?? []) this.deliverNotification({ jsonrpc: "2.0", method: "client_request", params });
-      const resumed = await this.resumeSession(sessionId, tracker.streamId, tracker.lastSeq);
-      if (!isCurrent() || this.ws !== socket || this.sessionBuffers.get(sessionId) !== held) return;
-      for (const event of tracker.applyResume(resumed)) this.deliverNotification({ jsonrpc: "2.0", ...event });
+      for (const params of result.snapshot.pending_requests ?? [])
+        this.deliverNotification({
+          jsonrpc: "2.0",
+          method: "client_request",
+          params,
+        });
+      const resumed = await this.resumeSession(
+        sessionId,
+        tracker.streamId,
+        tracker.lastSeq,
+      );
+      if (
+        !isCurrent() ||
+        this.ws !== socket ||
+        this.sessionBuffers.get(sessionId) !== held
+      )
+        return;
+      for (const event of tracker.applyResume(resumed))
+        this.deliverNotification({ jsonrpc: "2.0", ...event });
       this.scheduleAck({ session_id: sessionId, seq: tracker.lastSeq });
     } catch (error) {
-      if (retries > 0 && error instanceof JSONRPCError && error.code === -32030 && isCurrent() && this.ws === socket) {
+      if (
+        retries > 0 &&
+        error instanceof JSONRPCError &&
+        error.code === -32030 &&
+        isCurrent() &&
+        this.ws === socket
+      ) {
         await this.synchronizeSession(sessionId, apply, isCurrent, retries - 1);
       } else throw error;
     } finally {
       if (this.sessionBuffers.get(sessionId) === held) {
         this.sessionBuffers.delete(sessionId);
-        if (isCurrent() && this.ws === socket) for (const event of held) this.handleMessage(event);
+        if (isCurrent() && this.ws === socket)
+          for (const event of held) this.handleMessage(event);
       }
     }
   }
@@ -808,11 +933,23 @@ export class RPCClient extends EventEmitter {
   ): Promise<SessionSnapshot> {
     const readCursor = async (streamId?: string, seq = 0) => {
       try {
-        return await this.resumeSession(sessionId, streamId, seq) as ResumeResult & { active_run_id?: string | null };
+        return (await this.resumeSession(
+          sessionId,
+          streamId,
+          seq,
+        )) as ResumeResult & { active_run_id?: string | null };
       } catch (error) {
-        if (!(error instanceof JSONRPCError) || error.code !== -32030) throw error;
-        const data = error.data as { stream_id: string; retained_last_seq: number };
-        return await this.resumeSession(sessionId, data.stream_id, data.retained_last_seq) as ResumeResult & { active_run_id?: string | null };
+        if (!(error instanceof JSONRPCError) || error.code !== -32030)
+          throw error;
+        const data = error.data as {
+          stream_id: string;
+          retained_last_seq: number;
+        };
+        return (await this.resumeSession(
+          sessionId,
+          data.stream_id,
+          data.retained_last_seq,
+        )) as ResumeResult & { active_run_id?: string | null };
       }
     };
     let cursor = await readCursor();
@@ -822,21 +959,41 @@ export class RPCClient extends EventEmitter {
       const items = await this.listAllItems(sessionId);
       const queue = await this.listQueue(sessionId);
       const next = await readCursor(cursor.stream_id, cursor.last_seq);
-      if (next.stream_id === cursor.stream_id && next.last_seq === cursor.last_seq) {
-        const controls = new Set(["tool_approval_requested", "mcp_approval_requested", "elicitation_requested", "run_status", "client_request"]);
+      if (
+        next.stream_id === cursor.stream_id &&
+        next.last_seq === cursor.last_seq
+      ) {
+        const controls = new Set([
+          "tool_approval_requested",
+          "mcp_approval_requested",
+          "elicitation_requested",
+          "run_status",
+          "client_request",
+        ]);
         return {
           active_run_id: next.active_run_id ?? null,
           run_active: !!next.active_run_id,
           snapshot: {
-            stream_id: next.stream_id!, last_seq: next.last_seq ?? 0, items, queue: queue.items,
+            stream_id: next.stream_id!,
+            last_seq: next.last_seq ?? 0,
+            items,
+            queue: queue.items,
             restore_item_controls: false,
-            state_events: held.slice(offset).filter(event => controls.has(event.method)).map(event => ({ method: event.method, params: event.params as Record<string, unknown> })),
+            state_events: held
+              .slice(offset)
+              .filter((event) => controls.has(event.method))
+              .map((event) => ({
+                method: event.method,
+                params: event.params as Record<string, unknown>,
+              })),
           },
         };
       }
       cursor = next;
     }
-    throw new ConnectionClosedError("Session hydration superseded", { permanent: true });
+    throw new ConnectionClosedError("Session hydration superseded", {
+      permanent: true,
+    });
   }
 
   /** Acknowledge applied events so the server can compact its journal. */
@@ -984,6 +1141,22 @@ export class RPCClient extends EventEmitter {
   }
 
   /**
+   * The typeable subset of server functions (`server_call("slash.list")`).
+   * Older servers have no such function; the palette then shows only the
+   * client's own commands.
+   */
+  async listSlashCommands(): Promise<unknown[]> {
+    try {
+      const result = (await this.serverCall("slash.list", {})) as {
+        commands?: unknown;
+      };
+      return Array.isArray(result?.commands) ? result.commands : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Call a server function. An `OPTIONAL_WORKSPACE_READ` extension only
    * receives its centrally resolved read lease when the caller routes an
    * environment — pass `environmentId` (typically `defaultEnvironmentId()`)
@@ -1020,7 +1193,11 @@ export class RPCClient extends EventEmitter {
     if (opts?.workspaceId) params.workspace_id = opts.workspaceId;
     if (opts?.environmentGeneration !== undefined)
       params.environment_generation = opts.environmentGeneration;
-    return this.sendRequest<Record<string, unknown>>("server_call", params, opts);
+    return this.sendRequest<Record<string, unknown>>(
+      "server_call",
+      params,
+      opts,
+    );
   }
 
   // ---------------------------------------------------------------------
@@ -1053,9 +1230,7 @@ export class RPCClient extends EventEmitter {
     if (opts?.safeToolOverrides)
       params.safe_tool_overrides = opts.safeToolOverrides;
     if (opts?.source) params.source = opts.source;
-    return this.submissions.send(
-      "enqueue_message", params,
-    ) as Promise<{
+    return this.submissions.send("enqueue_message", params) as Promise<{
       ok: boolean;
       id?: string;
       depth?: number;
@@ -1102,7 +1277,12 @@ export class RPCClient extends EventEmitter {
     return this.call("cancel_queued_message", {
       session_id: sessionId,
       item_id: itemId,
-    }) as Promise<{ ok: boolean; id?: string; depth?: number; reason?: string }>;
+    }) as Promise<{
+      ok: boolean;
+      id?: string;
+      depth?: number;
+      reason?: string;
+    }>;
   }
 
   // ---------------------------------------------------------------------
@@ -1333,7 +1513,9 @@ export class RPCClient extends EventEmitter {
   }
 
   async setVoiceModel(model: string): Promise<SetVoiceModelResult> {
-    return this.call("set_voice_model", { model }) as Promise<SetVoiceModelResult>;
+    return this.call("set_voice_model", {
+      model,
+    }) as Promise<SetVoiceModelResult>;
   }
 
   // ---------------------------------------------------------------------
@@ -1682,10 +1864,12 @@ export class RPCClient extends EventEmitter {
     if (opts?.source) params.source = opts.source;
     if (opts?.model) params.model = opts.model;
     if (opts?.parentThreadId) params.parent_thread_id = opts.parentThreadId;
-    if (opts?.createdAfter !== undefined) params.created_after = opts.createdAfter;
+    if (opts?.createdAfter !== undefined)
+      params.created_after = opts.createdAfter;
     if (opts?.createdBefore !== undefined)
       params.created_before = opts.createdBefore;
-    if (opts?.updatedAfter !== undefined) params.updated_after = opts.updatedAfter;
+    if (opts?.updatedAfter !== undefined)
+      params.updated_after = opts.updatedAfter;
     if (opts?.updatedBefore !== undefined)
       params.updated_before = opts.updatedBefore;
     if (opts?.limit !== undefined) params.limit = opts.limit;
@@ -1720,10 +1904,12 @@ export class RPCClient extends EventEmitter {
     if (opts?.source) params.source = opts.source;
     if (opts?.model) params.model = opts.model;
     if (opts?.parentThreadId) params.parent_thread_id = opts.parentThreadId;
-    if (opts?.createdAfter !== undefined) params.created_after = opts.createdAfter;
+    if (opts?.createdAfter !== undefined)
+      params.created_after = opts.createdAfter;
     if (opts?.createdBefore !== undefined)
       params.created_before = opts.createdBefore;
-    if (opts?.updatedAfter !== undefined) params.updated_after = opts.updatedAfter;
+    if (opts?.updatedAfter !== undefined)
+      params.updated_after = opts.updatedAfter;
     if (opts?.updatedBefore !== undefined)
       params.updated_before = opts.updatedBefore;
     if (opts?.limit !== undefined) params.limit = opts.limit;
@@ -1846,7 +2032,10 @@ export class RPCClient extends EventEmitter {
     path: string,
     opts?: { recursive?: boolean; pollIntervalMs?: number },
   ): Promise<FsWatchResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, path };
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      path,
+    };
     if (opts?.recursive !== undefined) params.recursive = opts.recursive;
     if (opts?.pollIntervalMs !== undefined)
       params.poll_interval_ms = opts.pollIntervalMs;
@@ -1980,54 +2169,67 @@ export class RPCClient extends EventEmitter {
     environmentId: string,
     opts?: { path?: string; maxDepth?: number },
   ): Promise<GitListRepositoriesResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId }
-    if (opts?.path !== undefined) params.path = opts.path
-    if (opts?.maxDepth !== undefined) params.max_depth = opts.maxDepth
+    const params: Record<string, unknown> = { environment_id: environmentId };
+    if (opts?.path !== undefined) params.path = opts.path;
+    if (opts?.maxDepth !== undefined) params.max_depth = opts.maxDepth;
     return this.call(
       "git_list_repositories",
       params as unknown as RpcMethodMap["git_list_repositories"]["params"],
-    ) as Promise<GitListRepositoriesResult>
+    ) as Promise<GitListRepositoriesResult>;
   }
 
   async gitStatus(
     environmentId: string,
     repo: string,
-    opts?: { includeUntracked?: boolean; includeIgnored?: boolean; paths?: string[] },
+    opts?: {
+      includeUntracked?: boolean;
+      includeIgnored?: boolean;
+      paths?: string[];
+    },
   ): Promise<GitStatusResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (opts?.includeUntracked !== undefined) params.include_untracked = opts.includeUntracked
-    if (opts?.includeIgnored !== undefined) params.include_ignored = opts.includeIgnored
-    if (opts?.paths !== undefined) params.paths = opts.paths
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (opts?.includeUntracked !== undefined)
+      params.include_untracked = opts.includeUntracked;
+    if (opts?.includeIgnored !== undefined)
+      params.include_ignored = opts.includeIgnored;
+    if (opts?.paths !== undefined) params.paths = opts.paths;
     return this.call(
       "git_status",
       params as unknown as RpcMethodMap["git_status"]["params"],
-    ) as Promise<GitStatusResult>
+    ) as Promise<GitStatusResult>;
   }
 
   async gitDiff(
     environmentId: string,
     repo: string,
     opts?: {
-      mode?: GitDiffMode
-      paths?: string[]
-      contextLines?: number
-      fromRev?: string
-      toRev?: string
-      includeUntracked?: boolean
+      mode?: GitDiffMode;
+      paths?: string[];
+      contextLines?: number;
+      fromRev?: string;
+      toRev?: string;
+      includeUntracked?: boolean;
     },
   ): Promise<GitDiffResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (opts?.mode !== undefined) params.mode = opts.mode
-    if (opts?.paths !== undefined) params.paths = opts.paths
-    if (opts?.contextLines !== undefined) params.context_lines = opts.contextLines
-    if (opts?.fromRev !== undefined) params.from_rev = opts.fromRev
-    if (opts?.toRev !== undefined) params.to_rev = opts.toRev
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (opts?.mode !== undefined) params.mode = opts.mode;
+    if (opts?.paths !== undefined) params.paths = opts.paths;
+    if (opts?.contextLines !== undefined)
+      params.context_lines = opts.contextLines;
+    if (opts?.fromRev !== undefined) params.from_rev = opts.fromRev;
+    if (opts?.toRev !== undefined) params.to_rev = opts.toRev;
     if (opts?.includeUntracked !== undefined)
-      params.include_untracked = opts.includeUntracked
+      params.include_untracked = opts.includeUntracked;
     return this.call(
       "git_diff",
       params as unknown as RpcMethodMap["git_diff"]["params"],
-    ) as Promise<GitDiffResult>
+    ) as Promise<GitDiffResult>;
   }
 
   async gitLog(
@@ -2035,15 +2237,18 @@ export class RPCClient extends EventEmitter {
     repo: string,
     opts?: { rev?: string; maxCount?: number; skip?: number; paths?: string[] },
   ): Promise<GitLogResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (opts?.rev !== undefined) params.rev = opts.rev
-    if (opts?.maxCount !== undefined) params.max_count = opts.maxCount
-    if (opts?.skip !== undefined) params.skip = opts.skip
-    if (opts?.paths !== undefined) params.paths = opts.paths
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (opts?.rev !== undefined) params.rev = opts.rev;
+    if (opts?.maxCount !== undefined) params.max_count = opts.maxCount;
+    if (opts?.skip !== undefined) params.skip = opts.skip;
+    if (opts?.paths !== undefined) params.paths = opts.paths;
     return this.call(
       "git_log",
       params as unknown as RpcMethodMap["git_log"]["params"],
-    ) as Promise<GitLogResult>
+    ) as Promise<GitLogResult>;
   }
 
   async gitListBranches(
@@ -2051,19 +2256,25 @@ export class RPCClient extends EventEmitter {
     repo: string,
     includeRemote?: boolean,
   ): Promise<GitListBranchesResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (includeRemote !== undefined) params.include_remote = includeRemote
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (includeRemote !== undefined) params.include_remote = includeRemote;
     return this.call(
       "git_list_branches",
       params as unknown as RpcMethodMap["git_list_branches"]["params"],
-    ) as Promise<GitListBranchesResult>
+    ) as Promise<GitListBranchesResult>;
   }
 
-  async gitListWorktrees(environmentId: string, repo: string): Promise<GitListWorktreesResult> {
+  async gitListWorktrees(
+    environmentId: string,
+    repo: string,
+  ): Promise<GitListWorktreesResult> {
     return this.call("git_list_worktrees", {
       environment_id: environmentId,
       repo,
-    }) as Promise<GitListWorktreesResult>
+    }) as Promise<GitListWorktreesResult>;
   }
 
   async gitConflicts(
@@ -2071,12 +2282,15 @@ export class RPCClient extends EventEmitter {
     repo: string,
     paths?: string[],
   ): Promise<GitConflictsResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (paths !== undefined) params.paths = paths
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (paths !== undefined) params.paths = paths;
     return this.call(
       "git_conflicts",
       params as unknown as RpcMethodMap["git_conflicts"]["params"],
-    ) as Promise<GitConflictsResult>
+    ) as Promise<GitConflictsResult>;
   }
 
   async gitStage(
@@ -2086,8 +2300,12 @@ export class RPCClient extends EventEmitter {
   ): Promise<GitStageResult> {
     return this.call(
       "git_stage",
-      gitSelectionParams(environmentId, repo, selection) as unknown as RpcMethodMap["git_stage"]["params"],
-    ) as Promise<GitStageResult>
+      gitSelectionParams(
+        environmentId,
+        repo,
+        selection,
+      ) as unknown as RpcMethodMap["git_stage"]["params"],
+    ) as Promise<GitStageResult>;
   }
 
   async gitUnstage(
@@ -2097,8 +2315,12 @@ export class RPCClient extends EventEmitter {
   ): Promise<GitUnstageResult> {
     return this.call(
       "git_unstage",
-      gitSelectionParams(environmentId, repo, selection) as unknown as RpcMethodMap["git_unstage"]["params"],
-    ) as Promise<GitUnstageResult>
+      gitSelectionParams(
+        environmentId,
+        repo,
+        selection,
+      ) as unknown as RpcMethodMap["git_unstage"]["params"],
+    ) as Promise<GitUnstageResult>;
   }
 
   /**
@@ -2111,31 +2333,41 @@ export class RPCClient extends EventEmitter {
     repo: string,
     selection: GitSelection & { confirmationToken?: string },
   ): Promise<GitDiscardResult> {
-    const params = gitSelectionParams(environmentId, repo, selection)
+    const params = gitSelectionParams(environmentId, repo, selection);
     if (selection.confirmationToken !== undefined) {
-      params.confirmation_token = selection.confirmationToken
+      params.confirmation_token = selection.confirmationToken;
     }
     return this.call(
       "git_discard",
       params as unknown as RpcMethodMap["git_discard"]["params"],
-    ) as Promise<GitDiscardResult>
+    ) as Promise<GitDiscardResult>;
   }
 
   async gitCommit(
     environmentId: string,
     repo: string,
     message: string,
-    opts?: { amend?: boolean; allowEmpty?: boolean; author?: string; confirmationToken?: string },
+    opts?: {
+      amend?: boolean;
+      allowEmpty?: boolean;
+      author?: string;
+      confirmationToken?: string;
+    },
   ): Promise<GitCommitResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo, message }
-    if (opts?.amend !== undefined) params.amend = opts.amend
-    if (opts?.allowEmpty !== undefined) params.allow_empty = opts.allowEmpty
-    if (opts?.author !== undefined) params.author = opts.author
-    if (opts?.confirmationToken !== undefined) params.confirmation_token = opts.confirmationToken
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+      message,
+    };
+    if (opts?.amend !== undefined) params.amend = opts.amend;
+    if (opts?.allowEmpty !== undefined) params.allow_empty = opts.allowEmpty;
+    if (opts?.author !== undefined) params.author = opts.author;
+    if (opts?.confirmationToken !== undefined)
+      params.confirmation_token = opts.confirmationToken;
     return this.call(
       "git_commit",
       params as unknown as RpcMethodMap["git_commit"]["params"],
-    ) as Promise<GitCommitResult>
+    ) as Promise<GitCommitResult>;
   }
 
   async gitCheckout(
@@ -2143,39 +2375,54 @@ export class RPCClient extends EventEmitter {
     repo: string,
     branch: string,
     opts?: {
-      create?: boolean
-      startPoint?: string
-      detach?: boolean
-      discardChanges?: boolean
-      confirmationToken?: string
+      create?: boolean;
+      startPoint?: string;
+      detach?: boolean;
+      discardChanges?: boolean;
+      confirmationToken?: string;
     },
   ): Promise<GitStatusResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo, branch }
-    if (opts?.create !== undefined) params.create = opts.create
-    if (opts?.startPoint !== undefined) params.start_point = opts.startPoint
-    if (opts?.detach !== undefined) params.detach = opts.detach
-    if (opts?.discardChanges !== undefined) params.discard_changes = opts.discardChanges
-    if (opts?.confirmationToken !== undefined) params.confirmation_token = opts.confirmationToken
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+      branch,
+    };
+    if (opts?.create !== undefined) params.create = opts.create;
+    if (opts?.startPoint !== undefined) params.start_point = opts.startPoint;
+    if (opts?.detach !== undefined) params.detach = opts.detach;
+    if (opts?.discardChanges !== undefined)
+      params.discard_changes = opts.discardChanges;
+    if (opts?.confirmationToken !== undefined)
+      params.confirmation_token = opts.confirmationToken;
     return this.call(
       "git_checkout",
       params as unknown as RpcMethodMap["git_checkout"]["params"],
-    ) as Promise<GitStatusResult>
+    ) as Promise<GitStatusResult>;
   }
 
   async gitReset(
     environmentId: string,
     repo: string,
-    opts?: { mode?: GitResetMode; rev?: string; paths?: string[]; confirmationToken?: string },
+    opts?: {
+      mode?: GitResetMode;
+      rev?: string;
+      paths?: string[];
+      confirmationToken?: string;
+    },
   ): Promise<GitStatusResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (opts?.mode !== undefined) params.mode = opts.mode
-    if (opts?.rev !== undefined) params.rev = opts.rev
-    if (opts?.paths !== undefined) params.paths = opts.paths
-    if (opts?.confirmationToken !== undefined) params.confirmation_token = opts.confirmationToken
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (opts?.mode !== undefined) params.mode = opts.mode;
+    if (opts?.rev !== undefined) params.rev = opts.rev;
+    if (opts?.paths !== undefined) params.paths = opts.paths;
+    if (opts?.confirmationToken !== undefined)
+      params.confirmation_token = opts.confirmationToken;
     return this.call(
       "git_reset",
       params as unknown as RpcMethodMap["git_reset"]["params"],
-    ) as Promise<GitStatusResult>
+    ) as Promise<GitStatusResult>;
   }
 
   async gitFetch(
@@ -2183,14 +2430,17 @@ export class RPCClient extends EventEmitter {
     repo: string,
     opts?: { remote?: string; refspec?: string; prune?: boolean },
   ): Promise<GitFetchResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (opts?.remote !== undefined) params.remote = opts.remote
-    if (opts?.refspec !== undefined) params.refspec = opts.refspec
-    if (opts?.prune !== undefined) params.prune = opts.prune
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (opts?.remote !== undefined) params.remote = opts.remote;
+    if (opts?.refspec !== undefined) params.refspec = opts.refspec;
+    if (opts?.prune !== undefined) params.prune = opts.prune;
     return this.call(
       "git_fetch",
       params as unknown as RpcMethodMap["git_fetch"]["params"],
-    ) as Promise<GitFetchResult>
+    ) as Promise<GitFetchResult>;
   }
 
   async gitPull(
@@ -2198,39 +2448,47 @@ export class RPCClient extends EventEmitter {
     repo: string,
     opts?: { remote?: string; refspec?: string; rebase?: boolean },
   ): Promise<GitPullResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (opts?.remote !== undefined) params.remote = opts.remote
-    if (opts?.refspec !== undefined) params.refspec = opts.refspec
-    if (opts?.rebase !== undefined) params.rebase = opts.rebase
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (opts?.remote !== undefined) params.remote = opts.remote;
+    if (opts?.refspec !== undefined) params.refspec = opts.refspec;
+    if (opts?.rebase !== undefined) params.rebase = opts.rebase;
     return this.call(
       "git_pull",
       params as unknown as RpcMethodMap["git_pull"]["params"],
-    ) as Promise<GitPullResult>
+    ) as Promise<GitPullResult>;
   }
 
   async gitPush(
     environmentId: string,
     repo: string,
     opts?: {
-      remote?: string
-      refspec?: string
-      force?: boolean
-      forceWithLease?: boolean
-      setUpstream?: boolean
-      confirmationToken?: string
+      remote?: string;
+      refspec?: string;
+      force?: boolean;
+      forceWithLease?: boolean;
+      setUpstream?: boolean;
+      confirmationToken?: string;
     },
   ): Promise<GitPushResult> {
-    const params: Record<string, unknown> = { environment_id: environmentId, repo }
-    if (opts?.remote !== undefined) params.remote = opts.remote
-    if (opts?.refspec !== undefined) params.refspec = opts.refspec
-    if (opts?.force !== undefined) params.force = opts.force
-    if (opts?.forceWithLease !== undefined) params.force_with_lease = opts.forceWithLease
-    if (opts?.setUpstream !== undefined) params.set_upstream = opts.setUpstream
-    if (opts?.confirmationToken !== undefined) params.confirmation_token = opts.confirmationToken
+    const params: Record<string, unknown> = {
+      environment_id: environmentId,
+      repo,
+    };
+    if (opts?.remote !== undefined) params.remote = opts.remote;
+    if (opts?.refspec !== undefined) params.refspec = opts.refspec;
+    if (opts?.force !== undefined) params.force = opts.force;
+    if (opts?.forceWithLease !== undefined)
+      params.force_with_lease = opts.forceWithLease;
+    if (opts?.setUpstream !== undefined) params.set_upstream = opts.setUpstream;
+    if (opts?.confirmationToken !== undefined)
+      params.confirmation_token = opts.confirmationToken;
     return this.call(
       "git_push",
       params as unknown as RpcMethodMap["git_push"]["params"],
-    ) as Promise<GitPushResult>
+    ) as Promise<GitPushResult>;
   }
 
   /**
@@ -2294,7 +2552,9 @@ export class RPCClient extends EventEmitter {
       (params as { function?: unknown } | undefined)?.function === "compact";
     const timeoutMs =
       opts.timeoutMs === undefined
-        ? (isCompaction ? null : this.policy.rpcTimeoutMs)
+        ? isCompaction
+          ? null
+          : this.policy.rpcTimeoutMs
         : opts.timeoutMs;
 
     return new Promise<Result>((resolve, reject) => {
@@ -2346,14 +2606,23 @@ export class RPCClient extends EventEmitter {
     // Handle server events (notifications)
     if ("method" in message && !("id" in message)) {
       const notification = message as JSONRPCNotification;
-      const sessionId = (notification.params as { session_id?: string })?.session_id;
+      const sessionId = (notification.params as { session_id?: string })
+        ?.session_id;
       if (sessionId && this.pendingNewRun) {
         this.pendingNewRun.push(notification);
         return;
       }
-      if (sessionId && this.sessionSelection > 0 && sessionId !== this.activeSessionId) return;
+      if (
+        sessionId &&
+        this.sessionSelection > 0 &&
+        sessionId !== this.activeSessionId
+      )
+        return;
       const held = sessionId && this.sessionBuffers.get(sessionId);
-      if (held) { held.push(notification); return; }
+      if (held) {
+        held.push(notification);
+        return;
+      }
       // Sequence-aware dedup / gap recovery: drops duplicate deliveries
       // (a replayed client_request must not re-execute the function),
       // backfills gaps via resume_session, and reports unrecoverable
@@ -2367,7 +2636,9 @@ export class RPCClient extends EventEmitter {
         return;
       }
       this.deliverNotification(notification);
-      this.scheduleAck(notification.params as Record<string, unknown> | undefined);
+      this.scheduleAck(
+        notification.params as Record<string, unknown> | undefined,
+      );
       return;
     }
 
@@ -2378,18 +2649,29 @@ export class RPCClient extends EventEmitter {
   private deliverNotification(notification: JSONRPCNotification): void {
     // Check if it's a client_request notification (special case)
     if (notification.method === "client_request") {
-      const sessionId = (notification.params as { session_id?: string }).session_id;
+      const sessionId = (notification.params as { session_id?: string })
+        .session_id;
       // Leave another session's pending request unanswered. Its authoritative
       // snapshot will restore it when selected; acknowledging it here loses it.
-      if (sessionId && this.activeSessionId && sessionId !== this.activeSessionId) return;
-      const requestId = (notification.params as { request_id: string }).request_id;
+      if (
+        sessionId &&
+        this.activeSessionId &&
+        sessionId !== this.activeSessionId
+      )
+        return;
+      const requestId = (notification.params as { request_id: string })
+        .request_id;
       if (!this.clientResponses.has(requestId)) {
-        const response = this.handleClientRequest(notification).catch((error) => {
-          this.reportResponseFailure(error);
-        });
+        const response = this.handleClientRequest(notification).catch(
+          (error) => {
+            this.reportResponseFailure(error);
+          },
+        );
         this.clientResponses.set(requestId, response);
       } else if (this.responseOutbox.has(requestId)) {
-        void this.flushClientResponse(requestId).catch(error => this.reportResponseFailure(error));
+        void this.flushClientResponse(requestId).catch((error) =>
+          this.reportResponseFailure(error),
+        );
       }
       return;
     }
@@ -2483,12 +2765,24 @@ export class RPCClient extends EventEmitter {
       failure = { code: -32601, message: `Function not found: ${funcName}` };
     } else {
       try {
-        result = await handler({ ...args, request_id, session_id: params.session_id, run_id: params.run_id });
+        result = await handler({
+          ...args,
+          request_id,
+          session_id: params.session_id,
+          run_id: params.run_id,
+        });
       } catch (error) {
-        failure = { code: -32603, message: `Function execution failed: ${String(error)}` };
+        failure = {
+          code: -32603,
+          message: `Function execution failed: ${String(error)}`,
+        };
       }
     }
-    this.responseOutbox.set(request_id, { ok: !failure, result: result as Record<string, unknown>, error: failure });
+    this.responseOutbox.set(request_id, {
+      ok: !failure,
+      result: result as Record<string, unknown>,
+      error: failure,
+    });
     await this.flushClientResponse(request_id);
   }
 
@@ -2501,9 +2795,18 @@ export class RPCClient extends EventEmitter {
     const response = this.responseOutbox.get(requestId);
     if (!response) return;
     try {
-      await this.clientResponse(requestId, response.ok, response.result, response.error);
+      await this.clientResponse(
+        requestId,
+        response.ok,
+        response.result,
+        response.error,
+      );
     } catch (error) {
-      if (error instanceof JSONRPCError && classifyRpcErrorCode(error.code) === "permanent") this.responseOutbox.delete(requestId);
+      if (
+        error instanceof JSONRPCError &&
+        classifyRpcErrorCode(error.code) === "permanent"
+      )
+        this.responseOutbox.delete(requestId);
       throw error;
     }
     this.responseOutbox.delete(requestId);
@@ -2803,25 +3106,25 @@ export type FsTransferProgressPayload = {
 
 /** A repository is always addressed by its `repo` id — never implicitly. */
 export type GitRepository = {
-  repo: string
-  root: string
-  absolute_root: string
-  branch: string | null
-  detached: boolean
-  bare: boolean
-  git_common_dir: string | null
-  is_linked_worktree: boolean
-}
+  repo: string;
+  root: string;
+  absolute_root: string;
+  branch: string | null;
+  detached: boolean;
+  bare: boolean;
+  git_common_dir: string | null;
+  is_linked_worktree: boolean;
+};
 
 export type GitListRepositoriesResult = {
-  environment_id: string
-  path: string
-  repositories: GitRepository[]
-  truncated: boolean
-}
+  environment_id: string;
+  path: string;
+  repositories: GitRepository[];
+  truncated: boolean;
+};
 
-export type GitDiffMode = "worktree" | "staged" | "head" | "range"
-export type GitResetMode = "soft" | "mixed" | "hard"
+export type GitDiffMode = "worktree" | "staged" | "head" | "range";
+export type GitResetMode = "soft" | "mixed" | "hard";
 
 export type GitFileStatus =
   | "unmodified"
@@ -2832,50 +3135,55 @@ export type GitFileStatus =
   | "renamed"
   | "copied"
   | "unmerged"
-  | "unknown"
+  | "unknown";
 
 export type GitStatusEntry = {
-  path: string
-  orig_path: string | null
-  xy: string
-  index_status: GitFileStatus
-  worktree_status: GitFileStatus
-  staged: boolean
-  unstaged: boolean
-  submodule: boolean
-  similarity: number | null
+  path: string;
+  orig_path: string | null;
+  xy: string;
+  index_status: GitFileStatus;
+  worktree_status: GitFileStatus;
+  staged: boolean;
+  unstaged: boolean;
+  submodule: boolean;
+  similarity: number | null;
   unmerged: {
-    base_mode: string
-    ours_mode: string
-    theirs_mode: string
-    worktree_mode: string
-    base_oid: string
-    ours_oid: string
-    theirs_oid: string
-  } | null
-}
+    base_mode: string;
+    ours_mode: string;
+    theirs_mode: string;
+    worktree_mode: string;
+    base_oid: string;
+    ours_oid: string;
+    theirs_oid: string;
+  } | null;
+};
 
 export type GitStatusResult = {
-  environment_id: string
-  repo: string
-  head: { detached: boolean; unborn: boolean; branch: string | null; oid: string | null }
-  upstream: { name: string; ahead: number; behind: number } | null
-  entries: GitStatusEntry[]
-  untracked: string[]
-  ignored: string[]
-  conflicted: string[]
-  stash_count: number
-  clean: boolean
-  state: "clean" | "merging" | "rebasing" | "cherry_picking" | "reverting"
-}
+  environment_id: string;
+  repo: string;
+  head: {
+    detached: boolean;
+    unborn: boolean;
+    branch: string | null;
+    oid: string | null;
+  };
+  upstream: { name: string; ahead: number; behind: number } | null;
+  entries: GitStatusEntry[];
+  untracked: string[];
+  ignored: string[];
+  conflicted: string[];
+  stash_count: number;
+  clean: boolean;
+  state: "clean" | "merging" | "rebasing" | "cherry_picking" | "reverting";
+};
 
 /** One line of a hunk. `origin` is structural — never a rendered prefix. */
 export type GitDiffLine = {
-  origin: "context" | "add" | "delete" | "no_newline"
-  content: string
-  old_lineno: number | null
-  new_lineno: number | null
-}
+  origin: "context" | "add" | "delete" | "no_newline";
+  content: string;
+  old_lineno: number | null;
+  new_lineno: number | null;
+};
 
 /**
  * `hunk_id` is content-addressed over the hunk body and the diff scope, so
@@ -2883,231 +3191,252 @@ export type GitDiffLine = {
  * `reason: "hunk_not_found"`) instead of applying somewhere unintended.
  */
 export type GitDiffHunk = {
-  hunk_id: string
-  index: number
-  header: string
-  section_heading: string
-  old_start: number
-  old_lines: number
-  new_start: number
-  new_lines: number
-  lines: GitDiffLine[]
-}
+  hunk_id: string;
+  index: number;
+  header: string;
+  section_heading: string;
+  old_start: number;
+  old_lines: number;
+  new_start: number;
+  new_lines: number;
+  lines: GitDiffLine[];
+};
 
 export type GitDiffFile = {
-  path: string
-  old_path: string | null
-  change: GitFileStatus
-  old_mode: string
-  new_mode: string
-  old_oid: string
-  new_oid: string
-  similarity: number | null
-  binary: boolean
-  added_lines: number | null
-  deleted_lines: number | null
-  unmerged: boolean
-  submodule: boolean
+  path: string;
+  old_path: string | null;
+  change: GitFileStatus;
+  old_mode: string;
+  new_mode: string;
+  old_oid: string;
+  new_oid: string;
+  similarity: number | null;
+  binary: boolean;
+  added_lines: number | null;
+  deleted_lines: number | null;
+  unmerged: boolean;
+  submodule: boolean;
   /** False for binary blobs, submodules and unmerged paths: stage whole. */
-  hunk_selectable: boolean
-  hunks: GitDiffHunk[]
-}
+  hunk_selectable: boolean;
+  hunks: GitDiffHunk[];
+};
 
 export type GitDiffResult = {
-  environment_id: string
-  repo: string
-  mode: GitDiffMode
-  context_lines: number
-  files: GitDiffFile[]
-}
+  environment_id: string;
+  repo: string;
+  mode: GitDiffMode;
+  context_lines: number;
+  files: GitDiffFile[];
+};
 
 export type GitCommitSummary = {
-  oid: string
-  short_oid: string
-  parents: string[]
-  author_name: string
-  author_email: string
-  authored_at: string
-  committer_name: string
-  committer_email: string
-  committed_at: string
-  refs: string[]
-  subject: string
-  body: string
-}
+  oid: string;
+  short_oid: string;
+  parents: string[];
+  author_name: string;
+  author_email: string;
+  authored_at: string;
+  committer_name: string;
+  committer_email: string;
+  committed_at: string;
+  refs: string[];
+  subject: string;
+  body: string;
+};
 
-export type GitLogResult = { environment_id: string; repo: string; commits: GitCommitSummary[] }
+export type GitLogResult = {
+  environment_id: string;
+  repo: string;
+  commits: GitCommitSummary[];
+};
 
 export type GitBranch = {
-  ref: string
-  name: string
-  oid: string
-  remote: boolean
-  upstream: string | null
-  upstream_remote: string | null
-  current: boolean
-  worktree_path: string | null
-  category: "branch" | "worker"
-}
+  ref: string;
+  name: string;
+  oid: string;
+  remote: boolean;
+  upstream: string | null;
+  upstream_remote: string | null;
+  current: boolean;
+  worktree_path: string | null;
+  category: "branch" | "worker";
+};
 
-export type GitListBranchesResult = { environment_id: string; repo: string; branches: GitBranch[] }
+export type GitListBranchesResult = {
+  environment_id: string;
+  repo: string;
+  branches: GitBranch[];
+};
 
 export type GitWorktree = {
-  path: string
-  head: string | null
-  branch: string | null
-  detached: boolean
-  bare: boolean
-  locked: boolean
-  lock_reason: string | null
-  prunable: boolean
+  path: string;
+  head: string | null;
+  branch: string | null;
+  detached: boolean;
+  bare: boolean;
+  locked: boolean;
+  lock_reason: string | null;
+  prunable: boolean;
   /** Workspace-relative `repo` id, or null when outside the workspace. */
-  repo: string | null
+  repo: string | null;
   /** Worker worktrees live in the framework scratch area and are read-only here. */
-  accessible: boolean
-  inaccessible_reason: "outside_workspace" | null
-  category: "worktree" | "worker"
-}
+  accessible: boolean;
+  inaccessible_reason: "outside_workspace" | null;
+  category: "worktree" | "worker";
+};
 
 export type GitListWorktreesResult = {
-  environment_id: string
-  repo: string
-  worktrees: GitWorktree[]
-}
+  environment_id: string;
+  repo: string;
+  worktrees: GitWorktree[];
+};
 
 /** A conflict region delimited by git's fixed ASCII markers. */
 export type GitConflictRegion = {
-  start_line: number
-  end_line: number
-  ours_label: string
-  base_label: string | null
-  theirs_label: string
-  ours: string[]
-  base: string[] | null
-  theirs: string[]
-}
+  start_line: number;
+  end_line: number;
+  ours_label: string;
+  base_label: string | null;
+  theirs_label: string;
+  ours: string[];
+  base: string[] | null;
+  theirs: string[];
+};
 
 export type GitConflict = {
-  path: string
-  stages: Partial<Record<"base" | "ours" | "theirs", { mode: string; oid: string }>>
-  regions: GitConflictRegion[]
-  regions_available: boolean
-}
+  path: string;
+  stages: Partial<
+    Record<"base" | "ours" | "theirs", { mode: string; oid: string }>
+  >;
+  regions: GitConflictRegion[];
+  regions_available: boolean;
+};
 
 export type GitConflictsResult = {
-  environment_id: string
-  repo: string
-  state: GitStatusResult["state"]
-  conflicts: GitConflict[]
-}
+  environment_id: string;
+  repo: string;
+  state: GitStatusResult["state"];
+  conflicts: GitConflict[];
+};
 
 /** A hunk-level selection: `{ path, hunk_id }` from a `git_diff` result. */
-export type GitHunkRef = { path: string; hunk_id: string }
+export type GitHunkRef = { path: string; hunk_id: string };
 
 export type GitSelection = {
-  paths?: string[]
-  hunks?: GitHunkRef[]
-  contextLines?: number
+  paths?: string[];
+  hunks?: GitHunkRef[];
+  contextLines?: number;
   /** Which git_diff view the `hunks` came from (git_stage only). */
-  mode?: "worktree" | "head"
-}
+  mode?: "worktree" | "head";
+};
 
 export function gitSelectionParams(
   environmentId: string,
   repo: string,
   selection: GitSelection,
 ): Record<string, unknown> {
-  const params: Record<string, unknown> = { environment_id: environmentId, repo }
-  if (selection.paths !== undefined) params.paths = selection.paths
-  if (selection.hunks !== undefined) params.hunks = selection.hunks
-  if (selection.contextLines !== undefined) params.context_lines = selection.contextLines
-  if (selection.mode !== undefined) params.mode = selection.mode
-  return params
+  const params: Record<string, unknown> = {
+    environment_id: environmentId,
+    repo,
+  };
+  if (selection.paths !== undefined) params.paths = selection.paths;
+  if (selection.hunks !== undefined) params.hunks = selection.hunks;
+  if (selection.contextLines !== undefined)
+    params.context_lines = selection.contextLines;
+  if (selection.mode !== undefined) params.mode = selection.mode;
+  return params;
 }
 
 export type GitStageResult = {
-  environment_id: string
-  repo: string
-  staged_paths: string[]
-  staged_hunks: GitHunkRef[]
-}
+  environment_id: string;
+  repo: string;
+  staged_paths: string[];
+  staged_hunks: GitHunkRef[];
+};
 
 export type GitUnstageResult = {
-  environment_id: string
-  repo: string
-  unstaged_paths: string[]
-  unstaged_hunks: GitHunkRef[]
-}
+  environment_id: string;
+  repo: string;
+  unstaged_paths: string[];
+  unstaged_hunks: GitHunkRef[];
+};
 
 export type GitDiscardResult = {
-  environment_id: string
-  repo: string
-  discarded_paths: string[]
-  discarded_hunks: GitHunkRef[]
-}
+  environment_id: string;
+  repo: string;
+  discarded_paths: string[];
+  discarded_hunks: GitHunkRef[];
+};
 
 export type GitCommitResult = {
-  environment_id: string
-  repo: string
-  oid: string
-  amended: boolean
-}
+  environment_id: string;
+  repo: string;
+  oid: string;
+  amended: boolean;
+};
 
 export type GitRefUpdate = {
-  ref: string
-  old_oid: string | null
-  new_oid: string | null
-  change: "created" | "updated" | "deleted"
-}
+  ref: string;
+  old_oid: string | null;
+  new_oid: string | null;
+  change: "created" | "updated" | "deleted";
+};
 
 export type GitFetchResult = {
-  environment_id: string
-  repo: string
-  remote: string | null
-  updated_refs: GitRefUpdate[]
-}
+  environment_id: string;
+  repo: string;
+  remote: string | null;
+  updated_refs: GitRefUpdate[];
+};
 
 export type GitPullResult = {
-  environment_id: string
-  repo: string
-  ok: boolean
-  state: GitStatusResult["state"]
-  conflicted: string[]
-  head: GitStatusResult["head"]
-}
+  environment_id: string;
+  repo: string;
+  ok: boolean;
+  state: GitStatusResult["state"];
+  conflicted: string[];
+  head: GitStatusResult["head"];
+};
 
 /**
  * `status` comes from `git push --porcelain`'s leading flag character;
  * `summary_raw` is display text and is never parsed.
  */
 export type GitPushUpdate = {
-  flag: string
-  status: "fast_forward" | "forced_update" | "deleted" | "created" | "rejected" | "up_to_date" | "unknown"
-  rejected: boolean
-  source_ref: string
-  target_ref: string
-  summary_raw: string
-  reason_raw: string | null
-}
+  flag: string;
+  status:
+    | "fast_forward"
+    | "forced_update"
+    | "deleted"
+    | "created"
+    | "rejected"
+    | "up_to_date"
+    | "unknown";
+  rejected: boolean;
+  source_ref: string;
+  target_ref: string;
+  summary_raw: string;
+  reason_raw: string | null;
+};
 
 export type GitPushResult = {
-  environment_id: string
-  repo: string
-  ok: boolean
-  remote_url: string | null
-  updates: GitPushUpdate[]
-  rejected: string[]
-}
+  environment_id: string;
+  repo: string;
+  ok: boolean;
+  remote_url: string | null;
+  updates: GitPushUpdate[];
+  rejected: string[];
+};
 
 /** Payload of the `git_operation_progress` server notification. */
 export type GitOperationProgressPayload = {
-  environment_id: string
-  operation_id: string
-  repo: string
-  operation: "fetch" | "pull" | "push"
-  phase: "started" | "completed" | "failed"
-  detail?: Record<string, unknown>
-}
+  environment_id: string;
+  operation_id: string;
+  repo: string;
+  operation: "fetch" | "pull" | "push";
+  phase: "started" | "completed" | "failed";
+  detail?: Record<string, unknown>;
+};
 
 export interface SessionSnapshot {
   active_run_id: string | null;

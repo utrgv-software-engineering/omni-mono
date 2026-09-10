@@ -9,17 +9,14 @@ import {
 } from "../store/appStore.js";
 import { Theme } from "../theme.js";
 import type { Screen } from "./StatusBar.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 // Browser-style tabs on the terminal's top row: where you ARE. Solid
 // blocks on a filled bar — active tab bright, inactive dim — with the
 // decision badge on the chat tab (decisions render there). The bottom
 // StatusBar carries what's HAPPENING; each bar has exactly one job.
-const BAR_BG = Theme.barBg;
-const ACTIVE_TAB_BG = Theme.barActiveBg;
-const ACTIVE_TAB_FG = Theme.barActiveFg;
-const INACTIVE_FG = Theme.textSecondary;
 
-export const TopTabs = React.memo<{
+export const TopTabs = themedMemo<{
   screen: Screen;
   /** `*` = changed since last visited (the browser-unread dot). */
   unread: Record<Screen, boolean>;
@@ -73,15 +70,17 @@ export const TopTabs = React.memo<{
       {labels.map((label) => (
         <Text
           key={label.id}
-          backgroundColor={screen === label.id ? ACTIVE_TAB_BG : BAR_BG}
-          color={screen === label.id ? ACTIVE_TAB_FG : INACTIVE_FG}
+          backgroundColor={
+            screen === label.id ? Theme.barActiveBg : Theme.barBg
+          }
+          color={screen === label.id ? Theme.barActiveFg : Theme.textSecondary}
           bold={screen === label.id}
         >
           {label.text}
         </Text>
       ))}
-      <Text backgroundColor={BAR_BG}>{filler}</Text>
-      <Text backgroundColor={BAR_BG} color={Theme.textChrome}>
+      <Text backgroundColor={Theme.barBg}>{filler}</Text>
+      <Text backgroundColor={Theme.barBg} color={Theme.textChrome}>
         {hint}
       </Text>
     </Box>

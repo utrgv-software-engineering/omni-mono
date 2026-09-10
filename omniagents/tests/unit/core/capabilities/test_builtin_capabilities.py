@@ -147,9 +147,6 @@ def test_notebook_readonly_and_slash_builtins(tmp_path):
     sh_ro_tools = {t.name for t in proj.capability_registry["shell_readonly"].tools()}
     assert sh_ro_tools == {"execute_bash"}
 
-    slash_tools = {t.name for t in proj.capability_registry["slash"].tools()}
-    assert slash_tools == {"dispatch"}
-
 
 def test_recap_and_compact_control_packs(tmp_path):
     """The recap/compact control-plane packs ship as builtins: no tools,

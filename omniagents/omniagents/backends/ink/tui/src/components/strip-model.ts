@@ -112,9 +112,15 @@ export function buildStripTokens(state: StripState): StripToken[] {
     });
   }
 
-  if (state.goal && (state.goal.status === "active" || state.goal.status === "paused")) {
+  if (
+    state.goal &&
+    (state.goal.status === "active" || state.goal.status === "paused")
+  ) {
     const suffix = state.goal.status === "paused" ? " (paused)" : "";
-    tokens.push({ text: `goal ${short(state.goal.goal)}${suffix}`, tone: "dim" });
+    tokens.push({
+      text: `goal ${short(state.goal.goal)}${suffix}`,
+      tone: "dim",
+    });
   }
   if (state.wakeup && state.wakeup.status === "active") {
     tokens.push({
@@ -128,141 +134,4 @@ export function buildStripTokens(state: StripState): StripToken[] {
   }
 
   return tokens;
-}
-
-export type MenuPanelId =
-  | "tasks"
-  | "workers"
-  | "queue"
-  | "jobs"
-  | "notifications"
-  | "git"
-  | "terminal"
-  | "models"
-  | "commands"
-  | "artifacts";
-
-export type PanelMenuRow = {
-  /** Mnemonic key that opens the panel from the menu. */
-  key: string;
-  panel: MenuPanelId;
-  label: string;
-  /** Live summary — the same facts the strip shows, per panel. */
-  summary: string | null;
-  /** Something in this panel needs attention; sorts to the top. */
-  warn: boolean;
-};
-
-/**
- * Rows for the which-key panel menu (ctrl+a). Every panel is always
- * listed — the menu doubles as the discoverability surface for the
- * direct chords — with live summaries, and panels in an attention state
- * sort first so "show me the problem" is always the first key listed.
- */
-export function buildPanelMenuRows(state: StripState): PanelMenuRow[] {
-  const total = state.tasks.length;
-  const doneTasks = state.tasks.filter((t) => t.status === "completed").length;
-  const blocked = state.tasks.filter((t) => t.status === "blocked").length;
-  const runningWorkers = state.subagents.filter(
-    (w) => w.kind === "worker" && w.status === "running",
-  ).length;
-  const failedWorkers = state.subagents.filter(
-    (w) => w.kind === "worker" && w.status === "error",
-  ).length;
-  const runningJobs = state.bashJobs.filter((j) => j.running).length;
-  const failedJobs = state.bashJobs.filter(
-    (j) => !j.running && j.exit_code !== 0 && j.exit_code !== null,
-  ).length;
-
-  const join = (parts: Array<string | null>): string | null => {
-    const kept = parts.filter((p): p is string => p !== null);
-    return kept.length > 0 ? kept.join(" · ") : null;
-  };
-
-  const rows: PanelMenuRow[] = [
-    {
-      key: "t",
-      panel: "tasks",
-      label: "tasks",
-      summary: join([
-        total > 0 ? `${doneTasks}/${total}` : null,
-        blocked > 0 ? `${blocked} blocked` : null,
-      ]),
-      warn: blocked > 0,
-    },
-    {
-      key: "w",
-      panel: "workers",
-      label: "workers",
-      summary: join([
-        runningWorkers > 0 ? `${runningWorkers} running` : null,
-        failedWorkers > 0 ? `${failedWorkers} failed` : null,
-      ]),
-      warn: failedWorkers > 0,
-    },
-    {
-      key: "q",
-      panel: "queue",
-      label: "queue",
-      summary:
-        state.queuedMessages.length > 0
-          ? `${state.queuedMessages.length} queued`
-          : null,
-      warn: false,
-    },
-    {
-      key: "j",
-      panel: "jobs",
-      label: "jobs",
-      summary: join([
-        runningJobs > 0 ? `${runningJobs} running` : null,
-        failedJobs > 0 ? `${failedJobs} failed` : null,
-      ]),
-      warn: failedJobs > 0,
-    },
-    {
-      key: "n",
-      panel: "notifications",
-      label: "notes",
-      summary:
-        state.notificationCount > 0
-          ? plural(state.notificationCount, "note")
-          : null,
-      warn: false,
-    },
-    {
-      key: "g",
-      panel: "git",
-      label: "git",
-      summary: state.runDiff
-        ? `${plural(state.runDiff.stats.files_changed, "file")} edited +${state.runDiff.stats.additions} −${state.runDiff.stats.deletions}`
-        : null,
-      warn: false,
-    },
-    {
-      key: "s",
-      panel: "terminal",
-      label: "shell",
-      summary: null,
-      warn: false,
-    },
-    { key: "m", panel: "models", label: "models", summary: null, warn: false },
-    {
-      key: "a",
-      panel: "artifacts",
-      label: "artifacts",
-      summary:
-        state.artifactCount > 0 ? plural(state.artifactCount, "artifact") : null,
-      warn: false,
-    },
-    {
-      key: "c",
-      panel: "commands",
-      label: "commands",
-      summary: null,
-      warn: false,
-    },
-  ];
-
-  return [...rows].sort((a, b) => Number(b.warn) - Number(a.warn));
 }

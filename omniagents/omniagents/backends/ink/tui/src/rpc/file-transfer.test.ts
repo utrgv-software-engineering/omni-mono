@@ -6,13 +6,11 @@ import type { RPCClient } from "./client.js";
 function fixture(text = "hello") {
   const bytes = Buffer.from(text);
   const api = {
-    fsDownloadOpen: vi
-      .fn()
-      .mockResolvedValue({
-        transfer_id: "transfer",
-        size: bytes.length,
-        sha256: createHash("sha256").update(bytes).digest("hex"),
-      }),
+    fsDownloadOpen: vi.fn().mockResolvedValue({
+      transfer_id: "transfer",
+      size: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    }),
     fsDownloadRead: vi
       .fn()
       .mockImplementation(async (_env, _id, { offset, length }) => {
@@ -96,12 +94,10 @@ it.each(["chunk", "cancel", "invalid-size"])(
   "aborts an upload on %s without committing",
   async (kind) => {
     const api = {
-      fsUploadOpen: vi
-        .fn()
-        .mockResolvedValue({
-          transfer_id: "upload",
-          chunk_size: kind === "invalid-size" ? Infinity : 2,
-        }),
+      fsUploadOpen: vi.fn().mockResolvedValue({
+        transfer_id: "upload",
+        chunk_size: kind === "invalid-size" ? Infinity : 2,
+      }),
       fsUploadChunk: vi.fn().mockRejectedValue(new Error("disconnected")),
       fsUploadCommit: vi.fn(),
       fsUploadAbort: vi.fn().mockResolvedValue(true),
@@ -145,11 +141,36 @@ it.each([true, false])(
       "old",
     );
     if (matches)
-      await expect(result).resolves.toBe(
-        createHash("sha256").update("saved").digest("hex"),
-      );
-    else await expect(result).rejects.toThrow("Save not confirmed");
+      await expect(result).resolves.toEqual({
+        kind: "saved",
+        sha: createHash("sha256").update("saved").digest("hex"),
+      });
+    else
+      await expect(result).resolves.toEqual({
+        kind: "reloaded",
+        sha: createHash("sha256").update("other").digest("hex"),
+        bytes: Buffer.from("other"),
+      });
     expect(write.fsUploadCommit).toHaveBeenCalledOnce();
     expect(write.fsUploadAbort).not.toHaveBeenCalled();
   },
 );
+
+it("surfaces the transport error when a lost commit cannot be verified", async () => {
+  const { api, client } = fixture("saved");
+  Object.assign(api, {
+    fsUploadOpen: vi
+      .fn()
+      .mockResolvedValue({ transfer_id: "upload", chunk_size: 10 }),
+    fsUploadChunk: vi.fn().mockResolvedValue({}),
+    fsUploadCommit: vi
+      .fn()
+      .mockRejectedValue(new ConnectionClosedError("lost reply")),
+    fsUploadAbort: vi.fn(),
+    waitUntilReady: vi.fn().mockRejectedValue(new Error("no reconnect")),
+  });
+  await expect(
+    uploadFile(client, "env", "file", Buffer.from("saved"), "old"),
+  ).rejects.toThrow("lost reply");
+  expect(api.fsDownloadOpen).not.toHaveBeenCalled();
+});

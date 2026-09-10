@@ -914,6 +914,27 @@ Server-side behavior:
 
 Server Functions let clients invoke server-provided capabilities via RPC. This is the default direction JSON-RPC already supports, but the protocol defines a capability listing and a generic dispatch method for consistency with Client Functions.
 
+### Slash commands (`server_call` with `function: "slash.list"`)
+
+A server function is an RPC. The subset a person may *type* is the slash
+catalog, declared explicitly (`@slash_command` next to `@server_function`,
+or a product manifest `slash_commands:` binding) and read with
+`server_call {"function": "slash.list"}`. The result is
+`{"commands": [...]}`, each row carrying `name`, `function` (what to call),
+`description`, `usage`, `args` (`{"kind": "none"}`, `{"kind": "text",
+"field": ...}` or `{"kind": "words", "fields": [...]}`), `aliases`,
+`during_run` and `order`. Clients render only this list in popups and
+`/help`, map the typed line through the row's argument rule (never JSON),
+and refuse an unknown `/name` locally instead of sending it to the model.
+`list_server_functions` below is the full RPC surface and is unchanged.
+
+**Result of running a typed command.** A client shows the result of a
+slash-declared function as command output in the transcript, never as
+the model's words. The result is either a string (the message) or an
+object with a string `message`; an object with only `text` is read as
+its message too. Anything else renders as "Done." A client never dumps
+JSON into the conversation.
+
 ### list_server_functions (client → server)
 Returns metadata for available server functions.
 

@@ -1,6 +1,9 @@
 name: skills
 tools:
   - load_skill
+server_functions:
+  - skills.list
+  - skills.read
 instructions: |
   Skills are modular instruction bundles. The `available_skills` index in
   the system prompt lists names and descriptions; `load_skill("<name>")`

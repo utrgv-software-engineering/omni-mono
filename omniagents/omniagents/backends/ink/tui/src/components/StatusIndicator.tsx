@@ -3,9 +3,10 @@ import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useThinking, useStatus } from "../store/appStore.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 // Animated spinner with status text
-export const StatusIndicator = React.memo(() => {
+export const StatusIndicator = themedMemo(() => {
   const thinking = useThinking();
   const statusObj = useStatus() as unknown as {
     status: string | null;

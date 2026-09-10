@@ -1,4 +1,4 @@
-import { ConnectionClosedError, RpcTimeoutError } from "../rpc/lifecycle.js";
+import { isReplyLost } from "../rpc/lifecycle.js";
 import { useRequestScope } from "../hooks/useRequestScope.js";
 import { WorkspaceView } from "./WorkspaceView.js";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -29,10 +29,16 @@ import {
   type GitFileRow,
 } from "./git-model.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
+import {
+  Clip,
+  Fixed,
+  oneLine,
+  useDrawerBudget,
+} from "./shared/drawer-layout.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
-const MAX_VISIBLE_FILES = 10;
-const DIFF_WINDOW_LINES = 18;
+const MAX_LIST_ROWS = 10;
 const DIFF_SCROLL_PAGE = 12;
 
 type Props = {
@@ -67,7 +73,7 @@ export const GitPanel = (props: Props) => (
   </WorkspaceView>
 );
 
-const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
+const GitPanelContent = themedMemo(({ focused, onUnfocus, client }: Props) => {
   const scope = useRequestScope();
   const operationPending = useRef(false);
   const [repos, setRepos] = useState<GitRepository[]>([]);
@@ -83,6 +89,8 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
   const [diffScroll, setDiffScroll] = useState(0);
+  const diffWindow = useDrawerBudget();
+  const listRows = Math.min(MAX_LIST_ROWS, diffWindow);
   // Write/network op state.
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -330,17 +338,20 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
           setStatusLine(null);
           return;
         }
-        setStatusLine(
-          e instanceof ConnectionClosedError || e instanceof RpcTimeoutError
-            ? `${label}: outcome unknown; refresh status before retrying`
-            : `${label} failed: ${(e as Error).message ?? String(e)}`,
-        );
+        if (isReplyLost(e)) {
+          // Lost reply: re-read server truth instead of guessing. Refetch
+          // now if the socket is back; otherwise rpc_ready refetches.
+          setStatusLine(null);
+          if (client?.initializeResult) void loadStatus();
+          return;
+        }
+        setStatusLine(`${label} failed: ${(e as Error).message ?? String(e)}`);
       } finally {
         operationPending.current = false;
         if (current()) setBusy(false);
       }
     },
-    [loadStatus],
+    [client, loadStatus],
   );
 
   const openBranches = useCallback(async () => {
@@ -713,13 +724,13 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
       const step = key.pageDown || key.pageUp ? DIFF_SCROLL_PAGE : 1;
       if (key.downArrow || key.pageDown || input === "j") {
         setDiffScroll((prev) =>
-          clampScroll(prev + step, diffLines.length, DIFF_WINDOW_LINES),
+          clampScroll(prev + step, diffLines.length, diffWindow),
         );
         return true;
       }
       if (key.upArrow || key.pageUp || input === "k") {
         setDiffScroll((prev) =>
-          clampScroll(prev - step, diffLines.length, DIFF_WINDOW_LINES),
+          clampScroll(prev - step, diffLines.length, diffWindow),
         );
         return true;
       }
@@ -979,7 +990,7 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
             )}
           </Box>
           {branchError && <Text color={Theme.stateFailed}>{branchError}</Text>}
-          {branches.slice(0, MAX_VISIBLE_FILES).map((branch, idx) => (
+          {branches.slice(0, listRows).map((branch, idx) => (
             <SelectableRow
               key={branch.ref}
               selected={idx === branchIndex && !newBranchMode}
@@ -1005,9 +1016,9 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
               )}
             </SelectableRow>
           ))}
-          {branches.length > MAX_VISIBLE_FILES && (
+          {branches.length > listRows && (
             <Text color={Theme.textChrome}>
-              … +{branches.length - MAX_VISIBLE_FILES} more
+              … +{branches.length - listRows} more
             </Text>
           )}
           {newBranchMode ? (
@@ -1034,23 +1045,31 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
             )}
           </Box>
           {logError && <Text color={Theme.stateFailed}>{logError}</Text>}
-          {commits.slice(0, MAX_VISIBLE_FILES).map((commit, idx) => (
+          {commits.slice(0, listRows).map((commit, idx) => (
             <SelectableRow key={commit.oid} selected={idx === logIndex}>
-              <RowText color={Theme.stateBlocked}>{commit.short_oid} </RowText>
-              <RowText color={Theme.textPrimary} wrap="truncate-end">
-                {commit.subject}
-              </RowText>
-              {commit.refs.length > 0 && (
-                <RowText color={Theme.stateDone}>
-                  {" "}
-                  ({commit.refs.join(", ")})
+              <Fixed>
+                <RowText color={Theme.stateBlocked}>
+                  {commit.short_oid}{" "}
                 </RowText>
+              </Fixed>
+              <Clip>
+                <RowText color={Theme.textPrimary} wrap="truncate-end">
+                  {oneLine(commit.subject)}
+                </RowText>
+              </Clip>
+              {commit.refs.length > 0 && (
+                <Fixed>
+                  <RowText color={Theme.stateDone}>
+                    {" "}
+                    ({commit.refs.join(", ")})
+                  </RowText>
+                </Fixed>
               )}
             </SelectableRow>
           ))}
-          {commits.length > MAX_VISIBLE_FILES && (
+          {commits.length > listRows && (
             <Text color={Theme.textChrome}>
-              … +{commits.length - MAX_VISIBLE_FILES} more
+              … +{commits.length - listRows} more
             </Text>
           )}
           {logDetail && commits[logIndex] && (
@@ -1091,7 +1110,7 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
           {worktreesError && (
             <Text color={Theme.stateFailed}>{worktreesError}</Text>
           )}
-          {worktrees.slice(0, MAX_VISIBLE_FILES).map((wt) => (
+          {worktrees.slice(0, listRows).map((wt) => (
             <Box key={wt.path}>
               <Text color={Theme.textPrimary}>{wt.path}</Text>
               <Text color={Theme.textChrome}>
@@ -1117,16 +1136,16 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
               )}
             </Box>
           ))}
-          {worktrees.length > MAX_VISIBLE_FILES && (
+          {worktrees.length > listRows && (
             <Text color={Theme.textChrome}>
-              … +{worktrees.length - MAX_VISIBLE_FILES} more
+              … +{worktrees.length - listRows} more
             </Text>
           )}
           <Text color={Theme.textChrome}>r refresh · esc back</Text>
         </Box>
       ) : diffForPath === null ? (
         <>
-          {rows.slice(0, MAX_VISIBLE_FILES).map((row, idx) => (
+          {rows.slice(0, listRows).map((row, idx) => (
             <SelectableRow key={row.path} selected={idx === selectedIndex}>
               <RowText color={rowColor(row)}>{row.xy} </RowText>
               <RowText color={Theme.textPrimary}>
@@ -1136,9 +1155,9 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
               </RowText>
             </SelectableRow>
           ))}
-          {rows.length > MAX_VISIBLE_FILES && (
+          {rows.length > listRows && (
             <Text color={Theme.textChrome}>
-              … +{rows.length - MAX_VISIBLE_FILES} more
+              … +{rows.length - listRows} more
             </Text>
           )}
           {!commitMode && !confirm && (
@@ -1170,11 +1189,11 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
                 )}
               </Text>
             )}
-            {diffLines.length > DIFF_WINDOW_LINES && (
+            {diffLines.length > diffWindow && (
               <Text color={Theme.textChrome}>
                 {"  "}
                 {diffScroll + 1}–
-                {Math.min(diffScroll + DIFF_WINDOW_LINES, diffLines.length)} of{" "}
+                {Math.min(diffScroll + diffWindow, diffLines.length)} of{" "}
                 {diffLines.length}
               </Text>
             )}
@@ -1187,7 +1206,7 @@ const GitPanelContent = React.memo(({ focused, onUnfocus, client }: Props) => {
             <Text color={Theme.stateBlocked}>{diffError}</Text>
           ) : (
             diffLines
-              .slice(diffScroll, diffScroll + DIFF_WINDOW_LINES)
+              .slice(diffScroll, diffScroll + diffWindow)
               .map((line, i) => (
                 <Text
                   key={diffScroll + i}

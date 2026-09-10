@@ -64,7 +64,11 @@ describe("task dock ordering", () => {
 describe("task dock counts and palette", () => {
   it("counts blocked separately from pending", () => {
     expect(
-      taskCounts([task("1", "blocked"), task("2", "blocked"), task("3", "pending")]),
+      taskCounts([
+        task("1", "blocked"),
+        task("2", "blocked"),
+        task("3", "pending"),
+      ]),
     ).toEqual({ in_progress: 0, blocked: 2, pending: 1, completed: 0 });
   });
 
@@ -115,7 +119,7 @@ type InkRender = (typeof import("ink"))["render"];
 const instances: Array<ReturnType<InkRender>> = [];
 let inkRender: InkRender;
 let Tasks: React.ComponentType<{ focused: boolean }>;
-let useAppStore: typeof import("../../store/appStore.js")["useAppStore"];
+let useAppStore: (typeof import("../../store/appStore.js"))["useAppStore"];
 
 beforeAll(async () => {
   inkRender = (await import("ink")).render;
@@ -166,7 +170,10 @@ describe("Tasks dock render", () => {
   });
 
   it("counts blocked work in the header", async () => {
-    const frame = await renderDock([task("1", "blocked"), task("2", "pending")]);
+    const frame = await renderDock([
+      task("1", "blocked"),
+      task("2", "pending"),
+    ]);
     expect(frame).toContain("blocked");
     expect(frame).toContain("1 pending");
   });

@@ -130,18 +130,18 @@ asyncio.run(main())
         await eventually(lambda: not running(final["supervisor_pid"]))
         assert not running(child)
         assert not running(final["command_pid"])
-        # A bare reservation still cannot steal ownership. Recovery verifies
-        # process death plus cleanup, and permits a new run without replay.
+        # The dead backend's lease is honored until it lapses, then the next
+        # runtime simply takes the session over. No verification step.
         store = SqliteConversationStore(path=str(tmp_path / "owner.db"))
         try:
-            with pytest.raises(RuntimeError, match="unresolved runtime owner"):
+            with pytest.raises(RuntimeError, match="active runtime owner"):
                 reserve_run(store, "thread")
-            from omniagents.core.runtime.ownership_recovery import recover_runtime_owner
+            from ..runtime.lease_support import expire_lease
 
-            result = recover_runtime_owner(store, "thread")
-            assert result["recovered"] and result["mode"] == "verified"
+            expire_lease(store, "thread")
             next_owner = reserve_run(store, "thread")
             assert next_owner.generation == 2
+            assert next_owner.took_over_from is not None
             next_owner.release()
         finally:
             store.close()
@@ -184,10 +184,11 @@ async def test_unconfirmed_completion_keeps_owner_reserved(tmp_path, evidence):
             RuntimeError, match="outcome is unknown|evidence is unavailable"
         ):
             _ = process.returncode
+        # Unconfirmed cleanup is recorded on the owner and in the transcript;
+        # it does not hold the session hostage.
         owner.release()
-        assert owner.closing and owner.execution_uncertain and not owner.released
-        with pytest.raises(RuntimeError, match="unresolved runtime owner"):
-            reserve_run(store, "thread")
+        assert owner.execution_uncertain and owner.released
+        reserve_run(store, "thread").release()
     finally:
         store.close()
 

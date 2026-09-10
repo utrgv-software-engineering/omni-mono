@@ -301,6 +301,8 @@ export function rendersNothing(message: Message): boolean {
     return true;
   }
   if (message.role === "system" && !(message.content ?? "").trim()) return true;
+  if (message.role === "command" && !(message.content ?? "").trim())
+    return true;
   return false;
 }
 

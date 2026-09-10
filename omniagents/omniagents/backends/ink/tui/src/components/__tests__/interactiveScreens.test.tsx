@@ -90,13 +90,11 @@ function reviewClient() {
     gitListRepositories: vi
       .fn()
       .mockResolvedValue({ repositories: [{ repo: "repo" }] }),
-    gitStatus: vi
-      .fn()
-      .mockResolvedValue({
-        entries: [],
-        untracked: ["a.txt", "b.txt"],
-        conflicted: [],
-      }),
+    gitStatus: vi.fn().mockResolvedValue({
+      entries: [],
+      untracked: ["a.txt", "b.txt"],
+      conflicted: [],
+    }),
     gitDiff: vi.fn().mockResolvedValue({ files: [] }),
     gitStage: vi.fn().mockReturnValue(new Promise(() => {})),
     gitUnstage: vi.fn(),

@@ -15,7 +15,14 @@ import {
 } from "./artifact-model.js";
 import { windowStart } from "./model-picker-model.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
+import {
+  Clip,
+  Fixed,
+  oneLine,
+  useDrawerBudget,
+} from "./shared/drawer-layout.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 /**
  * The artifacts drawer.
@@ -33,8 +40,7 @@ import { Theme } from "../theme.js";
  * the rendering, it wrecks the session. They are described, and saved.
  */
 
-const LIST_WINDOW = 6;
-const PREVIEW_ROWS = 14;
+const MAX_LIST_WINDOW = 6;
 const PREVIEW_SCROLL = 6;
 /** Narrowest wrap width worth rendering; the model honors what it is given. */
 const MIN_PREVIEW_WIDTH = 20;
@@ -50,7 +56,7 @@ type Props = {
   saveDir?: string;
 };
 
-export const ArtifactsPanel = React.memo<Props>(
+export const ArtifactsPanel = themedMemo<Props>(
   ({ focused, onUnfocus, saveDir }) => {
     const artifacts = useArtifacts();
     const { stdout } = useStdout();
@@ -59,6 +65,8 @@ export const ArtifactsPanel = React.memo<Props>(
     const [index, setIndex] = useState(0);
     const [previewing, setPreviewing] = useState(false);
     const [scroll, setScroll] = useState(0);
+    const previewRows = useDrawerBudget();
+    const listWindow = Math.min(MAX_LIST_WINDOW, previewRows);
     const [statusLine, setStatusLine] = useState<string | null>(null);
 
     // The list grows underneath the cursor as the agent emits; clamp
@@ -125,7 +133,7 @@ export const ArtifactsPanel = React.memo<Props>(
         }
 
         if (previewing) {
-          const maxScroll = Math.max(0, lines.length - PREVIEW_ROWS);
+          const maxScroll = Math.max(0, lines.length - previewRows);
           if (key.upArrow || input === "k") {
             setScroll((prev) => Math.max(0, prev - 1));
             return true;
@@ -187,9 +195,9 @@ export const ArtifactsPanel = React.memo<Props>(
       );
     }
 
-    const start = windowStart(index, artifacts.length, LIST_WINDOW);
-    const visible = artifacts.slice(start, start + LIST_WINDOW);
-    const visibleLines = lines.slice(scroll, scroll + PREVIEW_ROWS);
+    const start = windowStart(index, artifacts.length, listWindow);
+    const visible = artifacts.slice(start, start + listWindow);
+    const visibleLines = lines.slice(scroll, scroll + previewRows);
 
     return (
       <Box
@@ -201,10 +209,10 @@ export const ArtifactsPanel = React.memo<Props>(
         <Box>
           <Text color={Theme.textChrome}>Artifacts </Text>
           <Text color={Theme.stateActive}>{artifacts.length}</Text>
-          {artifacts.length > LIST_WINDOW && (
+          {artifacts.length > listWindow && (
             <Text color={Theme.textChrome}>
               {"  "}
-              {start + 1}–{Math.min(start + LIST_WINDOW, artifacts.length)} of{" "}
+              {start + 1}–{Math.min(start + listWindow, artifacts.length)} of{" "}
               {artifacts.length}
             </Text>
           )}
@@ -219,13 +227,17 @@ export const ArtifactsPanel = React.memo<Props>(
                 key={`${entry.artifactId ?? "anon"}-${position}`}
                 selected={isSelected}
               >
-                <RowText color={Theme.textPrimary}>
-                  {entry.title || "(untitled)"}
-                </RowText>
-                <RowText color={Theme.textChrome}>
-                  {" "}
-                  · {artifactMeta(entry)}
-                </RowText>
+                <Clip>
+                  <RowText color={Theme.textPrimary} wrap="truncate-end">
+                    {oneLine(entry.title || "(untitled)")}
+                  </RowText>
+                </Clip>
+                <Fixed>
+                  <RowText color={Theme.textChrome}>
+                    {" "}
+                    · {artifactMeta(entry)}
+                  </RowText>
+                </Fixed>
               </SelectableRow>
             );
           })}
@@ -238,11 +250,15 @@ export const ArtifactsPanel = React.memo<Props>(
               </Text>
               <Text color={Theme.textChrome}>
                 {"  "}
-                {Math.min(scroll + PREVIEW_ROWS, lines.length)}/{lines.length}
+                {Math.min(scroll + previewRows, lines.length)}/{lines.length}
               </Text>
             </Box>
             {visibleLines.map((line, i) => (
-              <Text key={scroll + i} color={Theme.textSecondary}>
+              <Text
+                key={scroll + i}
+                color={Theme.textSecondary}
+                wrap="truncate-end"
+              >
                 {line === "" ? " " : line}
               </Text>
             ))}

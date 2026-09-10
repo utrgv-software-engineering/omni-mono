@@ -27,6 +27,12 @@ from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 logger = logging.getLogger(__name__)
 
 
+from omniagents.core.server_functions.slash import slash_command
+
+
+@slash_command(
+    description="Compact the conversation context", during_run=False, order=20
+)
 @server_function(
     description="Compact context using the session's native compactor when available",
     strict=True,

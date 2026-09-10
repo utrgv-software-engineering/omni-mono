@@ -19,12 +19,65 @@ import platform
 import errno
 import shutil
 from threading import Thread
-from typing import Optional
+from typing import Callable, Optional
 import logging
 
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.debug import Debug
 from omniagents.core.runtime.overrides import apply_cli_overrides
+
+
+def theme_args(config_dir: Optional[Path] = None) -> list[str]:
+    """Where the TUI finds user themes and remembers the chosen one.
+
+    Both live under the product's config directory, the way Omarchy
+    drops a generated theme into ``~/.claude/themes`` or
+    ``~/.pi/agent/themes``: ``<config>/themes/<name>.toml`` (or
+    ``<name>/colors.toml``) in Omarchy's ``colors.toml`` format, and
+    ``<config>/ink.json`` for the saved ``theme``. The TUI itself finds
+    Omarchy's current theme and follows it when nothing else is chosen;
+    ``OMNI_THEME`` in the environment names a theme explicitly.
+    """
+    if config_dir is None:
+        try:
+            from omniagents.core.product import product_info
+
+            config_dir = product_info().config_dir()
+        except Exception:
+            return []
+    return [
+        "--themes-dir",
+        str(config_dir / "themes"),
+        "--settings-file",
+        str(config_dir / "ink.json"),
+    ]
+
+
+def detach_terminal(log_fd: Optional[int] = None) -> Callable[[], None]:
+    """Point this process's fd 0, 1 and 2 away from the terminal.
+
+    stdin goes to ``os.devnull``; stdout and stderr go to ``log_fd`` when
+    given (the debug log) and to ``os.devnull`` otherwise. Descendants
+    spawned afterwards inherit the redirected descriptors, so none of
+    them can read the TUI's keystrokes or draw over its frame. Returns a
+    callable that puts the original descriptors back, for the exit
+    message printed once the TUI has released the screen.
+    """
+    saved = {fd: os.dup(fd) for fd in (0, 1, 2)}
+    null = os.open(os.devnull, os.O_RDWR)
+    try:
+        os.dup2(null, 0)
+        os.dup2(log_fd if log_fd is not None else null, 1)
+        os.dup2(log_fd if log_fd is not None else null, 2)
+    finally:
+        os.close(null)
+
+    def restore() -> None:
+        for fd, copy in saved.items():
+            os.dup2(copy, fd)
+            os.close(copy)
+
+    return restore
 
 
 class InkBackend:
@@ -223,6 +276,8 @@ class InkBackend:
         if debug:
             cmd.append("--debug")
 
+        cmd.extend(theme_args())
+
         # Launch the Ink TUI with proper stdin/stdout/stderr
         exit_code = 0
         try:
@@ -239,7 +294,16 @@ class InkBackend:
                 stdout=real_stdout,
                 stderr=sys.stderr,
             )
-            exit_code = proc.wait()
+            # The TUI now holds its own copies of the terminal. This
+            # process has no further use for it, and every tool command
+            # it spawns from here on would inherit whatever it keeps, so
+            # give the terminal up at the descriptor level, not just the
+            # sys.stdout object the Debug capture swaps.
+            restore_terminal = detach_terminal(Debug.log_fileno())
+            try:
+                exit_code = proc.wait()
+            finally:
+                restore_terminal()
         except KeyboardInterrupt:
             pass
         except FileNotFoundError:

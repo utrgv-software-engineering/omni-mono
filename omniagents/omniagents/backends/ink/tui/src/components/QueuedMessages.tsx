@@ -5,7 +5,9 @@ import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { useQueuedMessages } from "../store/appStore.js";
 import { windowStart } from "./model-picker-model.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
+import { Clip, Fixed, oneLine } from "./shared/drawer-layout.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 const MAX_VISIBLE = 5;
 
@@ -38,7 +40,7 @@ type Props = {
  * that silently means two different operations is how a user stops
  * trusting either.
  */
-export const QueuedMessages = React.memo<Props>(
+export const QueuedMessages = themedMemo<Props>(
   ({ focused, onUnfocus, onCancel }) => {
     const items = useQueuedMessages();
     const [index, setIndex] = useState(0);
@@ -154,12 +156,14 @@ export const QueuedMessages = React.memo<Props>(
           const isSelected = position === index;
           return (
             <SelectableRow key={item.id} selected={isSelected}>
-              <RowText color={Theme.textChrome}>{position + 1}. </RowText>
-              <RowText color={Theme.textPrimary}>
-                {item.content.length > 80
-                  ? `${item.content.slice(0, 77)}…`
-                  : item.content}
-              </RowText>
+              <Fixed>
+                <RowText color={Theme.textChrome}>{position + 1}. </RowText>
+              </Fixed>
+              <Clip>
+                <RowText color={Theme.textPrimary} wrap="truncate-end">
+                  {oneLine(item.content)}
+                </RowText>
+              </Clip>
             </SelectableRow>
           );
         })}

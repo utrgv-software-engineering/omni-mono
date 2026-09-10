@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ConnectionClosedError, RpcTimeoutError } from "./lifecycle.js";
+import { isReplyLost } from "./lifecycle.js";
 import type { RPCClient } from "./client.js";
 
 /** Always release a download, including rejected sizes and malformed/interrupted reads. */
@@ -56,7 +56,17 @@ export async function downloadFile(
   }
 }
 
-/** Never replay a write. An uncertain commit can only be confirmed by reading its checksum. */
+/**
+ * `saved`: the server holds exactly what was uploaded. `reloaded`: the
+ * commit's reply was lost and the server's file differs from the upload —
+ * `bytes` is what the server actually holds, and it is the truth the editor
+ * must show. Callers never see uncertainty; they see server state.
+ */
+export type UploadOutcome =
+  | { kind: "saved"; sha: string }
+  | { kind: "reloaded"; sha: string; bytes: Buffer };
+
+/** Never replay a write. A lost commit reply is resolved by reading the file back. */
 export async function uploadFile(
   client: RPCClient,
   environment: string,
@@ -64,7 +74,8 @@ export async function uploadFile(
   bytes: Buffer,
   expectedSha256: string,
   current = () => true,
-): Promise<string> {
+  reloadCap = bytes.length,
+): Promise<UploadOutcome> {
   const sha = createHash("sha256").update(bytes).digest("hex");
   const open = await client.fsUploadOpen(environment, path, bytes.length, {
     sha256: sha,
@@ -88,33 +99,34 @@ export async function uploadFile(
     if (!current()) throw new Error("file view closed");
     committing = true;
     await client.fsUploadCommit(environment, open.transfer_id);
-    return sha;
+    return { kind: "saved", sha };
   } catch (error) {
     if (!committing) {
       void client.fsUploadAbort(environment, open.transfer_id).catch(() => {});
-    } else if (
-      current() &&
-      (error instanceof ConnectionClosedError ||
-        error instanceof RpcTimeoutError)
-    ) {
+    } else if (current() && isReplyLost(error)) {
+      // The commit may or may not have landed. Read the file back once the
+      // connection returns: a matching checksum means it saved; anything
+      // else is the server's content, which replaces the draft.
+      let saved: Awaited<ReturnType<typeof downloadFile>>;
       try {
         await client.waitUntilReady();
         if (!current()) throw error;
-        const saved = await downloadFile(
+        saved = await downloadFile(
           client,
           environment,
           path,
-          bytes.length,
+          Math.max(reloadCap, bytes.length),
           false,
           current,
         );
-        if (saved.sha === sha) return sha;
       } catch {
-        /* Preserve the draft and the uncertainty if verification is unavailable. */
+        // Verification unavailable (no reconnect within the deadline, or
+        // the read itself failed): surface the transport's own error and
+        // keep the draft so the next save asks the server again.
+        throw error;
       }
-      throw new Error(
-        "Save not confirmed. Your edits are retained; check the file before retrying.",
-      );
+      if (saved.sha === sha) return { kind: "saved", sha };
+      return { kind: "reloaded", sha: saved.sha, bytes: saved.bytes };
     }
     throw error;
   }

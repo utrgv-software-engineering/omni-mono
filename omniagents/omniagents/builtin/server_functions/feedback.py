@@ -14,6 +14,19 @@ from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 from omniagents.studio import tracing
 
 
+from omniagents.core.server_functions.slash import (
+    slash_command,
+    text as slash_text,
+    words as slash_words,
+)
+
+
+@slash_command(
+    description="Mark this conversation as good, with an optional note",
+    usage="[note]",
+    args=slash_text(),
+    order=50,
+)
 @server_function(
     description="Mark conversation acceptable and submit feedback to developers (optional note included)",
     strict=True,
@@ -35,6 +48,12 @@ async def good(session: Session, text: str = "") -> dict:
     return {"ok": True, "message": message}
 
 
+@slash_command(
+    description="Flag this conversation as bad, with an optional note",
+    usage="[note]",
+    args=slash_text(),
+    order=51,
+)
 @server_function(
     description="Flag conversation as unacceptable and submit feedback to developers (optional note included)",
     strict=True,

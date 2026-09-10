@@ -12,6 +12,7 @@ import {
   BaseSelectionList,
   type SelectionOption,
 } from "./shared/BaseSelectionList.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 export type ApprovalOption = SelectionOption<"yes" | "always" | "no">;
 
@@ -43,7 +44,7 @@ interface BaseApprovalProps {
  * Diff approval dialog
  * Matches Bubbletea's renderDiffApprovalWithWidth
  */
-export const DiffApproval = React.memo<
+export const DiffApproval = themedMemo<
   BaseApprovalProps & { tool: string; metadata: RichMetadata }
 >(({ tool, metadata, onApprove }) => {
   let filePath = "";
@@ -118,7 +119,7 @@ export const DiffApproval = React.memo<
  * File write approval dialog
  * Matches Bubbletea's renderFileWriteApprovalWithWidth
  */
-export const FileWriteApproval = React.memo<
+export const FileWriteApproval = themedMemo<
   BaseApprovalProps & { tool: string; metadata: RichMetadata }
 >(({ metadata, onApprove }) => {
   const summary = metadata.summary || "File Write";
@@ -161,7 +162,7 @@ export const FileWriteApproval = React.memo<
  * Command approval dialog
  * Matches Bubbletea's renderCommandApprovalWithWidth
  */
-export const CommandApproval = React.memo<
+export const CommandApproval = themedMemo<
   BaseApprovalProps & {
     tool: string;
     metadata: RichMetadata;

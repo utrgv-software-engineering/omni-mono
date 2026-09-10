@@ -4,7 +4,10 @@ import {
   initialIndex,
   windowStart,
 } from "../model-picker-model.js";
-import type { ListModelsResult, ModelDescriptor } from "../../protocol/catalog.js";
+import type {
+  ListModelsResult,
+  ModelDescriptor,
+} from "../../protocol/catalog.js";
 
 function model(overrides: Partial<ModelDescriptor>): ModelDescriptor {
   return {

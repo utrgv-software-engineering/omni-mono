@@ -17,7 +17,7 @@ const { mockSockets, mockSocketConfig } = vi.hoisted(() => ({
   }>,
   mockSocketConfig: {
     failConnects: false,
-    serverVersion: '2.0.0',
+    serverVersion: "2.0.0",
     incompleteHandshake: false,
     earlyNotification: false,
     // One-shot (or persistent, below): the next initialize is rejected
@@ -190,64 +190,95 @@ function connectedClient(sent: string[]): TestClient {
 }
 
 describe("RPCClient", () => {
-  it.each(["helper", "raw"])("lets the backend own the %s compaction deadline", async (entry) => {
-    vi.useFakeTimers();
-    const client = new RPCClient({ url: "ws://example.test/ws" });
-    await client.connect();
-    try {
-      const pending = entry === "helper"
-        ? client.serverCall("compact", {}, "session")
-        : client.request("server_call", { function: "compact", session_id: "session" });
-      let settled = false;
-      void pending.then(() => { settled = true; }, () => { settled = true; });
-      const request = JSON.parse(mockSockets[0]!.sent.at(-1)!);
-      await vi.advanceTimersByTimeAsync(21 * 60_000);
-      expect(settled).toBe(false);
-      mockSockets[0]!.emit("message", JSON.stringify({ jsonrpc: "2.0", id: request.id, result: { ok: true } }));
-      await expect(pending).resolves.toEqual({ ok: true });
-    } finally {
-      client.disconnect();
-    }
-  });
+  it.each(["helper", "raw"])(
+    "lets the backend own the %s compaction deadline",
+    async (entry) => {
+      vi.useFakeTimers();
+      const client = new RPCClient({ url: "ws://example.test/ws" });
+      await client.connect();
+      try {
+        const pending =
+          entry === "helper"
+            ? client.serverCall("compact", {}, "session")
+            : client.request("server_call", {
+                function: "compact",
+                session_id: "session",
+              });
+        let settled = false;
+        void pending.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        const request = JSON.parse(mockSockets[0]!.sent.at(-1)!);
+        await vi.advanceTimersByTimeAsync(21 * 60_000);
+        expect(settled).toBe(false);
+        mockSockets[0]!.emit(
+          "message",
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: request.id,
+            result: { ok: true },
+          }),
+        );
+        await expect(pending).resolves.toEqual({ ok: true });
+      } finally {
+        client.disconnect();
+      }
+    },
+  );
 
-  it('does not deliver events before the handshake is accepted', async () => {
+  it("does not deliver events before the handshake is accepted", async () => {
     mockSocketConfig.earlyNotification = true;
     const client = new RPCClient({ url: "ws://example.test/ws" });
     const output = vi.fn();
-    client.on('message_output', output);
+    client.on("message_output", output);
     await client.connect();
     expect(output).not.toHaveBeenCalled();
     client.disconnect();
   });
-  it.each(['1.0.0', '3.0.0', 'invalid', '2.0.0-dev', '02.0.0', '', '2.0.0\n'])('rejects a successful but incompatible %s handshake', async (version) => {
-    mockSocketConfig.serverVersion = version;
-    const client = new RPCClient({ url: "ws://example.test/ws" });
-    const ready = vi.fn();
-    client.on("rpc_ready", ready);
-    await expect(client.connect()).rejects.toMatchObject({ code: -32012 });
-    expect(ready).not.toHaveBeenCalled();
-    expect(client.initializeResult).toBeNull();
-    expect(mockSockets).toHaveLength(1);
-    expect(mockSockets[0]!.sent.map((value) => JSON.parse(value).method)).toEqual(['initialize']);
-    client.disconnect();
-  });
+  it.each(["1.0.0", "3.0.0", "invalid", "2.0.0-dev", "02.0.0", "", "2.0.0\n"])(
+    "rejects a successful but incompatible %s handshake",
+    async (version) => {
+      mockSocketConfig.serverVersion = version;
+      const client = new RPCClient({ url: "ws://example.test/ws" });
+      const ready = vi.fn();
+      client.on("rpc_ready", ready);
+      await expect(client.connect()).rejects.toMatchObject({ code: -32012 });
+      expect(ready).not.toHaveBeenCalled();
+      expect(client.initializeResult).toBeNull();
+      expect(mockSockets).toHaveLength(1);
+      expect(
+        mockSockets[0]!.sent.map((value) => JSON.parse(value).method),
+      ).toEqual(["initialize"]);
+      client.disconnect();
+    },
+  );
 
-  it('rejects an incomplete successful handshake before initialized', async () => {
+  it("rejects an incomplete successful handshake before initialized", async () => {
     mockSocketConfig.incompleteHandshake = true;
     const client = new RPCClient({ url: "ws://example.test/ws" });
     await expect(client.connect()).rejects.toMatchObject({ code: -32602 });
     expect(client.initializeResult).toBeNull();
-    expect(mockSockets[0]!.sent.map((value) => JSON.parse(value).method)).toEqual(['initialize']);
+    expect(
+      mockSockets[0]!.sent.map((value) => JSON.parse(value).method),
+    ).toEqual(["initialize"]);
     client.disconnect();
   });
 
-  it.each(['2.0.1', '2.1.0'])('accepts compatible newer server %s', async (version) => {
-    mockSocketConfig.serverVersion = version;
-    const client = new RPCClient({ url: "ws://example.test/ws" });
-    await client.connect();
-    expect(client.initializeResult?.protocol_version).toBe(version);
-    client.disconnect();
-  });
+  it.each(["2.0.1", "2.1.0"])(
+    "accepts compatible newer server %s",
+    async (version) => {
+      mockSocketConfig.serverVersion = version;
+      const client = new RPCClient({ url: "ws://example.test/ws" });
+      await client.connect();
+      expect(client.initializeResult?.protocol_version).toBe(version);
+      client.disconnect();
+    },
+  );
 
   it("cancels queued reconnects on explicit disconnect", async () => {
     vi.useFakeTimers();
@@ -339,23 +370,21 @@ describe("RPCClient", () => {
           snapshot = resolve;
         }),
     );
-    const replay = vi
-      .spyOn(client, "resumeSession")
-      .mockResolvedValue({
-        stream_id: "epoch",
-        last_seq: 11,
-        events: [
-          {
-            method: "run_end",
-            params: {
-              session_id: "s",
-              stream_id: "epoch",
-              seq: 11,
-              run_id: "run",
-            },
+    const replay = vi.spyOn(client, "resumeSession").mockResolvedValue({
+      stream_id: "epoch",
+      last_seq: 11,
+      events: [
+        {
+          method: "run_end",
+          params: {
+            session_id: "s",
+            stream_id: "epoch",
+            seq: 11,
+            run_id: "run",
           },
-        ],
-      });
+        },
+      ],
+    });
     const ended = vi.fn();
     const approval = vi.fn();
     client.on("run_end", ended);
@@ -508,10 +537,19 @@ describe("RPCClient", () => {
     const client = new RPCClient({ url: "ws://example.test/ws" });
     client.setActiveSession(undefined);
     let finish!: (value: unknown) => void;
-    vi.spyOn(client, "request").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    vi.spyOn(client, "request").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
     const started = vi.fn();
     client.on("run_started", started);
-    const event = (session_id: string) => ({ jsonrpc: "2.0", method: "run_started", params: { session_id, run_id: session_id } });
+    const event = (session_id: string) => ({
+      jsonrpc: "2.0",
+      method: "run_started",
+      params: { session_id, run_id: session_id },
+    });
     (client as any).handleMessage(event("old"));
     const run = client.startRun("hello", { mode: "none" });
     (client as any).handleMessage(event("old"));
@@ -526,7 +564,7 @@ describe("RPCClient", () => {
   afterEach(() => {
     mockSockets.length = 0;
     mockSocketConfig.failConnects = false;
-    mockSocketConfig.serverVersion = '2.0.0';
+    mockSocketConfig.serverVersion = "2.0.0";
     mockSocketConfig.incompleteHandshake = false;
     mockSocketConfig.earlyNotification = false;
     mockSocketConfig.rejectCapabilities = null;
@@ -956,7 +994,8 @@ describe("RPCClient typed git wrappers", () => {
       id: request.id,
       error: {
         code: -32093,
-        message: "discard_changes discards work and must be confirmed explicitly",
+        message:
+          "discard_changes discards work and must be confirmed explicitly",
         data: {
           kind: "git_confirmation_required",
           operation: "discard_changes",

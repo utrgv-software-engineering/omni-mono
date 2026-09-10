@@ -84,7 +84,8 @@ describe("SessionReplayCoordinator", () => {
           ],
         };
       },
-      (method, params) => delivered.push([method, (params as { seq?: number }).seq]),
+      (method, params) =>
+        delivered.push([method, (params as { seq?: number }).seq]),
     );
 
     // seq 1 delivers normally (handle() itself advances the cursor).

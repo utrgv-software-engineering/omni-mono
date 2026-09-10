@@ -335,15 +335,34 @@ const FilesScreenContent = ({
     setEdit((prev) => (prev ? { ...prev, saving: true, notice: null } : prev));
     try {
       const bytes = Buffer.from(toText(edit.buffer), "utf8");
-      const sha = await uploadFile(
+      const outcome = await uploadFile(
         client,
         environmentId,
         edit.path,
         bytes,
         edit.sha,
         current,
+        EDIT_CAP,
       );
       if (!current()) return;
+      if (outcome.kind === "reloaded") {
+        // The commit reply was lost and the server's file is not what we
+        // sent. The server is the truth: show its content, clean.
+        setEdit((prev) =>
+          prev
+            ? {
+                ...prev,
+                sha: outcome.sha,
+                saving: false,
+                notice: "reloaded from server",
+                buffer: fromText(outcome.bytes.toString("utf8")),
+              }
+            : prev,
+        );
+        setPreview(null);
+        return;
+      }
+      const { sha } = outcome;
       // Saved: the new content is the next edit's baseline.
       setEdit((prev) =>
         prev
@@ -553,7 +572,10 @@ const FilesScreenContent = ({
           setDiscardArm(true);
           return true;
         }
+        // Invalidate an in-flight save and release its guard, or the
+        // next file's Ctrl+S would be silently ignored.
         scope.begin("save");
+        saving.current = false;
         setEdit(null);
         setDiscardArm(false);
         return true;

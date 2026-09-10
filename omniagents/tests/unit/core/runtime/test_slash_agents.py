@@ -1,5 +1,5 @@
-"""Declarative slash → project-agent bindings, end-to-end through the
-default slash registry with a faked agent run."""
+"""Declarative slash → project-agent bindings, registered by AgentService as
+server functions with a slash declaration and run through server_call."""
 
 from dataclasses import replace
 
@@ -11,7 +11,8 @@ from omniagents.core.product import (
     set_product_info,
 )
 from omniagents.core.runtime import ephemeral, slash_agents
-from omniagents.core.tools import default_slash_registry, register_slash_command
+
+from ..agents.test_environment_run_retirement import make_service
 
 MANIFEST = """\
 name: acme
@@ -21,6 +22,7 @@ slash_commands:
     prompt: begin
     max_turns: 1000
     normalize_model: false
+    description: Create or update AGENTS.md
     failure_message: Failed to update AGENTS.md
     attach_file:
       path: AGENTS.md
@@ -64,8 +66,22 @@ def test_manifest_slash_bindings_empty_without_product():
     assert slash_agents.manifest_slash_bindings() == {}
 
 
+def test_bindings_become_slash_commands_in_the_catalog(fake_product, monkeypatch):
+    service = make_service(monkeypatch)
+    catalog = {row["name"]: row for row in service.list_slash_commands()}
+    assert catalog["init"]["description"] == "Create or update AGENTS.md"
+    assert catalog["init"]["function"] == "init"
+    assert catalog["init"]["args"] == {"kind": "none"}
+    assert catalog["init"]["during_run"] is False
+    assert "bare" in catalog
+    # The catalog is the typeable subset, never the whole RPC surface.
+    assert "session.ensure" not in catalog
+    assert "slash.list" not in catalog
+    assert "init" in service._server_functions
+
+
 @pytest.mark.asyncio
-async def test_registry_falls_back_to_manifest_binding(
+async def test_binding_runs_the_agent_through_server_call(
     fake_product, workspace, monkeypatch
 ):
     captured = {}
@@ -78,32 +94,18 @@ async def test_registry_falls_back_to_manifest_binding(
 
     monkeypatch.setattr(ephemeral, "run_project_agent_once", fake_run)
     (workspace / "AGENTS.md").write_text("# Guide\n", encoding="utf-8")
+    service = make_service(monkeypatch)
+    session = service._session_manager.get_or_create("slash-init")
 
-    registry = default_slash_registry()
-    assert registry.has("init")
-    output = await registry.execute("init")
+    result = await service.server_call("init", {}, session.id)
 
     assert captured["agent_key"] == "init_agent"
     assert captured["prompt"] == "begin"
     assert captured["max_turns"] == 1000
     assert captured["workspace_root"] == str(workspace)
-    # Success-status + existing file => attach_file protocol formatting
-    # (byte-identical to the handler this replaces: the body keeps its
-    # own trailing newline ahead of the closing fence's).
-    assert output == "Created AGENTS.md\n\nAGENTS.md:\n\n```markdown\n# Guide\n\n```"
-
-
-@pytest.mark.asyncio
-async def test_status_outside_when_status_returned_verbatim(
-    fake_product, workspace, monkeypatch
-):
-    async def fake_run(agent_key, prompt, **kwargs):
-        return "Failed to create AGENTS.md"
-
-    monkeypatch.setattr(ephemeral, "run_project_agent_once", fake_run)
-    (workspace / "AGENTS.md").write_text("# Guide\n", encoding="utf-8")
-    output = await default_slash_registry().execute("init")
-    assert output == "Failed to create AGENTS.md"
+    assert result["message"] == (
+        "Created AGENTS.md\n\nAGENTS.md:\n\n```markdown\n# Guide\n\n```"
+    )
 
 
 @pytest.mark.asyncio
@@ -114,24 +116,22 @@ async def test_run_failure_returns_declared_failure_message(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(ephemeral, "run_project_agent_once", fake_run)
-    assert await default_slash_registry().execute("init") == (
+    service = make_service(monkeypatch)
+    session = service._session_manager.get_or_create("slash-fail")
+    assert (await service.server_call("init", {}, session.id))["message"] == (
         "Failed to update AGENTS.md"
     )
-    # Binding without failure_message gets the generic text.
-    assert await default_slash_registry().execute("bare") == "Failed to run /bare."
+    assert (await service.server_call("bare", {}, session.id))["message"] == (
+        "Failed to run /bare."
+    )
 
 
 @pytest.mark.asyncio
-async def test_python_registered_handler_wins_over_binding(fake_product, workspace):
-    registry = default_slash_registry()
-    register_slash_command("init", lambda _arg=None: "python handler")
-    try:
-        assert await registry.execute("init") == "python handler"
-    finally:
-        registry._commands.pop("init", None)
-
-
-@pytest.mark.asyncio
-async def test_unknown_command_still_unknown(fake_product):
-    assert await default_slash_registry().execute("nope") == "Unknown command: nope"
-    assert not default_slash_registry().has("nope")
+async def test_slash_list_is_a_server_function(fake_product, monkeypatch):
+    service = make_service(monkeypatch)
+    session = service._session_manager.get_or_create("slash-list")
+    result = await service.server_call("slash.list", {}, session.id)
+    names = [row["name"] for row in result["commands"]]
+    assert "init" in names
+    orders = [row["order"] for row in result["commands"]]
+    assert orders == sorted(orders)

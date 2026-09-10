@@ -8,12 +8,13 @@
 import React, { useMemo } from "react";
 import { Box, Text } from "ink";
 import { createASCIIArt, applyGradient } from "../utils/asciiArt.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 export interface LogoProps {
   agentName: string;
 }
 
-export const Logo = React.memo<LogoProps>(({ agentName }) => {
+export const Logo = themedMemo<LogoProps>(({ agentName }) => {
   // Memoize ASCII art generation - only recreate when agent name changes
   const gradientLines = useMemo(() => {
     const asciiLines = createASCIIArt(agentName || "OmniAgent");

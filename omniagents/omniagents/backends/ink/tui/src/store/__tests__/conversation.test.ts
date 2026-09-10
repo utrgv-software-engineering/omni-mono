@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { ConversationItem } from "../../types/conversation.js";
-import { isTerminal, mergeItems, normalizeItems, toolKind } from "../conversation.js";
+import {
+  isTerminal,
+  mergeItems,
+  normalizeItems,
+  toolKind,
+} from "../conversation.js";
 
 function item(
-  overrides: Partial<ConversationItem> &
-    Pick<ConversationItem, "seq" | "kind">,
+  overrides: Partial<ConversationItem> & Pick<ConversationItem, "seq" | "kind">,
 ): ConversationItem {
   return {
     item_id: `itm_${overrides.seq}`,
@@ -142,7 +146,11 @@ describe("normalizeItems", () => {
 
   it("renders compaction checkpoints and artifacts as system lines", () => {
     const messages = normalizeItems([
-      item({ seq: 1, kind: "compaction", content: { summary: "earlier work" } }),
+      item({
+        seq: 1,
+        kind: "compaction",
+        content: { summary: "earlier work" },
+      }),
       item({ seq: 2, kind: "artifact", content: { title: "Report" } }),
     ]);
     expect(messages).toEqual([
@@ -181,7 +189,12 @@ describe("mergeItems", () => {
   });
 
   it("refuses to regress an item to a stale revision", () => {
-    const newer = item({ seq: 1, kind: "agent_message", revision: 3, content: { text: "new" } });
+    const newer = item({
+      seq: 1,
+      kind: "agent_message",
+      revision: 3,
+      content: { text: "new" },
+    });
     const older = { ...newer, revision: 1, content: { text: "old" } };
     expect(mergeItems([newer], [older])[0].content.text).toBe("new");
   });
@@ -189,14 +202,22 @@ describe("mergeItems", () => {
 
 describe("item helpers", () => {
   it("classifies terminal statuses", () => {
-    expect(isTerminal(item({ seq: 1, kind: "tool_call", status: "started" }))).toBe(false);
+    expect(
+      isTerminal(item({ seq: 1, kind: "tool_call", status: "started" })),
+    ).toBe(false);
     for (const status of ["completed", "failed", "cancelled"] as const) {
-      expect(isTerminal(item({ seq: 1, kind: "tool_call", status }))).toBe(true);
+      expect(isTerminal(item({ seq: 1, kind: "tool_call", status }))).toBe(
+        true,
+      );
     }
   });
 
   it("reads the server tool taxonomy with an 'other' default", () => {
-    expect(toolKind(item({ seq: 1, kind: "tool_call", content: { tool_kind: "plan" } }))).toBe("plan");
+    expect(
+      toolKind(
+        item({ seq: 1, kind: "tool_call", content: { tool_kind: "plan" } }),
+      ),
+    ).toBe("plan");
     expect(toolKind(item({ seq: 1, kind: "tool_call" }))).toBe("other");
   });
 });
@@ -242,7 +263,12 @@ describe("reviews survive a reload", () => {
       item({
         seq: 1,
         kind: "approval",
-        content: { call_id: "c1", tool: "read_file", reviewer: "sandbox-policy", outcome: "allow" },
+        content: {
+          call_id: "c1",
+          tool: "read_file",
+          reviewer: "sandbox-policy",
+          outcome: "allow",
+        },
       }),
     ]);
     expect(msg!.review?.blocking).toBe(false);
@@ -264,7 +290,9 @@ describe("reviews survive a reload", () => {
         },
       }),
     ]);
-    expect(msg!.review?.line).toBe("github · create_issue approved by guardian");
+    expect(msg!.review?.line).toBe(
+      "github · create_issue approved by guardian",
+    );
   });
 
   it("rebuilds a workflow review, which used to vanish on reload", () => {

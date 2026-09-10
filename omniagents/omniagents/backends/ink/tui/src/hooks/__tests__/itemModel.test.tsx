@@ -165,7 +165,12 @@ describe("item-model hydration", () => {
         item_id: "i2",
         seq: 2,
         kind: "tool_call",
-        content: { tool: "read_file", input: "{}", call_id: "c1", output: "ok" },
+        content: {
+          tool: "read_file",
+          input: "{}",
+          call_id: "c1",
+          output: "ok",
+        },
       }),
       item({
         item_id: "i3",

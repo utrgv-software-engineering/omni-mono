@@ -27,6 +27,7 @@ import {
   BaseSelectionList,
   type SelectionOption,
 } from "./shared/BaseSelectionList.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 export type ElicitationAnswer = {
   action: "accept" | "decline" | "cancel";
@@ -139,7 +140,7 @@ const DECLINE_OPTIONS: SelectionOption<"decline">[] = [
   },
 ];
 
-export const ElicitationDialog = React.memo<ElicitationDialogProps>(
+export const ElicitationDialog = themedMemo<ElicitationDialogProps>(
   ({ elicitation, onRespond }) => {
     const support = dialogSupport(elicitation);
     const title = elicitation.title || "Input requested";

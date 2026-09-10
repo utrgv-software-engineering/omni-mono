@@ -67,7 +67,8 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
               ],
               agentHost: {
                 agentHostId: init.agent_host.agent_host_id,
-                defaultWorkspaceId: init.agent_host.default_workspace_id ?? null,
+                defaultWorkspaceId:
+                  init.agent_host.default_workspace_id ?? null,
                 defaultEnvironmentId:
                   init.agent_host.default_environment_id ?? null,
               },

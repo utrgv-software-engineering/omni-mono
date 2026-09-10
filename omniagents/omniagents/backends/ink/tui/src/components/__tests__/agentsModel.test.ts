@@ -67,7 +67,6 @@ describe("buildWorkerDetail", () => {
   });
 });
 
-
 describe("buildLiveActivity", () => {
   it("renders tool calls in beat language, prose wrapped, failures red", () => {
     const lines = buildLiveActivity(
@@ -116,7 +115,6 @@ describe("buildLiveActivity", () => {
   });
 });
 
-
 describe("settled subagent detail", () => {
   it("keeps the action transcript and appends the result without repeating prose", () => {
     const lines = buildWorkerDetail(
@@ -142,7 +140,10 @@ describe("settled subagent detail", () => {
             call_id: "c1",
           },
         },
-        { method: "message_output", params: { content: "It is a small web app." } },
+        {
+          method: "message_output",
+          params: { content: "It is a small web app." },
+        },
       ],
     );
     const texts = lines.map((l) => l.text);

@@ -46,6 +46,9 @@ _goal_resume_on_invoke = resume_impl
 # ---------------------------------------------------------------------------
 
 
+from omniagents.core.server_functions.slash import slash_command, text as slash_text
+
+
 @server_function(
     description="Cancel the running goal loop on this session.",
     strict=True,
@@ -75,7 +78,7 @@ setattr(goal_status, "_server_function_on_invoke", _goal_status_on_invoke)
 
 
 @server_function(
-    description="Pause the active goal loop on this session. Cancels the periodic tick but keeps the goal state and run-end listener so /goal.resume can pick it back up.",
+    description="Pause the active goal loop on this session. Cancels the periodic tick but keeps the goal state and run-end listener so `/goal resume` can pick it back up.",
     strict=True,
     name_override="goal.pause",
     resource_scope=ResourceScope.THREAD,
@@ -104,11 +107,18 @@ setattr(goal_resume, "_server_function_on_invoke", _goal_resume_on_invoke)
 
 # ---------------------------------------------------------------------------
 # Ink slash entry: /goal <goal text> -> start a new loop.
-# /goal.stop / /goal.status / /goal.pause / /goal.resume are reachable
+# `/goal stop|status|pause|resume` are reachable
 # as slash commands via their dotted names and via UI buttons.
 # ---------------------------------------------------------------------------
 
 
+@slash_command(
+    description="Autonomous goal loop: start one, or status / stop / pause / resume",
+    usage="[<goal text> | status | stop | pause | resume]",
+    args=slash_text(),
+    during_run=False,
+    order=30,
+)
 @server_function(
     description="Start an autonomous goal loop. Slash form: /goal <goal text>.",
     strict=True,
@@ -123,12 +133,25 @@ async def goal_alias(
 
 
 async def _goal_alias_on_invoke(service, session, args=None):
+    """One verb, Codex-style: a bare `/goal` reports status, a mode word
+    (`stop`, `pause`, `resume`, `status`) acts on the running loop, and
+    anything else is the goal to start."""
     args = args or {}
+    text = str(args.get("text") or args.get("goal") or "").strip()
+    action = text.lower()
+    if action in ("", "status"):
+        return await status_impl(service, session, {})
+    if action == "stop":
+        return await stop_impl(service, session, {})
+    if action == "pause":
+        return await pause_impl(service, session, {})
+    if action == "resume":
+        return await resume_impl(service, session, {})
     return await start_impl(
         service,
         session,
         {
-            "goal": args.get("text") or args.get("goal"),
+            "goal": text,
             "max_turns": args.get("max_turns"),
             "tick_interval": args.get("tick_interval"),
             "safe_tool_overrides": args.get("safe_tool_overrides"),

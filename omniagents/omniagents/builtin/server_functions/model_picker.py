@@ -45,6 +45,14 @@ def _no_store_result() -> dict:
     return {"model": None, "models": [], "message": model_setup_hint()}
 
 
+from omniagents.core.server_functions.slash import (
+    slash_command,
+    text as slash_text,
+    words as slash_words,
+)
+
+
+@slash_command(description="List available models and the current selection", order=11)
 @server_function(
     description="List available models",
     strict=True,
@@ -112,6 +120,13 @@ async def list_models(session: Session) -> dict:
     }
 
 
+@slash_command(
+    description="Switch the session's model",
+    usage="<name>",
+    args=slash_text(),
+    during_run=False,
+    order=10,
+)
 @server_function(
     description="Switch model",
     strict=True,
@@ -198,6 +213,13 @@ async def switch_model(session: Session, text: str) -> dict:
     }
 
 
+@slash_command(
+    description="Set reasoning effort",
+    usage="<low|medium|high>",
+    args=slash_text(),
+    during_run=False,
+    order=12,
+)
 @server_function(
     description="Set reasoning effort",
     strict=True,

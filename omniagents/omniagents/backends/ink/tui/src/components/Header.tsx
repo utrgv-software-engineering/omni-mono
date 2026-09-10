@@ -6,6 +6,7 @@ import React from "react";
 import { Box, Text } from "ink";
 import { Logo } from "./Logo.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 export interface HeaderProps {
   agentName: string;
@@ -19,11 +20,13 @@ export interface HeaderProps {
 const DASHBOARD_ACTIONS: Array<{ keys: string; label: string }> = [
   { keys: "type", label: "start a conversation" },
   { keys: "tab", label: "review · agents" },
-  { keys: "ctrl+a", label: "panels" },
+  { keys: "/", label: "commands and panels" },
+  { keys: "ctrl+p", label: "sessions" },
   { keys: "/model", label: "switch model" },
+  { keys: "?", label: "all keys" },
 ];
 
-export const Header = React.memo<HeaderProps>(
+export const Header = themedMemo<HeaderProps>(
   ({ agentName, welcomeText, visible }) => {
     return (
       <Box

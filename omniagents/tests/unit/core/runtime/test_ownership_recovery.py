@@ -1,11 +1,16 @@
-import json
+"""The run lease: a dead holder is displaced, a live one is not, nothing waits."""
+
+import asyncio
 
 import pytest
 
 from omniagents.core.conversation.recorder import ConversationRecorder
 from omniagents.core.conversation.store import SqliteConversationStore
+from omniagents.core.runtime import ownership
 from omniagents.core.runtime.ownership import reserve_run
-from omniagents.core.runtime import ownership_recovery as recovery
+from omniagents.core.session import queue_inbox
+
+from .lease_support import expire_lease
 
 
 @pytest.fixture
@@ -18,54 +23,69 @@ def reserved(tmp_path):
     store.close()
 
 
-def test_live_owner_cannot_be_recovered_even_with_abandonment(reserved):
+def test_live_lease_refuses_a_second_runtime(reserved):
     store, _, owner = reserved
-    owner.record_recovery_scope("host")
-    result = recovery.recover_runtime_owner(store, "thread", abandon_unknown=True)
-    assert not result["recovered"]
+    with pytest.raises(RuntimeError, match="active runtime owner"):
+        reserve_run(store, "thread")
     owner.assert_current()
-
-
-@pytest.mark.parametrize("scope", ["remote", "host"])
-def test_uncertain_execution_not_automatically_recovered(
-    reserved, tmp_path, monkeypatch, scope
-):
-    store, _, owner = reserved
-    owner.record_recovery_scope(scope, journal=tmp_path / "missing.json")
-    monkeypatch.setattr(recovery, "process_is_dead", lambda identity: True)
-    assert (
-        recovery.recover_runtime_owner(store, "thread")["reason"]
-        == "cleanup_unconfirmed"
-    )
-    owner.assert_current()
-
-
-def test_late_cleanup_evidence_releases_a_cancelled_local_owner(reserved, tmp_path):
-    store, _, owner = reserved
-    journal = tmp_path / "state.json"
-    owner.record_recovery_scope("host", journal=journal)
-    journal.write_text(json.dumps({"state": "running"}))
-    owner.execution_uncertain = True
     owner.release()
-    assert not owner.released
-    journal.write_text(
-        json.dumps(
-            {
-                "state": "interrupted",
-                "descendants_reaped": True,
-                "run_owner": {
-                    key: getattr(owner, key)
-                    for key in ("thread_id", "run_id", "owner", "generation")
-                },
-            }
-        )
-    )
+    assert owner.released
+
+
+def test_lapsed_lease_is_taken_over_without_ceremony(reserved):
+    store, _, owner = reserved
+    expire_lease(store, "thread")
+    replacement = reserve_run(store, "thread")
+    assert replacement.generation == owner.generation + 1
+    assert replacement.took_over_from == {
+        "run_id": owner.run_id,
+        "owner": owner.owner,
+        "generation": owner.generation,
+    }
+    with pytest.raises(RuntimeError, match="no longer current"):
+        owner.assert_current()
+    # The displaced holder's late release is a no-op, never an error.
+    owner.release()
+    replacement.assert_current()
+    replacement.release()
+
+
+def test_heartbeat_keeps_the_lease_alive(reserved, monkeypatch):
+    store, _, owner = reserved
+    monkeypatch.setattr(ownership, "LEASE_TTL", 0.05)
+    assert owner.heartbeat()
+    with pytest.raises(RuntimeError, match="active runtime owner"):
+        reserve_run(store, "thread")
+    import time
+
+    time.sleep(0.1)
+    replacement = reserve_run(store, "thread")
+    assert replacement.took_over_from is not None
+    assert not owner.heartbeat()
+    replacement.release()
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_task_refreshes_until_release(reserved, monkeypatch):
+    store, _, owner = reserved
+    monkeypatch.setattr(ownership, "HEARTBEAT_INTERVAL", 0.01)
+    before = queue_inbox.runtime_owner(store, "thread")["heartbeat"]
+    owner.start_heartbeat()
+    await asyncio.sleep(0.05)
+    assert queue_inbox.runtime_owner(store, "thread")["heartbeat"] > before
+    owner.release()
+    assert owner._heartbeat_task is None or owner._heartbeat_task.cancelled()
+
+
+def test_uncertain_execution_no_longer_pins_the_session(reserved):
+    store, _, owner = reserved
+    owner.execution_uncertain = True
     owner.release()
     assert owner.released
     reserve_run(store, "thread").release()
 
 
-def test_legacy_abandonment_preserves_claims_and_fails_uncertain_queue(reserved):
+def test_takeover_returns_the_dead_dispatchers_claims_to_pending(reserved):
     store, recorder, owner = reserved
     tool = recorder.claim_tool_execution(
         "thread",
@@ -78,70 +98,61 @@ def test_legacy_abandonment_preserves_claims_and_fails_uncertain_queue(reserved)
         "tool-owner",
     )
 
-    def legacy(state, receipt):
-        state.pop("runtime_recovery")
+    def claimed(state, receipt):
         state["items"] = [
-            {"owner": "old-dispatcher", "item": {"id": "queued", "state": "pending"}}
+            {
+                "owner": "dead-dispatcher",
+                "claimed_at": 0,
+                "item": {"id": "queued", "state": "pending", "trigger_run": True},
+            }
         ]
         return None, None
 
-    store.mutate_queue("thread", legacy)
-    assert (
-        recovery.recover_runtime_owner(store, "thread")["reason"]
-        == "legacy_owner_unverifiable"
-    )
-    assert (
-        recovery.recover_runtime_owner(store, "thread", abandon_unknown=True)["mode"]
-        == "operator_abandonment"
-    )
+    store.mutate_queue("thread", claimed)
+    expire_lease(store, "thread")
+    replacement = reserve_run(store, "thread")
+    state = store.mutate_queue("thread", lambda state, receipt: (state, None))
+    assert state["items"][0]["owner"] is None
+    assert state["items"][0]["item"]["state"] == "pending"
+    # The tool claim itself is untouched: history, not the lease, says what
+    # happened to it.
     assert (
         store.get_item("thread", tool.item_id).content["execution_state"] == "claimed"
     )
-    state = store.mutate_queue("thread", lambda state, receipt: (state, None))
-    assert state["items"][0]["owner"] is None
-    assert state["items"][0]["item"]["state"] == "failed"
-    next_owner = reserve_run(store, "thread")
-    assert next_owner.generation == 2
-    next_owner.release()
-
-
-def test_recovery_cannot_retire_a_replacement_owner(reserved, monkeypatch):
-    store, _, owner = reserved
-    monkeypatch.setattr(recovery, "process_is_dead", lambda identity: True)
-    replacement = None
-
-    def changed(*args):
-        nonlocal replacement
-        owner.release()
-        replacement = reserve_run(store, "thread")
-        return True
-
-    monkeypatch.setattr(recovery, "cleanup_confirmed", changed)
-    assert recovery.recover_runtime_owner(store, "thread")["reason"] == "owner_changed"
-    replacement.assert_current()
     replacement.release()
 
 
-def test_process_identity_checks_machine_boot_and_pid_reuse():
-    identity = recovery.process_identity()
-    if identity is None:
-        pytest.skip("Linux process identity unavailable")
-    assert not recovery.process_is_dead(identity)
-    assert not recovery.process_is_dead({**identity, "machine": "other"})
-    assert not recovery.process_is_dead({**identity, "pid_namespace": "other"})
-    assert recovery.process_is_dead({**identity, "boot": "previous-boot"})
-    assert recovery.process_is_dead({**identity, "start": "previous-process"})
-
-
-@pytest.mark.parametrize("scope", ["host", "remote"])
-def test_reboot_retires_only_local_executors(reserved, tmp_path, monkeypatch, scope):
+def test_stale_queue_claim_lapses_and_cancel_always_removes(reserved):
     store, _, owner = reserved
-    identity = recovery.process_identity()
-    if identity is None:
-        pytest.skip("Linux process identity unavailable")
-    owner.record_recovery_scope(scope, journal=tmp_path / "missing-final-journal")
-    monkeypatch.setattr(
-        recovery, "process_identity", lambda: {**identity, "boot": "new-boot"}
+    owner.release()
+    queue_inbox.accept(
+        store,
+        "thread",
+        {
+            "id": "q",
+            "content": "x",
+            "role": "user",
+            "trigger_run": True,
+            "enqueued_at": 1,
+            "state": "pending",
+        },
     )
-    result = recovery.recover_runtime_owner(store, "thread")
-    assert result["recovered"] is (scope == "host")
+    assert queue_inbox.claim(store, "thread", "q", "dead")
+    assert not queue_inbox.claim(store, "thread", "q", "next")
+    expire_lease(store, "thread", claims=True)
+    assert queue_inbox.claim(store, "thread", "q", "next")
+    assert queue_inbox.cancel(store, "thread", "q")["ok"]
+    assert queue_inbox.entries(store, "thread") == []
+
+
+def test_record_written_without_a_heartbeat_counts_as_dead(reserved):
+    store, _, owner = reserved
+
+    def legacy(state, receipt):
+        state["runtime_owner"].pop("heartbeat")
+        return None, None
+
+    store.mutate_queue("thread", legacy)
+    replacement = reserve_run(store, "thread")
+    assert replacement.generation == 2
+    replacement.release()

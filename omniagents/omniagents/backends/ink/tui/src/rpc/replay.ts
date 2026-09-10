@@ -22,52 +22,56 @@
  * Ink TUI (same pattern as the generated protocol maps).
  */
 
-export type ReplayObservation = 'deliver' | 'duplicate' | 'gap' | 'stream_changed'
+export type ReplayObservation =
+  | "deliver"
+  | "duplicate"
+  | "gap"
+  | "stream_changed";
 
-export type ReplayedEvent = { method: string; params: Record<string, unknown> }
+export type ReplayedEvent = { method: string; params: Record<string, unknown> };
 
 export type ResumeResult = {
-  session_id?: string
-  stream_id?: string
-  first_seq?: number
-  last_seq?: number
-  events?: ReplayedEvent[]
-}
+  session_id?: string;
+  stream_id?: string;
+  first_seq?: number;
+  last_seq?: number;
+  events?: ReplayedEvent[];
+};
 
 export class ReplayTracker {
-  streamId: string | null = null
-  lastSeq = 0
-  gapCount = 0
+  streamId: string | null = null;
+  lastSeq = 0;
+  gapCount = 0;
 
   observe(params: Record<string, unknown> | undefined): ReplayObservation {
-    const seq = params?.seq
-    if (typeof seq !== 'number' || !Number.isInteger(seq)) return 'deliver'
-    const streamId = params?.stream_id
-    if (typeof streamId === 'string' && streamId !== this.streamId) {
+    const seq = params?.seq;
+    if (typeof seq !== "number" || !Number.isInteger(seq)) return "deliver";
+    const streamId = params?.stream_id;
+    if (typeof streamId === "string" && streamId !== this.streamId) {
       if (this.streamId === null) {
         // First sequenced event observed: adopt the stream from here.
-        this.streamId = streamId
-        this.lastSeq = seq
-        return 'deliver'
+        this.streamId = streamId;
+        this.lastSeq = seq;
+        return "deliver";
       }
-      this.streamId = streamId
-      this.lastSeq = seq
-      return 'stream_changed'
+      this.streamId = streamId;
+      this.lastSeq = seq;
+      return "stream_changed";
     }
-    if (seq <= this.lastSeq) return 'duplicate'
+    if (seq <= this.lastSeq) return "duplicate";
     if (this.lastSeq > 0 && seq > this.lastSeq + 1) {
       // Cursor NOT advanced: backfill via resume_session + applyResume,
       // or opt out by delivering and calling forceAdvance(seq).
-      this.gapCount += 1
-      return 'gap'
+      this.gapCount += 1;
+      return "gap";
     }
-    this.lastSeq = seq
-    return 'deliver'
+    this.lastSeq = seq;
+    return "deliver";
   }
 
   /** Advance without backfilling (deliver-anyway consumers). */
   forceAdvance(seq: number): void {
-    if (Number.isInteger(seq)) this.lastSeq = Math.max(this.lastSeq, seq)
+    if (Number.isInteger(seq)) this.lastSeq = Math.max(this.lastSeq, seq);
   }
 
   /**
@@ -77,22 +81,25 @@ export class ReplayTracker {
    * superseded snapshots) and adopts the advertised `last_seq`.
    */
   applyResume(result: ResumeResult): ReplayedEvent[] {
-    if (typeof result.stream_id === 'string') this.streamId = result.stream_id
-    const deliver: ReplayedEvent[] = []
+    if (typeof result.stream_id === "string") this.streamId = result.stream_id;
+    const deliver: ReplayedEvent[] = [];
     for (const entry of result.events ?? []) {
-      if (!entry || typeof entry.method !== 'string') continue
-      const params = entry.params ?? {}
-      const seq = params.seq
-      if (typeof seq === 'number' && Number.isInteger(seq)) {
-        if (seq <= this.lastSeq) continue
-        this.lastSeq = seq
+      if (!entry || typeof entry.method !== "string") continue;
+      const params = entry.params ?? {};
+      const seq = params.seq;
+      if (typeof seq === "number" && Number.isInteger(seq)) {
+        if (seq <= this.lastSeq) continue;
+        this.lastSeq = seq;
       }
-      deliver.push({ method: entry.method, params })
+      deliver.push({ method: entry.method, params });
     }
-    if (typeof result.last_seq === 'number' && Number.isInteger(result.last_seq)) {
-      this.lastSeq = Math.max(this.lastSeq, result.last_seq)
+    if (
+      typeof result.last_seq === "number" &&
+      Number.isInteger(result.last_seq)
+    ) {
+      this.lastSeq = Math.max(this.lastSeq, result.last_seq);
     }
-    return deliver
+    return deliver;
   }
 }
 
@@ -105,9 +112,9 @@ export class ReplayTracker {
  * authoritative state (`get_session_history`).
  */
 export class SessionReplayCoordinator {
-  private trackers = new Map<string, ReplayTracker>()
-  private resuming = new Set<string>()
-  private buffered = new Map<string, ReplayedEvent[]>()
+  private trackers = new Map<string, ReplayTracker>();
+  private resuming = new Set<string>();
+  private buffered = new Map<string, ReplayedEvent[]>();
 
   constructor(
     private resume: (
@@ -120,12 +127,12 @@ export class SessionReplayCoordinator {
   ) {}
 
   tracker(sessionId: string): ReplayTracker {
-    let tracker = this.trackers.get(sessionId)
+    let tracker = this.trackers.get(sessionId);
     if (!tracker) {
-      tracker = new ReplayTracker()
-      this.trackers.set(sessionId, tracker)
+      tracker = new ReplayTracker();
+      this.trackers.set(sessionId, tracker);
     }
-    return tracker
+    return tracker;
   }
 
   /**
@@ -134,58 +141,65 @@ export class SessionReplayCoordinator {
    * deliver it normally.
    */
   handle(method: string, params: Record<string, unknown> | undefined): boolean {
-    const sessionId = params?.session_id
-    const seq = params?.seq
-    if (typeof sessionId !== 'string' || typeof seq !== 'number') return false
-    const tracker = this.tracker(sessionId)
+    const sessionId = params?.session_id;
+    const seq = params?.seq;
+    if (typeof sessionId !== "string" || typeof seq !== "number") return false;
+    const tracker = this.tracker(sessionId);
     if (this.resuming.has(sessionId)) {
       // Hold live events while a backfill is in flight; they are flushed
       // (with dedup) once the resume result has been applied.
-      this.buffered.get(sessionId)!.push({ method, params: params! })
-      return true
+      this.buffered.get(sessionId)!.push({ method, params: params! });
+      return true;
     }
-    const observation = tracker.observe(params)
-    if (observation === 'deliver') return false
-    if (observation === 'duplicate') return true
-    if (observation === 'stream_changed') {
-      this.onResyncRequired(sessionId)
-      return false
+    const observation = tracker.observe(params);
+    if (observation === "deliver") return false;
+    if (observation === "duplicate") return true;
+    if (observation === "stream_changed") {
+      this.onResyncRequired(sessionId);
+      return false;
     }
     // gap: buffer the triggering event and backfill.
-    this.buffered.set(sessionId, [{ method, params: params! }])
-    this.resuming.add(sessionId)
-    void this.runResume(sessionId, tracker)
-    return true
+    this.buffered.set(sessionId, [{ method, params: params! }]);
+    this.resuming.add(sessionId);
+    void this.runResume(sessionId, tracker);
+    return true;
   }
 
-  private async runResume(sessionId: string, tracker: ReplayTracker): Promise<void> {
-    let failed = false
+  private async runResume(
+    sessionId: string,
+    tracker: ReplayTracker,
+  ): Promise<void> {
+    let failed = false;
     try {
-      const result = await this.resume(sessionId, tracker.streamId, tracker.lastSeq)
+      const result = await this.resume(
+        sessionId,
+        tracker.streamId,
+        tracker.lastSeq,
+      );
       for (const event of tracker.applyResume(result)) {
-        this.deliver(event.method, event.params)
+        this.deliver(event.method, event.params);
       }
     } catch {
       // Resync required (or transport failure): surface to the host app,
       // which refetches authoritative state.
-      failed = true
-      this.onResyncRequired(sessionId)
+      failed = true;
+      this.onResyncRequired(sessionId);
     } finally {
-      const held = this.buffered.get(sessionId) ?? []
-      this.buffered.delete(sessionId)
-      this.resuming.delete(sessionId)
+      const held = this.buffered.get(sessionId) ?? [];
+      this.buffered.delete(sessionId);
+      this.resuming.delete(sessionId);
       for (const event of held) {
         if (failed) {
           // Degrade to deliver-anyway: force the cursor past the held
           // events so they cannot re-trigger a resume loop while the host
           // performs its full resync.
-          const seq = event.params.seq
-          if (typeof seq === 'number') tracker.forceAdvance(seq)
-          this.deliver(event.method, event.params)
-          continue
+          const seq = event.params.seq;
+          if (typeof seq === "number") tracker.forceAdvance(seq);
+          this.deliver(event.method, event.params);
+          continue;
         }
-        if (this.handle(event.method, event.params)) continue
-        this.deliver(event.method, event.params)
+        if (this.handle(event.method, event.params)) continue;
+        this.deliver(event.method, event.params);
       }
     }
   }

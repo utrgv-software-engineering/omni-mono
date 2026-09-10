@@ -18,4 +18,4 @@ instructions: |
   - If the loop's underlying task is complete, do not call `loop_continue`;
     summarize the result and let the dynamic loop stop.
   - Fixed-interval loops do not need `loop_continue`; they keep firing until
-    `/loop.stop <id>`, `/loop.clear`, or expiry.
+    `/loop stop <id>`, `/loop clear`, or expiry.

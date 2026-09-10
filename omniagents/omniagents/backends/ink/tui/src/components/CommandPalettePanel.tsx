@@ -12,7 +12,9 @@ import {
 } from "./command-palette-model.js";
 import { windowStart } from "./model-picker-model.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
+import { Clip, Fixed, oneLine } from "./shared/drawer-layout.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 const WINDOW = 8;
 
@@ -39,11 +41,11 @@ type Props = {
  * declares, completing into the composer so the user can add arguments
  * before committing.
  *
- * Same disclosure philosophy as the ctrl+a which-key menu: the menu IS
+ * The menu IS
  * the documentation, and the direct `/name` spelling is the accelerator
  * you graduate into.
  */
-export const CommandPalettePanel = React.memo<Props>(
+export const CommandPalettePanel = themedMemo<Props>(
   ({ open, onClose, client, onComplete }) => {
     const [all, setAll] = useState<CommandRow[]>([]);
     const [query, setQuery] = useState("");
@@ -56,7 +58,7 @@ export const CommandPalettePanel = React.memo<Props>(
       setLoading(true);
       setError(null);
       try {
-        setAll(buildCommandRows(await client.listServerFunctions()));
+        setAll(buildCommandRows(await client.listSlashCommands()));
       } catch (e) {
         // The builtins are client-side and still worth listing when the
         // server half is unreachable — a palette that renders nothing
@@ -165,9 +167,7 @@ export const CommandPalettePanel = React.memo<Props>(
         </Box>
 
         {error && (
-          <Text color={Theme.stateFailed}>
-            server functions unavailable: {error}
-          </Text>
+          <Text color={Theme.stateFailed}>commands unavailable: {error}</Text>
         )}
 
         {visible.map((row, i) => {
@@ -177,15 +177,22 @@ export const CommandPalettePanel = React.memo<Props>(
               key={`${row.source}:${row.name}`}
               selected={isSelected}
             >
-              <RowText color={Theme.textPrimary}>/{row.name}</RowText>
-              {row.takesArgs && (
-                <RowText color={Theme.textChrome}> &lt;args&gt;</RowText>
-              )}
-              {row.source === "builtin" && (
-                <RowText color={Theme.accentUser}> builtin</RowText>
-              )}
+              <Fixed>
+                <RowText color={Theme.textPrimary}>/{row.name}</RowText>
+                {row.usage && (
+                  <RowText color={Theme.textChrome}> {row.usage}</RowText>
+                )}
+                {row.source === "client" && (
+                  <RowText color={Theme.accentUser}> builtin</RowText>
+                )}
+              </Fixed>
               {row.description && (
-                <RowText color={Theme.textChrome}> · {row.description}</RowText>
+                <Clip>
+                  <RowText color={Theme.textChrome} wrap="truncate-end">
+                    {" "}
+                    · {oneLine(row.description)}
+                  </RowText>
+                </Clip>
               )}
             </SelectableRow>
           );

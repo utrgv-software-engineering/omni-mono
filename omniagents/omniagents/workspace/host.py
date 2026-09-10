@@ -357,12 +357,18 @@ class HostWorkspace(Workspace):
         merged_env = {**os.environ, **(env or {})} if env else None
 
         start = time.perf_counter()
+        # A one-shot command never gets the caller's stdin. Under the Ink
+        # backend fd 0 is the terminal Ink reads in raw mode; a child that
+        # inherited it would steal keystrokes, and one that found a tty
+        # there would reset it to cooked mode on exit, leaving the TUI
+        # echoing typed keys and mouse reports as text.
         if shell:
             cmd_str = command if isinstance(command, str) else shlex.join(command)
             proc = await create_host_process(
                 asyncio.create_subprocess_shell,
                 cmd_str,
                 scratch_root=self.scratch_root,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd_resolved,
@@ -374,6 +380,7 @@ class HostWorkspace(Workspace):
                 asyncio.create_subprocess_exec,
                 *args,
                 scratch_root=self.scratch_root,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd_resolved,

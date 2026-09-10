@@ -128,10 +128,13 @@ export interface Message {
     | "user"
     | "assistant"
     | "system"
+    | "command"
     | "tool_call"
     | "approval_request"
     | "review";
   content: string;
+  /** For `command` rows: the verb that produced `content`, e.g. "status". */
+  command?: string;
   timestamp?: Date;
   toolCall?: ToolCallInfo;
   approval?: ApprovalInfo;
@@ -153,11 +156,7 @@ export interface UsageInfo {
 /** Closed set, mirroring the server's plan step statuses. ``blocked`` is
  * set by the agent, never inferred from the ``blockedBy`` edge list — see
  * protocol.md § Durable Structured Plans. */
-export type TaskStatus =
-  | "pending"
-  | "in_progress"
-  | "completed"
-  | "blocked";
+export type TaskStatus = "pending" | "in_progress" | "completed" | "blocked";
 
 export interface TaskSummary {
   id: string;
@@ -348,6 +347,8 @@ interface AppState {
   // Last successful handshake; null until the first rpc_ready. Kept
   // across reconnects (each rpc_ready overwrites it).
   serverInit: ServerInitInfo | null;
+  /** Incremented on every palette change. */
+  themeVersion: number;
   // IDs of dock items the user has "moved past" — snapshotted from
   // currently-terminal items each time the user submits, so the next
   // run starts with a clean dock instead of dragging the previous
@@ -376,6 +377,8 @@ interface AppState {
       metadata?: Record<string, unknown>,
     ) => void;
     setThinking: (thinking: boolean, status?: string | null) => void;
+    /** Bumped when the palette changes; `themedMemo` re-renders on it. */
+    bumpThemeVersion: () => void;
     setStatus: (
       status: string | null,
       type?: "info" | "warning" | "error" | "success" | "progress" | null,
@@ -467,8 +470,13 @@ export const useAppStore = create<AppState>()(
     wakeup: null,
     loops: [],
     serverInit: null,
+    themeVersion: 0,
 
     actions: {
+      bumpThemeVersion: () =>
+        set((state) => {
+          state.themeVersion += 1;
+        }),
       addMessage: (msg) =>
         set((state) => {
           state.messages.push(msg);
@@ -854,6 +862,7 @@ export const useAppStore = create<AppState>()(
 
 // Selectors to prevent unnecessary re-renders
 export const useMessages = () => useAppStore((s) => s.messages);
+export const useThemeVersion = () => useAppStore((s) => s.themeVersion);
 export const useThinking = () => useAppStore((s) => s.thinking);
 export const useStatus = () =>
   useAppStore(
@@ -889,12 +898,12 @@ export const useWakeup = () => useAppStore((s) => s.wakeup);
 export const useLoops = () => useAppStore((s) => s.loops);
 export const useRunDiff = () => useAppStore((s) => s.runDiff);
 export const useSubagentEvents = () => useAppStore((s) => s.subagentEvents);
-export const useStatusContext = () =>
-  useAppStore((s) => s.statusContext);
-export const useTranscriptDetail = () =>
-  useAppStore((s) => s.transcriptDetail);
+export const useStatusContext = () => useAppStore((s) => s.statusContext);
+export const useTranscriptDetail = () => useAppStore((s) => s.transcriptDetail);
 export const useServerInit = () => useAppStore((s) => s.serverInit);
 /** Whether the server granted an experimental operation at the handshake. */
 export const useIsGranted = (operation: string) =>
-  useAppStore((s) => s.serverInit?.grantedExperimental.includes(operation) ?? false);
+  useAppStore(
+    (s) => s.serverInit?.grantedExperimental.includes(operation) ?? false,
+  );
 export const useActions = () => useAppStore((s) => s.actions);

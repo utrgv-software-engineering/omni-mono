@@ -19,6 +19,7 @@ import {
 } from "./reviewer-model.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 /**
  * The two reviewer switches, `/approvals` and `/checks`.
@@ -57,7 +58,7 @@ const SUBTITLES: Record<ReviewerKind, string> = {
   checks: "who reviews a plan step against its exit criteria",
 };
 
-export const ReviewerPanel = React.memo<Props>(
+export const ReviewerPanel = themedMemo<Props>(
   ({ kind, open, onClose, client, sessionId }) => {
     const options = (
       kind === "approvals" ? APPROVALS_OPTIONS : CHECKS_OPTIONS

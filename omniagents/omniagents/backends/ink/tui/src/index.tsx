@@ -5,6 +5,7 @@
 import React from "react";
 import { render } from "ink";
 import meow from "meow";
+import { initTheme } from "./theme/controller.js";
 import { App } from "./components/App.js";
 import { KeypressProvider } from "./contexts/KeypressContext.js";
 import { enableDebugLog, getDebugLogPath } from "./utils/debugLog.js";
@@ -24,6 +25,9 @@ const cli = meow(
     --initial-message Initial message to send
     --safe-mode       Enable safe mode (approval required)
     --debug           Enable debug logging
+    --theme           Color theme id (an Omarchy palette; default follows Omarchy, else tokyo-night)
+    --themes-dir      Directory of user themes (<name>.toml or <name>/colors.toml)
+    --settings-file   JSON file that remembers the chosen theme
     --help            Show this help message
     --version         Show version
 
@@ -74,6 +78,15 @@ const cli = meow(
         type: "boolean",
         default: true,
       },
+      theme: {
+        type: "string",
+      },
+      themesDir: {
+        type: "string",
+      },
+      settingsFile: {
+        type: "string",
+      },
     },
   },
 );
@@ -88,6 +101,9 @@ const {
   initialMessage,
   debug,
   mouse,
+  theme,
+  themesDir,
+  settingsFile,
 } = cli.flags;
 
 // Enable debug logging to file if requested
@@ -95,6 +111,10 @@ if (debug) {
   enableDebugLog();
   console.error(`Debug logging enabled: ${getDebugLogPath()}`);
 }
+
+// Resolve the palette before the first frame: an explicit --theme, the
+// saved choice, OMNI_THEME, Omarchy's current theme, else tokyo-night.
+initTheme(theme, { themesDir, settingsFile });
 
 // Disable terminal line wrapping - let Ink handle all wrapping
 // This reduces rendering artifacts and flickering

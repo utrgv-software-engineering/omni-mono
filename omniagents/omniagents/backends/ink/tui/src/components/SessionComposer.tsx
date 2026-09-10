@@ -50,11 +50,5 @@ export function SessionComposer({
   replyId?: string;
 }) {
   const draft = drafts.get(sessionId, replyId);
-  return (
-    <MultiLineInputOptimized
-      key={draft.id}
-      {...props}
-      draft={draft}
-    />
-  );
+  return <MultiLineInputOptimized key={draft.id} {...props} draft={draft} />;
 }

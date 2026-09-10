@@ -3,13 +3,14 @@ import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useEscalation } from "../store/appStore.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 // Banner shown when the agent calls ``escalate`` (the blocking
 // client-function builtin). The agent is paused on the tool call
 // awaiting our ``client_response``; the next message the user submits
 // is routed back as the reply via the App.tsx submit interceptor.
 // Renders nothing when no escalation is pending.
-export const EscalationBanner = React.memo(() => {
+export const EscalationBanner = themedMemo(() => {
   const escalation = useEscalation();
   if (!escalation) return null;
 

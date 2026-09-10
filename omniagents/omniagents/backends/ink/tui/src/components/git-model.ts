@@ -128,7 +128,9 @@ export function headline(status: GitStatusResult): string {
   }
   if (status.state !== "clean") parts.push(status.state.replace("_", " "));
   if (status.stash_count > 0)
-    parts.push(`${status.stash_count} stash${status.stash_count > 1 ? "es" : ""}`);
+    parts.push(
+      `${status.stash_count} stash${status.stash_count > 1 ? "es" : ""}`,
+    );
   return parts.join(" · ");
 }
 

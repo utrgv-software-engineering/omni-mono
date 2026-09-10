@@ -1,7 +1,9 @@
-"""Durable queued-command acceptance and conservative dispatch claims.
+"""Durable queued-command acceptance and dispatch claims.
 
-A claim is not a lease: process death never authorizes another execution.
-Foreign claims are exposed as uncertain until an authoritative outcome exists.
+A claim is a short lease: the dispatcher that took it either starts the run
+(whose receipt then settles the item) or dies, in which case the claim lapses
+after ``LEASE_TTL`` and the item is dispatched again. See
+``omniagents.core.runtime.ownership`` for the run-level lease it pairs with.
 """
 
 from __future__ import annotations
@@ -10,8 +12,26 @@ from copy import deepcopy
 from contextvars import ContextVar
 import hashlib
 import json
+import time
 
 current_dispatch = ContextVar("queue_dispatch_owner", default=None)
+
+
+def _claim_expired(entry, now=None):
+    from omniagents.core.runtime.ownership import lease_expired
+
+    return lease_expired({"heartbeat": entry.get("claimed_at")}, now)
+
+
+def release_stale_claims(state, now=None):
+    """Drop claims whose dispatcher stopped refreshing. Returns True if any."""
+    released = False
+    for entry in state.get("items", []):
+        if entry.get("owner") is not None and _claim_expired(entry, now):
+            entry["owner"] = None
+            entry.pop("claimed_at", None)
+            released = True
+    return released
 
 
 def accept(store, thread_id, item, *, submission_id=None, payload=None, limit=100):
@@ -81,11 +101,18 @@ def runtime_owner(store, thread_id):
 
 
 def claim(store, thread_id, item_id, owner):
+    from omniagents.core.runtime.ownership import lease_expired
+
     def update(state, receipt):
         items = state["items"]
-        if state.get("archived") or state.get("runtime_owner") is not None:
+        now = time.time()
+        runtime_owner = state.get("runtime_owner")
+        if state.get("archived"):
             return False, None
-        # A competing/uncertain dispatcher blocks later work for this session.
+        if runtime_owner is not None and not lease_expired(runtime_owner, now):
+            return False, None
+        release_stale_claims(state, now)
+        # One dispatcher at a time; a live competing claim blocks this one.
         pending = [
             entry
             for entry in items
@@ -96,7 +123,24 @@ def claim(store, thread_id, item_id, owner):
         if pending[0]["item"]["id"] != item_id:
             return False, None
         pending[0]["owner"] = owner
+        pending[0]["claimed_at"] = now
         return True, None
+
+    return store.mutate_queue(thread_id, update)
+
+
+def release_claim_if_stale(store, thread_id, item_id):
+    """Return the item to pending when its dispatcher's claim has lapsed."""
+
+    def update(state, receipt):
+        for entry in state["items"]:
+            if entry["item"]["id"] == item_id and entry.get("owner") is not None:
+                if _claim_expired(entry):
+                    entry["owner"] = None
+                    entry.pop("claimed_at", None)
+                    return True, None
+                return False, None
+        return False, None
 
     return store.mutate_queue(thread_id, update)
 
@@ -128,12 +172,9 @@ def cancel(store, thread_id, item_id):
     def update(state, receipt):
         for index, entry in enumerate(state["items"]):
             if entry["item"]["id"] == item_id:
-                if entry["owner"] is not None:
-                    return {
-                        "ok": False,
-                        "id": item_id,
-                        "reason": "dispatch_uncertain",
-                    }, None
+                # Cancel always removes the item. If a dispatcher had already
+                # handed it to start_run, that run is already visible in the
+                # transcript and is stopped through stop_run, not here.
                 del state["items"][index]
                 return {"ok": True, "id": item_id, "depth": len(state["items"])}, None
         return {"ok": False, "id": item_id, "reason": "not_found"}, None

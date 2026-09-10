@@ -15,7 +15,7 @@
 // Ours is Tokyo Night and so is theirs, so the classes land on the
 // palette this TUI already has.
 
-import { Theme } from "../theme.js";
+import { roleMap } from "../theme.js";
 
 export type IconClass =
   | "Red"
@@ -28,19 +28,19 @@ export type IconClass =
   | "Purple"
   | "Grey";
 
-export const ICON_COLORS: Record<IconClass, string> = {
-  Red: Theme.stateFailed,
+export const ICON_COLORS: Record<IconClass, string> = roleMap({
+  Red: "stateFailed",
   // mini.icons links Orange and Yellow to the same DiagnosticWarn.
-  Yellow: Theme.stateBlocked,
-  Orange: Theme.stateBlocked,
-  Green: Theme.stateDone,
-  Blue: Theme.accentAgent,
-  // Tokyo Night has no separate azure; DiagnosticInfo is the blue.
-  Azure: Theme.accentAgent,
-  Cyan: Theme.stateActive,
-  Purple: Theme.accentUser,
-  Grey: Theme.textChrome,
-};
+  Yellow: "stateBlocked",
+  Orange: "stateBlocked",
+  Green: "stateDone",
+  Blue: "accentAgent",
+  // No separate azure; DiagnosticInfo is the agent blue.
+  Azure: "accentAgent",
+  Cyan: "stateActive",
+  Purple: "accentUser",
+  Grey: "textChrome",
+});
 
 type Entry = readonly [glyph: string, cls: IconClass];
 

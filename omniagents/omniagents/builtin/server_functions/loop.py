@@ -34,6 +34,17 @@ from omniagents.core.autonomy.loop import (  # noqa: F401  (re-exported surface)
 )
 
 
+from omniagents.core.server_functions.slash import slash_command, text as slash_text
+
+
+@slash_command(
+    description="Recurring prompt: start one, or status / stop [id] / clear",
+    usage="[<interval>] <prompt> | status | stop [id] | clear",
+    args=slash_text(),
+    aliases=("loops",),
+    during_run=False,
+    order=40,
+)
 @server_function(
     description="Run a prompt on a recurring loop. Slash form: /loop [interval] [prompt].",
     strict=True,
@@ -48,8 +59,18 @@ async def loop_alias(
 
 
 async def _loop_alias_on_invoke(service, session, args=None):
+    """One verb: bare `/loop` lists, `stop [id]` / `clear` act, anything
+    else is `[interval] <prompt>` to start."""
     args = args or {}
     text = str(args.get("text") or args.get("prompt") or "")
+    head, _, rest = text.strip().partition(" ")
+    action = head.lower()
+    if action in ("", "status"):
+        return await _loop_status_on_invoke(service, session, {})
+    if action == "stop":
+        return await _loop_stop_on_invoke(service, session, {"text": rest.strip()})
+    if action == "clear":
+        return await _loop_clear_on_invoke(service, session, {})
     interval_seconds, prompt, _token = split_loop_interval_and_prompt(text)
     if not prompt:
         lease = require_request_context().environment_lease
@@ -129,7 +150,7 @@ async def _loop_stop_on_invoke(service, session, args=None):
         else:
             return {
                 "ok": False,
-                "message": "Usage: /loop.stop <task_id>\n" + _format_status(tasks),
+                "message": "Usage: /loop stop <task_id>\n" + _format_status(tasks),
                 "snapshot": loop_snapshot_dict(getattr(session, "id", "")),
             }
     return await delete_impl(service, session, task_id=task_id)

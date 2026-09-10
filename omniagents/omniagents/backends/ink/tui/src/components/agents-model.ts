@@ -2,7 +2,11 @@
 // (same split as ./review-model / ./strip-model).
 
 import wrapAnsi from "wrap-ansi";
-import type { ToolCallInfo, SubagentEvent, SubagentSummary } from "../store/appStore.js";
+import type {
+  ToolCallInfo,
+  SubagentEvent,
+  SubagentSummary,
+} from "../store/appStore.js";
 import { renderMarkdownCached } from "../utils/markdownCache.js";
 import { runningLabel } from "./transcript-model.js";
 import { Theme } from "../theme.js";
@@ -71,9 +75,7 @@ export function buildLiveActivity(
         : label.action;
       lines.push({ text: `· ${text}`, color: Theme.textChrome });
     } else if (event.method === "tool_result") {
-      const metadata = params.metadata as
-        | Record<string, unknown>
-        | undefined;
+      const metadata = params.metadata as Record<string, unknown> | undefined;
       if (metadata && metadata.success === false) {
         lines.push({
           text: `✗ ${String(params.tool ?? "tool")} failed`,

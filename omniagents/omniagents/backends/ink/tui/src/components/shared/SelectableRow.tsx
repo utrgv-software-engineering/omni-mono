@@ -1,6 +1,7 @@
 import React, { createContext, useContext } from "react";
 import { Box, Text } from "ink";
 import { Theme } from "../../theme.js";
+import { themedMemo } from "../../theme/themed-memo.js";
 
 /**
  * The one way a list marks its selected row: a full-width highlight
@@ -50,7 +51,7 @@ export const RowText = ({ bold, children, ...rest }: TextProps) => {
   );
 };
 
-export const SelectableRow = React.memo<{
+export const SelectableRow = themedMemo<{
   selected: boolean;
   children: React.ReactNode;
 }>(({ selected, children }) => (

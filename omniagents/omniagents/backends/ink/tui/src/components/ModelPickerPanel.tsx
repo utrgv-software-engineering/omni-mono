@@ -13,6 +13,7 @@ import {
 } from "./model-picker-model.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 const WINDOW = 8;
 
@@ -28,7 +29,7 @@ type Props = {
 // session's model via set_session_model — the same stable RPC pair web's
 // ModelPicker.tsx consumes. Switching needs a session; before the first
 // message the panel says so instead of failing.
-export const ModelPickerPanel = React.memo(
+export const ModelPickerPanel = themedMemo(
   ({ open, onClose, client, sessionId }: Props) => {
     const actions = useActions();
     const [rows, setRows] = useState<ModelRow[]>([]);
@@ -80,7 +81,7 @@ export const ModelPickerPanel = React.memo(
         if (!client) return;
         if (!sessionId) {
           setStatusLine("no active session yet — send a message first");
-        return;
+          return;
         }
         setSwitching(true);
         setStatusLine(`switching to ${row.label}…`);
@@ -110,10 +111,10 @@ export const ModelPickerPanel = React.memo(
 
     useKeypress(
       (input, key) => {
-      // Modified keys are chords for the global layer (quit, panel
-      // switching) — never mistake Ctrl+X for the letter x.
-      if (key.ctrl || (key.meta && !key.escape)) return false;
-      if (key.tab) return false; // tab always cycles screens
+        // Modified keys are chords for the global layer (quit, panel
+        // switching) — never mistake Ctrl+X for the letter x.
+        if (key.ctrl || (key.meta && !key.escape)) return false;
+        if (key.tab) return false; // tab always cycles screens
         if (key.escape || input === "q") {
           onClose();
           return true;
@@ -189,10 +190,7 @@ export const ModelPickerPanel = React.memo(
                 {row.label}
               </RowText>
               {row.provider && (
-                <RowText color={Theme.textChrome}>
-                  {" "}
-                  · {row.provider}
-                </RowText>
+                <RowText color={Theme.textChrome}> · {row.provider}</RowText>
               )}
               {row.active && (
                 <RowText color={Theme.stateDone}> ✔ active</RowText>
@@ -211,9 +209,7 @@ export const ModelPickerPanel = React.memo(
         })}
 
         {rows.length === 0 && !loading && !error && (
-          <Text color={Theme.textChrome}>
-            no models configured
-          </Text>
+          <Text color={Theme.textChrome}>no models configured</Text>
         )}
 
         {statusLine && (

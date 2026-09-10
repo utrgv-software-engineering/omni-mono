@@ -14,6 +14,7 @@ import {
   BaseSelectionList,
   type SelectionOption,
 } from "./shared/BaseSelectionList.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 export type McpApprovalOption = SelectionOption<"yes" | "no">;
 
@@ -37,7 +38,7 @@ const DEFAULT_OPTIONS: McpApprovalOption[] = [
   },
 ];
 
-export const McpApprovalDialog = React.memo<McpApprovalDialogProps>(
+export const McpApprovalDialog = themedMemo<McpApprovalDialogProps>(
   ({ tool, serverLabel, arguments: args, onApprove }) => {
     const argsDisplay = React.useMemo(() => {
       try {

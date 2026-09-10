@@ -10,7 +10,14 @@ import React, {
   useRef,
   useLayoutEffect,
 } from "react";
-import { Box, Text, useApp, useStdout, measureElement } from "ink";
+import {
+  Box,
+  Text,
+  useApp,
+  useStdout,
+  measureElement,
+  ResizeObserver,
+} from "ink";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { useRPC } from "../hooks/useRPC.js";
@@ -31,6 +38,7 @@ import {
   useRunDiff,
   useSubagents,
   useTranscriptDetail,
+  useThemeVersion,
   useActions,
   useAppStore,
 } from "../store/appStore.js";
@@ -52,8 +60,11 @@ import { SessionManager } from "./SessionManager.js";
 import { Scrollable } from "./Scrollable.js";
 import { Tasks } from "./Tasks.js";
 import { BashJobs } from "./BashJobs.js";
+import { GoalPanel } from "./GoalPanel.js";
+import { LoopPanel } from "./LoopPanel.js";
+import { SkillsPanel } from "./SkillsPanel.js";
+import { ThemePanel } from "./ThemePanel.js";
 import { QueuedMessages } from "./QueuedMessages.js";
-import { PanelMenu } from "./PanelMenu.js";
 import { ReviewScreen } from "./ReviewScreen.js";
 import { AgentsScreen } from "./AgentsScreen.js";
 import { FilesScreen } from "./FilesScreen.js";
@@ -63,6 +74,32 @@ import { GitPanel } from "./GitPanel.js";
 import { TerminalScreen } from "./TerminalScreen.js";
 import { ModelPickerPanel } from "./ModelPickerPanel.js";
 import { CommandPalettePanel } from "./CommandPalettePanel.js";
+import { HelpPanel } from "./HelpPanel.js";
+import { ComposerPopup } from "./ComposerPopup.js";
+import { buildCommandRows, type CommandRow } from "./command-palette-model.js";
+import {
+  exportFileName,
+  lastAssistantText,
+  mcpLines,
+  osc52,
+  statusLines,
+  transcriptToMarkdown,
+} from "./session-commands-model.js";
+import { writeFileSync } from "node:fs";
+import { join as joinPath } from "node:path";
+import {
+  findSlashCommand,
+  parseSlashArgs,
+  parseSlashLine,
+  unknownCommandMessage,
+  slashResultMessage,
+} from "../rpc/slash.js";
+import {
+  nextDismissedToken,
+  tokenKey,
+  type ComposerCompletion,
+  type ComposerToken,
+} from "./composer-token.js";
 import { ArtifactsPanel } from "./ArtifactsPanel.js";
 import { ReviewerPanel } from "./ReviewerPanel.js";
 import { EscalationBanner } from "./EscalationBanner.js";
@@ -76,79 +113,74 @@ import { resolveEscalation } from "../hooks/escalationBridge.js";
 import { MouseProvider } from "../contexts/MouseContext.js";
 import { ScrollProvider } from "../contexts/ScrollProvider.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 /**
  * Wrapper to keep ApprovalDialog mounted to prevent flicker
  */
-const ApprovalDialogWrapper = React.memo<{
+const ApprovalDialogWrapper = themedMemo<{
   approval: ApprovalInfo | null;
   onApprove: (value: "yes" | "always" | "no", requestId?: string) => void;
-}>(
-  ({ approval, onApprove }) => {
-    if (!approval) {
-      // Render empty placeholder to keep component mounted
-      return null;
-    }
+}>(({ approval, onApprove }) => {
+  if (!approval) {
+    // Render empty placeholder to keep component mounted
+    return null;
+  }
 
-    return (
-      <ApprovalDialog
-        key={approval.call_id}
-        tool={approval.tool}
-        arguments={approval.arguments}
-        metadata={approval.metadata}
-        onApprove={value => onApprove(value, approval.call_id)}
-      />
-    );
-  },
-);
+  return (
+    <ApprovalDialog
+      key={approval.call_id}
+      tool={approval.tool}
+      arguments={approval.arguments}
+      metadata={approval.metadata}
+      onApprove={(value) => onApprove(value, approval.call_id)}
+    />
+  );
+});
 
 /**
  * Wrapper for the hosted-MCP approval dialog. Mirrors
  * ApprovalDialogWrapper but renders ``McpApprovalDialog`` and matches on
  * ``request_id`` (not call_id).
  */
-const McpApprovalDialogWrapper = React.memo<{
+const McpApprovalDialogWrapper = themedMemo<{
   approval: McpApprovalInfo | null;
   onApprove: (value: "yes" | "no", requestId?: string) => void;
-}>(
-  ({ approval, onApprove }) => {
-    if (!approval) {
-      return null;
-    }
-    return (
-      <McpApprovalDialog
-        key={approval.request_id}
-        tool={approval.tool}
-        serverLabel={approval.server_label}
-        arguments={approval.arguments}
-        onApprove={value => onApprove(value, approval.request_id)}
-      />
-    );
-  },
-);
+}>(({ approval, onApprove }) => {
+  if (!approval) {
+    return null;
+  }
+  return (
+    <McpApprovalDialog
+      key={approval.request_id}
+      tool={approval.tool}
+      serverLabel={approval.server_label}
+      arguments={approval.arguments}
+      onApprove={(value) => onApprove(value, approval.request_id)}
+    />
+  );
+});
 
 /**
  * Wrapper for the elicitation dialog. Question-kind prompts render as
  * the ElicitationBanner (next user submit answers them) instead, so
  * this wrapper only mounts for confirm/select/url/unsupported kinds.
  */
-const ElicitationDialogWrapper = React.memo<{
+const ElicitationDialogWrapper = themedMemo<{
   elicitation: ElicitationInfo | null;
   onRespond: (answer: ElicitationAnswer, requestId?: string) => void;
-}>(
-  ({ elicitation, onRespond }) => {
-    if (!elicitation || elicitation.kind === "question") {
-      return null;
-    }
-    return (
-      <ElicitationDialog
-        key={elicitation.elicitation_id}
-        elicitation={elicitation}
-        onRespond={answer => onRespond(answer, elicitation.elicitation_id)}
-      />
-    );
-  },
-);
+}>(({ elicitation, onRespond }) => {
+  if (!elicitation || elicitation.kind === "question") {
+    return null;
+  }
+  return (
+    <ElicitationDialog
+      key={elicitation.elicitation_id}
+      elicitation={elicitation}
+      onRespond={(answer) => onRespond(answer, elicitation.elicitation_id)}
+    />
+  );
+});
 
 /**
  * Inline "⠋ Thinking…" / status indicator rendered at the bottom of the
@@ -159,7 +191,7 @@ const ElicitationDialogWrapper = React.memo<{
  * Hidden while an approval dialog is up: the approval surface itself
  * communicates the paused state.
  */
-const InlineStatusIndicator = React.memo(() => {
+const InlineStatusIndicator = themedMemo(() => {
   const thinking = useThinking();
   const statusObj = useStatus() as unknown as { status: string | null };
   const approval = useApproval();
@@ -289,6 +321,11 @@ type ActivePanel =
   | "artifacts"
   | "approvals"
   | "checks"
+  | "help"
+  | "theme"
+  | "goal"
+  | "loop"
+  | "skills"
   | null;
 
 export const App: React.FC<AppProps> = ({
@@ -328,20 +365,18 @@ export const App: React.FC<AppProps> = ({
   const currentRunId = useCurrentRunId();
   const bashJobs = useBashJobs();
   const actions = useActions();
+  useThemeVersion();
 
   // Measure controls/footer height dynamically (like gemini-cli)
   const controlsRef = useRef<any>(null);
   const [controlsHeight, setControlsHeight] = useState(0);
 
-  // Exactly one panel drawer may own the keyboard at a time. Chords
-  // toggle their panel (ctrl+b jobs, ctrl+n notifications, ctrl+g git,
-  // /model models) and ctrl+a cycles the strip drawers
-  // (tasks → workers → queue); opening one closes whatever was open, so
-  // panels can never stack two live cursors.
+  // Exactly one panel drawer may own the keyboard at a time. Every
+  // drawer opens from its slash verb (/jobs, /tasks, /goal …); the
+  // chords (ctrl+b jobs, ctrl+n notifications, ctrl+g git) are
+  // accelerators for the same thing. Opening one closes whatever was
+  // open, so panels can never stack two live cursors.
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
-  // Which-key popup (ctrl+a): pick a panel by mnemonic instead of
-  // cycling blind. Selecting sets activePanel and closes the menu.
-  const [panelMenuOpen, setPanelMenuOpen] = useState(false);
   // Screen router: full-screen scenes switched with alt+1/2. Chat is
   // the conversation (composer, transcript, decisions inline); review
   // is the full-height diff screen. Drawer overlays live on chat.
@@ -360,45 +395,39 @@ export const App: React.FC<AppProps> = ({
   // bridge): consumed by MultiLineInputOptimized on the next render.
   const [pendingInsert, setPendingInsert] = useState<string | null>(null);
   const composerDrafts = React.useRef(new ComposerDrafts()).current;
+  // Inline completion popup: the `/command` or `@file` token under the
+  // composer cursor, the one-shot completion the popup hands back, and
+  // the token the user dismissed with Esc (stays hidden until they move
+  // on to a different token).
+  const [composerToken, setComposerTokenState] = useState<ComposerToken | null>(
+    null,
+  );
+  const setComposerToken = useCallback((next: ComposerToken | null) => {
+    setComposerTokenState((prev) =>
+      prev === next ||
+      (prev &&
+        next &&
+        prev.kind === next.kind &&
+        prev.query === next.query &&
+        prev.row === next.row &&
+        prev.start === next.start &&
+        prev.end === next.end)
+        ? prev
+        : next,
+    );
+  }, []);
+  const [composerCompletion, setComposerCompletion] =
+    useState<ComposerCompletion | null>(null);
+  const [dismissedToken, setDismissedToken] = useState<string | null>(null);
+  // The session manager can be entered from chat (ctrl+p, /sessions);
+  // only then does Esc have somewhere to go back to.
+  const [sessionsReturnable, setSessionsReturnable] = useState(false);
   const promptId =
     approval?.call_id ??
     mcpApproval?.request_id ??
     (elicitation?.kind !== "question"
       ? elicitation?.elicitation_id
       : undefined);
-  const promptKey = JSON.stringify([sessionId, promptId]);
-  const promptAttention = React.useRef({ key: "", held: false });
-  if (promptAttention.current.key !== promptKey) {
-    promptAttention.current = {
-      key: promptKey,
-      held:
-        !!promptId &&
-        !!composerDrafts
-          .get(sessionId)
-          .current?.lines.some((line) => line.length > 0),
-    };
-  }
-  const [focusedPrompt, setFocusedPrompt] = useState<string | null>(null);
-  const promptNeedsFocus =
-    promptAttention.current.held && focusedPrompt !== promptKey;
-  useKeypress(
-    (input, key) => {
-      if (key.ctrl && input === "y") {
-        setFocusedPrompt(promptKey);
-        return true;
-      }
-      return false;
-    },
-    {
-      isActive:
-        promptNeedsFocus &&
-        screen === "chat" &&
-        activePanel === null &&
-        !panelMenuOpen,
-      priority: KeypressPriority.High,
-    },
-  );
-
   // Unread stars per tab — "changed since you last looked", the
   // browser/IDE modified-dot. Distinct from ⚠ (needs a decision).
   // Watching a signal while its screen is inactive sets the star;
@@ -585,33 +614,52 @@ export const App: React.FC<AppProps> = ({
     actions.clearArtifacts();
   }, [sessionId, actions]);
 
+  // The footer's height is whatever it is: the composer grows as you
+  // type, the completion popup lists more or fewer rows as you filter,
+  // drawers open and close. Observe the element instead of enumerating
+  // every state that could change it — a missed dependency here paints
+  // the footer over the transcript. Zero is a REAL measurement on
+  // screens without a composer (review/agents with no drawer open).
   useLayoutEffect(() => {
-    if (controlsRef.current) {
-      // Zero is a REAL measurement on screens without a composer
-      // (review/agents with no drawer open) — skipping it would keep
-      // subtracting the stale chat-controls height and strand rows of
-      // blank space under those screens.
-      setControlsHeight(measureElement(controlsRef.current).height);
-    }
-    // `screen` changes the controls column contents (the composer only
-    // exists on chat), and the drawer region grows/shrinks with
-    // activePanel / the menu — all of them must re-measure.
-  }, [
-    terminalHeight,
-    approval,
-    mcpApproval,
-    thinking,
-    screen,
-    activePanel,
-    panelMenuOpen,
-  ]);
+    const element = controlsRef.current;
+    if (!element) return;
+    setControlsHeight(measureElement(element).height);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setControlsHeight(Math.round(entry.contentRect.height));
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [terminalHeight, screen]);
 
-  // Calculate available height for messages (gemini-cli approach).
-  // The extra -1 is the TopTabs row, which sits outside controlsRef.
-  const availableTerminalHeight = Math.max(
-    5,
-    terminalHeight - controlsHeight - 2 - 1,
-  );
+  // The content region is a flex child that shrinks to whatever the
+  // footer leaves, and clips. Its measured height is what the screens
+  // get; the arithmetic below is only the first-frame fallback before
+  // the observer has reported. Children may hold a stale height for one
+  // frame, but the wrapper clips them, so the frame never exceeds the
+  // terminal — which is what used to corrupt Ink's redraw.
+  const contentRef = useRef<any>(null);
+  const [contentHeight, setContentHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const element = contentRef.current;
+    if (!element) return;
+    setContentHeight(measureElement(element).height);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContentHeight(Math.round(entry.contentRect.height));
+      }
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [terminalHeight, screen, uiState]);
+  // A measured region may legitimately be tiny (the key overlay open on
+  // a short terminal); forcing a floor above it would make the children
+  // overflow their clipped wrapper, which Ink does not paint cleanly.
+  const availableTerminalHeight =
+    contentHeight !== null
+      ? Math.max(1, contentHeight)
+      : Math.max(5, terminalHeight - controlsHeight - 2 - 1);
 
   // Ctrl+C handling - require double tap to quit
   const { exit } = useApp();
@@ -712,8 +760,21 @@ export const App: React.FC<AppProps> = ({
     if (debug) {
       console.error("[DEBUG] Creating new session");
     }
+    // From chat, "new" means a fresh transcript too; the next send
+    // mints the session. At launch there is nothing to clear.
+    if (sessionsReturnable) {
+      actions.clearMessages();
+      actions.setSessionId(undefined);
+    }
     setUIState("chat");
-  }, [debug]);
+  }, [actions, debug, sessionsReturnable]);
+
+  /** Chat → session manager, with a way back. */
+  const openSessions = useCallback(() => {
+    setActivePanel(null);
+    setSessionsReturnable(true);
+    setUIState("session_select");
+  }, []);
 
   // Handle approval
   const handleApproval = useCallback(
@@ -743,136 +804,290 @@ export const App: React.FC<AppProps> = ({
     [respondElicitation, elicitation?.elicitation_id],
   );
 
-  // Handle slash commands
+  // Slash commands. The catalog is the server's typeable subset plus the
+  // client's own commands; a name outside it is refused, never sent to
+  // the model. Arguments follow the command's declared rule.
+  const slashCatalog = useRef<{ rows: CommandRow[]; at: number } | null>(null);
+  const loadSlashCatalog = useCallback(async (): Promise<CommandRow[]> => {
+    const cached = slashCatalog.current;
+    if (cached && Date.now() - cached.at < 30_000) return cached.rows;
+    const rows = buildCommandRows(
+      client ? await client.listSlashCommands() : [],
+    );
+    slashCatalog.current = { rows, at: Date.now() };
+    return rows;
+  }, [client]);
+  useEffect(() => {
+    slashCatalog.current = null;
+  }, [client, rpcReady]);
+
   const handleSlashCommand = useCallback(
-    async (cmd: string): Promise<{ sendToLLM: boolean; result?: string }> => {
-      const parts = cmd.trim().split(/\s+/);
-      if (parts.length === 0) {
-        return { sendToLLM: false };
+    async (cmd: string): Promise<{ result?: string; restore?: boolean }> => {
+      const parsed = parseSlashLine(cmd);
+      if (!parsed) return {};
+      const rows = await loadSlashCatalog();
+      const command = findSlashCommand(rows, parsed.name);
+      if (!command) {
+        return { result: unknownCommandMessage(parsed.name), restore: true };
+      }
+      const args = parseSlashArgs(command.args, parsed.rest);
+      if (!args.ok) {
+        return {
+          result: `/${command.name}: ${args.error}${command.usage ? ` Usage: /${command.name} ${command.usage}` : ""}`,
+          restore: true,
+        };
+      }
+      if (!command.during_run && thinking) {
+        return {
+          result: `/${command.name} can't run while a response is in progress. Stop it first (esc).`,
+          restore: true,
+        };
       }
 
-      const name = parts[0].toLowerCase();
-      const argText = cmd.slice(parts[0].length).trim();
-
-      // Built-in: /exit
-      if (name === "/exit") {
-        exit();
-        return { sendToLLM: false };
+      // A verb with a panel and nothing after it opens the panel; the
+      // panel offers the verb's actions as keys.
+      if (
+        parsed.rest === "" &&
+        (command.name === "goal" || command.name === "loop")
+      ) {
+        setActivePanel(command.name);
+        return {};
       }
 
-      // Built-in: /model — open the catalog picker panel. Client-side on
-      // purpose: model switching is a stable GUI RPC pair, not a server
-      // function.
-      if (name === "/model" || name === "/models") {
-        setActivePanel("models");
-        return { sendToLLM: false };
-      }
-
-      // Built-in: /help — the command directory. Client-side because
-      // half its rows (this one, /model, /exit) never reach the server,
-      // and a directory missing the commands you are reading it in is
-      // not a directory.
-      if (name === "/help" || name === "/?") {
-        setActivePanel("commands");
-        return { sendToLLM: false };
-      }
-
-      // Built-in: the two reviewer switches. Independent commands
-      // because they are independent switches — who answers a tool
-      // approval, and who reviews a plan-step completion — over
-      // different subjects, each paired with its own transcript record.
-      if (name === "/approvals") {
-        setActivePanel("approvals");
-        return { sendToLLM: false };
-      }
-      if (name === "/checks") {
-        setActivePanel("checks");
-        return { sendToLLM: false };
-      }
-
-      // Server function invocation
-      try {
-        const fn = name.slice(1); // Remove leading /
-
-        // Check if this server function exists
-        const funcs = await client!.listServerFunctions();
-        const found = funcs.find(
-          (f) => f.name.toLowerCase() === fn.toLowerCase(),
-        );
-
-        if (!found) {
-          // Not a server function - fall back to LLM. sendMessage
-          // (useRPC) mints a session on first call, so we don't need to
-          // pre-ensure here.
-          return { sendToLLM: true };
+      // Client-side commands.
+      if (command.source === "client") {
+        switch (command.name) {
+          case "exit":
+            exit();
+            return {};
+          case "model":
+            setActivePanel("models");
+            return {};
+          case "help":
+            setActivePanel("commands");
+            return {};
+          case "keys":
+            setActivePanel("help");
+            return {};
+          case "sessions":
+            openSessions();
+            return {};
+          case "jobs":
+            setActivePanel("jobs");
+            return {};
+          case "tasks":
+            setActivePanel("tasks");
+            return {};
+          case "queue":
+            setActivePanel("queue");
+            return {};
+          case "notifications":
+            setActivePanel("notifications");
+            return {};
+          case "git":
+            setActivePanel("git");
+            return {};
+          case "workers":
+            setScreen("agents");
+            return {};
+          case "terminal":
+            setScreen("term");
+            return {};
+          case "artifacts":
+            setActivePanel("artifacts");
+            return {};
+          case "new":
+            actions.clearMessages();
+            actions.setSessionId(undefined);
+            return {};
+          case "rename": {
+            const title = String(args.args.title ?? "").trim();
+            if (!sessionId)
+              return {
+                result: "Nothing to rename yet — send a message first.",
+                restore: true,
+              };
+            if (!title)
+              return { result: "Usage: /rename <title>", restore: true };
+            if (!client?.isGranted("update_thread"))
+              return {
+                result: "This server does not support renaming conversations.",
+              };
+            try {
+              await client.updateThread(sessionId, { title });
+              return { result: `Renamed to “${title}”.` };
+            } catch (err) {
+              return { result: `Rename failed: ${err}` };
+            }
+          }
+          case "fork": {
+            if (!sessionId)
+              return {
+                result: "Nothing to fork yet — send a message first.",
+                restore: true,
+              };
+            if (!client?.isGranted("fork_session"))
+              return {
+                result: "This server does not support forking conversations.",
+              };
+            try {
+              const res = (await client.forkSession(sessionId)) as {
+                new_session_id?: unknown;
+              };
+              const id =
+                typeof res?.new_session_id === "string"
+                  ? res.new_session_id
+                  : null;
+              if (!id)
+                return { result: "Fork did not return a new conversation." };
+              handleOpenSession(id);
+              return {};
+            } catch (err) {
+              return { result: `Fork failed: ${err}` };
+            }
+          }
+          case "diff":
+            setScreen("review");
+            return {};
+          case "status": {
+            const state = useAppStore.getState();
+            let workspaceRoot: string | null = null;
+            try {
+              const res = (await client?.serverCall(
+                "fs_get_workspace_root",
+                {},
+                sessionId || undefined,
+              )) as { path?: unknown } | undefined;
+              if (typeof res?.path === "string") workspaceRoot = res.path;
+            } catch {
+              /* no workspace functions on this agent */
+            }
+            return {
+              result: statusLines({
+                sessionId,
+                model: state.sessionModel,
+                usage: state.usage,
+                goal: state.goal,
+                loops: state.loops,
+                workspaceRoot,
+                connected,
+              }).join("\n"),
+            };
+          }
+          case "mcp": {
+            try {
+              const res = await client!.mcpListServers(sessionId || undefined);
+              return { result: mcpLines(res.servers ?? []).join("\n") };
+            } catch (err) {
+              return { result: `Could not list MCP servers: ${err}` };
+            }
+          }
+          case "skills":
+            setActivePanel("skills");
+            return {};
+          case "theme":
+            setActivePanel("theme");
+            return {};
+          case "copy": {
+            const text = lastAssistantText(messages);
+            if (!text) return { result: "Nothing to copy yet." };
+            stdout.write(osc52(text));
+            return {
+              result: `Copied ${text.length} characters to the clipboard.`,
+            };
+          }
+          case "export": {
+            const now = new Date();
+            const dir = process.env.PWD ?? process.cwd();
+            const file = joinPath(dir, exportFileName(sessionId, now));
+            try {
+              writeFileSync(
+                file,
+                transcriptToMarkdown(messages, {
+                  sessionId,
+                  model: useAppStore.getState().sessionModel,
+                  exportedAt: now,
+                }),
+                "utf8",
+              );
+              return { result: `Exported to ${file}` };
+            } catch (err) {
+              return { result: `Export failed: ${err}` };
+            }
+          }
+          case "pwd": {
+            try {
+              const res = (await client!.serverCall(
+                "fs_get_workspace_root",
+                {},
+                sessionId || undefined,
+              )) as {
+                path?: unknown;
+              };
+              return {
+                result:
+                  typeof res?.path === "string" ? res.path : "No workspace.",
+              };
+            } catch {
+              return { result: "No workspace on this agent." };
+            }
+          }
+          case "approvals":
+            setActivePanel("approvals");
+            return {};
+          case "checks":
+            setActivePanel("checks");
+            return {};
+          default:
+            return {
+              result: unknownCommandMessage(command.name),
+              restore: true,
+            };
         }
+      }
 
-        // Anchor a session before dispatching the server function.
-        // Slash commands like /goal short-circuit sendMessage's
-        // mint-on-first-call (which only runs for regular chat), so when
-        // /goal is the user's very first action there's no sessionId to
-        // pass — the function fires session-less and goal returns
-        // "No session context". session.ensure({}) mints one on the
-        // server and returns its id; we mirror it into local store so
-        // subsequent UI state stays consistent.
+      try {
+        // Anchor a session before dispatching: a slash command may be the
+        // first thing the user does, and server functions like /goal start
+        // runs through the drainer rather than through sendMessage's
+        // mint-on-first-call.
         let sid: string | undefined = sessionId || undefined;
         if (!sid) {
           try {
             const ensured = (await client!.serverCall("session.ensure", {})) as
               | { session_id?: unknown }
               | undefined;
-            const ensuredId =
-              typeof ensured?.session_id === "string"
-                ? ensured.session_id
-                : undefined;
-            if (ensuredId) {
-              sid = ensuredId;
-              actions.setSessionId(ensuredId);
+            if (typeof ensured?.session_id === "string") {
+              sid = ensured.session_id;
+              actions.setSessionId(sid);
             }
           } catch {
-            /* best-effort — let the server function attempt the call anyway */
+            /* best-effort — let the call attempt anyway */
           }
         }
-
-        // Parse arguments
-        let args: Record<string, unknown> = {};
-        if (argText) {
-          try {
-            const parsed = JSON.parse(argText);
-            if (typeof parsed === "object" && !Array.isArray(parsed)) {
-              args = parsed;
-            } else if (Array.isArray(parsed)) {
-              args = { args: parsed };
-            } else if (typeof parsed === "string") {
-              args = { text: parsed };
-            } else {
-              args = { value: parsed };
-            }
-          } catch {
-            // Not JSON - treat as text argument
-            args = { text: argText };
-          }
-        }
-
-        // Call server function
-        const result = await client!.serverCall(fn, args, sid);
-
-        // Format result
-        if (result.message && typeof result.message === "string") {
-          return { sendToLLM: false, result: result.message };
-        }
-
-        const formatted = JSON.stringify(result, null, 2);
-        return {
-          sendToLLM: false,
-          result:
-            formatted === "null" || !formatted.trim() ? "Done." : formatted,
-        };
+        const result = await client!.serverCall(
+          command.function ?? command.name,
+          args.args,
+          sid,
+        );
+        return { result: slashResultMessage(result) };
       } catch (err) {
-        return { sendToLLM: false, result: `Error: ${err}` };
+        return { result: `Error: ${err}` };
       }
     },
-    [client, sessionId, exit, actions],
+    [
+      client,
+      sessionId,
+      exit,
+      actions,
+      thinking,
+      loadSlashCatalog,
+      openSessions,
+      handleOpenSession,
+      messages,
+      stdout,
+      connected,
+    ],
   );
 
   // Handle user input
@@ -929,22 +1144,20 @@ export const App: React.FC<AppProps> = ({
         });
       }
 
-      // Check for slash command
-      if (message.startsWith("/")) {
-        const { sendToLLM, result } = await handleSlashCommand(message);
-
-        if (!sendToLLM) {
-          // Show result as assistant message (if any)
-          if (result) {
-            actions.addMessage({
-              role: "assistant",
-              content: result,
-              timestamp: new Date(),
-            });
-          }
-          return;
+      // Slash command: handled here or refused here. Never the model's.
+      const typed = parseSlashLine(message);
+      if (typed) {
+        const { result, restore } = await handleSlashCommand(message);
+        if (result) {
+          actions.addMessage({
+            role: "command",
+            command: typed.name,
+            content: result,
+            timestamp: new Date(),
+          });
         }
-        // Fall through to send to LLM if not handled
+        // A refused command goes back into the composer, as typed.
+        return restore ? false : undefined;
       }
 
       // Always update input-recall history (regardless of which path
@@ -969,7 +1182,8 @@ export const App: React.FC<AppProps> = ({
             role: "user",
             source: "ink",
           });
-          if (!queued.ok) throw new Error(queued.reason || "Message was not queued");
+          if (!queued.ok)
+            throw new Error(queued.reason || "Message was not queued");
         } catch (err) {
           const errorMessage =
             err instanceof Error ? err.message : "Failed to enqueue message";
@@ -1099,7 +1313,6 @@ export const App: React.FC<AppProps> = ({
             const step = key.shift ? order.length - 1 : 1;
             return order[(index + step) % order.length]!;
           });
-          setPanelMenuOpen(false);
           return;
         }
         // Alt+digit jumps stay as direct accelerators.
@@ -1151,10 +1364,10 @@ export const App: React.FC<AppProps> = ({
           setActivePanel((prev) => (prev === "commands" ? null : "commands"));
           return;
         }
-        // Ctrl+A: toggle the which-key panel menu — one mnemonic
-        // keypress to any panel, with live summaries.
-        if (key.ctrl && input === "a") {
-          setPanelMenuOpen((prev) => !prev);
+        // Ctrl+P: the session manager. "P" as in pick — the same chord
+        // editors use for their switcher.
+        if (key.ctrl && input === "p") {
+          openSessions();
           return;
         }
         // Ctrl+O: toggle the transcript between semantic activity beats
@@ -1199,6 +1412,7 @@ export const App: React.FC<AppProps> = ({
         handleMcpApproval,
         activePanel,
         actions,
+        openSessions,
       ],
     ),
     {
@@ -1206,6 +1420,50 @@ export const App: React.FC<AppProps> = ({
       priority: KeypressPriority.Low,
     },
   );
+
+  // `?` on an empty composer opens the key reference. High priority so
+  // the composer never inserts the character first; the emptiness check
+  // is what keeps a real question mark typeable.
+  const composerReplyId = escalation
+    ? `escalation:${escalation.request_id}`
+    : elicitation?.kind === "question"
+      ? `question:${elicitation.elicitation_id}`
+      : undefined;
+  useKeypress(
+    useCallback(
+      (input, key) => {
+        if (input !== "?" || key.ctrl || key.meta) return false;
+        const current = composerDrafts.get(sessionId, composerReplyId).current;
+        if (current && current.lines.some((line) => line.length > 0))
+          return false;
+        setActivePanel("help");
+        return true;
+      },
+      [composerDrafts, sessionId, composerReplyId],
+    ),
+    {
+      isActive:
+        uiState === "chat" &&
+        screen === "chat" &&
+        activePanel === null &&
+        !promptId,
+      priority: KeypressPriority.High,
+    },
+  );
+
+  // The popup shows for the live token unless the user dismissed that
+  // very token; a different token (new position or sigil) reopens it.
+  const popupToken =
+    screen === "chat" &&
+    !promptId &&
+    activePanel === null &&
+    composerToken &&
+    dismissedToken !== tokenKey(composerToken)
+      ? composerToken
+      : null;
+  useEffect(() => {
+    setDismissedToken((prev) => nextDismissedToken(prev, composerToken));
+  }, [composerToken]);
 
   // Cleanup timer on unmount
   useEffect(() => {
@@ -1256,8 +1514,9 @@ export const App: React.FC<AppProps> = ({
             onNew={handleNewSession}
             // Nothing to resume is not a screen worth showing: `--resume`
             // on a fresh install used to land straight in chat, and it
-            // still does.
-            onEmpty={handleNewSession}
+            // still does. Opened from chat, an empty list is a finding.
+            onEmpty={sessionsReturnable ? undefined : handleNewSession}
+            onExit={sessionsReturnable ? () => setUIState("chat") : undefined}
           />
         </Box>
       </Box>
@@ -1291,7 +1550,13 @@ export const App: React.FC<AppProps> = ({
               Scrollable's own paddingRight reserves the scrollbar lane
               and the input's paddingRight (added below) keeps its right
               border aligned with the panels' right border. */}
-          <Box flexGrow={1}>
+          <Box
+            ref={contentRef}
+            flexGrow={1}
+            flexShrink={1}
+            minHeight={0}
+            overflowY="hidden"
+          >
             {screen === "review" ? (
               <ReviewScreen
                 active={screen === "review"}
@@ -1329,7 +1594,10 @@ export const App: React.FC<AppProps> = ({
             ) : messages.length === 0 ? (
               /* Fresh session: the dashboard IS the body, vertically
                  centered in the full content region, LazyVim-style. The
-                 first message replaces it with the transcript. */
+                 first message replaces it with the transcript. When the
+                 footer leaves too few rows (a popup or the key overlay is
+                 open), draw the logo alone or nothing: content taller
+                 than its box is what Ink paints as overlapping rows. */
               <Box
                 height={availableTerminalHeight}
                 width="100%"
@@ -1337,18 +1605,18 @@ export const App: React.FC<AppProps> = ({
                 justifyContent="center"
                 alignItems="center"
               >
-                <Header
-                  agentName={agentName}
-                  welcomeText={welcomeText}
-                  visible={true}
-                />
+                {availableTerminalHeight >= 13 ? (
+                  <Header
+                    agentName={agentName}
+                    welcomeText={welcomeText}
+                    visible={true}
+                  />
+                ) : availableTerminalHeight >= 3 ? (
+                  <Logo agentName={agentName} />
+                ) : null}
               </Box>
             ) : (
-              <SelectionInputContext.Provider
-                value={
-                  !promptNeedsFocus && activePanel === null && !panelMenuOpen
-                }
-              >
+              <SelectionInputContext.Provider value={activePanel === null}>
                 <ScrollableMessageList
                   availableHeight={availableTerminalHeight}
                   onApprove={handleApproval}
@@ -1366,7 +1634,7 @@ export const App: React.FC<AppProps> = ({
               border provides enough visual break to the help line
               below; help still has paddingBottom for the
               terminal-bottom gap. */}
-          <Box ref={controlsRef} flexDirection="column" gap={0}>
+          <Box ref={controlsRef} flexDirection="column" gap={0} flexShrink={0}>
             {/* Input prompt - always rendered, disabled only during
                 approval prompts or when a side panel owns the keyboard.
                 Submission while ``thinking`` is allowed now — handleSubmit
@@ -1382,30 +1650,30 @@ export const App: React.FC<AppProps> = ({
                 <SessionComposer
                   drafts={composerDrafts}
                   sessionId={sessionId}
-                  replyId={
-                    escalation
-                      ? `escalation:${escalation.request_id}`
-                      : elicitation?.kind === "question"
-                        ? `question:${elicitation.elicitation_id}`
-                        : undefined
-                  }
+                  replyId={composerReplyId}
                   onSubmit={handleSubmit}
-                  disabled={
-                    (!!promptId && !promptNeedsFocus) ||
-                    activePanel !== null ||
-                    panelMenuOpen
-                  }
+                  disabled={!!promptId || activePanel !== null}
                   history={messageHistory}
                   disableSubmit={!rpcReady}
                   pendingInsert={pendingInsert}
                   onInsertConsumed={() => setPendingInsert(null)}
+                  onTokenChange={setComposerToken}
+                  completion={composerCompletion}
+                  onCompletionConsumed={() => setComposerCompletion(null)}
                 />
               </Box>
             )}
-            {screen === "chat" && promptNeedsFocus && (
-              <Text color={Theme.textSecondary}>
-                A decision is waiting — Ctrl+Y to review. Your draft is saved.
-              </Text>
+            {/* Inline completions for `/command` and `@file`, right under
+                the text they complete. Non-modal: typing keeps filtering. */}
+            {screen === "chat" && (
+              <ComposerPopup
+                token={popupToken}
+                client={client}
+                onComplete={setComposerCompletion}
+                onDismiss={() =>
+                  setDismissedToken(popupToken ? tokenKey(popupToken) : null)
+                }
+              />
             )}
 
             {/* Blocking prompts render BELOW the input — they are the
@@ -1457,6 +1725,48 @@ export const App: React.FC<AppProps> = ({
                 )) as any;
               }}
             />
+            <GoalPanel
+              focused={activePanel === "goal"}
+              onUnfocus={() => setActivePanel(null)}
+              onAction={async (action) => {
+                if (!client) return {};
+                return await client.serverCall(
+                  `goal.${action}`,
+                  {},
+                  sessionId || undefined,
+                );
+              }}
+            />
+            <LoopPanel
+              focused={activePanel === "loop"}
+              onUnfocus={() => setActivePanel(null)}
+              onStop={async (id) => {
+                if (!client) return {};
+                return await client.serverCall(
+                  "loop.stop",
+                  { text: id },
+                  sessionId || undefined,
+                );
+              }}
+              onClear={async () => {
+                if (!client) return {};
+                return await client.serverCall(
+                  "loop.clear",
+                  {},
+                  sessionId || undefined,
+                );
+              }}
+            />
+            <SkillsPanel
+              focused={activePanel === "skills"}
+              onUnfocus={() => setActivePanel(null)}
+              client={client}
+              sessionId={sessionId || undefined}
+            />
+            <ThemePanel
+              focused={activePanel === "theme"}
+              onUnfocus={() => setActivePanel(null)}
+            />
             <ArtifactsPanel
               focused={activePanel === "artifacts"}
               onUnfocus={() => setActivePanel(null)}
@@ -1486,6 +1796,11 @@ export const App: React.FC<AppProps> = ({
               client={client}
               sessionId={sessionId}
             />
+            <HelpPanel
+              open={activePanel === "help"}
+              screen={screen}
+              onClose={() => setActivePanel(null)}
+            />
             <CommandPalettePanel
               open={activePanel === "commands"}
               onClose={() => setActivePanel(null)}
@@ -1494,23 +1809,6 @@ export const App: React.FC<AppProps> = ({
               // command may still need arguments, and the user has to
               // be able to read one before committing to it.
               onComplete={(text) => setPendingInsert(text)}
-            />
-
-            {/* Which-key panel picker — works from any screen. Workers
-                graduated to the agents screen; its row routes there. */}
-            <PanelMenu
-              open={panelMenuOpen}
-              onSelect={(panel) => {
-                if (panel === "workers") {
-                  setScreen("agents");
-                } else if (panel === "terminal") {
-                  setScreen("term");
-                } else {
-                  setActivePanel(panel);
-                }
-                setPanelMenuOpen(false);
-              }}
-              onClose={() => setPanelMenuOpen(false)}
             />
 
             {/* Bottom bar: what's happening (mission tokens + usage). */}

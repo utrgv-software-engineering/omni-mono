@@ -4,25 +4,18 @@ import pytest
 
 from omniagents.core.agents import service as service_module
 from omniagents.core.runtime.ownership import reserve_run
-from omniagents.core.runtime.ownership_recovery import recovery_snapshot
+from omniagents.core.session import queue_inbox
+
+from ..runtime.lease_support import expire_lease
 from .test_environment_run_retirement import make_service
 
 
 @pytest.mark.asyncio
-async def test_new_prompt_recovers_dead_host_owner_and_preserves_unknown_tool(
-    monkeypatch,
-):
+async def test_new_prompt_takes_over_a_dead_owner_and_tells_the_model(monkeypatch):
     service = make_service(monkeypatch)
     session = service._session_manager.get_or_create("recover-on-start")
     store = service._queue_store(session)
     owner = reserve_run(store, session.id)
-    owner.record_recovery_scope("host")
-
-    def dead(state, receipt):
-        state["runtime_recovery"]["process"]["start"] = "previous-process"
-        return None, None
-
-    store.mutate_queue(session.id, dead)
     session.append_message({"role": "user", "content": "original"})
     session.append_message(
         {
@@ -33,6 +26,7 @@ async def test_new_prompt_recovers_dead_host_owner_and_preserves_unknown_tool(
             "omniagents": {"run_id": owner.run_id},
         }
     )
+    expire_lease(store, session.id)
     prompts = []
 
     async def stream(agent, prompt, *args, **kwargs):
@@ -49,56 +43,65 @@ async def test_new_prompt_recovers_dead_host_owner_and_preserves_unknown_tool(
     assert result["session_id"] == session.id
     assert prompts == ["continue"]
     assert session.runtime_ownership.generation == 2
+    assert session.runtime_ownership.took_over_from["run_id"] == owner.run_id
     assert any(
         "execution outcome unknown" in str(row.get("output", ""))
         for row in session.history
     )
     with pytest.raises(RuntimeError, match="no longer current"):
         owner.assert_current()
+    assert queue_inbox.runtime_owner(store, session.id) is None
 
 
 @pytest.mark.asyncio
-async def test_recover_command_handles_legacy_owner_without_erasing_history(
-    monkeypatch,
-):
+async def test_takeover_closes_the_interrupted_turn_in_the_transcript(monkeypatch):
+    from omniagents.core.conversation.model import ItemStatus, TurnStatus
+    from omniagents.core.conversation.recorder import recorder_for_session
+
     service = make_service(monkeypatch)
-    session = service._session_manager.get_or_create("legacy-recovery")
+    session = service._session_manager.get_or_create("close-interrupted")
     store = service._queue_store(session)
-    reserve_run(store, session.id)
-
-    def legacy(state, receipt):
-        state.pop("runtime_recovery")
-        return None, None
-
-    store.mutate_queue(session.id, legacy)
-    session.append_message({"role": "user", "content": "preserve me"})
-    original = list(session.history)
-    result = await service.server_call("recover", {}, session.id)
-    assert result["reason"] == "legacy_owner_unverifiable"
-    assert recovery_snapshot(store, session.id)["owner"] is not None
-    result = await service.server_call(
-        "recover", {"abandon_unknown_run": True}, session.id
+    owner = reserve_run(store, session.id)
+    recorder = recorder_for_session(session)
+    recorder.open_turn(session.id, owner.run_id, prompt="do it", prompt_role="user")
+    claimed = recorder.claim_tool_execution(
+        session.id,
+        {"run_id": owner.run_id, "call_id": "c", "tool": "execute_bash", "input": "{}"},
+        "tool-owner",
     )
-    assert result["recovered"] and result["mode"] == "operator_abandonment"
-    assert session.history == original
-    reserve_run(store, session.id).release()
+    expire_lease(store, session.id)
+
+    async def stream(agent, prompt, *args, **kwargs):
+        return {}
+
+    monkeypatch.setattr(service_module, "stream_agent", stream)
+    await service.start_run(
+        "continue", {"mode": "explicit", "environment_id": "a"}, session_id=session.id
+    )
+    await asyncio.wait_for(session.current_task, 2)
+    assert store.get_turn(session.id, owner.run_id).status == TurnStatus.FAILED
+    item = store.get_item(session.id, claimed.item_id)
+    assert item.status == ItemStatus.FAILED
+    assert item.content["execution_state"] == "uncertain"
 
 
 @pytest.mark.asyncio
-async def test_recover_command_does_not_supersede_live_foreign_owner(monkeypatch):
+async def test_live_foreign_owner_is_not_displaced(monkeypatch):
     service = make_service(monkeypatch)
-    session = service._session_manager.get_or_create("live-recovery")
+    session = service._session_manager.get_or_create("live-owner")
     owner = reserve_run(service._queue_store(session), session.id)
-    result = await service.server_call(
-        "recover", {"abandon_unknown_run": True}, session.id
-    )
-    assert not result["recovered"]
+    with pytest.raises(RuntimeError, match="active runtime owner"):
+        await service.start_run(
+            "continue",
+            {"mode": "explicit", "environment_id": "a"},
+            session_id=session.id,
+        )
     owner.assert_current()
     owner.release()
 
 
 @pytest.mark.asyncio
-async def test_recover_stops_foreground_host_command_and_allows_next_run(
+async def test_stopping_a_foreground_host_command_frees_the_next_run(
     monkeypatch, tmp_path
 ):
     import sys
@@ -145,17 +148,19 @@ async def test_recover_stops_foreground_host_command_and_allows_next_run(
     result = await service.start_run(
         "long command",
         {"mode": "explicit", "environment_id": "host"},
-        session_id="stop-recover",
+        session_id="stop-then-continue",
     )
     session = service._session_manager.get(result["session_id"])
     try:
         async with asyncio.timeout(5):
             while not pidfile.exists() or not pidfile.read_text():
                 await asyncio.sleep(0.01)
-        response = await service.server_call("recover", {}, session.id)
-        assert response.get("reason") == "no_runtime_owner"
-        assert not Path(f"/proc/{int(pidfile.read_text())}").exists()
-        assert session.runtime_ownership.released
+        task = session.current_task
+        await service.stop_run(task.get_name())
+        await asyncio.gather(task, return_exceptions=True)
+        async with asyncio.timeout(5):
+            while Path(f"/proc/{int(pidfile.read_text())}").exists():
+                await asyncio.sleep(0.01)
         await service.start_run(
             "continue",
             {"mode": "explicit", "environment_id": "host"},

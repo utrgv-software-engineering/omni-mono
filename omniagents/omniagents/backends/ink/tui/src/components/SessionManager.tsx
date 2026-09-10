@@ -2,7 +2,7 @@ import { WorkspaceView } from "./WorkspaceView.js";
 import { useImmediateState } from "../hooks/useImmediateState.js";
 import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
 import { useRequestScope } from "../hooks/useRequestScope.js";
-import { ConnectionClosedError, RpcTimeoutError } from "../rpc/lifecycle.js";
+import { isReplyLost } from "../rpc/lifecycle.js";
 import React, {
   useCallback,
   useEffect,
@@ -29,6 +29,7 @@ import {
 import { windowStart } from "./model-picker-model.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 /**
  * The resume screen, promoted from a list to a manager.
@@ -71,15 +72,20 @@ type Props = {
    * finding, not an absence.
    */
   onEmpty?: () => void;
+  /**
+   * Go back to the conversation the user came from (Esc in the list).
+   * Absent at launch, where there is nothing to go back to.
+   */
+  onExit?: () => void;
 };
 
-export const SessionManager = React.memo<Props>((props) => (
+export const SessionManager = themedMemo<Props>((props) => (
   <WorkspaceView client={props.client} active>
     <SessionManagerContent {...props} />
   </WorkspaceView>
 ));
-const SessionManagerContent = React.memo<Props>(
-  ({ client, onOpen, onNew, onEmpty }) => {
+const SessionManagerContent = themedMemo<Props>(
+  ({ client, onOpen, onNew, onEmpty, onExit }) => {
     const requests = useRequestScope([client]);
     const operationPending = useRef(false);
     const leaving = useRef(false);
@@ -233,16 +239,22 @@ const SessionManagerContent = React.memo<Props>(
           if (current()) setStatusLine(label);
         } catch (e) {
           if (!current()) return;
+          if (isReplyLost(e)) {
+            // The reply was lost, not necessarily the mutation. Re-read
+            // server truth: now if the socket is already back, otherwise
+            // the rpc_ready subscription refetches on reconnect.
+            setStatusLine(null);
+            if (client?.initializeResult) void load(appliedQueryRef.current);
+            return;
+          }
           setStatusLine(
-            e instanceof ConnectionClosedError || e instanceof RpcTimeoutError
-              ? `${label}: outcome unknown; refresh before retrying`
-              : `${label} failed: ${(e as Error).message ?? String(e)}`,
+            `${label} failed: ${(e as Error).message ?? String(e)}`,
           );
         } finally {
           operationPending.current = false;
         }
       },
-      [load],
+      [client, load],
     );
 
     const requireOrganize = useCallback(
@@ -301,6 +313,12 @@ const SessionManagerContent = React.memo<Props>(
         void load("");
         return true;
       }
+      if (key.escape && onExit) {
+        leaving.current = true;
+        requests.invalidate();
+        onExit();
+        return true;
+      }
       if (!selected || operationPending.current) return true;
 
       if (input === "p") {
@@ -349,11 +367,14 @@ const SessionManagerContent = React.memo<Props>(
             setStatusLine("fork returned no session id");
           } catch (e) {
             if (!current()) return;
-            setStatusLine(
-              e instanceof ConnectionClosedError || e instanceof RpcTimeoutError
-                ? "fork: outcome unknown; refresh before retrying"
-                : `fork failed: ${(e as Error).message ?? String(e)}`,
-            );
+            if (isReplyLost(e)) {
+              // A forked child, if it exists, shows up in the list: refetch
+              // now if connected, else on rpc_ready.
+              setStatusLine(null);
+              if (client?.initializeResult) void load(appliedQueryRef.current);
+              return;
+            }
+            setStatusLine(`fork failed: ${(e as Error).message ?? String(e)}`);
           } finally {
             operationPending.current = false;
           }
@@ -639,6 +660,7 @@ const SessionManagerContent = React.memo<Props>(
             <Text color={Theme.textChrome}>
               ↑↓ select · enter open · tab new · /{" "}
               {canSearch && organized ? "search" : "filter"} · d delete
+              {onExit ? " · esc back" : ""}
             </Text>
             {organized ? (
               <Text color={Theme.textChrome}>

@@ -36,19 +36,9 @@ def snapshot_queue(inbox: dict, session: Any) -> list[dict]:
     for entry in inbox.get("items", []):
         item = dict(entry["item"])
         owner = entry["owner"]
-        if owner is not None:
-            if owner == session.queue_owner and draining:
-                continue
-            item["state"] = "dispatch_uncertain"
-        elif (
-            item.get("state", "pending") == "pending"
-            and inbox.get("runtime_owner")
-            and not active
-        ):
-            item["error"] = (
-                "Waiting for the previous runtime to finish or be reconciled. "
-                "This message has not started."
-            )
+        if owner is not None and owner == session.queue_owner and draining:
+            # Handed to start_run by this runtime: it is the active run now.
+            continue
         result.append(item)
     return result
 
@@ -90,7 +80,7 @@ def reconcile_runtime_controls(
                 }
         pending = None
         request_id = None
-        payloads = {}
+        payloads: dict[str, Any] = {}
         if item.get("kind") == "approval":
             mcp = content.get("approval_kind") == "mcp"
             pending = mcp_requests if mcp else tools

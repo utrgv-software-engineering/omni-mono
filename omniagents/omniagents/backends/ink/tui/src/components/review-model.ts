@@ -36,7 +36,10 @@ export function fileBadge(file: ReviewFile): { text: string; color: string } {
             : Theme.stateActive;
     return { text: file.xy.replace(/ /g, "·"), color };
   }
-  return { text: changeGlyph(file.change).padEnd(2), color: changeColor(file.change) };
+  return {
+    text: changeGlyph(file.change).padEnd(2),
+    color: changeColor(file.change),
+  };
 }
 
 const CHANGE_GLYPH: Record<string, string> = {
@@ -66,7 +69,16 @@ export type UnifiedSection = {
   offset: number;
 };
 
-const NOISE_PREFIXES = ["diff --git ", "index ", "--- ", "+++ ", "new file mode", "deleted file mode", "old mode", "new mode"];
+const NOISE_PREFIXES = [
+  "diff --git ",
+  "index ",
+  "--- ",
+  "+++ ",
+  "new file mode",
+  "deleted file mode",
+  "old mode",
+  "new mode",
+];
 
 // ----- line-number gutter -----
 //

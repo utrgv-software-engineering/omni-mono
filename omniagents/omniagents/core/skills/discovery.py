@@ -60,3 +60,16 @@ def build_available_skills_block(skill_roots: list[Path]) -> str:
     discovered = discover_skill_dirs(skill_roots)
     valid = [skill_dir for skill_dir in discovered if not validate(skill_dir)]
     return to_prompt(merge_skill_dirs(valid))
+
+
+def read_skill_text(skill_dir: Path) -> str | None:
+    """The SKILL.md body for a discovered skill directory, or None when
+    the directory has none. Reads happen here, in the skills package that
+    already owns skill discovery, so server functions never touch host
+    paths themselves."""
+    from .parser import find_skill_md
+
+    path = find_skill_md(Path(skill_dir))
+    if path is None:
+        return None
+    return path.read_text(encoding="utf-8")

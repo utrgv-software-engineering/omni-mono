@@ -17,7 +17,8 @@ import {
   useSubagents,
 } from "../store/appStore.js";
 import { buildStripTokens, type StripTone } from "./strip-model.js";
-import { Theme } from "../theme.js";
+import { Theme, roleMap } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 export type Screen = "chat" | "review" | "agents" | "files" | "term";
 
@@ -26,16 +27,14 @@ export type Screen = "chat" | "review" | "agents" | "files" | "term";
 // (truncated token-by-token, never mid-word), usage pinned right, and
 // the armed Ctrl+C warning takes the row over. Screen identity lives in
 // TopTabs at the top of the terminal; each bar has exactly one job.
-const BAR_BG = Theme.barBg;
+const TONE_FG: Record<StripTone, string> = roleMap({
+  info: "stateActive",
+  warn: "stateBlocked",
+  dim: "textSecondary",
+  success: "stateDone",
+});
 
-const TONE_FG: Record<StripTone, string> = {
-  info: Theme.stateActive,
-  warn: Theme.stateBlocked,
-  dim: Theme.textSecondary,
-  success: Theme.stateDone,
-};
-
-export const StatusBar = React.memo<{
+export const StatusBar = themedMemo<{
   waitingForSecondCtrlC: boolean;
 }>(({ waitingForSecondCtrlC }) => {
   const { stdout } = useStdout();
@@ -111,33 +110,33 @@ export const StatusBar = React.memo<{
   return (
     <Box width={width}>
       {contextText && (
-        <Text backgroundColor={BAR_BG} color={Theme.textPrimary} bold>
+        <Text backgroundColor={Theme.barBg} color={Theme.textPrimary} bold>
           {contextText}
         </Text>
       )}
       {waitingForSecondCtrlC ? (
-        <Text backgroundColor={BAR_BG} color={Theme.stateBlocked} bold>
+        <Text backgroundColor={Theme.barBg} color={Theme.stateBlocked} bold>
           {" ctrl+c again to quit"}
         </Text>
       ) : (
         <>
-          <Text backgroundColor={BAR_BG}> </Text>
+          <Text backgroundColor={Theme.barBg}> </Text>
           {middleTokens.map((token, index) => (
             <React.Fragment key={`${token.text}-${index}`}>
               {index > 0 && (
-                <Text backgroundColor={BAR_BG} color={Theme.textChrome}>
+                <Text backgroundColor={Theme.barBg} color={Theme.textChrome}>
                   {" · "}
                 </Text>
               )}
-              <Text backgroundColor={BAR_BG} color={TONE_FG[token.tone]}>
+              <Text backgroundColor={Theme.barBg} color={TONE_FG[token.tone]}>
                 {token.text}
               </Text>
             </React.Fragment>
           ))}
         </>
       )}
-      <Text backgroundColor={BAR_BG}>{filler}</Text>
-      <Text backgroundColor={BAR_BG} color={Theme.textSecondary}>
+      <Text backgroundColor={Theme.barBg}>{filler}</Text>
+      <Text backgroundColor={Theme.barBg} color={Theme.textSecondary}>
         {usageText}
       </Text>
     </Box>

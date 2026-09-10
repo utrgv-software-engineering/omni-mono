@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildPanelMenuRows,
-  buildStripTokens,
-  type StripState,
-} from "../strip-model.js";
+import { buildStripTokens, type StripState } from "../strip-model.js";
 
 function state(overrides: Partial<StripState>): StripState {
   return {
@@ -78,9 +74,15 @@ describe("buildStripTokens", () => {
         runDiff: {
           stats: { files_changed: 2, additions: 45, deletions: 12 },
         } as never,
-        goal: { goal: "refactor the parser end to end", status: "active" } as never,
+        goal: {
+          goal: "refactor the parser end to end",
+          status: "active",
+        } as never,
         wakeup: { status: "active", interval_seconds: 300 } as never,
-        loops: [{ status: "active" } as never, { status: "cancelled" } as never],
+        loops: [
+          { status: "active" } as never,
+          { status: "cancelled" } as never,
+        ],
       }),
     );
     expect(tokens).toEqual([
@@ -97,47 +99,5 @@ describe("buildStripTokens", () => {
       state({ goal: { goal: "ship", status: "paused" } as never }),
     );
     expect(tokens).toEqual([{ text: "goal ship (paused)", tone: "dim" }]);
-  });
-});
-
-describe("buildPanelMenuRows", () => {
-  it("lists every panel with unique mnemonics even when idle", () => {
-    const rows = buildPanelMenuRows(state({}));
-    expect(rows.map((r) => r.panel)).toEqual([
-      "tasks",
-      "workers",
-      "queue",
-      "jobs",
-      "notifications",
-      "git",
-      "terminal",
-      "models",
-      "artifacts",
-      "commands",
-    ]);
-    const keys = rows.map((r) => r.key);
-    expect(new Set(keys).size).toBe(keys.length);
-    expect(rows.every((r) => r.summary === null && !r.warn)).toBe(true);
-  });
-
-  it("sorts attention panels first and carries live summaries", () => {
-    const rows = buildPanelMenuRows(
-      state({
-        tasks: [task("1", "completed"), task("2", "in_progress")],
-        bashJobs: [{ running: false, exit_code: 2 } as never],
-        runDiff: {
-          stats: { files_changed: 3, additions: 10, deletions: 4 },
-        } as never,
-      }),
-    );
-    expect(rows[0]).toMatchObject({
-      panel: "jobs",
-      warn: true,
-      summary: "1 failed",
-    });
-    expect(rows.find((r) => r.panel === "tasks")?.summary).toBe("1/2");
-    expect(rows.find((r) => r.panel === "git")?.summary).toBe(
-      "3 files edited +10 −4",
-    );
   });
 });

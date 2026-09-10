@@ -72,7 +72,26 @@ omniagents/backends/ink/
 └── README.md
 ```
 
+## Theming
+
+The TUI's colors are a theme: an [Omarchy](https://github.com/basecamp/omarchy)
+`colors.toml` palette mapped onto the design system's semantic roles. All
+22 Omarchy themes ship bundled (vendored by `tui/scripts/import-omarchy-themes.mjs`).
+
+- `/theme` opens the picker: type to filter, arrows preview a swatch strip,
+  Enter applies and remembers the choice in `<product config dir>/ink.json`.
+- On an Omarchy desktop the TUI follows the desktop's current theme by default
+  and retints live when `omarchy-theme-set` runs, the way Omarchy retints
+  Claude Code and Pi. Pick "Omarchy" in the picker to go back to following it.
+- Your own themes go in `<product config dir>/themes/<name>.toml` (or
+  `<name>/colors.toml`) in Omarchy's format. A user theme with a bundled
+  theme's id replaces it.
+- Precedence: `--theme` flag, saved choice, `OMNI_THEME`, Omarchy's current
+  theme, `tokyo-night`.
+
 ## Environment Variables
+
+- `OMNI_THEME` — theme id to use when nothing is saved (see Theming)
 
 - `OMNI_INK_AUTO_BUILD`: Set to "0" or "false" to disable auto-build
 - `OMNI_DEBUG`: Enable debug logging

@@ -105,7 +105,7 @@ async def test_retirement_waits_for_admitted_write_and_rejects_late_writes(
     task.cancel()
     owner.release()
     assert owner.closing and not owner.released
-    with pytest.raises(RuntimeError, match="unresolved runtime owner"):
+    with pytest.raises(RuntimeError, match="active runtime owner"):
         reserve_run(owner.store, "thread")
     with pytest.raises(RuntimeError, match="no longer current"):
         await workspace.write_text("late", "no")

@@ -7,12 +7,13 @@ import React from "react";
 import { Box, Text } from "ink";
 import type { RichMetadata } from "../types/richMetadata.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 /**
  * Render rich tool output based on display type
  * Matches Bubbletea's renderRichToolResultWithWidth
  */
-export const RichToolOutput = React.memo<{
+export const RichToolOutput = themedMemo<{
   metadata: RichMetadata;
   plainOutput?: string;
 }>(
@@ -188,7 +189,7 @@ export const RichToolOutput = React.memo<{
  * Render diff preview from value.diff_lines
  * Matches Bubbletea's renderDiffToolPreviewWithWidth
  */
-const RenderDiffPreview = React.memo<{ value: Record<string, unknown> }>(
+const RenderDiffPreview = themedMemo<{ value: Record<string, unknown> }>(
   ({ value }) => {
     // Extract diff_lines from value
     const diffLines = value.diff_lines as string[] | undefined;
@@ -279,7 +280,7 @@ const RenderDiffPreview = React.memo<{ value: Record<string, unknown> }>(
  * Render table from table metadata
  * Matches Bubbletea's renderTableRichWithWidth (simplified)
  */
-const RenderTable = React.memo<{
+const RenderTable = themedMemo<{
   table: Record<string, unknown>;
   truncated?: boolean;
 }>(
@@ -312,7 +313,7 @@ const RenderTable = React.memo<{
  * Render search results
  * Matches Bubbletea's formatSearchResults
  */
-const RenderSearchResults = React.memo<{
+const RenderSearchResults = themedMemo<{
   preview: string;
   truncated?: boolean;
 }>(
@@ -366,7 +367,7 @@ const RenderSearchResults = React.memo<{
  * Render directory listing
  * Tool provides: total_entries, entries_returned, file_count, dir_count, symlink_count, was_truncated
  */
-const RenderDirectoryListing = React.memo<{
+const RenderDirectoryListing = themedMemo<{
   preview: string;
   metadata?: Record<string, unknown>;
   truncated?: boolean;
@@ -396,11 +397,7 @@ const RenderDirectoryListing = React.memo<{
                 </Text>
                 <Text
                   bold={isDir}
-                  color={
-                    isSymlink
-                      ? Theme.stateActive
-                      : Theme.textSecondary
-                  }
+                  color={isSymlink ? Theme.stateActive : Theme.textSecondary}
                 >
                   {entryName}
                 </Text>
@@ -445,7 +442,7 @@ const RenderDirectoryListing = React.memo<{
 /**
  * Render error preview with red styling
  */
-const RenderErrorPreview = React.memo<{ preview: string; truncated?: boolean }>(
+const RenderErrorPreview = themedMemo<{ preview: string; truncated?: boolean }>(
   ({ preview, truncated }) => {
     const lines = preview.split("\n").slice(0, 10);
 
@@ -471,7 +468,7 @@ const RenderErrorPreview = React.memo<{ preview: string; truncated?: boolean }>(
 /**
  * Render plain text preview (default)
  */
-const RenderPlainPreview = React.memo<{ preview: string; truncated?: boolean }>(
+const RenderPlainPreview = themedMemo<{ preview: string; truncated?: boolean }>(
   ({ preview, truncated }) => {
     const lines = preview.split("\n").slice(0, 10);
 
@@ -498,7 +495,7 @@ const RenderPlainPreview = React.memo<{ preview: string; truncated?: boolean }>(
  * Render command (bash) output
  * Shows exit code status and timing information
  */
-const RenderCommandOutput = React.memo<{
+const RenderCommandOutput = themedMemo<{
   preview: string;
   metadata?: Record<string, unknown>;
   truncated?: boolean;
@@ -516,9 +513,7 @@ const RenderCommandOutput = React.memo<{
         {/* Status line */}
         {exitCode !== undefined && (
           <Text color={Theme.textChrome}>
-            <Text
-              color={success ? Theme.stateActive : Theme.stateFailed}
-            >
+            <Text color={success ? Theme.stateActive : Theme.stateFailed}>
               Exit: {exitCode}
             </Text>
             {wallTimeMs !== undefined && (
@@ -566,7 +561,7 @@ const RenderCommandOutput = React.memo<{
  * Render file content with line numbers
  * Tool provides: total_file_lines, lines_returned, lines_truncated_count, start_line, end_line
  */
-const RenderFileContent = React.memo<{
+const RenderFileContent = themedMemo<{
   preview: string;
   metadata?: Record<string, unknown>;
   truncated?: boolean;
@@ -584,9 +579,7 @@ const RenderFileContent = React.memo<{
             const content = line.slice(lineNumMatch[0].length);
             return (
               <Text key={idx} color={Theme.textSecondary}>
-                <Text color={Theme.textChrome}>
-                  {lineNum.padStart(4, " ")}
-                </Text>
+                <Text color={Theme.textChrome}>{lineNum.padStart(4, " ")}</Text>
                 <Text color={Theme.textSecondary}>{content}</Text>
               </Text>
             );
@@ -614,7 +607,7 @@ const RenderFileContent = React.memo<{
 /**
  * Render web content (fetched page)
  */
-const RenderWebContent = React.memo<{
+const RenderWebContent = themedMemo<{
   preview: string;
   truncated?: boolean;
 }>(

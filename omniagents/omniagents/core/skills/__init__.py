@@ -2,6 +2,7 @@ from .discovery import (
     build_available_skills_block,
     discover_skill_dirs,
     merge_skill_dirs,
+    read_skill_text,
 )
 from .errors import ParseError, SkillError, ValidationError
 from .models import SkillProperties
@@ -28,6 +29,7 @@ __all__ = [
     "validate_metadata",
     "to_prompt",
     "discover_skill_dirs",
+    "read_skill_text",
     "merge_skill_dirs",
     "build_available_skills_block",
     "set_skill_roots_provider",

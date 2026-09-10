@@ -89,12 +89,26 @@ describe("elicitation queue", () => {
     const client = new FakeClient();
     const getRespond = mountHarness(client);
     await flush();
-    client.emit("elicitation_requested", { elicitation_id: "race", kind: "confirm", message: "Proceed?", session_id: "s" });
+    client.emit("elicitation_requested", {
+      elicitation_id: "race",
+      kind: "confirm",
+      message: "Proceed?",
+      session_id: "s",
+    });
     await flush();
     let reject!: (error: Error) => void;
-    vi.spyOn(client, "elicitationResponse").mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    vi.spyOn(client, "elicitationResponse").mockImplementationOnce(
+      () =>
+        new Promise((_resolve, fail) => {
+          reject = fail;
+        }),
+    );
     const sending = getRespond()!({ action: "accept" });
-    client.emit("elicitation_resolved", { elicitation_id: "race", status: "accepted", session_id: "s" });
+    client.emit("elicitation_resolved", {
+      elicitation_id: "race",
+      status: "accepted",
+      session_id: "s",
+    });
     await flush();
     const status = useAppStore.getState().status;
     reject(new Error("Already resolved by another client"));
@@ -103,11 +117,24 @@ describe("elicitation queue", () => {
     expect(useAppStore.getState().status).toBe(status);
   });
   it("does not answer a newer prompt through a callback bound to the old one", async () => {
-    const client = new FakeClient(); const getRespond = mountHarness(client); await flush();
-    client.emit("elicitation_requested", { elicitation_id: "old", kind: "confirm", message: "old" });
-    client.emit("elicitation_requested", { elicitation_id: "new", kind: "confirm", message: "new" });
+    const client = new FakeClient();
+    const getRespond = mountHarness(client);
     await flush();
-    client.emit("elicitation_resolved", { elicitation_id: "old", status: "accepted" });
+    client.emit("elicitation_requested", {
+      elicitation_id: "old",
+      kind: "confirm",
+      message: "old",
+    });
+    client.emit("elicitation_requested", {
+      elicitation_id: "new",
+      kind: "confirm",
+      message: "new",
+    });
+    await flush();
+    client.emit("elicitation_resolved", {
+      elicitation_id: "old",
+      status: "accepted",
+    });
     await getRespond()!({ action: "accept" }, "old");
     expect(client.elicitationResponses).toHaveLength(0);
     expect(useAppStore.getState().elicitation?.elicitation_id).toBe("new");

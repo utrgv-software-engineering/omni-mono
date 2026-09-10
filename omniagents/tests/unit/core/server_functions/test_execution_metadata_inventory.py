@@ -51,6 +51,12 @@ EXPECTED_BUILTIN_CLASSIFICATIONS: dict[str, Classification] = {
         ExecutionRequirement.PROCESS | ExecutionRequirement.WORKSPACE_READ,
     ),
     "compact": _classification(ResourceScope.THREAD),
+    "skills.list": _classification(
+        ResourceScope.THREAD, ExecutionRequirement.OPTIONAL_WORKSPACE_READ
+    ),
+    "skills.read": _classification(
+        ResourceScope.THREAD, ExecutionRequirement.OPTIONAL_WORKSPACE_READ
+    ),
     "good": _classification(ResourceScope.THREAD),
     "bad": _classification(ResourceScope.THREAD),
     "note": _classification(ResourceScope.THREAD),
@@ -116,6 +122,7 @@ EXPECTED_BUILTIN_CLASSIFICATIONS: dict[str, Classification] = {
 
 
 EXPECTED_CORE_CLASSIFICATIONS: dict[str, Classification] = {
+    "slash.list": _classification(ResourceScope.AGENT_HOST, ExecutionRequirement.NONE),
     "session.ensure": _classification(ResourceScope.THREAD),
     "mcp.list_resources": _classification(ResourceScope.THREAD),
     "mcp.read_resource": _classification(ResourceScope.THREAD),
@@ -275,11 +282,11 @@ def _literal_core_registrations() -> dict[str, tuple[dict[str, ast.expr], str]]:
     return registrations
 
 
-def test_all_47_decorated_builtins_have_the_expected_execution_metadata():
+def test_all_49_decorated_builtins_have_the_expected_execution_metadata():
     declarations = _decorated_builtins()
     by_name = {declaration.published_name: declaration for declaration in declarations}
 
-    assert len(declarations) == 47
+    assert len(declarations) == 49
     assert len(by_name) == len(
         declarations
     ), "published server-function names must be unique"
@@ -306,7 +313,7 @@ def test_builtin_aliases_have_the_same_classification_as_their_canonical_name():
         )
 
 
-def test_five_always_registered_core_functions_declare_thread_metadata():
+def test_always_registered_core_functions_declare_execution_metadata():
     registrations = _literal_core_registrations()
 
     assert set(registrations) == set(EXPECTED_CORE_CLASSIFICATIONS)

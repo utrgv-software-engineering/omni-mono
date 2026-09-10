@@ -64,19 +64,17 @@ class TestRunOwnership:
         first["inbox"]["marker"] = "client mutation"
         assert store.read_snapshot("snapshot")["inbox"]["marker"] == "stable"
 
-    def test_unconfirmed_execution_cannot_be_released_or_retried(self, store):
+    def test_unconfirmed_execution_releases_normally(self, store):
         from omniagents.core.runtime.ownership import reserve_run
 
         store.upsert_thread(make_thread())
         owner = reserve_run(store, "t1")
         owner.execution_uncertain = True
-        for _ in range(2):
-            owner.release()
-            assert owner.closing and not owner.released
-            with pytest.raises(RuntimeError, match="no longer current"):
-                owner.assert_current()
-            with pytest.raises(RuntimeError, match="unresolved runtime owner"):
-                reserve_run(store, "t1")
+        owner.release()
+        assert owner.released
+        with pytest.raises(RuntimeError, match="no longer current"):
+            owner.assert_current()
+        reserve_run(store, "t1").release()
 
     def test_closing_waits_for_admitted_operations_before_releasing(self, store):
         from omniagents.core.runtime.ownership import reserve_run
@@ -88,7 +86,7 @@ class TestRunOwnership:
             assert owner.closing and not owner.released
             with pytest.raises(RuntimeError, match="no longer current"):
                 owner.assert_current()
-            with pytest.raises(RuntimeError, match="unresolved runtime owner"):
+            with pytest.raises(RuntimeError, match="active runtime owner"):
                 reserve_run(store, "t1")
         assert owner.released
         reserve_run(store, "t1").release()
@@ -157,8 +155,9 @@ class TestRunOwnership:
         assert next_owner.generation == owner.generation + 1
         with pytest.raises(RuntimeError, match="no longer current"):
             stale.assert_current()
-        with pytest.raises(RuntimeError, match="another runtime"):
-            stale.release()
+        # A displaced holder's late release is a no-op and cannot touch the
+        # successor's reservation.
+        stale.release()
         next_owner.assert_current()
         next_owner.release()
 
@@ -431,8 +430,8 @@ class TestQueueInbox:
             )
         assert sum(claims) == 1
         assert not inbox.finish(store, "t1", item_id, "foreign")
-        assert inbox.cancel(store, "t1", item_id)["reason"] == "dispatch_uncertain"
-        assert len(inbox.entries(store, "t1")) == 1
+        assert inbox.cancel(store, "t1", item_id)["ok"]
+        assert inbox.entries(store, "t1") == []
 
     def test_receipt_failure_rolls_back_inbox(self, store):
         store.upsert_thread(make_thread())

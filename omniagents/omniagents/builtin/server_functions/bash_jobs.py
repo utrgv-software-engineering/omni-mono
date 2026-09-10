@@ -374,6 +374,10 @@ def _format_job_line(j: dict) -> str:
     return f"  {j['job_id']}  {state:>9}  {_format_elapsed(j['wall_time_ms']):>7}  {j['command']}"
 
 
+from omniagents.core.server_functions.slash import slash_command
+
+
+@slash_command("jobs", description="List background bash jobs", order=70)
 @server_function(
     description="List background bash jobs (Ink slash form: /bj-list).",
     strict=True,

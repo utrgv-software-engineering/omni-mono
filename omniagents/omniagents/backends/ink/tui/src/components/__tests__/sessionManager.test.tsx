@@ -170,6 +170,7 @@ async function mount(
     onOpen?: (id: string) => void;
     onNew?: () => void;
     onEmpty?: () => void;
+    onExit?: () => void;
   } = {},
 ) {
   const stdout = new TestStdout();
@@ -181,6 +182,7 @@ async function mount(
         onOpen={handlers.onOpen ?? (() => undefined)}
         onNew={handlers.onNew ?? (() => undefined)}
         onEmpty={handlers.onEmpty}
+        onExit={handlers.onExit}
       />
     </KeypressProvider>,
     {
@@ -267,6 +269,23 @@ describe("SessionManager keys", () => {
     stdin.press(KEY.tab);
     await settle();
     expect(onNew).toHaveBeenCalled();
+  });
+
+  it("goes back to the conversation on esc when opened from chat", async () => {
+    const onExit = vi.fn();
+    const onNew = vi.fn();
+    const { stdin, stdout } = await mount(makeClient(), { onExit, onNew });
+    await waitFor(() => expect(stdout.lastFrame()).toContain("esc back"));
+    stdin.press(KEY.escape);
+    // A lone Esc waits out the parser's disambiguation window.
+    await waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
+    expect(onNew).not.toHaveBeenCalled();
+  });
+
+  it("has no esc hint at launch, where there is nothing to go back to", async () => {
+    const { stdout } = await mount(makeClient());
+    await waitFor(() => expect(stdout.lastFrame()).toContain("enter open"));
+    expect(stdout.lastFrame()).not.toContain("esc back");
   });
 
   it("pins through update_thread and refetches", async () => {
@@ -477,14 +496,33 @@ it("does not reuse an old delete confirmation during a cancel/select/delete/yes 
   await waitFor(() => expect(stub.deleteSession).toHaveBeenCalledWith("b"));
 });
 
-it("reports an uncertain fork without replaying it after reconnect", async () => {
+it("re-reads the list after a lost fork reply instead of replaying or warning", async () => {
   const stub = makeClient();
   stub.forkSession.mockRejectedValue(new ConnectionClosedError("lost reply"));
   const { stdin, stdout } = await mount(stub);
+  const listsBefore = stub.listThreads.mock.calls.length;
   stdin.press("f");
   await settle();
+  expect(stdout.lastFrame()).not.toContain("forking");
   stub.events.emit("rpc_ready");
   await settle();
   expect(stub.forkSession).toHaveBeenCalledTimes(1);
-  expect(stdout.lastFrame()).toContain("outcome unknown");
+  expect(stub.listThreads.mock.calls.length).toBeGreaterThan(listsBefore);
+  expect(stdout.lastFrame()).not.toContain("outcome unknown");
+  expect(stdout.lastFrame()).not.toContain("fork failed");
+});
+
+it("refetches immediately after a lost mutation reply when already reconnected", async () => {
+  const stub = makeClient();
+  (stub as { initializeResult?: unknown }).initializeResult = {};
+  stub.updateThread.mockRejectedValueOnce(new ConnectionClosedError("lost"));
+  const { stdin, stdout } = await mount(stub);
+  const listsBefore = stub.listThreads.mock.calls.length;
+  stdin.press("a");
+  await waitFor(() =>
+    expect(stub.listThreads.mock.calls.length).toBeGreaterThan(listsBefore),
+  );
+  await settle();
+  expect(stdout.lastFrame()).not.toContain("outcome unknown");
+  expect(stdout.lastFrame()).not.toContain("failed");
 });

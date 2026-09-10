@@ -614,6 +614,8 @@ class AgentService(RpcMethodsBase):
         # Server functions registry (client→server dynamic functions)
         # Map name -> {"func": callable, "description": str | None, "params_schema": dict | None, "result_schema": dict | None}
         self._server_functions: dict[str, dict] = {}
+        # name -> SlashDeclaration for the typeable subset (see core/server_functions/slash.py)
+        self._slash_commands: dict[str, Any] = {}
         self._runtime_hooks: dict[str, list[Any]] = {}
         # Every currently connected /ws channel (registered by
         # JsonRpcEndpoint). Connection-wide broadcasts (``account_changed``)
@@ -740,6 +742,7 @@ class AgentService(RpcMethodsBase):
                 value = getattr(field, "default", None)
             self._default_settings[key] = value
 
+        self._register_slash_catalog()
         self.register_server_function(
             "session.ensure",
             self._sf_session_ensure,
@@ -764,21 +767,6 @@ class AgentService(RpcMethodsBase):
                 },
                 "required": ["session_id"],
             },
-            strict=False,
-        )
-
-        self.register_server_function(
-            "recover",
-            self._sf_session_recover,
-            resource_scope=ResourceScope.THREAD,
-            execution_requirements=ExecutionRequirement.NONE,
-            description="Recover an interrupted session without replaying its old actions.",
-            params_schema={
-                "type": "object",
-                "properties": {"abandon_unknown_run": {"type": "boolean"}},
-                "additionalProperties": False,
-            },
-            result_schema={"type": "object"},
             strict=False,
         )
 
@@ -1663,6 +1651,14 @@ class AgentService(RpcMethodsBase):
         if strict is None:
             strict = getattr(func, "_server_function_strict", None)
 
+        from omniagents.core.server_functions.slash import slash_declaration_of
+
+        declaration = slash_declaration_of(func)
+        slash_commands = self.__dict__.setdefault("_slash_commands", {})
+        if declaration is not None:
+            slash_commands[name] = declaration
+        else:
+            slash_commands.pop(name, None)
         self._server_functions[name] = {
             "func": func,
             "description": description,
@@ -1939,52 +1935,107 @@ class AgentService(RpcMethodsBase):
                 variables=variables_value,
             )
 
-    async def _sf_session_recover(
-        self, session: Session | None, args: dict | None = None
-    ) -> dict:
-        if session is None:
-            raise ValueError("Recovery requires a session")
-        payload = args or {}
-        abandon = payload.get("abandon_unknown_run", False)
-        if type(abandon) is not bool:
-            raise ValueError("abandon_unknown_run must be a boolean")
-        task = session.current_task
-        if task is not None and not task.done():
-            await self._session_manager.cancel(task.get_name())
-            if not task.done():
-                return {
-                    "recovered": False,
-                    "reason": "stopping",
-                    "message": "The old run is still stopping; recovery has not released it.",
-                }
-        self._recover_local_run_ownership(session)
-        from omniagents.core.runtime.ownership_recovery import recover_runtime_owner
+    # ------------------------------------------------------------------
+    #  Slash commands: the typeable subset of server functions.
+    # ------------------------------------------------------------------
 
-        result = recover_runtime_owner(
-            self._queue_store(session), session.id, abandon_unknown=abandon
+    def list_slash_commands(self) -> list[dict]:
+        """The catalog clients render in popups and /help: only functions
+        that carry a slash declaration, in presentation order."""
+        rows = [
+            declaration.to_dict(function)
+            for function, declaration in self.__dict__.get(
+                "_slash_commands", {}
+            ).items()
+            if function in self._server_functions
+        ]
+        rows.sort(key=lambda row: (row["order"], row["name"]))
+        return rows
+
+    async def _sf_slash_list(self, session: Session | None = None, args=None):
+        return {"commands": self.list_slash_commands()}
+
+    def _register_slash_catalog(self) -> None:
+        """``slash.list`` plus one server function per manifest binding.
+
+        A product's ``slash_commands:`` block binds a name to a project
+        agent run. Each binding becomes an ordinary server function that
+        runs the bound agent, carrying a slash declaration so it appears in
+        the catalog; nothing about it goes through the model.
+        """
+        from omniagents.core.server_functions.slash import (
+            SlashDeclaration,
+            none as _no_args,
+            text as _text_args,
         )
-        if result.get("recovered"):
-            result["message"] = (
-                "Session recovered. Previous actions may have taken effect; inspect their results before retrying."
+
+        self.register_server_function(
+            "slash.list",
+            self._sf_slash_list,
+            resource_scope=ResourceScope.AGENT_HOST,
+            execution_requirements=ExecutionRequirement.NONE,
+            description="The slash commands a client may offer for typing.",
+            params_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+            result_schema={"type": "object"},
+            strict=False,
+        )
+        try:
+            from omniagents.core.runtime.slash_agents import (
+                manifest_slash_bindings,
+                run_slash_agent,
             )
-            self._refresh_queue(session)
-            await self._broadcast_queue_changed(session)
-        elif result.get("reason") == "legacy_owner_unverifiable":
-            result["message"] = (
-                "This older run has no executor identity. Recovery cannot prove its commands stopped. "
-                'After stopping them, /recover {"abandon_unknown_run":true} explicitly abandons '
-                "the old run without replaying it. Its uncertain tool records are preserved."
+
+            bindings = manifest_slash_bindings()
+        except Exception:
+            bindings = {}
+        for command_name, binding in bindings.items():
+            if command_name in self._server_functions:
+                continue  # a Python-registered function of that name wins
+
+            def _make(command: str, spec: dict):
+                async def _run(session: Session | None = None, args=None):
+                    payload = args or {}
+                    arg = payload.get("text") if isinstance(payload, dict) else None
+                    message = await run_slash_agent(command, spec, arg)
+                    return {"message": message}
+
+                return _run
+
+            handler = _make(command_name, binding)
+            takes_text = bool(binding.get("args") == "text")
+            setattr(
+                handler,
+                "_slash_command",
+                SlashDeclaration(
+                    name=command_name,
+                    description=str(
+                        binding.get("description")
+                        or f"Run the {binding.get('agent', command_name)} agent"
+                    ),
+                    usage=str(binding.get("usage") or ""),
+                    args=_text_args() if takes_text else _no_args(),
+                    during_run=bool(binding.get("during_run", False)),
+                    order=int(binding.get("order", 100)),
+                ),
             )
-        elif result.get("reason") == "cleanup_unconfirmed":
-            result["message"] = (
-                "The previous command is still stopping or cleanup could not be verified. "
-                "The session remains protected; previous actions have not been replayed."
+            self.register_server_function(
+                command_name,
+                handler,
+                resource_scope=ResourceScope.AGENT_HOST,
+                execution_requirements=ExecutionRequirement.NONE,
+                description=str(binding.get("description") or ""),
+                params_schema={
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "additionalProperties": False,
+                },
+                result_schema={"type": "object"},
+                strict=False,
             )
-        elif result.get("reason") == "runtime_alive_or_unverifiable":
-            result["message"] = (
-                "Another runtime may still be executing this run. Recovery has not replaced it."
-            )
-        return result
 
     def _sf_session_ensure(
         self, session: Session | None, args: dict | None = None
@@ -3750,12 +3801,12 @@ class AgentService(RpcMethodsBase):
         if sess.current_task is not None and not sess.current_task.done():
             raise RuntimeError("Run already active in this session")
         self._recover_local_run_ownership(sess)
-        from omniagents.core.runtime.ownership_recovery import recover_runtime_owner
-
-        recover_runtime_owner(self._queue_store(sess), sess.id)
         ownership = reserve_run(self._queue_store(sess), sess.id)
         sess.runtime_ownership = ownership
         try:
+            ownership.start_heartbeat()
+            if ownership.took_over_from is not None:
+                self._close_interrupted_run(sess, ownership.took_over_from)
             sess.refresh_owned_history(ownership)
             return await self._start_owned_run(
                 sess,
@@ -6373,6 +6424,43 @@ class AgentService(RpcMethodsBase):
             recorder.recover_pending_messages(sess.id)
         return recorder.store
 
+    def _close_interrupted_run(self, sess, displaced: dict) -> None:
+        """Land the turn a dead runtime left open, so the transcript is honest.
+
+        The displaced reservation stopped heartbeating, so its run is over
+        whether or not it finished. Closing the turn with ``end_reason="error"``
+        sweeps every item still open under it: a tool call that never
+        reported lands as failed with "outcome unknown", which is what the
+        model is told on the next turn (``refresh_owned_history`` mirrors the
+        same note into the SDK context). Nothing is replayed.
+        """
+        from omniagents.core.conversation.recorder import recorder_for_session
+        from omniagents.core.conversation.model import TurnStatus
+
+        run_id = displaced.get("run_id")
+        recorder = recorder_for_session(sess)
+        if recorder is None or not run_id:
+            return
+        try:
+            turn = recorder.store.get_turn(sess.id, run_id)
+            if turn is None or turn.status != TurnStatus.RUNNING:
+                return
+            recorder.close_turn(
+                sess.id,
+                run_id,
+                end_reason="error",
+                error={
+                    "message": "The runtime executing this run stopped before it finished."
+                },
+                usage=None,
+                model=None,
+                model_ref=None,
+            )
+        except Exception:
+            logger.exception(
+                "could not close interrupted run", extra={"session": sess.id}
+            )
+
     @staticmethod
     def _recover_local_run_ownership(sess):
         """Retry only this process's proven-finished release, never foreign takeover."""
@@ -6399,20 +6487,9 @@ class AgentService(RpcMethodsBase):
             sess.notification_signal.set()
             self._ensure_notification_flusher(sess)
         visible = []
-        runtime_owner = queue_inbox.runtime_owner(store, sess.id)
         for entry in queue_inbox.entries(store, sess.id):
             item = dict(entry["item"])
             owner = entry["owner"]
-            if (
-                owner is None
-                and item.get("state", "pending") == "pending"
-                and runtime_owner is not None
-                and (sess.current_task is None or sess.current_task.done())
-            ):
-                item["error"] = (
-                    "Waiting for the previous runtime to finish or be reconciled. "
-                    "This message has not started."
-                )
             if owner is not None and item["trigger_run"]:
                 receipt = store.submission_receipt(
                     sess.id, f"queue-dispatch:{item['id']}"
@@ -6449,7 +6526,10 @@ class AgentService(RpcMethodsBase):
                     and not sess.drainer_task.done()
                 ):
                     continue
-                item["state"] = "dispatch_uncertain"
+                # A claim whose dispatcher stopped refreshing lapses and the
+                # item is simply pending again. A live foreign claim is a run
+                # about to start; it is shown as pending too.
+                queue_inbox.release_claim_if_stale(store, sess.id, item["id"])
             visible.append(QueuedItem(**item))
         sess.message_queue = visible
 
@@ -6535,9 +6615,9 @@ class AgentService(RpcMethodsBase):
     ) -> dict:  # noqa: D401
         """Remove a queued item by id.
 
-        Claimed commands return ``dispatch_uncertain``; completed/absent
-        commands return ``not_found``. Cancelling a known actively-running
-        turn requires ``stop_run`` instead.
+        Absent (already dispatched or cancelled) items return ``not_found``.
+        Cancelling a known actively-running turn requires ``stop_run``
+        instead.
         """
         sess = self._session_manager.get_or_create(
             session_id, user_id=self._current_user_id()
@@ -6579,9 +6659,7 @@ class AgentService(RpcMethodsBase):
             return
         if sess.drainer_task and not sess.drainer_task.done():
             return
-        if not any(item.state == "pending" for item in sess.message_queue) or any(
-            item.state == "dispatch_uncertain" for item in sess.message_queue
-        ):
+        if not any(item.state == "pending" for item in sess.message_queue):
             return
         sess.drainer_task = asyncio.create_task(
             self._drain_queue(sess), name=f"drain-{sess.id[:8]}"
@@ -6703,10 +6781,21 @@ class AgentService(RpcMethodsBase):
                 self._refresh_queue(sess)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "drain failed",
                     extra={"session": sess.id, "source": item.source},
+                )
+                # Settle by receipt first (the run may have started and its
+                # receipt says so). Whatever is still ours after that did not
+                # start: mark it failed with the reason, visibly, and move on.
+                self._refresh_queue(sess, reveal_claims=True)
+                queue_inbox.fail(
+                    store,
+                    sess.id,
+                    item.id,
+                    sess.queue_owner,
+                    f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__,
                 )
                 self._refresh_queue(sess, reveal_claims=True)
                 await self._broadcast_queue_changed(sess)

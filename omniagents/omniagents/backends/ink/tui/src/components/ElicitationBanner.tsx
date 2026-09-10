@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
 import { useElicitation } from "../store/appStore.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 // Banner shown for ``question``-kind elicitations (structured user
 // elicitation, protocol.md § "User Elicitation Flow"). Free-text answers
@@ -11,7 +12,7 @@ import { Theme } from "../theme.js";
 // the App.tsx submit interceptor. Non-question kinds render as the
 // ElicitationDialog instead; renders nothing when no question is
 // pending.
-export const ElicitationBanner = React.memo(() => {
+export const ElicitationBanner = themedMemo(() => {
   const elicitation = useElicitation();
   if (!elicitation || elicitation.kind !== "question") return null;
 
@@ -28,8 +29,8 @@ export const ElicitationBanner = React.memo(() => {
         </Text>
         <Text color={Theme.stateBlocked} bold>
           {" "}
-          {elicitation.title || "The agent has a question"} — your next
-          message will be sent as the answer.
+          {elicitation.title || "The agent has a question"} — your next message
+          will be sent as the answer.
         </Text>
       </Box>
       <Box>

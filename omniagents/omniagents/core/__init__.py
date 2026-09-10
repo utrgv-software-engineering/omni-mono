@@ -29,6 +29,11 @@ except Exception:
     register_server_functions_from_dir = None  # type: ignore
 
 try:
+    from .server_functions.slash import slash_command  # type: ignore
+except Exception:
+    slash_command = None  # type: ignore
+
+try:
     from .runtime_hooks.discovery import (  # type: ignore
         runtime_hook,
         discover_runtime_hooks_in_dir,

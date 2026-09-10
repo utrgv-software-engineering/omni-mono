@@ -98,7 +98,7 @@ async def test_shared_session_reservation_blocks_another_service_during_preparat
     preparing = asyncio.create_task(start(first, "a", "shared-owner"))
     await entered.wait()
     try:
-        with pytest.raises(RuntimeError, match="unresolved runtime owner"):
+        with pytest.raises(RuntimeError, match="active runtime owner"):
             await start(second, "b", "shared-owner")
         assert second._session_manager.get("shared-owner").current_task is None
     finally:

@@ -2,7 +2,7 @@ import { useRequestScope } from "../hooks/useRequestScope.js";
 import { useImmediateState } from "../hooks/useImmediateState.js";
 import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
 import { WorkspaceView } from "./WorkspaceView.js";
-import { ConnectionClosedError, RpcTimeoutError } from "../rpc/lifecycle.js";
+import { isReplyLost } from "../rpc/lifecycle.js";
 import React, {
   useCallback,
   useEffect,
@@ -343,17 +343,20 @@ const ReviewContent = ({ active, height, client, onExit }: Props) => {
           setStatusLine(null);
           return;
         }
-        setStatusLine(
-          e instanceof ConnectionClosedError || e instanceof RpcTimeoutError
-            ? `${label}: outcome unknown; refresh before retrying`
-            : `${label} failed: ${(e as Error).message ?? String(e)}`,
-        );
+        if (isReplyLost(e)) {
+          // Lost reply: re-read server truth instead of guessing. Refetch
+          // now if the socket is back; otherwise rpc_ready refetches.
+          setStatusLine(null);
+          if (client?.initializeResult) void load();
+          return;
+        }
+        setStatusLine(`${label} failed: ${(e as Error).message ?? String(e)}`);
       } finally {
         operationPending.current = false;
         if (current()) setBusy(false);
       }
     },
-    [load],
+    [client, load],
   );
 
   useEffect(() => {
@@ -573,7 +576,7 @@ const ReviewContent = ({ active, height, client, onExit }: Props) => {
         // Coalesced command keys are separate gestures; text fields receive the remaining text together.
         const chars = [...input];
         for (let i = 0; i < chars.length; i++) {
-          if (!!commitModeRef.current) {
+          if (commitModeRef.current) {
             dispatch(chars.slice(i).join(""), key);
             break;
           }

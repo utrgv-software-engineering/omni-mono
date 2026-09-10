@@ -4,17 +4,11 @@ import { useActions, useNotifications } from "../store/appStore.js";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { RowText, SelectableRow } from "./shared/SelectableRow.js";
+import { Clip, oneLine } from "./shared/drawer-layout.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 const MAX_VISIBLE = 5;
-const MESSAGE_TRUNCATE_UNFOCUSED = 70;
-const MESSAGE_TRUNCATE_FOCUSED = 80;
-
-function shortMessage(message: string, max: number): string {
-  const oneLine = message.replace(/\s+/g, " ").trim();
-  if (oneLine.length <= max) return oneLine;
-  return oneLine.slice(0, max - 1) + "…";
-}
 
 type Props = {
   focused: boolean;
@@ -30,7 +24,7 @@ type Props = {
 // - Unfocused: collapsed single line ("N notifications · Ctrl+N to manage").
 // - Focused (Ctrl+N): full list with cursor; ↑↓ navigate, d dismiss,
 //   D dismiss all, esc exit.
-export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
+export const Notifications = themedMemo(({ focused, onUnfocus }: Props) => {
   const notifications = useNotifications();
   const actions = useActions();
 
@@ -113,14 +107,13 @@ export const Notifications = React.memo(({ focused, onUnfocus }: Props) => {
 
       {visible.map((n, idx) => {
         const isSelected = focused && idx === selectedIndex;
-        const max = focused
-          ? MESSAGE_TRUNCATE_FOCUSED
-          : MESSAGE_TRUNCATE_UNFOCUSED;
         return (
           <SelectableRow key={n.id} selected={isSelected}>
-            <RowText color={Theme.textChrome}>
-              {shortMessage(n.message, max)}
-            </RowText>
+            <Clip>
+              <RowText color={Theme.textChrome} wrap="truncate-end">
+                {oneLine(n.message)}
+              </RowText>
+            </Clip>
           </SelectableRow>
         );
       })}

@@ -3,154 +3,106 @@ import {
   BUILTIN_COMMANDS,
   buildCommandRows,
   completionFor,
-  declaresRequiredParams,
   filterCommands,
-  type CommandRow,
-  type ServerFunction,
 } from "../command-palette-model.js";
 
-function fn(overrides: Partial<ServerFunction> = {}): ServerFunction {
-  return { name: "goal", description: "Set the session goal", ...overrides };
-}
+const server = (name: string, extra: Record<string, unknown> = {}) => ({
+  name,
+  function: name,
+  description: `${name} desc`,
+  usage: "",
+  args: { kind: "none" },
+  aliases: [],
+  during_run: true,
+  order: 50,
+  ...extra,
+});
 
 describe("buildCommandRows", () => {
-  it("lists builtins first, then server functions alphabetically", () => {
+  it("sorts by declared order then name, builtins included", () => {
     const rows = buildCommandRows([
-      fn({ name: "zebra" }),
-      fn({ name: "alpha" }),
+      server("zebra", { order: 20 }),
+      server("alpha", { order: 20 }),
+      server("late", { order: 95 }),
     ]);
-    expect(rows.slice(0, BUILTIN_COMMANDS.length).map((r) => r.name)).toEqual(
-      BUILTIN_COMMANDS.map((b) => b.name),
-    );
-    expect(rows.slice(BUILTIN_COMMANDS.length).map((r) => r.name)).toEqual([
-      "alpha",
-      "zebra",
-    ]);
+    const names = rows.map((r) => r.name);
+    expect(names.indexOf("model")).toBeLessThan(names.indexOf("alpha"));
+    expect(names.indexOf("alpha")).toBeLessThan(names.indexOf("zebra"));
+    expect(names.indexOf("late")).toBeGreaterThan(names.indexOf("help"));
   });
 
-  it("drops a server function that collides with a builtin", () => {
+  it("drops a server row that collides with a builtin name or alias", () => {
     const rows = buildCommandRows([
-      fn({ name: "Model" }),
-      fn({ name: "goal" }),
+      server("Model"),
+      server("models"),
+      server("goal"),
     ]);
-    expect(rows.filter((r) => r.name.toLowerCase() === "model")).toHaveLength(
-      1,
-    );
-    expect(rows.find((r) => r.name.toLowerCase() === "model")!.source).toBe(
-      "builtin",
-    );
+    expect(rows.filter((r) => r.name === "model")).toHaveLength(1);
+    expect(rows.find((r) => r.name === "model")!.source).toBe("client");
+    expect(rows.some((r) => r.name === "models")).toBe(false);
+    expect(rows.some((r) => r.name === "goal")).toBe(true);
   });
 
-  it("normalizes a blank description to null", () => {
-    const rows = buildCommandRows([fn({ name: "quiet", description: "   " })]);
-    expect(rows.find((r) => r.name === "quiet")!.description).toBeNull();
-  });
-
-  it("ignores entries without a usable name", () => {
-    const rows = buildCommandRows([
-      fn({ name: "" }),
-      { name: undefined as unknown as string },
-    ]);
+  it("ignores malformed catalog rows", () => {
+    const rows = buildCommandRows([{ name: "" }, null, 42, { nope: true }]);
     expect(rows).toHaveLength(BUILTIN_COMMANDS.length);
   });
 
-  it("marks functions that declare parameters", () => {
+  it("carries the argument rule and usage through", () => {
     const rows = buildCommandRows([
-      fn({ name: "withargs", params_schema: { required: ["text"] } }),
-      fn({ name: "noargs", params_schema: {} }),
+      server("goal", {
+        usage: "<goal text>",
+        args: { kind: "text", field: "goal" },
+        during_run: false,
+      }),
     ]);
-    expect(rows.find((r) => r.name === "withargs")!.takesArgs).toBe(true);
-    expect(rows.find((r) => r.name === "noargs")!.takesArgs).toBe(false);
-  });
-});
-
-describe("declaresRequiredParams", () => {
-  it("reads an explicit required list", () => {
-    expect(declaresRequiredParams({ required: ["a"] })).toBe(true);
-    expect(declaresRequiredParams({ required: [] })).toBe(false);
-  });
-
-  it("treats a non-empty properties map as parameters", () => {
-    expect(declaresRequiredParams({ properties: { a: {} } })).toBe(true);
-    expect(declaresRequiredParams({ properties: {} })).toBe(false);
-  });
-
-  it("degrades to false for an absent or unusable schema", () => {
-    expect(declaresRequiredParams(undefined)).toBe(false);
-    expect(declaresRequiredParams({} as Record<string, unknown>)).toBe(false);
+    const goal = rows.find((r) => r.name === "goal")!;
+    expect(goal.args).toEqual({ kind: "text", field: "goal" });
+    expect(goal.usage).toBe("<goal text>");
+    expect(goal.during_run).toBe(false);
   });
 });
 
 describe("filterCommands", () => {
-  const rows: CommandRow[] = [
-    {
-      name: "model",
-      description: "Switch model",
-      source: "builtin",
-      takesArgs: false,
-    },
-    {
-      name: "goal",
-      description: "Set the goal",
-      source: "server",
-      takesArgs: true,
-    },
-    {
-      name: "recap",
-      description: "Summarize the model session",
-      source: "server",
-      takesArgs: false,
-    },
-  ];
-
-  it("ranks prefix matches above substring matches", () => {
-    expect(filterCommands(rows, "mo").map((r) => r.name)).toEqual([
-      "model",
-      "recap",
+  const rows = buildCommandRows([
+    server("goal"),
+    server("goal.stop"),
+    server("good", { description: "go through the roof" }),
+  ]);
+  it("puts an exact name first, then prefix matches in catalog order", () => {
+    expect(filterCommands(rows, "goal").map((r) => r.name)).toEqual([
+      "goal",
+      "goal.stop",
+    ]);
+    expect(filterCommands(rows, "go").map((r) => r.name)).toEqual([
+      "goal",
+      "goal.stop",
+      "good",
     ]);
   });
-
-  it("tolerates the leading slash the user typed", () => {
-    expect(filterCommands(rows, "/go").map((r) => r.name)).toEqual(["goal"]);
+  it("matches aliases but never descriptions", () => {
+    expect(filterCommands(rows, "resume")[0]!.name).toBe("sessions");
+    expect(filterCommands(rows, "roof")).toEqual([]);
+    expect(filterCommands(rows, "through")).toEqual([]);
   });
-
-  it("matches descriptions as a fallback", () => {
-    expect(filterCommands(rows, "summarize").map((r) => r.name)).toEqual([
-      "recap",
-    ]);
-  });
-
-  it("returns a copy of everything for an empty query", () => {
-    const all = filterCommands(rows, "  ");
-    expect(all).toHaveLength(3);
-    expect(all).not.toBe(rows);
-  });
-
-  it("returns nothing when nothing matches", () => {
-    expect(filterCommands(rows, "zzz")).toEqual([]);
+  it("returns everything for an empty query", () => {
+    expect(filterCommands(rows, "")).toHaveLength(rows.length);
   });
 });
 
 describe("completionFor", () => {
-  it("leaves the cursor after a space for commands that take arguments", () => {
+  it("adds a trailing space only when the command takes arguments", () => {
     expect(
-      completionFor({
-        name: "goal",
-        description: null,
-        source: "server",
-        takesArgs: true,
-      }),
+      completionFor(
+        buildCommandRows([server("recap")]).find((r) => r.name === "recap")!,
+      ),
+    ).toBe("/recap");
+    expect(
+      completionFor(
+        buildCommandRows([
+          server("goal", { args: { kind: "text", field: "goal" } }),
+        ]).find((r) => r.name === "goal")!,
+      ),
     ).toBe("/goal ");
-  });
-
-  it("completes argument-free commands exactly", () => {
-    expect(
-      completionFor({
-        name: "exit",
-        description: null,
-        source: "builtin",
-        takesArgs: false,
-      }),
-    ).toBe("/exit");
   });
 });

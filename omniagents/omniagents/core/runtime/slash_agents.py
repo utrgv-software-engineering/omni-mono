@@ -19,10 +19,11 @@ manifest instead of registering a Python handler:
             - Updated AGENTS.md
           language: markdown       # code-fence language (default markdown)
 
-The default slash registry (``omniagents.core.tools.slash_commands``)
-falls back to these bindings whenever no Python-registered handler
-exists for a command name — the binding is pure data, no product wiring
-runs. A ``register_slash_command`` handler of the same name always wins.
+``AgentService`` registers each binding as a server function of the
+same name carrying a slash declaration (see
+``omniagents.core.server_functions.slash``), so clients list it in the
+slash catalog and run it through ``server_call``; nothing goes through
+the model. A Python-registered server function of the same name wins.
 
 Runner semantics (:func:`run_slash_agent`), generalized from omni-code's
 ``/init`` handler:
@@ -56,12 +57,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 __all__ = [
     "DEFAULT_SLASH_AGENT_MAX_TURNS",
     "manifest_slash_bindings",
-    "manifest_slash_handler",
     "run_slash_agent",
 ]
 
@@ -107,19 +107,6 @@ def manifest_slash_bindings(project_path: Any = None) -> Dict[str, dict]:
         if name and isinstance(value, dict):
             out[name] = value
     return out
-
-
-def manifest_slash_handler(name: str) -> Optional[Callable[..., Any]]:
-    """A registry-shaped handler for the manifest binding of *name*, or
-    ``None`` when the installed product declares no such binding."""
-    binding = manifest_slash_bindings().get(_normalize(name))
-    if not binding:
-        return None
-
-    async def _handler(arg: Optional[str] = None) -> str:
-        return await run_slash_agent(name, binding, arg)
-
-    return _handler
 
 
 async def run_slash_agent(name: str, binding: dict, arg: Optional[str] = None) -> str:

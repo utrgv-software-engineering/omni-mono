@@ -1,5 +1,6 @@
 import React from "react";
 import { Box, Text } from "ink";
+import { Clip, Fixed, oneLine } from "./shared/drawer-layout.js";
 import Spinner from "ink-spinner";
 import { useDismissedTaskIds, useTasks } from "../store/appStore.js";
 import {
@@ -9,15 +10,16 @@ import {
   taskCounts,
 } from "./task-model.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 const MAX_VISIBLE = 5;
 
-// Task drawer (ctrl+a cycle). Ambient presence lives in the
+// Task drawer (/tasks). Ambient presence lives in the
 // ActivityStrip; the full body renders only while this drawer is open.
 //
 // Ordering, counting and the glyph/colour palette live in `./task-model` so they
 // stay exhaustive over the status set and can be tested without a render.
-export const Tasks = React.memo<{ focused: boolean }>(({ focused }) => {
+export const Tasks = themedMemo<{ focused: boolean }>(({ focused }) => {
   const allTasks = useTasks();
   const dismissed = useDismissedTaskIds();
   if (!focused) return null;
@@ -71,10 +73,12 @@ export const Tasks = React.memo<{ focused: boolean }>(({ focused }) => {
           <Text color={Theme.stateActive}>
             <Spinner type="dots" />
           </Text>
-          <Text color={Theme.stateActive} italic>
-            {" "}
-            {live.activeForm || live.subject}
-          </Text>
+          <Clip>
+            <Text color={Theme.stateActive} italic wrap="truncate-end">
+              {" "}
+              {oneLine(live.activeForm || live.subject)}
+            </Text>
+          </Clip>
         </Box>
       )}
       {visible.map((t) => {
@@ -82,33 +86,38 @@ export const Tasks = React.memo<{ focused: boolean }>(({ focused }) => {
         const blocked = t.status === "blocked" || blockers.length > 0;
         return (
           <Box key={t.id}>
-            <Text color={STATUS_COLOR[t.status] ?? STATUS_COLOR.pending}>
-              {STATUS_GLYPH[t.status] ?? STATUS_GLYPH.pending}{" "}
-            </Text>
-            <Text color={Theme.textChrome}>#{t.id} </Text>
-            <Text
-              color={
-                t.status === "completed"
-                  ? Theme.textSecondary
-                  : Theme.textPrimary
-              }
-              strikethrough={t.status === "completed"}
-            >
-              {t.subject}
-            </Text>
-            {blocked && (
-              <Text color={Theme.stateBlocked}>
-                {blockers.length > 0
-                  ? ` › blocked by #${blockers.join(", #")}`
-                  : " › blocked"}
+            <Fixed>
+              <Text color={STATUS_COLOR[t.status] ?? STATUS_COLOR.pending}>
+                {STATUS_GLYPH[t.status] ?? STATUS_GLYPH.pending}{" "}
               </Text>
+              <Text color={Theme.textChrome}>#{t.id} </Text>
+            </Fixed>
+            <Clip>
+              <Text
+                color={
+                  t.status === "completed"
+                    ? Theme.textSecondary
+                    : Theme.textPrimary
+                }
+                strikethrough={t.status === "completed"}
+                wrap="truncate-end"
+              >
+                {oneLine(t.subject)}
+              </Text>
+            </Clip>
+            {blocked && (
+              <Fixed>
+                <Text color={Theme.stateBlocked}>
+                  {blockers.length > 0
+                    ? ` › blocked by #${blockers.join(", #")}`
+                    : " › blocked"}
+                </Text>
+              </Fixed>
             )}
           </Box>
         );
       })}
-      {overflow > 0 && (
-        <Text color={Theme.textChrome}>… +{overflow} more</Text>
-      )}
+      {overflow > 0 && <Text color={Theme.textChrome}>… +{overflow} more</Text>}
     </Box>
   );
 });

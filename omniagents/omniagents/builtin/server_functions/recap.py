@@ -17,6 +17,10 @@ from omniagents.core.session.manager import Session
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
+from omniagents.core.server_functions.slash import slash_command
+
+
+@slash_command(description="Recap the session so far", order=21)
 @server_function(
     description="Recap the session so far in <=400 words (shown in a panel)",
     strict=True,
@@ -43,4 +47,4 @@ async def recap(service: Any, session: Session) -> dict:
     # Return the text too, so the interactive slash path can render it even
     # if the broadcast was dropped. The client routes recap's result into
     # the panel rather than dumping it in chat.
-    return {"ok": True, "text": text}
+    return {"ok": True, "text": text, "message": text}

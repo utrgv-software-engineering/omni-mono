@@ -3,6 +3,7 @@ import { Header } from './components/Header'
 import { ModelPicker } from './components/ModelPicker'
 import { MessageList, type ApprovalItem, type ChatMessage, type ElicitationItem, type McpApprovalItem, type MessageItem } from './components/MessageList'
 import { Input } from './components/Input'
+import { findSlashCommand, normalizeSlashCommand, parseSlashArgs, parseSlashLine, unknownCommandMessage, type SlashCommand, slashResultMessage } from './rpc/slash'
 import { Tasks, type TaskSummary } from './components/Tasks'
 import { Notifications, type NotificationInfo } from './components/Notifications'
 import { RecapPanel, type RecapInfo } from './components/RecapPanel'
@@ -847,27 +848,31 @@ export function App() {
       return
     }
 
-    // Slash commands
-    if (text.startsWith('/')) {
-      const parts = text.trim().split(/\s+/)
-      const name = parts[0].slice(1)
-      const argText = text.slice(parts[0].length).trim()
+    // Slash commands: looked up in the catalog (the server's typeable
+    // subset), arguments mapped by the declared rule, unknown names
+    // refused. Never sent to the model.
+    const slash = parseSlashLine(text)
+    if (slash) {
+      const say = (content: string) => setItems(prev => [...prev, { type: 'chat', role: 'assistant', content }])
       try {
-        // Anchor the session before dispatching. Two problems this
-        // solves for the slash path:
-        //   1. ``sessionId`` is undefined when slash is the user's very
-        //      first action — startRun/sendMessage would normally
-        //      mint-on-first-call, but ``serverCall(name, args, undef)``
-        //      hits the function session-less and goal returns
-        //      "No session context". session.ensure mints one and
-        //      returns the id.
-        //   2. Server functions like /goal trigger start_run via the
-        //      drainer, not via our handleSubmit's startRun(variables)
-        //      call — so the session must already carry workspace_root
-        //      or the framework raises WorkspaceRootRequiredError.
-        // Local ``workspacePath`` state tracks both fs_get_workspace_root
-        // and the WorkspacePicker, so a user switching workspace via
-        // the pill before submit is respected.
+        const rows = (await client.listSlashCommands()).map(normalizeSlashCommand).filter((row): row is SlashCommand => row !== null)
+        const command = findSlashCommand(rows, slash.name)
+        if (!command) {
+          say(unknownCommandMessage(slash.name))
+          return
+        }
+        const parsedArgs = parseSlashArgs(command.args, slash.rest)
+        if (parsedArgs.ok === false) {
+          say(`/${command.name}: ${parsedArgs.error}${command.usage ? ` Usage: /${command.name} ${command.usage}` : ''}`)
+          return
+        }
+        if (!command.during_run && thinking) {
+          say(`/${command.name} can't run while a response is in progress. Stop it first.`)
+          return
+        }
+        // Anchor the session first: a slash command may be the user's
+        // first action, and server functions like /goal start runs through
+        // the drainer rather than through startRun's mint-on-first-call.
         const ensureArgs: Record<string, unknown> = {}
         if (sessionId) ensureArgs.session_id = sessionId
         if (workspacePath && workspaceSupported) ensureArgs.workspace_root = workspacePath
@@ -880,39 +885,13 @@ export function App() {
             sid = ensuredId
           }
         } catch {
-          /* best-effort — let the dispatch attempt anyway */
+          /* best-effort — let the call attempt anyway */
         }
-        const funcs = await client.listServerFunctions()
-        const found = funcs.find(f => String(f.name).toLowerCase() === name.toLowerCase())
-        if (!found) {
-          // Not a known server function; send to LLM. Route through the
-          // queue when a run is active or the queue is non-empty — same
-          // guard as the main path below.
-          if ((thinking || queuedMessages.length > 0) && sid) {
-            await client.enqueueMessage(sid, text, { triggerRun: true, role: 'user', source: 'ui' })
-          } else {
-            await client.startRun(text, client.defaultEnvironmentSelection(), sid)
-          }
-          return
-        }
-        let args: Record<string, unknown> = {}
-        if (argText) {
-          try {
-            const parsed = JSON.parse(argText)
-            if (typeof parsed === 'object' && !Array.isArray(parsed)) args = parsed
-            else if (Array.isArray(parsed)) args = { args: parsed }
-            else if (typeof parsed === 'string') args = { text: parsed }
-            else args = { value: parsed }
-          } catch {
-            args = { text: argText }
-          }
-        }
-        const result = await client.serverCall(name, args, sid)
-        const formatted = JSON.stringify(result, null, 2)
-        setItems(prev => [...prev, { type: 'chat', role: 'assistant', content: formatted === 'null' ? 'Done.' : formatted }])
+        const result = await client.serverCall(command.function ?? command.name, parsedArgs.args, sid)
+        say(slashResultMessage(result))
         return
       } catch (e) {
-        setItems(prev => [...prev, { type: 'chat', role: 'assistant', content: `Error: ${String((e as Error)?.message || e)}` }])
+        say(`Error: ${String((e as Error)?.message || e)}`)
         return
       }
     }

@@ -3,6 +3,7 @@
 import logging
 import os
 import sys
+from typing import Optional
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -120,9 +121,7 @@ class Debug:
             return
         cls._original_stderr = sys.stderr
         target = (
-            cls._log_file
-            if (cls._enabled and cls._log_file)
-            else open(os.devnull, "w")
+            cls._log_file if (cls._enabled and cls._log_file) else open(os.devnull, "w")
         )
         old = sys.stderr
         sys.stderr = target
@@ -130,6 +129,16 @@ class Debug:
             if getattr(handler, "stream", None) is old:
                 handler.stream = target
         cls._stderr_redirected = True
+
+    @classmethod
+    def log_fileno(cls) -> Optional[int]:
+        """The debug log's descriptor when debug is on, else None."""
+        if cls._enabled and cls._log_file is not None:
+            try:
+                return cls._log_file.fileno()
+            except (AttributeError, ValueError, OSError):
+                return None
+        return None
 
     @classmethod
     def original_stderr(cls):

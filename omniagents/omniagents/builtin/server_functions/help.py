@@ -1,14 +1,11 @@
-"""Builtin ``/help``: auto-generated command list.
+"""Builtin ``/help``: the slash command list.
 
-Renders every server function registered on the running AgentService —
-name plus its ``@server_function`` description — so the list can never
-drift from what's actually installed. Dotted names (``terminal.create``,
-``session.ensure``) are RPC endpoints rather than user-facing slash
-commands; they're included in the payload but omitted from the rendered
-message. Products with curated help simply define their own ``help``
-server function — a project definition takes over the name entirely.
-
-Activated by the ``slash`` capability pack.
+Renders the slash catalog (``AgentService.list_slash_commands``): only
+server functions that carry a slash declaration, with their usage and
+description, in presentation order. RPC-only functions never appear, by
+construction rather than by naming heuristic. Products with curated help
+define their own ``help`` server function; a project definition takes
+over the name entirely.
 """
 
 from __future__ import annotations
@@ -16,9 +13,11 @@ from __future__ import annotations
 from typing import Any
 
 from omniagents import server_function
+from omniagents.core.server_functions.slash import slash_command
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
 
+@slash_command(description="List the commands you can type", order=0)
 @server_function(
     description="List available commands",
     strict=True,
@@ -27,24 +26,14 @@ from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
     execution_requirements=ExecutionRequirement.NONE,
 )
 async def help_command(service: Any, session: Any = None) -> dict:
-    registered = getattr(service, "_server_functions", {}) or {}
-
-    entries = []
-    for name in sorted(registered):
-        meta = registered.get(name) or {}
-        entries.append(
-            {"command": f"/{name}", "description": meta.get("description") or ""}
-        )
-
+    lister = getattr(service, "list_slash_commands", None)
+    commands = list(lister()) if callable(lister) else []
     lines = ["**Available commands:**"]
-    for entry in entries:
-        name = entry["command"]
-        if "." in name:
-            continue  # RPC endpoint, not a user-facing slash command
-        desc = entry["description"]
-        lines.append(f"  `{name}`" + (f" — {desc}" if desc else ""))
-
-    return {"commands": entries, "message": "\n".join(lines)}
+    for entry in commands:
+        usage = f" {entry['usage']}" if entry.get("usage") else ""
+        desc = entry.get("description") or ""
+        lines.append(f"  `/{entry['name']}{usage}`" + (f" — {desc}" if desc else ""))
+    return {"commands": commands, "message": "\n".join(lines)}
 
 
 async def _help_on_invoke(service, session, args=None):

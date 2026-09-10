@@ -135,7 +135,12 @@ describe("headline", () => {
     expect(
       headline(
         statusResult({
-          head: { detached: true, unborn: false, branch: null, oid: "abcdef1234" },
+          head: {
+            detached: true,
+            unborn: false,
+            branch: null,
+            oid: "abcdef1234",
+          },
         }),
       ),
     ).toBe("detached @ abcdef12");
@@ -192,9 +197,24 @@ describe("flattenDiff", () => {
             new_lines: 2,
             lines: [
               { origin: "context", content: "a", old_lineno: 1, new_lineno: 1 },
-              { origin: "delete", content: "old", old_lineno: 2, new_lineno: null },
-              { origin: "add", content: "new", old_lineno: null, new_lineno: 2 },
-              { origin: "no_newline", content: "", old_lineno: null, new_lineno: null },
+              {
+                origin: "delete",
+                content: "old",
+                old_lineno: 2,
+                new_lineno: null,
+              },
+              {
+                origin: "add",
+                content: "new",
+                old_lineno: null,
+                new_lineno: 2,
+              },
+              {
+                origin: "no_newline",
+                content: "",
+                old_lineno: null,
+                new_lineno: null,
+              },
             ],
           },
         ],

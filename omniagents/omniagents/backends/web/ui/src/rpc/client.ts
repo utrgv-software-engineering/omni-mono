@@ -703,6 +703,16 @@ export class RPCClient {
     return this.call('list_server_functions') as Promise<Array<{ name: string; description?: string; params_schema?: Record<string, unknown>; result_schema?: Record<string, unknown> }>>
   }
 
+  /** The typeable subset of server functions (`server_call("slash.list")`); [] on older servers. */
+  async listSlashCommands(): Promise<unknown[]> {
+    try {
+      const result = (await this.serverCall('slash.list', {})) as { commands?: unknown }
+      return Array.isArray(result?.commands) ? result.commands : []
+    } catch {
+      return []
+    }
+  }
+
   async serverCall(func: string, args?: Record<string, unknown>, sessionId?: string, opts?: RequestOptions): Promise<Record<string, unknown>> {
     const params: Record<string, unknown> = { function: func }
     if (args) params.args = args

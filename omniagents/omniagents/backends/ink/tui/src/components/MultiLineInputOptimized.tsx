@@ -14,7 +14,13 @@ import { layoutInput, columnAtCell } from "./input-layout.js";
 import chalk from "chalk";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
+import {
+  detectComposerToken,
+  type ComposerCompletion,
+  type ComposerToken,
+} from "./composer-token.js";
 import { Theme } from "../theme.js";
+import { themedMemo } from "../theme/themed-memo.js";
 
 interface InputState {
   lines: string[];
@@ -58,7 +64,14 @@ type InputAction =
   | { type: "SET_VALUE"; value: string }
   | { type: "SET_HISTORY_INDEX"; index: number; value: string }
   | { type: "UPDATE_HISTORY_INDEX"; index: number }
-  | { type: "SAVE_DRAFT"; draft: string };
+  | { type: "SAVE_DRAFT"; draft: string }
+  | {
+      type: "REPLACE_RANGE";
+      row: number;
+      start: number;
+      end: number;
+      text: string;
+    };
 
 export interface MultiLineInputProps {
   onSubmit: (value: string) => void | boolean | Promise<void | boolean>;
@@ -74,6 +87,13 @@ export interface MultiLineInputProps {
    * onInsertConsumed. */
   pendingInsert?: string | null;
   onInsertConsumed?: () => void;
+  /** Reports the `/command` or `@file` token under the cursor (null when
+   * there is none) so the owner can show a completion popup. */
+  onTokenChange?: (token: ComposerToken | null) => void;
+  /** One-shot: replace the completion's token with its text, then
+   * optionally submit. Acknowledged via onCompletionConsumed. */
+  completion?: ComposerCompletion | null;
+  onCompletionConsumed?: () => void;
 }
 
 /**
@@ -307,12 +327,30 @@ export function inputReducer(
         draft: action.draft,
       };
 
+    case "REPLACE_RANGE": {
+      // Code-point columns on one row; the cursor lands after the text.
+      const chars = Array.from(state.lines[action.row] ?? "");
+      const start = Math.max(0, Math.min(action.start, chars.length));
+      const end = Math.max(start, Math.min(action.end, chars.length));
+      const newLines = [...state.lines];
+      newLines[action.row] =
+        chars.slice(0, start).join("") +
+        action.text +
+        chars.slice(end).join("");
+      return {
+        ...state,
+        lines: newLines,
+        cursorRow: action.row,
+        cursorCol: start + codePointLength(action.text),
+      };
+    }
+
     default:
       return state;
   }
 }
 
-export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
+export const MultiLineInputOptimized = themedMemo<MultiLineInputProps>(
   ({
     onSubmit,
     onEscape,
@@ -323,6 +361,9 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
     disableSubmit = false,
     pendingInsert = null,
     onInsertConsumed,
+    onTokenChange,
+    completion = null,
+    onCompletionConsumed,
     draft: suppliedDraft,
   }) => {
     const localDraft = React.useRef<ComposerDraft>({});
@@ -486,6 +527,41 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
         }
       }
     }, [onSubmit, getValue, draft]);
+
+    // Tell the owner what sits under the cursor so a popup can offer
+    // completions. Fired from committed state, not from every keystroke,
+    // so a paste burst reports once.
+    useEffect(() => {
+      onTokenChange?.(
+        disabled
+          ? null
+          : detectComposerToken(state.lines, state.cursorRow, state.cursorCol),
+      );
+    }, [
+      state.lines,
+      state.cursorRow,
+      state.cursorCol,
+      disabled,
+      onTokenChange,
+    ]);
+
+    // One-shot completion from the popup: replace the token, acknowledge,
+    // and send if the popup asked for it (a command with no arguments).
+    // dispatch updates stateRef synchronously, so the submit sees the
+    // replaced text.
+    useEffect(() => {
+      if (!completion) return;
+      const { token, text, submit } = completion;
+      dispatch({
+        type: "REPLACE_RANGE",
+        row: token.row,
+        start: token.start,
+        end: token.end,
+        text,
+      });
+      onCompletionConsumed?.();
+      if (submit && !disableSubmit) handleSubmit();
+    }, [completion]);
 
     const handleHistoryUp = useCallback(() => {
       if (history.length === 0) return;
@@ -712,7 +788,10 @@ export const MultiLineInputOptimized = React.memo<MultiLineInputProps>(
       prevProps.onSubmit === nextProps.onSubmit &&
       prevProps.onEscape === nextProps.onEscape &&
       prevProps.pendingInsert === nextProps.pendingInsert &&
-      prevProps.onInsertConsumed === nextProps.onInsertConsumed
+      prevProps.onInsertConsumed === nextProps.onInsertConsumed &&
+      prevProps.onTokenChange === nextProps.onTokenChange &&
+      prevProps.completion === nextProps.completion &&
+      prevProps.onCompletionConsumed === nextProps.onCompletionConsumed
     );
   },
 );
