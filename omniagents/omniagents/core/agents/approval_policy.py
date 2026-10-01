@@ -166,6 +166,16 @@ async def resolve_approval_route(
     service: Any, session: Any
 ) -> tuple[ApprovalRoute, EnvironmentSummary]:
     environment = await resolve_environment_summary(service, session)
+    worker = getattr(service, "_worker_approval_context", None)
+    if worker is not None:
+        return (
+            (
+                ApprovalRoute.AUTO_APPROVE
+                if worker.auto_approve
+                else ApprovalRoute.GUARDIAN
+            ),
+            environment,
+        )
     route = resolve_route(
         reviewer=effective_reviewer(service, session),
         sandbox_tier=sandbox_auto_approve_tier(service),
@@ -177,6 +187,9 @@ async def resolve_approval_route(
 def _config_value(
     service: Any, key: str, default: Any, allowed: tuple[str, ...] | None
 ) -> Any:
+    worker = getattr(service, "_worker_approval_context", None)
+    if worker is not None and worker.parent_service is not None:
+        service = worker.parent_service
     try:
         is_set, value = service._layered_config_store().effective_value(key)
     except Exception:

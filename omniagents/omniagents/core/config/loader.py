@@ -2231,6 +2231,7 @@ def load_agent_spec_from_yaml(
         sandbox_run_as=sandbox_run_as_value,
         # Capability Packs (Phase 0)
         resolved_capabilities=resolved_capabilities_list,
+        capability_profiles=config.get("capability_profiles", {}),
         # Tracing Config
         tracing_config=tracing_config,
         # MCP Config

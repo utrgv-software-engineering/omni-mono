@@ -483,6 +483,10 @@ async def _default_build_agent(
     from agents.models._openai_shared import get_default_openai_client
     from omniagents.core.utils.jinja_instructions import process_instructions
 
+    from omniagents.core.capabilities.profiles import spec_for_capability_profile
+
+    spec = spec_for_capability_profile(spec, session)
+
     logger.debug(f"Building agent '{spec.name}' using internal default builder...")
 
     # Merge incoming settings with environment and SettingField defaults.

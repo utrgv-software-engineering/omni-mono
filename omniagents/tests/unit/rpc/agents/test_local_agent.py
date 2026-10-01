@@ -391,3 +391,23 @@ async def test_run_server_processes_requests():
 
     assert results == [(1, 1)]
     assert errors[0]["error"]["data"]["method"] == "fail"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("servers", [["first-server", "omni-projects"], []])
+async def test_default_builder_preserves_all_connected_mcp_servers(
+    monkeypatch, servers
+):
+    builder = AsyncMock(return_value=SimpleNamespace(name="worker"))
+    monkeypatch.setattr("omniagents.core.agents.builder._default_build_agent", builder)
+    spec = make_agent_spec(build_agent=None)
+    agent = LocalAgent(spec)
+    try:
+        await agent.initialize()
+        await spec.build_agent(
+            {}, "legacy-first", SimpleNamespace(mcp_servers=servers, session="session")
+        )
+        assert builder.call_args.args[1] == servers
+        assert builder.call_args.kwargs["session"] == "session"
+    finally:
+        await agent.cleanup()

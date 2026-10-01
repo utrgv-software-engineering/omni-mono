@@ -429,7 +429,9 @@ class RemoteAgent(UnifiedAgentBase):
                 self._transport,
                 self._methods,
                 client_info=client_info,
-                capabilities=REMOTE_AGENT_CAPABILITIES,
+                capabilities=getattr(
+                    self, "_rpc_capabilities", REMOTE_AGENT_CAPABILITIES
+                ),
                 policy=self._policy,
             )
         if self._url:
@@ -437,7 +439,9 @@ class RemoteAgent(UnifiedAgentBase):
                 self._url,
                 self._methods,
                 client_info=client_info,
-                capabilities=REMOTE_AGENT_CAPABILITIES,
+                capabilities=getattr(
+                    self, "_rpc_capabilities", REMOTE_AGENT_CAPABILITIES
+                ),
                 token=self._token,
                 policy=self._policy,
             )

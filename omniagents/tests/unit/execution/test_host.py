@@ -65,30 +65,29 @@ async def test_registered_host_environment_is_unconfined(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_mounted_workspace_still_bounds_its_own_address_space(tmp_path):
-    """The one workspace that DOES bound, and does it itself.
-
-    A composite root is a synthetic mount table, not a place on the machine,
-    so a path it cannot name resolves to nothing rather than to a file. It
-    must not borrow that enforcement from a base-class flag.
-    """
+async def test_mounted_host_paths_are_unrestricted_but_rpc_paths_stay_bounded(tmp_path):
     from omniagents.workspace.mounted_host import MountedHostWorkspace
     from omniagents.workspace.types import WorkspaceEscapeError
 
     (tmp_path / "src").mkdir()
+    outside = tmp_path / "skills"
+    outside.mkdir()
+    (outside / "reference.md").write_text("skill reference")
     workspace = MountedHostWorkspace(
         str(tmp_path / "logical"),
         [{"kind": "local", "mountName": "src", "path": str(tmp_path / "src")}],
     )
-
-    assert workspace.enforces_confinement is True
+    assert workspace.enforces_confinement is False
     assert workspace.resolve("src") == str(tmp_path / "src")
+    for path in [str(outside / "reference.md"), "../skills/reference.md"]:
+        assert await workspace.read_text(path) == "skill reference"
+        with pytest.raises(WorkspaceEscapeError):
+            workspace.resolve_confined(path)
+    (Path(workspace.root) / "external").symlink_to(outside, target_is_directory=True)
+    assert await workspace.read_text("external/reference.md") == "skill reference"
     with pytest.raises(WorkspaceEscapeError):
-        workspace.resolve("/etc/hostname")
-    # A symlink planted in the managed root names nothing in the table.
-    (Path(workspace.root) / "sneaky").symlink_to("/etc", target_is_directory=True)
-    with pytest.raises(WorkspaceEscapeError):
-        workspace.resolve("sneaky/hostname")
+        workspace.resolve_confined("external/reference.md")
+    assert workspace.resolve_confined("src") == str(tmp_path / "src")
 
 
 @pytest.mark.parametrize("agent_host_id", ["", "  "])

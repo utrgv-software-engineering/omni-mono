@@ -415,6 +415,7 @@ class Runner:
         auth_token: Optional[str] = None,
         minimal_ui: bool = True,
         input: Optional[str] = None,
+        default_host_workspace_root: Optional[str] = None,
         **kwargs,
     ) -> None:
         """Run the agent embedded in a Jupyter notebook.
@@ -429,12 +430,15 @@ class Runner:
             auth_token: Optional authentication token
             minimal_ui: If True, hide the sidebar (default: True)
             input: Optional message to send immediately on load
-            **kwargs: Additional arguments passed to the server
+            default_host_workspace_root: Root for the notebook's host execution
+                environment. Defaults to the current working directory at launch.
+            **kwargs: Reserved for compatibility.
 
         Example:
             runner = Runner.from_agent(agent)
             runner.run_notebook()  # Displays embedded UI in notebook
             runner.run_notebook(input="Hello!")  # Starts with a message
+            runner.run_notebook(default_host_workspace_root="/path/to/project")
         """
         try:
             from IPython.display import IFrame, HTML, display
@@ -496,7 +500,17 @@ class Runner:
             pass
 
         # Build the FastAPI app (registers /ws WebSocket route)
-        app = build_app(spec=self.spec, auth_token=auth_token)
+        # Like the local web launcher, notebooks need an explicit host
+        # environment so filesystem and process tools have a workspace.
+        app = build_app(
+            spec=self.spec,
+            auth_token=auth_token,
+            default_host_workspace_root=(
+                os.getcwd()
+                if default_host_workspace_root is None
+                else default_host_workspace_root
+            ),
+        )
 
         # Add CORS and cross-origin headers for embedding in Jupyter notebooks
         # Jupyter runs with COEP: require-corp, so we need these headers

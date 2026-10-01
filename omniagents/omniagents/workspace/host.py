@@ -47,9 +47,8 @@ class HostWorkspace(Workspace):
     wire surfaces, which promise clients that every path they touch stays
     inside it — call :meth:`~omniagents.workspace.base.Workspace.resolve_confined`,
     which enforces it through :meth:`contains_path` independently of this
-    class. Subclasses whose root is a synthetic namespace rather than a place
-    (:class:`~omniagents.workspace.mounted_host.MountedHostWorkspace`) enforce
-    their own address space in their own ``resolve``.
+    class. Composite host workspaces retain this behavior while exposing
+    named source mounts to workspace-aware clients.
     """
 
     supports_direct_host_scan = True
@@ -84,9 +83,8 @@ class HostWorkspace(Workspace):
 
     @property
     def enforces_confinement(self) -> bool:
-        # ``resolve`` never rejects — see the class docstring. Subclasses that
-        # DO reject (MountedHostWorkspace) override this back to True so
-        # ``resolve_confined`` can skip its redundant containment probe.
+        # All host workspaces allow host paths; bounded RPC callers use
+        # resolve_confined independently of agent tool access.
         return False
 
     def _display_path(self, p: Path) -> str:

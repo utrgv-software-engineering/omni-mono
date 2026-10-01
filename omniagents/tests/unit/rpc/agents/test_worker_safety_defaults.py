@@ -8,28 +8,30 @@ class _Spec:
         self.safe_agent_options = safe_agent_options
 
 
-def test_safe_agent_defaults_to_skip_approvals():
+def test_safe_agent_defaults_to_review():
     spec = _Spec(use_safe_agent=True, safe_agent_options=SafeAgentOptions())
     _default_worker_safety(spec)
-    assert spec.safe_agent_options.skip_approvals is True
+    assert spec.safe_agent_options.skip_approvals is False
 
 
 def test_missing_options_get_created():
     spec = _Spec(use_safe_agent=True, safe_agent_options=None)
     _default_worker_safety(spec)
     assert spec.safe_agent_options is not None
-    assert spec.safe_agent_options.skip_approvals is True
+    assert spec.safe_agent_options.skip_approvals is False
 
 
-def test_safe_agent_disabled_untouched():
+def test_legacy_disabled_safety_enables_review():
     spec = _Spec(use_safe_agent=False, safe_agent_options=None)
     _default_worker_safety(spec)
-    assert spec.safe_agent_options is None
+    assert spec.use_safe_agent is True
+    assert spec.safe_agent_options.skip_approvals is False
 
 
 def test_explicit_skip_approvals_true_preserved():
     opts = SafeAgentOptions(skip_approvals=True, halt_on_rejection=False)
     spec = _Spec(use_safe_agent=True, safe_agent_options=opts)
     _default_worker_safety(spec)
-    assert spec.safe_agent_options is opts
+    assert spec.safe_agent_options is not opts
+    assert spec.safe_agent_options.skip_approvals is True
     assert spec.safe_agent_options.halt_on_rejection is False

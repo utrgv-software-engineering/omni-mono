@@ -723,6 +723,7 @@ class PgSessionStorage(SessionStorageBackend):
             LEFT JOIN history fh ON fh.id = b.first_id
             LEFT JOIN history lh ON lh.id = b.last_id
             WHERE s.tenant_id = %s AND s.project_slug = %s AND s.agent_slug = %s
+              AND s.context->>'worker_id' IS NULL
         """
         # Owner scoping happens in SQL so it composes with LIMIT/OFFSET —
         # filtering after pagination would silently under-deliver pages.

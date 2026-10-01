@@ -265,6 +265,7 @@ class ConversationRecorder:
         *,
         user_id: str | None = None,
         archived: bool = False,
+        source: str | None = None,
         created_at: float | None = None,
         project_legacy_history: bool = True,
     ) -> Thread:
@@ -306,6 +307,9 @@ class ConversationRecorder:
 
             def update(current):
                 changed = False
+                if source is not None and current.source != source:
+                    current.source = source
+                    changed = True
                 if user_id and current.user_id != user_id:
                     current.user_id = user_id
                     changed = True
@@ -322,6 +326,7 @@ class ConversationRecorder:
         now = created_at if created_at is not None else _now()
         thread = Thread(
             thread_id=thread_id,
+            source=source or "recorded",
             user_id=user_id,
             status=ThreadStatus.ARCHIVED if archived else ThreadStatus.ACTIVE,
             created_at=now,
@@ -1976,6 +1981,11 @@ def recorder_for_session(
     )
 
 
+def _session_thread_source(session: Any) -> str | None:
+    context = getattr(session, "context", None)
+    return "worker" if isinstance(context, dict) and context.get("worker_id") else None
+
+
 def ensure_conversation_thread(session: Any) -> Optional[ConversationRecorder]:
     """Materialize *session*'s thread BEFORE a new history row is written.
 
@@ -1996,6 +2006,7 @@ def ensure_conversation_thread(session: Any) -> Optional[ConversationRecorder]:
         session_id,
         user_id=getattr(session, "user_id", None),
         archived=bool(getattr(session, "archived", False)),
+        source=_session_thread_source(session),
     )
     return recorder
 
@@ -2015,6 +2026,7 @@ def record_session_event(session: Any, method: str, payload: Dict[str, Any]) -> 
             session_id,
             user_id=getattr(session, "user_id", None),
             archived=bool(getattr(session, "archived", False)),
+            source=_session_thread_source(session),
         )
         recorder.record(session_id, method, payload)
     except Exception:

@@ -361,6 +361,9 @@ class AgentSpec:
     Empty list when no capabilities are configured (default behavior unchanged).
     """
 
+    capability_profiles: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    """Named, product-declared capability replacements selected per session."""
+
     # --- Tracing Configuration ---
     tracing_config: Optional[Dict[str, Any]] = None
 

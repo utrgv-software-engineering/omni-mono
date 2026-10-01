@@ -554,16 +554,14 @@ class ServeEnvironmentProvisioner:
             # ``resolve_confined`` — see Workspace.resolve_confined.
             workspace: HostWorkspace
             if use_composite:
-                # Composite stays confined: its root is a synthetic mount
-                # table, not a place on the machine. See MountedHostWorkspace.
+                # Mount aliases organize host sources without restricting the
+                # host agent. Bounded RPC reads still use resolve_confined.
                 workspace = MountedHostWorkspace(str(workspace_dir), local_sources)
             elif any(
                 source.get("gitDir") or source.get("gitCommonDir")
                 for source in local_sources
             ):
-                workspace = GitMetadataHostWorkspace(
-                    str(workspace_dir), local_sources
-                )
+                workspace = GitMetadataHostWorkspace(str(workspace_dir), local_sources)
             else:
                 workspace = HostWorkspace(root=str(workspace_dir))
             terminal_defaults = TerminalExecutionDefaults(

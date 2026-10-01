@@ -1,5 +1,14 @@
 # Runtime ownership and recovery
 
+> **Superseded (September 2026).** Ownership is now a heartbeat lease
+> (`omniagents/core/runtime/ownership.py`): the holder refreshes a timestamp
+> every `HEARTBEAT_INTERVAL` seconds and a reservation older than `LEASE_TTL`
+> is taken over by the next `start_run`, which closes the interrupted turn and
+> returns the dead dispatcher's queue claims to pending. There is no
+> `/recover` command and no process-identity or cleanup-journal proof; the
+> sections below describe the design that was replaced and are kept as
+> history.
+
 ## Staged work — September 7, 2026
 
 ### 1. Exclusive run ownership: implemented, conservative

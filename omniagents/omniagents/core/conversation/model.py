@@ -709,7 +709,7 @@ class Thread:
     #: the server: the alternative is a protocol break every time a client
     #: wants to remember one more thing about a conversation.
     metadata: Dict[str, Any] = field(default_factory=dict)
-    #: ``"recorded"`` (written live by the recorder) or ``"adapter"``
+    #: ``"worker"`` (delegated work), ``"recorded"`` (ordinary live chats) or ``"adapter"``
     #: (projected from legacy history by the compatibility adapter).
     source: str = "recorded"
     #: When this thread's pre-existing history was materialized into domain

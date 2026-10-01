@@ -17,7 +17,7 @@ import json
 import logging
 import random
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from agents.run_context import RunContextWrapper
 from omniagents.core.tools import (
@@ -292,7 +292,9 @@ async def broadcast_workers_snapshot(service, parent_session_id: Optional[str]) 
 
 
 # Workers contribute their entries to the unified subagent snapshot.
-from omniagents.core.runtime.subagents import register_snapshot_provider as _register_snapshot_provider
+from omniagents.core.runtime.subagents import (
+    register_snapshot_provider as _register_snapshot_provider,
+)
 
 _register_snapshot_provider(
     lambda parent_session_id: workers_snapshot(parent_session_id=parent_session_id)
@@ -430,7 +432,11 @@ def _environment_id_from_ctx(ctx: RunContextWrapper[Any] | None) -> str | None:
     if ctx is None:
         return None
     c = getattr(ctx, "context", None)
-    value = c.get("environment_id") if isinstance(c, dict) else getattr(c, "environment_id", None)
+    value = (
+        c.get("environment_id")
+        if isinstance(c, dict)
+        else getattr(c, "environment_id", None)
+    )
     return value if isinstance(value, str) and value.strip() else None
 
 
@@ -543,7 +549,27 @@ async def spawn_worker(
               fails by default. Set to True to proceed anyway when you know
               those changes are not relevant.
     """
-    worker_id = _generate_worker_name()
+    return await spawn_worker_run(ctx, task, isolation, allow_dirty)
+
+
+async def spawn_worker_run(
+    ctx: RunContextWrapper[Any],
+    task: str,
+    isolation: Optional[str] = None,
+    allow_dirty: bool = False,
+    *,
+    worker_id: Optional[str] = None,
+    configure_spec: Optional[Callable[[Any], None]] = None,
+) -> RichToolOutput:
+    """Internal execution adapter shared by worker and swarm capabilities.
+
+    The public worker tool schema and defaults remain unchanged.
+    """
+    worker_id = worker_id or _generate_worker_name()
+    if worker_id in _workers():
+        return _error_output(
+            worker_id, "Worker already exists", "Duplicate worker", worker_id
+        )
     workspace_root = _workspace_root_from_ctx(ctx)
 
     defaults = worker_defaults()
@@ -645,6 +671,10 @@ async def spawn_worker(
     else:
         environment_id = _environment_id_from_ctx(ctx)
 
+    spawn_options: dict[str, Any] = {}
+    if configure_spec is not None:
+        spawn_options["configure_spec"] = configure_spec
+
     try:
         await manager().spawn(
             worker_id=worker_id,
@@ -656,8 +686,10 @@ async def spawn_worker(
             },
             parent_session_id=parent_sid,
             principal=parent_principal,
+            parent_service=_svc,
             project_slug=parent_project_slug,
             agent_slug=parent_agent_slug,
+            **spawn_options,
         )
     except Exception as e:
         # The worktree was prepared above; a failed spawn must not leak it —

@@ -71,8 +71,8 @@ class Workspace(abc.ABC):
 
     Path semantics: relative paths are resolved against ``self.root``.
     Confinement depends on the backend: plain host workspaces allow paths
-    outside the root, while mounted and sandbox workspaces enforce their
-    address spaces. Call :meth:`resolve_confined` when the caller requires
+    outside the root, including mounted host workspaces. Sandbox workspaces
+    enforce their address spaces. Call :meth:`resolve_confined` when the caller requires
     a workspace boundary regardless of backend.
     """
 
@@ -145,7 +145,7 @@ class Workspace(abc.ABC):
         """Whether :meth:`resolve` itself refuses paths outside the root.
 
         True everywhere except :class:`~omniagents.workspace.host.HostWorkspace`
-        and its direct-tree subclasses, where the agent's file tools
+        and its subclasses, where the agent's file tools
         deliberately reach the whole machine, exactly as the shell already
         does. This is a property of the class, not a setting: there is no
         "host but fenced" mode to configure. Callers that need the boundary

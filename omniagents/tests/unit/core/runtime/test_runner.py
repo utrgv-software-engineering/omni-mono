@@ -154,7 +154,15 @@ def test_from_agent_without_build_context_uses_variables_as_context(monkeypatch)
     assert spec.build_context is None
 
 
-def test_run_notebook_enables_realtime_for_voice_spec(monkeypatch):
+@pytest.mark.parametrize("explicit_workspace", [False, True])
+def test_run_notebook_configures_environment_and_voice(
+    monkeypatch, tmp_path, explicit_workspace
+):
+    monkeypatch.chdir(tmp_path)
+    workspace_root = tmp_path / "project" if explicit_workspace else tmp_path
+    workspace_root.mkdir(exist_ok=True)
+    app_options = {}
+
     class DummyIFrame:
         def __init__(self, *args, **kwargs):
             self.args = args
@@ -201,9 +209,11 @@ def test_run_notebook_enables_realtime_for_voice_spec(monkeypatch):
         def mount(self, *args, **kwargs):
             return None
 
-    monkeypatch.setattr(
-        "omniagents.backends.server.app.build_app", lambda **kwargs: DummyApp()
-    )
+    def build_app(**kwargs):
+        app_options.update(kwargs)
+        return DummyApp()
+
+    monkeypatch.setattr("omniagents.backends.server.app.build_app", build_app)
     monkeypatch.setattr(Runner, "_resolve_web_ui_dist", lambda self: None)
     monkeypatch.setattr(Runner, "_find_available_port", lambda *args, **kwargs: 8123)
 
@@ -244,8 +254,15 @@ def test_run_notebook_enables_realtime_for_voice_spec(monkeypatch):
     assert spec.voice_spec.realtime_mode is False
 
     runner = Runner(spec=spec)
-    runner.run_notebook()
+    notebook_options = (
+        {"default_host_workspace_root": str(workspace_root)}
+        if explicit_workspace
+        else {}
+    )
+    runner.run_notebook(**notebook_options)
 
+    assert app_options["default_host_workspace_root"] == str(workspace_root)
+    assert app_options["spec"] is spec
     assert runner.spec.voice_spec.realtime_mode is True
     assert runner.spec.voice_spec.realtime_settings is not None
     assert "audio" in (runner.spec.voice_spec.realtime_settings.modalities or [])

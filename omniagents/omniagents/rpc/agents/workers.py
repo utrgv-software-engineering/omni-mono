@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, TypeGuard, cast
@@ -10,37 +11,26 @@ from .local import LocalAgent
 logger = logging.getLogger(__name__)
 
 
-def _default_worker_safety(spec: Any) -> None:
-    """Default a spawned worker's spec to skip approval prompts.
+def _default_worker_safety(spec: Any, parent_service: Any = None) -> bool:
+    """Enable review unless auto-approval was explicitly configured."""
+    from omniagents.core.agents.specs import SafeAgentOptions
 
-    Workers have no human reviewer by construction — the monitor loop
-    auto-approves every ``tool_approval_requested`` it sees — so leaving
-    approvals on merely detours every tool call through the approval
-    machinery (request → queue → auto-approve → resume), which reads as
-    a hang. Skipping at the source is outcome-identical and removes the
-    round-trips. The YAML loader defaults ``use_safe_agent`` to True with
-    an empty safe list when a headless agent's YAML doesn't mention it,
-    which is how workers historically ended up on this path; product
-    YAMLs no longer need the ``use_safe_agent: false`` workaround.
-
-    Deployments with ``safety_mode: enforced`` are unaffected: the
-    service layer re-forces ``skip_approvals=False`` after this, and the
-    monitor's auto-approve remains as the answering party.
-    """
-    try:
-        if not getattr(spec, "use_safe_agent", False):
-            return
-        opts = getattr(spec, "safe_agent_options", None)
-        if opts is None:
-            from omniagents.core.agents.specs import SafeAgentOptions
-
-            spec.safe_agent_options = SafeAgentOptions(skip_approvals=True)
-        elif not getattr(opts, "skip_approvals", False):
-            opts.skip_approvals = True
-    except Exception:
-        # Defaulting must never block a spawn; worst case the monitor's
-        # auto-approve still answers every prompt as before.
-        pass
+    opts = (
+        copy.deepcopy(getattr(spec, "safe_agent_options", None)) or SafeAgentOptions()
+    )
+    parent_spec = getattr(parent_service, "spec", None)
+    parent_opts = getattr(parent_spec, "safe_agent_options", None)
+    auto_approve = bool(
+        opts.skip_approvals or getattr(parent_opts, "skip_approvals", False)
+    )
+    parent_security = getattr(parent_spec, "security_config", None) or {}
+    security = getattr(spec, "security_config", None) or {}
+    if "enforced" in (security.get("safety_mode"), parent_security.get("safety_mode")):
+        auto_approve = False
+    opts.skip_approvals = auto_approve
+    spec.use_safe_agent = True
+    spec.safe_agent_options = opts
+    return auto_approve
 
 
 @dataclass
@@ -60,6 +50,8 @@ class WorkerHandle:
     #: by that user — under enforced authorization an unowned worker thread
     #: would be unreadable by the very user whose agent spawned it.
     principal: Any = None
+    parent_service: Any = None
+    configure_spec: Callable[[Any], None] | None = None
     #: Session namespace the worker persists under — the PARENT's
     #: (project_slug, agent_slug), not a worker-private one. The parent
     #: serve authorizes and reads worker threads through ITS store; a
@@ -103,10 +95,10 @@ class WorkerManager:
         spec_loader: Callable[[str | None], tuple[Any, dict | None]],
         agent_factory: Callable[[Any, Any], Any] | None = None,
         on_complete: Callable[["WorkerHandle"], Awaitable[None]] | None = None,
-        on_event: Callable[["WorkerHandle", str, dict], Awaitable[None]]
-        | None = None,
-        on_session_event: Callable[["WorkerHandle", str, dict], Awaitable[None]]
-        | None = None,
+        on_event: Callable[["WorkerHandle", str, dict], Awaitable[None]] | None = None,
+        on_session_event: (
+            Callable[["WorkerHandle", str, dict], Awaitable[None]] | None
+        ) = None,
         host_resources_provider: Callable[[], Any | None] | None = None,
     ) -> None:
         self._spec_loader = spec_loader
@@ -196,34 +188,9 @@ class WorkerManager:
                         pass
                 continue
 
-            if method == "tool_approval_requested":
-                # Workers auto-approve tool calls so multi-agent runs don't
-                # hang waiting for a human reviewer. If a worker should
-                # enforce approvals, route through a dedicated supervisor.
-                call_id = params.get("call_id")
-                if call_id:
-                    try:
-                        await agent._client.other.tool_approval_response(
-                            call_id=call_id,
-                            decision="approve",
-                            always_approve=False,
-                        )
-                    except Exception:
-                        pass
-                continue
-
-            if method == "mcp_approval_requested":
-                # Mirror the function-tool auto-approval: workers should not
-                # block on hosted-MCP approval prompts.
-                request_id = params.get("request_id")
-                if request_id:
-                    try:
-                        await agent._client.other.mcp_approval_response(
-                            request_id=request_id,
-                            decision="approve",
-                        )
-                    except Exception:
-                        pass
+            if method in {"tool_approval_requested", "mcp_approval_requested"}:
+                # Reviews are resolved by the service (Guardian, then parent
+                # UI). Without a parent UI the request remains pending.
                 continue
 
             if method == "message_output":
@@ -270,11 +237,17 @@ class WorkerManager:
         context: dict | None = None,
         parent_session_id: str | None = None,
         principal: Any = None,
+        parent_service: Any = None,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        configure_spec: Callable[[Any], None] | None = None,
     ) -> WorkerHandle:
         spec, _runtime = self._spec_loader(model)
-        _default_worker_safety(spec)
+        spec = copy.copy(spec)
+        if configure_spec is not None:
+            spec = copy.copy(spec)
+            configure_spec(spec)
+        auto_approve = _default_worker_safety(spec, parent_service)
         # Persist the worker in the spawning agent's session namespace (see
         # WorkerHandle.project_slug). The spec drives the worker service's
         # SessionManager slugs, so stamping it here is the one chokepoint.
@@ -296,6 +269,13 @@ class WorkerManager:
         )
         agent = self._agent_factory(spec, resources)
         await agent.initialize()
+        from omniagents.core.agents.worker_approvals import WorkerApprovalContext
+
+        worker_service = getattr(agent, "_agent_service", None)
+        if worker_service is not None:
+            worker_service._worker_approval_context = WorkerApprovalContext(
+                parent_service, parent_session_id, worker_id, auto_approve
+            )
         await agent._ensure_client()
         client = agent._client
         assert client is not None  # _ensure_client() guarantees a live client
@@ -334,10 +314,21 @@ class WorkerManager:
             "environment_selection": environment_selection,
             "session_id": session_id,
         }
-        if context is not None:
-            start_kwargs["context"] = context
+        start_kwargs["context"] = {
+            **(context or {}),
+            "worker_id": worker_id,
+            "parent_session_id": parent_session_id,
+        }
 
-        resp = await client.other.start_run(**start_kwargs)
+        # Explicit resumption restores workers archived by older runtimes.
+        # New workers use source=worker for visibility, never lifecycle archive.
+        try:
+            if session_id:
+                await client.other.update_thread(thread_id=session_id, status="active")
+            resp = await client.other.start_run(**start_kwargs)
+        except BaseException:
+            await agent.cleanup()
+            raise
         raw = getattr(resp, "result", resp)
         if isinstance(raw, dict):
             run_id = raw.get("run_id", "")
@@ -345,45 +336,6 @@ class WorkerManager:
         else:
             run_id = ""
             sess_id = ""
-
-        # Worker threads share the parent's store but are not conversations
-        # the user opened — archive them at birth so session listings stay
-        # clean while the thread remains readable by id (the launcher's
-        # Agents app mounts it as a transcript). THREE writes make this
-        # stick, because "archived" lives in three places:
-        #   1. the legacy ``sessions.archived`` row (list_sessions),
-        #   2. the LIVE session object — the conversation recorder
-        #      force-syncs ``Thread.status`` from ``session.archived`` on
-        #      every recorded item, and the live flag hydrated False before
-        #      this ran; without this write the thread flips back to
-        #      ACTIVE on the very next item,
-        #   3. via (2), the canonical Thread row itself — which is the
-        #      projection session listings actually prefer.
-        if sess_id and (project_slug is not None or agent_slug is not None):
-            try:
-                from omniagents.core.session.history_db import set_archived
-
-                set_archived(
-                    sess_id,
-                    True,
-                    project_slug=project_slug,
-                    agent_slug=agent_slug,
-                )
-            except Exception:
-                logger.exception("failed to archive worker session %s", sess_id)
-            try:
-                worker_service = getattr(agent, "_agent_service", None)
-                live = (
-                    worker_service.get_session(sess_id)
-                    if worker_service is not None
-                    else None
-                )
-                if live is not None:
-                    live.archived = True
-            except Exception:
-                logger.exception(
-                    "failed to flag live worker session %s archived", sess_id
-                )
 
         handle = WorkerHandle(
             agent=agent,
@@ -394,8 +346,10 @@ class WorkerManager:
             worker_id=worker_id,
             parent_session_id=parent_session_id,
             principal=principal,
+            parent_service=parent_service,
             project_slug=project_slug,
             agent_slug=agent_slug,
+            configure_spec=configure_spec,
         )
         handle.monitor_task = asyncio.create_task(
             self._monitor_worker(handle), name=f"worker-monitor-{run_id or worker_id}"
@@ -411,8 +365,10 @@ class WorkerManager:
         context: dict | None = None,
         parent_session_id: str | None = None,
         principal: Any = None,
+        parent_service: Any = None,
         project_slug: str | None = None,
         agent_slug: str | None = None,
+        configure_spec: Callable[[Any], None] | None = None,
     ) -> WorkerHandle:
         handle = await self._create_worker(
             worker_id=worker_id,
@@ -421,8 +377,10 @@ class WorkerManager:
             context=context,
             parent_session_id=parent_session_id,
             principal=principal,
+            parent_service=parent_service,
             project_slug=project_slug,
             agent_slug=agent_slug,
+            configure_spec=configure_spec,
         )
         self._workers[worker_id] = handle
         return handle
@@ -564,8 +522,10 @@ class WorkerManager:
             context=context,
             parent_session_id=handle.parent_session_id,
             principal=handle.principal,
+            parent_service=handle.parent_service,
             project_slug=handle.project_slug,
             agent_slug=handle.agent_slug,
+            configure_spec=handle.configure_spec,
         )
         new_handle.result = None
         self._workers[worker_id] = new_handle

@@ -21,7 +21,6 @@ from omniagents.core.conversation.run_diff import (
 from omniagents.core.conversation.store import SqliteConversationStore
 from omniagents.workspace import (
     HostWorkspace,
-    MountedHostWorkspace,
     WorkspaceEscapeError,
     reset_mutation_observer,
     reset_workspace,
@@ -707,14 +706,26 @@ class TestObservation:
         outside = tmp_path / "outside.txt"
         outside.write_text("secret\n")
         (workspace / "link.txt").symlink_to(outside)
-        confined = MountedHostWorkspace(
-            str(tmp_path / "logical"),
-            [{"kind": "local", "mountName": "src", "path": str(workspace)}],
-        )
+
+        # Host workspaces (including mounted ones) are unrestricted. Model
+        # a confined backend explicitly to exercise the observer's boundary
+        # handling without depending on a sandbox service.
+        class ConfinedTestWorkspace(HostWorkspace):
+            @property
+            def enforces_confinement(self):
+                return True
+
+            def resolve(self, path):
+                absolute = super().resolve(path)
+                if not self.contains_path(absolute):
+                    raise WorkspaceEscapeError(f"Outside test workspace: {path}")
+                return absolute
+
+        confined = ConfinedTestWorkspace(str(workspace))
         path = {
             "absolute": str(outside),
             "relative": "../outside.txt",
-            "symlink": "src/link.txt",
+            "symlink": "link.txt",
         }[spelling]
         from unittest.mock import AsyncMock
 

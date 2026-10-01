@@ -541,8 +541,11 @@ class RealtimeSession:
         # build_agent(); realtime builds its agent here, so expand them the
         # same way. Approval predicates are attached below, once the full
         # static list is assembled.
+        from omniagents.core.capabilities.profiles import spec_for_capability_profile
+
+        profile_spec = spec_for_capability_profile(self.spec, self.paired_session)
         tools = list(self.spec.available_tools or [])
-        resolved_caps = list(getattr(self.spec, "resolved_capabilities", []) or [])
+        resolved_caps = list(getattr(profile_spec, "resolved_capabilities", []) or [])
         for cap in resolved_caps:
             cap_label = getattr(cap, "capability_name", None) or getattr(
                 cap, "type", "?"
@@ -1054,10 +1057,7 @@ class RealtimeSession:
                         self._assistant_transcripts.get(key, "") + rpc_event.delta
                     )
 
-                if (
-                    rpc_event.type == "realtime_transcript"
-                    and rpc_event.role == "user"
-                ):
+                if rpc_event.type == "realtime_transcript" and rpc_event.role == "user":
                     self._persist_voice_message("user", rpc_event.transcript)
 
                 # Turn end: flush accumulated assistant items as final

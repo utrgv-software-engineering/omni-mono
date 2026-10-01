@@ -1168,6 +1168,8 @@ class SqliteConversationStore(ConversationStore):
         if thread_filter.source is not None:
             clauses.append("threads.source = ?")
             params.append(thread_filter.source)
+        else:
+            clauses.append("threads.source <> 'worker'")
         if thread_filter.parent_thread_id is not None:
             clauses.append("threads.parent_thread_id = ?")
             params.append(thread_filter.parent_thread_id)
@@ -2345,6 +2347,8 @@ class PgConversationStore(ConversationStore):
         if thread_filter.source is not None:
             clauses.append("conversation_threads.source = %s")
             params.append(thread_filter.source)
+        else:
+            clauses.append("conversation_threads.source <> 'worker'")
         if thread_filter.parent_thread_id is not None:
             clauses.append("conversation_threads.parent_thread_id = %s")
             params.append(thread_filter.parent_thread_id)

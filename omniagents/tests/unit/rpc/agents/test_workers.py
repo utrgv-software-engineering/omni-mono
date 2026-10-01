@@ -25,11 +25,21 @@ class FakeOther:
             result={"run_id": self.agent.run_id, "session_id": self.agent.session_id}
         )
 
+    async def update_thread(self, thread_id, status):
+        self.agent.restored_thread = (thread_id, status)
+        return SimpleNamespace(result={"thread_id": thread_id, "status": status})
+
     async def send_user_message(self, run_id, content):
         self.sent_messages.append((run_id, content))
 
     async def stop_run(self, run_id):
         self.stopped_runs.append(run_id)
+
+    async def tool_approval_response(self, **kwargs):
+        self.approvals.append(kwargs)
+
+    async def mcp_approval_response(self, **kwargs):
+        self.approvals.append(kwargs)
 
     async def client_response(self, request_id, ok, result):
         self.approvals.append((request_id, ok, result))
@@ -168,13 +178,15 @@ async def test_worker_manager_spawn_forwards_context_to_start_run():
     assert handle.agent.started_context == {
         "workspace_root": "/tenant/x",
         "extra_key": "v",
+        "worker_id": "worker-ctx",
+        "parent_session_id": None,
     }
+    await manager.close("worker-ctx")
 
 
 @pytest.mark.asyncio
-async def test_worker_manager_spawn_omits_context_when_none():
-    """When the parent passes no context, workers should not receive a
-    context= kwarg either — preserves backwards-compatible session creation."""
+async def test_worker_manager_marks_worker_context_without_parent_context():
+    """Worker identity persists even for targetless runs."""
     manager = make_manager()
     handle = await manager.spawn(
         worker_id="worker-noctx",
@@ -182,7 +194,11 @@ async def test_worker_manager_spawn_omits_context_when_none():
         model=None,
     )
 
-    assert handle.agent.started_context is None
+    assert handle.agent.started_context == {
+        "worker_id": "worker-noctx",
+        "parent_session_id": None,
+    }
+    await manager.close("worker-noctx")
 
 
 @pytest.mark.asyncio
@@ -202,7 +218,13 @@ async def test_worker_manager_resume_forwards_context_to_start_run():
         "worker-resume", "follow up", context={"workspace_root": "/resumed"}
     )
     assert resumed is not None
-    assert resumed.agent.started_context == {"workspace_root": "/resumed"}
+    assert resumed.agent.started_context == {
+        "workspace_root": "/resumed",
+        "worker_id": "worker-resume",
+        "parent_session_id": None,
+    }
+    assert resumed.agent.restored_thread == (handle.session_id, "active")
+    await manager.close("worker-resume")
 
 
 @pytest.mark.asyncio
@@ -285,8 +307,8 @@ async def test_worker_manager_resume_reselects_environment():
 @pytest.mark.asyncio
 async def test_worker_manager_relays_narrative_events_to_observer():
     """The monitor streams the narrative subset (tool/message/run events)
-    to on_event, tags nothing itself (handle carries identity), answers
-    approvals without relaying them, and still relays run_end before
+    to on_event, tags nothing itself (handle carries identity), leaves
+    approvals pending without answering them, and still relays run_end before
     finalizing."""
     relayed = []
 
@@ -310,6 +332,7 @@ async def test_worker_manager_relays_narrative_events_to_observer():
         {"method": "tool_called", "params": {"tool": "write_file"}},
         {"method": "token", "params": {"text": "chatty"}},
         {"method": "tool_approval_requested", "params": {"call_id": "c1"}},
+        {"method": "mcp_approval_requested", "params": {"request_id": "m1"}},
         {"method": "tool_result", "params": {"tool": "write_file"}},
         {"method": "message_output", "params": {"content": "done"}},
         {
@@ -321,7 +344,9 @@ async def test_worker_manager_relays_narrative_events_to_observer():
         await handle.agent._event_queue.put(event)
     await asyncio.wait_for(handle.done_event.wait(), timeout=1)
 
-    assert [(m, p.get("tool") or p.get("content") or p.get("run_id")) for _, m, p in relayed] == [
+    assert [
+        (m, p.get("tool") or p.get("content") or p.get("run_id")) for _, m, p in relayed
+    ] == [
         ("run_started", handle.run_id),
         ("tool_called", "write_file"),
         ("tool_result", "write_file"),
@@ -353,8 +378,117 @@ async def test_worker_manager_relay_failure_does_not_poison_lifecycle():
         {"method": "message_output", "params": {"content": "ok"}}
     )
     await handle.agent._event_queue.put(
-        {"method": "run_end", "params": {"run_id": handle.run_id, "end_reason": "completed"}}
+        {
+            "method": "run_end",
+            "params": {"run_id": handle.run_id, "end_reason": "completed"},
+        }
     )
     await asyncio.wait_for(handle.done_event.wait(), timeout=1)
     assert handle.status == "completed"
     assert handle.result == "ok"
+
+
+@pytest.mark.asyncio
+async def test_worker_spec_configuration_is_opt_in_and_survives_resume():
+    cached = SimpleNamespace(
+        variables={}, available_tools=[], project_slug="proj", agent_slug="worker"
+    )
+    manager = WorkerManager(
+        spec_loader=lambda model: (cached, {}), agent_factory=FakeAgent
+    )
+
+    def configure(spec):
+        spec.available_tools = list(spec.available_tools) + ["bound-member-tool"]
+
+    handle = await manager.spawn(
+        worker_id="member", task_description="first", configure_spec=configure
+    )
+    assert handle.agent.spec.available_tools == ["bound-member-tool"]
+    assert cached.available_tools == []
+    await handle.agent._event_queue.put(
+        {
+            "method": "run_end",
+            "params": {"run_id": handle.run_id, "end_reason": "completed"},
+        }
+    )
+    await asyncio.wait_for(handle.done_event.wait(), timeout=1)
+    resumed = await manager.resume("member", "follow up")
+    assert resumed.configure_spec is configure
+    assert resumed.agent.spec.available_tools == ["bound-member-tool"]
+    ordinary = await manager.spawn(worker_id="ordinary", task_description="baseline")
+    assert ordinary.agent.spec.available_tools == []
+    assert ordinary.configure_spec is None
+    for item in (resumed, ordinary):
+        await item.agent._event_queue.put(
+            {
+                "method": "run_end",
+                "params": {"run_id": item.run_id, "end_reason": "completed"},
+            }
+        )
+        await asyncio.wait_for(item.done_event.wait(), timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_swarm_runs_through_real_worker_adapter_and_manager(monkeypatch):
+    import json
+    from unittest.mock import AsyncMock
+    from agents.run_context import RunContextWrapper
+    from omniagents.builtin.tools import swarm_tools as sw
+    from omniagents.builtin.tools import worker_tools as wt
+    from omniagents.core.workers.config import WorkerDefaults
+
+    completion = AsyncMock()
+    manager = WorkerManager(
+        spec_loader=lambda model: (
+            SimpleNamespace(variables={}, available_tools=[]),
+            {},
+        ),
+        agent_factory=FakeAgent,
+        on_complete=completion,
+    )
+    monkeypatch.setattr(wt, "_MANAGER", manager)
+    monkeypatch.setattr(wt, "worker_defaults", lambda: WorkerDefaults())
+    monkeypatch.setattr(wt, "_WORKER_META", {})
+    monkeypatch.setattr(sw, "_SWARMS", {})
+    context = RunContextWrapper(
+        context={"session_id": "resident-day", "workspace_root": "/tmp"}
+    )
+
+    async def invoke(tool, *args):
+        return json.loads(await tool._original_func(*args))
+
+    group = await invoke(sw.create_swarm, context, "Compare implementations")
+    sid = group["swarm_id"]
+    for name in ("builder", "reviewer"):
+        await invoke(sw.add_swarm_member, context, sid, name, name)
+        result = await invoke(
+            sw.dispatch_swarm_member, context, sid, name, "Inspect code"
+        )
+        assert result["status"] == "spawned"
+    members = sw._SWARMS[sid].members
+    handles = {
+        name: manager.workers[member.worker_id] for name, member in members.items()
+    }
+    builder = handles["builder"]
+    assert builder.parent_session_id == "resident-day"
+    tools = {tool.name: tool for tool in builder.agent.spec.available_tools}
+    message = await invoke(
+        tools["swarm_member_message"], "reviewer", "Check backward compatibility"
+    )
+    assert message["delivery"] == "message_sent"
+    assert "from builder" in handles["reviewer"].agent._client.other.sent_messages[0][1]
+    for handle in handles.values():
+        await handle.agent._event_queue.put(
+            {"method": "message_output", "params": {"content": "verified"}}
+        )
+        await handle.agent._event_queue.put(
+            {
+                "method": "run_end",
+                "params": {"run_id": handle.run_id, "end_reason": "completed"},
+            }
+        )
+        await asyncio.wait_for(handle.done_event.wait(), timeout=1)
+    snapshot = await invoke(sw.get_swarm, context, sid)
+    assert all(m["state"]["result"] == "verified" for m in snapshot["members"])
+    assert completion.await_count == 2
+    await invoke(sw.close_swarm, context, sid, "Both verified")

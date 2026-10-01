@@ -398,12 +398,7 @@ async def test_host_profile_git_metadata_workspace_is_unconfined(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_host_profile_composite_workspace_stays_confined(tmp_path):
-    """A composite root is a synthetic mount table, not a place on the machine.
-
-    There is no "the whole machine" reading of a mount-relative name to opt
-    into, so this one is confined regardless of the target.
-    """
+async def test_host_profile_composite_workspace_is_unconfined(tmp_path):
     layout = tmp_path / "layout"
     frontend = tmp_path / "frontend"
     backend = tmp_path / "backend"
@@ -424,7 +419,7 @@ async def test_host_profile_composite_workspace_stays_confined(tmp_path):
     )
 
     assert isinstance(provisioned.workspace, MountedHostWorkspace)
-    assert provisioned.workspace.enforces_confinement is True
+    assert provisioned.workspace.enforces_confinement is False
 
 
 @pytest.mark.asyncio
@@ -572,7 +567,9 @@ async def test_devbox_capabilities_reflect_network_truth(monkeypatch, tmp_path):
     )
     assert EnvironmentCapability.NETWORK in provisioned.capabilities
     # ...or allow_all.
-    provisioned = await _provision_with({"type": "wasm", "network": {"allow_all": True}})
+    provisioned = await _provision_with(
+        {"type": "wasm", "network": {"allow_all": True}}
+    )
     assert EnvironmentCapability.NETWORK in provisioned.capabilities
     # The explicit opt-out is offline too — hard-off, with no toggle.
     provisioned = await _provision_with({"type": "wasm", "network": "none"})

@@ -10,7 +10,7 @@ from omniagents.core.agents.specs import AgentSpec
 from omniagents.execution import AgentHostResources
 from omniagents.rpc.transport.inmemory import InMemoryTransport
 from omniagents.rpc.transport import TransportClosedError
-from .remote import RemoteAgent
+from .remote import REMOTE_AGENT_CAPABILITIES, RemoteAgent
 
 
 class LocalAgent(RemoteAgent):
@@ -51,6 +51,11 @@ class LocalAgent(RemoteAgent):
             context=getattr(spec, "context", None),
         )
 
+        # Worker resumption uses the authorized thread-restore RPC.
+        self._rpc_capabilities = {
+            **REMOTE_AGENT_CAPABILITIES,
+            "experimental_operations": ["update_thread"],
+        }
         self.spec = spec
         self.settings = settings or {}
         self.approval_callback = approval_callback
@@ -114,7 +119,14 @@ class LocalAgent(RemoteAgent):
             # kept `prompt_cache_retention` and 400ed on every run).
             from omniagents.core.agents.builder import _default_build_agent
 
-            mcp_to_use = mcp_servers if mcp_servers else mcp_server
+            # The positional argument is only the legacy primary server.
+            # Preserve the entire connected set, including an explicitly
+            # empty set after disconnect, instead of dropping later servers.
+            mcp_to_use = (
+                mcp_servers
+                if mcp_servers
+                else getattr(stub_app, "mcp_servers", mcp_server)
+            )
             return await _default_build_agent(
                 settings,
                 mcp_to_use,

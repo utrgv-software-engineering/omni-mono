@@ -932,6 +932,20 @@ def seed_threads(store, count, *, user_id="u1", prefix="th", **overrides):
 
 
 class TestThreadListing:
+    def test_workers_hidden_before_pagination_but_readable_by_id(self, store):
+        store.upsert_thread(make_thread("chat", source="recorded", user_id="u1"))
+        store.upsert_thread(
+            make_thread("worker", source="worker", user_id="u1", updated_at=2.0)
+        )
+        ordinary = ThreadFilter(user_id="u1")
+        assert [t.thread_id for t in store.list_threads(ordinary, limit=1)] == ["chat"]
+        assert store.count_threads(ordinary) == 1
+        workers = ThreadFilter(user_id="u1", source="worker")
+        assert [t.thread_id for t in store.list_threads(workers, limit=1)] == ["worker"]
+        assert store.count_threads(workers) == 1
+        assert store.get_thread("worker").status == ThreadStatus.ACTIVE
+        assert store.count_threads(ThreadFilter(user_id="u2", source="worker")) == 0
+
     def test_a_large_history_is_walked_by_cursor_exactly_once(self, store):
         """The headline acceptance criterion, at a size that would break a
         naive offset pager: 400 threads, paged 37 at a time."""

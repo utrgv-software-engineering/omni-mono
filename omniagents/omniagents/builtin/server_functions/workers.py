@@ -49,7 +49,14 @@ _log = logging.getLogger(__name__)
     execution_requirements=ExecutionRequirement.NONE,
 )
 async def workers_list(_session_id: Optional[str] = None) -> dict:
-    return {"snapshot": workers_snapshot(parent_session_id=_session_id)}
+    from omniagents.core.runtime.subagents import subagents_snapshot
+    from omniagents.builtin.tools.swarm_tools import swarm_snapshots
+
+    return {
+        "snapshot": workers_snapshot(parent_session_id=_session_id),
+        "subagents": subagents_snapshot(_session_id) if _session_id else [],
+        "swarms": swarm_snapshots(_session_id),
+    }
 
 
 async def _workers_list_on_invoke(service, session, args=None):

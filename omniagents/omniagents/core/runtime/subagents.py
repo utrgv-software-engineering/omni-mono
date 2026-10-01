@@ -32,7 +32,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -82,9 +82,7 @@ def _task_from_arguments(arguments: str) -> str:
         value = parsed.get("input")
         if isinstance(value, str) and value.strip():
             return _truncate(value, _TASK_CAP)
-        strings = [
-            v for v in parsed.values() if isinstance(v, str) and v.strip()
-        ]
+        strings = [v for v in parsed.values() if isinstance(v, str) and v.strip()]
         if len(strings) == 1:
             return _truncate(strings[0], _TASK_CAP)
     return _truncate(arguments or "", _TASK_CAP)
@@ -176,9 +174,14 @@ async def broadcast_subagents_snapshot(
         sess = service.get_session(parent_session_id)
         if sess is None:
             return
+        from omniagents.builtin.tools.swarm_tools import swarm_snapshots
+
         await service.request_client_function(
             "ui.subagents.update",
-            {"snapshot": subagents_snapshot(parent_session_id)},
+            {
+                "snapshot": subagents_snapshot(parent_session_id),
+                "swarms": swarm_snapshots(parent_session_id),
+            },
             session=sess,
             expect_result=False,
         )
@@ -264,9 +267,7 @@ async def agent_tool_stream_observer(payload: dict) -> None:
             run = SubagentRun(
                 subagent_id=call_id,
                 agent=str(getattr(agent_obj, "name", "") or "agent"),
-                task=_task_from_arguments(
-                    getattr(tool_call, "arguments", "") or ""
-                ),
+                task=_task_from_arguments(getattr(tool_call, "arguments", "") or ""),
                 parent_session_id=session_id,
             )
             _AGENT_TOOL_RUNS[call_id] = run
@@ -295,9 +296,7 @@ async def agent_tool_stream_observer(payload: dict) -> None:
             include_mcp_ui=False,
         )
         if method in RELAYED_SUBAGENT_EVENTS and mapped is not None:
-            await emit_subagent_event(
-                session_id, call_id, "agent_tool", method, mapped
-            )
+            await emit_subagent_event(session_id, call_id, "agent_tool", method, mapped)
     except Exception:
         logger.debug("agent-tool stream observer failed", exc_info=True)
 

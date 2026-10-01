@@ -173,3 +173,30 @@ def test_failing_provider_degrades_to_default(tmp_path):
     assert roots[0] == tmp_path / ".omniagents" / "skills"
     assert roots[-1].name == "skills"
     assert roots[-1].parent.name == "omniagents"
+
+
+@pytest.mark.asyncio
+async def test_global_skill_reference_readable_from_composite_host(tmp_path):
+    from omniagents.workspace import MountedHostWorkspace
+    from omniagents.builtin.tools.file_tools import read_file
+
+    global_root = tmp_path / "global-skills"
+    skill = _write_skill(global_root, "comms", "Read examples/general.md")
+    reference = skill.parent / "examples" / "general.md"
+    reference.parent.mkdir()
+    reference.write_text("Supporting instructions")
+    source = tmp_path / "project"
+    source.mkdir()
+    workspace = MountedHostWorkspace(
+        str(tmp_path / "logical"),
+        [{"kind": "local", "mountName": "project", "path": str(source)}],
+    )
+    set_skill_roots_provider(lambda *_: [global_root])
+    with _routed_devbox(workspace, []):
+        loaded = await skill_tool.load_skill._original_func(
+            _ctx(workspace.root), "comms"
+        )
+        assert "Read examples/general.md" in str(loaded)
+        result = await read_file._original_func(_ctx(workspace.root), str(reference))
+        assert "Supporting instructions" in str(result)
+        assert "Error reading file" not in str(result)

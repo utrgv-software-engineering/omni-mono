@@ -1,9 +1,10 @@
 """Composite host Workspace backed by explicitly declared source mounts.
 
 The logical root is a launcher-managed directory. Each visible mount name maps
-to one user-selected host directory without widening the boundary to a common
-ancestor. Filesystem and process operations address ``<mountName>/...`` while
-executing directly against the real host files.
+to one user-selected host directory. Host paths outside those mounts remain
+accessible; mounts organize the workspace, rather than sandboxing the agent.
+Filesystem and process operations address ``<mountName>/...`` while executing
+directly against the real host files.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import Any, List, Literal, Mapping, Optional, Sequence
 
 from ._entries import make_entry, sort_entries
 from .host import HostWorkspace
-from .types import FileEntry, GrepMatch, WorkspaceEscapeError
+from .types import FileEntry, GrepMatch
 
 
 class GitMetadataHostWorkspace(HostWorkspace):
@@ -60,18 +61,11 @@ class GitMetadataHostWorkspace(HostWorkspace):
 
 
 class MountedHostWorkspace(HostWorkspace):
-    """A confined logical Host workspace with explicit directory mounts."""
+    """An unrestricted host workspace with named source-directory aliases."""
 
     supports_direct_host_scan = False
 
     def __init__(self, root: str, sources: Sequence[Mapping[str, Any]]) -> None:
-        # Bounded unconditionally, and not because of any sandboxing: this
-        # root is a *logical* tree of symlinks this class synthesizes, and
-        # paths are meaningful only as mount-relative names. There is no
-        # "the whole machine" reading of a path here to opt into — the mount
-        # table IS the address space, so a path outside it is a name that
-        # resolves to nothing, not a place the caller is refused. ``resolve``
-        # is overridden below to route through the table and enforce that.
         super().__init__(root=root)
         self._visible_mounts: dict[str, Path] = {}
         self._internal_mounts: dict[str, Path] = {}
@@ -136,57 +130,15 @@ class MountedHostWorkspace(HostWorkspace):
         return name
 
     @property
-    def enforces_confinement(self) -> bool:
-        # Unlike a plain HostWorkspace, ``resolve`` below rejects anything the
-        # mount table cannot name, so ``resolve_confined`` needs no second
-        # containment probe.
-        return True
-
-    @property
     def mount_names(self) -> tuple[str, ...]:
         return tuple(self._visible_mounts)
 
     def resolve(self, path: str) -> str:
-        if not path or path == ".":
-            return self.root
-        candidate = Path(path)
-        if candidate.is_absolute():
-            resolved = candidate.resolve()
-            if self.contains_path(str(resolved)):
-                return str(resolved)
-            raise WorkspaceEscapeError(
-                f"Path {path!r} resolves outside mounted workspace root {self.root!r}"
-            )
-
-        normalized = posixpath.normpath(path.replace("\\", "/"))
-        if normalized == ".." or normalized.startswith("../"):
-            raise WorkspaceEscapeError(f"Path {path!r} escapes the mounted workspace")
-        for logical, target in sorted(
-            self._visible_mounts.items(), key=lambda item: len(item[0]), reverse=True
-        ):
-            if normalized != logical and not normalized.startswith(logical + "/"):
-                continue
-            remainder = normalized[len(logical) :].lstrip("/")
-            resolved = (target / remainder).resolve() if remainder else target
-            try:
-                resolved.relative_to(target)
-            except ValueError:
-                raise WorkspaceEscapeError(
-                    f"Path {path!r} escapes mounted source {logical!r}"
-                ) from None
-            return str(resolved)
-
-        # Framework-owned root entries (for example .omni-artifacts) remain
-        # ordinary files under the managed logical root. The base anchors
-        # without bounding, so the mount table applies its own check here: a
-        # symlink planted in the managed root after construction must not
-        # quietly acquire a workspace identity the table has no name for.
-        absolute = super().resolve(normalized)
-        if not self.contains_path(absolute):
-            raise WorkspaceEscapeError(
-                f"Path {path!r} resolves outside mounted workspace root {self.root!r}"
-            )
-        return absolute
+        # Materialized source symlinks supply mount-relative addressing.
+        # Resolve through the real filesystem (including ../ and external
+        # symlinks), exactly like shell commands on the host do. The bounded
+        # RPC surfaces use resolve_confined/contains_path separately.
+        return super().resolve(path)
 
     def relative_path(self, absolute_path: str) -> Optional[str]:
         resolved = Path(absolute_path).expanduser().resolve()
@@ -237,9 +189,7 @@ class MountedHostWorkspace(HostWorkspace):
         absolute = self.resolve(path)
         relative = self.relative_path(absolute)
         if relative is None:
-            raise WorkspaceEscapeError(
-                f"Path {path!r} has no visible path in mounted workspace {self.root!r}"
-            )
+            return absolute
         if relative == ".":
             return self.root
         return str(Path(self.root) / Path(*relative.split("/")))

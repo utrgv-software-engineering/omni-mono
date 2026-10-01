@@ -583,11 +583,12 @@ class SqliteSessionStorage(SessionStorageBackend):
             LEFT JOIN history fh ON fh.id = b.first_id
             LEFT JOIN history lh ON lh.id = b.last_id
         """
+        query += " WHERE json_extract(s.context_json, '$.worker_id') IS NULL"
         params: list = []
         # Owner scoping happens in SQL so it composes with LIMIT/OFFSET —
         # filtering after pagination would silently under-deliver pages.
         if user_id is not None:
-            query += " WHERE s.user_id = ?"
+            query += " AND s.user_id = ?"
             params.append(user_id)
         query += " ORDER BY s.created_at DESC, s.session_id DESC"
         if limit is not None:

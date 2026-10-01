@@ -96,21 +96,20 @@ async def test_remove_file_and_dir(host_ws):
 
 
 @pytest.mark.asyncio
-async def test_exists_returns_false_on_escape(tmp_path: Path):
-    """exists() over a would-escape path returns False rather than raising —
-    friendlier for tools probing optional paths.
-
-    Only workspaces that bound their own address space can escape at all now;
-    a plain HostWorkspace simply answers whether the file is there.
-    """
+async def test_composite_host_exists_outside_mounts(tmp_path: Path):
+    """Host file probes use the same unrestricted paths as host execution."""
     from omniagents.workspace.mounted_host import MountedHostWorkspace
 
     (tmp_path / "src").mkdir()
-    bounded = MountedHostWorkspace(
+    workspace = MountedHostWorkspace(
         str(tmp_path / "logical"),
         [{"kind": "local", "mountName": "src", "path": str(tmp_path / "src")}],
     )
-    assert await bounded.exists("/etc/passwd") is False
+    external = tmp_path / "external.txt"
+    external.write_text("host file")
+    assert await workspace.exists(str(external)) is True
+    assert await workspace.exists("../external.txt") is True
+    assert await workspace.exists(str(tmp_path / "missing.txt")) is False
 
 
 # -- Confinement (the "host" no-sandbox target) ---------------------------
@@ -192,10 +191,10 @@ async def test_resolve_confined_catches_a_symlink_out_of_the_root(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_resolve_confined_is_plain_resolve_when_already_confined(
+async def test_composite_host_resolve_confined_checks_mount_membership(
     tmp_path: Path,
 ):
-    """Confined substrates pay nothing: resolve already refused."""
+    """Explicitly bounded RPC paths still enforce the composite workspace."""
     from omniagents.workspace.mounted_host import MountedHostWorkspace
 
     (tmp_path / "src").mkdir()
@@ -204,12 +203,15 @@ async def test_resolve_confined_is_plain_resolve_when_already_confined(
         [{"kind": "local", "mountName": "src", "path": str(tmp_path / "src")}],
     )
 
-    assert confined.enforces_confinement is True
+    assert confined.enforces_confinement is False
     assert confined.resolve_confined("sub/file.txt") == str(
         (tmp_path / "logical" / "sub" / "file.txt").resolve()
     )
+    assert confined.resolve_confined("src/file.txt") == str(
+        tmp_path / "src" / "file.txt"
+    )
     with pytest.raises(WorkspaceEscapeError):
-        confined.resolve_confined("/etc/passwd")
+        confined.resolve_confined(str(tmp_path / "external.txt"))
 
 
 def test_current_workspace_fails_without_run_binding():

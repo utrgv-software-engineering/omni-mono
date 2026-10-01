@@ -1,9 +1,9 @@
 """SDK-native compaction wrapping for OmniAgents sessions.
 
 This thin helper wraps an OmniAgents :class:`~omniagents.core.session.manager.Session`
-with the SDK's :class:`~agents.memory.OpenAIResponsesCompactionSession` so the
-OpenAI Responses ``compact`` endpoint manages context-window pressure instead
-of the legacy custom heuristics in :mod:`omniagents.core.runtime.compaction`.
+with the SDK's :class:`~agents.memory.OpenAIResponsesCompactionSession` for
+context-window management. ChatGPT login uses Codex's streamed compaction
+protocol; other Responses providers use the SDK's ``compact`` endpoint.
 
 When compaction is disabled (``config`` empty/falsy or ``enabled`` flag false),
 the original session is returned unchanged so existing call sites stay
@@ -21,7 +21,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("omniagents.session.compaction")
-# Codex's unary /responses/compact budget is four times its 300s idle timeout.
+# End-to-end budget, shared by unary and streamed compaction transports.
 COMPACTION_TIMEOUT_SECONDS = 20 * 60
 explicit_native_compaction = ContextVar("explicit_native_compaction", default=False)
 
@@ -353,10 +353,9 @@ def wrap_with_compaction(
     * **trigger window** — *max_input_tokens* (the serving model's real
       context window) when supplied, else the SDK's static lookup.
 
-    Endpoint-compatibility (whether the provider actually serves
-    ``responses.compact``) is the operator's responsibility — flip
-    ``enabled: false`` per-agent if you point at a backend that doesn't
-    implement it.
+    ChatGPT's Codex provider uses streamed ``responses.create`` with a
+    compaction trigger. Other providers retain the SDK ``responses.compact``
+    protocol and must support that endpoint.
 
     Returns the original session unchanged when compaction is disabled or
     when wrapping fails.
@@ -493,6 +492,16 @@ def wrap_with_compaction(
                     exc,
                 )
 
+    from omniagents.core.providers.codex_compaction import (
+        CodexCompactionClient,
+        is_codex_client,
+    )
+
+    if is_codex_client(kwargs.get("client")):
+        kwargs["client"] = CodexCompactionClient(kwargs["client"])
+        # Codex requests are store=false; always send the persisted context.
+        kwargs["compaction_mode"] = "input"
+
     session_id = getattr(session, "session_id", None) or getattr(session, "id", None)
     if not session_id:
         logger.warning("Session has no session_id/id; compaction wrapping skipped.")
@@ -519,6 +528,9 @@ def wrap_with_compaction(
         # The HTTP client's shorter read timeout must not preempt this budget.
         if callable(getattr(wrapped.client, "with_options", None)):
             wrapped._client = wrapped.client.with_options(timeout=timeout)
+        from omniagents.core.session.compaction_retry import RetryingCompactionClient
+
+        wrapped._client = RetryingCompactionClient(wrapped.client)
         return wrapped
     except Exception as exc:
         logger.warning(

@@ -36,6 +36,7 @@ import os
 import shlex
 import sys
 import tarfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import (
@@ -642,6 +643,68 @@ def write_session_state(state_path: Path, client: Any, session: Any) -> None:
         )
 
 
+async def _reconcile_resumed_sources(session: Any, manifest: Any) -> None:
+    """Seed added entries without replaying init over a durable workspace.
+
+    A resumed container retains its serialized manifest. Publishing the new
+    manifest without materializing its additions makes mounts look available
+    while their directories are absent. Never overwrite an existing path or
+    silently reinterpret a retained source as a different repository.
+    """
+    from agents.sandbox.entries import resolve_workspace_path
+
+    previous = session.state.manifest
+    if previous.root != manifest.root:
+        raise ValueError("Cannot change a resumed workspace root")
+    old = {str(name): entry for name, entry in previous.entries.items()}
+    wanted = {str(name): entry for name, entry in manifest.entries.items()}
+    for name, entry in old.items():
+        if name not in wanted or wanted[name] != entry:
+            raise ValueError(
+                f"Resumed workspace source {name!r} changed or was removed; "
+                "preserve its files before replacing the workspace"
+            )
+
+    root = Path(manifest.root)
+    for name, entry in wanted.items():
+        if name in old:
+            continue
+        destination = resolve_workspace_path(root, name)
+        quoted_destination = shlex.quote(str(destination))
+        result = await session.exec(
+            f"test ! -e {quoted_destination} && test ! -L {quoted_destination}",
+            shell=True,
+        )
+        if result.exit_code != 0:
+            raise ValueError(
+                f"New workspace source {name!r} would overwrite existing files"
+            )
+        staging = root / f".omni-source-{uuid.uuid4().hex}"
+        quoted_staging = shlex.quote(str(staging))
+        try:
+            await session._apply_entry_batch(
+                [(staging, entry)], base_dir=session._manifest_base_dir()
+            )
+            # New entries are materialized by the container's control user.
+            # Retain the workspace's established tool-user ownership.
+            result = await session.exec(
+                f"chown -R --reference={shlex.quote(str(root))} {quoted_staging} "
+                f"&& test ! -e {quoted_destination} && test ! -L {quoted_destination} "
+                f"&& mv -T {quoted_staging} {quoted_destination}",
+                shell=True,
+            )
+            if result.exit_code != 0:
+                raise RuntimeError(f"Could not install new workspace source {name!r}")
+        finally:
+            await session.exec(f"rm -rf -- {quoted_staging}", shell=True)
+        # Record each completed addition. If a later source fails, a retry
+        # must not mistake an already installed source for a path collision.
+        old[name] = entry
+        session.state = session.state.model_copy(
+            update={"manifest": previous.model_copy(update={"entries": dict(old)})}
+        )
+
+
 async def bring_up_session(
     *,
     profile: ResolvedProfile,
@@ -752,6 +815,12 @@ async def bring_up_session(
             credentials_parsed or [],
             run_as_user=_run_as_exec_user(profile.raw),
         )
+        if recorded_container_id is not None:
+            try:
+                await _reconcile_resumed_sources(session, manifest)
+            finally:
+                if state_path is not None:
+                    write_session_state(state_path, client, session)
         if not workspace_preserved:
             init_commands = list(profile.init)
             if any(src.get("mountName") == "." for src in sources_parsed):

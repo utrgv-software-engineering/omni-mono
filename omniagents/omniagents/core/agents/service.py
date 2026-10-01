@@ -238,8 +238,9 @@ def _is_retryable_error(ex: Exception) -> bool:
     for unknown errors.
     """
     from omniagents.core.session.compaction import CompactionTimeoutError
+    from omniagents.core.session.compaction_retry import CompactionRetriesExhausted
 
-    if isinstance(ex, CompactionTimeoutError):
+    if isinstance(ex, (CompactionTimeoutError, CompactionRetriesExhausted)):
         return False
 
     # Never retry AgentsException types - these are permanent failures
@@ -2323,11 +2324,14 @@ class AgentService(RpcMethodsBase):
         for req_id in list(session.pending_client_requests.keys()):
             self._retire_client_request(req_id)
         session.pending_client_requests.clear()
-        if hasattr(session, "pending_tool_approvals"):
-            session.pending_tool_approvals.clear()
-        pending_mcp = getattr(session, "pending_mcp_approvals", None)
-        if pending_mcp is not None:
-            pending_mcp.clear()
+        # Delegated approvals belong to worker tasks, which may outlive
+        # this parent run. Keep them available for reconnect replay.
+        for attr in ("pending_tool_approvals", "pending_mcp_approvals"):
+            pending = getattr(session, attr, None)
+            if pending is not None:
+                for token, payload in list(pending.items()):
+                    if not payload.get("worker_session_id"):
+                        pending.pop(token, None)
         # Elicitations are terminal-resolved (journal + broadcast) by
         # ``_resolve_session_elicitations`` on the run-end path before this
         # runs; the sweep here only drops stragglers' bookkeeping.
@@ -2946,10 +2950,15 @@ class AgentService(RpcMethodsBase):
             return None
 
         if route is ApprovalRoute.AUTO_APPROVE:
+            worker_policy = getattr(self, "_worker_approval_context", None)
             rationale = (
-                f"Contained environment ({environment.kind})"
-                f"{' without network egress' if not environment.has_network else ''}"
-                " — auto-approved by sandbox policy"
+                "Explicit worker auto-approval setting"
+                if worker_policy is not None and worker_policy.auto_approve
+                else (
+                    f"Contained environment ({environment.kind})"
+                    f"{' without network egress' if not environment.has_network else ''}"
+                    " — auto-approved by sandbox policy"
+                )
             )
             await self._record_reviewed_approval(
                 session,
@@ -2958,7 +2967,9 @@ class AgentService(RpcMethodsBase):
                 tool_name=tool_name,
                 server_label=server_label,
                 run_id=run_id,
-                reviewer="sandbox-policy",
+                reviewer=(
+                    "worker-policy" if worker_policy is not None else "sandbox-policy"
+                ),
                 arguments=arguments,
                 outcome="allow",
                 risk_level=None,
@@ -3157,6 +3168,14 @@ class AgentService(RpcMethodsBase):
         if resolved is not None:
             return resolved
 
+        worker = getattr(self, "_worker_approval_context", None)
+        if worker is not None:
+            delegated = await worker.escalate(
+                kind="tool", session=session, payload=payload
+            )
+            if delegated is not None:
+                return delegated
+
         # Keep provider correlation as metadata; only the new token authorizes
         # a decision. Reused provider IDs (even within one session) cannot alias.
         payload["source_call_id"] = call_id
@@ -3309,6 +3328,14 @@ class AgentService(RpcMethodsBase):
             "arguments": arguments or "",
             "session_id": session.id,
         }
+        worker = getattr(self, "_worker_approval_context", None)
+        if worker is not None:
+            delegated = await worker.escalate(
+                kind="mcp", session=session, payload={**payload, "run_id": run_id}
+            )
+            if delegated is not None:
+                return delegated
+
         request_id = f"apr_{uuid.uuid4().hex}"
         payload["request_id"] = request_id
         if run_id is not None:
