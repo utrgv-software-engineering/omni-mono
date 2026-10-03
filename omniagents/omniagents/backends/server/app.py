@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Dict, Any
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from omniagents.core.providers.auth.base import UserIdentity
-    from omniagents.execution import AgentHostResources
+    from omniagents.execution import AgentHostResources, ExecutionEnvironmentDescriptor
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -418,6 +418,7 @@ def build_app(
     agent_host_resources: "AgentHostResources | None" = None,
     agent_host_control_token: str | None = None,
     default_host_workspace_root: str | None = None,
+    default_environment: "ExecutionEnvironmentDescriptor | None" = None,
 ) -> FastAPI:  # noqa: D401
     """Return a fully configured FastAPI app exposing the agent via RPC.
 
@@ -437,6 +438,10 @@ def build_app(
             is never returned in protocol initialization or readiness payloads.
         default_host_workspace_root: Optional explicit host environment composed at
             startup and advertised as the AgentHost's default binding.
+        default_environment: An environment the caller already composed into
+            ``agent_host_resources`` (``register_initial``), advertised as the
+            default binding in place of a host one — e.g. a sandbox session
+            opened before the server starts.
     """
 
     # ------------------------------------------------------------------
@@ -549,6 +554,9 @@ def build_app(
             default_host_workspace_root,
             owner_user_id="token_user" if auth_token else None,
         )
+        app.state.default_workspace_id = default_environment.workspace_id
+        app.state.default_environment_id = default_environment.environment_id
+    elif default_environment is not None:
         app.state.default_workspace_id = default_environment.workspace_id
         app.state.default_environment_id = default_environment.environment_id
     service = AgentService(spec, agent_host_resources)
