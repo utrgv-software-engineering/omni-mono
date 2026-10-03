@@ -125,3 +125,101 @@ def test_policy_document_ships_and_names_the_contract():
     assert "risk_level" in text
     assert "user_authorization" in text
     assert "allow | deny" in text
+
+
+@pytest.mark.asyncio
+class TestReviewModelResolution:
+    """The guardian reviews on the provider the agent itself is configured with."""
+
+    @staticmethod
+    def _patch(monkeypatch, *, runtime, built_provider="spec-provider"):
+        import omniagents.core.models as models
+        import omniagents.core.runtime.ephemeral as ephemeral
+        from omniagents.core.agents import run_options
+
+        captured = {}
+
+        async def fake_run_agent_once(spec, prompt, **kwargs):
+            captured["spec"] = spec
+            captured.update(kwargs)
+            return assessment_json()
+
+        async def fake_prompt(service, session, request):
+            return "review this"
+
+        monkeypatch.setattr(
+            models,
+            "resolve_service_model_runtime",
+            lambda service, session: ("gpt-x", runtime),
+        )
+        # The spec's OAuth provider and a store-resolved runtime build through
+        # the same function; tell them apart by the config each passes
+        monkeypatch.setattr(
+            run_options,
+            "build_model_provider",
+            lambda config: (
+                built_provider
+                if (config or {}).get("type") == "openai-oauth"
+                else "store-provider"
+            ),
+        )
+        monkeypatch.setattr(ephemeral, "run_agent_once", fake_run_agent_once)
+        monkeypatch.setattr(guardian, "_build_prompt", fake_prompt)
+        monkeypatch.setattr(
+            "omniagents.core.agents.approval_policy.guardian_model_ref",
+            lambda service: None,
+        )
+        return captured
+
+    @staticmethod
+    def _request():
+        return guardian.GuardianRequest(
+            kind="tool", tool_name="run_command", arguments="{}"
+        )
+
+    async def test_falls_back_to_the_spec_provider_and_settings(self, monkeypatch):
+        captured = self._patch(monkeypatch, runtime={})
+        settings = {
+            "store": False,
+            "extra_body": {"include": ["reasoning.encrypted_content"]},
+        }
+        service = SimpleNamespace(
+            spec=SimpleNamespace(
+                model_provider_config={"type": "openai-oauth"}, model_settings=settings
+            )
+        )
+
+        assessment = await guardian._review(service, SimpleNamespace(), self._request())
+
+        assert assessment is not None and assessment.allowed
+        assert captured["model_provider"] == "spec-provider"
+        assert captured["model"] == "gpt-x"
+        assert captured["spec"].model_settings == settings
+        assert captured["env_overrides"] == {}
+
+    async def test_a_store_resolved_provider_wins(self, monkeypatch):
+        captured = self._patch(
+            monkeypatch,
+            runtime={"provider": "openai", "model": "gpt-x", "api_key": "sk-test"},
+        )
+        service = SimpleNamespace(
+            spec=SimpleNamespace(
+                model_provider_config={"type": "openai-oauth"},
+                model_settings={"store": False},
+            )
+        )
+
+        await guardian._review(service, SimpleNamespace(), self._request())
+
+        assert captured["model_provider"] == "store-provider"
+        assert captured["spec"].model_settings is None
+
+    async def test_without_a_spec_provider_keeps_the_default(self, monkeypatch):
+        captured = self._patch(monkeypatch, runtime={})
+        service = SimpleNamespace(
+            spec=SimpleNamespace(model_provider_config=None, model_settings=None)
+        )
+
+        await guardian._review(service, SimpleNamespace(), self._request())
+
+        assert captured["model_provider"] is None
