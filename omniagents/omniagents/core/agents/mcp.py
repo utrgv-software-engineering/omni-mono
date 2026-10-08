@@ -6,7 +6,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from agents.mcp import (
     MCPServer,
@@ -75,6 +75,36 @@ async def _capture_ui_after_call(
         return
     for block in blocks:
         mcp_ui.record(server_name, tool_name, block)
+
+
+# MCP Apps' tool visibility (``_meta.ui.visibility``), per (server, tool) as
+# last listed: who may call it. ``"model"``: the agent; ``"app"``: that
+# server's own app, through mcp_call_tool. Unstated, both.
+_TOOL_VISIBILITY: Dict[Tuple[str, str], Tuple[str, ...]] = {}
+_DEFAULT_VISIBILITY = ("model", "app")
+
+
+def _visibility_of(tool: Any) -> Tuple[str, ...]:
+    meta = getattr(tool, "meta", None)
+    if meta is None and isinstance(tool, dict):
+        meta = tool.get("meta") or tool.get("_meta")
+    ui = (meta.get("ui") if isinstance(meta, dict) else getattr(meta, "ui", None)) if meta else None
+    raw = (ui.get("visibility") if isinstance(ui, dict) else getattr(ui, "visibility", None)) if ui else None
+    if isinstance(raw, (list, tuple)) and raw:
+        return tuple(str(v) for v in raw)
+    return _DEFAULT_VISIBILITY
+
+
+def tool_visibility(server_name: str, tool_name: str) -> Optional[Tuple[str, ...]]:
+    """Who may call the tool, as last listed; None when it hasn't been."""
+    return _TOOL_VISIBILITY.get((server_name, tool_name))
+
+
+def _tool_name_of(tool: Any) -> Optional[str]:
+    name = getattr(tool, "name", None)
+    if not name and isinstance(tool, dict):
+        name = tool.get("name")
+    return str(name) if name else None
 
 
 def _harvest_tool_ui_meta(server_name: str, tools: Any) -> None:
@@ -192,11 +222,36 @@ def _attach_ui_capture(server: MCPServer) -> MCPServer:
     if list_orig is not None and callable(list_orig):
 
         async def list_tools(*args, **kwargs):
-            tools = await list_orig(*args, **kwargs)
+            # One server failing (gone away, a broken connection) costs the
+            # agent that server's tools for this turn, not the whole turn:
+            # listing every server's tools comes before the model is called.
             try:
-                _harvest_tool_ui_meta(getattr(server, "name", "") or "", tools)
+                tools = await list_orig(*args, **kwargs)
+            except Exception:
+                logger.warning(
+                    "MCP server %r couldn't list its tools; leaving them out this turn",
+                    getattr(server, "name", server),
+                    exc_info=True,
+                )
+                return []
+            server_name = getattr(server, "name", "") or ""
+            try:
+                _harvest_tool_ui_meta(server_name, tools)
             except Exception:
                 logger.debug("mcp_ui list_tools harvest failed", exc_info=True)
+            # MCP Apps: each tool's visibility kept (mcp_call_tool checks an
+            # app's calls against it), and the agent offered only the tools
+            # visible to the model; an app-only tool is its app's alone
+            if isinstance(tools, list):
+                offered = []
+                for tool in tools:
+                    name = _tool_name_of(tool)
+                    visible = _visibility_of(tool)
+                    if name:
+                        _TOOL_VISIBILITY[(server_name, name)] = visible
+                    if "model" in visible:
+                        offered.append(tool)
+                return offered
             return tools
 
         try:
