@@ -2,9 +2,12 @@
 
 Agent tools speak bash: ``execute_bash`` commands, background-job wrappers
 (``( cmd ) >> log 2>&1 < /dev/null``), and framework plumbing such as
-``mkdir -p`` / ``test -e``. On POSIX hosts the system shell already is one.
-On Windows ``create_subprocess_shell`` means ``cmd.exe``, where none of that
-works, so host commands run through Git for Windows' bash instead.
+``mkdir -p`` / ``test -e``. ``create_subprocess_shell`` would use the
+system shell instead: ``/bin/sh`` on POSIX, which is dash on Debian/Ubuntu
+(and therefore in WSL), so bash syntax (``[[ ]]``, arrays, ``source``)
+failed there; ``cmd.exe`` on Windows, where none of it works. Host commands
+therefore run through bash: the one on PATH on POSIX hosts (``/bin/sh``
+only when no bash is installed), Git for Windows' bash on Windows.
 
 Resolution on Windows, first match wins:
 
@@ -120,16 +123,17 @@ def host_shell_env(env: Optional[Dict[str, str]], bash: str) -> Dict[str, str]:
 
 def host_shell_command(
     command: str, env: Optional[Dict[str, str]]
-) -> Optional[tuple[List[str], Dict[str, str]]]:
-    """Argv + env that run *command* through bash on Windows.
+) -> Optional[tuple[List[str], Optional[Dict[str, str]]]]:
+    """Argv + env that run *command* through bash.
 
-    Returns None on POSIX hosts, where the system shell (``/bin/sh``) is
-    already POSIX. Raises :class:`HostShellUnavailable` on Windows when no
-    Git Bash is available, rather than falling back to ``cmd.exe`` and
-    running bash syntax in the wrong shell.
+    POSIX: ``bash -c`` when bash is installed, else None (the caller uses
+    the system shell). Windows: Git Bash; raises
+    :class:`HostShellUnavailable` when none is available rather than
+    falling back to ``cmd.exe`` and running bash syntax in the wrong shell.
     """
     if sys.platform != "win32":
-        return None
+        bash = shutil.which("bash")
+        return ([bash, "-c", command], env) if bash else None
     bash = find_windows_bash()
     if bash is None:
         raise HostShellUnavailable(_MISSING_BASH_MESSAGE)

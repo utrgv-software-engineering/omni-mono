@@ -63,7 +63,12 @@ class _FakeStore:
 
 
 @pytest.fixture
-def fake_store():
+def fake_store(monkeypatch):
+    # monkeypatch restores the process-wide store afterwards: a leaked fake
+    # broke unrelated tests that ran later on the same xdist worker.
+    import omniagents.core.models as models_pkg
+
+    monkeypatch.setattr(models_pkg, "_ACTIVE_STORE", models_pkg._ACTIVE_STORE)
     store = _FakeStore()
     set_model_store(store)
     yield store

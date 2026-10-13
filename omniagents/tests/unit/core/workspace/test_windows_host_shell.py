@@ -28,8 +28,18 @@ def _fake_git(tmp_path):
     return root, bash, git
 
 
-def test_posix_hosts_keep_the_system_shell(monkeypatch):
+def test_posix_hosts_use_bash_not_sh(monkeypatch):
+    # /bin/sh is dash on Debian/Ubuntu (and so in WSL).
     monkeypatch.setattr(host_shell.sys, "platform", "linux")
+    monkeypatch.setattr(host_shell.shutil, "which", lambda name: "/usr/bin/bash")
+    argv, env = host_shell.host_shell_command("echo hi", {"A": "1"})
+    assert argv == ["/usr/bin/bash", "-c", "echo hi"]
+    assert env == {"A": "1"}
+
+
+def test_posix_hosts_without_bash_keep_the_system_shell(monkeypatch):
+    monkeypatch.setattr(host_shell.sys, "platform", "linux")
+    monkeypatch.setattr(host_shell.shutil, "which", lambda name: None)
     assert host_shell.host_shell_command("echo hi", None) is None
 
 

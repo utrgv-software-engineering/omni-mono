@@ -55,9 +55,9 @@ def _from_git_bash_path(path: str) -> str:
 
 def _posix_shell_argv(
     command: CommandLike, env: Optional[Dict[str, str]]
-) -> Optional[tuple[List[str], Dict[str, str]]]:
-    """Argv/env running a ``shell=True`` command through a POSIX shell when
-    the host's own shell isn't one (Windows → Git Bash); None otherwise."""
+) -> Optional[tuple[List[str], Optional[Dict[str, str]]]]:
+    """Argv/env running a ``shell=True`` command through bash (Git Bash on
+    Windows); None when the host has no bash and the system shell is used."""
     cmd_str = command if isinstance(command, str) else shlex.join(command)
     return host_shell_command(cmd_str, env)
 
