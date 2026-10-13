@@ -10,6 +10,7 @@ directly against the real host files.
 from __future__ import annotations
 
 import asyncio
+import os
 import posixpath
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +19,42 @@ from typing import Any, List, Literal, Mapping, Optional, Sequence
 from ._entries import make_entry, sort_entries
 from .host import HostWorkspace
 from .types import FileEntry, GrepMatch
+
+
+def _is_dir_link(path: Path) -> bool:
+    """A symlink, or (Windows) a directory junction — Path.is_junction is
+    3.12+, and the runtime still runs on 3.11."""
+    if path.is_symlink():
+        return True
+    if os.name != "nt":
+        return False
+    try:
+        os.readlink(path)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _remove_dir_link(path: Path) -> None:
+    """Remove the link itself, never the directory it points at."""
+    if os.name == "nt" and not path.is_symlink():
+        os.rmdir(path)  # a junction: removes the reparse point only
+    else:
+        path.unlink()
+
+
+def _link_dir(link: Path, target: Path) -> None:
+    """Directory symlink; on Windows fall back to a junction, which needs
+    neither admin rights nor Developer Mode (symlinks need one of them)."""
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        import _winapi
+
+        # Windows-only API: typeshed exposes it under a platform guard.
+        getattr(_winapi, "CreateJunction")(str(target), str(link))
 
 
 class GitMetadataHostWorkspace(HostWorkspace):
@@ -80,8 +117,8 @@ class MountedHostWorkspace(HostWorkspace):
         # only stale top-level links from an earlier materialization; ordinary
         # files/directories (including framework artifacts) are never touched.
         for entry in root_path.iterdir():
-            if entry.is_symlink() and entry.name not in requested_mounts:
-                entry.unlink()
+            if _is_dir_link(entry) and entry.name not in requested_mounts:
+                _remove_dir_link(entry)
 
         for source in sources:
             if source.get("kind") not in {"local", "local-git"}:
@@ -94,11 +131,11 @@ class MountedHostWorkspace(HostWorkspace):
                 )
             self._visible_mounts[mount_name] = target
             link = root_path / mount_name
-            if link.exists() or link.is_symlink():
-                if link.is_symlink() and link.resolve() != target:
-                    link.unlink()
-                    link.symlink_to(target, target_is_directory=True)
-                elif not link.is_symlink() and link.resolve() != target:
+            if link.exists() or _is_dir_link(link):
+                if _is_dir_link(link) and link.resolve() != target:
+                    _remove_dir_link(link)
+                    _link_dir(link, target)
+                elif not _is_dir_link(link) and link.resolve() != target:
                     # A real directory that IS the target needs no link: the
                     # source lives physically at its mount point (e.g. a
                     # host-materialized remote checkout under this root).
@@ -106,7 +143,7 @@ class MountedHostWorkspace(HostWorkspace):
                         f"host workspace mount {mount_name!r} already exists differently"
                     )
             else:
-                link.symlink_to(target, target_is_directory=True)
+                _link_dir(link, target)
 
             for field, suffix in (
                 ("gitDir", "git-dir"),

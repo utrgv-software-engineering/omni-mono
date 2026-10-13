@@ -98,10 +98,19 @@ async def display_artifact(
         emit_artifact(title, content, mode, artifact_id)
         return {"success": True, "emitted_mode": mode}
 
-    expanded_path = os.path.expanduser((path or "").strip())
+    from omniagents import workspace as _ws
+
+    # Workspace path syntax: a Linux sandbox stays POSIX on a Windows host.
+    try:
+        pm = _ws.current_workspace().path_module
+    except Exception:
+        pm = os.path
+    expanded_path = (path or "").strip()
+    if pm is os.path:
+        expanded_path = os.path.expanduser(expanded_path)
     ctx_workspace_root = _workspace_root_from_ctx(ctx)
-    if expanded_path and not os.path.isabs(expanded_path) and ctx_workspace_root:
-        expanded_path = os.path.abspath(os.path.join(ctx_workspace_root, expanded_path))
+    if expanded_path and not pm.isabs(expanded_path) and ctx_workspace_root:
+        expanded_path = pm.normpath(pm.join(ctx_workspace_root, expanded_path))
 
     try:
         resolved = await _resolve_workspace_file_content(expanded_path, mode)

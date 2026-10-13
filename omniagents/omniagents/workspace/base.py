@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import abc
 import posixpath
+from types import ModuleType
 from typing import Dict, List, Literal, Optional, Sequence, Union
 
 from .types import ExecResult, FileEntry, GrepMatch, WorkspaceEscapeError
@@ -91,6 +92,16 @@ class Workspace(abc.ABC):
     """Filesystem-absolute path of the workspace root in whichever backend
     this workspace operates against. On host: the project workspace dir;
     in sandbox: the manifest root (often ``/workspace``)."""
+
+    path_module: ModuleType = posixpath
+    """Path syntax of this workspace's address space (``root``,
+    ``scratch_root``, and every path handed to :meth:`exec`/:meth:`spawn`).
+
+    Sandbox, container, and wasm workspaces are POSIX regardless of the host
+    OS the runtime runs on; :class:`~omniagents.workspace.host.HostWorkspace`
+    uses the host's ``os.path``. Tools that build workspace paths must join
+    with this, never with the runtime's own ``os.path`` — on a Windows host
+    that would put backslashes into Linux sandbox paths."""
 
     scratch_root: str
     """Framework-owned scratch directory for tool-internal state — worktrees,

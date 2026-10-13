@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -24,6 +25,7 @@ from ._entries import log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace
 from ._process import await_cleanup, finish_cleanup, stop_process
 from ._supervised_process import create_host_process
+from .host_shell import host_shell_command
 from .types import (
     ExecResult,
     FileEntry,
@@ -31,6 +33,33 @@ from .types import (
     WorkspaceEscapeError,
     WorkspaceFeatureUnavailable,
 )
+
+_GIT_BASH_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
+
+
+def _from_git_bash_path(path: str) -> str:
+    """Accept Git Bash's ``/c/Users/...`` spelling of a Windows path.
+
+    Host commands on Windows run under Git Bash, so ``pwd`` and friends
+    report MSYS paths; the agent then hands them to file tools. Elsewhere
+    (and for any other path shape) the input is returned unchanged.
+    """
+    if os.name != "nt":
+        return path
+    match = _GIT_BASH_DRIVE.match(path)
+    if match is None:
+        return path
+    rest = path[match.end() :].lstrip("/").replace("/", "\\")
+    return f"{match.group(1).upper()}:\\{rest}"
+
+
+def _posix_shell_argv(
+    command: CommandLike, env: Optional[Dict[str, str]]
+) -> Optional[tuple[List[str], Dict[str, str]]]:
+    """Argv/env running a ``shell=True`` command through a POSIX shell when
+    the host's own shell isn't one (Windows → Git Bash); None otherwise."""
+    cmd_str = command if isinstance(command, str) else shlex.join(command)
+    return host_shell_command(cmd_str, env)
 
 
 class HostWorkspace(Workspace):
@@ -52,6 +81,7 @@ class HostWorkspace(Workspace):
     """
 
     supports_direct_host_scan = True
+    path_module = os.path
 
     def __init__(
         self,
@@ -100,7 +130,7 @@ class HostWorkspace(Workspace):
             return self.root
         # Relative paths are anchored at ``root``; absolute paths are taken
         # as given. Nothing is rejected — ``root`` is an anchor, not a fence.
-        candidate = Path(path)
+        candidate = Path(_from_git_bash_path(path))
         if candidate.is_absolute():
             return str(candidate.resolve())
         return str((Path(self.root) / candidate).resolve())
@@ -360,7 +390,20 @@ class HostWorkspace(Workspace):
         # inherited it would steal keystrokes, and one that found a tty
         # there would reset it to cooked mode on exit, leaving the TUI
         # echoing typed keys and mouse reports as text.
-        if shell:
+        posix_shell = _posix_shell_argv(command, merged_env) if shell else None
+        if posix_shell is not None:
+            argv, merged_env = posix_shell
+            proc = await create_host_process(
+                asyncio.create_subprocess_exec,
+                *argv,
+                scratch_root=self.scratch_root,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd_resolved,
+                env=merged_env,
+            )
+        elif shell:
             cmd_str = command if isinstance(command, str) else shlex.join(command)
             proc = await create_host_process(
                 asyncio.create_subprocess_shell,
@@ -450,7 +493,20 @@ class HostWorkspace(Workspace):
         cwd_resolved = self.resolve(cwd) if cwd else self.root
         merged_env = {**os.environ, **(env or {})} if env else None
 
-        if shell:
+        posix_shell = _posix_shell_argv(command, merged_env) if shell else None
+        if posix_shell is not None:
+            argv, merged_env = posix_shell
+            proc = await create_host_process(
+                asyncio.create_subprocess_exec,
+                *argv,
+                scratch_root=self.scratch_root,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE,
+                cwd=cwd_resolved,
+                env=merged_env,
+            )
+        elif shell:
             cmd_str = command if isinstance(command, str) else shlex.join(command)
             proc = await create_host_process(
                 asyncio.create_subprocess_shell,

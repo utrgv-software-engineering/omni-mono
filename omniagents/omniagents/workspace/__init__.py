@@ -394,7 +394,7 @@ async def scratch_dir(purpose: str) -> str:
     import os as _os
     import shlex as _shlex
 
-    path = _os.path.join(scratch_root(), purpose)
+    path = current_workspace().path_module.join(scratch_root(), purpose)
     result = await exec(f"mkdir -p {_shlex.quote(path)}", shell=True, timeout=10.0)
     if result.exit_code != 0:
         raise WorkspaceError(

@@ -23,11 +23,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import posixpath
 import secrets
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 from typing import Any, Awaitable, Callable, Dict, List, Literal, Optional, Tuple
 
 from omniagents.workspace import ProcessHandle
@@ -35,7 +37,7 @@ from omniagents.workspace import ProcessHandle
 _log = logging.getLogger(__name__)
 
 
-_JOBS_DIRNAME = os.path.join(".omniagents", "jobs")
+_JOBS_DIRNAME = (".omniagents", "jobs")
 
 
 @dataclass
@@ -208,12 +210,16 @@ def new_job_id() -> str:
     return f"bash-{secrets.token_hex(4)}"
 
 
-def jobs_dir(workspace_root: str) -> str:
-    return os.path.join(workspace_root, _JOBS_DIRNAME)
+def jobs_dir(workspace_root: str, path_module: ModuleType = posixpath) -> str:
+    """Job-log directory under *workspace_root*, in the workspace's own path
+    syntax (``Workspace.path_module``): POSIX for sandboxes on any host OS."""
+    return path_module.join(workspace_root, *_JOBS_DIRNAME)
 
 
-def log_path_for(workspace_root: str, job_id: str) -> str:
-    return os.path.join(jobs_dir(workspace_root), f"{job_id}.log")
+def log_path_for(
+    workspace_root: str, job_id: str, path_module: ModuleType = posixpath
+) -> str:
+    return path_module.join(jobs_dir(workspace_root, path_module), f"{job_id}.log")
 
 
 # ---------------------------------------------------------------------------

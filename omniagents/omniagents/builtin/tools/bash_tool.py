@@ -153,14 +153,19 @@ def _truncate_long_lines(
 def _resolve_cwd(ctx: RunContextWrapper[Any], cwd: Optional[str], where: str) -> str:
     """Resolve cwd against workspace_root: absolute paths are honored
     as-is; relative or empty values are anchored to the workspace."""
-    cwd_is_absolute = isinstance(cwd, str) and cwd.strip() and os.path.isabs(cwd)
+    from omniagents import workspace as _ws
+
+    # Workspace path syntax, not the runtime's: a Linux sandbox driven from
+    # a Windows host still takes POSIX cwds.
+    path_module = _ws.current_workspace().path_module
+    cwd_is_absolute = isinstance(cwd, str) and cwd.strip() and path_module.isabs(cwd)
     if cwd_is_absolute:
         workspace_root_from_ctx(ctx)  # informational only
         return cwd  # type: ignore[return-value]
     wr = require_workspace_root(ctx, where=where)
     if cwd is None or (isinstance(cwd, str) and not cwd.strip()):
         return wr
-    return os.path.abspath(os.path.join(wr, cwd))
+    return path_module.normpath(path_module.join(wr, cwd))
 
 
 # ---------------------------------------------------------------------------
@@ -421,13 +426,14 @@ async def _execute_bash_background(
     environment_id, environment_generation = _environment_identity_from_ctx(ctx)
 
     job_id = new_job_id()
-    log_path = log_path_for(workspace_root, job_id)
+    path_module = _ws.current_workspace().path_module
+    log_path = log_path_for(workspace_root, job_id, path_module)
 
     # Ensure the log file exists before we spawn so callers (and tests)
     # can stat it the instant ``execute_bash`` returns. Doing it via the
     # workspace keeps the operation sandbox-correct. ``mkdir -p`` + ``touch``
     # are both path-policy-safe (exec-based) in the sandbox backend.
-    log_dir = os.path.dirname(log_path)
+    log_dir = path_module.dirname(log_path)
     try:
         await _ws.exec(
             f"mkdir -p {shlex.quote(log_dir)} && : > {shlex.quote(log_path)}",

@@ -138,9 +138,11 @@ class CopyIsolation:
         from omniagents import workspace as _ws
         from omniagents.workspace import scratch_dir
 
-        parent_name = Path(parent_workspace_root).name or "workspace"
+        # Workspace path syntax (POSIX in sandboxes on any host OS).
+        pm = _ws.current_workspace().path_module
+        parent_name = pm.basename(pm.normpath(parent_workspace_root)) or "workspace"
         base = await scratch_dir("workers")
-        dest = os.path.join(base, f"{parent_name}-worker-{worker_id}")
+        dest = pm.join(base, f"{parent_name}-worker-{worker_id}")
 
         async def _exists(p: str) -> bool:
             probe = await _ws.exec(f"test -e {shlex.quote(p)}", shell=True, timeout=5.0)
@@ -255,11 +257,13 @@ class WorktreeIsolation:
 
         # Derive a worktree name from the workspace directory name + worker
         # id, e.g. supervisor in ~/projects/my-app → "my-app-worker-pip".
-        parent_name = Path(parent_workspace_root).name or "workspace"
+        # Workspace path syntax (POSIX in sandboxes on any host OS).
+        pm = _ws.current_workspace().path_module
+        parent_name = pm.basename(pm.normpath(parent_workspace_root)) or "workspace"
         worktree_name = f"{parent_name}-worker-{worker_id}"
         worktree_branch = f"worker/{worktree_name}"
-        worktrees_dir = os.path.join(scratch_root(), "worktrees")
-        worktree_path = os.path.join(worktrees_dir, worktree_name)
+        worktrees_dir = pm.join(scratch_root(), "worktrees")
+        worktree_path = pm.join(worktrees_dir, worktree_name)
 
         # Existence check + mkdir via exec rather than the workspace's typed
         # methods: sandbox scratch lives outside the manifest mount, so the
@@ -275,7 +279,7 @@ class WorktreeIsolation:
                 n += 1
             worktree_name = f"{worktree_name}-{n}"
             worktree_branch = f"worker/{worktree_name}"
-            worktree_path = os.path.join(worktrees_dir, worktree_name)
+            worktree_path = pm.join(worktrees_dir, worktree_name)
 
         mkdir_result = await _ws.exec(
             f"mkdir -p {shlex.quote(worktrees_dir)}", shell=True, timeout=10.0
@@ -465,10 +469,12 @@ class MultiSourceWorktreeIsolation(WorktreeIsolation):
         from omniagents import workspace as _ws
         from omniagents.workspace import scratch_root
 
-        parent_name = Path(parent_workspace_root).name or "workspace"
+        # Workspace path syntax (POSIX in sandboxes on any host OS).
+        pm = _ws.current_workspace().path_module
+        parent_name = pm.basename(pm.normpath(parent_workspace_root)) or "workspace"
         worker_root_name = f"{parent_name}-worker-{worker_id}"
-        worktrees_dir = os.path.join(scratch_root(), "worktrees")
-        worker_root = os.path.join(worktrees_dir, worker_root_name)
+        worktrees_dir = pm.join(scratch_root(), "worktrees")
+        worker_root = pm.join(worktrees_dir, worker_root_name)
 
         async def _scratch_exists(p: str) -> bool:
             probe = await _ws.exec(f"test -e {shlex.quote(p)}", shell=True, timeout=5.0)
@@ -479,7 +485,7 @@ class MultiSourceWorktreeIsolation(WorktreeIsolation):
             while await _scratch_exists(f"{worker_root}-{n}"):
                 n += 1
             worker_root_name = f"{worker_root_name}-{n}"
-            worker_root = os.path.join(worktrees_dir, worker_root_name)
+            worker_root = pm.join(worktrees_dir, worker_root_name)
 
         mkdir_result = await _ws.exec(
             f"mkdir -p {shlex.quote(worker_root)}", shell=True, timeout=10.0
@@ -494,7 +500,7 @@ class MultiSourceWorktreeIsolation(WorktreeIsolation):
         created_branches: list[tuple[str, str]] = []
         try:
             for source in sources:
-                target_path = os.path.join(worker_root, source.name)
+                target_path = pm.join(worker_root, source.name)
                 if source.git:
                     branch = f"worker/{worker_root_name}/{source.name}"
                     result = await _ws.exec(

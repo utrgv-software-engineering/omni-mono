@@ -197,18 +197,12 @@ async def resolve_default_loop_prompt_in_workspace(workspace) -> Optional[str]:
     if workspace is not None:
         try:
             from omniagents.core.product import product_info
-            from omniagents.core.utils.prompt_files import (
-                DEFAULT_MAX_PROMPT_FILE_BYTES,
-            )
+            from omniagents.core.utils.prompt_files import decode_prompt_bytes
 
             prog = (product_info().prog or "").strip()
             if prog:
                 data = await workspace.read_bytes(f".{prog}/loop.md")
-                text = (
-                    data[:DEFAULT_MAX_PROMPT_FILE_BYTES]
-                    .decode("utf-8", errors="replace")
-                    .strip()
-                )
+                text = decode_prompt_bytes(data)
                 if text:
                     return text
         except Exception:
