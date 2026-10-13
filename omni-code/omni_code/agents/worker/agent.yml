@@ -33,13 +33,10 @@ model_settings:
 
 max_turns: 200
 
-# Headless subagent — spawned by the framework worker tools via
-# WorkerManager, which defaults spawned specs to
-# safe_agent_options.skip_approvals=true (omniagents ≥0.7.19,
-# _default_worker_safety): workers have no human reviewer, so approval
-# prompts would only round-trip through the monitor's auto-approve.
-# No use_safe_agent override needed here anymore; safety_mode: enforced
-# deployments still re-enable approvals at the service layer.
+# Workers use Guardian review by default. Only an explicit
+# safe_agent_options.skip_approvals=true on the worker or parent skips review;
+# enforced safety still takes precedence. Unresolved reviews reach the
+# parent conversation's approval UI.
 
 context: build_worker_context
 variables: {}

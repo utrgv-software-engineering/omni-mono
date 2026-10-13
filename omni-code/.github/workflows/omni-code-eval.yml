@@ -1,24 +1,8 @@
 name: Omni-Code Evaluation Suite
 
+# Agent evals are manual-only: they spend model credits and are too slow and
+# nondeterministic to gate pushes or PRs. Run from the Actions tab when needed.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "evaluations/**"
-      - "omni_code/agents/**"
-      - "omni_code/tools/**"
-      - "omni_code/capabilities/**"
-      - "omni_code/server_functions/**"
-  pull_request:
-    paths:
-      - "evaluations/**"
-      - "omni_code/agents/**"
-      - "omni_code/tools/**"
-      - "omni_code/capabilities/**"
-      - "omni_code/server_functions/**"
-  schedule:
-    # Weekly on Monday 6am UTC
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 jobs:

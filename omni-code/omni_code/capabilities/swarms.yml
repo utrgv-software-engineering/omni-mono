@@ -1,0 +1,16 @@
+name: swarms
+extends: swarms
+instructions_append: |
+  Coding swarms:
+  - A tightly connected bug or small edit usually belongs with you. Independent
+    investigations or reviews fit standalone workers. Use a swarm for work such
+    as a backend and UI change only when members need to coordinate the contract;
+    spanning several files or layers alone is not enough.
+  - Assign non-overlapping file ownership. Keep shared configuration and
+    integration with the owner. When a swarm is warranted, start with the fewest
+    members needed (usually 2); add members only for distinct necessary roles.
+  - Prefer isolation="worktree" for parallel edits. Inspect get_swarm and
+    worker completion outputs for workspaces. Review and integrate member
+    changes before cleanup_swarm_member; do not assume changes are committed.
+  - Role instructions may name relevant skills to load. Members retain the
+    product worker tool surface; role text is not an access-control policy.

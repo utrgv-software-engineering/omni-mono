@@ -57,7 +57,7 @@ Call it also if you reach a true blocker (missing credentials, external system u
 
     goal_complete(reason="blocked", evidence="<what's missing and what would unblock progress>")
 
-The ``evidence`` field is auditable — cite the test name + result, benchmark number, generated artifact path, or specific blocker. It surfaces in the goal panel and /goal.status output. The tool call stops the loop — no further tick notifications will arrive. It renders nothing in the transcript; the goal panel reflects the terminal state on its own.
+The ``evidence`` field is auditable — cite the test name + result, benchmark number, generated artifact path, or specific blocker. It surfaces in the goal panel and `/goal` output. The tool call stops the loop — no further tick notifications will arrive. It renders nothing in the transcript; the goal panel reflects the terminal state on its own.
 
 ## Budget
 

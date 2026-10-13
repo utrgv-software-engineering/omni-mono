@@ -5,7 +5,7 @@ description = "Omni Code: a full‑stack coding agent built with OmniAgents"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "omniagents[all]==0.7.36",
+    "omniagents[all]==0.7.38",
     "python-dotenv",
     "markitdown[all,docx,pdf]>=0.1.1",
     "litellm>=1.0.0",  # For non-OpenAI model support
@@ -55,7 +55,9 @@ select = ["E4", "E7", "E9", "F", "I"]
 "tests/*" = ["E402"]
 
 [tool.mypy]
-python_version = "3.10"
+# Matches CI. numpy ≥2.5 (pulled in via omniagents) ships stubs with PEP 695
+# `type` statements that mypy refuses to parse for a target below 3.12.
+python_version = "3.12"
 files = ["omni_code", "tests", "evaluations/measures.py"]
 check_untyped_defs = true
 # omniagents and other fury-hosted deps ship without stubs/py.typed.

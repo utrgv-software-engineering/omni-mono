@@ -45,6 +45,31 @@ def test_token_hook_uses_total_tokens_for_utilization():
     assert "omni_code" not in session.variables
 
 
+def test_token_hook_records_pressure_without_compacting_mid_turn():
+    # Token notifications arrive before the SDK has saved tool outputs; only
+    # the model-input boundary may run compaction.
+    service = FakeService()
+    session = FakeSession("sess-3")
+
+    params = {
+        "max_input_tokens": 100,
+        "delta": {"input_tokens": 1, "total_tokens": 95},
+    }
+
+    asyncio.run(
+        on_token(
+            service=service,
+            session=session,
+            run_id="run-3",
+            params=params,
+            event="token",
+        )
+    )
+
+    assert service.calls == []
+    assert session.variables["omni_code"]["needs_context_compression"] is True
+
+
 def test_token_hook_triggers_compact_when_total_tokens_over_threshold():
     service = FakeService()
     session = FakeSession("sess-2")
@@ -52,6 +77,7 @@ def test_token_hook_triggers_compact_when_total_tokens_over_threshold():
     params = {
         "max_input_tokens": 100,
         "delta": {"input_tokens": 1, "total_tokens": 95},
+        "compaction_safe_boundary": True,
     }
 
     asyncio.run(

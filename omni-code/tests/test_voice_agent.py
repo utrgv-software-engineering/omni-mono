@@ -17,14 +17,13 @@ def test_voice_agent_yaml_has_required_fields():
     assert config["name"] == "voice_agent"
     assert config["label"] == "Omni Code Voice"
     # Tools are activated via capability packs. Voice reads and
-    # delegates: read-only inspection + web/search + slash dispatch +
+    # delegates: read-only inspection + web/search +
     # markdown, with anything that writes or runs commands handed to a
     # worker (full filesystem/shell surface) or to `explore`.
     assert isinstance(config["capabilities"], list)
     caps = set(config["capabilities"])
     assert caps >= {
         "filesystem_readonly",
-        "slash",
         "workers",
         "exploration",
     }
@@ -33,15 +32,18 @@ def test_voice_agent_yaml_has_required_fields():
     # are out because their pack instructions name `web_fetch` /
     # `download_file`, which voice no longer has. `notebook`/`tasks` stay
     # off for latency (tighter tool surface).
-    assert not {
-        "filesystem",
-        "shell",
-        "web",
-        "serpapi",
-        "markdown",
-        "notebook",
-        "tasks",
-    } & caps
+    assert (
+        not {
+            "filesystem",
+            "shell",
+            "web",
+            "serpapi",
+            "markdown",
+            "notebook",
+            "tasks",
+        }
+        & caps
+    )
     assert config["use_safe_agent"] is True
 
 
