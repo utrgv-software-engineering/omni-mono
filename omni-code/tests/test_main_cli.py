@@ -12,6 +12,7 @@ extensions module at all.
 """
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import omniagents.cli as fw_cli
@@ -54,7 +55,7 @@ def test_cli_main_discovers_product_and_forces_prompt_with_double_dash(cli_env):
     argv = cli_env.run["argv"]
     assert argv[:5] == ["omniagents", "run", "--project", argv[3], "--mode"]
     # Discovery alone resolved the packaged manifest — no product cli.py.
-    assert argv[3].endswith("omni_code/project.yml")
+    assert Path(argv[3]).parts[-2:] == ("omni_code", "project.yml")
     assert argv[5] == "ink"
     assert argv[-3:] == ["work", "on", "this"]
 

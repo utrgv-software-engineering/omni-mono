@@ -5,6 +5,8 @@ shell, cwd, backend, and ownership all come from the dispatcher-bound
 EnvironmentLease; session context is not an execution-routing fallback.
 """
 
+from pathlib import Path
+
 import pytest
 from omniagents.builtin.server_functions import terminal as terminal_mod
 
@@ -96,7 +98,9 @@ async def test_terminal_create_attaches_manager_and_returns_ws_path(monkeypatch)
     created = fake_manager.created[0]
     assert created["session_id"] == "sess-1"
     assert created["shell"] == "bash"
-    assert created["cwd"] == "/"
+    # The default test environment is HostWorkspace(root="/"): its root is
+    # the host's own spelling ("D:\\" on a Windows runner).
+    assert created["cwd"] == str(Path("/").resolve())
     assert created["cols"] == 120
     assert created["rows"] == 40
     assert created["user"] is None

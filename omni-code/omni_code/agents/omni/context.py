@@ -8,6 +8,7 @@ Jinja2 instruction templates, including workspace-specific AGENTS.md files.
 from __future__ import annotations
 
 import os
+import posixpath
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -192,7 +193,13 @@ def format_agents_md_block(variables: Optional[Dict[str, Any]] = None) -> str:
     # leaked host path.
     workspace_root = variables.get("workspace_root")
     if isinstance(workspace_root, str) and workspace_root.strip():
-        base_dir = str(Path(workspace_root).expanduser().resolve())
+        if workspace_root.startswith("/"):
+            # Already the environment's absolute (POSIX) spelling — a sandbox
+            # manifest root on any host OS. Never re-resolve it against the
+            # host filesystem: on Windows that turns /workspace into D:\workspace.
+            base_dir = posixpath.normpath(workspace_root)
+        else:
+            base_dir = str(Path(workspace_root).expanduser().resolve())
     else:
         base_dir = str(_resolve_invocation_dir())
 

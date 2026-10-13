@@ -39,10 +39,13 @@ def config_dir(tmp_path, monkeypatch):
 
     ``resolve_profile`` defaults its config dir from the installed
     product identity (project.yml ``product.config_dir`` = ``omni_code``),
-    which honors ``XDG_CONFIG_HOME`` at call time.
+    which honors ``XDG_CONFIG_HOME`` (``%APPDATA%`` on Windows) at call time.
     """
+    from omniagents.core.config.dirs import product_config_dir
+
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    return tmp_path / "omni_code"
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    return product_config_dir()
 
 
 @pytest.fixture
