@@ -503,6 +503,8 @@ def _clone_into(porcelain: Any, target: str, url: str, proxy_base: Optional[str]
 
     repo = Repo.init(target)
     repo.hooks.clear()
+    # dulwich types refs as a NewType over bytes; plain bytes are what it stores.
+    refs: Any = repo.refs
     client, resolved = _client_for(url, proxy_base)
     result = client.fetch(resolved, repo)
     for ref, sha in result.refs.items():
@@ -516,9 +518,10 @@ def _clone_into(porcelain: Any, target: str, url: str, proxy_base: Optional[str]
     )
     if default:
         branch = b"main" if b"refs/heads/main" in result.refs else b"master"
-        repo.refs[b"refs/heads/" + branch] = default
-        repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/" + branch)
-        _checkout_tree(repo, repo[default].tree)
+        refs[b"refs/heads/" + branch] = default
+        refs.set_symbolic_ref(b"HEAD", b"refs/heads/" + branch)
+        commit: Any = repo[default]
+        _checkout_tree(repo, commit.tree)
     # One config object: get_config() hands back a fresh instance each call,
     # so setting on one and writing another silently drops the remote.
     config = repo.get_config()

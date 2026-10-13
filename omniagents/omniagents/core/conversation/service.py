@@ -1013,9 +1013,10 @@ class ConversationService:
                     f"Unknown thread status: {status}", status=status
                 ) from exc
 
-        thread = self.store.mutate_thread(thread_id, update)
-        if thread is None:
+        mutated = self.store.mutate_thread(thread_id, update)
+        if mutated is None:
             raise ThreadNotFound(thread_id)
+        thread = mutated
 
         if target_status is not None and target_status is not thread.status:
             outcome = self.set_status(thread_id, target_status, can_access=can_access)

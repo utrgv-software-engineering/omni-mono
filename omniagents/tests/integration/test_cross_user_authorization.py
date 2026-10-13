@@ -421,6 +421,13 @@ def test_cross_user_approval_resolution_denied(authz_context):
         approval_loop = asyncio.new_event_loop()
         loop_future = approval_loop.create_future()
         service._pending_tool_approvals["call-123"] = (loop_future, session)
+        # The replay payload is what lets the decision commit durably.
+        session.pending_tool_approvals["call-123"] = {
+            "call_id": "call-123",
+            "tool_name": "delete_file",
+            "arguments": "",
+            "session_id": session_id,
+        }
 
         bob.expect_denied(
             "tool_approval_response", call_id="call-123", decision="approve"

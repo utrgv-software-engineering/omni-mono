@@ -103,7 +103,7 @@ def test_apply_baseline_noop_without_allowlist():
 def test_apply_baseline_execs_as_root():
     session = _Session()
     asyncio.run(apply_baseline_egress(session, "api.openai.com"))
-    (cmd, shell, user) = session.calls[0]
+    cmd, shell, user = session.calls[0]
     assert shell is True
     assert user == "root"
     assert BASELINE_CHAIN in cmd

@@ -1,50 +1,17 @@
 export type JsonRpcId = string | number;
 export type JsonRpcError = { code: number; message: string; data?: unknown };
-export interface Identity {
-  name: string;
-  version: string;
-}
-export interface Platform {
-  os: string;
-  arch: string;
-}
-export interface Capabilities {
-  realtime: boolean;
-  mcp_apps: boolean;
-  client_functions: boolean;
-  approvals: boolean;
-  artifacts: boolean;
-  replay: boolean;
-  terminal: boolean;
-  experimental_operations: string[];
-  disabled_notifications: string[];
-}
-export interface AgentHostDescriptor {
-  agent_host_id: string;
-  default_workspace_id?: string | null;
-  default_environment_id?: string | null;
-}
-export type EnvironmentSelection =
-  | { mode: "inherit" }
-  | { mode: "none" }
-  | {
-      mode: "explicit";
-      environment_id: string;
-      environment_generation?: number;
-    };
+export interface Identity { name: string; version: string }
+export interface Platform { os: string; arch: string }
+export interface Capabilities { realtime: boolean; mcp_apps: boolean; client_functions: boolean; approvals: boolean; artifacts: boolean; replay: boolean; terminal: boolean; experimental_operations: string[]; disabled_notifications: string[] }
+export interface AgentHostDescriptor { agent_host_id: string; default_workspace_id?: string | null; default_environment_id?: string | null }
+export type EnvironmentSelection = { mode: "inherit" } | { mode: "none" } | { mode: "explicit"; environment_id: string; environment_generation?: number };
 export interface InitializeParams {
   protocol_version: string;
   identity: Identity;
   platform: Platform;
   capabilities: Capabilities;
 }
-export interface InitializeResult {
-  protocol_version: string;
-  identity: Identity;
-  platform: Platform;
-  capabilities: Capabilities;
-  agent_host: AgentHostDescriptor;
-}
+export interface InitializeResult { protocol_version: string; identity: Identity; platform: Platform; capabilities: Capabilities; agent_host: AgentHostDescriptor }
 export interface StartRunParams {
   prompt: string;
   environment_selection: EnvironmentSelection;
@@ -59,10 +26,7 @@ export interface StartRunParams {
   prompt_role?: string;
   submission_id?: string;
 }
-export interface StartRunResult {
-  run_id: string;
-  session_id: string;
-}
+export interface StartRunResult { run_id: string; session_id: string }
 export interface StopRunParams {
   run_id: string;
 }
@@ -88,7 +52,8 @@ export interface GetUserHistoryParams {
   limit?: number;
   include_archived?: boolean;
 }
-export interface GetAgentInfoParams {}
+export interface GetAgentInfoParams {
+}
 export interface ToolApprovalResponseParams {
   call_id: string;
   decision: string;
@@ -110,7 +75,8 @@ export interface ClientResponseParams {
   result?: Record<string, unknown>;
   error?: Record<string, unknown>;
 }
-export interface ListServerFunctionsParams {}
+export interface ListServerFunctionsParams {
+}
 export interface ServerCallParams {
   function: string;
   args?: Record<string, unknown>;
@@ -155,7 +121,8 @@ export interface ListModelsParams {
 export interface GetModelParams {
   model: string;
 }
-export interface ListProvidersParams {}
+export interface ListProvidersParams {
+}
 export interface SetSessionModelParams {
   session_id: string;
   model: string;
@@ -167,7 +134,8 @@ export interface SetSessionReasoningParams {
 export interface SetVoiceModelParams {
   model: string;
 }
-export interface AccountStatusParams {}
+export interface AccountStatusParams {
+}
 export interface AccountLoginStartParams {
   provider: string;
   mode: string;
@@ -281,7 +249,8 @@ export interface AgentHostBindThreadParams {
   thread_id: string;
   binding: Record<string, unknown>;
 }
-export interface AgentHostListResourcesParams {}
+export interface AgentHostListResourcesParams {
+}
 export interface AgentHostMaterializeEnvironmentParams {
   workspace_id: string;
   profile_id: string;
@@ -333,7 +302,8 @@ export interface ExportSessionParams {
   session_id: string;
   redact?: boolean;
 }
-export interface GetConfigParams {}
+export interface GetConfigParams {
+}
 export interface ValidateConfigParams {
   updates: Record<string, unknown>;
 }
@@ -675,7 +645,8 @@ export interface GetRunDiffParams {
   thread_id: string;
   turn_id?: string;
 }
-export interface InitializedParams {}
+export interface InitializedParams {
+}
 export interface RunStartedParams {
   run_id: string;
   session_id: string;
@@ -973,433 +944,192 @@ export interface ItemUpdatedParams {
   stream_id?: string;
 }
 export interface RpcMethodMap {
-  initialize: { params: InitializeParams; result: InitializeResult };
-  start_run: { params: StartRunParams; result: StartRunResult };
-  stop_run: { params: StopRunParams; result: boolean };
-  send_user_message: { params: SendUserMessageParams; result: null };
-  get_session_history: {
-    params: GetSessionHistoryParams;
-    result: Array<Record<string, unknown>>;
-  };
-  list_sessions: {
-    params: ListSessionsParams;
-    result: Array<Record<string, unknown>>;
-  };
-  archive_session: { params: ArchiveSessionParams; result: boolean };
-  delete_session: { params: DeleteSessionParams; result: boolean };
-  get_user_history: {
-    params: GetUserHistoryParams;
-    result: Array<Record<string, unknown>>;
-  };
-  get_agent_info: {
-    params: GetAgentInfoParams;
-    result: Record<string, unknown>;
-  };
-  tool_approval_response: {
-    params: ToolApprovalResponseParams;
-    result: boolean;
-  };
-  mcp_approval_response: { params: McpApprovalResponseParams; result: boolean };
-  client_functions: { params: ClientFunctionsParams; result: boolean };
-  client_response: { params: ClientResponseParams; result: boolean };
-  list_server_functions: {
-    params: ListServerFunctionsParams;
-    result: Array<Record<string, unknown>>;
-  };
-  server_call: { params: ServerCallParams; result: Record<string, unknown> };
-  enqueue_message: {
-    params: EnqueueMessageParams;
-    result: Record<string, unknown>;
-  };
-  list_queue: { params: ListQueueParams; result: Record<string, unknown> };
-  cancel_queued_message: {
-    params: CancelQueuedMessageParams;
-    result: Record<string, unknown>;
-  };
-  resume_session: {
-    params: ResumeSessionParams;
-    result: Record<string, unknown>;
-  };
-  ack_events: { params: AckEventsParams; result: Record<string, unknown> };
-  list_models: { params: ListModelsParams; result: Record<string, unknown> };
-  get_model: { params: GetModelParams; result: Record<string, unknown> };
-  list_providers: {
-    params: ListProvidersParams;
-    result: Record<string, unknown>;
-  };
-  set_session_model: {
-    params: SetSessionModelParams;
-    result: Record<string, unknown>;
-  };
-  set_session_reasoning: {
-    params: SetSessionReasoningParams;
-    result: Record<string, unknown>;
-  };
-  set_voice_model: {
-    params: SetVoiceModelParams;
-    result: Record<string, unknown>;
-  };
-  account_status: {
-    params: AccountStatusParams;
-    result: Record<string, unknown>;
-  };
-  account_login_start: {
-    params: AccountLoginStartParams;
-    result: Record<string, unknown>;
-  };
-  account_login_complete: {
-    params: AccountLoginCompleteParams;
-    result: Record<string, unknown>;
-  };
-  account_login_cancel: { params: AccountLoginCancelParams; result: boolean };
-  account_logout: {
-    params: AccountLogoutParams;
-    result: Record<string, unknown>;
-  };
-  account_refresh: {
-    params: AccountRefreshParams;
-    result: Record<string, unknown>;
-  };
-  account_usage: {
-    params: AccountUsageParams;
-    result: Record<string, unknown>;
-  };
-  account_select: {
-    params: AccountSelectParams;
-    result: Record<string, unknown>;
-  };
-  elicitation_response: {
-    params: ElicitationResponseParams;
-    result: Record<string, unknown>;
-  };
-  mcp_list_servers: {
-    params: McpListServersParams;
-    result: Record<string, unknown>;
-  };
-  mcp_get_server: {
-    params: McpGetServerParams;
-    result: Record<string, unknown>;
-  };
-  mcp_create_server: {
-    params: McpCreateServerParams;
-    result: Record<string, unknown>;
-  };
-  mcp_update_server: {
-    params: McpUpdateServerParams;
-    result: Record<string, unknown>;
-  };
-  mcp_delete_server: {
-    params: McpDeleteServerParams;
-    result: Record<string, unknown>;
-  };
-  mcp_reload_server: {
-    params: McpReloadServerParams;
-    result: Record<string, unknown>;
-  };
-  mcp_auth_start: {
-    params: McpAuthStartParams;
-    result: Record<string, unknown>;
-  };
-  mcp_auth_complete: {
-    params: McpAuthCompleteParams;
-    result: Record<string, unknown>;
-  };
-  mcp_auth_cancel: { params: McpAuthCancelParams; result: boolean };
-  get_thread: { params: GetThreadParams; result: Record<string, unknown> };
-  list_turns: { params: ListTurnsParams; result: Record<string, unknown> };
-  list_items: { params: ListItemsParams; result: Record<string, unknown> };
-  get_item: { params: GetItemParams; result: Record<string, unknown> };
-  set_session_approvals: {
-    params: SetSessionApprovalsParams;
-    result: Record<string, unknown>;
-  };
-  set_session_workflow: {
-    params: SetSessionWorkflowParams;
-    result: Record<string, unknown>;
-  };
-  agent_host_register_workspace: {
-    params: AgentHostRegisterWorkspaceParams;
-    result: Record<string, unknown>;
-  };
-  agent_host_register_profile: {
-    params: AgentHostRegisterProfileParams;
-    result: Record<string, unknown>;
-  };
-  agent_host_bind_thread: {
-    params: AgentHostBindThreadParams;
-    result: Record<string, unknown>;
-  };
-  agent_host_list_resources: {
-    params: AgentHostListResourcesParams;
-    result: Record<string, unknown>;
-  };
-  agent_host_materialize_environment: {
-    params: AgentHostMaterializeEnvironmentParams;
-    result: Record<string, unknown>;
-  };
-  agent_host_stop_environment: {
-    params: AgentHostStopEnvironmentParams;
-    result: Record<string, unknown>;
-  };
-  fork_session: { params: ForkSessionParams; result: Record<string, unknown> };
-  set_session_hold: {
-    params: SetSessionHoldParams;
-    result: Record<string, unknown>;
-  };
-  queue_status: { params: QueueStatusParams; result: Record<string, unknown> };
-  enqueue_notification: {
-    params: EnqueueNotificationParams;
-    result: Record<string, unknown>;
-  };
-  update_session_variables: {
-    params: UpdateSessionVariablesParams;
-    result: Record<string, unknown>;
-  };
-  set_client_status: { params: SetClientStatusParams; result: null };
-  disable_tool: { params: DisableToolParams; result: null };
-  disable_mcp_server: { params: DisableMcpServerParams; result: null };
-  report_incident: { params: ReportIncidentParams; result: null };
-  export_session: {
-    params: ExportSessionParams;
-    result: Record<string, unknown>;
-  };
-  get_config: { params: GetConfigParams; result: Record<string, unknown> };
-  validate_config: {
-    params: ValidateConfigParams;
-    result: Record<string, unknown>;
-  };
-  write_config: { params: WriteConfigParams; result: Record<string, unknown> };
-  mcp_read_resource: {
-    params: McpReadResourceParams;
-    result: Record<string, unknown>;
-  };
-  mcp_call_tool: { params: McpCallToolParams; result: Record<string, unknown> };
-  mcp_get_prompt: {
-    params: McpGetPromptParams;
-    result: Record<string, unknown>;
-  };
-  fs_watch: { params: FsWatchParams; result: Record<string, unknown> };
-  fs_unwatch: { params: FsUnwatchParams; result: boolean };
-  fs_list: { params: FsListParams; result: Record<string, unknown> };
-  fs_stat: { params: FsStatParams; result: Record<string, unknown> };
-  fs_download_open: {
-    params: FsDownloadOpenParams;
-    result: Record<string, unknown>;
-  };
-  fs_download_read: {
-    params: FsDownloadReadParams;
-    result: Record<string, unknown>;
-  };
-  fs_download_close: { params: FsDownloadCloseParams; result: boolean };
-  fs_upload_open: {
-    params: FsUploadOpenParams;
-    result: Record<string, unknown>;
-  };
-  fs_upload_chunk: {
-    params: FsUploadChunkParams;
-    result: Record<string, unknown>;
-  };
-  fs_upload_commit: {
-    params: FsUploadCommitParams;
-    result: Record<string, unknown>;
-  };
-  fs_upload_abort: { params: FsUploadAbortParams; result: boolean };
-  fs_delete: { params: FsDeleteParams; result: Record<string, unknown> };
-  fs_rename: { params: FsRenameParams; result: Record<string, unknown> };
-  fs_mkdir: { params: FsMkdirParams; result: Record<string, unknown> };
-  git_list_repositories: {
-    params: GitListRepositoriesParams;
-    result: Record<string, unknown>;
-  };
-  git_status: { params: GitStatusParams; result: Record<string, unknown> };
-  git_diff: { params: GitDiffParams; result: Record<string, unknown> };
-  git_log: { params: GitLogParams; result: Record<string, unknown> };
-  git_list_branches: {
-    params: GitListBranchesParams;
-    result: Record<string, unknown>;
-  };
-  git_list_worktrees: {
-    params: GitListWorktreesParams;
-    result: Record<string, unknown>;
-  };
-  git_conflicts: {
-    params: GitConflictsParams;
-    result: Record<string, unknown>;
-  };
-  git_stage: { params: GitStageParams; result: Record<string, unknown> };
-  git_unstage: { params: GitUnstageParams; result: Record<string, unknown> };
-  git_discard: { params: GitDiscardParams; result: Record<string, unknown> };
-  git_commit: { params: GitCommitParams; result: Record<string, unknown> };
-  git_checkout: { params: GitCheckoutParams; result: Record<string, unknown> };
-  git_reset: { params: GitResetParams; result: Record<string, unknown> };
-  git_fetch: { params: GitFetchParams; result: Record<string, unknown> };
-  git_pull: { params: GitPullParams; result: Record<string, unknown> };
-  git_push: { params: GitPushParams; result: Record<string, unknown> };
-  git_status_watch: {
-    params: GitStatusWatchParams;
-    result: Record<string, unknown>;
-  };
-  git_status_unwatch: { params: GitStatusUnwatchParams; result: boolean };
-  list_threads: { params: ListThreadsParams; result: Record<string, unknown> };
-  search_threads: {
-    params: SearchThreadsParams;
-    result: Record<string, unknown>;
-  };
-  update_thread: {
-    params: UpdateThreadParams;
-    result: Record<string, unknown>;
-  };
-  list_thread_descendants: {
-    params: ListThreadDescendantsParams;
-    result: Record<string, unknown>;
-  };
-  export_thread: {
-    params: ExportThreadParams;
-    result: Record<string, unknown>;
-  };
-  purge_threads: {
-    params: PurgeThreadsParams;
-    result: Record<string, unknown>;
-  };
-  get_plan: { params: GetPlanParams; result: Record<string, unknown> };
-  get_run_diff: { params: GetRunDiffParams; result: Record<string, unknown> };
+  "initialize": { params: InitializeParams; result: InitializeResult };
+  "start_run": { params: StartRunParams; result: StartRunResult };
+  "stop_run": { params: StopRunParams; result: boolean };
+  "send_user_message": { params: SendUserMessageParams; result: null };
+  "get_session_history": { params: GetSessionHistoryParams; result: Array<Record<string, unknown>> };
+  "list_sessions": { params: ListSessionsParams; result: Array<Record<string, unknown>> };
+  "archive_session": { params: ArchiveSessionParams; result: boolean };
+  "delete_session": { params: DeleteSessionParams; result: boolean };
+  "get_user_history": { params: GetUserHistoryParams; result: Array<Record<string, unknown>> };
+  "get_agent_info": { params: GetAgentInfoParams; result: Record<string, unknown> };
+  "tool_approval_response": { params: ToolApprovalResponseParams; result: boolean };
+  "mcp_approval_response": { params: McpApprovalResponseParams; result: boolean };
+  "client_functions": { params: ClientFunctionsParams; result: boolean };
+  "client_response": { params: ClientResponseParams; result: boolean };
+  "list_server_functions": { params: ListServerFunctionsParams; result: Array<Record<string, unknown>> };
+  "server_call": { params: ServerCallParams; result: Record<string, unknown> };
+  "enqueue_message": { params: EnqueueMessageParams; result: Record<string, unknown> };
+  "list_queue": { params: ListQueueParams; result: Record<string, unknown> };
+  "cancel_queued_message": { params: CancelQueuedMessageParams; result: Record<string, unknown> };
+  "resume_session": { params: ResumeSessionParams; result: Record<string, unknown> };
+  "ack_events": { params: AckEventsParams; result: Record<string, unknown> };
+  "list_models": { params: ListModelsParams; result: Record<string, unknown> };
+  "get_model": { params: GetModelParams; result: Record<string, unknown> };
+  "list_providers": { params: ListProvidersParams; result: Record<string, unknown> };
+  "set_session_model": { params: SetSessionModelParams; result: Record<string, unknown> };
+  "set_session_reasoning": { params: SetSessionReasoningParams; result: Record<string, unknown> };
+  "set_voice_model": { params: SetVoiceModelParams; result: Record<string, unknown> };
+  "account_status": { params: AccountStatusParams; result: Record<string, unknown> };
+  "account_login_start": { params: AccountLoginStartParams; result: Record<string, unknown> };
+  "account_login_complete": { params: AccountLoginCompleteParams; result: Record<string, unknown> };
+  "account_login_cancel": { params: AccountLoginCancelParams; result: boolean };
+  "account_logout": { params: AccountLogoutParams; result: Record<string, unknown> };
+  "account_refresh": { params: AccountRefreshParams; result: Record<string, unknown> };
+  "account_usage": { params: AccountUsageParams; result: Record<string, unknown> };
+  "account_select": { params: AccountSelectParams; result: Record<string, unknown> };
+  "elicitation_response": { params: ElicitationResponseParams; result: Record<string, unknown> };
+  "mcp_list_servers": { params: McpListServersParams; result: Record<string, unknown> };
+  "mcp_get_server": { params: McpGetServerParams; result: Record<string, unknown> };
+  "mcp_create_server": { params: McpCreateServerParams; result: Record<string, unknown> };
+  "mcp_update_server": { params: McpUpdateServerParams; result: Record<string, unknown> };
+  "mcp_delete_server": { params: McpDeleteServerParams; result: Record<string, unknown> };
+  "mcp_reload_server": { params: McpReloadServerParams; result: Record<string, unknown> };
+  "mcp_auth_start": { params: McpAuthStartParams; result: Record<string, unknown> };
+  "mcp_auth_complete": { params: McpAuthCompleteParams; result: Record<string, unknown> };
+  "mcp_auth_cancel": { params: McpAuthCancelParams; result: boolean };
+  "get_thread": { params: GetThreadParams; result: Record<string, unknown> };
+  "list_turns": { params: ListTurnsParams; result: Record<string, unknown> };
+  "list_items": { params: ListItemsParams; result: Record<string, unknown> };
+  "get_item": { params: GetItemParams; result: Record<string, unknown> };
+  "set_session_approvals": { params: SetSessionApprovalsParams; result: Record<string, unknown> };
+  "set_session_workflow": { params: SetSessionWorkflowParams; result: Record<string, unknown> };
+  "agent_host_register_workspace": { params: AgentHostRegisterWorkspaceParams; result: Record<string, unknown> };
+  "agent_host_register_profile": { params: AgentHostRegisterProfileParams; result: Record<string, unknown> };
+  "agent_host_bind_thread": { params: AgentHostBindThreadParams; result: Record<string, unknown> };
+  "agent_host_list_resources": { params: AgentHostListResourcesParams; result: Record<string, unknown> };
+  "agent_host_materialize_environment": { params: AgentHostMaterializeEnvironmentParams; result: Record<string, unknown> };
+  "agent_host_stop_environment": { params: AgentHostStopEnvironmentParams; result: Record<string, unknown> };
+  "fork_session": { params: ForkSessionParams; result: Record<string, unknown> };
+  "set_session_hold": { params: SetSessionHoldParams; result: Record<string, unknown> };
+  "queue_status": { params: QueueStatusParams; result: Record<string, unknown> };
+  "enqueue_notification": { params: EnqueueNotificationParams; result: Record<string, unknown> };
+  "update_session_variables": { params: UpdateSessionVariablesParams; result: Record<string, unknown> };
+  "set_client_status": { params: SetClientStatusParams; result: null };
+  "disable_tool": { params: DisableToolParams; result: null };
+  "disable_mcp_server": { params: DisableMcpServerParams; result: null };
+  "report_incident": { params: ReportIncidentParams; result: null };
+  "export_session": { params: ExportSessionParams; result: Record<string, unknown> };
+  "get_config": { params: GetConfigParams; result: Record<string, unknown> };
+  "validate_config": { params: ValidateConfigParams; result: Record<string, unknown> };
+  "write_config": { params: WriteConfigParams; result: Record<string, unknown> };
+  "mcp_read_resource": { params: McpReadResourceParams; result: Record<string, unknown> };
+  "mcp_call_tool": { params: McpCallToolParams; result: Record<string, unknown> };
+  "mcp_get_prompt": { params: McpGetPromptParams; result: Record<string, unknown> };
+  "fs_watch": { params: FsWatchParams; result: Record<string, unknown> };
+  "fs_unwatch": { params: FsUnwatchParams; result: boolean };
+  "fs_list": { params: FsListParams; result: Record<string, unknown> };
+  "fs_stat": { params: FsStatParams; result: Record<string, unknown> };
+  "fs_download_open": { params: FsDownloadOpenParams; result: Record<string, unknown> };
+  "fs_download_read": { params: FsDownloadReadParams; result: Record<string, unknown> };
+  "fs_download_close": { params: FsDownloadCloseParams; result: boolean };
+  "fs_upload_open": { params: FsUploadOpenParams; result: Record<string, unknown> };
+  "fs_upload_chunk": { params: FsUploadChunkParams; result: Record<string, unknown> };
+  "fs_upload_commit": { params: FsUploadCommitParams; result: Record<string, unknown> };
+  "fs_upload_abort": { params: FsUploadAbortParams; result: boolean };
+  "fs_delete": { params: FsDeleteParams; result: Record<string, unknown> };
+  "fs_rename": { params: FsRenameParams; result: Record<string, unknown> };
+  "fs_mkdir": { params: FsMkdirParams; result: Record<string, unknown> };
+  "git_list_repositories": { params: GitListRepositoriesParams; result: Record<string, unknown> };
+  "git_status": { params: GitStatusParams; result: Record<string, unknown> };
+  "git_diff": { params: GitDiffParams; result: Record<string, unknown> };
+  "git_log": { params: GitLogParams; result: Record<string, unknown> };
+  "git_list_branches": { params: GitListBranchesParams; result: Record<string, unknown> };
+  "git_list_worktrees": { params: GitListWorktreesParams; result: Record<string, unknown> };
+  "git_conflicts": { params: GitConflictsParams; result: Record<string, unknown> };
+  "git_stage": { params: GitStageParams; result: Record<string, unknown> };
+  "git_unstage": { params: GitUnstageParams; result: Record<string, unknown> };
+  "git_discard": { params: GitDiscardParams; result: Record<string, unknown> };
+  "git_commit": { params: GitCommitParams; result: Record<string, unknown> };
+  "git_checkout": { params: GitCheckoutParams; result: Record<string, unknown> };
+  "git_reset": { params: GitResetParams; result: Record<string, unknown> };
+  "git_fetch": { params: GitFetchParams; result: Record<string, unknown> };
+  "git_pull": { params: GitPullParams; result: Record<string, unknown> };
+  "git_push": { params: GitPushParams; result: Record<string, unknown> };
+  "git_status_watch": { params: GitStatusWatchParams; result: Record<string, unknown> };
+  "git_status_unwatch": { params: GitStatusUnwatchParams; result: boolean };
+  "list_threads": { params: ListThreadsParams; result: Record<string, unknown> };
+  "search_threads": { params: SearchThreadsParams; result: Record<string, unknown> };
+  "update_thread": { params: UpdateThreadParams; result: Record<string, unknown> };
+  "list_thread_descendants": { params: ListThreadDescendantsParams; result: Record<string, unknown> };
+  "export_thread": { params: ExportThreadParams; result: Record<string, unknown> };
+  "purge_threads": { params: PurgeThreadsParams; result: Record<string, unknown> };
+  "get_plan": { params: GetPlanParams; result: Record<string, unknown> };
+  "get_run_diff": { params: GetRunDiffParams; result: Record<string, unknown> };
 }
 export interface RpcNotificationMap {
-  run_started: RunStartedParams;
-  run_status: RunStatusParams;
-  tool_called: ToolCalledParams;
-  tool_result: ToolResultParams;
-  message_output: MessageOutputParams;
-  token: TokenParams;
-  run_end: RunEndParams;
-  tool_approval_requested: ToolApprovalRequestedParams;
-  tool_approval_resolved: ToolApprovalResolvedParams;
-  mcp_approval_requested: McpApprovalRequestedParams;
-  mcp_approval_resolved: McpApprovalResolvedParams;
-  client_request: ClientRequestParams;
-  client_request_resolved: ClientRequestResolvedParams;
-  queue_changed: QueueChangedParams;
-  account_changed: AccountChangedParams;
-  elicitation_requested: ElicitationRequestedParams;
-  elicitation_resolved: ElicitationResolvedParams;
-  mcp_server_status_changed: McpServerStatusChangedParams;
-  tool_approval_reviewed: ToolApprovalReviewedParams;
-  plan_completion_reviewed: PlanCompletionReviewedParams;
-  session_forked: SessionForkedParams;
-  session_variables_changed: SessionVariablesChangedParams;
-  fs_events: FsEventsParams;
-  fs_rescan_required: FsRescanRequiredParams;
-  fs_transfer_progress: FsTransferProgressParams;
-  git_operation_progress: GitOperationProgressParams;
-  git_status_changed: GitStatusChangedParams;
-  thread_updated: ThreadUpdatedParams;
-  item_updated: ItemUpdatedParams;
+  "run_started": RunStartedParams;
+  "run_status": RunStatusParams;
+  "tool_called": ToolCalledParams;
+  "tool_result": ToolResultParams;
+  "message_output": MessageOutputParams;
+  "token": TokenParams;
+  "run_end": RunEndParams;
+  "tool_approval_requested": ToolApprovalRequestedParams;
+  "tool_approval_resolved": ToolApprovalResolvedParams;
+  "mcp_approval_requested": McpApprovalRequestedParams;
+  "mcp_approval_resolved": McpApprovalResolvedParams;
+  "client_request": ClientRequestParams;
+  "client_request_resolved": ClientRequestResolvedParams;
+  "queue_changed": QueueChangedParams;
+  "account_changed": AccountChangedParams;
+  "elicitation_requested": ElicitationRequestedParams;
+  "elicitation_resolved": ElicitationResolvedParams;
+  "mcp_server_status_changed": McpServerStatusChangedParams;
+  "tool_approval_reviewed": ToolApprovalReviewedParams;
+  "plan_completion_reviewed": PlanCompletionReviewedParams;
+  "session_forked": SessionForkedParams;
+  "session_variables_changed": SessionVariablesChangedParams;
+  "fs_events": FsEventsParams;
+  "fs_rescan_required": FsRescanRequiredParams;
+  "fs_transfer_progress": FsTransferProgressParams;
+  "git_operation_progress": GitOperationProgressParams;
+  "git_status_changed": GitStatusChangedParams;
+  "thread_updated": ThreadUpdatedParams;
+  "item_updated": ItemUpdatedParams;
 }
 export interface RpcClientNotificationMap {
-  initialized: InitializedParams;
+  "initialized": InitializedParams;
 }
 export type RpcRequest<M extends keyof RpcMethodMap = keyof RpcMethodMap> = {
-  [K in M]: {
-    jsonrpc: "2.0";
-    id: JsonRpcId;
-    method: K;
-    params: RpcMethodMap[K]["params"];
-  };
+  [K in M]: { jsonrpc: '2.0'; id: JsonRpcId; method: K; params: RpcMethodMap[K]['params'] }
 }[M];
-export type RpcNotification<
-  E extends keyof RpcNotificationMap = keyof RpcNotificationMap,
-> = {
-  [K in E]: { jsonrpc: "2.0"; method: K; params: RpcNotificationMap[K] };
+export type RpcNotification<E extends keyof RpcNotificationMap = keyof RpcNotificationMap> = {
+  [K in E]: { jsonrpc: '2.0'; method: K; params: RpcNotificationMap[K] }
 }[E];
-export type RpcClientNotification<
-  E extends keyof RpcClientNotificationMap = keyof RpcClientNotificationMap,
-> = {
-  [K in E]: { jsonrpc: "2.0"; method: K; params: RpcClientNotificationMap[K] };
+export type RpcClientNotification<E extends keyof RpcClientNotificationMap = keyof RpcClientNotificationMap> = {
+  [K in E]: { jsonrpc: '2.0'; method: K; params: RpcClientNotificationMap[K] }
 }[E];
 
 export const GUI_PROTOCOL_VERSION = "2.0.0" as const;
 
 /** A successful initialize reply must still prove version compatibility. */
 export function supportsGuiProtocolVersion(serverVersion: unknown): boolean {
-  if (
-    typeof serverVersion !== "string" ||
-    serverVersion.trim() !== serverVersion ||
-    !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(serverVersion)
-  )
-    return false;
+  if (typeof serverVersion !== "string" || serverVersion.trim() !== serverVersion || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(serverVersion)) return false;
   const server = serverVersion.split(".").map(Number);
   const client = GUI_PROTOCOL_VERSION.split(".").map(Number);
   const [serverMajor, serverMinor, serverPatch] = server;
   const [clientMajor, clientMinor, clientPatch] = client;
-  if (
-    serverMajor === undefined ||
-    serverMinor === undefined ||
-    serverPatch === undefined ||
-    clientMajor === undefined ||
-    clientMinor === undefined ||
-    clientPatch === undefined
-  )
-    return false;
-  if (!server.every(Number.isSafeInteger) || serverMajor !== clientMajor)
-    return false;
-  return (
-    serverMinor > clientMinor ||
-    (serverMinor === clientMinor && serverPatch >= clientPatch)
-  );
+  if (serverMajor === undefined || serverMinor === undefined || serverPatch === undefined ||
+      clientMajor === undefined || clientMinor === undefined || clientPatch === undefined) return false;
+  if (!server.every(Number.isSafeInteger) || serverMajor !== clientMajor) return false;
+  return serverMinor > clientMinor || (serverMinor === clientMinor && serverPatch >= clientPatch);
 }
 
 /** Validate the required handshake shape before reading capabilities. */
-export function isGuiInitializeResult(
-  value: unknown,
-): value is InitializeResult {
-  const object = (v: unknown): v is Record<string, unknown> =>
-    typeof v === "object" && v !== null && !Array.isArray(v);
-  const strings = (v: unknown): boolean =>
-    Array.isArray(v) && v.every((item) => typeof item === "string");
-  if (!object(value) || !supportsGuiProtocolVersion(value.protocol_version))
-    return false;
+export function isGuiInitializeResult(value: unknown): value is InitializeResult {
+  const object = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+  const strings = (v: unknown): boolean => Array.isArray(v) && v.every(item => typeof item === "string");
+  if (!object(value) || !supportsGuiProtocolVersion(value.protocol_version)) return false;
   const { identity, platform, capabilities, agent_host: host } = value;
-  if (
-    !object(identity) ||
-    typeof identity.name !== "string" ||
-    typeof identity.version !== "string"
-  )
-    return false;
-  if (
-    !object(platform) ||
-    typeof platform.os !== "string" ||
-    typeof platform.arch !== "string"
-  )
-    return false;
-  if (
-    !object(host) ||
-    typeof host.agent_host_id !== "string" ||
-    !host.agent_host_id
-  )
-    return false;
+  if (!object(identity) || typeof identity.name !== "string" || typeof identity.version !== "string") return false;
+  if (!object(platform) || typeof platform.os !== "string" || typeof platform.arch !== "string") return false;
+  if (!object(host) || typeof host.agent_host_id !== "string" || !host.agent_host_id) return false;
   for (const key of ["default_workspace_id", "default_environment_id"]) {
-    if (
-      host[key] !== undefined &&
-      host[key] !== null &&
-      typeof host[key] !== "string"
-    )
-      return false;
+    if (host[key] !== undefined && host[key] !== null && typeof host[key] !== "string") return false;
   }
   if (!object(capabilities)) return false;
-  if (
-    ![
-      "realtime",
-      "mcp_apps",
-      "client_functions",
-      "approvals",
-      "artifacts",
-      "replay",
-      "terminal",
-    ].every((key) => typeof capabilities[key] === "boolean")
-  )
-    return false;
-  return (
-    strings(capabilities.experimental_operations) &&
-    strings(capabilities.disabled_notifications)
-  );
+  if (!["realtime", "mcp_apps", "client_functions", "approvals", "artifacts", "replay", "terminal"].every(key => typeof capabilities[key] === "boolean")) return false;
+  return strings(capabilities.experimental_operations) && strings(capabilities.disabled_notifications);
 }

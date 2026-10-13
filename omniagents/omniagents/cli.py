@@ -2058,7 +2058,9 @@ def main():
                 if isinstance(run_manifest, dict):
                     run_manifest["select"] = str(args.select or "") or None
                     run_manifest["exclude"] = str(args.exclude or "") or None
-                    run_manifest["split"] = str(getattr(args, "split", "") or "") or None
+                    run_manifest["split"] = (
+                        str(getattr(args, "split", "") or "") or None
+                    )
                 # Determine output location
                 out_arg = str(getattr(args, "output", "") or "").strip()
                 yaml_output = (eval_cfg.config or {}).get("output") or ""
@@ -2108,7 +2110,9 @@ def main():
                         source="cli",
                         scenario_name=name_arg or "default",
                         agent=_agent_arg or None,
-                        manifest=run_manifest if isinstance(run_manifest, dict) else None,
+                        manifest=(
+                            run_manifest if isinstance(run_manifest, dict) else None
+                        ),
                     )
                     print(f"Wrote results: {final_out}")
                 from omniagents.core.eval.measure_tiers import gates_ci, DEFAULT_TIER
@@ -2171,8 +2175,10 @@ def main():
                         else str(value)
                     )
                     interval = mt.get("interval")
-                    if isinstance(interval, (list, tuple)) and len(interval) == 2 and all(
-                        isinstance(x, (int, float)) for x in interval
+                    if (
+                        isinstance(interval, (list, tuple))
+                        and len(interval) == 2
+                        and all(isinstance(x, (int, float)) for x in interval)
                     ):
                         vstr = f"{vstr} [{interval[0]:.3f}-{interval[1]:.3f}]"
                     if has_target:
@@ -2197,7 +2203,9 @@ def main():
                         for key, g in (groups or {}).items():
                             gv = g.get("value")
                             gi = g.get("interval") or [None, None]
-                            gstr = f"{gv:.3f}" if isinstance(gv, (int, float)) else str(gv)
+                            gstr = (
+                                f"{gv:.3f}" if isinstance(gv, (int, float)) else str(gv)
+                            )
                             if all(isinstance(x, (int, float)) for x in gi):
                                 gstr = f"{gstr} [{gi[0]:.3f}-{gi[1]:.3f}]"
                             checks.append(
@@ -2745,7 +2753,10 @@ def main():
 
                 traceback.print_exc()
                 sys.exit(1)
-        elif args.eval_cmd == "scenarios" and getattr(args, "scen_cmd", None) == "holdout":
+        elif (
+            args.eval_cmd == "scenarios"
+            and getattr(args, "scen_cmd", None) == "holdout"
+        ):
             try:
                 from omniagents.core.eval.loader import load_eval_config
                 from omniagents.core.eval.holdout import (
@@ -2774,16 +2785,22 @@ def main():
                 if not scenarios:
                     print("Error: no scenarios to hold out (check --select/--exclude).")
                     sys.exit(2)
-                strata = [x.strip() for x in str(args.strata or "").split(",") if x.strip()]
+                strata = [
+                    x.strip() for x in str(args.strata or "").split(",") if x.strip()
+                ]
                 try:
                     fractions = [float(x) for x in str(args.fractions).split(",")]
                 except ValueError:
-                    print(f"Error: --fractions must be three numbers, got {args.fractions!r}")
+                    print(
+                        f"Error: --fractions must be three numbers, got {args.fractions!r}"
+                    )
                     sys.exit(2)
                 assignment = create_holdout(
                     scenarios, strata=strata, fractions=fractions, seed=int(args.seed)
                 )
-                manifest = holdout_manifest(assignment, scenarios, strata, fractions, int(args.seed))
+                manifest = holdout_manifest(
+                    assignment, scenarios, strata, fractions, int(args.seed)
+                )
                 paths = write_holdout(eval_cfg.eval_dir, assignment, manifest)
                 counts = manifest["counts"]
                 print(
@@ -2791,7 +2808,9 @@ def main():
                     f"(seed {args.seed}, strata {strata or 'none'}) -> {paths['manifest'].parent}"
                 )
                 for stratum, c in manifest["counts_by_stratum"].items():
-                    print(f"  {stratum}: train={c['train']} dev={c['dev']} test={c['test']}")
+                    print(
+                        f"  {stratum}: train={c['train']} dev={c['dev']} test={c['test']}"
+                    )
                 sys.exit(0)
             except SystemExit:
                 raise
@@ -2799,7 +2818,9 @@ def main():
                 print(f"Error creating holdout: {e}")
                 sys.exit(1)
         elif args.eval_cmd == "scenarios":
-            print("Error: Provide a scenarios subcommand: generate | run | annotate | holdout")
+            print(
+                "Error: Provide a scenarios subcommand: generate | run | annotate | holdout"
+            )
             sys.exit(2)
         elif args.eval_cmd == "judge" and getattr(args, "judge_cmd", None) == "run":
             try:

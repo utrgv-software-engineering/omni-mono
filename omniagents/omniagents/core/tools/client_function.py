@@ -171,7 +171,7 @@ def human_reply_outputs(result: dict) -> list:
     """Keep human attachments multimodal through the SDK tool-result boundary."""
     from agents.tool import ToolOutputText, ToolOutputImage, ToolOutputFileContent
 
-    outputs = []
+    outputs: list[ToolOutputText | ToolOutputImage | ToolOutputFileContent] = []
     for part in result["input_content"]:
         kind = part.get("type")
         if kind == "input_text":

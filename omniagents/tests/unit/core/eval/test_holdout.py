@@ -20,7 +20,10 @@ def _scenarios(n=40):
                 "name": f"case-{i:03d}",
                 "prompt": "hi",
                 "tags": ["derm", "tone_56" if i % 2 else "tone_12"],
-                "expect": {"skin_tone": "56" if i % 2 else "12", "malignant": i % 4 == 0},
+                "expect": {
+                    "skin_tone": "56" if i % 2 else "12",
+                    "malignant": i % 4 == 0,
+                },
             }
         )
     return out
@@ -39,9 +42,18 @@ def test_holdout_is_deterministic_for_a_seed():
 def test_holdout_stratifies_every_stratum_by_the_fractions():
     scenarios = _scenarios(40)
     assignment = create_holdout(
-        scenarios, strata=["expect.skin_tone", "expect.malignant"], fractions=(0.5, 0.25, 0.25), seed=1
+        scenarios,
+        strata=["expect.skin_tone", "expect.malignant"],
+        fractions=(0.5, 0.25, 0.25),
+        seed=1,
     )
-    manifest = holdout_manifest(assignment, scenarios, ["expect.skin_tone", "expect.malignant"], (0.5, 0.25, 0.25), 1)
+    manifest = holdout_manifest(
+        assignment,
+        scenarios,
+        ["expect.skin_tone", "expect.malignant"],
+        (0.5, 0.25, 0.25),
+        1,
+    )
     # strata are (12, malignant)=10, (12, benign)=10, (56, benign)=20 - odd i is never malignant
     assert manifest["total"] == 40 and manifest["counts"]["train"] == 20
     assert set(manifest["counts_by_stratum"]) == {"12/True", "12/False", "56/False"}
@@ -71,7 +83,9 @@ def test_field_value_joins_lists_and_reads_dotted_paths():
 def test_write_and_load_holdout_roundtrip(tmp_path: Path):
     scenarios = _scenarios(12)
     assignment = create_holdout(scenarios, strata=["expect.skin_tone"], seed=3)
-    manifest = holdout_manifest(assignment, scenarios, ["expect.skin_tone"], (0.5, 0.25, 0.25), 3)
+    manifest = holdout_manifest(
+        assignment, scenarios, ["expect.skin_tone"], (0.5, 0.25, 0.25), 3
+    )
     paths = write_holdout(tmp_path / "evaluations", assignment, manifest)
     assert paths["test"] == tmp_path / "evaluations" / "splits" / "eval" / "test.yml"
     names, loaded_manifest = load_holdout(tmp_path / "evaluations", "test")

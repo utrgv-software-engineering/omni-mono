@@ -36,7 +36,11 @@ def test_agent_service_builds_agent_correctly():
     # The import is inside the method, so check the source
     import inspect
 
-    source = inspect.getsource(AgentService.start_run)
+    # start_run reserves run ownership and hands off to _start_owned_run,
+    # which builds the agent.
+    source = inspect.getsource(AgentService.start_run) + inspect.getsource(
+        AgentService._start_owned_run
+    )
     # Should use internal builder helper rather than direct create_unified_agent
     assert "_build_agent_for_session" in source
     # Should NOT use create_unified_agent (causes circular dependency)

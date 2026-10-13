@@ -8,6 +8,7 @@ from omniagents.execution import AgentHostResources, register_host_environment
 from omniagents.core.agents import service as service_module
 from omniagents.core.agents.service import AgentService
 from omniagents.core.agents.specs import AgentSpec
+from omniagents.core.runtime.ownership import HEARTBEAT_INTERVAL
 
 
 @dataclass
@@ -76,8 +77,14 @@ async def test_start_run_retries_emit_status_and_error(monkeypatch):
     monkeypatch.setenv("OMNIAGENTS_RETRY_MAX", "2")
     monkeypatch.setenv("OMNIAGENTS_RETRY_BASE", "0.25")
     delays = []
+    real_sleep = asyncio.sleep
 
     async def fake_sleep(delay):
+        # asyncio.sleep is patched process-wide; the runtime-ownership
+        # heartbeat is not part of the retry schedule under test.
+        if delay == HEARTBEAT_INTERVAL:
+            await real_sleep(delay)
+            return
         delays.append(delay)
 
     monkeypatch.setattr(service_module.asyncio, "sleep", fake_sleep)

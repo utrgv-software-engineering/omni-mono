@@ -39,6 +39,20 @@ def _make_service() -> AgentService:
     )
 
 
+async def _issued_token(session) -> str:
+    """The server-issued approval token once the prompt is pending.
+
+    Approval identity is an opaque ``apr_*`` token, never the provider's
+    tool call id (that travels as ``source_call_id`` metadata).
+    """
+    for _ in range(100):
+        if session.pending_tool_approvals:
+            (token,) = session.pending_tool_approvals
+            return token
+        await asyncio.sleep(0)
+    raise AssertionError("approval request never became pending")
+
+
 @pytest.mark.asyncio
 async def test_request_emits_event_to_session_channels():
     service = _make_service()
@@ -58,19 +72,21 @@ async def test_request_emits_event_to_session_channels():
             run_id="run_a",
         )
     )
-    await asyncio.sleep(0)
+    token = await _issued_token(sess_target)
 
     assert ch_target.events, "target session channel should receive approval event"
     method, payload = ch_target.events[0]
     assert method == "tool_approval_requested"
-    assert payload["call_id"] == "call_1"
+    assert payload["call_id"] == token
+    assert token.startswith("apr_")
+    assert payload["source_call_id"] == "call_1"
     assert payload["tool_name"] == "delete_file"
     assert payload["session_id"] == sess_target.id
     assert payload["run_id"] == "run_a"
     assert ch_other.events == [], "unrelated session must not receive prompt"
 
     await service.tool_approval_response(
-        call_id="call_1", decision="approve", always_approve=False
+        call_id=token, decision="approve", always_approve=False
     )
     response = await task
     assert response == {
@@ -98,11 +114,11 @@ async def test_response_with_always_approve_updates_session_allow_set():
             arguments=None,
         )
     )
-    await asyncio.sleep(0)
+    token = await _issued_token(sess)
 
     assert "run_shell" not in sess.always_allow_tools
     await service.tool_approval_response(
-        call_id="call_2", decision="approve", always_approve=True
+        call_id=token, decision="approve", always_approve=True
     )
     await task
 
@@ -127,10 +143,10 @@ async def test_response_reject_propagates_message():
             arguments=None,
         )
     )
-    await asyncio.sleep(0)
+    token = await _issued_token(sess)
 
     await service.tool_approval_response(
-        call_id="call_3",
+        call_id=token,
         decision="reject",
         rejection_message="Too dangerous",
     )
@@ -155,8 +171,8 @@ async def test_response_broadcasts_resolved_event():
             arguments=None,
         )
     )
-    await asyncio.sleep(0)
-    await service.tool_approval_response(call_id="call_4", decision="approve")
+    token = await _issued_token(sess)
+    await service.tool_approval_response(call_id=token, decision="approve")
     await task
 
     # Both channels saw the request and the resolution.
@@ -189,15 +205,15 @@ async def test_request_queued_when_no_channel_attached():
             arguments=None,
         )
     )
-    await asyncio.sleep(0)
+    token = await _issued_token(sess)
 
     # Pending tool approvals are surfaced via session.pending_tool_approvals
     # so a reconnecting client can replay them.
-    assert "call_5" in sess.pending_tool_approvals
-    payload = sess.pending_tool_approvals["call_5"]
+    payload = sess.pending_tool_approvals[token]
     assert payload["tool_name"] == "t"
+    assert payload["source_call_id"] == "call_5"
 
     # Resolve to clean up the awaiting future.
-    await service.tool_approval_response(call_id="call_5", decision="reject")
+    await service.tool_approval_response(call_id=token, decision="reject")
     await task
-    assert "call_5" not in sess.pending_tool_approvals
+    assert token not in sess.pending_tool_approvals

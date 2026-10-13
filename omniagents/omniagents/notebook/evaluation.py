@@ -701,10 +701,21 @@ class EvalSuiteResults:
                 cur: Any = r.metadata or {}
                 for part in path.split("."):
                     cur = cur.get(part) if isinstance(cur, dict) else None
-                keys = [] if cur is None else ([str(v) for v in cur] if isinstance(cur, (list, tuple)) else [str(cur)])
+                keys = (
+                    []
+                    if cur is None
+                    else (
+                        [str(v) for v in cur]
+                        if isinstance(cur, (list, tuple))
+                        else [str(cur)]
+                    )
+                )
             for key in keys:
                 groups.setdefault(key, []).append(r)
-        return {key: EvalSuiteResults(suite=self.suite, results=rs) for key, rs in sorted(groups.items())}
+        return {
+            key: EvalSuiteResults(suite=self.suite, results=rs)
+            for key, rs in sorted(groups.items())
+        }
 
     def failures(self) -> List[EvalResult]:
         """Return only failed results."""
@@ -1060,7 +1071,9 @@ class EvalSuite:
         results: List[EvalResult] = []
         total = len(cases) * repeats
 
-        for i, (case, trial) in enumerate((c, t) for c in cases for t in range(repeats)):
+        for i, (case, trial) in enumerate(
+            (c, t) for c in cases for t in range(repeats)
+        ):
             if show_progress:
                 print(f"\rRunning {i + 1}/{total}: {case.name}...", end="", flush=True)
 

@@ -206,8 +206,7 @@ def test_describe_reports_identity_and_protocol(tmp_path, capsys, monkeypatch):
     from omniagents.product_cli import run_product_describe_command
 
     manifest = tmp_path / "project.yml"
-    manifest.write_text(
-        dedent("""
+    manifest.write_text(dedent("""
             name: acme_code
             product:
               name: acme-code
@@ -217,8 +216,7 @@ def test_describe_reports_identity_and_protocol(tmp_path, capsys, monkeypatch):
               update:
                 index_url: https://pypi.example.test/acme/acme-code/
                 command_hint: acme update
-            """)
-    )
+            """))
     bootstrap_product(manifest)
 
     rc = run_product_describe_command(["--json"])
@@ -245,13 +243,11 @@ def test_describe_null_update_block(tmp_path, capsys):
     from omniagents.product_cli import run_product_describe_command
 
     manifest = tmp_path / "project.yml"
-    manifest.write_text(
-        dedent("""
+    manifest.write_text(dedent("""
             name: bare
             product:
               slug: bare
-            """)
-    )
+            """))
     bootstrap_product(manifest)
 
     assert run_product_describe_command([]) == 0

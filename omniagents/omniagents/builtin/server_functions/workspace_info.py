@@ -127,7 +127,7 @@ async def fs_list_dir(
             up = None
         else:
             relative = workspace.relative_path(workspace.resolve(base))
-            if relative in (None, "."):
+            if relative is None or relative == ".":
                 up = None
             else:
                 parent_relative = relative.rsplit("/", 1)[0] if "/" in relative else "."

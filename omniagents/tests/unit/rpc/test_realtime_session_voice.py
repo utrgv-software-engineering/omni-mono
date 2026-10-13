@@ -91,9 +91,7 @@ async def test_assistant_deltas_flush_as_one_final_at_turn_end(
         raw("transcript_delta", item_id="item_a", delta="world", response_id="r1"),
         raw("turn_ended"),
     ]
-    session, _ = await start_streaming_session(
-        realtime_spec, settings_with_key, events
-    )
+    session, _ = await start_streaming_session(realtime_spec, settings_with_key, events)
 
     out = [e async for e in session.stream_events()]
 
@@ -112,17 +110,13 @@ async def test_assistant_deltas_flush_as_one_final_at_turn_end(
 
 
 @pytest.mark.asyncio
-async def test_flush_keeps_items_separate_by_item_id(
-    realtime_spec, settings_with_key
-):
+async def test_flush_keeps_items_separate_by_item_id(realtime_spec, settings_with_key):
     events = [
         raw("transcript_delta", item_id="item_a", delta="First", response_id="r1"),
         raw("transcript_delta", item_id="item_b", delta="Second", response_id="r1"),
         raw("turn_ended"),
     ]
-    session, _ = await start_streaming_session(
-        realtime_spec, settings_with_key, events
-    )
+    session, _ = await start_streaming_session(realtime_spec, settings_with_key, events)
 
     finals = [
         e
@@ -227,9 +221,7 @@ async def test_no_paired_session_falls_back_to_history_db(
             transcript="Hello there",
         ),
     ]
-    session, _ = await start_streaming_session(
-        realtime_spec, settings_with_key, events
-    )
+    session, _ = await start_streaming_session(realtime_spec, settings_with_key, events)
 
     with patch(
         "omniagents.rpc.realtime_session.history_db.append_message"
@@ -495,9 +487,7 @@ async def test_start_leaves_tools_ungated_without_paired_session(
 
 
 @pytest.mark.asyncio
-async def test_tool_approval_required_routes_approve(
-    realtime_spec, settings_with_key
-):
+async def test_tool_approval_required_routes_approve(realtime_spec, settings_with_key):
     paired = make_paired_session()
     agent_service = Mock()
     agent_service.request_tool_approval = AsyncMock(
@@ -540,9 +530,7 @@ async def test_tool_approval_required_routes_approve(
 
 
 @pytest.mark.asyncio
-async def test_tool_approval_required_routes_reject(
-    realtime_spec, settings_with_key
-):
+async def test_tool_approval_required_routes_reject(realtime_spec, settings_with_key):
     paired = make_paired_session()
     agent_service = Mock()
     agent_service.request_tool_approval = AsyncMock(

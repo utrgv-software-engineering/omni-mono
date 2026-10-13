@@ -126,7 +126,7 @@ class Debug:
         old = sys.stderr
         sys.stderr = target
         for handler in logging.getLogger().handlers:
-            if getattr(handler, "stream", None) is old:
+            if isinstance(handler, logging.StreamHandler) and handler.stream is old:
                 handler.stream = target
         cls._stderr_redirected = True
 

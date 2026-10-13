@@ -1283,8 +1283,12 @@ class Session:  # noqa: D101
                 "[Missing tool output: execution outcome unknown. "
                 "Do not assume it is safe to repeat the action.]"
             )
-            if recorder is not None and run_id:
-                key = recorder._tool_natural_key({"run_id": run_id, "call_id": call_id})
+            key = (
+                recorder._tool_natural_key({"run_id": run_id, "call_id": call_id})
+                if recorder is not None and run_id
+                else None
+            )
+            if recorder is not None and key is not None:
                 recorded = recorder.store.get_item(
                     self.id, derive_item_id(self.id, key)
                 )

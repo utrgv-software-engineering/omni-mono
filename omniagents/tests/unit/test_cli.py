@@ -1514,16 +1514,36 @@ def test_eval_scenarios_holdout_writes_split_files(monkeypatch, tmp_path, capsys
                 "name": "alpha",
                 "evaluation": {
                     "scenarios": [
-                        {"name": f"case-{i}", "prompt": "hi", "expect": {"tone": str(i % 2)}} for i in range(8)
+                        {
+                            "name": f"case-{i}",
+                            "prompt": "hi",
+                            "expect": {"tone": str(i % 2)},
+                        }
+                        for i in range(8)
                     ]
                 },
             }
         ),
         encoding="utf-8",
     )
-    monkeypatch.setitem(sys.modules, "omniagents.core.eval.loader", _make_fake_loader_module(compiled))
+    monkeypatch.setitem(
+        sys.modules, "omniagents.core.eval.loader", _make_fake_loader_module(compiled)
+    )
     monkeypatch.setattr(
-        sys, "argv", ["omniagents", "eval", "scenarios", "holdout", "--project", str(tmp_path), "--strata", "expect.tone", "--seed", "3"]
+        sys,
+        "argv",
+        [
+            "omniagents",
+            "eval",
+            "scenarios",
+            "holdout",
+            "--project",
+            str(tmp_path),
+            "--strata",
+            "expect.tone",
+            "--seed",
+            "3",
+        ],
     )
     with pytest.raises(SystemExit) as exc:
         cli_main()
@@ -1540,7 +1560,12 @@ def test_eval_suite_run_accepts_split_and_stores_manifest(monkeypatch, tmp_path)
     import yaml as _yaml
 
     compiled = tmp_path / "agent.yml"
-    compiled.write_text(_yaml.safe_dump({"name": "alpha", "model": "m", "evaluation": {"scenarios": []}}), encoding="utf-8")
+    compiled.write_text(
+        _yaml.safe_dump(
+            {"name": "alpha", "model": "m", "evaluation": {"scenarios": []}}
+        ),
+        encoding="utf-8",
+    )
     fake_loader = _make_fake_loader_module(compiled)
     seen = {}
     original_load = fake_loader.load_eval_config
@@ -1556,7 +1581,23 @@ def test_eval_suite_run_accepts_split_and_stores_manifest(monkeypatch, tmp_path)
     def fake_run_evaluation(*args, **kwargs):
         return {
             "runs": [],
-            "metrics": [{"name": "r", "label": "r", "type": "pass_rate", "value": 0.5, "interval": [0.2, 0.8], "runs": 4, "target": {"op": ">=", "value": 0.4}, "meets_target": True, "slices": {"expect.tone": {"12": {"value": 1.0, "interval": [0.3, 1.0], "runs": 2}}}}],
+            "metrics": [
+                {
+                    "name": "r",
+                    "label": "r",
+                    "type": "pass_rate",
+                    "value": 0.5,
+                    "interval": [0.2, 0.8],
+                    "runs": 4,
+                    "target": {"op": ">=", "value": 0.4},
+                    "meets_target": True,
+                    "slices": {
+                        "expect.tone": {
+                            "12": {"value": 1.0, "interval": [0.3, 1.0], "runs": 2}
+                        }
+                    },
+                }
+            ],
             "stats": {},
             "manifest": {"agent": "alpha", "model": "m"},
         }
@@ -1572,7 +1613,22 @@ def test_eval_suite_run_accepts_split_and_stores_manifest(monkeypatch, tmp_path)
 
     monkeypatch.setattr("omniagents.cli.save_evaluation_run", fake_save)
     monkeypatch.setattr(
-        sys, "argv", ["omniagents", "eval", "suite", "run", "--project", str(tmp_path), "--split", "test", "--reporter", "tap", "--color", "never"]
+        sys,
+        "argv",
+        [
+            "omniagents",
+            "eval",
+            "suite",
+            "run",
+            "--project",
+            str(tmp_path),
+            "--split",
+            "test",
+            "--reporter",
+            "tap",
+            "--color",
+            "never",
+        ],
     )
     try:
         cli_main()

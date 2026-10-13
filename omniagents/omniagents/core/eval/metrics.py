@@ -70,7 +70,12 @@ def _rate_block(pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]]) -> Dict[str,
     passed = sum(1 for _, m in pairs if bool(m.get("passed")) is True)
     value = (passed / total) if total else None
     low, high = wilson_interval(passed, total) if total else (None, None)
-    return {"value": value, "runs": total, "passed_runs": passed, "interval": [low, high] if total else None}
+    return {
+        "value": value,
+        "runs": total,
+        "passed_runs": passed,
+        "interval": [low, high] if total else None,
+    }
 
 
 def _slices(

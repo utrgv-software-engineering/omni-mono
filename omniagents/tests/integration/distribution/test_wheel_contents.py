@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 from zipfile import ZipFile
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PRODUCT_MODULES = (
     "omniagents/product_cli.py",

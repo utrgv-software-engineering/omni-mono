@@ -14,7 +14,9 @@ def _fake_evaluate(outcomes):
         n = calls.get(name, 0)
         calls[name] = n + 1
         passed, text = outcomes[name][n % len(outcomes[name])]
-        return EvalResult(input=input or "", output=text, passed=passed, measures=[], name=name)
+        return EvalResult(
+            input=input or "", output=text, passed=passed, measures=[], name=name
+        )
 
     return fake, calls
 
@@ -23,7 +25,12 @@ def test_run_with_repeats_indexes_trials_and_rates_per_case(monkeypatch):
     suite = EvalSuite("s")
     suite.add("flaky", "q", metadata={"tone": "34"})
     suite.add("broken", "q", metadata={"tone": "56"})
-    fake, calls = _fake_evaluate({"flaky": [(True, "ok"), (False, "no"), (True, "ok")], "broken": [(False, ""), (False, ""), (False, "")]})
+    fake, calls = _fake_evaluate(
+        {
+            "flaky": [(True, "ok"), (False, "no"), (True, "ok")],
+            "broken": [(False, ""), (False, ""), (False, "")],
+        }
+    )
     monkeypatch.setattr(ev, "evaluate", fake)
 
     results = asyncio.run(suite.run(agent=object(), repeats=3, show_progress=False))
@@ -42,7 +49,9 @@ def test_by_field_slices_by_metadata_and_tags(monkeypatch):
     suite.add("a", "q", metadata={"tone": "12"}, tags=["dev"])
     suite.add("b", "q", metadata={"tone": "56"}, tags=["dev", "malignant"])
     suite.add("c", "q", metadata={"tone": "56"}, tags=["test"])
-    fake, _ = _fake_evaluate({"a": [(True, "ok")], "b": [(False, "no")], "c": [(True, "ok")]})
+    fake, _ = _fake_evaluate(
+        {"a": [(True, "ok")], "b": [(False, "no")], "c": [(True, "ok")]}
+    )
     monkeypatch.setattr(ev, "evaluate", fake)
 
     results = asyncio.run(suite.run(agent=object(), show_progress=False))
@@ -61,4 +70,8 @@ def test_default_repeats_is_one(monkeypatch):
     fake, calls = _fake_evaluate({"a": [(True, "ok")]})
     monkeypatch.setattr(ev, "evaluate", fake)
     results = asyncio.run(suite.run(agent=object(), show_progress=False))
-    assert calls == {"a": 1} and results.results[0].trial == 0 and results.results[0].metadata is None
+    assert (
+        calls == {"a": 1}
+        and results.results[0].trial == 0
+        and results.results[0].metadata is None
+    )

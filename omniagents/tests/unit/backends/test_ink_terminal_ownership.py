@@ -20,8 +20,7 @@ from omniagents.workspace import HostWorkspace
 
 def test_detach_terminal_moves_fds_and_restores(tmp_path):
     log = tmp_path / "log.txt"
-    script = textwrap.dedent(
-        f"""
+    script = textwrap.dedent(f"""
         import os, sys
         from omniagents.backends.ink import detach_terminal
         log_fd = os.open({str(log)!r}, os.O_WRONLY | os.O_CREAT)
@@ -34,8 +33,7 @@ def test_detach_terminal_moves_fds_and_restores(tmp_path):
         restore()
         os.write(1, b"after\\n")
         os.write(2, b"after-err\\n")
-        """
-    )
+        """)
     result = subprocess.run(
         [sys.executable, "-c", script],
         input=b"typed\n",

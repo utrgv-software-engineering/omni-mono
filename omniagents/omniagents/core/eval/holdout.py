@@ -69,16 +69,26 @@ def create_holdout(
     The assignment is a function of (names, strata values, seed): re-running
     on the same scenarios gives the same split.
     """
-    if len(fractions) != 3 or abs(sum(fractions) - 1.0) > 1e-6 or any(f < 0 for f in fractions):
-        raise ValueError(f"fractions must be three non-negative numbers summing to 1, got {list(fractions)}")
+    if (
+        len(fractions) != 3
+        or abs(sum(fractions) - 1.0) > 1e-6
+        or any(f < 0 for f in fractions)
+    ):
+        raise ValueError(
+            f"fractions must be three non-negative numbers summing to 1, got {list(fractions)}"
+        )
     keyed = [(scenario_key(sc), sc) for sc in scenarios]
     missing = [sc for k, sc in keyed if not k]
     if missing:
-        raise ValueError(f"{len(missing)} scenario(s) have neither name nor id and cannot be assigned")
+        raise ValueError(
+            f"{len(missing)} scenario(s) have neither name nor id and cannot be assigned"
+        )
     names = [k for k, _ in keyed]
     if len(set(names)) != len(names):
         dupes = sorted({n for n in names if names.count(n) > 1})
-        raise ValueError(f"scenario names must be unique to hold out by name; duplicates: {dupes[:5]}")
+        raise ValueError(
+            f"scenario names must be unique to hold out by name; duplicates: {dupes[:5]}"
+        )
 
     groups: Dict[Tuple[str, ...], List[str]] = {}
     for key, sc in keyed:
@@ -117,7 +127,9 @@ def holdout_manifest(
         by_split[split] += 1
         stratum = "/".join(field_value(sc, p) for p in strata) or "(all)"
         by_stratum.setdefault(stratum, {s: 0 for s in SPLIT_NAMES})[split] += 1
-    digest = hashlib.sha256("\n".join(sorted(assignment)).encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256("\n".join(sorted(assignment)).encode("utf-8")).hexdigest()[
+        :16
+    ]
     return {
         "seed": int(seed),
         "strata": list(strata),
@@ -129,7 +141,9 @@ def holdout_manifest(
     }
 
 
-def write_holdout(eval_dir: Path, assignment: Dict[str, str], manifest: Dict[str, Any]) -> Dict[str, Path]:
+def write_holdout(
+    eval_dir: Path, assignment: Dict[str, str], manifest: Dict[str, Any]
+) -> Dict[str, Path]:
     """Write ``<eval_dir>/splits/eval/{train,dev,test}.yml`` and ``manifest.yml``."""
     out_dir = Path(eval_dir) / HOLDOUT_SUBDIR
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -137,9 +151,14 @@ def write_holdout(eval_dir: Path, assignment: Dict[str, str], manifest: Dict[str
     for split in SPLIT_NAMES:
         names = sorted(k for k, s in assignment.items() if s == split)
         path = out_dir / f"{split}.yml"
-        path.write_text(yaml.safe_dump({"split": split, "scenarios": names}, sort_keys=False), encoding="utf-8")
+        path.write_text(
+            yaml.safe_dump({"split": split, "scenarios": names}, sort_keys=False),
+            encoding="utf-8",
+        )
         paths[split] = path
-    (out_dir / "manifest.yml").write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    (out_dir / "manifest.yml").write_text(
+        yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+    )
     paths["manifest"] = out_dir / "manifest.yml"
     return paths
 
@@ -158,5 +177,9 @@ def load_holdout(eval_dir: Path, split: str) -> Tuple[List[str], Dict[str, Any]]
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     names = [str(n) for n in (data.get("scenarios") or [])]
     manifest_path = out_dir / "manifest.yml"
-    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+    manifest = (
+        yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {}
+    )
     return names, (manifest or {})

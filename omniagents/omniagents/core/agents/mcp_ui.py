@@ -50,8 +50,12 @@ _call_id_to_tool: Dict[str, str] = {}
 # rather than being inlined in the response (mcp-ui demo pattern).
 # Keyed by server and raw tool name.
 _tool_ui_resource: Dict[tuple[str, str], Dict[str, str]] = {}
-_run_state = ContextVar("mcp_ui_run_state", default=None)
-_invocation_id = ContextVar("mcp_ui_invocation_id", default=None)
+_run_state: ContextVar[Optional[tuple[dict, dict, dict]]] = ContextVar(
+    "mcp_ui_run_state", default=None
+)
+_invocation_id: ContextVar[Optional[str]] = ContextVar(
+    "mcp_ui_invocation_id", default=None
+)
 
 
 def set_invocation_id(call_id):

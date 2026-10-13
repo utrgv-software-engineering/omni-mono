@@ -52,7 +52,7 @@ async def test_stop_run_cancels_active_run(monkeypatch):
     channel = RecordingChannel()
     service.channel = channel
 
-    async def fake_builder(self, session_arg, approval_callback, *, spec=None):
+    async def fake_builder(self, session_arg, approval_callback, *, spec=None, **_):
         return object()
 
     service._build_agent_for_session = types.MethodType(fake_builder, service)
@@ -105,28 +105,20 @@ async def test_stop_run_cancels_active_run(monkeypatch):
 @pytest.mark.asyncio
 async def test_send_user_message_appends_history():
     service = build_service()
-
-    class StubSession:
-        def __init__(self):
-            self.messages = []
-
-        def append_message(self, message: dict) -> None:
-            self.messages.append(message)
+    # A real session: the message must land in the canonical thread, so a
+    # bare stub with only append_message no longer models the contract.
+    session = service._session_manager.get_or_create(None)
 
     class StubManager:
-        def __init__(self):
-            self.session = StubSession()
-
         def get_by_run_id(self, run_id: str):
             assert run_id == "run-123"
-            return self.session
+            return session
 
-    manager = StubManager()
-    service._session_manager = manager
+    service._session_manager = StubManager()
 
     await service.send_user_message("run-123", "hello")
 
-    assert manager.session.messages == [{"role": "user", "content": "hello"}]
+    assert session.history[-1] == {"role": "user", "content": "hello"}
 
 
 @pytest.mark.asyncio
@@ -551,6 +543,9 @@ async def test_tool_approval_always_routes_mcp_tuple_to_mcp_allowlist():
     ``always_allow_mcp_tools``; plain tools keep landing in the flat set."""
     service = build_service()
     sess = types.SimpleNamespace(id="s1", channels=[])
+    # Durable persistence of the decision is covered elsewhere; this test is
+    # about which allow-list the identity lands in.
+    service._persist_approval_decision = lambda *a, **k: None
 
     # MCP-derived call: tracker holds the identity tuple.
     fut = asyncio.get_event_loop().create_future()

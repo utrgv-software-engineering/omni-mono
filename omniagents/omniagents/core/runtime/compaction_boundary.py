@@ -23,8 +23,9 @@ def compaction_input_filter(session, service, max_input_tokens, strip_input):
 
     checkpoint_written = False
     sdk_context = getattr(session, "_sdk_history", None)
-    run_id = (
-        getattr(session, "active_run_id", None) or asyncio.current_task().get_name()
+    task = asyncio.current_task()
+    run_id = getattr(session, "active_run_id", None) or (
+        task.get_name() if task is not None else None
     )
 
     async def filter_input(data):

@@ -92,8 +92,8 @@ __all__ = [
 
 import contextvars as _contextvars
 
-_current_session_id: _contextvars.ContextVar[Optional[str]] = (
-    _contextvars.ContextVar("omniagents_current_session_id", default=None)
+_current_session_id: _contextvars.ContextVar[Optional[str]] = _contextvars.ContextVar(
+    "omniagents_current_session_id", default=None
 )
 
 

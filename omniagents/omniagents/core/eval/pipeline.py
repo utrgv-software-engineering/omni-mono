@@ -792,7 +792,7 @@ async def run_evaluation_async(
         metrics = compute_metrics(all_runs, metrics_cfg, default_slice_by=slice_by)
     else:
         metrics = compute_metrics(all_runs, metrics_cfg)
-    out = {
+    out: Dict[str, Any] = {
         "agent_yaml": str(cfg_path),
         "runs": all_runs,
         "metrics": metrics,

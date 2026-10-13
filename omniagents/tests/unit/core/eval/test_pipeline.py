@@ -593,7 +593,9 @@ def test_run_evaluation_with_environment_returns_error_on_failed_build(
     assert result["runs"] == []
 
 
-def test_run_evaluation_async_indexes_repeats_and_records_answered(monkeypatch, tmp_path):
+def test_run_evaluation_async_indexes_repeats_and_records_answered(
+    monkeypatch, tmp_path
+):
     config_text = textwrap.dedent("""
         evaluation:
           defaults:
@@ -613,9 +615,20 @@ def test_run_evaluation_async_indexes_repeats_and_records_answered(monkeypatch, 
     cfg_path = tmp_path / "compiled.yaml"
     cfg_path.write_text(config_text)
     monkeypatch.setattr(pipeline, "_load_local_measures", lambda cfg, **kw: None)
-    monkeypatch.setattr(registry, "_MEASURES", {"tool_hallucination": lambda ctx: {"name": "tool_hallucination", "passed": True}})
+    monkeypatch.setattr(
+        registry,
+        "_MEASURES",
+        {
+            "tool_hallucination": lambda ctx: {
+                "name": "tool_hallucination",
+                "passed": True,
+            }
+        },
+    )
 
-    async def fake_run_scenario(agent_yaml, scenario, defaults, eval_cfg, workflow_name, **kw):
+    async def fake_run_scenario(
+        agent_yaml, scenario, defaults, eval_cfg, workflow_name, **kw
+    ):
         return {
             "scenario": scenario["name"],
             "prompt": scenario["prompt"],

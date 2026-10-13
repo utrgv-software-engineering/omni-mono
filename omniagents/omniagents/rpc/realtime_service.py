@@ -273,9 +273,7 @@ class RealtimeService(RpcMethodsBase):
             # Task was cancelled during cleanup
             pass
         except Exception as e:
-            logger.exception(
-                "Realtime session %s event stream failed", session_id
-            )
+            logger.exception("Realtime session %s event stream failed", session_id)
             # Surface the failure on the channel the client actually
             # listens to — a bare "realtime_error" method has no handler.
             try:
