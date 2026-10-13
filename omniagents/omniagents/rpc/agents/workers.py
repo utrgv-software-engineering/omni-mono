@@ -59,6 +59,10 @@ class WorkerHandle:
     #: perspective.
     project_slug: str | None = None
     agent_slug: str | None = None
+    #: Model ref the worker was spawned with (the parent session's selected
+    #: model), reused on resume so a resumed worker keeps it. None = the
+    #: product default.
+    model: str | None = None
 
 
 # Worker transcript events forwarded to the observer: the narrative
@@ -350,6 +354,7 @@ class WorkerManager:
             project_slug=project_slug,
             agent_slug=agent_slug,
             configure_spec=configure_spec,
+            model=model,
         )
         handle.monitor_task = asyncio.create_task(
             self._monitor_worker(handle), name=f"worker-monitor-{run_id or worker_id}"
@@ -517,7 +522,7 @@ class WorkerManager:
         new_handle = await self._create_worker(
             worker_id=worker_id,
             task_description=message,
-            model=None,
+            model=handle.model,
             session_id=old_session_id,
             context=context,
             parent_session_id=handle.parent_session_id,

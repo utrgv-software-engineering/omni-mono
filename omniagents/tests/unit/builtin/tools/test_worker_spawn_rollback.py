@@ -148,3 +148,64 @@ def test_spawn_success_keeps_worktree(_spawn_env, monkeypatch):
 
     assert strategy.prepared and strategy.cleaned == []
     assert list(wt._WORKER_WORKSPACES) == strategy.prepared
+
+
+@pytest.mark.parametrize(
+    ("active", "expected"), [("codex/gpt-6-luna", "codex/gpt-6-luna"), (None, None)]
+)
+def test_worker_runs_on_the_parent_chats_selected_model(
+    _spawn_env, monkeypatch, active, expected
+):
+    """A per-chat /model switch carries into workers; no switch → default."""
+    import omniagents.core.agents.service as service_mod
+
+    parent = SimpleNamespace(active_model=active, user_id="u1")
+    fake_service = SimpleNamespace(
+        channel=None,
+        get_session=lambda sid: parent if sid == "sess-1" else None,
+        _session_manager=None,
+    )
+    monkeypatch.setattr(service_mod, "current_service", lambda: fake_service)
+    captured = {}
+
+    async def spawn(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(wt, "manager", lambda: SimpleNamespace(spawn=spawn, workers={}))
+
+    asyncio.run(_invoke_spawn())
+
+    assert captured["model"] == expected
+
+
+def test_resumed_worker_keeps_its_model():
+    from omniagents.rpc.agents.workers import WorkerHandle, WorkerManager
+
+    async def run():
+        manager = WorkerManager.__new__(WorkerManager)
+
+        async def cleanup():
+            return None
+
+        handle = WorkerHandle(
+            agent=SimpleNamespace(cleanup=cleanup),
+            run_id="r1",
+            session_id="s1",
+            done_event=asyncio.Event(),
+            monitor_task=None,
+            status="completed",
+            worker_id="w1",
+            model="codex/gpt-6-luna",
+        )
+        manager._workers = {"w1": handle}
+        seen = {}
+
+        async def create_worker(**kwargs):
+            seen.update(kwargs)
+            return handle
+
+        manager._create_worker = create_worker
+        await manager.resume("w1", "keep going")
+        assert seen["model"] == "codex/gpt-6-luna"
+
+    asyncio.run(run())

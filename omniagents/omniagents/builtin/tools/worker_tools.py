@@ -647,10 +647,18 @@ async def spawn_worker_run(
         _svc = None
     parent_project_slug = None
     parent_agent_slug = None
+    # Workers run on the model the parent chat is using (a per-chat /model
+    # switch included), not silently on the product default. None falls back
+    # to the default, as before.
+    parent_model = None
     if _svc is not None:
+        _parent_session = _svc.get_session(parent_sid) if parent_sid else None
+        _active = getattr(_parent_session, "active_model", None)
+        if isinstance(_active, str) and _active.strip():
+            parent_model = _active.strip()
         parent_principal = getattr(getattr(_svc, "channel", None), "principal", None)
         if parent_principal is None and parent_sid:
-            _owner = getattr(_svc.get_session(parent_sid), "user_id", None)
+            _owner = getattr(_parent_session, "user_id", None)
             if isinstance(_owner, str) and _owner:
                 from omniagents.core.providers.auth.base import UserIdentity
 
@@ -689,6 +697,7 @@ async def spawn_worker_run(
             parent_service=_svc,
             project_slug=parent_project_slug,
             agent_slug=parent_agent_slug,
+            model=parent_model,
             **spawn_options,
         )
     except Exception as e:
