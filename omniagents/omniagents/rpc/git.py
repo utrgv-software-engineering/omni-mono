@@ -1612,7 +1612,7 @@ class GitManager:
                 reason="layout_unresolved",
             )
         toplevel, git_dir, common_dir = lines
-        if not _same_path(toplevel, repo_abs):
+        if not _same_path(toplevel, repo_abs, _path_module(workspace)):
             raise GitRepositoryNotFound(
                 "the repository root is outside the environment workspace",
                 repo=repo_id,
@@ -1721,8 +1721,13 @@ class GitManager:
             for source in sources
             if source.get("mountName")
         }
+        pm = _path_module(workspace)
+
+        def path_key(value: str) -> str:
+            return pm.normcase(pm.normpath(value))
+
         by_path = {
-            str(source.get("path")).rstrip("/"): source
+            path_key(str(source.get("path"))): source
             for source in sources
             if source.get("path")
         }
@@ -1738,7 +1743,7 @@ class GitManager:
             # A repository that *is* one of the launcher's published
             # ``--source`` mounts is labelled as such, so a client can
             # tell a project source apart from an incidental checkout.
-            source = by_mount.get(repo_id) or by_path.get(repo_abs.rstrip("/"))
+            source = by_mount.get(repo_id) or by_path.get(path_key(repo_abs))
             if source is None:
                 source = next(
                     (
@@ -1842,7 +1847,11 @@ class GitManager:
             "git_common_dir": git_dir.stdout.strip() or None,
             "is_linked_worktree": (
                 git_dir.stdout.strip() != ""
-                and not _same_path(git_dir.stdout.strip(), f"{repo_abs}/.git")
+                and not _same_path(
+                    git_dir.stdout.strip(),
+                    _path_module(workspace).join(repo_abs, ".git"),
+                    _path_module(workspace),
+                )
             ),
         }
 
@@ -3875,8 +3884,18 @@ class GitManager:
 # ---------------------------------------------------------------------------
 
 
-def _same_path(left: str, right: str) -> bool:
-    return left.rstrip("/") == right.rstrip("/")
+def _path_module(workspace: Any) -> Any:
+    """The workspace's path syntax (``Workspace.path_module``); POSIX for
+    duck-typed workspaces that don't declare one."""
+    return getattr(workspace, "path_module", posixpath)
+
+
+def _same_path(left: str, right: str, path_module: Any = posixpath) -> bool:
+    """Whether two absolute paths name the same location, in the workspace's
+    path syntax. git reports Windows paths with forward slashes
+    (``C:/Users/...``); the workspace spells them ``C:\\Users\\...``."""
+    pm = path_module
+    return pm.normcase(pm.normpath(left)) == pm.normcase(pm.normpath(right))
 
 
 def _relative_to(candidate: str, root: str) -> Optional[str]:

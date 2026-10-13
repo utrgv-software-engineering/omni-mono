@@ -183,7 +183,7 @@ def test_catalog_store_uses_product_config_dir(tmp_path):
     bootstrap_product(root)
     store = model_store()
     assert store is not None
-    assert store.config_path() == tmp_path / "xdg" / "acme_code" / "models.json"
+    assert store.config_path() == _product_config_dir() / "models.json"
 
 
 def test_catalog_store_env_expansion_at_resolve(tmp_path, monkeypatch):
@@ -236,7 +236,7 @@ def test_governed_hook_gated_on_platform_auth(tmp_path, monkeypatch):
 
     root = _product_dir(tmp_path)
     bootstrap_product(root)
-    config_dir = tmp_path / "xdg" / "acme_code"
+    config_dir = _product_config_dir()
     write_governed_config(config_dir, {"gov": {"type": "openai", "models": {}}})
 
     # Signed out: a governed file on disk must NOT apply.
@@ -264,7 +264,7 @@ def test_governed_hook_reapplies_once_when_cache_missing(tmp_path, monkeypatch):
         lambda config_dir=None: calls.append(config_dir),
     )
     assert _conventional_governed_config() is None
-    assert calls == [tmp_path / "xdg" / "acme_code"]
+    assert calls == [_product_config_dir()]
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +347,11 @@ def test_load_project_installs_catalog_implicitly(tmp_path):
     store = model_store()
     assert store is not None
     assert store.get_default_model_name() == "gpt-test"
+
+
+def _product_config_dir():
+    """The installed product's config dir, as the product resolves it on this
+    OS (``%APPDATA%/<windows name>`` on Windows, XDG elsewhere)."""
+    from omniagents.core.config.dirs import product_config_dir
+
+    return product_config_dir()

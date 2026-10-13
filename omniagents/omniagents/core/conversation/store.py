@@ -56,6 +56,17 @@ from .model import (
 logger = logging.getLogger(__name__)
 
 
+def _flush_wal(conn: sqlite3.Connection) -> None:
+    """Checkpoint and truncate the WAL after a deletion.
+
+    secure_delete zeroes freed pages in the main database, but in WAL mode
+    the deleted rows' last versions sit in the ``-wal`` file until a
+    checkpoint. Deleted transcripts must leave no bytes behind, so retention
+    paths fold the WAL back and truncate it right away.
+    """
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
 def _attach_initial_item(thread: Thread, turn: Turn, item: Item) -> Item:
     if item.thread_id != thread.thread_id or item.turn_id != turn.turn_id:
         raise ValueError("Initial item must belong to its turn")
@@ -923,6 +934,13 @@ class SqliteConversationStore(ConversationStore):
         # content, so "deleted" should mean gone, not unlinked. Cheaper
         # than VACUUM (no whole-file rewrite, no exclusive lock on delete).
         conn.execute("PRAGMA secure_delete = ON")
+        # WAL: one sync per commit instead of the rollback journal's several.
+        # Every item write commits, and on Windows each fsync is slow enough
+        # that long conversations stalled. synchronous stays FULL (the
+        # default), so a committed item survives power loss exactly as
+        # before. The store lives in the local config dir; WAL needs a local
+        # filesystem, not a network share.
+        conn.execute("PRAGMA journal_mode = WAL")
         for statement in _SQLITE_SCHEMA:
             conn.execute(statement)
         for statement in _SQLITE_MIGRATIONS:
@@ -1137,6 +1155,7 @@ class SqliteConversationStore(ConversationStore):
                 "DELETE FROM submission_receipts WHERE thread_id = ?", (thread_id,)
             )
             conn.commit()
+            _flush_wal(conn)
             return cursor.rowcount > 0
 
     @staticmethod
@@ -1275,6 +1294,7 @@ class SqliteConversationStore(ConversationStore):
                 except sqlite3.OperationalError:  # pragma: no cover - defensive
                     logger.exception("FTS optimize failed for %s", table)
             conn.commit()
+            _flush_wal(conn)
 
     def _count_for_threads(
         self, table: str, thread_ids: Sequence[str]

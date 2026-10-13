@@ -20,6 +20,8 @@ import subprocess
 from types import SimpleNamespace
 from typing import Any, Dict, List
 
+import sys
+
 import pytest
 
 from omniagents.rpc.git import (
@@ -566,6 +568,9 @@ async def test_multi_repository_projects_are_addressed_unambiguously(
     assert api_status["untracked"] == []
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="these directory names cannot be created on Windows"
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("awkward", ["back\\slash", "C:", "E:migration.sql"])
 async def test_discovery_survives_directories_it_cannot_address(

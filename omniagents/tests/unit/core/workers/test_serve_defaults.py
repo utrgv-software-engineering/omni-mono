@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import os
+
 import pytest
 
 from omniagents.execution import (
@@ -101,7 +103,9 @@ def test_sources_mapping_kinds_and_paths():
     ):
         assert serve_worker_sources() == [
             WorkerSource(name="api", host_path="/host/api", git=True),
-            WorkerSource(name="web", host_path="/workspace/web", git=True),
+            WorkerSource(
+                name="web", host_path=os.path.join("/workspace", "web"), git=True
+            ),
             WorkerSource(name="notes", host_path="/host/notes", git=False),
         ]
 
@@ -118,7 +122,11 @@ def test_sources_mapping_skips_unusable_entries():
         ]
     ):
         assert serve_worker_sources() == [
-            WorkerSource(name="scratch", host_path="/workspace/scratch", git=False),
+            WorkerSource(
+                name="scratch",
+                host_path=os.path.join("/workspace", "scratch"),
+                git=False,
+            ),
         ]
 
 

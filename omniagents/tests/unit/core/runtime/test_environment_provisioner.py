@@ -358,7 +358,9 @@ async def test_host_profile_workspace_is_unconfined(tmp_path):
 
     assert workspace.enforces_confinement is False
     # An absolute path outside the root names what it says.
-    assert workspace.resolve("/etc/hostname") == str(Path("/etc/hostname").resolve())
+    assert workspace.resolve("/etc/hostname") == str(
+        (Path(workspace.root) / "/etc/hostname").resolve()
+    )
     # Relative paths are still anchored at the root — unconfined lifts the
     # fence, it does not move the frame of reference.
     assert workspace.resolve("sub/file.txt") == str(tmp_path / "sub" / "file.txt")
@@ -392,7 +394,7 @@ async def test_host_profile_git_metadata_workspace_is_unconfined(tmp_path):
     assert isinstance(provisioned.workspace, GitMetadataHostWorkspace)
     assert provisioned.workspace.enforces_confinement is False
     assert provisioned.workspace.resolve("/etc/hostname") == str(
-        Path("/etc/hostname").resolve()
+        (Path(provisioned.workspace.root) / "/etc/hostname").resolve()
     )
     # The authorized-metadata overrides still answer the boundary questions
     # git_* asks, which is what they were always for.

@@ -2006,8 +2006,16 @@ class TestRetentionLeavesNoBytes:
             )
 
             def present() -> bool:
-                with open(path, "rb") as handle:
-                    return SECRET_MARKER.encode() in handle.read()
+                # On disk = the database plus its WAL (fresh writes live in
+                # the -wal file until a checkpoint).
+                found = False
+                for candidate in (path, f"{path}-wal"):
+                    try:
+                        with open(candidate, "rb") as handle:
+                            found = found or SECRET_MARKER.encode() in handle.read()
+                    except FileNotFoundError:
+                        pass
+                return found
 
             assert present()
             backend.delete_thread("t1")

@@ -122,7 +122,9 @@ async def test_host_workspace_allows_out_of_root_absolute(tmp_path: Path):
     the agent may reach anywhere the process can, as its shell already does."""
     unconfined = HostWorkspace(root=str(tmp_path))
     # No raise, returns the resolved absolute path verbatim.
-    assert unconfined.resolve("/etc/hostname") == str(Path("/etc/hostname").resolve())
+    assert unconfined.resolve("/etc/hostname") == str(
+        (Path(unconfined.root) / "/etc/hostname").resolve()
+    )
     assert unconfined.resolve("../../outside.txt").endswith("outside.txt")
 
 
@@ -149,7 +151,9 @@ async def test_host_workspace_has_no_fenced_mode(tmp_path: Path):
     assert "confine" not in inspect.signature(HostWorkspace.__init__).parameters
     workspace = HostWorkspace(root=str(tmp_path))
     assert workspace.enforces_confinement is False
-    assert workspace.resolve("/etc/passwd") == str(Path("/etc/passwd").resolve())
+    assert workspace.resolve("/etc/passwd") == str(
+        (Path(workspace.root) / "/etc/passwd").resolve()
+    )
 
 
 # -- resolve_confined: confinement as the caller's policy -----------------
@@ -165,7 +169,9 @@ async def test_resolve_confined_reimposes_the_boundary_when_unconfined(
 ):
     unconfined = HostWorkspace(root=str(tmp_path))
 
-    assert unconfined.resolve("/etc/hostname") == str(Path("/etc/hostname").resolve())
+    assert unconfined.resolve("/etc/hostname") == str(
+        (Path(unconfined.root) / "/etc/hostname").resolve()
+    )
     with pytest.raises(WorkspaceEscapeError):
         unconfined.resolve_confined("/etc/hostname")
 

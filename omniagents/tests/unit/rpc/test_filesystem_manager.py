@@ -15,6 +15,8 @@ import hashlib
 import os
 from typing import Any, Dict, List, Optional
 
+import sys
+
 import pytest
 
 from omniagents.rpc.filesystem import (
@@ -836,6 +838,10 @@ async def test_download_open_missing_and_directory(tmp_path):
         await manager.download_open("s1", ".", channel=FakeChannel())
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX-only: Windows blocks replacing an open file, and symlinks need privileges",
+)
 @pytest.mark.asyncio
 async def test_download_read_never_follows_a_symlink_swapped_in_mid_transfer(
     tmp_path,
@@ -1375,6 +1381,10 @@ async def test_generic_scan_does_not_descend_symlinked_directories(tmp_path):
     assert [entry["path"] for entry in listing["entries"]] == ["link"]
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX-only: these filenames cannot be created on Windows",
+)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("workspace_cls", [HostWorkspace, GenericWorkspace])
 async def test_unaddressable_names_are_dropped_identically_on_both_scanners(
