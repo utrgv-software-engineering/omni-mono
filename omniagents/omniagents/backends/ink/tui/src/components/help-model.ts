@@ -11,7 +11,7 @@ const GLOBAL: HelpSection = {
   title: "Everywhere",
   rows: [
     { keys: "tab / shift+tab", label: "next / previous screen" },
-    { keys: "alt+1..5", label: "chat · review · agents · files · terminal" },
+    { keys: "alt+1..4", label: "chat · review · agents · files" },
     { keys: "ctrl+p", label: "sessions: switch, search, fork" },
     { keys: "ctrl+k", label: "command palette" },
     { keys: "ctrl+g", label: "git panel" },
@@ -86,14 +86,6 @@ const SCREENS: Record<Screen, HelpSection> = {
       { keys: "↑↓ enter", label: "browse · expand" },
       { keys: "e", label: "edit (ctrl+s saves)" },
       { keys: "m", label: "mention the file in the composer" },
-    ],
-  },
-  term: {
-    title: "Terminal",
-    rows: [
-      { keys: "i / enter", label: "give the keyboard to the shell" },
-      { keys: "ctrl+]", label: "take the keyboard back" },
-      { keys: "pgup / pgdn", label: "scrollback" },
     ],
   },
 };

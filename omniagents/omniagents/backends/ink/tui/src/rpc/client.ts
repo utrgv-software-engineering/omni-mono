@@ -75,7 +75,8 @@ const CLIENT_CAPABILITIES: Capabilities = {
   approvals: true,
   artifacts: false,
   replay: true,
-  terminal: true,
+  // The TUI runs inside the user's own terminal; it opens no shells.
+  terminal: false,
   experimental_operations: [...REQUESTED_EXPERIMENTAL_OPERATIONS],
   disabled_notifications: [],
 };

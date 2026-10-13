@@ -71,7 +71,6 @@ import { FilesScreen } from "./FilesScreen.js";
 import { StatusBar, type Screen } from "./StatusBar.js";
 import { TopTabs } from "./TopTabs.js";
 import { GitPanel } from "./GitPanel.js";
-import { TerminalScreen } from "./TerminalScreen.js";
 import { ModelPickerPanel } from "./ModelPickerPanel.js";
 import { CommandPalettePanel } from "./CommandPalettePanel.js";
 import { HelpPanel } from "./HelpPanel.js";
@@ -381,16 +380,6 @@ export const App: React.FC<AppProps> = ({
   // the conversation (composer, transcript, decisions inline); review
   // is the full-height diff screen. Drawer overlays live on chat.
   const [screen, setScreen] = useState<Screen>("chat");
-  // True while the terminal screen's PTY owns the keyboard. Lifted here
-  // because the tab bar has to show it: it decides whether Tab cycles
-  // tabs or completes a filename, and an invisible mode that reassigns
-  // Tab is exactly the trap this design exists to avoid. Arriving on the
-  // screen never captures — you press `i`/enter — so leaving always
-  // clears it and every arrival starts in the same state.
-  const [termCaptured, setTermCaptured] = useState(false);
-  useEffect(() => {
-    if (screen !== "term") setTermCaptured(false);
-  }, [screen]);
   // Text queued for the composer (the Files screen's @path mention
   // bridge): consumed by MultiLineInputOptimized on the next render.
   const [pendingInsert, setPendingInsert] = useState<string | null>(null);
@@ -437,7 +426,6 @@ export const App: React.FC<AppProps> = ({
     review: false,
     agents: false,
     files: false,
-    term: false,
   });
   const runDiffForBadge = useRunDiff();
   const workersForBadge = useSubagents();
@@ -890,9 +878,6 @@ export const App: React.FC<AppProps> = ({
           case "workers":
             setScreen("agents");
             return {};
-          case "terminal":
-            setScreen("term");
-            return {};
           case "artifacts":
             setActivePanel("artifacts");
             return {};
@@ -1307,7 +1292,7 @@ export const App: React.FC<AppProps> = ({
         // Tab cycles screens — from anywhere, always. Overlays close so
         // the switch is never invisible. Shift+Tab reverses.
         if (key.tab && !key.ctrl && !key.meta) {
-          const order: Screen[] = ["chat", "review", "agents", "files", "term"];
+          const order: Screen[] = ["chat", "review", "agents", "files"];
           setScreen((prev) => {
             const index = order.indexOf(prev);
             const step = key.shift ? order.length - 1 : 1;
@@ -1333,17 +1318,10 @@ export const App: React.FC<AppProps> = ({
             setScreen("files");
             return;
           }
-          if (input === "5") {
-            setScreen("term");
-            return;
-          }
         }
         // Panel chords — each toggles its own panel; opening one closes
         // whatever else was open (single-owner rule).
-        //
-        // ctrl+] is deliberately NOT among them. It means exactly one
-        // thing, on the terminal screen only: give the keyboard back.
-        // Screens are reached with Tab and alt+1..5.
+        // Screens are reached with Tab and alt+1..4.
         if (key.ctrl && input === "b") {
           setActivePanel((prev) => (prev === "jobs" ? null : "jobs"));
           return;
@@ -1536,11 +1514,7 @@ export const App: React.FC<AppProps> = ({
         <Box flexDirection="column" gap={0} height={terminalHeight - 1}>
           {/* Header with logo and welcome message - visible only before first message */}
           {/* Browser-style tabs on the top row: where you are. */}
-          <TopTabs
-            screen={screen}
-            unread={unread}
-            termCaptured={termCaptured}
-          />
+          <TopTabs screen={screen} unread={unread} />
 
           {/* Message history + dock panels - all scrollable together.
               Goal/Tasks/Workers/QueuedMessages/Notifications/BashJobs/
@@ -1568,16 +1542,6 @@ export const App: React.FC<AppProps> = ({
               <AgentsScreen
                 active={screen === "agents"}
                 height={availableTerminalHeight}
-                onExit={() => setScreen("chat")}
-              />
-            ) : screen === "term" ? (
-              <TerminalScreen
-                active={screen === "term"}
-                height={availableTerminalHeight}
-                client={client}
-                sessionId={sessionId ?? null}
-                captured={termCaptured}
-                onCapturedChange={setTermCaptured}
                 onExit={() => setScreen("chat")}
               />
             ) : screen === "files" ? (

@@ -20,11 +20,7 @@ export const TopTabs = themedMemo<{
   screen: Screen;
   /** `*` = changed since last visited (the browser-unread dot). */
   unread: Record<Screen, boolean>;
-  /** The terminal's PTY currently owns the keyboard — so Tab is the
-   *  shell's, not ours. The corner hint must say so rather than keep
-   *  advertising a key that no longer switches tabs. */
-  termCaptured?: boolean;
-}>(({ screen, unread, termCaptured = false }) => {
+}>(({ screen, unread }) => {
   const approval = useApproval();
   const mcpApproval = useMcpApproval();
   const escalation = useEscalation();
@@ -54,14 +50,8 @@ export const TopTabs = themedMemo<{
           : ` 3 agents${star("agents")} `,
     },
     { id: "files", text: ` 4 files${star("files")} ` },
-    {
-      id: "term",
-      text: termCaptured ? ` 5 term ● ` : ` 5 term${star("term")} `,
-    },
   ];
-  // Captured means Tab belongs to the shell; saying "tab" there would
-  // advertise the one key that does not do what the bar implies.
-  const hint = termCaptured ? "ctrl+] release " : "tab ";
+  const hint = "tab ";
   const tabsWidth = labels.reduce((sum, l) => sum + l.text.length, 0);
   const filler = " ".repeat(Math.max(0, width - tabsWidth - hint.length));
 

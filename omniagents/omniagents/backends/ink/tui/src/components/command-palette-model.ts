@@ -231,17 +231,6 @@ export const BUILTIN_COMMANDS: readonly CommandRow[] = [
     source: "client",
   },
   {
-    name: "terminal",
-    function: null,
-    description: "Interactive shell: go to the terminal screen (alt+5)",
-    usage: "",
-    args: { kind: "none" },
-    aliases: ["term"],
-    during_run: true,
-    order: 67,
-    source: "client",
-  },
-  {
     name: "sessions",
     function: null,
     description: "Browse, search, fork or switch conversations (ctrl+p)",
