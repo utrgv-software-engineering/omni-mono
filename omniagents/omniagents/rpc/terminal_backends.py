@@ -51,6 +51,8 @@ from omniagents.core.sandbox.pty_stream import PtyStreamingSession
 __all__ = [
     "PtyBackend",
     "HostPtyBackend",
+    "WindowsConPtyBackend",
+    "host_pty_backend",
     "SessionPtyBackend",
     "PtyHandle",
     "PtyOpenError",
@@ -237,6 +239,168 @@ class HostPtyBackend:
 
     async def exit_code(self, handle: _HostHandle) -> Optional[int]:
         return handle.exit_code_value
+
+
+# ---------------------------------------------------------------------------
+# WindowsConPtyBackend — host terminals on Windows via ConPTY (pywinpty)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _ConPtyHandle:
+    shell: str
+    cwd: Optional[str]
+    cols: int
+    rows: int
+    process: Any  # winpty.PtyProcess
+    closed: bool = False
+    exit_code_value: Optional[int] = None
+
+
+def _windows_shell_argv(shell: str) -> tuple[list[str], dict]:
+    """Argv/env for a host terminal shell on Windows.
+
+    Profiles name POSIX shells (``bash -i``, ``/bin/bash``); those resolve to
+    the same Git Bash the agent's shell tool uses. Anything else (``pwsh``,
+    ``cmd.exe``) is launched as given.
+    """
+    from omniagents.workspace.host_shell import (
+        HostShellUnavailable,
+        find_windows_bash,
+        host_shell_env,
+    )
+
+    parts = [p.strip('"') for p in shlex.split(shell, posix=False)] if shell else []
+    if not parts:
+        parts = ["bash"]
+    program = parts[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if program in {"bash", "bash.exe", "sh", "sh.exe"}:
+        bash = find_windows_bash()
+        if bash is None:
+            raise HostShellUnavailable(
+                "The terminal needs Git Bash on Windows, and none was found."
+            )
+        args = [a for a in parts[1:]]
+        if "-i" not in args and "--login" not in args and "-l" not in args:
+            # A login shell sets up Git Bash's prompt and PATH like its own
+            # terminal does; CHERE_INVOKING (host_shell_env) keeps the cwd.
+            args = ["--login", "-i"] + args
+        env = host_shell_env(None, bash)
+        env.setdefault("TERM", "xterm-256color")
+        return [bash] + args, env
+    env = os.environ.copy()
+    return parts, env
+
+
+class WindowsConPtyBackend:
+    """Host terminals on Windows, where ``pty``/``termios`` don't exist.
+
+    Uses ConPTY through ``pywinpty`` (a Windows-only dependency of the
+    server extra). Reads block, so they run on the default executor, the
+    same model as :class:`HostPtyBackend`.
+    """
+
+    async def start(
+        self,
+        *,
+        shell: str,
+        cwd: Optional[str],
+        cols: int,
+        rows: int,
+        user: Optional[str] = None,
+    ) -> _ConPtyHandle:
+        _ = user  # identity changes are a sandbox concern
+        cols = max(10, int(cols))
+        rows = max(5, int(rows))
+        try:
+            from winpty import PtyProcess  # type: ignore[import-not-found]
+        except ImportError as e:  # pragma: no cover - packaging error
+            raise PtyOpenError(
+                "Host terminals on Windows need the pywinpty package."
+            ) from e
+        try:
+            argv, env = _windows_shell_argv(shell)
+            loop = asyncio.get_running_loop()
+            process = await loop.run_in_executor(
+                None,
+                lambda: PtyProcess.spawn(
+                    argv,
+                    cwd=cwd if cwd and cwd.strip() else None,
+                    env=env,
+                    dimensions=(rows, cols),
+                ),
+            )
+        except PtyOpenError:
+            raise
+        except Exception as e:
+            raise PtyOpenError(str(e)) from e
+        return _ConPtyHandle(
+            shell=shell,
+            cwd=cwd if cwd and cwd.strip() else None,
+            cols=cols,
+            rows=rows,
+            process=process,
+        )
+
+    async def write(self, handle: _ConPtyHandle, data: bytes) -> None:
+        if handle.closed:
+            return
+        text = data.decode("utf-8", errors="replace")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, handle.process.write, text)
+
+    async def resize(self, handle: _ConPtyHandle, cols: int, rows: int) -> None:
+        if handle.closed:
+            return
+        cols = max(10, int(cols))
+        rows = max(5, int(rows))
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, handle.process.setwinsize, rows, cols)
+        handle.cols = cols
+        handle.rows = rows
+
+    def stream(self, handle: _ConPtyHandle) -> AsyncIterator[bytes]:
+        return self._stream(handle)
+
+    async def _stream(self, handle: _ConPtyHandle) -> AsyncIterator[bytes]:
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                try:
+                    chunk = await loop.run_in_executor(None, handle.process.read, 4096)
+                except (EOFError, OSError):
+                    break
+                if not chunk:
+                    if not handle.process.isalive():
+                        break
+                    continue
+                yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+        finally:
+            handle.closed = True
+            handle.exit_code_value = getattr(handle.process, "exitstatus", None)
+
+    async def close(self, handle: _ConPtyHandle) -> None:
+        handle.closed = True
+        loop = asyncio.get_running_loop()
+
+        def _terminate() -> None:
+            with _suppress():
+                handle.process.terminate(force=True)
+            with _suppress():
+                handle.process.close()
+
+        await loop.run_in_executor(None, _terminate)
+        handle.exit_code_value = getattr(handle.process, "exitstatus", None)
+
+    async def exit_code(self, handle: _ConPtyHandle) -> Optional[int]:
+        return handle.exit_code_value
+
+
+def host_pty_backend() -> "HostPtyBackend | WindowsConPtyBackend":
+    """The host terminal backend for this OS."""
+    if os.name == "nt":
+        return WindowsConPtyBackend()
+    return HostPtyBackend()
 
 
 # ---------------------------------------------------------------------------

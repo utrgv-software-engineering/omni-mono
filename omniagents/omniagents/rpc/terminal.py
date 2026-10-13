@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, cast
 
 from omniagents.rpc.terminal_backends import (
-    HostPtyBackend,
+    host_pty_backend,
     PtyBackend,
     PtyHandle,
     PtyOpenError,
@@ -91,7 +91,7 @@ class TerminalManager:
         # (PtyHandle is opaque per backend), so mypy can't prove structural
         # conformance to the PtyBackend protocol.
         self._backend: PtyBackend = (
-            backend if backend is not None else cast(PtyBackend, HostPtyBackend())
+            backend if backend is not None else cast(PtyBackend, host_pty_backend())
         )
         self._default_shell = default_shell
         self._default_cwd = default_cwd

@@ -39,6 +39,8 @@ studio = [
 server = [
     "fastapi[all]>=0.115.12",
     "uvicorn>=0.34.1",
+    # Host terminals on Windows (ConPTY); POSIX hosts use the stdlib pty.
+    "pywinpty>=2.0.14; sys_platform == 'win32'",
 ]
 web = [
     "fastapi[all]>=0.115.12",

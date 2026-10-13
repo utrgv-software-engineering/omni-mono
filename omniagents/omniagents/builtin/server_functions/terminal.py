@@ -80,9 +80,9 @@ def _backend_for_lease(lease):
     # its shell must ride the sandbox session exactly like its tools do).
     # No sandbox session → the shell runs as a child of serve on the host.
     if lease.sandbox_runtime is None:
-        from omniagents.rpc.terminal_backends import HostPtyBackend
+        from omniagents.rpc.terminal_backends import host_pty_backend
 
-        return HostPtyBackend()
+        return host_pty_backend()
 
     from omniagents.core.sandbox.pty_stream import coerce_pty_streaming
     from omniagents.rpc.terminal_backends import SessionPtyBackend

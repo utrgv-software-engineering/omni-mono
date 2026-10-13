@@ -115,3 +115,27 @@ def test_job_logs_follow_workspace_path_syntax():
         _bash_jobs.log_path_for("C:\\proj", "bash-1", ntpath)
         == "C:\\proj\\.omniagents\\jobs\\bash-1.log"
     )
+
+
+@pytest.mark.parametrize(
+    "shell",
+    ["bash -i", "/bin/bash", "bash", "", '"C:\\Program Files\\Git\\bin\\bash.exe"'],
+)
+def test_windows_terminal_shell_resolves_to_git_bash(monkeypatch, tmp_path, shell):
+    from omniagents.rpc import terminal_backends
+
+    root, bash, _ = _fake_git(tmp_path)
+    monkeypatch.setattr(host_shell.sys, "platform", "win32")
+    monkeypatch.setenv(host_shell.BASH_ENV_VAR, str(bash))
+    argv, env = terminal_backends._windows_shell_argv(shell)
+    assert argv[0] == str(bash)
+    assert "-i" in argv
+    assert env["CHERE_INVOKING"] == "1"
+    assert env["TERM"] == "xterm-256color"
+
+
+def test_windows_terminal_keeps_non_posix_shells(monkeypatch):
+    from omniagents.rpc import terminal_backends
+
+    argv, _ = terminal_backends._windows_shell_argv("pwsh -NoLogo")
+    assert argv == ["pwsh", "-NoLogo"]

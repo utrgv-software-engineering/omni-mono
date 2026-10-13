@@ -126,3 +126,32 @@ def test_file_tools_accept_git_bash_paths(host_workspace):
         assert "via msys path" in str(result.llm_output)
 
     asyncio.run(run())
+
+
+def test_host_terminal_runs_an_interactive_bash(tmp_path):
+    """The Terminal tab's host backend: ConPTY + Git Bash on Windows,
+    pty + bash elsewhere."""
+    from omniagents.rpc.terminal_backends import host_pty_backend
+
+    async def run():
+        backend = host_pty_backend()
+        handle = await backend.start(
+            shell="bash -i", cwd=str(tmp_path), cols=80, rows=24
+        )
+        try:
+            await backend.write(handle, b"echo term-$((40 + 2))\r")
+            seen = b""
+
+            async def collect():
+                nonlocal seen
+                async for chunk in backend.stream(handle):
+                    seen += chunk
+                    if b"term-42" in seen:
+                        return
+
+            await asyncio.wait_for(collect(), timeout=30)
+        finally:
+            await backend.close(handle)
+        assert b"term-42" in seen
+
+    asyncio.run(run())
