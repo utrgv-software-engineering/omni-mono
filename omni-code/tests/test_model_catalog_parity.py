@@ -9,6 +9,8 @@ module returned (snapshotted below from default_models.py at deletion),
 and the installed store must serve them as its default layer.
 """
 
+from typing import Any
+
 from omniagents.core.models import install_model_catalog, model_store
 from omniagents.core.models.catalog import load_model_catalog
 from omniagents.core.product import product_info
@@ -25,7 +27,7 @@ _REASONING_MODEL_SETTINGS = {
     "extra_body": {"include": ["reasoning.encrypted_content"]},
 }
 
-OLD_DEFAULT_PROVIDERS = {
+OLD_DEFAULT_PROVIDERS: dict[str, Any] = {
     "openai": {
         "type": "openai",
         "api_key": "${OPENAI_API_KEY}",
