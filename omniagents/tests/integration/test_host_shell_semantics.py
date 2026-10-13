@@ -155,3 +155,15 @@ def test_host_terminal_runs_an_interactive_bash(tmp_path):
         assert b"term-42" in seen
 
     asyncio.run(run())
+
+
+def test_host_writes_are_byte_exact_on_every_os(host_workspace):
+    """No newline translation: an agent edit in an LF repo stays LF."""
+
+    async def run():
+        await host_workspace.write_text("lf.txt", "one\ntwo\n")
+        await host_workspace.write_text("lf.txt", "three\n", append=True)
+        raw = await host_workspace.read_bytes("lf.txt")
+        assert raw == b"one\ntwo\nthree\n"
+
+    asyncio.run(run())

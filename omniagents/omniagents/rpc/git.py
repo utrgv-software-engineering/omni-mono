@@ -2462,6 +2462,9 @@ class GitManager:
         )
         worktrees = parse_worktree_porcelain(result.stdout)
         for entry in worktrees:
+            # git prints Windows paths with forward slashes; report them in
+            # the host's own spelling like every other absolute path.
+            entry["path"] = _path_module(workspace).normpath(entry["path"])
             relative = workspace.relative_path(entry["path"])
             entry["repo"] = relative
             entry["accessible"] = relative is not None

@@ -160,7 +160,11 @@ class HostWorkspace(Workspace):
         mode = "a" if append else "w"
 
         def _write() -> None:
-            with absolute.open(mode, encoding=encoding) as f:
+            # newline="": write exactly the text given. Text mode on Windows
+            # would turn every "\n" into "\r\n" — rewriting whole files the
+            # agent edits in LF repositories, and corrupting patches fed to
+            # `git apply`. Same bytes on every OS.
+            with absolute.open(mode, encoding=encoding, newline="") as f:
                 f.write(content)
 
         await asyncio.to_thread(_write)
