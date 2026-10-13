@@ -12,7 +12,7 @@
 # store's models.json providers use; ${VAR} expands at resolve time).
 
 # Default model to use if user hasn't set one.
-default_model: gpt-5.2
+default_model: gpt-6-luna
 
 # Provider profile implied by unprefixed model refs ("gpt-5.1");
 # other providers use "<provider_name>/<model_name>".
@@ -45,6 +45,12 @@ providers:
       gpt-5.2:
         model: gpt-5.2
         label: GPT-5.2
+        max_input_tokens: 272000
+        max_output_tokens: 128000
+        model_settings: *reasoning_model_settings
+      gpt-6-luna:
+        model: gpt-6-luna
+        label: GPT-6 Luna
         max_input_tokens: 272000
         max_output_tokens: 128000
         model_settings: *reasoning_model_settings
