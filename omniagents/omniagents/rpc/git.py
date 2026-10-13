@@ -91,6 +91,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
+import ntpath
 import posixpath
 import re
 import secrets
@@ -1055,19 +1056,32 @@ def redact_remote_url(url: Optional[str]) -> Optional[str]:
     return f"{scheme}://{remainder}"
 
 
-def local_remote_path(url: str) -> Optional[str]:
+_DOS_DRIVE = re.compile(r"^[A-Za-z]:(?:[\\/]|$)")
+
+
+def local_remote_path(url: str, *, windows: bool = False) -> Optional[str]:
     """The filesystem path a remote URL refers to, or ``None`` if remote.
 
     Git treats a bare path and a ``file://`` URL as local; everything
     with a transport (``https``, ``ssh``, ``git``, ``ext``, or the
     ``host:path`` scp-like form) reaches a different machine and crosses
     no workspace boundary.
+
+    *windows*: the git that will read this URL runs on Windows, where a
+    drive path (``C:\\x``, ``C:/x``) is local — not an scp ``host:path``.
+    Missing that let a remote naming any folder on the machine skip the
+    workspace-boundary check.
     """
     if not isinstance(url, str) or not url.strip():
         return None
     text = url.strip()
     if text.startswith("file://"):
-        return text[len("file://") :] or "/"
+        path = text[len("file://") :] or "/"
+        if windows and _DOS_DRIVE.match(path.lstrip("/")):
+            return path.lstrip("/")
+        return path
+    if windows and _DOS_DRIVE.match(text):
+        return text
     scheme, separator, rest = text.partition("://")
     if separator:
         return None
@@ -2431,7 +2445,12 @@ class GitManager:
                     "upstream": fields[2] or None,
                     "upstream_remote": fields[3] or None,
                     "current": fields[4] == "*",
-                    "worktree_path": fields[5] or None,
+                    # git prints Windows paths with forward slashes.
+                    "worktree_path": (
+                        _path_module(workspace).normpath(fields[5])
+                        if fields[5]
+                        else None
+                    ),
                     # ``worker/`` is the branch namespace
                     # WorktreeIsolation creates for isolated workers; the
                     # category lets a client group them without inventing
@@ -3426,13 +3445,12 @@ class GitManager:
         for url in (line.strip() for line in urls.stdout.split("\n")):
             if not url:
                 continue
-            local = local_remote_path(url)
+            pm = _path_module(workspace)
+            local = local_remote_path(url, windows=pm is ntpath)
             if local is None:
                 continue
-            target = (
-                local if posixpath.isabs(local) else posixpath.join(repo_abs, local)
-            )
-            if not workspace.contains_path(posixpath.normpath(target)):
+            target = local if pm.isabs(local) else pm.join(repo_abs, local)
+            if not workspace.contains_path(pm.normpath(target)):
                 raise GitStateInvalid(
                     "this remote points at a location outside the environment "
                     "workspace, so fetching it would import objects the "

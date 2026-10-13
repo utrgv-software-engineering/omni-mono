@@ -2881,6 +2881,23 @@ def test_local_remote_path_separates_local_from_networked():
     assert local_remote_path("") is None
 
 
+def test_windows_drive_remotes_are_local_not_scp():
+    # On Windows, git reads C:\\x and C:/x as local paths; treating them as
+    # scp host:path skipped the workspace-boundary check entirely.
+    assert (
+        local_remote_path("C:\\Users\\s\\outside", windows=True)
+        == "C:\\Users\\s\\outside"
+    )
+    assert local_remote_path("C:/Users/s/outside", windows=True) == "C:/Users/s/outside"
+    assert (
+        local_remote_path("file:///C:/Users/s/outside", windows=True)
+        == "C:/Users/s/outside"
+    )
+    # Elsewhere, single-letter "hosts" keep git's scp meaning.
+    assert local_remote_path("C:/Users/s/outside") is None
+    assert local_remote_path("git@host:repo.git", windows=True) is None
+
+
 def test_redact_remote_url_drops_userinfo():
     assert redact_remote_url("https://user:tok@host/x.git") == "https://host/x.git"
     # A bare token in the userinfo is indistinguishable from a username,
