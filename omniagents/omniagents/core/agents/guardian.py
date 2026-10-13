@@ -150,6 +150,17 @@ async def _review(
         logger.warning("guardian: no resolvable model; routing to human")
         return None
     model_provider, env_overrides = provider_from_runtime(runtime)
+    model_settings = None
+    if model_provider is None and not configured:
+        # An agent that declares its provider in its own spec (YAML
+        # ``model_provider: {type: openai-oauth}``) isn't in the model store,
+        # so the runtime above carries no provider. Review on the agent's own
+        # provider and settings rather than falling through to the SDK
+        # default, which has no credentials for it (and, for Codex OAuth,
+        # would also send requests the backend rejects without its settings).
+        model_provider, model_settings = _spec_provider(service)
+        if model_provider is not None:
+            env_overrides = {}
 
     prompt = await _build_prompt(service, session, request)
     spec = AgentSpec(
@@ -157,6 +168,7 @@ async def _review(
         welcome_text="",
         get_agent_instructions=guardian_policy_text,
         build_agent=None,
+        model_settings=model_settings,
     )
     raw = await run_agent_once(
         spec,
@@ -168,6 +180,25 @@ async def _review(
         max_turns=1,
     )
     return parse_assessment(raw)
+
+
+def _spec_provider(service: Any) -> tuple[Any, Optional[dict]]:
+    """The provider and model settings an agent spec declares for itself."""
+    spec = getattr(service, "spec", None)
+    config = getattr(spec, "model_provider_config", None)
+    if not config:
+        return None, None
+    from omniagents.core.agents.run_options import build_model_provider
+
+    try:
+        provider = build_model_provider(config)
+    except Exception:
+        logger.exception("guardian: could not build the agent's model provider")
+        return None, None
+    if provider is None:
+        return None, None
+    settings = getattr(spec, "model_settings", None)
+    return provider, dict(settings) if isinstance(settings, dict) else None
 
 
 def parse_assessment(raw: str) -> Optional[GuardianAssessment]:
