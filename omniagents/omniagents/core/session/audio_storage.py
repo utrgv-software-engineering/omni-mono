@@ -100,7 +100,9 @@ class LocalAudioStorage(AudioStorageBackend):
         filename = f"{item_id}_{content_index}.{audio_format}"
         file_path = session_dir / filename
         await asyncio.to_thread(file_path.write_bytes, audio_data)
-        return str(file_path.relative_to(self.base_path))
+        # A storage key, not a host path: "/"-separated on every OS so it
+        # stays valid in transcripts read elsewhere (blob backends, other OSes).
+        return file_path.relative_to(self.base_path).as_posix()
 
     async def get_audio_chunk(self, relative_path: str) -> bytes:
         file_path = self.base_path / relative_path

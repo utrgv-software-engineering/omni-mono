@@ -156,6 +156,7 @@ def loop_layers(fake_product, tmp_path, monkeypatch):
     xdg = tmp_path / "xdg"
     (xdg / "acme_cfg").mkdir(parents=True)
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("APPDATA", str(xdg))  # Windows config root
     return {"root": fake_product, "ws": ws, "cfg": xdg / "acme_cfg"}
 
 

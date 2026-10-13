@@ -7,6 +7,18 @@ because that second part is what lets agent file and shell tools run in a
 browser with no special casing.
 """
 
+import sys
+
+import pytest
+
+if sys.platform == "win32":
+    pytest.skip(
+        "Known gap: the bashkit/wasm sandbox is not yet supported on Windows "
+        "hosts (VFS mount paths); wasm is off by default",
+        allow_module_level=True,
+    )
+
+
 import importlib.util
 import io
 import os

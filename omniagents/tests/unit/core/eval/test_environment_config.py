@@ -123,6 +123,7 @@ def test_local_workspace_defaults_apply(tmp_path):
 
 def test_absolute_fixtures_dir_and_tilde_workspace_root(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows home for ~
     env = build_environment(
         {
             "type": "local_workspace",

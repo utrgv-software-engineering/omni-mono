@@ -35,6 +35,7 @@ def _fresh_state(monkeypatch, tmp_path):
     reset_model_store()
     # Keep conventional config dirs inside the sandbox.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "xdg"))  # Windows config root
     yield
     reset_model_store()
     reset_product_info()

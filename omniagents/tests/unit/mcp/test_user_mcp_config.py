@@ -313,6 +313,7 @@ def test_load_user_mcp_config_user_global_only(tmp_path, monkeypatch):
     xdg_config.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config))
 
+    monkeypatch.setenv("APPDATA", str(xdg_config))  # Windows config root
     # Create user-global config
     global_dir = xdg_config / "test_project"
     global_dir.mkdir()
@@ -342,6 +343,7 @@ def test_load_user_mcp_config_project_local_overrides_global(tmp_path, monkeypat
     xdg_config.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config))
 
+    monkeypatch.setenv("APPDATA", str(xdg_config))  # Windows config root
     # Create user-global config
     global_dir = xdg_config / "test_project"
     global_dir.mkdir()
@@ -378,6 +380,7 @@ def test_load_user_mcp_config_unique_names_merged(tmp_path, monkeypatch):
     xdg_config.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config))
 
+    monkeypatch.setenv("APPDATA", str(xdg_config))  # Windows config root
     # Create user-global config
     global_dir = xdg_config / "test_project"
     global_dir.mkdir()
@@ -413,6 +416,7 @@ def test_load_user_mcp_config_both_missing_returns_empty(tmp_path, monkeypatch):
     xdg_config.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config))
 
+    monkeypatch.setenv("APPDATA", str(xdg_config))  # Windows config root
     configs = load_user_mcp_config(project_root, "test_project")
     assert configs == []
 
@@ -427,6 +431,7 @@ def test_get_user_config_dir_xdg_override(tmp_path, monkeypatch):
     xdg_path = tmp_path / "custom_xdg"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_path))
 
+    monkeypatch.setenv("APPDATA", str(xdg_path))  # Windows config root
     result = get_user_config_dir("my_project")
     assert result == xdg_path / "my_project"
 

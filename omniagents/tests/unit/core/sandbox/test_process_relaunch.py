@@ -16,6 +16,16 @@ Three concerns:
 
 from __future__ import annotations
 
+import sys
+
+import pytest
+
+if sys.platform == "win32":
+    pytest.skip(
+        "the process sandbox backend (omni-sandbox/bwrap) is POSIX-only",
+        allow_module_level=True,
+    )
+
 import shutil
 from pathlib import Path
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import sys
 import pytest
 
 from omniagents import workspace as ws
@@ -121,7 +122,7 @@ async def test_host_workspace_allows_out_of_root_absolute(tmp_path: Path):
     the agent may reach anywhere the process can, as its shell already does."""
     unconfined = HostWorkspace(root=str(tmp_path))
     # No raise, returns the resolved absolute path verbatim.
-    assert unconfined.resolve("/etc/hostname") == "/etc/hostname"
+    assert unconfined.resolve("/etc/hostname") == str(Path("/etc/hostname").resolve())
     assert unconfined.resolve("../../outside.txt").endswith("outside.txt")
 
 
@@ -148,7 +149,7 @@ async def test_host_workspace_has_no_fenced_mode(tmp_path: Path):
     assert "confine" not in inspect.signature(HostWorkspace.__init__).parameters
     workspace = HostWorkspace(root=str(tmp_path))
     assert workspace.enforces_confinement is False
-    assert workspace.resolve("/etc/passwd") == "/etc/passwd"
+    assert workspace.resolve("/etc/passwd") == str(Path("/etc/passwd").resolve())
 
 
 # -- resolve_confined: confinement as the caller's policy -----------------
@@ -164,7 +165,7 @@ async def test_resolve_confined_reimposes_the_boundary_when_unconfined(
 ):
     unconfined = HostWorkspace(root=str(tmp_path))
 
-    assert unconfined.resolve("/etc/hostname") == "/etc/hostname"
+    assert unconfined.resolve("/etc/hostname") == str(Path("/etc/hostname").resolve())
     with pytest.raises(WorkspaceEscapeError):
         unconfined.resolve_confined("/etc/hostname")
 
@@ -348,8 +349,10 @@ async def test_exec_basic(host_ws):
 
 @pytest.mark.asyncio
 async def test_exec_uses_workspace_as_default_cwd(host_ws):
-    result = await host_ws.exec("pwd")
-    assert result.stdout.strip() == host_ws.root
+    # Git Bash's plain pwd prints /c/...; -W prints the Windows path.
+    result = await host_ws.exec("pwd -W" if sys.platform == "win32" else "pwd")
+    reported = os.path.normcase(os.path.normpath(result.stdout.strip()))
+    assert reported == os.path.normcase(os.path.normpath(host_ws.root))
 
 
 @pytest.mark.asyncio
@@ -380,8 +383,9 @@ def test_host_workspace_scratch_root_default(tmp_path, monkeypatch):
     """Default scratch_root is under ~/.omniagents/scratch."""
     monkeypatch.delenv("OMNIAGENTS_SCRATCH", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows home
     ws = HostWorkspace(root=str(tmp_path))
-    assert ws.scratch_root.endswith("/.omniagents/scratch")
+    assert ws.scratch_root.endswith(os.path.join(".omniagents", "scratch"))
 
 
 def test_host_workspace_scratch_root_from_env(tmp_path, monkeypatch):

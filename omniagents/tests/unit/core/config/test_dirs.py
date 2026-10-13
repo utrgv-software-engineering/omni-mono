@@ -5,6 +5,7 @@ from omniagents.core.config import product_config_dir
 
 def test_xdg_override(monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", "/custom/xdg")
+    monkeypatch.setenv("APPDATA", "/custom/xdg")  # Windows config root
     assert product_config_dir("myproduct") == Path("/custom/xdg/myproduct")
 
 

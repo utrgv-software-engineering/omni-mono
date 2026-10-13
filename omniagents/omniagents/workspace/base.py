@@ -139,12 +139,24 @@ class Workspace(abc.ABC):
         path containment against ``root``.
         """
 
-        candidate = posixpath.normpath(str(absolute_path)).rstrip("/")
-        root = posixpath.normpath(str(self.root)).rstrip("/")
-        if candidate == root:
+        # In this workspace's own path syntax: POSIX paths fed to posixpath on
+        # a Windows host (or vice versa) put every file "outside" the root.
+        # The result is always "/"-separated — the wire form RPC clients and
+        # git pathspecs use on every OS.
+        pm = self.path_module
+        candidate = pm.normpath(str(absolute_path))
+        root = pm.normpath(str(self.root))
+        # normcase folds case and separators on Windows without changing
+        # length, so offsets into the folded string index the original.
+        folded_candidate = pm.normcase(candidate).rstrip(pm.sep)
+        folded_root = pm.normcase(root).rstrip(pm.sep)
+        if folded_candidate == folded_root:
             return "."
-        prefix = root + "/"
-        return candidate[len(prefix) :] if candidate.startswith(prefix) else None
+        prefix = folded_root + pm.sep
+        if not folded_candidate.startswith(prefix):
+            return None
+        relative = candidate[len(prefix) :].rstrip(pm.sep)
+        return relative.replace(pm.sep, "/") if pm.sep != "/" else relative
 
     def contains_path(self, absolute_path: str) -> bool:
         """Whether *absolute_path* belongs to this Workspace boundary."""
@@ -375,8 +387,9 @@ class Workspace(abc.ABC):
         """
 
     def relative_to_workspace(self, path: str) -> str:
-        """Inverse of :meth:`resolve` — return *path* relative to ``root``."""
-        import os.path
-
-        absolute = self.resolve(path)
-        return os.path.relpath(absolute, self.root)
+        """Inverse of :meth:`resolve` — return *path* relative to ``root``,
+        "/"-separated on every OS (the run diff and other client-facing keys
+        use this spelling)."""
+        pm = self.path_module
+        relative = pm.relpath(self.resolve(path), self.root)
+        return relative.replace(pm.sep, "/") if pm.sep != "/" else relative

@@ -14,6 +14,16 @@ backends — all routed through ``BaseSandboxSession``.
 
 from __future__ import annotations
 
+import sys
+
+import pytest
+
+if sys.platform == "win32":
+    pytest.skip(
+        "UnixLocalSandbox is POSIX-only; Windows hosts use docker/wasm sandboxes or host mode",
+        allow_module_level=True,
+    )
+
 import asyncio
 import io
 from pathlib import PurePosixPath

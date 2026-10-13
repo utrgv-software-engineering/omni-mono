@@ -84,6 +84,7 @@ def test_default_roots_derive_from_framework_identity(tmp_path):
 
 def test_default_roots_derive_from_installed_product(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "config"))  # Windows config root
     set_product_info(
         product_info_from_mapping({"slug": "omni_code", "config_dir": "omni_code"})
     )

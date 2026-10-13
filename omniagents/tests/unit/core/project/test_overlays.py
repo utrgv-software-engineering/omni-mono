@@ -68,6 +68,7 @@ def test_config_dir_project_d_layer(tmp_path, monkeypatch):
     base = _base_project(tmp_path)
     cfg = tmp_path / "xdg"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg))
+    monkeypatch.setenv("APPDATA", str(cfg))  # Windows config root
     monkeypatch.delenv("OMNIAGENTS_PROJECT_OVERLAYS", raising=False)
     _write(
         cfg / "overlay_test_product" / "project.d" / "10-user.yml",

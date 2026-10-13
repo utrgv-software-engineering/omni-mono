@@ -42,6 +42,7 @@ def env(tmp_path, monkeypatch):
     """Isolated product config dir + project root with a manifest."""
     config_home = tmp_path / "xdg"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("APPDATA", str(config_home))  # Windows config root
     monkeypatch.delenv(MCP_STORE_DURABILITY_ENV, raising=False)
     monkeypatch.delenv(MANAGED_MCP_SERVERS_ENV, raising=False)
     project_root = tmp_path / "project"

@@ -59,6 +59,10 @@ jobs:
   test-windows:
     runs-on: windows-latest
     timeout-minutes: 60
+    env:
+      # The desktop launcher runs the runtime in Python UTF-8 mode; test the
+      # same configuration students get.
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

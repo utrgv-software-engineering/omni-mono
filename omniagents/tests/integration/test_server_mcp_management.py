@@ -79,6 +79,7 @@ def env(tmp_path, monkeypatch):
     """Isolated product config dir + manifest enabling user MCP servers."""
     config_home = tmp_path / "xdg"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("APPDATA", str(config_home))  # Windows config root
     monkeypatch.delenv("OMNIAGENTS_MCP_STORE_DURABILITY", raising=False)
     monkeypatch.delenv("OMNIAGENTS_MANAGED_MCP_SERVERS", raising=False)
     project_root = tmp_path / "project"

@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from runpy import run_path
+import shutil
 import subprocess
 import tempfile
 
@@ -2212,7 +2213,9 @@ def build_pinned_tool_outputs(schema: dict) -> tuple[bytes, bytes]:
         )
         subprocess.run(
             [
-                "npx",
+                # Windows' npx is a .cmd shim, which CreateProcess won't find
+                # by bare name.
+                shutil.which("npx") or "npx",
                 "--prefix",
                 "omniagents/backends/web/ui",
                 "json2ts",

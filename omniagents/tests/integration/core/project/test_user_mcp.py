@@ -302,6 +302,7 @@ def test_full_precedence_chain(tmp_path, monkeypatch):
     xdg_config.mkdir()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_config))
 
+    monkeypatch.setenv("APPDATA", str(xdg_config))  # Windows config root
     _write(
         root / "project.yml",
         """product:

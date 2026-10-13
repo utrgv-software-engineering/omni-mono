@@ -24,6 +24,7 @@ PRODUCT = "cfgtest"
 def env(tmp_path, monkeypatch):
     """Isolated config-dir + overlay environment for every test."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "xdg"))  # Windows config root
     monkeypatch.delenv("OMNIAGENTS_PROJECT_OVERLAYS", raising=False)
     monkeypatch.delenv("OMNIAGENTS_LEGACY_QUERY_AUTH", raising=False)
     return tmp_path

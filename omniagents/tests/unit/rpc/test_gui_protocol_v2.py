@@ -3,6 +3,8 @@ import subprocess
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import os
+
 import pytest
 
 from omniagents.rpc import JsonRpcClient, RpcError
@@ -59,7 +61,7 @@ def test_v2_generation_is_separate_and_checked_in():
 
 def test_generated_typescript_supports_strict_indexed_access():
     ui = ROOT / "omniagents/backends/web/ui"
-    compiler = ui / "node_modules/.bin/tsc"
+    compiler = ui / "node_modules/.bin" / ("tsc.cmd" if os.name == "nt" else "tsc")
     if not compiler.exists():
         pytest.skip("Install web UI dependencies to verify generated TypeScript")
     result = subprocess.run(

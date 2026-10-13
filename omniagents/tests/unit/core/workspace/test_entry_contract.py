@@ -20,6 +20,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, List, Optional
 
+import sys
+
 import pytest
 
 from omniagents.workspace._entries import entry_basename, make_entry, sort_entries
@@ -93,6 +95,9 @@ def test_make_entry_keeps_windows_shaped_posix_filenames(name: str, path: str) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX filenames/symlinks and a POSIX probe shell"
+)
 async def test_host_lists_windows_shaped_filenames(
     host_ws: HostWorkspace, tmp_path: Path
 ) -> None:
@@ -544,6 +549,9 @@ def _probe_tree(root: Path, outside: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX filenames/symlinks and a POSIX probe shell"
+)
 async def test_sandbox_probe_refuses_a_symlink_out_of_the_root(tmp_path: Path) -> None:
     """``test -f`` follows symlinks; the ``case`` guard is what refuses.
 
@@ -566,6 +574,9 @@ async def test_sandbox_probe_refuses_a_symlink_out_of_the_root(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX filenames/symlinks and a POSIX probe shell"
+)
 async def test_sandbox_probe_fails_closed_when_readlink_is_unavailable(
     tmp_path: Path,
 ) -> None:

@@ -320,6 +320,7 @@ def test_product_config_dir_argless_defaults_from_identity(tmp_path, monkeypatch
     from omniagents.core.config.dirs import product_config_dir
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))  # Windows config root
     assert product_config_dir() == tmp_path / "omniagents"
     set_product_info(ACME_INFO)
     assert product_config_dir() == tmp_path / "acme_code"
@@ -362,6 +363,7 @@ def test_platform_client_defaults_from_identity(tmp_path, monkeypatch):
     from omniagents.core.providers.platform import client
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))  # Windows config root
     prior_dir = client._credential_store_dir
     prior_slug = client._product_slug
     try:
@@ -388,6 +390,7 @@ def test_codex_token_store_defaults_from_identity(tmp_path, monkeypatch):
     from omniagents.core.providers import codex
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))  # Windows config root
     monkeypatch.delenv("OMNIAGENTS_CODEX_HOME", raising=False)
     prior = codex._token_store_dir
     try:
@@ -409,6 +412,7 @@ def test_codex_auth_command_prog_defaults_from_identity(tmp_path, monkeypatch, c
     from omniagents.cli import run_codex_auth_command
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))  # Windows config root
     monkeypatch.delenv("OMNIAGENTS_CODEX_HOME", raising=False)
     set_product_info(ACME_INFO)
     assert run_codex_auth_command("status") == 0
@@ -451,6 +455,7 @@ def test_resolve_profile_config_dir_defaults_from_identity(tmp_path, monkeypatch
     from omniagents.core.sandbox.profiles import resolve_profile
 
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))  # Windows config root
     set_product_info(ACME_INFO)
     user_layer = _write(
         tmp_path / "acme_code" / "sandbox" / "default.yml",

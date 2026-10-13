@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import stat
 
 import pytest
@@ -101,8 +102,9 @@ def test_credential_round_trip_and_permissions(tmp_path):
     path = client.credential_path()
     assert path == tmp_path / "platform.json"
     assert path.exists()
-    mode = stat.S_IMODE(path.stat().st_mode)
-    assert mode == 0o600
+    if os.name != "nt":  # Windows has no POSIX mode bits (profile ACLs apply)
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode == 0o600
     assert client.load_credentials() == _CREDS
 
 
