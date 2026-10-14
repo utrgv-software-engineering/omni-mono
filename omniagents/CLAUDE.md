@@ -171,6 +171,7 @@ container time, not CPU.
 ### Git Workflow Notes
 
 - **Always check branch and working tree status** before making changes (`git status -sb`)
+- **Work on `dev`**; `main` holds released code only, and `make publish` refuses to run off a clean, in-sync `main`. Release order and steps: the launcher's CLAUDE.md, "Branches and releases"
 - **Never modify unrelated dirty files** - surface dirty state to user and wait for guidance
 - **Run Black formatter on all touched Python files** before every commit
 - **Do not commit `docs/TESTING_ISSUES.md`** from inside a worktree
