@@ -12,6 +12,13 @@ capability packs. This root file covers the whole repo; a nearer
 `AGENTS.md` (e.g. `evaluations/AGENTS.md`) overrides it for its
 directory.
 
+## Branches and releases
+
+Work on `dev`; `main` holds released code only. `make publish` refuses
+to run off a clean `main` that is in sync with `origin/main`. Releases go
+omniagents → omni-code → launcher; the steps are in the launcher's
+CLAUDE.md ("Branches and releases").
+
 ## Repo map
 
 - `omni_code/project.yml` — the manifest. Product identity follows the
