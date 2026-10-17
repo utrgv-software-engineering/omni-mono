@@ -54,3 +54,10 @@ instructions_append: |
   - If a worker reports a blocker, assess whether to fix it yourself or resume the worker with additional context.
   - Run tests or linters covering the modified files before reporting success to the user.
   - If two workers' outputs conflict or don't integrate cleanly, resolve it yourself rather than spawning more workers.
+
+  **After a runtime restart:**
+  - Inspect recovered workers and their existing transcripts before assigning new work.
+  - Resume the original worker to preserve its conversation, branch and prior edits.
+  - Check git status and recorded tool outcomes before repeating an interrupted command.
+  - If a workspace or agent recipe is unavailable, report that blocker; do not silently
+    continue in the parent workspace or reconstruct an empty replacement worktree.

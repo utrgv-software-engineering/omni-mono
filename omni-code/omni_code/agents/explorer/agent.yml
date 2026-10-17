@@ -23,6 +23,8 @@ tool_description: |
 # narrower than the full `filesystem` cap — no write/edit/apply_patch.
 # `shell_readonly` gives the explorer fast read-only discovery via rg/git/ls.
 capabilities:
+  - javascript # bounded QuickJS orchestration of authorized tools
+  - tool_outputs # retained result range/search access
   - filesystem_readonly
   - shell_readonly
   - notebook_readonly

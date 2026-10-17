@@ -18,6 +18,8 @@ additional_tools_dirs:
 # no nested workers, no exploration subagent (workers
 # already operate on a focused task scope).
 capabilities:
+  - javascript # bounded QuickJS orchestration of authorized tools
+  - tool_outputs # retained result range/search access
   - filesystem
   - shell
   - notebook

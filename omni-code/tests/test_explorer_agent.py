@@ -77,7 +77,7 @@ def test_eval_subagent_test_explorer_agent_tool_resolves(project):
     assert explore[0].max_turns == 50
 
 
-def test_explorer_llm_contract_is_unchanged():
+def test_explorer_llm_contract_remains_readonly_with_orchestration():
     """The spec-level LLM contract the behavior evals were tuned against:
     read-only capability surface, headless, turn budget, and the
     tool_description fallback the `explore` tool presents to the model."""
@@ -85,8 +85,10 @@ def test_explorer_llm_contract_is_unchanged():
     assert data["name"] == "explorer"
     assert data["max_turns"] == 50
     assert data["use_safe_agent"] is False
-    # Read-only surface only.
+    # JavaScript can only orchestrate this same read-only tool surface.
     assert data["capabilities"] == [
+        "javascript",
+        "tool_outputs",
         "filesystem_readonly",
         "shell_readonly",
         "notebook_readonly",

@@ -12,6 +12,8 @@ welcome_text: |
 # (apply_patch-exact-name, no re-read after edit, rg-over-cat/grep/find)
 # now ships in the builtins themselves.
 capabilities:
+  - javascript # bounded QuickJS orchestration of authorized tools
+  - tool_outputs # retained result range/search access
   - filesystem    # read/list/glob/grep/write/edit/apply_patch + read_image (builtin)
   - shell         # execute_bash + bash_status/logs/kill (builtin)
   - web           # web_fetch + download_file (builtin, provider-agnostic)

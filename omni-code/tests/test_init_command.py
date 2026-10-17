@@ -166,7 +166,7 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
 
     monkeypatch.setattr(builder, "_default_build_agent", fake_build_agent)
     monkeypatch.setattr(
-        models_mod, "provider_from_runtime", lambda _runtime: (None, {})
+        models_mod, "provider_from_runtime", lambda _runtime: (object(), {})
     )
 
     captured: dict = {}
@@ -249,7 +249,7 @@ async def test_run_init_agent_falls_back_to_cwd_when_pwd_missing(monkeypatch, tm
 
     monkeypatch.setattr(builder, "_default_build_agent", fake_build_agent)
     monkeypatch.setattr(
-        models_mod, "provider_from_runtime", lambda _runtime: (None, {})
+        models_mod, "provider_from_runtime", lambda _runtime: (object(), {})
     )
 
     captured: dict = {}

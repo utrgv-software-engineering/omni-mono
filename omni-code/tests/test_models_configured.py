@@ -63,3 +63,7 @@ def test_get_model_config_uses_openai_defaults_for_unprefixed_ref(monkeypatch):
     config = _STORE.get_model_config("gpt-5.1")
     assert config["name"] == "gpt-5.1"
     assert config["provider"] == "openai"
+
+
+def test_product_uses_one_provider_for_all_agents():
+    assert _STORE.single_provider is True

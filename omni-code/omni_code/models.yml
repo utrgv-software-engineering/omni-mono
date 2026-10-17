@@ -1,3 +1,6 @@
+# One provider for the application workspace; all agents inherit its selection.
+single_provider: true
+
 # omni-code's shipped model catalog, declared in project.yml as
 # `paths.model_catalog`. The framework parses it at product bootstrap
 # (`import omni_code`) and installs a ModelConfigStore over it with the
