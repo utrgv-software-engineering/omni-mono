@@ -525,6 +525,19 @@ def apply_session_model(
     at run time) but carries its availability reasons as ``warnings`` so
     pickers can flag it.
     """
+    try:
+        store.require_selected_provider(ref)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "reasons": [
+                _reason(
+                    "provider_mismatch",
+                    str(exc),
+                    "Change the workspace provider in Settings.",
+                )
+            ],
+        }
     normalized = store.normalize_model_ref(ref)
     merged = store.get_model_config(normalized) if normalized else None
     if not normalized or not merged:
@@ -596,6 +609,19 @@ def apply_session_reasoning(session: Any, effort: str) -> Dict[str, Any]:
 
 def set_voice_default_model(store: ModelConfigStore, ref: str) -> Dict[str, Any]:
     """Set the process-wide voice (realtime) default to catalog model *ref*."""
+    try:
+        store.require_selected_provider(ref)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "reasons": [
+                _reason(
+                    "provider_mismatch",
+                    str(exc),
+                    "Change the workspace provider in Settings.",
+                )
+            ],
+        }
     normalized = store.normalize_model_ref(ref)
     merged = store.get_model_config(normalized) if normalized else None
     if not normalized or not merged:

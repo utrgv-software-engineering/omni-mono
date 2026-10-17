@@ -90,7 +90,7 @@ from typing import Any, Dict, Mapping, Optional
 
 import yaml
 
-from .store import ModelConfigStore
+from .store import ModelConfigStore, validate_provider_connections
 
 __all__ = [
     "MODEL_CATALOG_PATH_KEY",
@@ -104,7 +104,12 @@ __all__ = [
 #: The ``paths:`` key naming the catalog file, relative to the manifest.
 MODEL_CATALOG_PATH_KEY = "model_catalog"
 
-_KNOWN_CATALOG_KEYS = {"providers", "default_model", "default_provider"}
+_KNOWN_CATALOG_KEYS = {
+    "providers",
+    "default_model",
+    "default_provider",
+    "single_provider",
+}
 
 
 @dataclass(frozen=True)
@@ -119,6 +124,8 @@ class ModelCatalog:
 
     default_provider: str = "openai"
     """Provider profile implied by unprefixed model refs."""
+
+    single_provider: bool = False
 
     path: Optional[Path] = None
     """The catalog file this was parsed from, when file-loaded."""
@@ -185,10 +192,13 @@ def _catalog_from_mapping(data: Any, *, where: str) -> ModelCatalog:
             f"{default_provider!r}"
         )
 
+    validate_provider_connections(dict(providers_raw))
+
     return ModelCatalog(
         providers=providers,
         default_model=default_model.strip() if default_model else None,
         default_provider=default_provider.strip(),
+        single_provider=bool(data.get("single_provider", False)),
     )
 
 
@@ -203,6 +213,7 @@ def load_model_catalog(path: Any) -> ModelCatalog:
         providers=catalog.providers,
         default_model=catalog.default_model,
         default_provider=catalog.default_provider,
+        single_provider=catalog.single_provider,
         path=p.resolve(),
     )
 
@@ -323,6 +334,7 @@ def build_catalog_store(catalog: ModelCatalog) -> ModelConfigStore:
         oauth_authenticated=_codex_authenticated if has_oauth else None,
         credential_resolver=_conventional_credential_resolver,
         default_provider_name=catalog.default_provider,
+        single_provider=catalog.single_provider,
     )
 
 

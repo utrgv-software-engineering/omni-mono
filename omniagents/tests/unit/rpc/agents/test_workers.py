@@ -492,3 +492,42 @@ async def test_swarm_runs_through_real_worker_adapter_and_manager(monkeypatch):
     assert all(m["state"]["result"] == "verified" for m in snapshot["members"])
     assert completion.await_count == 2
     await invoke(sw.close_swarm, context, sid, "Both verified")
+
+
+@pytest.mark.asyncio
+async def test_resume_inherits_parent_model_after_selection_changes(
+    tmp_path, monkeypatch
+):
+    from omniagents.core import models
+
+    store = models.ModelConfigStore(config_dir=lambda: tmp_path, single_provider=True)
+    store.save_config(
+        {
+            "default": "company/a",
+            "providers": {
+                "company": {
+                    "type": "openai-compatible",
+                    "base_url": "http://localhost:9999/v1",
+                    "models": {"a": {"model": "a"}, "b": {"model": "b"}},
+                }
+            },
+        }
+    )
+    monkeypatch.setattr(models, "model_store", lambda: store)
+    parent_session = SimpleNamespace(active_model="company/a", model_config=None)
+    parent = SimpleNamespace(
+        get_session=lambda sid: parent_session, spec=SimpleNamespace()
+    )
+    manager = make_manager()
+    handle = await manager.spawn(
+        worker_id="inherit",
+        task_description="first",
+        model="company/a",
+        parent_service=parent,
+        parent_session_id="parent",
+    )
+    await manager.close("inherit")
+    parent_session.active_model = "company/b"
+    resumed = await manager.resume("inherit", "continue")
+    assert resumed.model == "company/b"
+    await manager.close("inherit")

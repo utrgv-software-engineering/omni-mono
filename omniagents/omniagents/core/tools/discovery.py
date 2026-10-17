@@ -24,12 +24,19 @@ class RichToolOutput:
     The UI metadata is preserved for client-side rendering.
     """
 
-    def __init__(self, llm_output: str, ui_metadata: Dict[str, Any] = None):
+    def __init__(
+        self,
+        llm_output: str,
+        ui_metadata: Dict[str, Any] = None,
+        *,
+        max_output_chars: int | None = None,
+    ):
         """
         Args:
             llm_output: The text output intended for the LLM context
             ui_metadata: Additional data for UI rendering (charts, tables, etc.)
         """
+        self.max_output_chars = max_output_chars
         self.llm_output = llm_output
         self.ui_metadata = ui_metadata or {}
 

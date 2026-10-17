@@ -82,6 +82,11 @@ def resolve_service_model_runtime(
     model, resolved through the model store; as a last resort the
     session's raw ``model_config`` is adapted into a runtime dict.
     """
+    target = _active_store(store)
+    if target is not None and target.single_provider:
+        target.reconcile_session_model(session)
+        ref = session.active_model
+        return ref, target.resolve_model_for_runtime(ref)
     candidates: list[str] = []
     active_model = getattr(session, "active_model", None)
     if isinstance(active_model, str) and active_model.strip():
@@ -144,6 +149,27 @@ def provider_from_runtime(
     model = runtime.get("model")
     api_key = runtime.get("api_key")
     base_url = runtime.get("base_url")
+
+    if provider == "litellm" and runtime.get("routing_prefix"):
+        from agents.models.interface import ModelProvider
+        from agents.extensions.models.litellm_model import LitellmModel
+
+        prefix = runtime["routing_prefix"]
+        if not api_key:
+            raise ValueError("Configure credentials on the selected LiteLLM provider.")
+
+        class ScopedLiteLLMProvider(ModelProvider):
+            def get_model(self, model_name):
+                selected = model_name or model
+                if not isinstance(selected, str) or not selected.startswith(
+                    prefix + "/"
+                ):
+                    raise ValueError(
+                        "The model must use its provider's routing prefix."
+                    )
+                return LitellmModel(selected, api_key=api_key, base_url=base_url)
+
+        return ScopedLiteLLMProvider(), {}
 
     env_overrides: dict[str, str | None] = {}
     if provider == "litellm" and api_key:

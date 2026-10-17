@@ -180,6 +180,7 @@ def install_project_worker_defaults(
                 model_resolver=model_resolver or default_worker_model_resolver,
             ),
             default_isolation=default_isolation,
+            recipe_id=f"{project_slug}:{agent_key}:v1",
         )
     )
     _installed = True

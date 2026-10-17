@@ -1,6 +1,8 @@
 """Tests for agent-as-tool wiring (Agent.as_tool() integration)."""
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -39,7 +41,7 @@ async def test_build_agent_tools_inline(monkeypatch):
 
         def as_tool(self, **kwargs):
             captured.update(kwargs)
-            return ("FAKE_TOOL", kwargs)
+            return SimpleNamespace(on_invoke_tool=AsyncMock(return_value="ok"))
 
     async def fake_default_build_agent(*args, **kwargs):
         return _StubAgent()
@@ -76,7 +78,7 @@ async def test_build_agent_tools_inherits_subagent_max_turns(monkeypatch):
 
         def as_tool(self, **kwargs):
             captured.update(kwargs)
-            return ("FAKE_TOOL", kwargs)
+            return SimpleNamespace(on_invoke_tool=AsyncMock(return_value="ok"))
 
     async def fake_default_build_agent(*args, **kwargs):
         return _StubAgent()
@@ -104,7 +106,7 @@ async def test_build_agent_tools_passes_session_to_subagent(monkeypatch):
         name = "stub"
 
         def as_tool(self, **kwargs):
-            return ("FAKE_TOOL", kwargs)
+            return SimpleNamespace(on_invoke_tool=AsyncMock(return_value="ok"))
 
     async def fake_default_build_agent(*args, **kwargs):
         captured.update(kwargs)

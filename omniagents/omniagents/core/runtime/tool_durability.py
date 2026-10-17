@@ -5,6 +5,10 @@ Hosted/provider-executed and non-function SDK tools are outside this hook contra
 """
 
 import uuid
+from contextvars import ContextVar
+from typing import Any
+
+active_tool_hooks: ContextVar[Any] = ContextVar("active_tool_hooks", default=None)
 
 from agents import RunHooks
 
@@ -39,6 +43,9 @@ class DurableToolHooks(RunHooks):
         return recorder
 
     def assert_owner(self):
+        from omniagents.core.orchestration.cells import raise_fatal
+
+        raise_fatal(self.session.id, self.run_id)
         from .ownership import current_ownership
 
         ownership = current_ownership.get()
@@ -80,12 +87,8 @@ class DurableToolHooks(RunHooks):
         if call_id and claim is None:
             raise RuntimeError("Tool completion has no owned dispatch claim")
         if claim is not None:
-            from omniagents.core.tools import RichToolOutput
-
             payload, owner = claim
-            metadata = (
-                dict(result.ui_metadata) if isinstance(result, RichToolOutput) else {}
-            )
+            metadata = dict(getattr(result, "ui_metadata", {}) or {})
             ui = mcp_ui.pop(
                 payload.get("tool_label", tool.name),
                 payload.get("server_label"),

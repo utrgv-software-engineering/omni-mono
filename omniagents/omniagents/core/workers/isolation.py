@@ -41,6 +41,17 @@ from typing import (
 )
 
 
+from contextvars import ContextVar
+
+preparation_observer: ContextVar[Any] = ContextVar("worker_preparation", default=None)
+
+
+def note_preparation(root, **metadata):
+    observer = preparation_observer.get()
+    if observer is not None:
+        observer({"root": root, **metadata})
+
+
 class IsolationError(Exception):
     """Isolation setup failed. ``str(exc)`` is shown to the model."""
 
@@ -154,6 +165,7 @@ class CopyIsolation:
                 n += 1
             dest = f"{dest}-{n}"
 
+        note_preparation(dest, parent_workspace=parent_workspace_root, kind="copy")
         result = await _ws.exec(
             f"cp -a {shlex.quote(parent_workspace_root)} {shlex.quote(dest)}",
             shell=True,
@@ -281,6 +293,12 @@ class WorktreeIsolation:
             worktree_branch = f"worker/{worktree_name}"
             worktree_path = pm.join(worktrees_dir, worktree_name)
 
+        note_preparation(
+            worktree_path,
+            parent_workspace=parent_workspace_root,
+            worktree_branch=worktree_branch,
+            kind="worktree",
+        )
         mkdir_result = await _ws.exec(
             f"mkdir -p {shlex.quote(worktrees_dir)}", shell=True, timeout=10.0
         )
@@ -487,6 +505,15 @@ class MultiSourceWorktreeIsolation(WorktreeIsolation):
             worker_root_name = f"{worker_root_name}-{n}"
             worker_root = pm.join(worktrees_dir, worker_root_name)
 
+        note_preparation(
+            worker_root,
+            parent_workspace=parent_workspace_root,
+            kind="multi-worktree",
+            sources=[
+                {"name": source.name, "path": source.host_path, "git": source.git}
+                for source in sources
+            ],
+        )
         mkdir_result = await _ws.exec(
             f"mkdir -p {shlex.quote(worker_root)}", shell=True, timeout=10.0
         )

@@ -714,6 +714,12 @@ class RealtimeSession:
             mcp_config=self.spec.mcp_config or {},
         )
 
+        from omniagents.core.tools.output_budget import install_output_budget
+
+        install_output_budget(
+            self._agent, (self.spec.project_slug, self.spec.agent_slug)
+        )
+
         # MCP tools are not in the static list above: the SDK resolves them
         # inside RealtimeAgent.get_all_tools on every run, after that pass.
         # Gating them needs the agent, so it happens here — otherwise every

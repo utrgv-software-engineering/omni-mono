@@ -431,6 +431,15 @@ class _LayerEntry:
     value: Any
 
 
+def _inherited_model_control(key: str) -> bool:
+    if key not in {"approvals.guardian_model", "workflow.guardian_model"}:
+        return False
+    from omniagents.core.models import model_store
+
+    store = model_store()
+    return store is not None and store.single_provider
+
+
 class LayeredConfigStore:
     """Reads, validates, and writes the layered project configuration.
 
@@ -601,6 +610,7 @@ class LayeredConfigStore:
         fields = [
             self._field_payload(field, self._layer_entries(field))
             for field in CONFIG_FIELDS
+            if not _inherited_model_control(field.key)
         ]
         return {"layers": layers, "fields": fields}
 
@@ -619,6 +629,15 @@ class LayeredConfigStore:
         errors: List[Dict[str, Any]] = []
         normalized: Dict[str, Any] = {}
         for key, value in updates.items():
+            if _inherited_model_control(key):
+                errors.append(
+                    {
+                        "key": key,
+                        "code": "read_only",
+                        "message": "Reviewers inherit the conversation model in this product.",
+                    }
+                )
+                continue
             field = CONFIG_FIELDS_BY_KEY.get(key)
             if field is None:
                 errors.append(

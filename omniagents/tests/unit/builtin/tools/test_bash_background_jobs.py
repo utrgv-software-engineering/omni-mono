@@ -304,6 +304,21 @@ class TestBashStatus:
 
 
 class TestBashLogs:
+    def test_preserves_long_log_line(self, invoke_tool, tmp_path):
+        spawn = invoke_tool(
+            bash_tool.execute_bash,
+            command="printf '%0600d\\n' 0",
+            background=True,
+            workspace_root=str(tmp_path),
+        )
+        job_id = _meta(spawn)["job_id"]
+        invoke_tool.wait_for_job_exit(get_registry().get(job_id), timeout=5)
+        result = invoke_tool(
+            bash_tool.bash_logs, job_id=job_id, workspace_root=str(tmp_path)
+        )
+        assert "0" * 600 in str(result)
+        assert _meta(result)["lines_truncated"] == 0
+
     def test_tail_returns_recent_lines(self, invoke_tool, tmp_path):
         spawn = invoke_tool(
             bash_tool.execute_bash,

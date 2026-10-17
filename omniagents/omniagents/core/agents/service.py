@@ -2001,7 +2001,9 @@ class AgentService(RpcMethodsBase):
                 async def _run(session: Session | None = None, args=None):
                     payload = args or {}
                     arg = payload.get("text") if isinstance(payload, dict) else None
-                    message = await run_slash_agent(command, spec, arg)
+                    message = await run_slash_agent(
+                        command, spec, arg, service=self, session=session
+                    )
                     return {"message": message}
 
                 return _run
@@ -4022,6 +4024,10 @@ class AgentService(RpcMethodsBase):
             except Exception as e:
                 logger.debug(f"Failed to resolve default model config: {e}")
 
+        catalog_store = self._model_catalog_store()
+        if catalog_store is not None:
+            catalog_store.reconcile_session_model(sess)
+
         # Track current channel for real-time notifications.
         if channel is not None and channel not in sess.channels:
             sess.channels.append(channel)
@@ -4171,13 +4177,30 @@ class AgentService(RpcMethodsBase):
                 elif getattr(self.spec, "model_provider_config", None):
                     provider_cfg = self.spec.model_provider_config
 
-                if provider_cfg:
+                if catalog_store is not None and catalog_store.single_provider:
+                    from omniagents.core.models import provider_from_runtime
+
+                    runtime = catalog_store.resolve_model_for_runtime(sess.active_model)
+                    model_provider, _ = provider_from_runtime(runtime)
+                elif provider_cfg:
                     try:
                         model_provider = build_model_provider(provider_cfg)
                     except ImportError as e:
+                        if catalog_store is not None and catalog_store.single_provider:
+                            raise
                         logger.warning(str(e))
                     except Exception as e:
+                        if catalog_store is not None and catalog_store.single_provider:
+                            raise
                         logger.warning(f"Failed to create model provider: {e}")
+                if (
+                    catalog_store is not None
+                    and catalog_store.single_provider
+                    and model_provider is None
+                ):
+                    raise ValueError(
+                        "The workspace provider could not be initialized. Check its connection in Settings."
+                    )
 
                 # If the spec opts in to SDK-native compaction, build (and
                 # memoise) a wrapper that delegates reads/writes to the
@@ -6210,6 +6233,13 @@ class AgentService(RpcMethodsBase):
             sess = self._session_manager.get_or_create(
                 session_id, user_id=self._current_user_id()
             )
+            store.reconcile_session_model(sess)
+            if store.single_provider:
+                result["models"] = [
+                    m
+                    for m in result["models"]
+                    if m["provider"]["name"] == store.selected_provider()
+                ]
             active = getattr(sess, "active_model", None)
             result["session"] = {
                 "session_id": sess.id,
@@ -6509,6 +6539,9 @@ class AgentService(RpcMethodsBase):
         self._recover_local_run_ownership(sess)
         store = self._queue_store(sess)
         sess.archived = store.get_thread(sess.id).status.value == "archived"
+        from omniagents.core.workers.recovery import reconcile_session
+
+        reconcile_session(self, sess, store)
         sess.pending_notifications = queue_inbox.notifications(store, sess.id)
         if sess.pending_notifications and not sess.archived:
             sess.notification_signal.set()

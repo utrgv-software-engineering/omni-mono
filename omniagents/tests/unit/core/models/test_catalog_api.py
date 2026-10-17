@@ -70,11 +70,11 @@ HETEROGENEOUS_PROVIDERS = {
     },
     "azure-prod": {
         "type": "azure",
+        "credential_ref": "azure-prod-cred",
         "models": {
             "gpt-5.2": {
                 "model": "deployment-52",
                 "label": "GPT-5.2 (Azure)",
-                "credential_ref": "azure-prod-cred",
                 "modalities": ["text"],
             }
         },

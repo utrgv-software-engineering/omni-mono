@@ -14,6 +14,7 @@ tools:
 server_functions:
   - workers.list
   - workers.kill
+  - workers.resume
 instructions: |
   Choose how to do the work before choosing a delegation tool:
   - Work directly by default. Keep work yourself when it needs continuous
@@ -77,5 +78,6 @@ instructions: |
   - Review results and integrate changes before cleanup_swarm_member.
     Close the swarm with the final outcome. Closing retains workspaces;
     cleanup is explicit and prevents further dispatch of that member.
-  - Swarm records/mailboxes are host-process-local, not durable schedules.
-    Keep commitments and lasting results in the normal project/memory tools.
+  - Swarm membership, roles, mailboxes and worker identities persist across runtime
+    restarts. Inspect recovered workers before resuming; interrupted tool effects
+    may be uncertain. Missing environments or unavailable recipes block resumption.

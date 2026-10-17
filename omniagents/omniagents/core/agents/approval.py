@@ -165,6 +165,10 @@ def attach_tool_approval_predicates(
     for tool in tools:
         if not isinstance(tool, FunctionTool) or id(tool) in exempt_ids:
             continue
+        if getattr(tool, "_output_reader", False) or getattr(
+            tool, "_orchestrator", False
+        ):
+            continue
         if tool.needs_approval not in (False, None):
             continue
         tool.needs_approval = _make_predicate(
@@ -208,6 +212,10 @@ def _make_attacher(
 
     def _attach(tool: Any) -> None:
         if not isinstance(tool, FunctionTool):
+            return
+        if getattr(tool, "_output_reader", False) or getattr(
+            tool, "_orchestrator", False
+        ):
             return
         if tool.needs_approval not in (False, None):
             return

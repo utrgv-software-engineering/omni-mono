@@ -409,8 +409,19 @@ async def _build_agent_tools_from_configs(
                 sub_spec, "tool_description", None
             )
 
-            async def _ignore_agent_tool_stream_event(_event: Any) -> None:
-                return None
+            from omniagents.core.orchestration.subagents import (
+                ChildHooks,
+                record_stream,
+                wrap_agent_tool,
+            )
+
+            def make_stream_observer(observable):
+                async def observe(event):
+                    await record_stream(event)
+                    if observable:
+                        await agent_tool_stream_observer(event)
+
+                return observe
 
             # Observable agent tools stream their nested run onto the
             # subagent bus (live mini-transcript in clients); opted-out
@@ -423,11 +434,8 @@ async def _build_agent_tools_from_configs(
             as_tool_kwargs: Dict[str, Any] = {
                 "tool_name": at_cfg.tool_name,
                 "tool_description": resolved_tool_description,
-                "on_stream": (
-                    agent_tool_stream_observer
-                    if getattr(at_cfg, "observable", True)
-                    else _ignore_agent_tool_stream_event
-                ),
+                "on_stream": make_stream_observer(getattr(at_cfg, "observable", True)),
+                "hooks": ChildHooks(),
             }
             if at_cfg.is_enabled is not None:
                 as_tool_kwargs["is_enabled"] = at_cfg.is_enabled
@@ -449,7 +457,7 @@ async def _build_agent_tools_from_configs(
                 continue
 
             tool_obj = sub_agent.as_tool(**as_tool_kwargs)
-            built_tools.append(tool_obj)
+            built_tools.append(wrap_agent_tool(tool_obj, sub_spec.name))
         except Exception as e:
             ident = at_cfg.yaml_path or (
                 at_cfg.inline_spec.name if at_cfg.inline_spec else "unknown"
@@ -972,7 +980,11 @@ async def _default_build_agent(
             if run_as:
                 sandbox_kwargs["run_as"] = run_as
             base_agent = SandboxAgent(**agent_kwargs, **sandbox_kwargs)
-            return base_agent
+            from omniagents.core.tools.output_budget import install_output_budget
+
+            return install_output_budget(
+                base_agent, (spec.project_slug, spec.agent_slug)
+            )
         except Exception as e:
             logger.warning(
                 "Failed to build SandboxAgent (falling back to Agent): %s", e
@@ -980,4 +992,6 @@ async def _default_build_agent(
 
     base_agent = Agent(**agent_kwargs)
 
-    return base_agent
+    from omniagents.core.tools.output_budget import install_output_budget
+
+    return install_output_budget(base_agent, (spec.project_slug, spec.agent_slug))

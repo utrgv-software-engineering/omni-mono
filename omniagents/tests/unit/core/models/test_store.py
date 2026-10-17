@@ -209,11 +209,11 @@ def test_resolve_model_for_runtime_credential_ref_priority(tmp_path):
         return {
             "openai": {
                 "type": "azure",
+                "credential_ref": "cred-1",
+                "api_key": "sk-static",
                 "models": {
                     "gov-model": {
                         "model": "gpt",
-                        "credential_ref": "cred-1",
-                        "api_key": "sk-static",
                     }
                 },
             }

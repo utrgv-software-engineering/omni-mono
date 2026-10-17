@@ -8,6 +8,7 @@ import uuid
 from omniagents.workspace import HostWorkspace
 
 from .control import AgentHostProvisioningCatalog
+from .errors import WorkspaceNotFoundError
 from .models import (
     EnvironmentCapability,
     EnvironmentKind,
@@ -88,9 +89,15 @@ def register_host_environment(
     # is the lazy one. The two must agree on what a host target is, and
     # HostWorkspace no longer offers a fenced variant to disagree with.
     workspace = HostWorkspace(root=root)
-    resources.workspaces.register(
-        WorkspaceResource(workspace_id, owner_user_id=owner_user_id)
-    )
+    try:
+        existing = resources.workspaces.get(workspace_id)
+    except WorkspaceNotFoundError:
+        resources.workspaces.register(
+            WorkspaceResource(workspace_id, owner_user_id=owner_user_id)
+        )
+    else:
+        if existing.owner_user_id != owner_user_id:
+            raise PermissionError("Workspace owner changed")
     descriptor = ExecutionEnvironmentDescriptor(
         environment_id=environment_id,
         workspace_id=workspace_id,

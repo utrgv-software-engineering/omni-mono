@@ -398,7 +398,12 @@ def wrap_with_compaction(
     # must match that endpoint — a hardcoded name from a different provider
     # makes every compact call fail (and the failure is swallowed, so the
     # session grows unbounded until the next turn overflows the window).
-    if not kwargs.get("model") and parent_model:
+    from omniagents.core.models import model_store
+
+    store = model_store()
+    if parent_model and (
+        not kwargs.get("model") or (store is not None and store.single_provider)
+    ):
         kwargs["model"] = parent_model
 
     # Build a sensible ``should_trigger_compaction`` predicate unless the

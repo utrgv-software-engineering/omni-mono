@@ -140,7 +140,12 @@ async def _review(
     )
     from omniagents.core.runtime.ephemeral import run_agent_once
 
+    from omniagents.core.models import model_store
+
+    store = model_store()
     configured = guardian_model_ref(service)
+    if store is not None and store.single_provider:
+        configured = None
     if configured:
         model_name, runtime = resolve_model_runtime(configured)
     else:
@@ -175,6 +180,7 @@ async def _review(
         prompt,
         model=model_name,
         model_provider=model_provider,
+        resolved_model_config=runtime,
         env_overrides=env_overrides,
         session=session,
         max_turns=1,

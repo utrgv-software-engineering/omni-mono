@@ -10,6 +10,7 @@ tools:
 server_functions:
   - workers.list
   - workers.kill
+  - workers.resume
 instructions: |
   Worker sub-agents execute self-contained subtasks in the background,
   concurrently with you and each other.
@@ -29,3 +30,12 @@ instructions: |
     history.
   - `wait_for_workers` blocks within the current turn — use it only when
     one response must combine results from several workers.
+  - Worker IDs, conversations, results and workspace associations survive runtime
+    restart. Inspect recovered interrupted workers before using resume_worker;
+    resumption reuses the original workspace and conversation. Never replace a
+    blocked worker with a fresh worker merely to bypass missing environment state.
+    Interrupted tool effects may be unknown: inspect recorded results and files
+    before deciding whether an action is safe to retry.
+  - Accepted worker messages persist; queued guidance is applied before the next
+    resumed run. Explicit cancellation is recorded, while process loss leaves work
+    interrupted. Completed workers remain discoverable after restart.

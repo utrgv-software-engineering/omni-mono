@@ -301,9 +301,7 @@ def stream_event_payload(
         ui_metadata: dict = {}
 
         # Check if output is a RichToolOutput instance
-        from omniagents.core.tools import RichToolOutput
-
-        if isinstance(output, RichToolOutput):
+        if hasattr(output, "ui_metadata"):
             ui_metadata = dict(output.ui_metadata)
             # String conversion will use __str__ which returns only llm_output
 
@@ -707,7 +705,13 @@ async def stream_agent(
             if outer_iteration > 0:
                 streamed_items_buffer.clear()
             outer_iteration += 1
-            result = _Runner.run_streamed(agent, run_input, **run_kwargs)
+            from omniagents.core.runtime.tool_durability import active_tool_hooks
+
+            hooks_token = active_tool_hooks.set(run_kwargs.get("hooks"))
+            try:
+                result = _Runner.run_streamed(agent, run_input, **run_kwargs)
+            finally:
+                active_tool_hooks.reset(hooks_token)
             session.current_stream_result = result
 
             async for event in result.stream_events():
@@ -884,48 +888,9 @@ async def stream_agent(
                     if not delivered:
                         session.pending_events.append((method, payload))
 
-                    # Emit audit events for tool_called / tool_result
-                    if service is not None and method in ("tool_called", "tool_result"):
-                        try:
-                            from omniagents.core.audit.events import (
-                                make_audit_event,
-                                truncate_for_audit,
-                                TOOL_CALLED,
-                                TOOL_RESULT,
-                            )
+                    from omniagents.core.runtime.tool_events import emit_tool_audit
 
-                            _et = (
-                                TOOL_CALLED if method == "tool_called" else TOOL_RESULT
-                            )
-                            _max = 4096
-                            if method == "tool_called":
-                                _details = {
-                                    "tool": payload.get("tool"),
-                                    "call_id": payload.get("call_id"),
-                                    "input": truncate_for_audit(
-                                        payload.get("input", ""), _max
-                                    ),
-                                }
-                            else:
-                                _details = {
-                                    "tool": payload.get("tool"),
-                                    "call_id": payload.get("call_id"),
-                                    "output": truncate_for_audit(
-                                        payload.get("output", ""), _max
-                                    ),
-                                }
-                            await service.emit_runtime_hook(
-                                "audit",
-                                **make_audit_event(
-                                    _et,
-                                    session_id=getattr(session, "id", None),
-                                    user_id=getattr(session, "user_id", None),
-                                    run_id=payload.get("run_id"),
-                                    details=_details,
-                                ),
-                            )
-                        except Exception:
-                            pass
+                    await emit_tool_audit(service, session, method, payload)
 
                 # Persistence is handled by the SDK via ``add_items`` /
                 # ``save_result_to_session`` at turn boundaries (or on
@@ -1225,6 +1190,13 @@ async def stream_agent(
         # Every await in this block runs while the run's own outcome is
         # already decided, so nothing here may speak for it.
         unwinding = sys.exc_info()[1]
+        # Cells may yield back to the model, but never outlive this run's authority.
+        from omniagents.core.orchestration.cells import close_run
+
+        try:
+            await close_run(session.id, asyncio.current_task().get_name())
+        except Exception:
+            logger.exception("JavaScript cell teardown failed")
 
         # Close the run-diff scope FIRST. It re-reads every tracked path,
         # so it must run while the run's workspace is still installed

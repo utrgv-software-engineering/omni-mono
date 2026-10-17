@@ -24,15 +24,57 @@ class SingleWorker:
     started: bool = False
     cleaned: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    revision: int = 0
 
 
 _WORKERS: dict[tuple[str, str], SingleWorker] = {}
+
+
+def _restore(sid):
+    from omniagents.core.agents.service import current_service
+    from omniagents.builtin.tools.swarm_tools import _journal
+
+    journal = _journal(current_service(), sid)
+    if journal is None:
+        return
+    rows = {row["worker_id"]: row for row in journal.rows()}
+    for data in journal.groups().values():
+        if data.get("kind") != "single":
+            continue
+        key = (sid, data["name"])
+        old = _WORKERS.get(key)
+        if old is not None and old.revision == data["revision"]:
+            if old.worker_id in rows:
+                old.started = True
+                old.cleaned = bool(rows[old.worker_id].get("cleaned"))
+            continue
+        worker = SingleWorker(**{k: v for k, v in data.items() if k != "kind"})
+        if worker.worker_id in rows:
+            worker.started = True
+            worker.cleaned = bool(rows[worker.worker_id].get("cleaned"))
+        _WORKERS[key] = worker
+
+
+def _save(sid, worker):
+    from omniagents.core.agents.service import current_service
+    from omniagents.builtin.tools.swarm_tools import _journal
+
+    journal = _journal(current_service(), sid)
+    if journal is not None:
+        value = {
+            key: getattr(worker, key)
+            for key in ("name", "worker_id", "role", "task", "started", "cleaned")
+        }
+        worker.revision = journal.save_group(
+            f"single:{worker.name}", {"kind": "single", **value}, worker.revision
+        )
 
 
 def _owner(ctx: RunContextWrapper[Any]) -> str:
     sid = session_id_from_ctx(ctx)
     if not sid:
         raise ValueError("A session is required")
+    _restore(sid)
     return sid
 
 
@@ -100,6 +142,8 @@ async def dispatch_worker(
             f"Your name: {name}\nYour role: {instructions or 'Complete the assigned task'}\n"
             f"Assignment: {task}\nDo not recruit workers. Finish with your result for the owner."
         )
+        worker.role, worker.task = instructions, task
+        _save(sid, worker)
         if worker.started:
             output = await getattr(workers.resume_worker, "_original_func")(
                 ctx, worker.worker_id, brief
@@ -112,12 +156,14 @@ async def dispatch_worker(
                 allow_dirty,
                 worker_id=worker.worker_id,
                 configure_spec=_validate_worker_spec,
+                recipe={"kind": "single", "version": 1},
             )
         data = json.loads(str(output))
         if data.get("status") in {"spawned", "resumed"}:
             worker.started = True
             worker.role = instructions
             worker.task = task
+        _save(sid, worker)
         return json.dumps({"name": name, **data})
 
 
@@ -164,4 +210,5 @@ async def cleanup_single_worker(ctx: RunContextWrapper[Any], name: str) -> str:
         data = json.loads(str(output))
         if data.get("status") in {"cleaned_up", "no_worktree"}:
             worker.cleaned = True
+            _save(_owner(ctx), worker)
         return json.dumps({"name": name, **data})

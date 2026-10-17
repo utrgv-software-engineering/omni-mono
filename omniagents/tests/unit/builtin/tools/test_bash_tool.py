@@ -58,6 +58,7 @@ if "bs4" not in sys.modules:
     sys.modules["bs4"] = fake_bs4
 
 import omniagents.builtin.tools.bash_tool as bash_tool
+from omniagents.core.tools.output_budget import bound_output
 from omniagents.workspace import ExecResult
 
 
@@ -198,16 +199,17 @@ async def test_execute_bash_truncates_large_output(monkeypatch, tmp_path):
         ctx, "big output", max_output_chars=500
     )
 
-    assert "characters truncated" in result.llm_output
+    result = await bound_output(result, ctx)
+    assert "Output shortened" in result.llm_output
     assert "AAA" in result.llm_output
     assert "CCC" in result.llm_output
-    assert result.ui_metadata["metadata"]["was_truncated"] is True
-    assert result.ui_metadata["metadata"]["chars_truncated"] > 0
+    assert result.ui_metadata["output_retention"]["status"] == "unavailable"
+    assert len(result.llm_output.encode()) <= 512
 
 
 @pytest.mark.asyncio
-async def test_execute_bash_truncates_long_lines(monkeypatch, tmp_path):
-    """Test that individual long lines are truncated."""
+async def test_execute_bash_preserves_long_lines(monkeypatch, tmp_path):
+    """Long lines that fit the total budget remain intact."""
     ctx = make_ctx(tmp_path)
 
     long_line = "x" * 600
@@ -218,9 +220,8 @@ async def test_execute_bash_truncates_long_lines(monkeypatch, tmp_path):
 
     result = await unwrap(bash_tool.execute_bash)(ctx, "long line")
 
-    assert "lines exceeded 500 chars" in result.llm_output
-    assert result.ui_metadata["metadata"]["lines_truncated"] == 1
-    assert "..." in result.llm_output
+    assert long_line in result.llm_output
+    assert result.ui_metadata["metadata"]["lines_truncated"] == 0
 
 
 @pytest.mark.asyncio
@@ -271,9 +272,9 @@ async def test_execute_bash_truncation_notice_with_stats(monkeypatch, tmp_path):
         ctx, "many lines", max_output_chars=200
     )
 
-    assert "Total output:" in result.llm_output
-    assert "chars" in result.llm_output
-    assert "lines" in result.llm_output
+    result = await bound_output(result, ctx)
+    assert "Output shortened" in result.llm_output
+    assert result.ui_metadata["output_retention"]["original_bytes"] > 512
     assert result.ui_metadata["metadata"]["total_lines"] == 100
 
 

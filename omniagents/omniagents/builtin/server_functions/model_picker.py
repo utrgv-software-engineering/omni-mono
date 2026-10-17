@@ -67,6 +67,10 @@ async def list_models(session: Session) -> dict:
         return _no_store_result()
 
     models = store.list_text_models()
+    if store.single_provider:
+        models = [
+            m for m in models if m.get("provider_name") == store.selected_provider()
+        ]
     default_name = store.get_default_model_name()
 
     active_model = getattr(session, "active_model", None)

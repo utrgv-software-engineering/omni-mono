@@ -60,6 +60,7 @@ class QueuedItem:
     enqueued_at: float = field(default_factory=time.time)
     state: str = "pending"
     error: str | None = None
+    worker_reports: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON-safe wire shape for ``list_queue`` and ``queue_changed``."""
@@ -75,6 +76,7 @@ class QueuedItem:
             "enqueued_at": self.enqueued_at,
             "state": self.state,
             "error": self.error,
+            **({"worker_reports": self.worker_reports} if self.worker_reports else {}),
         }
 
 

@@ -109,7 +109,14 @@ def manifest_slash_bindings(project_path: Any = None) -> Dict[str, dict]:
     return out
 
 
-async def run_slash_agent(name: str, binding: dict, arg: Optional[str] = None) -> str:
+async def run_slash_agent(
+    name: str,
+    binding: dict,
+    arg: Optional[str] = None,
+    *,
+    service: Any = None,
+    session: Any = None,
+) -> str:
     """Run the project agent a slash binding names and format its result.
 
     See the module docstring for the binding schema and semantics. *arg*
@@ -125,7 +132,22 @@ async def run_slash_agent(name: str, binding: dict, arg: Optional[str] = None) -
     max_turns = int(binding.get("max_turns") or DEFAULT_SLASH_AGENT_MAX_TURNS)
     normalize = bool(binding.get("normalize_model", True))
 
-    model, model_runtime = resolve_model_runtime(normalize=normalize)
+    from omniagents.core.models import (
+        resolve_service_model_runtime,
+        normalize_model_name,
+    )
+
+    # Session-aware invocations use the same selection as chat. Standalone CLI
+    # invocations intentionally use the workspace default.
+    if session is not None:
+        ref, model_runtime = resolve_service_model_runtime(service, session)
+        model = (
+            normalize_model_name(ref, model_runtime)
+            if normalize
+            else model_runtime.get("model")
+        )
+    else:
+        model, model_runtime = resolve_model_runtime(normalize=normalize)
 
     # Anchor the run to the invoking shell's directory ($PWD, falling
     # back to process cwd) — the agent's file tools resolve relative
@@ -139,6 +161,7 @@ async def run_slash_agent(name: str, binding: dict, arg: Optional[str] = None) -
             prompt,
             model=model,
             runtime=model_runtime,
+            session=session,
             # The harness stamps model_settings only when it's a
             # non-empty dict, so the runtime value passes through raw.
             model_settings=model_runtime.get("model_settings"),

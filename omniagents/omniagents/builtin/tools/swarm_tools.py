@@ -1,7 +1,7 @@
 """Opt-in, session-owned swarm coordination over the existing worker runtime.
 
-Records and mailboxes live for the host process lifetime. Worker histories and
-workspaces retain their normal persistence; this is not a durable scheduler.
+Records, membership and mailboxes persist in the owning conversation inbox.
+Live locks and member tool closures are rebuilt from these records.
 Member communication tools are bound to membership by the host, never by
 model-supplied sender/session IDs. Only the owner gets lifecycle operations.
 """
@@ -43,6 +43,7 @@ class Swarm:
     result: str = ""
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     service: Any = field(default=None, repr=False)
+    revision: int = 0
 
 
 _SWARMS: dict[str, Swarm] = {}
@@ -51,9 +52,100 @@ MAX_MEMBERS = 16
 MAX_MESSAGES = 200
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
+def _parent_scope(swarm):
+    from omniagents.core.agents.service import (
+        bind_current_service,
+        reset_current_service,
+    )
+    from omniagents.core.session.helpers import (
+        set_current_session_id,
+        reset_current_session_id,
+    )
+
+    service_token = bind_current_service(swarm.service)
+    session_token = set_current_session_id(swarm.owner)
+    try:
+        yield
+    finally:
+        reset_current_session_id(session_token)
+        reset_current_service(service_token)
+
+
+def _journal(service, parent_id):
+    if service is None or not callable(getattr(service, "_queue_store", None)):
+        return None
+    from omniagents.core.workers.durable import for_session
+
+    parent = service.get_session(parent_id)
+    return for_session(service, parent) if parent is not None else None
+
+
+def restore_groups(service, parent_id):
+    journal = _journal(service, parent_id)
+    if journal is None:
+        return
+    rows = {row["worker_id"]: row for row in journal.rows()}
+    for key, data in journal.groups().items():
+        if data.get("kind") != "swarm":
+            continue
+        existing = _SWARMS.get(key)
+        if existing is not None and existing.revision == data["revision"]:
+            existing.service = service
+            for member in existing.members.values():
+                if member.worker_id in rows:
+                    member.started = True
+                    member.cleaned = bool(rows[member.worker_id].get("cleaned"))
+            continue
+        swarm = Swarm(
+            key,
+            parent_id,
+            data["objective"],
+            closed=data["closed"],
+            result=data["result"],
+            messages=data["messages"],
+            service=service,
+            revision=data["revision"],
+        )
+        swarm.members = {
+            name: Member(**member) for name, member in data["members"].items()
+        }
+        for member in swarm.members.values():
+            if member.worker_id in rows:
+                member.started = True
+                member.cleaned = bool(rows[member.worker_id].get("cleaned"))
+        _SWARMS[key] = swarm
+
+
+def _save(swarm):
+    journal = _journal(swarm.service, swarm.owner)
+    if journal is None:
+        return
+    from dataclasses import asdict
+
+    swarm.revision = journal.save_group(
+        swarm.id,
+        {
+            "kind": "swarm",
+            "objective": swarm.objective,
+            "closed": swarm.closed,
+            "result": swarm.result,
+            "messages": swarm.messages,
+            "members": {name: asdict(member) for name, member in swarm.members.items()},
+        },
+        swarm.revision,
+    )
+
+
 def _owned(ctx: RunContextWrapper[Any], swarm_id: str) -> Swarm:
-    swarm = _SWARMS.get(swarm_id)
+    from omniagents.core.agents.service import current_service
+
     sid = session_id_from_ctx(ctx)
+    restore_groups(current_service(), sid)
+    swarm = _SWARMS.get(swarm_id)
     if not sid or swarm is None or swarm.owner != sid:
         raise ValueError("Swarm not found in this session")
     return swarm
@@ -100,10 +192,14 @@ def swarm_snapshots(parent_session_id: str | None) -> list[dict[str, Any]]:
     """Read-only UI snapshot, strictly scoped to the owning parent session."""
     if not parent_session_id:
         return []
+    from omniagents.core.agents.service import current_service
+
+    restore_groups(current_service(), parent_session_id)
     return [_snapshot(s) for s in _SWARMS.values() if s.owner == parent_session_id]
 
 
 async def _publish(swarm: Swarm) -> None:
+    _save(swarm)
     from omniagents.core.runtime.subagents import broadcast_subagents_snapshot
 
     await broadcast_subagents_snapshot(swarm.service, swarm.owner)
@@ -127,6 +223,7 @@ async def _message(
         "delivery": "mailbox",
     }
     swarm.messages.append(row)
+    _save(swarm)
     # Store before attempting delivery: idle/planned recipients can read their
     # mailbox on dispatch/resume. Sending never starts a new run by itself.
     if recipient != "owner" and target.started:
@@ -168,12 +265,14 @@ def _configure_member(swarm: Swarm, member: Member) -> Callable[[Any], None]:
         Messages never automatically restart completed teammates. Avoid
         acknowledgments and social chatter; the swarm has a message budget.
         """
-        return json.dumps(await _message(swarm, member.name, recipient, message))
+        with _parent_scope(swarm):
+            return json.dumps(await _message(swarm, member.name, recipient, message))
 
     @rich_function_tool
     async def swarm_member_context() -> str:
         """Read the shared objective, member roles/status, and your mailbox."""
-        snapshot = _snapshot(swarm)
+        with _parent_scope(swarm):
+            snapshot = _snapshot(swarm)
         snapshot["messages"] = [
             m
             for m in swarm.messages
@@ -260,6 +359,8 @@ async def dispatch_swarm_member(
             "Use swarm_member_message for relevant findings/dependencies. "
             "Do not recruit workers. Finish with your result for the owner."
         )
+        member.task = task
+        _save(swarm)
         if member.started:
             output = await getattr(workers.resume_worker, "_original_func")(
                 ctx, member.worker_id, brief
@@ -272,6 +373,12 @@ async def dispatch_swarm_member(
                 allow_dirty,
                 worker_id=member.worker_id,
                 configure_spec=_configure_member(swarm, member),
+                recipe={
+                    "kind": "swarm",
+                    "version": 1,
+                    "swarm_id": swarm.id,
+                    "member": member.name,
+                },
             )
         data = json.loads(str(output))
         if data.get("status") in {"spawned", "resumed"}:
@@ -289,6 +396,9 @@ async def get_swarm(ctx: RunContextWrapper[Any], swarm_id: str | None = None) ->
     sid = session_id_from_ctx(ctx)
     if not sid:
         raise ValueError("A session is required")
+    from omniagents.core.agents.service import current_service
+
+    restore_groups(current_service(), sid)
     return json.dumps([_snapshot(s) for s in _SWARMS.values() if s.owner == sid])
 
 
