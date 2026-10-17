@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 
+import { validateModelsConfig } from '@/lib/agent-config';
 import { getOmniConfigDir } from '@/main/util';
 import type { ModelsConfig, ProviderEntry } from '@/shared/types';
 
@@ -38,9 +39,7 @@ const resolveDefault = (config: ModelsConfig): LauncherDefault | null => {
   if (!provider) {
     return null;
   }
-  // Either the provider-level api_key or the model-level api_key counts as configured.
-  const modelEntry = provider.models[modelId];
-  const apiKey = modelEntry?.api_key ?? provider.api_key;
+  const apiKey = provider.api_key;
   if (!apiKey) {
     return null;
   }
@@ -57,14 +56,14 @@ const resolveDefault = (config: ModelsConfig): LauncherDefault | null => {
  * be appended without having to round-trip through a TOML library.
  */
 export const buildMarimoAiToml = (config: ModelsConfig): string | null => {
+  validateModelsConfig(config);
   const resolved = resolveDefault(config);
   if (!resolved) {
     return null;
   }
 
   const { provider, modelId } = resolved;
-  const modelEntry = provider.models[modelId];
-  const apiKey = modelEntry?.api_key ?? provider.api_key ?? '';
+  const apiKey = provider.api_key ?? '';
   const baseUrl = provider.base_url;
   const apiVersion = provider.api_version;
 

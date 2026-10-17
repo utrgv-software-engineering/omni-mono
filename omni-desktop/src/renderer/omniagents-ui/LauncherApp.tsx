@@ -59,6 +59,8 @@ type OmniAgentsAppProps = {
   onOpenApp?: (appId: string) => void;
   /** Transcript-viewer mode: no composer or pill row. */
   readOnly?: boolean;
+  /** Refetch a read-only transcript when its external worker advances. */
+  transcriptRevision?: string;
   /** Additional column UI that must share this exact RPC connection. */
   providerChildren?: ReactNode;
 };
@@ -93,6 +95,7 @@ export const OmniAgentsApp = ({
   workspaceDir,
   onOpenApp,
   readOnly,
+  transcriptRevision,
   providerChildren,
 }: OmniAgentsAppProps) => {
   // Resolve relative ``/proxy/...`` payloads against the launcher's actual
@@ -135,6 +138,7 @@ export const OmniAgentsApp = ({
           workspaceDir={workspaceDir}
           onOpenApp={onOpenApp}
           readOnly={readOnly}
+          transcriptRevision={transcriptRevision}
         />
         {providerChildren}
       </RPCClientProvider>

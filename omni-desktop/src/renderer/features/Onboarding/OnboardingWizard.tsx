@@ -197,6 +197,9 @@ export const OnboardingWizard = memo(() => {
     const config = await agentConfigApi.getModels();
     const provider: ProviderEntry = config.providers[providerName] ?? { type: advProviderType, models: {} };
     provider.type = advProviderType;
+    if (advProviderType === 'litellm' && !provider.routing_prefix && advModelId.includes('/')) {
+      provider.routing_prefix = advModelId.trim().split('/')[0];
+    }
     if (advApiKey.trim()) {
       provider.api_key = advApiKey.trim();
     }

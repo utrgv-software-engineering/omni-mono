@@ -20,7 +20,7 @@ export function maskModelsConfig(config: ModelsConfig): ModelsConfig {
   for (const [name, prov] of Object.entries(config.providers)) {
     const models: typeof prov.models = {};
     for (const [id, m] of Object.entries(prov.models)) {
-      models[id] = m.api_key ? { ...m, api_key: SECRET_SENTINEL } : m;
+      models[id] = (m as { api_key?: string }).api_key ? ({ ...m, api_key: SECRET_SENTINEL } as typeof m) : m;
     }
     providers[name] = { ...prov, models, ...(prov.api_key ? { api_key: SECRET_SENTINEL } : {}) };
   }
@@ -59,8 +59,9 @@ export function restoreMaskedModels(incoming: ModelsConfig, stored: ModelsConfig
     const storedProv = stored.providers[name];
     const models: typeof prov.models = {};
     for (const [id, m] of Object.entries(prov.models)) {
-      const storedKey = storedProv?.models[id]?.api_key;
-      models[id] = m.api_key === SECRET_SENTINEL ? { ...m, api_key: storedKey } : m;
+      const storedKey = (storedProv?.models[id] as { api_key?: string } | undefined)?.api_key;
+      models[id] =
+        (m as { api_key?: string }).api_key === SECRET_SENTINEL ? ({ ...m, api_key: storedKey } as typeof m) : m;
     }
     const provKey = prov.api_key === SECRET_SENTINEL ? storedProv?.api_key : prov.api_key;
     providers[name] = { ...prov, models, ...(provKey !== undefined ? { api_key: provKey } : {}) };

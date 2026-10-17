@@ -177,3 +177,31 @@ describe('AgentsSurface agent-tool transcript', () => {
     expect(container.textContent).toContain('left no relayed steps');
   });
 });
+
+describe('worker recovery', () => {
+  it('offers explicit resume with an operation identity for interrupted workers', async () => {
+    const resumeWorker = vi.fn().mockResolvedValue({ ok: true });
+    await renderSubagentDetail(worker({ status: 'interrupted', recovered: true, error: 'Runtime stopped' }), {
+      ...actionsWith(vi.fn().mockResolvedValue([])),
+      resumeWorker,
+    });
+    expect(container.textContent).toContain('Worker interrupted');
+    const resume = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Resume worker'
+    );
+    expect(resume).toBeDefined();
+    await act(async () => resume!.click());
+    expect(resumeWorker).toHaveBeenCalledWith('w-1', expect.any(String));
+  });
+
+  it('shows blocked recovery and pending completion delivery honestly', async () => {
+    await renderSubagentDetail(
+      worker({ status: 'blocked', error: 'Original environment is unavailable', report_status: 'queued' }),
+      { ...actionsWith(vi.fn().mockResolvedValue([])), resumeWorker: vi.fn() }
+    );
+    expect(container.textContent).toContain('Recovery blocked');
+    expect(container.textContent).toContain('Original environment is unavailable');
+    expect(container.textContent).toContain('Retry recovery');
+    expect(container.textContent).toContain('Pending delivery');
+  });
+});

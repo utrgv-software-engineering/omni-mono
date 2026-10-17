@@ -903,7 +903,37 @@ export class ProcessManager {
     return this.consumerEpochs.get(processId) === epoch;
   }
 
+  private changingModels = false;
+
+  /** Stop requests using the old connection before publishing new settings. */
+  changeModels = async (write: () => void): Promise<void> => {
+    if (this.changingModels) {
+      throw new Error('AI settings are already changing. Please retry.');
+    }
+    this.changingModels = true;
+    try {
+      for (const id of this.pendingStarts.keys()) {
+        this.advanceConsumerEpoch(id);
+      }
+      await Promise.allSettled([...this.pendingStarts.values()].map((entry) => entry.promise));
+      await Promise.allSettled([...this.pendingStops.values()]);
+      await this.pendingManagementConnection?.catch(() => undefined);
+      const hosts = new Set([...this.agentHosts.hosts(), ...this.processes.values()]);
+      for (const host of hosts) {
+        await host.stop(); // A failed stop must prevent the provider change.
+        await this.evictStaleMcpHost(host, true);
+      }
+      this.pendingManagementConnection = null;
+      write();
+    } finally {
+      this.changingModels = false;
+    }
+  };
+
   start = (processId: string, opts: AgentProcessStartOptions): Promise<void> => {
+    if (this.changingModels) {
+      return Promise.reject(new Error('AI settings are changing. Please retry shortly.'));
+    }
     if (this.retiredConsumers.has(processId)) {
       return Promise.reject(new Error('This chat tab has been closed'));
     }
@@ -959,6 +989,9 @@ export class ProcessManager {
    * encapsulated by AgentProcess and its main-process control client.
    */
   ensureManagementConnection = (): Promise<ManagementRuntimeConnection> => {
+    if (this.changingModels) {
+      return Promise.reject(new Error('AI settings are changing. Please retry shortly.'));
+    }
     if (this.pendingManagementConnection) {
       return this.pendingManagementConnection;
     }
@@ -1052,7 +1085,7 @@ export class ProcessManager {
     return proc.callManagementAdmin(request.method, request.params as never);
   };
 
-  private evictStaleMcpHost = async (proc: AgentProcess): Promise<string[]> => {
+  private evictStaleMcpHost = async (proc: AgentProcess, alreadyStopped = false): Promise<string[]> => {
     const consumers = this.agentHosts.consumersForHost(proc);
     for (const processId of consumers) {
       this.advanceConsumerEpoch(processId);
@@ -1067,7 +1100,9 @@ export class ProcessManager {
         this.pendingManagementConnection = null;
       }
     }
-    await proc.stop().catch(() => undefined);
+    if (!alreadyStopped) {
+      await proc.stop().catch(() => undefined);
+    }
     return consumers;
   };
 
@@ -1347,6 +1382,9 @@ export class ProcessManager {
   /** All materializing operations share the same per-consumer lane as start.
    * Stop waits for this lane before retiring its final environment. */
   private mutateConsumer = <R>(processId: string, mutate: () => Promise<R>): Promise<R> => {
+    if (this.changingModels) {
+      return Promise.reject(new Error('AI settings are changing. Please retry shortly.'));
+    }
     if (this.retiredConsumers.has(processId)) {
       return Promise.reject(new Error('This chat tab has been closed'));
     }

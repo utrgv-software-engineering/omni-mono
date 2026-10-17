@@ -1277,6 +1277,9 @@ export const wireGlobalHandlers = async (arg: {
     return result;
   });
   ipc.handle('store:set-key', async (ctx, key, value) => {
+    if (key === 'modelsConfig') {
+      throw new Error('Use AI Settings to change model configuration.');
+    }
     if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId' || key === 'chatCleanupJobs') {
       throw new Error('Use store:chat-command for chat state mutations');
     }
@@ -1295,6 +1298,9 @@ export const wireGlobalHandlers = async (arg: {
   });
   ipc.handle('store:get', (ctx) => getStoreSnapshot(ctx.tenantId, ctx.principalId));
   ipc.handle('store:set', async (ctx, data) => {
+    if (Object.hasOwn(data, 'modelsConfig')) {
+      throw new Error('Use AI Settings to change model configuration.');
+    }
     if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data || 'chatCleanupJobs' in data) {
       throw new Error('Use store:chat-command for chat state mutations');
     }
@@ -1351,7 +1357,8 @@ export const wireGlobalHandlers = async (arg: {
     },
     // Cloud/teams: never echo shared secret values back to the renderer; a
     // save that didn't change a masked field preserves the stored value.
-    pgPool ? { maskModels: maskModelsConfig, maskMcp: maskMcpConfig, restoreModels: restoreMaskedModels } : {}
+    pgPool ? { maskModels: maskModelsConfig, maskMcp: maskMcpConfig, restoreModels: restoreMaskedModels } : {},
+    { writeModels: (event, write) => ctxTenant(event).processManager.changeModels(write) }
   );
   registerGitCredentialHandlers(
     ipc,

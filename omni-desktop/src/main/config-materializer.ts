@@ -48,7 +48,7 @@ function isLiteralSecret(value: unknown): value is string {
 }
 
 /**
- * Rewrite `providers[*].api_key` and `providers[*].models[*].api_key` to refs.
+ * Rewrite `providers[*].api_key` to refs.
  * These are the only credential-bearing fields, and the only ones omni-code
  * runs through `_expand_env_vars` — a ref anywhere else would not resolve.
  */
@@ -64,17 +64,14 @@ function extractModelSecrets(models: ModelsConfig): { sanitized: ModelsConfig; s
       nextProvider.api_key = `\${${ref}}`;
     }
 
-    const models_: typeof prov.models = {};
-    for (const [modelId, model] of Object.entries(prov.models)) {
-      const nextModel = { ...model };
-      if (isLiteralSecret(model.api_key)) {
-        const ref = secretRefName('MODELS', `providers.${provName}.models.${modelId}.api_key`);
-        secrets[ref] = model.api_key;
-        nextModel.api_key = `\${${ref}}`;
-      }
-      models_[modelId] = nextModel;
-    }
-    nextProvider.models = models_;
+    // Legacy invalid models remain invalid so the runtime refuses them. Keep
+    // their secrets out of cloud files while Settings offers explicit repair.
+    nextProvider.models = Object.fromEntries(
+      Object.entries(prov.models).map(([id, model]) => {
+        const legacy = model as typeof model & { api_key?: string };
+        return [id, legacy.api_key ? { ...model, api_key: '__PROVIDER_CONFIGURATION_REQUIRED__' } : model];
+      })
+    );
     providers[provName] = nextProvider;
   }
 

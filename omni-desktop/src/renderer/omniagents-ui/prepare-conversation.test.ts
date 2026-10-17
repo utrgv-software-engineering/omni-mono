@@ -53,3 +53,41 @@ it('retains choices if the server refuses them so the first prompt cannot silent
   await expect(prepareConversation(client, 'a')).rejects.toThrow('Could not apply');
   expect(getConversationDraft('a').model).toBe('unavailable');
 });
+
+it('reconciles an old draft after an explicitly switched workspace provider', async () => {
+  updateConversationDraft('a', { model: 'old/model', reasoning: 'high', text: 'preserve me' });
+  const request = vi.fn(async (method: string, params: { model?: string }) => {
+    if (method === 'list_models') {
+      return {
+        models: [],
+        default_model: 'new/model',
+        voice_default_model: null,
+        errors: [],
+        reasons: [],
+        session: { session_id: 'a', active_model: 'new/model', reasoning_effort: null },
+      };
+    }
+    if (params.model === 'old/model') {
+      return { ok: false, reasons: [{ code: 'provider_mismatch', message: 'Provider changed' }] };
+    }
+    return {
+      ok: true,
+      session_id: 'a',
+      model: 'new/model',
+      label: 'New model',
+      provider: 'new',
+      max_input_tokens: 100,
+      max_output_tokens: 10,
+      reasoning_effort: null,
+      warnings: [],
+    };
+  });
+  await prepareConversation({ request } as unknown as RPCClient, 'a');
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    'set_session_model',
+    'list_models',
+    'set_session_model',
+  ]);
+  expect(getConversationDraft('a').text).toBe('preserve me');
+  expect(getConversationDraft('a').model).toBeUndefined();
+});

@@ -73,6 +73,9 @@ export class MainProcessManager {
       return result;
     });
     this.ipc.handle('store:set-key', (_, key, value) => {
+      if (key === 'modelsConfig') {
+        throw new Error('Use AI Settings to change model configuration.');
+      }
       if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId' || key === 'chatCleanupJobs') {
         throw new Error('Use store:chat-command for chat state mutations');
       }
@@ -94,6 +97,9 @@ export class MainProcessManager {
       return this.store.store;
     });
     this.ipc.handle('store:set', (_, data) => {
+      if (Object.hasOwn(data, 'modelsConfig')) {
+        throw new Error('Use AI Settings to change model configuration.');
+      }
       if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data || 'chatCleanupJobs' in data) {
         throw new Error('Use store:chat-command for chat state mutations');
       }

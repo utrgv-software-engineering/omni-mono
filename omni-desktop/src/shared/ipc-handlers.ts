@@ -8,10 +8,16 @@
 import { randomUUID } from 'node:crypto';
 
 import { mkdir, readdir, readFile, writeFile } from 'fs/promises';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig } from '@/lib/agent-config';
+import {
+  emptyMcpConfig,
+  emptyModelsConfig,
+  emptyNetworkConfig,
+  modelProvider,
+  validateModelsConfig,
+} from '@/lib/agent-config';
 import { normalizeCompatibleBaseUrl } from '@/lib/provider-config';
 import type { SkillStore } from '@/main/skills';
 import { installSkillFromFile, listSkills, setSkillEnabled, uninstallSkill } from '@/main/skills';
@@ -92,6 +98,9 @@ export function registerConfigHandlers(
 
   ipc.handle('config:write-json-file', async (_: unknown, filePath: string, data: unknown) => {
     validateConfigPath(filePath, configDir);
+    if (basename(filePath) === 'models.json') {
+      throw new Error('Use AI Settings to change models and provider connections.');
+    }
     await hooks.beforeWrite?.(filePath);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
@@ -108,6 +117,9 @@ export function registerConfigHandlers(
 
   ipc.handle('config:write-text-file', async (_: unknown, filePath: string, content: string) => {
     validateConfigPath(filePath, configDir);
+    if (basename(filePath) === 'models.json') {
+      throw new Error('Use AI Settings to change models and provider connections.');
+    }
     await hooks.beforeWrite?.(filePath);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, content, 'utf-8');
@@ -144,6 +156,7 @@ export interface SettingsSecretMask {
 }
 
 export interface SettingsConfigHooks {
+  writeModels?: (event: unknown, write: () => void) => Promise<void>;
   /** Run before returning the local MCP document so ownership transfer can
    * complete before a renderer selects its canonical CRUD path. */
   beforeGetMcp?: (event: unknown) => void | Promise<void>;
@@ -163,14 +176,50 @@ export function registerSettingsConfigHandlers(
     const c = resolveStore(e).get('modelsConfig') ?? emptyModelsConfig();
     return mask.maskModels ? mask.maskModels(c) : c;
   });
-  ipc.handle('settings:set-models-config', (e: unknown, config: ModelsConfig) => {
-    const store = resolveStore(e);
-    const next = mask.restoreModels
-      ? mask.restoreModels(config, store.get('modelsConfig') ?? emptyModelsConfig())
-      : config;
-    store.set('modelsConfig', next);
-    afterWrite(e);
-  });
+  let pendingModelWrite: Promise<unknown> = Promise.resolve();
+  ipc.handle(
+    'settings:set-models-config',
+    (
+      e: unknown,
+      config: ModelsConfig,
+      options?: { expectedProvider: string | null; confirmProviderChange?: boolean }
+    ) => {
+      const operation = pendingModelWrite
+        .catch(() => undefined)
+        .then(async () => {
+          const store = resolveStore(e);
+          const previous = store.get('modelsConfig') ?? emptyModelsConfig();
+          const previousProvider = modelProvider(previous.default);
+          if (options && options.expectedProvider !== previousProvider) {
+            throw new Error('The workspace provider changed in another window. Reload Settings before saving.');
+          }
+          const next = mask.restoreModels ? mask.restoreModels(config, previous) : config;
+          validateModelsConfig(next);
+          if (previousProvider && previousProvider !== modelProvider(next.default) && !options?.confirmProviderChange) {
+            throw new Error(
+              'Confirm the workspace provider change before saving. Continuing conversations will share their history with the new provider.'
+            );
+          }
+          const write = () => {
+            store.set('modelsConfig', {
+              ...next,
+              provider_scope_version:
+                previous.provider_scope_version === 1 || options?.confirmProviderChange || !previousProvider
+                  ? 1
+                  : undefined,
+            });
+            afterWrite(e);
+          };
+          if (hooks.writeModels) {
+            await hooks.writeModels(e, write);
+          } else {
+            write();
+          }
+        });
+      pendingModelWrite = operation;
+      return operation;
+    }
+  );
   ipc.handle('settings:get-mcp-config', (e: unknown) => {
     return Promise.resolve(hooks.beforeGetMcp?.(e)).then(() => {
       const c = resolveStore(e).get('mcpConfig') ?? emptyMcpConfig();

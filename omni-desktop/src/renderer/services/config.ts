@@ -17,7 +17,8 @@ export const configApi = {
  */
 export const agentConfigApi = {
   getModels: () => emitter.invoke('settings:get-models-config'),
-  setModels: (config: ModelsConfig) => emitter.invoke('settings:set-models-config', config),
+  setModels: (config: ModelsConfig, options?: { expectedProvider: string | null; confirmProviderChange?: boolean }) =>
+    emitter.invoke('settings:set-models-config', config, options),
   getMcp: () => emitter.invoke('settings:get-mcp-config'),
   setMcp: (config: McpConfig) => emitter.invoke('settings:set-mcp-config', config),
   getNetwork: () => emitter.invoke('settings:get-network-config'),

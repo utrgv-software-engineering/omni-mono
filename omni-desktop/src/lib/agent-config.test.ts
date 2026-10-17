@@ -6,6 +6,9 @@ import {
   emptyModelsConfig,
   emptyNetworkConfig,
   parseEnvVars,
+  PROVIDER_CONNECTION_FIELDS,
+  useProviderConnections,
+  validateModelsConfig,
 } from '@/lib/agent-config';
 
 describe('parseEnvVars', () => {
@@ -38,4 +41,62 @@ describe('empty config factories', () => {
     expect(emptyMcpConfig()).toEqual({ mcpServers: {} });
     expect(emptyNetworkConfig().enabled).toBe(false);
   });
+});
+
+describe('provider-owned connections', () => {
+  it('rejects model connection overrides without exposing their values', () => {
+    for (const field of PROVIDER_CONNECTION_FIELDS) {
+      const config = emptyModelsConfig();
+      config.providers.company = {
+        type: 'azure',
+        models: { deployment: { model: 'deployment', [field]: 'private-secret' } },
+      };
+      expect(() => validateModelsConfig(config)).toThrow('provider-only');
+      expect(() => validateModelsConfig(config)).not.toThrow('private-secret');
+      expect(config.providers.company.models.deployment).toHaveProperty(field, 'private-secret');
+    }
+  });
+  it('requires explicit migration and preserves provider connections', () => {
+    const config = emptyModelsConfig();
+    config.providers.company = {
+      type: 'azure',
+      api_key: 'company-key',
+      base_url: 'https://company.invalid',
+      models: {
+        deployment: {
+          model: 'deployment',
+          model_settings: { extra_headers: { Authorization: 'legacy' }, temperature: 0.4 },
+        },
+      },
+    };
+    const migrated = useProviderConnections(config);
+    expect(() => validateModelsConfig(config)).toThrow('provider-only');
+    expect(() => validateModelsConfig(migrated)).not.toThrow();
+    expect(migrated.providers.company?.api_key).toBe('company-key');
+    expect(migrated.providers.company?.models.deployment?.model_settings).toEqual({ temperature: 0.4 });
+  });
+  it('rejects hosted voice from a different provider', () => {
+    expect(() =>
+      validateModelsConfig({ ...emptyModelsConfig(), default: 'company/chat', voice_default: 'personal/voice' })
+    ).toThrow('Hosted voice');
+  });
+});
+
+it('keeps LiteLLM vendor routing on the provider', () => {
+  const config = {
+    version: 3 as const,
+    default: 'company/claude',
+    voice_default: null,
+    providers: {
+      company: {
+        type: 'litellm' as const,
+        api_key: 'provider-key',
+        routing_prefix: 'anthropic',
+        models: { claude: { model: 'anthropic/claude-example' } },
+      },
+    },
+  };
+  expect(() => validateModelsConfig(config)).not.toThrow();
+  config.providers.company.models.claude.model = 'openai/gpt-example';
+  expect(() => validateModelsConfig(config)).toThrow('Routing prefix');
 });

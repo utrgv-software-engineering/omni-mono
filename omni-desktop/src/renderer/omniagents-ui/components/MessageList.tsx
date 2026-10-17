@@ -45,6 +45,7 @@ import { Tool, ToolContent, ToolHeader, ToolInput, ToolOutput } from './ai/tool'
 import { ChatContainerContent, ChatContainerRoot, ChatContainerScrollAnchor } from './ChatContainer';
 import { messageKey } from './message-key';
 import { Markdown } from './promptkit/markdown';
+import { RetainedToolOutput, type Retention } from './RetainedToolOutput';
 import { RunDiffCard } from './RunDiffCard';
 
 export type {
@@ -1155,6 +1156,9 @@ export function ToolStepDetail({ item }: { item: ToolItem }) {
         // diagnostic payload.
         <ToolInput input={parsedInput} />
       ) : null}
+      {Boolean(item.metadata?.output_retention) && (
+        <RetainedToolOutput retention={item.metadata?.output_retention as Retention} />
+      )}
       {richBody ? (
         richBody
       ) : hasResult && item.output ? (
@@ -1237,6 +1241,9 @@ export function ToolCard({ item, defaultOpen }: { item: ToolItem; defaultOpen?: 
             ) : parsedInput ? (
               <ToolInput input={parsedInput} />
             ) : null}
+            {Boolean(item.metadata?.output_retention) && (
+              <RetainedToolOutput retention={item.metadata?.output_retention as Retention} />
+            )}
             {richBody ? (
               <div className="space-y-2">
                 <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">Result</h4>

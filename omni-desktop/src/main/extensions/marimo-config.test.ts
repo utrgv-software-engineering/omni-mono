@@ -171,46 +171,11 @@ describe('buildMarimoAiToml — Azure provider', () => {
 // Model-level api_key override
 // ---------------------------------------------------------------------------
 
-describe('buildMarimoAiToml — model-level api_key', () => {
-  it('uses model-level api_key over provider-level', () => {
-    const result = buildMarimoAiToml(
-      makeConfig({
-        default: 'openai/gpt-4o',
-        providers: {
-          openai: openaiProvider({
-            api_key: 'provider-key',
-            models: { 'gpt-4o': { model: 'gpt-4o', api_key: 'model-key' } },
-          }),
-        },
-      })
-    )!;
-    expect(result).toContain('api_key = "model-key"');
-    expect(result).not.toContain('provider-key');
-  });
-
-  it('falls back to provider api_key when model has none', () => {
-    const result = buildMarimoAiToml(
-      makeConfig({
-        default: 'openai/gpt-4o',
-        providers: { openai: openaiProvider({ api_key: 'provider-key' }) },
-      })
-    )!;
-    expect(result).toContain('api_key = "provider-key"');
-  });
-
-  it('succeeds when provider has no key but model does', () => {
-    const result = buildMarimoAiToml(
-      makeConfig({
-        default: 'openai/gpt-4o',
-        providers: {
-          openai: openaiProvider({
-            api_key: undefined,
-            models: { 'gpt-4o': { model: 'gpt-4o', api_key: 'model-only-key' } },
-          }),
-        },
-      })
-    )!;
-    expect(result).toContain('api_key = "model-only-key"');
+describe('buildMarimoAiToml — provider credentials', () => {
+  it('rejects legacy model credentials instead of changing accounts silently', () => {
+    const config = makeConfig({ default: 'openai/gpt-4o', providers: { openai: openaiProvider() } });
+    Object.assign(config.providers.openai!.models['gpt-4o']!, { api_key: 'legacy-secret' });
+    expect(() => buildMarimoAiToml(config)).toThrow('provider-only');
   });
 });
 

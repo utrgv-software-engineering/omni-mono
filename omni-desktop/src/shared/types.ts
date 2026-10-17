@@ -3271,7 +3271,10 @@ type SettingsConfigIpcEvents = Namespaced<
   'settings',
   {
     'get-models-config': () => ModelsConfig;
-    'set-models-config': (config: ModelsConfig) => void;
+    'set-models-config': (
+      config: ModelsConfig,
+      options?: { expectedProvider: string | null; confirmProviderChange?: boolean }
+    ) => void;
     'get-mcp-config': () => McpConfig;
     'set-mcp-config': (config: McpConfig) => void;
     'get-network-config': () => NetworkConfig;
@@ -4705,7 +4708,6 @@ export type ModelEntry = {
   reasoning?: ReasoningEffort;
   max_input_tokens?: number;
   max_output_tokens?: number;
-  api_key?: string;
   model_settings?: Record<string, unknown>;
 };
 
@@ -4732,6 +4734,7 @@ export type ProviderEntry = {
   api_key?: string;
   base_url?: string;
   api_version?: string;
+  routing_prefix?: string;
   use_responses?: boolean;
   use_responses_websocket?: boolean;
   models: Record<string, ModelEntry>;
@@ -4739,6 +4742,7 @@ export type ProviderEntry = {
 
 export type ModelsConfig = {
   version: 3;
+  provider_scope_version?: 1;
   default: string | null;
   voice_default: string | null;
   providers: Record<string, ProviderEntry>;

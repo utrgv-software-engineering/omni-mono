@@ -34,7 +34,7 @@ import type { TaskSummary } from './canonical-plan-tasks';
 // --- status → dot color -----------------------------------------------------
 
 export function subagentDotClass(status: SubagentSummary['status']): string {
-  if (status === 'running') {
+  if (['accepted', 'provisioning', 'ready', 'resuming', 'running'].includes(status)) {
     return 'bg-primary animate-pulse';
   }
   if (status === 'completed') {
@@ -285,8 +285,10 @@ export function groupSubagents(subagents: SubagentSummary[]): {
   completed: SubagentSummary[];
 } {
   return {
-    running: subagents.filter((s) => s.status === 'running'),
-    failed: subagents.filter((s) => s.status === 'error' || s.status === 'cancelled').sort(byRecency),
+    running: subagents.filter((s) => ['accepted', 'provisioning', 'ready', 'resuming', 'running'].includes(s.status)),
+    failed: subagents
+      .filter((s) => ['error', 'cancelled', 'interrupted', 'blocked'].includes(s.status))
+      .sort(byRecency),
     completed: subagents.filter((s) => s.status === 'completed').sort(byRecency),
   };
 }

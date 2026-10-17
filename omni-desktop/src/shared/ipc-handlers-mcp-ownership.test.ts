@@ -43,7 +43,7 @@ describe('config ownership hooks', () => {
     ).rejects.toThrow('canonical owner');
     expect(existsSync(mcpPath)).toBe(false);
 
-    const modelsPath = join(dir, 'models.json');
+    const modelsPath = join(dir, 'network.json');
     await handlers.get('config:write-json-file')!(undefined as never, modelsPath as never, { version: 3 } as never);
     expect(JSON.parse(readFileSync(modelsPath, 'utf8'))).toEqual({ version: 3 });
   });

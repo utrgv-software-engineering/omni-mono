@@ -14,7 +14,7 @@ import {
 import electronExecutablePath from 'electron';
 import { startDeterministicModelServer } from 'tests/e2e/support/model-server';
 import type { ManagedProcess } from 'tests/e2e/support/process';
-import { killTcpPort, startProcess, waitForHttpOk } from 'tests/e2e/support/process';
+import { crashProcessTree, killTcpPort, startProcess, waitForHttpOk } from 'tests/e2e/support/process';
 import { attachProofVideo, visualProofEnabled } from 'tests/e2e/support/proof';
 import {
   createE2eState,
@@ -289,6 +289,7 @@ async function launchElectronLocal(
       await page.setViewportSize({ width, height });
     },
     releaseBackground: () => modelServer?.releaseBackground(),
+    inspectModelRequests: () => [...(modelServer?.observations ?? [])],
     setMinimized: async (minimized) => {
       await browserWindow.evaluate((window, value) => (value ? window.minimize() : window.restore()), minimized);
       await expect.poll(() => browserWindow.evaluate((window) => window.isMinimized())).toBe(minimized);
@@ -297,7 +298,11 @@ async function launchElectronLocal(
     // capturePage can return a stale compositor surface (or a host-WM crop)
     // after DOM assertions pass, making the artifact contradict the test.
     captureScreenshot: () => page.screenshot({ animations: 'disabled' }),
-    close: async () => {
+    close: async (options) => {
+      const process = electronApp.process();
+      if (options?.crash && process.pid && process.exitCode === null) {
+        crashProcessTree(process.pid);
+      }
       await electronApp.close().catch(() => undefined);
       await attachPageVideo(page, testInfo, `electron-local video ${launchIndex}`);
       await modelServer?.close().catch(() => undefined);

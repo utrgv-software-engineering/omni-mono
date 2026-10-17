@@ -30,7 +30,21 @@ export type SubagentSummary = {
   agent?: string;
   /** Present on worker entries only — the id ``workers.kill`` accepts. */
   worker_id?: string;
-  status: 'running' | 'completed' | 'cancelled' | 'error';
+  status:
+    | 'accepted'
+    | 'provisioning'
+    | 'ready'
+    | 'resuming'
+    | 'running'
+    | 'interrupted'
+    | 'blocked'
+    | 'completed'
+    | 'cancelled'
+    | 'error';
+  recovered?: boolean;
+  resumable?: boolean;
+  recovery_reason?: string | null;
+  report_status?: 'queued' | 'delivered' | 'dismissed' | null;
   task: string;
   parent_session_id: string | null;
   session_id: string;
@@ -246,6 +260,7 @@ function pruneSubagentTranscripts(sessionId: string, live: ReadonlySet<string>):
 // ---------------------------------------------------------------------------
 
 export type ActivityActions = {
+  resumeWorker?: (workerId: string, operationId: string) => Promise<WorkersKillResult>;
   killWorker: (workerId: string) => Promise<WorkersKillResult>;
   killJob: (jobId: string) => Promise<BashJobsKillResult>;
   tailJob: (jobId: string, lines?: number) => Promise<BashJobsTailResult>;

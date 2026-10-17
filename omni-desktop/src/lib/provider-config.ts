@@ -71,6 +71,7 @@ export function buildProviderConfig(
     provider.type = 'openai';
   } else if (answers.kind === 'anthropic') {
     provider.type = 'litellm';
+    provider.routing_prefix = 'anthropic';
   } else {
     provider.type = 'openai-compatible';
     provider.base_url = normalizeCompatibleBaseUrl(answers.baseUrl ?? '');

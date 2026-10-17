@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 
+import { modelProvider } from '@/lib/agent-config';
 import { Button } from '@/renderer/ds/ui/button';
 import {
   DropdownMenu,
@@ -147,10 +148,31 @@ export function ModelSessionControls({
           return;
         }
         setModels(
-          result.models.filter((model) => !model.hidden && model.availability.available && model.entitlement.entitled)
+          result.models.filter(
+            (model) =>
+              !model.hidden &&
+              model.availability.available &&
+              model.entitlement.entitled &&
+              (!result.default_model ||
+                model.provider.name ===
+                  (result.models.find((entry) => entry.id === result.default_model)?.provider.name ??
+                    modelProvider(result.default_model)))
+          )
         );
-        setActiveModel(result.session?.active_model ?? result.default_model);
-        setReasoningEffort(result.session?.reasoning_effort ?? null);
+        const selection = result.session?.active_model ?? result.default_model;
+        const defaultProvider =
+          result.models.find((entry) => entry.id === result.default_model)?.provider.name ??
+          modelProvider(result.default_model);
+        const selectionProvider =
+          result.models.find((entry) => entry.id === selection)?.provider.name ?? modelProvider(selection);
+        if (draftCatalog && selection && defaultProvider && selectionProvider !== defaultProvider) {
+          updateConversationDraft(sessionId, { model: undefined, reasoning: undefined });
+          setActiveModel(result.default_model);
+          setReasoningEffort(null);
+        } else {
+          setActiveModel(selection);
+          setReasoningEffort(result.session?.reasoning_effort ?? null);
+        }
         setApprovalsReviewer(result.session?.approvals_reviewer === 'auto' ? 'auto' : 'user');
         const sessionWorkflowReviewer = result.session?.workflow_reviewer;
         setWorkflowReviewer(isWorkflowReviewer(sessionWorkflowReviewer) ? sessionWorkflowReviewer : 'guardian');

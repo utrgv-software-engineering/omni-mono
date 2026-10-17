@@ -13,10 +13,21 @@ export async function prepareConversation(client: RPCClient, sessionId: string) 
       throw new Error(result.reason ?? 'Could not apply conversation settings. Please retry.');
     }
   };
+  let providerChanged = false;
   if (draft.model) {
-    requireOk(await catalog.setSessionModel(sessionId, draft.model));
+    let result = await catalog.setSessionModel(sessionId, draft.model);
+    if (!result.ok && result.reasons?.some((reason) => reason.code === 'provider_mismatch')) {
+      // The workspace switch was confirmed separately. The session catalog
+      // still refuses migration of existing history without that confirmation.
+      const current = await catalog.listModels({ sessionId });
+      if (current.default_model) {
+        result = await catalog.setSessionModel(sessionId, current.default_model);
+        providerChanged = result.ok;
+      }
+    }
+    requireOk(result);
   }
-  if (draft.reasoning) {
+  if (draft.reasoning && !providerChanged) {
     requireOk(await catalog.setSessionReasoning(sessionId, draft.reasoning));
   }
   if (draft.approvals) {

@@ -21,7 +21,7 @@ const models = (): ModelsConfig => ({
   default: 'openai/gpt',
   voice_default: null,
   providers: {
-    openai: { type: 'openai', api_key: 'sk-secret', models: { gpt: { model: 'gpt', api_key: 'sk-model' } } },
+    openai: { type: 'openai', api_key: 'sk-secret', models: { gpt: { model: 'gpt' } } },
     azure: { type: 'azure', api_key: '${USER_AZURE_KEY}', base_url: 'https://x', models: {} },
   },
 });
@@ -100,16 +100,13 @@ describe('materializeAgentConfig — refs', () => {
     });
 
     const provKey = read('models.json').providers.openai.api_key;
-    const modelKey = read('models.json').providers.openai.models.gpt.api_key;
     const ghHeader = read('mcp.json').mcpServers.github.headers.Authorization;
     expect(provKey).toMatch(/^\$\{OMNI_SECRET_MODELS_[a-f0-9]{16}\}$/);
-    expect(modelKey).toMatch(/^\$\{OMNI_SECRET_MODELS_[a-f0-9]{16}\}$/);
     expect(ghHeader).toMatch(/^\$\{OMNI_SECRET_MCP_[a-f0-9]{16}\}$/);
 
     // The ref resolves back to the original secret via the env map.
     const refOf = (s: string) => s.slice(2, -1);
     expect(secretEnv[refOf(provKey)]).toBe('sk-secret');
-    expect(secretEnv[refOf(modelKey)]).toBe('sk-model');
     expect(secretEnv[refOf(ghHeader)]).toBe('token ghp_xxx');
     // network is non-secret and untouched
     expect(read('network.json')).toEqual(NET);

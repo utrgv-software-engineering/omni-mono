@@ -132,6 +132,8 @@ type AppProps = {
    *  is embedded to READ another session (e.g. a subagent's transcript in
    *  the Agents sidecar detail page). */
   readOnly?: boolean;
+  /** Refetch a read-only transcript when its external worker advances. */
+  transcriptRevision?: string;
 };
 
 export function App(props: AppProps) {
@@ -198,6 +200,7 @@ function SessionView({
   workspaceDir,
   onOpenApp,
   readOnly,
+  transcriptRevision,
   onSelectConversation,
   resumeRequested,
   initialMessage,
@@ -315,6 +318,12 @@ function SessionView({
     stageContext,
     clearStagedContext,
   } = machine;
+
+  useEffect(() => {
+    if (readOnly && connected && ui === 'chat' && transcriptRevision) {
+      void loadSession(sessionIdProp, { force: true }).catch(() => undefined);
+    }
+  }, [readOnly, connected, ui, transcriptRevision, loadSession, sessionIdProp]);
 
   // Hosted realtime voice — one session per chat surface. The dock renders
   // above the composer; live transcript items merge into MessageList below.
@@ -637,6 +646,22 @@ function SessionView({
     [client, executionTarget, sessionId]
   );
 
+  const handleWorkerResume = useCallback(
+    async (worker_id: string, operation_id: string): Promise<WorkersKillResult> => {
+      const res = (await client.serverCall(
+        'workers.resume',
+        { worker_id, operation_id },
+        sessionId,
+        executionTarget
+      )) as unknown as WorkersKillResult;
+      if (Array.isArray(res?.snapshot) && sessionId) {
+        mergeWorkersSnapshot(sessionId, normalizeSubagentSnapshot(res.snapshot));
+      }
+      return res;
+    },
+    [client, executionTarget, sessionId]
+  );
+
   const handleBashKill = useCallback(
     async (job_id: string): Promise<BashJobsKillResult> => {
       if (!environmentId) {
@@ -714,12 +739,13 @@ function SessionView({
     }
     registerActivityActions(sessionId, {
       killWorker: handleWorkerKill,
+      resumeWorker: handleWorkerResume,
       killJob: handleBashKill,
       tailJob: handleBashTail,
       getWorkerPlan: handleWorkerPlan,
     });
     return () => registerActivityActions(sessionId, null);
-  }, [sessionId, readOnly, handleWorkerKill, handleBashKill, handleBashTail, handleWorkerPlan]);
+  }, [sessionId, readOnly, handleWorkerKill, handleWorkerResume, handleBashKill, handleBashTail, handleWorkerPlan]);
 
   // Keep the Review sidecar's "This turn" scope current: the newest
   // run_diff transcript item is the session's turn record.

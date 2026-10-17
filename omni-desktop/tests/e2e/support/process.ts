@@ -23,6 +23,45 @@ function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS
   }
 }
 
+/** Abruptly stop only this launched application's process tree. */
+export function crashProcessTree(pid: number): void {
+  if (process.platform === 'win32') {
+    execFileSync('taskkill', ['/pid', String(pid), '/T', '/F']);
+    return;
+  }
+  const parents = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })
+    .trim()
+    .split('\n')
+    .map((line) => line.trim().split(/\s+/).map(Number));
+  const targets = new Set([pid]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [child, parent] of parents) {
+      if (targets.has(parent) && !targets.has(child)) {
+        targets.add(child);
+        changed = true;
+      }
+    }
+  }
+  const signal = (target: number, value: NodeJS.Signals) => {
+    try {
+      process.kill(target, value);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+        throw error;
+      }
+    }
+  };
+  // Freeze first so a dying child cannot trigger a graceful parent finalizer.
+  for (const target of targets) {
+    signal(target, 'SIGSTOP');
+  }
+  for (const target of targets) {
+    signal(target, 'SIGKILL');
+  }
+}
+
 export type ManagedProcess = {
   crashDescendant: (pid: number) => void;
   logs: () => string;

@@ -209,6 +209,38 @@ describe('ProcessManager', () => {
     vi.restoreAllMocks();
   });
 
+  it('stops old connections before committing model settings and blocks concurrent starts', async () => {
+    const { pm } = makePm();
+    await pm.start('chat-a', { workspaceDir: '/tmp/provider-test' });
+    const host = hoisted.agentProcessInstances[0]!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    host.stop.mockImplementationOnce(() => gate);
+    const write = vi.fn();
+    const change = pm.changeModels(write);
+    await expect(pm.start('chat-b', { workspaceDir: '/tmp/provider-test' })).rejects.toThrow('AI settings');
+    await expect(pm.rebuild('chat-a', { workspaceDir: '/tmp/provider-test' })).rejects.toThrow('AI settings');
+    expect(write).not.toHaveBeenCalled();
+    release();
+    await change;
+    expect(write).toHaveBeenCalledOnce();
+    await pm.start('chat-b', { workspaceDir: '/tmp/provider-test' });
+    expect(hoisted.agentProcessInstances).toHaveLength(2);
+  });
+
+  it('does not commit a new provider when stopping the old host fails', async () => {
+    const { pm } = makePm();
+    await pm.start('chat-a', { workspaceDir: '/tmp/provider-test' });
+    hoisted.agentProcessInstances[0]!.stop.mockRejectedValueOnce(new Error('stop failed'));
+    const write = vi.fn();
+    await expect(pm.changeModels(write)).rejects.toThrow('stop failed');
+    expect(write).not.toHaveBeenCalled();
+    await pm.changeModels(write);
+    expect(write).toHaveBeenCalledOnce();
+  });
+
   it('binds daily sessions to the current runtime without materializing again', async () => {
     const { pm } = makePm();
     await pm.start('agent:a', { workspaceDir: '/tmp/resident', snapshotRef: 'resident-a' });

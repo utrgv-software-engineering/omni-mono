@@ -3,9 +3,20 @@ import { Plus, Trash2 } from 'lucide-react';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
+import { modelConnectionIssues, modelProvider, useProviderConnections } from '@/lib/agent-config';
 import { buildCodexConfig, probeForProvider } from '@/lib/provider-config';
 import { SaveBar } from '@/renderer/ds/SaveBar';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/renderer/ds/ui/accordion';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/renderer/ds/ui/alert-dialog';
 import { Button } from '@/renderer/ds/ui/button';
 import { Card, CardContent } from '@/renderer/ds/ui/card';
 import { Checkbox } from '@/renderer/ds/ui/checkbox';
@@ -92,6 +103,9 @@ export const SettingsModalAiTab = memo(() => {
   const managementSnapshot = useProductManagementSnapshot();
   const [config, setConfig] = useState<ModelsConfig | null>(null);
   const [loading, setLoading] = useState(true);
+  const [savedProvider, setSavedProvider] = useState<string | null>(null);
+  const [confirmChange, setConfirmChange] = useState(false);
+  const [confirmLegacy, setConfirmLegacy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -114,7 +128,9 @@ export const SettingsModalAiTab = memo(() => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setConfig(await agentConfigApi.getModels());
+      const loaded = await agentConfigApi.getModels();
+      setConfig(loaded);
+      setSavedProvider(modelProvider(loaded.default));
       setDirty(false);
       setError(null);
     } catch (e) {
@@ -172,22 +188,34 @@ export const SettingsModalAiTab = memo(() => {
   // Union of store-configured keys and the live runtime list, so discovered
   // models (e.g. Codex) are selectable as the default model. Realtime models
   // are filtered from both halves — they belong to the Voice row only.
-  const modelKeys = useMemo(() => {
+  const allModelKeys = useMemo(() => {
     const storeKeys = config ? collectModelKeys(config) : [];
     const runtimeKeys = runtimeModels.filter((m) => !m.realtime).map((m) => m.name);
     return Array.from(new Set([...storeKeys, ...runtimeKeys])).sort();
   }, [config, runtimeModels]);
 
+  const selectedProvider = modelProvider(config?.default);
+  const providerNames = Array.from(
+    new Set([
+      ...Object.keys(config?.providers ?? {}),
+      ...allModelKeys.map((key) => modelProvider(key)).filter((name): name is string => Boolean(name)),
+    ])
+  ).sort();
+  const modelKeys = allModelKeys.filter((key) => modelProvider(key) === selectedProvider);
+  const legacyConnections = config ? modelConnectionIssues(config) : [];
+
   // Same union, narrowed to realtime-capable models — what Hosted voice may use.
   const realtimeModelKeys = useMemo(() => {
     const storeKeys = config ? collectRealtimeModelKeys(config) : [];
     const runtimeKeys = runtimeModels.filter((m) => m.realtime).map((m) => m.name);
-    return Array.from(new Set([...storeKeys, ...runtimeKeys])).sort();
-  }, [config, runtimeModels]);
+    return Array.from(new Set([...storeKeys, ...runtimeKeys]))
+      .filter((key) => modelProvider(key) === selectedProvider)
+      .sort();
+  }, [config, runtimeModels, selectedProvider]);
 
   // Offering Hosted with nothing to point it at would write null and bounce
   // the radio back to Off. An already-set voice_default keeps it reachable.
-  const hostedVoiceAvailable = realtimeModelKeys.length > 0 || (config?.voice_default ?? null) !== null;
+  const hostedVoiceAvailable = realtimeModelKeys.length > 0;
 
   /**
    * Called after a successful ChatGPT sign-in. Registers the built-in `codex`
@@ -241,21 +269,35 @@ export const SettingsModalAiTab = memo(() => {
     [load]
   );
 
-  const save = useCallback(async () => {
-    if (!config) {
-      return;
+  const persist = useCallback(
+    async (confirmed = false) => {
+      if (!config) {
+        return;
+      }
+      setSaving(true);
+      setError(null);
+      try {
+        await agentConfigApi.setModels(config, { expectedProvider: savedProvider, confirmProviderChange: confirmed });
+        setConfig({ ...config, provider_scope_version: 1 });
+        setSavedProvider(modelProvider(config.default));
+        setDirty(false);
+        void refreshManagement();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to save');
+      } finally {
+        setSaving(false);
+      }
+    },
+    [config, savedProvider, refreshManagement]
+  );
+
+  const save = useCallback(() => {
+    if (savedProvider && (savedProvider !== modelProvider(config?.default) || config?.provider_scope_version !== 1)) {
+      setConfirmChange(true);
+    } else {
+      void persist();
     }
-    setSaving(true);
-    setError(null);
-    try {
-      await agentConfigApi.setModels(config);
-      setDirty(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to save');
-    } finally {
-      setSaving(false);
-    }
-  }, [config]);
+  }, [savedProvider, config, persist]);
 
   const updateConfig = useCallback((updater: (prev: ModelsConfig) => ModelsConfig) => {
     setConfig((prev) => {
@@ -316,6 +358,10 @@ export const SettingsModalAiTab = memo(() => {
 
   const removeProvider = useCallback(
     (name: string) => {
+      if (name === selectedProvider) {
+        setError('Choose another workspace provider before removing this provider.');
+        return;
+      }
       updateConfig((c) => {
         const { [name]: _, ...rest } = c.providers;
         return { ...c, providers: rest };
@@ -324,7 +370,7 @@ export const SettingsModalAiTab = memo(() => {
         setExpandedProvider(null);
       }
     },
-    [expandedProvider, updateConfig]
+    [expandedProvider, updateConfig, selectedProvider]
   );
 
   const updateProvider = useCallback(
@@ -454,6 +500,54 @@ export const SettingsModalAiTab = memo(() => {
 
   return (
     <SettingsPane>
+      <AlertDialog open={confirmChange} onOpenChange={setConfirmChange}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Use this provider throughout the workspace?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Continuing existing conversations will send their history to {selectedProvider}. Active conversations and
+              background agents will stop. All projects and residents will use this provider when they continue.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void persist(true)}>Change provider</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={confirmLegacy} onOpenChange={setConfirmLegacy}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Use provider connections for all models?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes model-specific credentials and endpoints. Those models will use their provider connection
+              instead, which may send conversation data to a different account or endpoint. Review your provider
+              settings before saving.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => updateConfig(useProviderConnections)}>
+              Use provider connections
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {legacyConnections.length > 0 && (
+        <SettingsSection title="Connection settings need attention">
+          <p>
+            These models have their own connection settings. Models now use their provider credentials and endpoint.
+          </p>
+          <ul>
+            {legacyConnections.map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+          <Button variant="outline" onClick={() => setConfirmLegacy(true)}>
+            Review connection migration
+          </Button>
+        </SettingsSection>
+      )}
       <SettingsSection title="Connections">
         <CodexSignInCard
           onSignedIn={applyCodexSignIn}
@@ -468,15 +562,45 @@ export const SettingsModalAiTab = memo(() => {
         />
       </SettingsSection>
 
-      <SettingsSection title="Defaults">
+      <SettingsSection title="Workspace AI">
         <Card>
           <CardContent className={settingsCardContentClassName}>
+            <Field orientation="horizontal" className="justify-between gap-4">
+              <FieldLabel htmlFor="workspace-provider">Provider</FieldLabel>
+              <Select
+                id="workspace-provider"
+                value={selectedProvider ?? ''}
+                onChange={(event) => {
+                  const provider = event.target.value;
+                  const model = allModelKeys.find((key) => modelProvider(key) === provider);
+                  if (!model) {
+                    setError('Add a model or deployment to this provider first.');
+                    return;
+                  }
+                  updateConfig((current) => ({ ...current, default: model, voice_default: null }));
+                }}
+              >
+                <option value="" disabled>
+                  Choose a provider
+                </option>
+                {providerNames.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <p className="text-sm text-muted-foreground">
+              All projects, residents, subagents, reviews, and recaps use this provider.
+            </p>
             <Field orientation="horizontal" className="justify-between gap-4">
               <div className="min-w-0">
                 <FieldLabel>Default model</FieldLabel>
               </div>
-              <Select value={config.default ?? ''} onChange={onChangeDefault}>
-                <option value="">None</option>
+              <Select aria-label="Default model" value={config.default ?? ''} onChange={onChangeDefault}>
+                <option value="" disabled>
+                  Choose a model
+                </option>
                 {modelKeys.map((k) => (
                   <option key={k} value={k}>
                     {k}
@@ -866,6 +990,17 @@ const ProviderRow = memo(
                 ))}
               </Select>
             </Field>
+            {provider.type === 'litellm' && (
+              <Field orientation="horizontal" className="justify-between gap-4">
+                <FieldLabel htmlFor={`routing-prefix-${name}`}>Routing prefix</FieldLabel>
+                <Input
+                  id={`routing-prefix-${name}`}
+                  value={provider.routing_prefix ?? ''}
+                  placeholder="anthropic"
+                  onChange={(event) => onUpdateProvider(name, 'routing_prefix', event.target.value)}
+                />
+              </Field>
+            )}
             {showApiKey && (
               <Field orientation="horizontal" className="justify-between gap-4">
                 <div className="min-w-0">

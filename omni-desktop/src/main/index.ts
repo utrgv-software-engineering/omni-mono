@@ -1034,6 +1034,7 @@ registerSettingsConfigHandlers(
   },
   {},
   {
+    writeModels: (_event, write) => processManager.changeModels(write),
     // Reading the legacy document must remain responsive while a cold
     // management host starts. Ownership is transferred by the readiness hook
     // above; this guard only blocks writes after the marker is durable.

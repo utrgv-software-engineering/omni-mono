@@ -23,6 +23,7 @@ export type E2eState = {
 
 export type SeedState =
   | 'blank'
+  | 'provider-switch'
   | 'codex-account'
   | 'mcp-migration'
   | 'planning'
@@ -464,7 +465,21 @@ function launcherConfig(seedState: SeedState, workspaceDir: string) {
     schemaVersion: 28,
     onboardingComplete: true,
     defaultProfileName: seedState.startsWith('lazy-error') ? errorProfile : firstMessage ? 'devbox' : 'host',
-    modelsConfig: e2eModelsConfig(),
+    modelsConfig:
+      seedState === 'provider-switch'
+        ? {
+            ...e2eModelsConfig(),
+            providers: {
+              ...e2eModelsConfig().providers,
+              second: {
+                type: 'openai-compatible',
+                base_url: 'http://127.0.0.1:9/v1',
+                api_key: 'test-only',
+                models: { 'second-model': { model: 'second-model', label: 'Second provider model' } },
+              },
+            },
+          }
+        : e2eModelsConfig(),
     envVars: '',
     ...(seedState === 'mcp-migration'
       ? {
