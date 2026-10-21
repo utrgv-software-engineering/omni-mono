@@ -11,7 +11,6 @@ import asyncio
 import os
 import re
 import shlex
-import shutil
 import signal
 import subprocess
 import time
@@ -33,6 +32,8 @@ from .types import (
     WorkspaceEscapeError,
     WorkspaceFeatureUnavailable,
 )
+
+from omniagents.core.utils.fs import remove_tree
 
 _GIT_BASH_DRIVE = re.compile(r"^/([A-Za-z])(?=/|$)")
 
@@ -229,7 +230,7 @@ class HostWorkspace(Workspace):
                 return
             if absolute.is_dir():
                 if recursive:
-                    shutil.rmtree(absolute)
+                    remove_tree(absolute)
                 else:
                     absolute.rmdir()
             else:

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from omniagents.core.eval.environment import EnvironmentContext, EvalEnvironment
+from omniagents.core.utils.fs import remove_tree
 
 __all__ = ["LocalWorkspaceEnvironment"]
 
@@ -150,7 +151,7 @@ class LocalWorkspaceEnvironment(EvalEnvironment):
                     f"preserving {tmp_dir}"
                 )
                 return
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            remove_tree(tmp_dir, ignore_errors=True)
 
     def get_env_vars(self, context: EnvironmentContext) -> Dict[str, str]:
         tmp_dir = context.get("workspace_root", "")

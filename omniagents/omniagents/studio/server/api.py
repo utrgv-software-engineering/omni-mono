@@ -13,7 +13,7 @@ import sqlite3
 import tempfile
 import uuid
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Literal, Set
 
@@ -96,6 +96,7 @@ from omniagents.core.project.scaffold import (
     scaffold_agent,
     delete_agent,
 )
+from omniagents.core.utils.fs import remove_tree
 
 from ..tracing.storage import SQLiteStorage
 
@@ -1067,7 +1068,15 @@ class PlaygroundSessionStore:
             key = session_id or uuid.uuid4().hex
             existing = self._sessions.get(key)
             payload = dict(config)
-            payload["updated_at"] = _utc_now()
+            # Every update moves updated_at forward, even within one tick
+            # of a coarse clock (Windows).
+            now = datetime.now(timezone.utc)
+            if existing and existing.get("updated_at"):
+                previous = datetime.fromisoformat(
+                    str(existing["updated_at"]).replace("Z", "+00:00")
+                )
+                now = max(now, previous + timedelta(microseconds=1))
+            payload["updated_at"] = _isoformat_utc(now)
             # Preserve the per-session sandbox tempdir across config
             # updates (the client may upsert the same session_id multiple
             # times to change instructions, tools, etc. — the workspace
@@ -1096,7 +1105,7 @@ class PlaygroundSessionStore:
         if entry:
             ws_root = entry.get("__playground_workspace_root")
             if isinstance(ws_root, str) and ws_root:
-                shutil.rmtree(ws_root, ignore_errors=True)
+                remove_tree(ws_root, ignore_errors=True)
 
 
 class PlaygroundSessionRequest(BaseModel):
