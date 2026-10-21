@@ -119,7 +119,6 @@
     "react-hotkeys-hook": "^4.6.2",
     "rimraf": "^6.0.1",
     "serialize-error": "^12.0.0",
-    "strip-ansi": "^7.1.0",
     "tailwindcss": "^4.2.0",
     "tar": "^7.4.3",
     "tmp": "^0.2.3",
