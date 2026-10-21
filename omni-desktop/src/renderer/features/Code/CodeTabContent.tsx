@@ -65,6 +65,8 @@ const CodeRunningView = memo(
     onActiveAppChange,
     onReady,
     uiMinimal,
+    headerActionsTargetId,
+    headerActionsCompact,
     composerExtras,
     onClientToolCall,
     tabId,
@@ -93,6 +95,8 @@ const CodeRunningView = memo(
     onActiveAppChange?: (app: AppId) => void;
     onReady: () => void;
     uiMinimal?: boolean;
+    headerActionsTargetId?: string;
+    headerActionsCompact?: boolean;
     composerExtras?: React.ReactNode;
     onClientToolCall?: ClientToolCallHandler;
     tabId?: string;
@@ -144,6 +148,8 @@ const CodeRunningView = memo(
             activeApp={activeApp}
             onActiveAppChange={onActiveAppChange}
             onReady={onReady}
+            headerActionsTargetId={headerActionsTargetId}
+            headerActionsCompact={headerActionsCompact}
             composerExtras={composerExtras}
             onClientToolCall={onClientToolCall}
             pendingPlan={pendingPlan}
@@ -174,6 +180,8 @@ type CodeTabContentProps = {
   activeApp?: AppId;
   onActiveAppChange?: (app: AppId) => void;
   uiMinimal?: boolean;
+  headerActionsTargetId?: string;
+  headerActionsCompact?: boolean;
   filesHost: HTMLDivElement;
   gitHost: HTMLDivElement;
   reviewHost: HTMLDivElement;
@@ -186,6 +194,8 @@ export const CodeTabContent = memo(
     activeApp = 'chat',
     onActiveAppChange,
     uiMinimal,
+    headerActionsTargetId,
+    headerActionsCompact,
     filesHost,
     gitHost,
     reviewHost,
@@ -441,6 +451,8 @@ export const CodeTabContent = memo(
                   onActiveAppChange={onActiveAppChange}
                   onReady={() => {}}
                   uiMinimal={uiMinimal}
+                  headerActionsTargetId={headerActionsTargetId}
+                  headerActionsCompact={headerActionsCompact}
                   composerExtras={composerExtras}
                   onClientToolCall={handleClientToolCall}
                   tabId={tab.id}

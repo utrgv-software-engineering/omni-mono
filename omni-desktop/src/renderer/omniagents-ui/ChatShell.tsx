@@ -10,6 +10,7 @@ import { Spinner } from '@/renderer/ds/ui/spinner';
 
 import { ConversationComposer } from './components/ConversationComposer';
 import { getGreeting } from './greeting';
+import { OmniAgentsHeaderActionsProvider } from './header-actions';
 
 type ChatShellPhase = 'loading' | 'idle' | 'error';
 
@@ -34,6 +35,11 @@ type ChatShellProps = {
   composerExtras?: ReactNode;
   workspaceReady?: boolean;
   onOpenWorkspaceSettings?: () => void;
+};
+
+const headerActions = {
+  showArtifactsButton: false,
+  onArtifactsToggle: undefined,
 };
 
 export const ChatShell = memo(
@@ -84,7 +90,7 @@ export const ChatShell = memo(
       ) : null;
 
     return (
-      <>
+      <OmniAgentsHeaderActionsProvider {...headerActions}>
         <div className="app h-full flex flex-row min-w-0 relative">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
             {/* Spacer matching the App header height so greeting centers identically */}
@@ -207,7 +213,7 @@ export const ChatShell = memo(
             </div>
           </div>
         </div>
-      </>
+      </OmniAgentsHeaderActionsProvider>
     );
   }
 );

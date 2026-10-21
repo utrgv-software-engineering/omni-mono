@@ -105,8 +105,8 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   const browser = buildBrowserContext(store as any, sendToAll);
 
   /**
-   * Write the user's `.env` into the config dir omni serve's get_config_dir()
-   * resolves (it reads it into the sandbox container's manifest.environment).
+   * Write the user's Settings → Environment vars to `<config>/.env`, which
+   * omni serve reads.
    */
   const materializeConfig = (): void => {
     try {
@@ -296,7 +296,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
       mutate: (request) => processManager.mutateManagement(request),
     },
   });
-  ipc.handle('codex:status', () => codexAccount.status());
   ipc.handle('codex:logout', () => codexAccount.logout());
   ipc.handle('codex:link', () => codexAccount.link((code) => sendToAll('codex:device-code', code)));
 

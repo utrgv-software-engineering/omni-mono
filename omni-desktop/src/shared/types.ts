@@ -1207,8 +1207,6 @@ type CodexIpcEvents = Namespaced<
     link: () => CodexAuthStatus;
     /** Remove the stored tokens. */
     logout: () => void;
-    /** Current sign-in status, read from the token store. */
-    status: () => CodexAuthStatus;
   }
 >;
 

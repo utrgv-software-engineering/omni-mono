@@ -50,7 +50,7 @@ export const getActiveProduct = (): ProductDefinition => BUNDLED_PRODUCT;
  * Serve-protocol version this launcher targets. Contract: omniagents
  * `docs/serve-protocol.md` (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`).
  */
-export const SUPPORTED_SERVE_PROTOCOL = 2;
+export const SUPPORTED_SERVE_PROTOCOL = 3;
 
 /** Runtime facts reported by `<prog> describe --json` from the installed venv. */
 export type ProductRuntimeInfo = {

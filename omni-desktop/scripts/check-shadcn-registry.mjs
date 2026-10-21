@@ -342,7 +342,7 @@ async function inspectRegistry() {
     infrastructure.push(`components.json style is ${components.style}, expected new-york`);
   if (components.rsc !== false)
     infrastructure.push('components.json rsc must remain false for the renderer normalization');
-  if (!packageJson.dependencies?.['radix-ui'])
+  if (!packageJson.dependencies?.['radix-ui'] && !packageJson.devDependencies?.['radix-ui'])
     infrastructure.push('package.json must retain the radix-ui primitive dependency');
   if (lock.version !== 1) infrastructure.push(`unsupported lock version: ${lock.version}`);
   if (lock.registry !== 'new-york-v4' || lock.primitive !== 'radix') {

@@ -171,17 +171,7 @@ export const SettingsModalAiTab = memo(() => {
           : undefined,
     };
   }, [managementSnapshot.accounts]);
-  const [legacyCodexBroken, setLegacyCodexBroken] = useState(false);
-  useEffect(() => {
-    if (canonicalCodexStatus || (management.status !== 'error' && managementSnapshot.accounts.status !== 'error')) {
-      return;
-    }
-    emitter
-      .invoke('codex:status')
-      .then((s) => setLegacyCodexBroken(Boolean(s.broken)))
-      .catch(() => setLegacyCodexBroken(false));
-  }, [canonicalCodexStatus, management.status, managementSnapshot.accounts.status]);
-  const codexBroken = canonicalCodexStatus?.broken ?? legacyCodexBroken;
+  const codexBroken = canonicalCodexStatus?.broken ?? false;
 
   // Union of store-configured keys and the live runtime list, so discovered
   // models (e.g. Codex) are selectable as the default model. Realtime models
@@ -512,11 +502,7 @@ export const SettingsModalAiTab = memo(() => {
         </AlertDialogContent>
       </AlertDialog>
       <SettingsSection title="Connections">
-        <CodexSignInCard
-          onSignedIn={applyCodexSignIn}
-          canonicalStatus={canonicalCodexStatus}
-          allowLegacyStatus={management.status === 'error' || managementSnapshot.accounts.status === 'error'}
-        />
+        <CodexSignInCard onSignedIn={applyCodexSignIn} canonicalStatus={canonicalCodexStatus} />
         <SettingsModalConnectionCards
           config={config}
           onFixKey={applyKeyFix}
@@ -726,11 +712,9 @@ const CodexSignInCard = memo(
   ({
     onSignedIn,
     canonicalStatus,
-    allowLegacyStatus,
   }: {
     onSignedIn: () => Promise<string | undefined>;
     canonicalStatus: { signedIn: boolean; accountId?: string; broken?: boolean } | null;
-    allowLegacyStatus: boolean;
   }) => {
     const [status, setStatus] = useState<{ signedIn: boolean; accountId?: string; broken?: boolean } | null>(
       canonicalStatus
@@ -744,16 +728,8 @@ const CodexSignInCard = memo(
     useEffect(() => {
       if (canonicalStatus) {
         setStatus(canonicalStatus);
-        return;
       }
-      if (!allowLegacyStatus) {
-        return;
-      }
-      emitter
-        .invoke('codex:status')
-        .then(setStatus)
-        .catch(() => setStatus({ signedIn: false }));
-    }, [allowLegacyStatus, canonicalStatus]);
+    }, [canonicalStatus]);
 
     // Main pushes the user code mid-flow; show it while we poll.
     useEffect(() => ipc.on('codex:device-code', setDeviceCode), []);

@@ -58,6 +58,7 @@ import { VoiceDock } from './components/VoiceDock';
 import { WakeupPanel } from './components/WakeupPanel';
 import { getConversationDraft, updateConversationDraft } from './conversation-drafts';
 import { conversationIsReady } from './conversation-readiness';
+import { OmniAgentsHeaderActionsPortal, OmniAgentsHeaderActionsProvider } from './header-actions';
 import { useChatBoot } from './hooks/use-chat-boot';
 import { useChatSession, useSessionField } from './hooks/use-chat-session';
 import { useConversationManagement } from './hooks/use-conversation-management';
@@ -89,6 +90,8 @@ type AppProps = {
   /** One-tap example tasks shown on the empty conversation. */
   suggestions?: ReadonlyArray<{ label: string; prompt: string }>;
   onReady?: () => void;
+  headerActionsTargetId?: string;
+  headerActionsCompact?: boolean;
   pendingMessages?: PendingMessage[];
   /** Called once this chat claims the pre-launch intent queue. */
   onPendingMessagesFlushed?: () => void;
@@ -158,6 +161,8 @@ function SessionView({
   greeting,
   suggestions,
   onReady,
+  headerActionsTargetId,
+  headerActionsCompact,
   pendingMessages,
   onPendingMessagesFlushed,
   composerExtras,
@@ -1216,7 +1221,10 @@ function SessionView({
   );
 
   const hasArtifacts = visibleArtifacts.length > 0;
-  const onArtifactsToggle = hasArtifacts ? () => setArtifactsPanelOpen((v) => !v) : undefined;
+  const headerActions = {
+    showArtifactsButton: hasArtifacts,
+    onArtifactsToggle: hasArtifacts ? () => setArtifactsPanelOpen((v) => !v) : undefined,
+  };
 
   let content: React.ReactNode = null;
   if (ui === 'error') {
@@ -1280,8 +1288,8 @@ function SessionView({
             <Header
               agentName={agentName}
               onMenu={() => setSidebarOpen((v) => !v)}
-              onArtifactsToggle={onArtifactsToggle}
-              showArtifactsButton={hasArtifacts}
+              onArtifactsToggle={headerActions.onArtifactsToggle}
+              showArtifactsButton={headerActions.showArtifactsButton}
             />
           )}
           <ResizablePanelGroup orientation="horizontal" className="min-h-0 min-w-0 flex-1">
@@ -1509,5 +1517,12 @@ function SessionView({
     );
   }
 
-  return content;
+  return (
+    <OmniAgentsHeaderActionsProvider {...headerActions}>
+      {content}
+      {headerActionsTargetId ? (
+        <OmniAgentsHeaderActionsPortal targetId={headerActionsTargetId} compact={headerActionsCompact} />
+      ) : null}
+    </OmniAgentsHeaderActionsProvider>
+  );
 }

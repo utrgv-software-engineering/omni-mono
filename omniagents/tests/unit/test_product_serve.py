@@ -105,19 +105,26 @@ def test_serve_parser_accepts_launcher_argv_minimal():
     assert ns.agent_host_control_token == "control-secret"
 
 
-def test_stdin_eof_watch_fires_once_stdin_closes(monkeypatch):
-    import io
+def test_stdin_eof_watch_fires_once_stdin_closes():
+    import os
     import threading
 
     from omniagents import product_serve
 
-    class _Stdin:
-        buffer = io.BytesIO(b"ignored")
-
-    monkeypatch.setattr(product_serve.sys, "stdin", _Stdin())
-    fired = threading.Event()
-    product_serve._watch_stdin_eof(fired.set)
-    assert fired.wait(timeout=5)
+    read_end, write_end = os.pipe()
+    try:
+        fired = threading.Event()
+        product_serve._watch_stdin_eof(fired.set, fd=read_end)
+        # Children inherit an empty stdin, not the launcher pipe.
+        assert os.read(read_end, 1) == b""
+        assert not fired.is_set()
+        os.close(write_end)
+        write_end = -1
+        assert fired.wait(timeout=5)
+    finally:
+        os.close(read_end)
+        if write_end != -1:
+            os.close(write_end)
 
 
 def test_serve_parser_accepts_private_agent_host_control_token():
@@ -232,7 +239,7 @@ def test_describe_reports_identity_and_protocol(tmp_path, capsys, monkeypatch):
         "index_url": "https://pypi.example.test/acme/acme-code/",
         "command_hint": "acme update",
     }
-    assert out["serve_protocol"] == SERVE_PROTOCOL_VERSION == 2
+    assert out["serve_protocol"] == SERVE_PROTOCOL_VERSION == 3
 
 
 def test_describe_null_update_block(tmp_path, capsys):

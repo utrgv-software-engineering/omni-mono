@@ -41,10 +41,7 @@ const config = {
     // This is included with @electron/forge
     'electron-rebuild',
   ],
-  ignore: [
-    'electron-builder.config.ts',
-    'src/server/electron-store-shim.ts',
-  ],
+  ignore: ['electron-builder.config.ts', 'src/server/electron-store-shim.ts'],
   paths: {
     'assets/*': ['assets/*'],
   },

@@ -79,16 +79,6 @@ function operations(initial: StoreData) {
         persistedStoreApi.setKey('activeCodeTabId', tabId);
       }
     },
-    reorderTabs: (nextTabs: CodeTabId[]) => {
-      // Reorder identities only. Preserve new/filtered-out tabs, ignore closed
-      // IDs, deduplicate input and never copy stale renderer fields back.
-      const stored = persistedStoreApi.getKey('codeTabs') ?? [];
-      const incoming = new Set(nextTabs);
-      const byId = new Map(stored.map((tab) => [tab.id, tab]));
-      const preserved = stored.filter((t) => !incoming.has(t.id));
-      const ordered = [...incoming].flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
-      persistedStoreApi.setKey('codeTabs', [...preserved, ...ordered]);
-    },
     setTabProject: (tabId: CodeTabId, projectId: ProjectId) => {
       const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) => {
         if (t.id !== tabId) {

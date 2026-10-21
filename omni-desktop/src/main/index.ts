@@ -3,7 +3,7 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 import { app, dialog, ipcMain, net, protocol, shell } from 'electron';
-import { writeFileSync } from 'fs';
+import { mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { assert } from 'tsafe';
 import { pathToFileURL } from 'url';
@@ -129,6 +129,8 @@ importLegacyProjectsDb(store);
  */
 function writeDesktopEnvFile(): void {
   try {
+    // First launch runs before the runtime has created its config dir.
+    mkdirSync(OMNI_CONFIG_DIR, { recursive: true });
     writeFileSync(join(OMNI_CONFIG_DIR, '.env'), store.get('envVars') ?? '', 'utf-8');
   } catch (err) {
     console.error('[config] writing .env failed:', err);
@@ -559,7 +561,6 @@ main.ipc.handle('util:open-external', (_, url) => shell.openExternal(url));
 
 main.ipc.handle('codex:link', () => localCodexAccount.link((code) => main.sendToWindow('codex:device-code', code)));
 main.ipc.handle('codex:logout', () => localCodexAccount.logout());
-main.ipc.handle('codex:status', () => localCodexAccount.status());
 
 //#endregion
 

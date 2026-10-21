@@ -27,6 +27,7 @@ import { BrowserView } from '@/renderer/features/Browser/BrowserView';
 import { $previewRequest, clearPreviewRequest } from '@/renderer/features/Code/preview-bridge';
 import { ConsoleStarted } from '@/renderer/features/Console/ConsoleRunning';
 import { JobsSurface } from '@/renderer/features/Jobs';
+import { OmniAgentsHeaderActionsSlot } from '@/renderer/omniagents-ui/header-actions';
 import { $agentStatuses } from '@/renderer/services/agent-process';
 import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
@@ -895,9 +896,7 @@ export const CodeDeck = memo(() => {
           <Empty>
             <EmptyHeader>
               <EmptyTitle className="text-base">No active sessions</EmptyTitle>
-              <EmptyDescription>
-                Start a chat, or launch an app from the header. Archived sessions can be restored from the sidebar.
-              </EmptyDescription>
+              <EmptyDescription>Start a chat. Archived sessions can be restored from the sidebar.</EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
               <Button variant="default" onClick={handleNewSession}>
@@ -929,7 +928,12 @@ export const CodeDeck = memo(() => {
                     label={resolveLabel(tab)}
                     routineName={resolveRoutineName(tab)}
                     routineSchedule={resolveRoutineSchedule(tab)}
-                    actions={renderSessionActions(tab)}
+                    actions={
+                      <div className="flex items-center gap-1">
+                        <OmniAgentsHeaderActionsSlot id={`code-deck-header-actions-${tab.id}`} />
+                        {renderSessionActions(tab)}
+                      </div>
+                    }
                     onArchive={handleArchive}
                     isVisible={tab.id === activeTab?.id}
                     content={<TabContentSlot host={getContentHost(tab.id)} />}
@@ -970,6 +974,8 @@ export const CodeDeck = memo(() => {
             activeApp={sidecarStateByTab.get(tab.id)?.activeAppId ?? 'chat'}
             onActiveAppChange={(app) => handleOpenSidecarApp(tab.id, app)}
             uiMinimal
+            headerActionsTargetId={`code-deck-header-actions-${tab.id}`}
+            headerActionsCompact
             filesHost={getFilesHost(tab.id)}
             gitHost={getGitHost(tab.id)}
             reviewHost={getReviewHost(tab.id)}

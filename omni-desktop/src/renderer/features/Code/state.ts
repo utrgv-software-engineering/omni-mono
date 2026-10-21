@@ -7,7 +7,7 @@ import { clearStatus, pollProcessStatus, teardownTerminal } from '@/renderer/ser
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatCommand, ChatOperations } from '@/shared/chat-commands';
-import type { CodeTab, CodeTabId } from '@/shared/types';
+import type { CodeTabId } from '@/shared/types';
 
 export const $codeTabPhases = map<Record<CodeTabId, AutoLaunchPhase>>({});
 export const $codeTabErrors = map<Record<CodeTabId, string | null>>({});
@@ -42,11 +42,6 @@ export const codeApi = {
     finishRemoval(args[0]);
   },
   setActiveTab: (...args: Parameters<ChatOperations['setActiveTab']>) => run('setActiveTab', ...args),
-  reorderTabs: (tabs: CodeTab[]) =>
-    run(
-      'reorderTabs',
-      tabs.map((tab) => tab.id)
-    ),
   setTabProject: (...args: Parameters<ChatOperations['setTabProject']>) => run('setTabProject', ...args),
   setTabActivated: (...args: Parameters<ChatOperations['setTabActivated']>) => run('setTabActivated', ...args),
   addTabForConversation: (...args: Parameters<ChatOperations['addTabForConversation']>) =>
