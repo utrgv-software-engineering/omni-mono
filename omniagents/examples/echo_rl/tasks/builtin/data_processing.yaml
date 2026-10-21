@@ -1,0 +1,30 @@
+# Bundled terminal tasks — data processing.
+- id: csv_row_count
+  prompt: >
+    /work/data.csv has a header row followed by data rows. Write the number of
+    DATA rows (excluding the header) to /work/answer.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && printf 'name,age\\nalice,30\\nbob,25\\ncarol,41\\n' > /work/data.csv"
+  verifier: 'test "$(cat /work/answer.txt)" = "3"'
+  tags: [data-processing]
+
+- id: sum_column
+  prompt: >
+    /work/nums.txt has one integer per line. Write their sum to /work/answer.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && printf '4\\n8\\n15\\n16\\n23\\n42\\n' > /work/nums.txt"
+  verifier: 'test "$(cat /work/answer.txt)" = "108"'
+  tags: [data-processing]
+
+- id: unique_words
+  prompt: >
+    Count the number of UNIQUE whitespace-separated words in /work/text.txt
+    (case-sensitive) and write the count to /work/answer.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && printf 'the cat sat on the mat the cat' > /work/text.txt"
+  verifier: 'test "$(cat /work/answer.txt)" = "5"'
+  tags: [data-processing]
+  split: val   # held out from training

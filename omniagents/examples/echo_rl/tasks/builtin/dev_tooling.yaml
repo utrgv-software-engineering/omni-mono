@@ -1,0 +1,32 @@
+# Bundled terminal tasks — development / tooling.
+- id: fix_syntax_error
+  prompt: >
+    /work/app.py has a Python syntax error. Fix it so that `python /work/app.py`
+    prints exactly: ok
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && printf 'def main()\\n    print(\"ok\")\\n\\nmain()\\n' > /work/app.py"
+  verifier: 'test "$(python /work/app.py 2>/dev/null)" = "ok"'
+  tags: [dev-tooling]
+
+- id: make_executable
+  prompt: >
+    Create a shell script /work/greet.sh that prints "hello" when run, and make
+    it executable so that `/work/greet.sh` outputs exactly: hello
+  image: python:3.11-slim
+  setup: ["mkdir -p /work"]
+  verifier: 'test "$(/work/greet.sh 2>/dev/null)" = "hello"'
+  tags: [dev-tooling]
+  split: val   # held out from training
+
+- id: passing_pytest
+  prompt: >
+    Implement the function `add` in /work/calc.py so that the test suite at
+    /work/test_calc.py passes (run with: python -m pytest -q /work).
+  image: python:3.11-slim
+  setup:
+    - "pip install -q pytest >/dev/null 2>&1 || true"
+    - "mkdir -p /work && printf 'def add(a, b):\\n    raise NotImplementedError\\n' > /work/calc.py"
+    - "printf 'from calc import add\\n\\ndef test_add():\\n    assert add(2, 3) == 5\\n    assert add(-1, 1) == 0\\n' > /work/test_calc.py"
+  verifier: "cd /work && python -m pytest -q >/dev/null 2>&1"
+  tags: [dev-tooling, pytest]

@@ -1,0 +1,4 @@
+product:
+  name: wired_demo
+agents:
+  entrypoint: wired_demo

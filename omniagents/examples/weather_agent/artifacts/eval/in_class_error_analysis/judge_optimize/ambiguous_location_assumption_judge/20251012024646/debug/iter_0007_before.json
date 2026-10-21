@@ -1,0 +1,56 @@
+{
+  "iteration": 7,
+  "stage": "before",
+  "source": "final_assistant_text",
+  "subsample_ids": [
+    "a7aa603e7fe5cc58",
+    "a7aa603e7fe5cc58",
+    "5a6284adbbfc0ee4"
+  ],
+  "labels": {
+    "pos": 2,
+    "neg": 1
+  },
+  "kinds": {
+    "TP": 0,
+    "TN": 1,
+    "FP": 0,
+    "FN": 2,
+    "UNK": 0
+  },
+  "scores_sum": 0.0,
+  "by_id": {
+    "a7aa603e7fe5cc58": {
+      "label": true,
+      "pred": false,
+      "kind": "FN"
+    },
+    "5a6284adbbfc0ee4": {
+      "label": false,
+      "pred": false,
+      "kind": "TN"
+    }
+  },
+  "candidate_summary": {
+    "has_instructions": true,
+    "has_template": true,
+    "instructions_len": 2158,
+    "template_len": 224
+  },
+  "mismatches": [
+    {
+      "id": "a7aa603e7fe5cc58",
+      "label": true,
+      "pred": false,
+      "kind": "FN",
+      "name": "greenville-today-update"
+    },
+    {
+      "id": "a7aa603e7fe5cc58",
+      "label": true,
+      "pred": false,
+      "kind": "FN",
+      "name": "greenville-today-update"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+name: feedback
+# Control-plane only: /good /bad /note /notes conversation feedback wired
+# into Studio tracing. No model-visible tools or instructions.
+server_functions:
+  - good
+  - bad
+  - note
+  - notes

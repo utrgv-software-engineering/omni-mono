@@ -1,0 +1,18 @@
+{
+  "project_name": "weather_agent_project",
+  "agent_file": "/Users/ericmartinez/code/omniagents/examples/weather_agent/agents/weather_agent/agent.yml",
+  "compiled_file": "/Users/ericmartinez/code/omniagents/examples/weather_agent/target/evaluation_compiled.yml",
+  "resources": {
+    "scenarios": [
+      "hello",
+      "manchester-check-please",
+      "richmond-weather-inquiry"
+    ],
+    "judges": [
+      "ambiguous_location_assumption_judge"
+    ],
+    "metrics": [
+      "unknown_tool_call_rate"
+    ]
+  }
+}

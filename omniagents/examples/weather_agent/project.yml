@@ -1,0 +1,5 @@
+product:
+  name: weather_agent
+agents:
+  entrypoint: weather_agent
+  voice_entrypoint: weather_voice

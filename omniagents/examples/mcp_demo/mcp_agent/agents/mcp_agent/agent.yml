@@ -1,0 +1,17 @@
+name: mcp_agent
+label: MCP Agent
+description: "Assistant that uses an MCP server to browse websites."
+model: gpt-4.1
+instructions_file: instructions.md
+welcome_text: "Ask me to fetch a web page and I'll use the MCP fetch tool."
+
+mcp_servers:
+  - name: mcp-fetch-server
+    type: stdio
+    params:
+      command: demo_mcp_server
+    options:
+      name: MCP Fetch Server
+      cache_tools_list: true
+
+tools: []

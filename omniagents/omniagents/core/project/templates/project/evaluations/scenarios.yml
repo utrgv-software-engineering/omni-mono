@@ -1,0 +1,10 @@
+scenarios:
+  - name: hello
+    prompt: Say hello
+    # Every scenario must declare which measures to run against it.
+    # Without this `measures:` field, `omniagents eval suite run` will
+    # silently skip the scenario (it only includes measured scenarios so
+    # CI can gate on real scores). `tool_hallucination` is a built-in
+    # measure that flags any tool calls outside the agent's allowed set.
+    measures:
+      - tool_hallucination

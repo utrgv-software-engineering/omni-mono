@@ -1,0 +1,4 @@
+name: smoke
+model: gpt-4o-mini
+instructions: Inline smoke instructions
+tools: []

@@ -1,0 +1,9 @@
+name: tool_outputs
+server_functions:
+  - tool_outputs.read
+instructions: |
+  Oversized tool text is saved before its model-visible preview is shortened.
+  Use read_tool_output with the returned reference and character offset to page
+  through it, or query to find literal text with surrounding context. Follow
+  next_search_offset for subsequent matches. This works without workspace access.
+  Do not rerun commands to recover saved output, especially commands with side effects.

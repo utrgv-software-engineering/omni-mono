@@ -1,0 +1,30 @@
+# Bundled terminal tasks — file operations.
+# Each task: a stock image + setup (fixtures) + a shell verifier (exit 0 = pass).
+# Runs on a laptop with Docker; no build step, no downloads.
+- id: count_py_files
+  prompt: >
+    Count how many .py files are directly under /work and write just that
+    number (no other text) to /work/answer.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && cd /work && touch a.py b.py c.txt sub.py notes.md"
+  verifier: 'test "$(cat /work/answer.txt)" = "3"'
+  tags: [file-ops]
+
+- id: write_hello
+  prompt: "Create /work/hello.txt containing exactly the text: hello world"
+  image: python:3.11-slim
+  setup: ["mkdir -p /work"]
+  verifier: 'test "$(cat /work/hello.txt)" = "hello world"'
+  tags: [file-ops]
+
+- id: largest_file
+  prompt: >
+    Find the largest file (by bytes) directly under /work and write its
+    filename (basename only) to /work/answer.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && cd /work && head -c 10 /dev/zero > small.bin && head -c 5000 /dev/zero > big.bin && head -c 200 /dev/zero > mid.bin"
+  verifier: 'test "$(cat /work/answer.txt)" = "big.bin"'
+  tags: [file-ops]
+  split: val   # held out from training

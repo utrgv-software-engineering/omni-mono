@@ -1,0 +1,14 @@
+name: Minimal with Model Settings
+model: gpt-4o-mini
+instructions: "You are a helpful assistant with custom temperature settings."
+
+# Only specify the model settings we want to customize
+model_settings:
+  temperature: 0.3  # More deterministic responses
+  max_tokens: 500  # Shorter responses
+
+# All other new fields will use defaults:
+# - handoff_description: None
+# - reset_tool_choice: true
+# - tool_use_behavior: "run_llm_again"
+# - mcp_config: None

@@ -1,0 +1,4 @@
+product:
+  name: studio_fixture
+agents:
+  entrypoint: primary

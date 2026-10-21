@@ -1,0 +1,34 @@
+name: Guardrails Demo Agent
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "I'm an agent with input and output guardrails. Try asking me something!"
+
+# Enable Studio tracing
+tracing:
+  provider: studio
+  project: guardrails_yaml_demo
+  name: guardrails_agent
+  settings:
+    resume: never  # Always create a new trace
+
+# Guardrails configuration
+input_guardrails:
+  - check_offensive_content
+  - check_rate_limit
+
+output_guardrails:
+  - validate_response_length
+  - check_sensitive_info
+
+# Tools
+tools:
+  - get_current_time
+  - calculate
+
+# Safety settings
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - get_current_time

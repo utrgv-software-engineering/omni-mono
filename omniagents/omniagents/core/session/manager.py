@@ -1,0 +1,1596 @@
+from __future__ import annotations
+
+import asyncio
+from copy import deepcopy
+import inspect
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Any
+
+from omniagents.core.debug import Debug
+from .event_log import MemoryEventLogStore, SessionEventLog
+from .history_db import (
+    load_history,
+    load_sdk_context,
+    replace_sdk_context,
+    register_session,
+    get_archived,
+    set_archived,
+    list_sessions as db_list_sessions,
+    append_message as db_append_message,
+    get_user_messages,
+    get_session_metadata,
+    get_session_user_id,
+    session_exists,
+    update_session_metadata,
+)
+
+__all__ = [
+    "QueuedItem",
+    "Session",
+    "SessionManager",
+    "sm",
+    "filter_history_for_api",
+    "strip_internal_keys_for_api",
+]
+
+
+@dataclass
+class QueuedItem:
+    """A message queued for serialized processing on a session.
+
+    Every accepted message starts a turn when the session is available.
+
+    Each item carries a stable ``id`` so clients can target it for
+    cancellation/edit while it's still in the queue.
+    """
+
+    content: str
+    input_content: Any | None = None
+    role: str = "user"
+    variables: Optional[Dict[str, Any]] = None
+    safe_tool_overrides: Optional[Dict[str, Any]] = None
+    source: Optional[str] = None
+    id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    enqueued_at: float = field(default_factory=time.time)
+    state: str = "pending"
+    error: str | None = None
+    worker_reports: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """JSON-safe wire shape for ``list_queue`` and ``queue_changed``."""
+        return {
+            "id": self.id,
+            "content": self.content,
+            "input_content": self.input_content,
+            "role": self.role,
+            "variables": self.variables,
+            "safe_tool_overrides": self.safe_tool_overrides,
+            "source": self.source,
+            "enqueued_at": self.enqueued_at,
+            "state": self.state,
+            "error": self.error,
+            **({"worker_reports": self.worker_reports} if self.worker_reports else {}),
+        }
+
+
+# ---------------------------------------------------------------------
+# Helpers shared between the SDK Session protocol (Session.get_items)
+# and the JSON-RPC ``get_session_history`` method.  These run when
+# raw history is about to be handed to the OpenAI Responses API: items
+# are reordered so reasoning items keep their required pairings, and
+# output-only metadata that the API rejects on input is stripped.
+# ---------------------------------------------------------------------
+
+
+def _normalize_assistant_message_parts_inplace(item: dict) -> None:
+    """Assistant messages must carry output parts, never ``input_text``.
+
+    The SDK persists a run's converted INPUT items after cancelled runs
+    (string content expanded to ``input_text`` parts); both ``responses``
+    and ``responses.compact`` reject that shape on assistant messages with
+    "Invalid value: 'input_text'. Supported values are: 'output_text' and
+    'refusal'." Mutates *item* so callers holding the same dict (e.g. the
+    SDK compaction wrapper's candidate cache) see the legal form too.
+    """
+    if not isinstance(item, dict) or item.get("role") != "assistant":
+        return
+    content = item.get("content")
+    if not isinstance(content, list):
+        return
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "input_text":
+            part["type"] = "output_text"
+            part.setdefault("annotations", [])
+
+
+def _is_model_output_message(item: dict) -> bool:
+    """Only messages the MODEL produced may pair with a reasoning item.
+
+    Model output messages carry a ``msg_*`` id from the Responses API.
+    Injected assistant items (notification batches, wakeups — appended by
+    ``start_run(prompt_role="assistant")`` with no id) must never be
+    reordered into a reasoning group: moving one between a reasoning item
+    and its function_call breaks the id linkage and the API rejects the
+    call with "function_call ... without its required 'reasoning' item".
+    """
+    msg_id = item.get("id")
+    return isinstance(msg_id, str) and msg_id.startswith("msg_")
+
+
+def _history_run_id(item: dict) -> str | None:
+    namespace = item.get("omniagents")
+    run_id = namespace.get("run_id") if isinstance(namespace, dict) else None
+    return run_id if isinstance(run_id, str) and run_id else None
+
+
+def _scope_reused_call_ids(history: list[dict]) -> list[dict]:
+    """Keep distinct recorded runs distinct in the provider's flat call namespace."""
+    import hashlib
+    import json
+
+    runs: dict[str, set[str]] = {}
+    for item in history:
+        run_id = _history_run_id(item)
+        call_id = item.get("call_id")
+        if (
+            item.get("type") == "function_call"
+            and isinstance(run_id, str)
+            and isinstance(call_id, str)
+        ):
+            runs.setdefault(call_id, set()).add(run_id)
+    result = []
+    for item in history:
+        run_id = _history_run_id(item)
+        call_id = item.get("call_id")
+        if (
+            item.get("type") in ("function_call", "function_call_output")
+            and isinstance(run_id, str)
+            and isinstance(call_id, str)
+            and len(runs.get(call_id, ())) > 1
+        ):
+            identity = hashlib.sha256(
+                json.dumps([run_id, call_id]).encode()
+            ).hexdigest()[:32]
+            item = {**item, "call_id": f"call_run_{identity}"}
+            if item["type"] == "function_call":
+                item["id"] = f"fc_synth_{identity}"
+        result.append(item)
+    return result
+
+
+def filter_history_for_api(history: list[dict]) -> list[dict]:
+    """Reorder history items to match OpenAI API requirements.
+
+    During streaming, items arrive in this order:
+      reasoning → function_call(s) → message → function_call_output(s)
+
+    But OpenAI expects:
+      reasoning → message → function_call(s) → function_call_output(s)
+
+    This reordering ensures:
+    - reasoning items are immediately followed by messages (not function_calls)
+    - parallel function_calls are grouped together after the message
+    - function_call items are properly paired with their outputs
+
+    This prevents errors like:
+    "Item 'rs_xxx' of type 'reasoning' was provided without its required following item."
+    "No tool call found for function call output with call_id xxx"
+    """
+    history = _scope_reused_call_ids(history)
+    reordered: list[dict] = []
+    i = 0
+    consumed_indices: set[int] = set()
+    while i < len(history):
+        if i in consumed_indices:
+            i += 1
+            continue
+        item = history[i]
+        item_type = item.get("type", "message")
+
+        # Handle reasoning items - they need special treatment for parallel calls
+        if item_type == "reasoning":
+            reasoning = item
+            j = i + 1
+
+            # Collect all parallel function calls that follow the reasoning.
+            # Calls and outputs may be interleaved (fc → fc_output → fc → fc_output)
+            # or grouped (fc → fc → fc_output → fc_output).  Handle both by
+            # skipping over outputs while scanning for calls.
+            function_calls: list[dict] = []
+            interleaved_outputs: list[tuple[int, dict]] = []
+            while j < len(history):
+                next_item = history[j]
+                next_type = next_item.get("type", "")
+                if (
+                    isinstance(next_type, str)
+                    and next_type.endswith("_call")
+                    and not next_type.endswith("_call_output")
+                ):
+                    function_calls.append(next_item)
+                    j += 1
+                elif isinstance(next_type, str) and next_type.endswith("_call_output"):
+                    # Output interleaved between calls – collect and skip
+                    interleaved_outputs.append((j, next_item))
+                    j += 1
+                else:
+                    break
+
+            # Find the message that pairs with this reasoning — it must be
+            # model output (msg_* id), not an injected assistant item that
+            # merely happens to come next in history. The search never
+            # crosses a subsequent reasoning item: every API response opens
+            # with its own reasoning, so a message beyond the next rs_*
+            # belongs to THAT turn. Stealing it (the old "trailing
+            # reasoning" skip) detached the stolen message from its own
+            # reasoning and wedged it between this group's reasoning and
+            # function_calls — the API then rejects the calls with
+            # "function_call ... without its required 'reasoning' item".
+            message = None
+            if (
+                j < len(history)
+                and history[j].get("type") == "message"
+                and _is_model_output_message(history[j])
+            ):
+                message = history[j]
+                j += 1
+
+            # Items may be persisted in message-before-calls order
+            # (reasoning → message → function_call) instead of streaming order
+            # (reasoning → function_call → message).  Scan for calls after the
+            # message so both orderings are handled.
+            if message and not function_calls:
+                while j < len(history):
+                    next_item = history[j]
+                    next_type = next_item.get("type", "")
+                    if (
+                        isinstance(next_type, str)
+                        and next_type.endswith("_call")
+                        and not next_type.endswith("_call_output")
+                    ):
+                        function_calls.append(next_item)
+                        j += 1
+                    elif isinstance(next_type, str) and next_type.endswith(
+                        "_call_output"
+                    ):
+                        interleaved_outputs.append((j, next_item))
+                        j += 1
+                    else:
+                        break
+
+            # Collect outputs for the function calls.
+            # Start from interleaved outputs already gathered, then scan
+            # forward for any remaining (the grouped layout).
+            outputs: list[dict] = []
+            call_ids = {fc.get("call_id") for fc in function_calls if fc.get("call_id")}
+
+            unmatched_interleaved: list[dict] = []
+            for idx, out_item in interleaved_outputs:
+                out_cid = out_item.get("call_id")
+                if out_cid in call_ids:
+                    outputs.append(out_item)
+                    consumed_indices.add(idx)
+                    call_ids.discard(out_cid)
+                else:
+                    # Output doesn't belong to any call in this group —
+                    # preserve it so it isn't silently dropped.
+                    unmatched_interleaved.append(out_item)
+
+            if call_ids:
+                for k in range(j, len(history)):
+                    next_item = history[k]
+                    next_type = next_item.get("type", "")
+                    if not (
+                        isinstance(next_type, str)
+                        and next_type.endswith("_call_output")
+                    ):
+                        continue
+                    output_call_id = next_item.get("call_id")
+                    if output_call_id in call_ids:
+                        outputs.append(next_item)
+                        consumed_indices.add(k)
+                        call_ids.remove(output_call_id)
+                        if not call_ids:
+                            break
+
+            # Emit any interleaved outputs that didn't match a call in this
+            # group before the group itself, so they aren't silently lost.
+            reordered.extend(unmatched_interleaved)
+
+            if message:
+                # Valid reasoning group. The Responses API requires the
+                # function_calls DIRECTLY after their reasoning item; the
+                # message comes after the group (probed live 2026-07-07:
+                # ``rs, fc, out, msg`` is accepted, ``rs, msg, fc, out`` is
+                # rejected with "function_call ... without its required
+                # 'reasoning' item" — the old msg-before-calls order this
+                # helper used to produce).
+                reordered.append(reasoning)
+                reordered.extend(function_calls)
+                reordered.extend(outputs)
+                reordered.append(message)
+            elif function_calls:
+                # Orphaned reasoning (no message): drop reasoning but preserve tool calls
+                # Azure rejects reasoning without messages AND rejects synthetic messages,
+                # but accepts function_calls without reasoning if they have new IDs.
+                # Create synthetic function_calls with new IDs to preserve the tool call history.
+                for fc in function_calls:
+                    # Find corresponding output
+                    fc_output = None
+                    for output in outputs:
+                        if output.get("call_id") == fc.get("call_id"):
+                            fc_output = output
+                            break
+
+                    # Create synthetic IDs (not referencing dropped reasoning)
+                    original_id = fc.get("id", "unknown")
+                    synth_call_id = f"call_synth_{original_id[3:] if original_id.startswith('fc_') else original_id}"
+                    synth_fc_id = f"fc_synth_{original_id[3:] if original_id.startswith('fc_') else original_id}"
+
+                    # Synthetic function call
+                    synth_fc = {
+                        "type": "function_call",
+                        "id": synth_fc_id,
+                        "call_id": synth_call_id,
+                        "name": fc.get("name"),
+                        "arguments": fc.get("arguments"),
+                        "status": fc.get("status", "completed"),
+                    }
+                    reordered.append(synth_fc)
+
+                    # Synthetic output
+                    if fc_output:
+                        synth_output = {
+                            "type": "function_call_output",
+                            "call_id": synth_call_id,
+                            "output": fc_output.get("output"),
+                        }
+                        reordered.append(synth_output)
+            # else: Orphaned reasoning with no function calls - just drop it
+
+            i = j  # Skip past all processed items
+        # Check if this is a function_call NOT preceded by reasoning
+        elif (
+            isinstance(item_type, str)
+            and item_type.endswith("_call")
+            and not item_type.endswith("_call_output")
+        ):
+            # Only process if we didn't already handle it as part of a reasoning group
+            # Check if previous item was reasoning (would have been handled above)
+            if i > 0 and reordered and reordered[-1].get("type") != "reasoning":
+                call_id = item.get("call_id")
+                function_call = item
+
+                # Look ahead for the message and output
+                message = None
+                output = None
+                j = i + 1
+
+                # Find the message that comes after this call
+                if j < len(history) and history[j].get("type") == "message":
+                    message = history[j]
+                    j += 1
+
+                # Find the output that matches this call_id
+                if call_id:
+                    for k in range(j, len(history)):
+                        next_item = history[k]
+                        if (
+                            isinstance(next_item.get("type", ""), str)
+                            and next_item.get("type", "").endswith("_call_output")
+                            and next_item.get("call_id") == call_id
+                        ):
+                            output = next_item
+                            consumed_indices.add(k)
+                            break
+
+                # Reorder: message → function_call → output
+                if message:
+                    reordered.append(message)
+                reordered.append(function_call)
+                if output:
+                    reordered.append(output)
+
+                i = j  # Skip past the items we just processed
+            else:
+                # Already handled as part of reasoning group, skip
+                i += 1
+        else:
+            # Not a reasoning or function_call, keep as-is
+            reordered.append(item)
+            i += 1
+
+    return _repair_orphaned_call_pairs(_synthesize_unanchored_calls(reordered))
+
+
+def _repair_orphaned_call_pairs(items: list[dict]) -> list[dict]:
+    """Make every call/output pairing in the final sequence two-sided.
+
+    Persisted history can lose one side of a pair for good — a run killed
+    between writing the call and its output, or pruning that took one but
+    not the other. Either orphan 400s the ENTIRE replayed input, bricking
+    the session on every subsequent turn:
+      * output without call — "No tool call found for function call output"
+      * call without output — "No tool output found for function call"
+    The reorder pass above deliberately carries unmatched outputs through
+    (an output whose call sits elsewhere in history must survive the
+    reshuffle); this final pass sees the whole sequence at once, so an
+    output STILL unmatched here is truly orphaned. Drop those; give
+    orphaned ``function_call``s a placeholder output (other ``*_call``
+    types have bespoke output schemas — drop the call instead of guessing).
+
+    DUPLICATE outputs for one call are the same 400 in disguise: a
+    retried run re-persists the tool output, the API pairs the first
+    output with the call and then rejects the second as "No tool call
+    found for function call output" (observed in production resident
+    sessions, dozens of duplicates each). Only the first output per
+    call_id survives.
+    """
+    call_ids: set = set()
+    output_ids: set = set()
+    for item in items:
+        t = item.get("type")
+        if not isinstance(t, str):
+            continue
+        if t.endswith("_call_output"):
+            output_ids.add(item.get("call_id"))
+        elif t.endswith("_call"):
+            call_ids.add(item.get("call_id"))
+
+    repaired: list[dict] = []
+    emitted_outputs: set = set()
+    for item in items:
+        t = item.get("type")
+        t = t if isinstance(t, str) else ""
+        if t.endswith("_call_output"):
+            cid = item.get("call_id")
+            if cid not in call_ids:
+                continue  # orphaned output — its call is gone from history
+            if cid in emitted_outputs:
+                continue  # duplicate output — the call is already answered
+            emitted_outputs.add(cid)
+            repaired.append(item)
+            continue
+        if t.endswith("_call") and item.get("call_id") not in output_ids:
+            if t != "function_call":
+                continue  # non-function call types: no legal placeholder
+            repaired.append(item)
+            repaired.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": item.get("call_id"),
+                    "output": "[tool output lost — the run was interrupted before it was recorded]",
+                }
+            )
+            continue
+        repaired.append(item)
+    return repaired
+
+
+def _synthesize_unanchored_calls(items: list[dict]) -> list[dict]:
+    """Rewrite real-id function_calls that lost their reasoning anchor.
+
+    The Responses API rejects an ``fc_*`` input item whose reasoning item
+    is not adjacent ("function_call ... without its required 'reasoning'
+    item"). History can legitimately contain such calls — the reasoning
+    was never persisted (interrupted run, legacy rows) or the group was
+    reshaped above. Give them synthetic ids (and re-point their outputs)
+    so the replay is self-contained, matching the orphaned-reasoning
+    treatment in the group handler."""
+    out: list[dict] = []
+    remap: dict[str, str] = {}
+    for n, item in enumerate(items):
+        item_type = item.get("type")
+        if item_type == "function_call":
+            fc_id = str(item.get("id", ""))
+            if fc_id.startswith("fc_") and not fc_id.startswith("fc_synth_"):
+                # Anchored = the call block directly follows its reasoning
+                # item (outputs may interleave between parallel calls). A
+                # message between reasoning and calls is NOT valid — the
+                # API rejects it (probed live; see the group emit above).
+                k = n
+                while k > 0 and items[k - 1].get("type") in (
+                    "function_call",
+                    "function_call_output",
+                ):
+                    k -= 1
+                prev = items[k - 1] if k > 0 else {}
+                anchored = prev.get("type") == "reasoning"
+                if not anchored:
+                    frag = fc_id[3:]
+                    synth = dict(item)
+                    synth["id"] = f"fc_synth_{frag}"
+                    call_id = item.get("call_id")
+                    if call_id:
+                        remap[call_id] = f"call_synth_{frag}"
+                        synth["call_id"] = remap[call_id]
+                    out.append(synth)
+                    continue
+        elif item_type and str(item_type).endswith("_call_output"):
+            call_id = item.get("call_id")
+            if call_id in remap:
+                repointed = dict(item)
+                repointed["call_id"] = remap[call_id]
+                out.append(repointed)
+                continue
+        out.append(item)
+    return out
+
+
+_STATUS_STRIP_TYPES = frozenset(
+    {
+        "reasoning",
+        "message",
+        "function_call",
+        "function_call_output",
+    }
+)
+
+
+def strip_internal_keys_for_api(items: list[dict]) -> list[dict]:
+    """Drop OmniAgents-internal keys and output-only metadata before sending to the API.
+
+    Strips:
+    - The ``omniagents`` namespace dict (private bookkeeping)
+    - ``phase`` (gpt-5.3-codex+ output marker rejected by Azure/litellm)
+    - ``status`` on output-only types (``reasoning``, ``message``, ``function_call``,
+      ``function_call_output``) which the API rejects on input
+    - The ``id`` field on assistant ``message`` items whose paired ``reasoning`` was
+      lost (older history saved before the reasoning-strip fix); without an id
+      the API treats it as a plain assistant turn.
+
+    Also ensures reasoning items have a ``summary`` list (the API requires at
+    least an empty list).
+    """
+    # Build set of reasoning IDs present so we can detect orphaned messages
+    reasoning_ids: set[str] = set()
+    for item in items or []:
+        if isinstance(item, dict) and item.get("type") == "reasoning":
+            rid = item.get("id")
+            if rid:
+                reasoning_ids.add(rid)
+
+    cleaned: list[dict] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        copied = dict(item)
+        copied.pop("omniagents", None)
+        # The API returns `phase` on assistant messages (gpt-5.3-codex+),
+        # but non-OpenAI providers (Azure, litellm) reject it as unknown.
+        # Safe to strip unconditionally — the SDK re-adds it when needed.
+        copied.pop("phase", None)
+        # The API returns `status` on output items (reasoning, message, etc.)
+        # but may reject it when those items are sent back as input.
+        # Strip it from types where it's output-only metadata.
+        if copied.get("type") in _STATUS_STRIP_TYPES:
+            copied.pop("status", None)
+        # Keep reasoning items (the API requires them before their paired
+        # message).  Preserve encrypted_content when present — the API
+        # requires it to associate reasoning with subsequent function_calls.
+        # Only strip status which is output-only metadata.
+        if copied.get("type") == "reasoning":
+            copied.pop("status", None)
+            # Ensure summary exists (API needs at least an empty list)
+            if "summary" not in copied:
+                copied["summary"] = []
+        # Assistant messages must carry output parts. A message the SDK
+        # re-persisted in converted INPUT form (string content expanded to
+        # ``input_text`` parts — seen after cancelled runs re-flushed their
+        # input buffer) is rejected on replay with "Invalid value:
+        # 'input_text'. Supported values are: 'output_text' and 'refusal'."
+        if copied.get("role") == "assistant" and isinstance(
+            copied.get("content"), list
+        ):
+            fixed_parts = []
+            changed = False
+            for part in copied["content"]:
+                if isinstance(part, dict) and part.get("type") == "input_text":
+                    part = {**part, "type": "output_text"}
+                    part.setdefault("annotations", [])
+                    changed = True
+                fixed_parts.append(part)
+            if changed:
+                copied["content"] = fixed_parts
+        # Same rejection, one step earlier: an injected assistant item
+        # stored with bare STRING content (notification/wakeup appends
+        # before start_run switched to typed parts) gets coerced to
+        # input_text parts by the SDK's input conversion before
+        # ``responses.compact`` sees it. Convert to explicit output parts
+        # here so the SDK passes it through untouched. Model messages are
+        # already parts-form; user strings stay strings (input_text is
+        # correct for them).
+        elif (
+            copied.get("role") == "assistant"
+            and copied.get("type") == "message"
+            and not copied.get("id")
+            and isinstance(copied.get("content"), str)
+        ):
+            copied["content"] = [
+                {
+                    "type": "output_text",
+                    "text": copied["content"],
+                    "annotations": [],
+                }
+            ]
+        # Strip id from orphaned message items whose reasoning was lost.
+        # This happens when history was saved before the reasoning-strip
+        # fix: the reasoning item was dropped but the message kept its id,
+        # so the API rejects it with "message without required reasoning".
+        # Removing the id makes the API treat it as a plain assistant turn.
+        if copied.get("type") == "message":
+            msg_id = copied.get("id", "")
+            if isinstance(msg_id, str) and msg_id.startswith("msg_"):
+                expected_reasoning_id = "rs_" + msg_id[4:]
+                if expected_reasoning_id not in reasoning_ids:
+                    copied.pop("id", None)
+        cleaned.append(copied)
+    return cleaned
+
+
+def _apply_legacy_compaction_window(history: list[dict]) -> list[dict]:
+    """Trim history to items from the most recent checkpoint marker on.
+
+    Honors the ``"kind": "context_summary"`` marker written by checkpoint
+    compaction (``core/runtime/compaction.run_checkpoint_compaction`` —
+    manual ``/compact``-style commands and reactive on-context-error
+    compaction). The checkpoint item itself is included so the model
+    still sees the summary. When no marker is present this is an
+    identity transform.
+    """
+    from omniagents.core.runtime.compaction import history_since_last_checkpoint
+
+    return history_since_last_checkpoint(history, include_checkpoint=True)
+
+
+def _is_reasoning(message: Any) -> bool:
+    return isinstance(message, dict) and message.get("type") == "reasoning"
+
+
+def _materialize_conversation_thread(session: Any) -> Any:
+    """Ensure the canonical thread exists before a history row is written.
+
+    Returns the recorder so the caller can reuse it. After the first call
+    for a session this is a single indexed lookup that returns early.
+
+    Suppressed while :meth:`SessionManager.fork_session` replays the
+    parent's rows into a new session, for two reasons.
+
+    The ordinary one: the fork is materialized by
+    ``ConversationRecorder.record_fork`` from the parent's DOMAIN rows,
+    which are strictly richer than a projection of the same history
+    (approvals, artifacts and elicitations never reach the history table).
+    Claiming the child here would pre-empt that copy with the poorer form.
+
+    The one that actually bites: ``AgentService.fork_session`` broadcasts
+    ``session_forked`` inside a bare ``try/except Exception: pass``, so
+    ``record_fork`` **not running at all** is a reachable path. Without this
+    exemption the first replayed row would claim the child and stamp
+    ``projected_at`` while its history is still empty — and ``backfill_thread``
+    then refuses the thread forever, leaving a permanently blank transcript:
+    the original fork defect, resurrected through the failure window. With
+    the exemption the loop leaves no thread row behind, so a later read
+    projects the copied history and the fork is readable either way.
+    """
+    if getattr(session, "_skip_conversation_materialization", False):
+        return None
+    try:
+        from omniagents.core.conversation.recorder import ensure_conversation_thread
+
+        return ensure_conversation_thread(session)
+    except Exception:
+        Debug.log(
+            f"[session] conversation thread not materialized for "
+            f"{getattr(session, 'id', None)!r}"
+        )
+        return None
+
+
+def _record_reasoning_item(session: Any, recorder: Any, message: dict) -> None:
+    """Promote a persisted reasoning block into a canonical Item.
+
+    Reasoning is the one conversation element with no notification: the SDK
+    writes it straight to history, so it never reaches the broadcast
+    chokepoint the domain recorder listens on. Without this hook a recorded
+    thread would carry no reasoning while a projected one does — the two
+    producers of the same read surface disagreeing about the same
+    conversation.
+    """
+    if recorder is None or not _is_reasoning(message):
+        return
+    try:
+        recorder.record_reasoning(
+            session.id,
+            run_id=getattr(session, "active_run_id", None),
+            item=message,
+        )
+    except Exception:
+        Debug.log(f"[session] reasoning item not recorded for {session.id!r}")
+
+
+class Session:  # noqa: D101
+    """Lightweight container for a client session.
+
+    A Session keeps track of the streaming task currently running for the
+    client as well as its chat history so consecutive *start_run* calls
+    can preserve context.
+    """
+
+    def __init__(
+        self,
+        project_slug: str | None,
+        agent_slug: str | None,
+        session_id: str | None = None,
+    ) -> None:  # noqa: D401
+        t_init = time.perf_counter()
+        self._project_slug = project_slug
+        self._agent_slug = agent_slug
+        self.id: str = session_id or str(uuid.uuid4())
+        # Owner principal. Hydrated from storage for pre-existing sessions;
+        # stamped by SessionManager.get_or_create for new ones. ``None``
+        # means the session is definitively unowned (legacy or
+        # system-created) — see omniagents.rpc.auth.principal_can_access.
+        self.user_id: str | None = None
+        # Set when hydration could NOT answer who owns this session (e.g. a
+        # transient storage fault). Authorization treats it as
+        # OWNER_UNKNOWN and denies: a failed lookup must never read as
+        # "unowned", which would widen access.
+        self.owner_lookup_failed: bool = False
+        if session_id:
+            try:
+                self.user_id = get_session_user_id(
+                    session_id, project_slug=project_slug, agent_slug=agent_slug
+                )
+            except Exception:
+                self.user_id = None
+                self.owner_lookup_failed = True
+                Debug.log(
+                    f"[session] owner lookup failed for {session_id}; "
+                    "access will be denied until it succeeds"
+                )
+        self.history: list[dict] = (
+            load_history(self.id, project_slug=project_slug, agent_slug=agent_slug)
+            if session_id
+            else []
+        )
+        # Model context is a replaceable view, not the append-only transcript.
+        # None means no SDK rewrite has occurred; [] means intentionally empty.
+        self._sdk_history = (
+            load_sdk_context(self.id, project_slug=project_slug, agent_slug=agent_slug)
+            if session_id
+            else None
+        )
+        t_after_history = time.perf_counter()
+        # Loading is not proof of a crash: another runtime may own the run.
+        # Repair only after acquiring exclusive durable run ownership.
+        t_after_repair = time.perf_counter()
+        self.current_task: Optional[asyncio.Task] = None
+        self.current_stream_result: Any | None = None
+        self.cancel_requested: bool = False
+        self.cancel_end_reason: str | None = None
+        # Holds (method, payload) tuples that could not be delivered because
+        # the WebSocket connection was already closed.  When the client
+        # reconnects we replay everything that is still pending so the UI can
+        # catch up (e.g. pending tool-approval requests).
+        self.pending_events: list[tuple[str, dict]] = []
+        # Durable sequenced journal of replayable events. Stamps every
+        # replayable notification with (session_id, stream_id, seq) and
+        # backs the ``resume_session`` / ``ack_events`` replay protocol.
+        # Falls back to a private in-memory store if the durable backend
+        # fails so session construction never breaks on journal I/O.
+        try:
+            self.event_log = SessionEventLog(
+                self.id, project_slug=project_slug, agent_slug=agent_slug
+            )
+        except Exception:
+            self.event_log = SessionEventLog(
+                self.id,
+                project_slug=project_slug,
+                agent_slug=agent_slug,
+                store=MemoryEventLogStore(),
+            )
+        # Active Rpc channels (one per concurrent client connection).  We
+        # may have more than one in case the user opens multiple tabs.
+        # Disconnected channels are automatically culled when a send fails.
+        self.channels: list[Any] = []
+        # Map active run_id -> preferred channel that initiated the run.
+        self.run_channels: Dict[str, Any] = {}
+        # Flag indicating whether this session was archived by the client.
+        self.archived: bool = (
+            get_archived(self.id, project_slug=project_slug, agent_slug=agent_slug)
+            if session_id
+            else False
+        )
+        # Set only while SessionManager.fork_session replays a parent's
+        # rows into this session — see _materialize_conversation_thread.
+        self._skip_conversation_materialization: bool = False
+        self.always_allow_tools: set[str] = set()
+        self.always_allow_patterns: set[str] = set()
+        self.always_allow_mcp_tools: set[tuple[str, str]] = set()
+        # Per-conversation approval reviewer override ("user" | "auto");
+        # None inherits the layered-config approvals.reviewer default.
+        self.approvals_reviewer: str | None = None
+        # Per-conversation workflow completion reviewer override
+        # ("guardian" | "user" | "off"); None inherits the layered-config
+        # workflow.completion_reviewer default.
+        self.workflow_reviewer: str | None = None
+        self.context: Any | None = None
+        self.variables: Any | None = None
+        self.active_run_id: str | None = None
+        self.active_run_started_payload: dict | None = None
+        self.active_run_status_payload: dict | None = None
+        self.active_run_set_status_payload: dict | None = None
+        self.active_session_state_payload: dict | None = None
+        self.pending_client_requests: Dict[str, dict] = {}
+        # Tool approval prompts awaiting user response (SDK 0.16+ flow).
+        # Keyed by tool call_id; replayed to channels that connect mid-run.
+        self.pending_tool_approvals: Dict[str, dict] = {}
+        # Hosted-MCP approval prompts awaiting user response (SDK 0.16+).
+        # Keyed by ``McpApprovalRequest.id``; replayed on reconnect like
+        # ``pending_tool_approvals``.
+        self.pending_mcp_approvals: Dict[str, dict] = {}
+        # Structured user-elicitation prompts awaiting the first response
+        # (tkt_F9tu2m9PjdpY). Keyed by elicitation_id; replayed on
+        # reconnect like ``pending_tool_approvals``.
+        self.pending_elicitations: Dict[str, dict] = {}
+        # Recently resolved elicitations, id -> {"status", "action"}.
+        # Backs the typed already-resolved rejection for late duplicate
+        # responses (bounded FIFO — see AgentService._record_resolved_elicitation).
+        self.resolved_elicitations: Dict[str, dict] = {}
+        # Background-injected messages awaiting serialized processing.
+        # Drained by AgentService._drain_queue, which serializes against
+        # ``current_task`` so queued runs never collide with user-initiated ones.
+        # This list is a projection of the durable command inbox. Service
+        # reads hydrate it; acceptance/claims/cancellation commit in the store.
+        self.message_queue: list[QueuedItem] = []
+        self.queue_owner = uuid.uuid4().hex
+        self.message_queue_max: int = 100
+        self.drainer_task: Optional[asyncio.Task] = None
+        # Background-notification batching. Sources that produce
+        # automated notifications (bash jobs exiting, workers
+        # completing, webhooks) call AgentService.enqueue_notification
+        # instead of enqueue_message. This projects the durable notification
+        # buffer, coalesced into ONE combined QueuedItem (role="assistant") by _notification_flusher at the next
+        # safe boundary: active run ends, short debounce when idle, or
+        # immediately when a real user message is enqueued.
+        self.pending_notifications: list[dict] = []
+        self.notification_signal: asyncio.Event = asyncio.Event()
+        self.notification_flush_now: asyncio.Event = asyncio.Event()
+        self.notification_flusher_task: Optional[asyncio.Task] = None
+        # Periodic-tick scheduler. When ``set_tick`` is called the session
+        # spawns a background task that calls ``enqueue_notification`` every
+        # ``interval`` seconds with ``content`` — used by autopilot loops
+        # (e.g. ``/goal``) to drive periodic wake-ups instead of firing a
+        # continuation prompt after every single turn.
+        self._tick_task: Optional[asyncio.Task] = None
+        self._tick_interval: Optional[float] = None
+        self._tick_content: Optional[str] = None
+        self._tick_source: str = "tick"
+        self._tick_safe_tool_overrides: Optional[Dict[str, Any]] = None
+        # Model configuration for runtime switching
+        self.active_model: str | None = None
+        self.model_config: Dict[str, Any] | None = None
+        self.reasoning_effort: str | None = None
+        self._reasoning_explicitly_set: bool = False
+        try:
+            ctx, vars_data = get_session_metadata(
+                self.id, project_slug=project_slug, agent_slug=agent_slug
+            )
+            if ctx is not None:
+                self.context = ctx
+            if vars_data is not None:
+                self.variables = vars_data
+        except Exception:
+            self.context = None
+            self.variables = None
+        t_end = time.perf_counter()
+        Debug.log(
+            f"[profile] Session.__init__ session={self.id} "
+            f"history_ms={(t_after_history - t_init) * 1000:.1f} "
+            f"repair_ms={(t_after_repair - t_after_history) * 1000:.1f} "
+            f"metadata_ms={(t_end - t_after_repair) * 1000:.1f} "
+            f"total_ms={(t_end - t_init) * 1000:.1f} "
+            f"history_items={len(self.history)}"
+        )
+
+    def append_message(self, message: dict, *, projection: dict | None = None) -> None:
+        """Add a message to this session and persist it."""
+        # Materialize the canonical thread BEFORE the row lands in history.
+        #
+        # Thread creation projects whatever history already exists, so a row
+        # written first would be projected AND separately recorded by
+        # whoever wrote it — one fact, two items. That bug was found and
+        # fixed four separate times (mid-run user messages, compaction
+        # checkpoints, reasoning blocks, assistant-role wakeups) before it
+        # was clear the guard belongs HERE, at the single point every
+        # history write passes through, rather than at each call site.
+        recorder = _materialize_conversation_thread(self)
+        if message.get("type") in ("function_call", "function_call_output"):
+            run_id = getattr(self, "active_run_id", None)
+            if isinstance(run_id, str) and run_id:
+                message = dict(message)
+                message["omniagents"] = {
+                    "run_id": run_id,
+                    **(message.get("omniagents") or {}),
+                }
+        # SDK retries can re-save old input rows. A legacy projection/fork
+        # has different canonical item IDs, so provider-key dedupe alone
+        # cannot prevent such old outputs being recorded as new responses.
+        message_id = message.get("id")
+        already_persisted = (
+            message.get("role") == "assistant"
+            and isinstance(message_id, str)
+            and bool(message_id)
+            and any(
+                row.get("id") == message_id
+                for row in self.history
+                if isinstance(row, dict)
+            )
+        )
+        from omniagents.core.conversation.recorder import ConversationRecorder
+
+        if projection is not None:
+            if recorder is None:
+                raise RuntimeError(
+                    "Cannot persist message: canonical thread unavailable"
+                )
+            ConversationRecorder.validate_projection(message, projection)
+        if (
+            projection is None
+            and not already_persisted
+            and not getattr(self, "_skip_conversation_materialization", False)
+            and ConversationRecorder.is_persisted_message(message)
+        ):
+            # Do not accept a durable response without a recoverable owner.
+            if recorder is None:
+                raise RuntimeError(
+                    "Cannot persist response: canonical thread unavailable"
+                )
+            projection = {"version": 1, "run_id": getattr(self, "active_run_id", None)}
+        db_append_message(
+            self.id,
+            message,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+            **({"projection": projection} if projection is not None else {}),
+        )
+        # A failed write must not leave a phantom input visible to the next
+        # SDK turn or convince retry deduplication that it was persisted.
+        self.history.append(message)
+        if self._sdk_history is not None:
+            self._sdk_history.append(message)
+        _record_reasoning_item(self, recorder, message)
+        # SDK session persistence can succeed before stream_events raises
+        # and discards an undelivered message_output. Record provider output
+        # here as well, using the same stable identity as the event path.
+        if recorder is not None and projection is not None:
+            try:
+                recorder.recover_pending_messages(self.id)
+            except Exception:
+                Debug.log(
+                    f"[session] message projection pending recovery for {self.id!r}"
+                )
+
+    # ------------------------------------------------------------------
+    # Session variables — mutable, persisted, broadcast-on-change dict
+    # accessible to tools, prompts, and server functions. The free-form
+    # contextvars store for the session. Tools read via
+    # ``omniagents.core.session.helpers.session_variables(ctx)`` and
+    # server functions read directly via ``session.variables``.
+    # ------------------------------------------------------------------
+
+    def get_variable(self, key: str, default: Any = None) -> Any:
+        """Return ``session.variables[key]`` or ``default`` if missing."""
+        vars_dict = self.variables if isinstance(self.variables, dict) else None
+        if not vars_dict:
+            return default
+        return vars_dict.get(key, default)
+
+    def set_variable(self, key: str, value: Any, *, persist: bool = True) -> None:
+        """Set a single variable. Persists by default."""
+        self.update_variables({key: value}, persist=persist)
+
+    # ------------------------------------------------------------------
+    # Periodic tick — fires an ``enqueue_notification`` on the running
+    # AgentService every ``interval`` seconds. Used by autopilot loops
+    # to drive wake-ups instead of "continue after every turn." Opt-in;
+    # default is no tick. Caller cancels via ``cancel_tick()``.
+    # ------------------------------------------------------------------
+
+    def set_tick(
+        self,
+        interval_seconds: float,
+        content: str,
+        *,
+        source: str = "tick",
+        safe_tool_overrides: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Schedule a periodic notification. Cancels any prior tick first.
+
+        Notifications use the existing batched-notification path, so they
+        coalesce with bash-job / worker completions and trigger the next
+        run via the standard drainer.
+        """
+        if interval_seconds is None or interval_seconds <= 0:
+            raise ValueError("set_tick: interval_seconds must be positive")
+        self.cancel_tick()
+        self._tick_interval = float(interval_seconds)
+        self._tick_content = content
+        self._tick_source = source or "tick"
+        self._tick_safe_tool_overrides = safe_tool_overrides
+        try:
+            self._tick_task = asyncio.create_task(
+                self._tick_loop(),
+                name=f"tick-{self.id[:8]}",
+            )
+        except RuntimeError:
+            # No running loop (e.g. tests that call set_tick synchronously).
+            # Reset state so caller can retry from an async context.
+            self._tick_task = None
+            self._tick_interval = None
+            self._tick_content = None
+            self._tick_safe_tool_overrides = None
+            raise
+
+    def cancel_tick(self) -> None:
+        """Stop the periodic tick if one is running."""
+        task = self._tick_task
+        self._tick_task = None
+        self._tick_interval = None
+        self._tick_content = None
+        self._tick_safe_tool_overrides = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _tick_loop(self) -> None:
+        """Background loop: sleep, enqueue notification, repeat. Skips
+        ticks when a run is currently active (the next run will end
+        naturally and the following tick wakes the agent) and dedups
+        already-pending ticks so a burst doesn't pile up while the
+        agent is busy mid-run.
+
+        Defers the service lookup until firing time so it survives
+        transient gaps in ``current_service()``."""
+        from omniagents.core.agents.service import current_service
+
+        interval = self._tick_interval or 0.0
+        content = self._tick_content or ""
+        source = self._tick_source or "tick"
+        safe_tool_overrides = self._tick_safe_tool_overrides
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                # Suppress while a run is in flight — it'll produce a
+                # run_end naturally; the next tick after that wakes the
+                # agent if needed.
+                if self.current_task and not self.current_task.done():
+                    continue
+                # Dedup: don't pile up identical ticks while the flusher
+                # hasn't fired yet.
+                if any(n.get("source") == source for n in self.pending_notifications):
+                    continue
+                svc = current_service()
+                if svc is None:
+                    continue
+                try:
+                    await svc.enqueue_notification(
+                        session_id=self.id,
+                        content=content,
+                        source=source,
+                        safe_tool_overrides=safe_tool_overrides,
+                    )
+                except Exception:
+                    Debug.log(f"[session] tick enqueue failed session={self.id}")
+        except asyncio.CancelledError:
+            return
+
+    def update_variables(
+        self, updates: Dict[str, Any], *, persist: bool = True
+    ) -> Dict[str, Any]:
+        """Merge ``updates`` into ``session.variables``. Returns the merged dict.
+
+        Keys with value ``None`` are *removed* from the dict (idiomatic for
+        callers that want to clear a key without a separate API). The session
+        variables dict is initialized lazily if it didn't exist yet.
+
+        Persistence is sync (SQLite UPDATE). Broadcasting is the caller's
+        responsibility — use ``AgentService.update_session_variables`` when
+        you want subscribers (UI panels, mirror state) to learn about the
+        change.
+        """
+        if not isinstance(updates, dict) or not updates:
+            return self.variables if isinstance(self.variables, dict) else {}
+        current = dict(self.variables) if isinstance(self.variables, dict) else {}
+        for k, v in updates.items():
+            if v is None:
+                current.pop(k, None)
+            else:
+                current[k] = v
+        self.variables = current
+        if persist:
+            try:
+                from .history_db import update_session_metadata
+
+                update_session_metadata(
+                    self.id,
+                    variables=current,
+                    project_slug=self._project_slug,
+                    agent_slug=self._agent_slug,
+                )
+            except Exception:
+                Debug.log(f"[session] persist variables failed session={self.id}")
+        return current
+
+    # --- openai-agents SDK Session protocol ---
+    # These async methods make Session compatible with agents.memory.Session,
+    # so it can be passed directly to Runner.run(session=...).
+    # They delegate to the existing sync persistence layer.
+
+    @property
+    def session_id(self) -> str:  # SDK Protocol field
+        return self.id
+
+    async def get_items(self, limit: int | None = None) -> list[dict]:
+        """SDK Session protocol: retrieve conversation items.
+
+        Returns the latest *limit* items in chronological order, or all items
+        when *limit* is None.
+
+        The OpenAI Responses API requires a specific item ordering and rejects
+        certain output-only fields when items are sent back as input.  Apply
+        the same reorder/strip helpers the bridge used to apply manually so
+        the SDK's ``prepare_input_with_session`` receives clean history.
+        """
+        items = list(self.history if self._sdk_history is None else self._sdk_history)
+        # Honor the legacy ``context_summary`` marker (a no-op for newly
+        # created sessions which never write one).
+        items = _apply_legacy_compaction_window(items)
+        # Reorder so reasoning/message/function_call/output groups are valid
+        # for the API and strip output-only metadata.
+        items = strip_internal_keys_for_api(filter_history_for_api(items))
+        if limit is not None and limit >= 0:
+            items = items[-limit:] if limit else []
+        return items
+
+    async def add_items(self, items: list[dict]) -> None:
+        """SDK Session protocol: append items to the conversation."""
+        for item in items:
+            # Normalize IN PLACE (not on a copy): callers such as the SDK's
+            # compaction wrapper keep references to these very dicts in
+            # their candidate cache, and ``responses.compact`` rejects
+            # assistant messages with ``input_text`` parts — the converted
+            # input form the bridge re-flushes after a cancelled run.
+            _normalize_assistant_message_parts_inplace(item)
+            # Reuse the sync append_message so existing persistence + repair
+            # logic stays the single source of truth.
+            self.append_message(item)
+
+    async def pop_item(self) -> dict | None:
+        """Durably rewind model context without deleting transcript records."""
+        items = self.history if self._sdk_history is None else self._sdk_history
+        if not items:
+            return None
+        popped = items[-1]
+        await self.replace_sdk_items(items[:-1])
+        return popped
+
+    async def clear_session(self) -> None:
+        """Durably clear model context, retaining the user's transcript."""
+        await self.replace_sdk_items([])
+
+    async def replace_sdk_items(self, items: list[dict]) -> None:
+        """Atomic SDK compaction replacement; failure leaves both views intact."""
+        self._replace_sdk_items(items)
+
+    def _replace_sdk_items(self, items: list[dict]) -> None:
+        snapshot = deepcopy(items)
+        for item in snapshot:
+            _normalize_assistant_message_parts_inplace(item)
+        replace_sdk_context(
+            self.id,
+            snapshot,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+        )
+        self._sdk_history = snapshot
+
+    def refresh_owned_history(self, ownership) -> None:
+        """Refresh and repair only while this runtime exclusively owns the session."""
+        if ownership.thread_id != self.id:
+            raise RuntimeError("History refresh belongs to a different session")
+        ownership.assert_current()
+        history = load_history(
+            self.id, project_slug=self._project_slug, agent_slug=self._agent_slug
+        )
+        sdk_history = load_sdk_context(
+            self.id, project_slug=self._project_slug, agent_slug=self._agent_slug
+        )
+        self.history, self._sdk_history = history, sdk_history
+        self._repair_history_after_unclean_shutdown()
+
+    def _repair_history_after_unclean_shutdown(self) -> None:
+        pending_responses: list[tuple[str | None, str, dict]] = []
+
+        chat_tool_call_ids_in_order: list[str] = []
+        chat_tool_call_ids_seen: set[str] = set()
+        chat_tool_outputs_seen: set[str] = set()
+
+        for item in (self.history if self._sdk_history is None else self._sdk_history):
+            if not isinstance(item, dict):
+                continue
+
+            item_type = item.get("type")
+            if isinstance(item_type, str) and item_type.endswith("_call_output"):
+                call_id = item.get("call_id")
+                run_id = _history_run_id(item)
+                for index, (pending_run, pending_call, _) in enumerate(
+                    pending_responses
+                ):
+                    if (pending_run, pending_call) == (run_id, call_id):
+                        pending_responses.pop(index)
+                        break
+                continue
+
+            if (
+                isinstance(item_type, str)
+                and item_type.endswith("_call")
+                and not item_type.endswith("_call_output")
+            ):
+                call_id = item.get("call_id")
+                if isinstance(call_id, str) and call_id:
+                    run_id = _history_run_id(item)
+                    pending_responses.append((run_id, call_id, item))
+                continue
+
+            role = item.get("role")
+            if role == "assistant":
+                tool_calls = item.get("tool_calls")
+                if isinstance(tool_calls, list):
+                    for tool_call in tool_calls:
+                        if not isinstance(tool_call, dict):
+                            continue
+                        tool_call_id = tool_call.get("id")
+                        if (
+                            isinstance(tool_call_id, str)
+                            and tool_call_id
+                            and tool_call_id not in chat_tool_call_ids_seen
+                        ):
+                            chat_tool_call_ids_seen.add(tool_call_id)
+                            chat_tool_call_ids_in_order.append(tool_call_id)
+                continue
+
+            if role == "tool":
+                tool_call_id = item.get("tool_call_id")
+                if isinstance(tool_call_id, str) and tool_call_id:
+                    chat_tool_outputs_seen.add(tool_call_id)
+                continue
+
+        from omniagents.core.conversation.recorder import recorder_for_session
+        from omniagents.core.conversation.model import derive_item_id
+
+        recorder = recorder_for_session(self)
+        for run_id, call_id, call in pending_responses:
+            if call.get("type") != "function_call":
+                # Other SDK tools have different output schemas. Do not invent
+                # a function output for e.g. a computer or hosted-shell call.
+                continue
+            output = (
+                "[Missing tool output: execution outcome unknown. "
+                "Do not assume it is safe to repeat the action.]"
+            )
+            key = (
+                recorder._tool_natural_key({"run_id": run_id, "call_id": call_id})
+                if recorder is not None and run_id
+                else None
+            )
+            if recorder is not None and key is not None:
+                recorded = recorder.store.get_item(
+                    self.id, derive_item_id(self.id, key)
+                )
+                if (
+                    recorded is not None
+                    and recorded.content.get("execution_state") == "completed"
+                    and recorded.content.get("tool") == call.get("name")
+                    and recorded.content.get("input") == call.get("arguments")
+                ):
+                    output = recorded.content["output"]
+            self.append_message(
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output,
+                    "omniagents": {"run_id": run_id, "recovered_tool_output": True},
+                }
+            )
+
+        missing_chat = [
+            cid
+            for cid in chat_tool_call_ids_in_order
+            if cid not in chat_tool_outputs_seen
+        ]
+        for tool_call_id in missing_chat:
+            self.append_message(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": "[Missing tool output: execution outcome unknown. Do not assume it is safe to repeat the action.]",
+                }
+            )
+
+
+class SessionManager:  # noqa: D101
+    """Holds *all* live sessions for the server process."""
+
+    def __init__(
+        self, project_slug: str | None, agent_slug: str | None
+    ) -> None:  # noqa: D401
+        self._project_slug = project_slug
+        self._agent_slug = agent_slug
+        self._by_id: Dict[str, Session] = {}
+        self._task_map: Dict[str, Session] = {}
+        self._run_tasks: Dict[str, asyncio.Task] = {}
+        self._cancel_tasks: Dict[str, asyncio.Task[bool]] = {}
+
+    # ---------------------------------------------------------------------
+    # Session lifecycle helpers
+    # ---------------------------------------------------------------------
+    def get_or_create(
+        self, session_id: str | None = None, *, user_id: str | None = None
+    ) -> Session:  # noqa: D401
+        """Return the live session, hydrating or creating it as needed.
+
+        *user_id* is the authenticated principal creating the session; it
+        becomes the persistent owner of a **newly created** session.
+
+        An existing session's owner is never rewritten here. Touching a
+        session must not transfer it: silently claiming a pre-existing
+        unowned (legacy) session would both expose it to whoever asked
+        first and lock out its real creator. Legacy rows stay unowned —
+        inaccessible under enforced authorization — until an operator runs
+        the documented backfill (``omniagents.core.session.backfill``).
+        """
+        if session_id and session_id in self._by_id:
+            return self._by_id[session_id]
+        existed = bool(session_id) and session_exists(
+            str(session_id),
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+        )
+        sess = Session(self._project_slug, self._agent_slug, session_id)
+        register_session(
+            sess.id,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+            user_id=None if existed else user_id,
+        )
+        if not existed and user_id is not None and sess.user_id is None:
+            # Brand-new session: register_session stamped the owner on the
+            # row it inserted; mirror it onto the live object.
+            sess.user_id = user_id
+        self._by_id[sess.id] = sess
+        return sess
+
+    def get(self, session_id: str | None) -> Optional[Session]:  # noqa: D401
+        """Look up a live session by id without creating one."""
+        if not session_id:
+            return None
+        return self._by_id.get(session_id)
+
+    def iter_active(self) -> list[Session]:  # noqa: D401
+        """Snapshot of all live sessions in this process."""
+        return list(self._by_id.values())
+
+    def drop(self, session_id: str) -> None:  # noqa: D401
+        """Forget a live session (in-memory only; storage is untouched)."""
+        self._by_id.pop(session_id, None)
+
+    def active_run_ids(self) -> list[str]:  # noqa: D401
+        """Run ids of all currently tracked runs."""
+        return list(self._task_map.keys())
+
+    def fork_session(
+        self,
+        source_session: Session,
+        *,
+        new_session_id: str | None = None,
+        history: list[dict] | None = None,
+        context: Any | None = None,
+        variables: Any | None = None,
+    ) -> Session:
+        new_session = self.get_or_create(
+            new_session_id, user_id=getattr(source_session, "user_id", None)
+        )
+        new_history = list(
+            history if history is not None else list(source_session.history)
+        )
+        new_session.history = []
+        register_session(
+            new_session.id,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+            user_id=new_session.user_id,
+        )
+        # See _materialize_conversation_thread: record_fork copies the
+        # parent's domain rows, so the child must NOT be materialized from
+        # its own half-written history mid-loop.
+        new_session._skip_conversation_materialization = True
+        try:
+            for msg in new_history:
+                try:
+                    new_session.append_message(dict(msg))
+                except Exception:
+                    continue
+        finally:
+            new_session._skip_conversation_materialization = False
+        # A full fork inherits compacted model context; a branch-point fork
+        # must instead use its historical prefix, never the parent's future.
+        if history is None and source_session._sdk_history is not None:
+            new_session._replace_sdk_items(source_session._sdk_history)
+        new_session.context = context if context is not None else source_session.context
+        new_session.variables = (
+            variables if variables is not None else source_session.variables
+        )
+        try:
+            self.persist_metadata(
+                new_session,
+                context=new_session.context,
+                variables=new_session.variables,
+            )
+        except Exception:
+            pass
+        return new_session
+
+    def bind_task(self, task: asyncio.Task, session: Session) -> None:  # noqa: D401
+        run_id = task.get_name()
+        self._task_map[run_id] = session
+        self._run_tasks[run_id] = task
+        session.current_task = task
+        session.current_stream_result = None
+        session.cancel_requested = False
+        session.cancel_end_reason = None
+        task.add_done_callback(lambda _: self._task_map.pop(run_id, None))
+        task.add_done_callback(lambda _: self._run_tasks.pop(run_id, None))
+
+    def get_by_run_id(self, run_id: str) -> Optional[Session]:  # noqa: D401
+        return self._task_map.get(run_id)
+
+    async def cancel(self, run_id: str, *, timeout: float = 5.0) -> bool:  # noqa: D401
+        # A UI stop and environment retirement may arrive together. Repeated
+        # task.cancel() would interrupt the worker's awaited finally cleanup.
+        # Join one cancellation attempt, even if its original caller disconnects.
+        pending = self._cancel_tasks.get(run_id)
+        if pending is None:
+            pending = asyncio.create_task(self._cancel_run(run_id, timeout=timeout))
+            self._cancel_tasks[run_id] = pending
+
+            def finished(done: asyncio.Task) -> None:
+                if self._cancel_tasks.get(run_id) is done:
+                    self._cancel_tasks.pop(run_id, None)
+                if not done.cancelled():
+                    done.exception()
+
+            pending.add_done_callback(finished)
+        return await asyncio.shield(pending)
+
+    async def _cancel_run(self, run_id: str, *, timeout: float) -> bool:
+        sess = self._task_map.get(run_id)
+        if not sess:
+            return False
+        task = self._run_tasks.get(run_id)
+        if task is None:
+            self._task_map.pop(run_id, None)
+            return False
+        if task.done():
+            self._task_map.pop(run_id, None)
+            self._run_tasks.pop(run_id, None)
+            if sess.current_task is task:
+                sess.current_task = None
+                sess.current_stream_result = None
+            return False
+
+        if sess.current_task is task:
+            sess.cancel_requested = True
+            if not sess.cancel_end_reason:
+                sess.cancel_end_reason = "cancelled"
+
+        stream = sess.current_stream_result if sess.current_task is task else None
+        force_cancel = False
+
+        if stream and hasattr(stream, "cancel"):
+            try:
+                cancel_result = stream.cancel("immediate")
+                if inspect.isawaitable(cancel_result):
+                    await asyncio.wait_for(cancel_result, timeout)
+            except Exception:
+                force_cancel = True
+        else:
+            force_cancel = True
+
+        if not force_cancel and not task.done():
+            done, _ = await asyncio.wait({task}, timeout=timeout)
+            force_cancel = not done
+
+        if force_cancel and not task.done():
+            # A retry may arrive after an earlier attempt timed out while
+            # finally blocks are still cleaning up. Do not cancel those again.
+            if not task.cancelling():
+                task.cancel()
+            # wait_for cancels again on timeout and then waits indefinitely
+            # if the worker suppresses cancellation. Keep its identity for
+            # retry and never publish a still-running task as stopped.
+            await asyncio.wait({task}, timeout=timeout)
+
+        if not task.done():
+            return False
+        if not task.cancelled():
+            task.exception()
+        if sess.current_task is task:
+            sess.current_task = None
+            sess.current_stream_result = None
+        self._task_map.pop(run_id, None)
+        self._run_tasks.pop(run_id, None)
+        return True
+
+    def archive_session(self, session_id: str) -> bool:  # noqa: D401
+        """Mark *session_id* as archived."""
+        sess = self._by_id.get(session_id)
+        if not sess:
+            return False
+        sess.archived = True
+        set_archived(
+            session_id,
+            True,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+        )
+        return True
+
+    def list_sessions(
+        self,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+        user_id: str | None = None,
+    ) -> list[dict]:  # noqa: D401
+        """Return session metadata, newest-first; ``limit=None`` = all.
+
+        ``user_id`` scopes the listing to one owner in SQL, so pagination
+        and ownership filtering compose (see the storage backends).
+        """
+        return db_list_sessions(
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+            limit=limit,
+            offset=offset,
+            user_id=user_id,
+        )
+
+    def persist_metadata(
+        self, session: Session, *, context: Any, variables: Any
+    ) -> None:
+        update_session_metadata(
+            session.id,
+            context=context,
+            variables=variables,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+        )
+
+    def get_user_messages(
+        self,
+        limit: int,
+        include_archived: bool,
+        *,
+        user_id: str | None = None,
+    ) -> list[dict]:  # noqa: D401
+        return get_user_messages(
+            limit=limit,
+            include_archived=include_archived,
+            project_slug=self._project_slug,
+            agent_slug=self._agent_slug,
+            user_id=user_id,
+        )
+
+
+sm = SessionManager("legacy", "legacy")

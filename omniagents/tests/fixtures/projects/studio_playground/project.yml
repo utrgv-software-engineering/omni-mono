@@ -1,0 +1,7 @@
+product:
+  name: demo_studio_project
+agents:
+  entrypoint: primary
+tracing:
+  project: demo_traces
+  name: demo_project

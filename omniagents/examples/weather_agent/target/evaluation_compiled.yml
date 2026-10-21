@@ -1,0 +1,266 @@
+name: weather_agent
+model: gpt-3.5-turbo
+instructions_file: instructions.md
+welcome_text: Ask for weather, e.g., 'Weather in Paris'
+tools:
+- geocode
+- get_weather
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names: []
+  safe_tool_patterns: []
+input_guardrails: []
+output_guardrails: []
+tracing:
+  provider: studio
+  project: weather_agent_demo
+  name: weather_agent
+  settings:
+    resume: never
+evaluation:
+  defaults:
+    runs_per_prompt: 1
+    max_turns: 6
+  synthetic_data_generation:
+    target_scenario_count: 100
+    generator:
+      agent:
+        name: PromptGenerator
+        model: gpt-4.1
+        output_type: list
+        output_type_strict: false
+        instructions: 'You are an AI test case generator. Read the dimension catalog
+          below to understand the space of user requests. You will be given a persona
+          mapping (one value per dimension) and a requested number of samples.
+
+
+          Task: Produce exactly {{ num_samples }} realistic and varied user prompts
+          that embody the given persona. Do not mention dimensions or internal schema;
+          write what a real user would say. Vary wording, phrasing, and surface form
+          across items; avoid near-duplicates.
+
+
+          Output format: Return ONLY a JSON array of length {{ num_samples }}. Each
+          item must be an object with keys {"name": string, "prompt": string}. The
+          name should be a short, descriptive slug. Do not include markdown fences
+          or extra text.
+
+
+          Dimension Catalog:
+
+          {{ dimensions_catalog | tojson(indent=2) }}
+
+          '
+      input:
+        template: 'You are an AI test case generator. Use the selected persona mapping
+          below to craft exactly {{ num_samples }} realistic user prompts that match
+          the selection. Vary tone and wording. Do not explain your reasoning.
+
+
+          Output ONLY a JSON array of length {{ num_samples }} of objects with keys
+          name and prompt.
+
+
+          Selected Persona (per dimension):
+
+          {{ selected_mapping | tojson(indent=2) }}
+
+
+          Dimension Catalog:
+
+          {{ dimensions_catalog | tojson(indent=2) }}
+
+          '
+        max_turns: 1
+    dimensions:
+    - name: location_ambiguity
+      label: Location Ambiguity
+      description: The level of ambiguity in the user's specified location.
+      values:
+      - name: unambiguous
+        label: Unambiguous
+        description: A specific, well-known location that is unlikely to have multiple
+          search results.
+        examples:
+        - Paris, France
+        - Tokyo, Japan
+        - San Francisco, CA, USA
+        - Berlin, Germany
+        - Sydney, NSW, Australia
+        - Toronto, ON, Canada
+        - Zurich, Switzerland
+        - Reykjavik, Iceland
+        - Cairo, Egypt
+        - Oslo, Norway
+      - name: ambiguous
+        label: Ambiguous
+        description: A common city name that exists in multiple countries or states,
+          requiring the agent to ask for clarification.
+        examples:
+        - Springfield
+        - Portland
+        - San Jose
+        - Columbus
+        - Alexandria
+        - Franklin
+        - Madison
+        - Greenville
+        - Rochester
+        - Richmond
+        - Cambridge
+        - Manchester
+        - Albany
+        - Salem
+        - Georgetown
+        - Bloomington
+        - Jacksonville
+        - Lancaster
+      - name: non_existent
+        label: Non-existent
+        description: A fictional or misspelled location that should result in an error
+          or no results.
+        examples:
+        - Faketownia
+        - Weatherton
+        - Imaginetown
+        - Loremville
+        - Qwertyland
+        - Foobaria
+        - Quuxburg
+        - Xyzzyville
+    - name: user_intent
+      label: User Intent
+      description: The specific task or constraint the user includes in their request.
+      values:
+      - name: simple_check
+        label: Simple Check
+        description: A direct, basic request for the weather with no special constraints.
+        examples:
+        - weather in Berlin, Germany
+        - Chicago, IL, USA weather
+        - forecast for Tokyo, Japan
+        - current weather Seattle, WA, USA
+        - weather today in Paris, France
+        - weather now in Toronto, ON, Canada
+        - what's the weather in Sydney, NSW, Australia
+        - weather in Cairo, Egypt today
+      - name: unit_preference
+        label: Unit Preference
+        description: The user explicitly asks for the temperature in either Fahrenheit
+          or Celsius.
+        examples:
+        - temperature in New York, NY, USA in Fahrenheit
+        - weather in London, UK in Celsius
+        - temp in Berlin, Germany in Celsius
+        - what's the temperature in Austin, TX, USA in Fahrenheit
+        - temperature in Toronto, ON, Canada in Celsius
+        - weather in Phoenix, AZ, USA in Fahrenheit
+        - show Paris, France temperature in Celsius
+        - temperature in Seattle, WA, USA in Fahrenheit
+      - name: out_of_scope
+        label: Out of Scope
+        description: A polite but irrelevant question to test if the agent stays on
+          topic.
+        examples:
+        - Tell me a joke.
+        - What's the capital of Texas?
+        - Play me a song.
+        - Set a timer.
+        - Who won the game last night?
+        - How do I bake bread?
+        - What's 2+2?
+        - Give me a movie recommendation.
+    - name: query_style
+      label: Query Style
+      description: The politeness and structure of the user's language.
+      values:
+      - name: direct
+        label: Direct
+        description: A short, keyword-like query without conversational filler.
+        examples:
+        - Miami, FL, USA weather
+        - Seattle, WA, USA weather
+        - Tokyo, Japan forecast
+        - Berlin, Germany weather
+        - Paris, France weather
+        - weather in New York, NY, USA
+        - Chicago, IL, USA forecast
+        - Dallas, TX, USA temp
+        - Boston, MA, USA weather now
+        - Phoenix, AZ, USA temperature
+      - name: conversational
+        label: Conversational
+        description: A polite, friendly query that includes greetings, thanks, or
+          other filler.
+        examples:
+        - Hi! Could you tell me the weather in Paris, France, please?
+        - What's it like in Miami, FL, USA? Thanks!
+        - Could you share today's weather for New York, NY, USA? Thanks!
+        - Hey! What's the weather like in Tokyo, Japan today?
+        - Good morning, could you share the forecast for Berlin, Germany?
+        - Please tell me the weather in San Francisco, CA, USA. Thanks!
+        - I'd love the weather for Sydney, NSW, Australia, please.
+        - Could you check the weather in Toronto, ON, Canada for me?
+  failure_categories:
+  - name: ambiguous_location_assumption
+    measures:
+    - ambiguous_location_requires_clarification
+  judges:
+    ambiguous_location_assumption_judge:
+      agent:
+        name: AmbiguousLocationAssumptionJudge
+        label: Ambiguous Location Assumption Judge
+        model: gpt-4.1
+        output_type: dict
+        output_type_strict: false
+        output_schema:
+          type: object
+          properties:
+            reasoning:
+              type: string
+            answer:
+              type: string
+              enum:
+              - Pass
+              - Fail
+          required:
+          - reasoning
+          - answer
+          additionalProperties: false
+        instructions_file: ../evaluations/judges/ambiguous_location_assumption_judge/instructions.md
+      input:
+        source: final_assistant_text
+        template_file: ../evaluations/judges/ambiguous_location_assumption_judge/template.md
+      failure_category: ambiguous_location_assumption
+  metrics:
+  - name: unknown_tool_call_rate
+    label: Unknown Tool Call Rate
+    type: rate
+    from_measure: tool_hallucination
+    numerator: counts.unknown_tool_calls
+    denominator: counts.total_tool_calls
+  scenarios:
+  - name: hello
+    prompt: Say hello
+  - id: c63fb5df02bb7745
+    name: manchester-check-please
+    prompt: Hey, what's the weather like today in Manchester? Thank you!
+    dimensions:
+      location_ambiguity: ambiguous
+      user_intent: simple_check
+      query_style: conversational
+    measures: []
+    failure_categories:
+    - ambiguous_location_assumption
+  - id: 04ce49465d5de71e
+    name: richmond-weather-inquiry
+    prompt: Good morning! Would you mind telling me the weather conditions in Richmond?
+    dimensions:
+      location_ambiguity: ambiguous
+      user_intent: simple_check
+      query_style: conversational
+    measures: []
+    failure_categories:
+    - ambiguous_location_assumption

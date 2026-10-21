@@ -1,0 +1,29 @@
+name: shell
+tools:
+  - execute_bash
+  - bash_status
+  - bash_logs
+  - bash_kill
+server_functions:
+  - bash_jobs.list
+  - bash_jobs.kill
+  - bash_jobs.tail
+  - bj-list
+  - bj-kill
+  - bj-logs
+instructions: |
+  Shell execution with background-job support:
+  - `execute_bash` runs a command. For long-running work (servers, soak
+    tests, builds longer than ~30s), pass `background=True` to get back a
+    job id immediately. **Do not use `sleep` to wait — when the job exits,
+    a completion notification (with exit code and timing) is delivered to
+    this session automatically and wakes the next turn. End your current
+    turn after spawning; the notification will bring you back.**
+  - `bash_status` and `bash_logs` are for inspecting a still-running job
+    mid-turn (e.g., is it making progress?), or for fetching the actual
+    log lines after the completion notification arrives (the notification
+    carries only the exit code, not output). Not for waiting.
+  - `bash_kill` terminates a job (SIGTERM, then SIGKILL).
+  - `rg` is the only search surface: there are no dedicated glob/grep
+    tools. Use `rg <pattern>` for text search and `rg --files -g '<glob>'`
+    for file discovery, in preference to `cat`/`grep`/`find` pipelines.

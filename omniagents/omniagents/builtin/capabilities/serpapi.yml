@@ -1,0 +1,12 @@
+name: serpapi
+tools:
+  - web_search
+  - youtube_search
+  - scholar_search
+instructions: |
+  Search via SerpAPI (requires `SERPAPI_API_KEY`):
+  - `web_search` for general queries.
+  - `scholar_search` for academic sources.
+  - `youtube_search` for video.
+  Follow up search hits with `web_fetch` (from the `web` capability) to read
+  the underlying page.

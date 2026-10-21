@@ -1,0 +1,93 @@
+name: Advanced Config Demo
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "I'm an advanced agent with extended configuration options!"
+
+# New handoff description
+handoff_description: "A demonstration agent showcasing advanced configuration options"
+
+# Tool behavior configuration
+reset_tool_choice: true
+
+# NEW: StopAtTools configuration - stops execution after specific tools
+# Can be either a string or a dict with stop_at_tool_names
+tool_use_behavior: 
+  stop_at_tool_names: 
+    - get_current_time
+    - calculate
+# Alternative string values: "run_llm_again" (default) or "stop_on_first_tool"
+
+# Output type for structured responses
+# Supported types: str, string, dict, dictionary, list, array, int, integer, float, number, bool, boolean, any
+output_type: dict  # Can be changed to dict, list, etc. for structured outputs
+
+# NEW: Control strict JSON schema mode for output_type
+output_type_strict: false  # Set to false for more flexible JSON schema validation
+
+# Prompt configuration (for OpenAI Responses API)
+# Allows dynamic configuration of instructions, tools, and other settings
+# prompt:
+#   id: "my-prompt-id"  # Required: The unique ID of the prompt
+#   version: "1.0"      # Optional: Version of the prompt
+#   variables:          # Optional: Variables to substitute into the prompt
+#     user_context: "production"
+#     language: "en"
+
+# Model settings for fine-tuning
+model_settings:
+  # Basic generation parameters
+  temperature: 0.7
+  top_p: 0.95
+  max_tokens: 2000
+  frequency_penalty: 0.2
+  presence_penalty: 0.1
+  
+  # Tool control
+  # tool_choice: auto  # auto-set when tools are present, but can be overridden to "required" or "none"
+  parallel_tool_calls: true  # Allow multiple tools to be called in parallel (default: true)
+  
+  # Advanced parameters
+  truncation: auto  # Truncation strategy: "auto" or "disabled"
+  verbosity: medium  # Response verbosity: "low", "medium", or "high"
+  top_logprobs: 5  # Number of top tokens to return logprobs for
+  
+  # Storage and usage tracking
+  store: true  # Store responses for later retrieval
+  include_usage: true  # Include usage information in responses
+  
+  # Metadata for tracking
+  metadata:
+    session: "demo-session"
+    environment: "development"
+  
+  # Additional output data to include
+  response_include:
+    - "message.output_text.logprobs"
+  
+  # Reasoning model configuration (for o1 models)
+  # reasoning:
+  #   effort: "medium"  # Reasoning effort level
+  
+# Extra parameters for provider-specific features
+  # extra_args:
+  #   custom_param: value
+
+# MCP configuration
+mcp_servers: []
+mcp_config:
+  convert_schemas_to_strict: true
+
+# Safety configuration
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - get_current_time
+  safe_tool_patterns: []
+
+# Tools
+tools:
+  - get_current_time
+  - flip_coin
+  - calculate

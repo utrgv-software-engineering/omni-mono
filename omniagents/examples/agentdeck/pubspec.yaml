@@ -1,0 +1,26 @@
+name: fleet_mgr
+description: "A new Flutter project."
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: ^3.6.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  web_socket_channel: ^2.4.0
+  uuid: ^3.0.7
+  provider: ^6.1.2
+  flutter_markdown: ^0.6.18
+  shared_preferences: ^2.2.2
+  xterm: ^4.0.0
+  google_fonts: ^6.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

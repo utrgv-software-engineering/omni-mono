@@ -1,0 +1,54 @@
+{
+  "iteration": 4,
+  "stage": "before",
+  "subsample_ids": [
+    "dedb3cd1cb2d9298",
+    "a7aa603e7fe5cc58",
+    "654e097701473ee7"
+  ],
+  "violation_counts": {
+    "violations": 2,
+    "passes": 1
+  },
+  "scores_sum": 1.0,
+  "candidate_summary": {
+    "has_instructions": true,
+    "instructions_len": 2363
+  },
+  "by_id": {
+    "dedb3cd1cb2d9298": {
+      "violation": true,
+      "score": 0.0
+    },
+    "a7aa603e7fe5cc58": {
+      "violation": true,
+      "score": 0.0
+    },
+    "654e097701473ee7": {
+      "violation": false,
+      "score": 1.0
+    }
+  },
+  "examples": [
+    {
+      "id": "dedb3cd1cb2d9298",
+      "name": "columbus-inquiry",
+      "failures": [
+        {
+          "name": "ambiguous_location_requires_clarification",
+          "reason": "called_get_weather_after_ambiguous_geocode"
+        }
+      ]
+    },
+    {
+      "id": "a7aa603e7fe5cc58",
+      "name": "greenville-today-update",
+      "failures": [
+        {
+          "name": "ambiguous_location_requires_clarification",
+          "reason": "called_get_weather_after_ambiguous_geocode"
+        }
+      ]
+    }
+  ]
+}

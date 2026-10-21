@@ -1,0 +1,53 @@
+{
+  "runs": [
+    {
+      "scenario": "case1",
+      "scenario_config": {
+        "id": "case1",
+        "name": "Case One"
+      },
+      "measures": [
+        {
+          "name": "accuracy",
+          "passed": true
+        }
+      ],
+      "prompt": "hello",
+      "final_assistant_text": "world"
+    }
+  ],
+  "metrics": [
+    {
+      "label": "score",
+      "value": 0.95,
+      "target": {
+        "op": ">=",
+        "value": 0.9
+      },
+      "meets_target": true
+    }
+  ],
+  "stats": {
+    "total_scenarios": 1,
+    "included_scenarios": 1,
+    "skipped_unmeasured": 0,
+    "unknown_measures": {
+      "mystery": 2
+    },
+    "measures_discovered_count": 12,
+    "measures_discovered": [
+      "m1",
+      "m2",
+      "m3",
+      "m4",
+      "m5",
+      "m6",
+      "m7",
+      "m8",
+      "m9",
+      "m10",
+      "m11",
+      "m12"
+    ]
+  }
+}

@@ -1,0 +1,297 @@
+interactions:
+- request:
+    body: '{"include":[],"input":[{"role":"user","content":"Please add 5 and 7 for
+      me."}],"instructions":"You are a strict test agent. When asked to add two integers,
+      you must call the add_integers_tool with JSON arguments containing keys ''a''
+      and ''b''. After receiving the tool result, reply with the single word ''ack''
+      followed by the numeric result.","model":"gpt-4o-mini","prompt_cache_key":"omniagents:67c7ab807a406c5c625fcfd3ec9796ba","prompt_cache_retention":"24h","temperature":0.0,"tool_choice":"auto","tools":[{"name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Echo
+      text for verification."},{"name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Return
+      the sum of two integers."}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      authorization:
+      - DUMMY
+      connection:
+      - keep-alive
+      content-length:
+      - '1082'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      user-agent:
+      - Agents/Python 0.16.1
+      x-stainless-arch:
+      - x64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 2.44.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.11
+    method: POST
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: "{\n  \"id\": \"resp_08188c18002807eb006a6ab4b509d48190abe730ae81db28e2\",\n
+        \ \"object\": \"response\",\n  \"created_at\": 1785377973,\n  \"status\":
+        \"completed\",\n  \"background\": false,\n  \"billing\": {\n    \"payer\":
+        \"developer\"\n  },\n  \"completed_at\": 1785377974,\n  \"error\": null,\n
+        \ \"frequency_penalty\": 0.0,\n  \"incomplete_details\": null,\n  \"instructions\":
+        \"You are a strict test agent. When asked to add two integers, you must call
+        the add_integers_tool with JSON arguments containing keys 'a' and 'b'. After
+        receiving the tool result, reply with the single word 'ack' followed by the
+        numeric result.\",\n  \"max_output_tokens\": null,\n  \"max_tool_calls\":
+        null,\n  \"model\": \"gpt-4o-mini-2024-07-18\",\n  \"moderation\": null,\n
+        \ \"output\": [\n    {\n      \"id\": \"fc_08188c18002807eb006a6ab4b661f081908ad298e956cac9da\",\n
+        \     \"type\": \"function_call\",\n      \"status\": \"completed\",\n      \"arguments\":
+        \"{\\\"a\\\":5,\\\"b\\\":7}\",\n      \"call_id\": \"call_o5DRgRPEiZbjyFRLDazy0ESI\",\n
+        \     \"name\": \"add_integers_tool\"\n    }\n  ],\n  \"parallel_tool_calls\":
+        true,\n  \"presence_penalty\": 0.0,\n  \"previous_response_id\": null,\n  \"prompt_cache_key\":
+        \"omniagents:67c7ab807a406c5c625fcfd3ec9796ba\",\n  \"prompt_cache_retention\":
+        \"24h\",\n  \"reasoning\": {\n    \"context\": null,\n    \"effort\": null,\n
+        \   \"summary\": null\n  },\n  \"safety_identifier\": null,\n  \"service_tier\":
+        \"default\",\n  \"store\": true,\n  \"temperature\": 0.0,\n  \"text\": {\n
+        \   \"format\": {\n      \"type\": \"text\"\n    },\n    \"verbosity\": \"medium\"\n
+        \ },\n  \"tool_choice\": \"auto\",\n  \"tool_usage\": {\n    \"image_gen\":
+        {\n      \"input_tokens\": 0,\n      \"input_tokens_details\": {\n        \"image_tokens\":
+        0,\n        \"text_tokens\": 0\n      },\n      \"output_tokens\": 0,\n      \"output_tokens_details\":
+        {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"total_tokens\":
+        0\n    },\n    \"web_search\": {\n      \"num_requests\": 0\n    }\n  },\n
+        \ \"tools\": [\n    {\n      \"type\": \"function\",\n      \"description\":
+        \"Echo text for verification.\",\n      \"name\": \"echo_text_tool\",\n      \"output_schema\":
+        null,\n      \"parameters\": {\n        \"properties\": {\n          \"text\":
+        {\n            \"title\": \"Text\",\n            \"type\": \"string\"\n          }\n
+        \       },\n        \"required\": [\n          \"text\"\n        ],\n        \"title\":
+        \"echo_text_tool_args\",\n        \"type\": \"object\",\n        \"additionalProperties\":
+        false\n      },\n      \"strict\": true\n    },\n    {\n      \"type\": \"function\",\n
+        \     \"description\": \"Return the sum of two integers.\",\n      \"name\":
+        \"add_integers_tool\",\n      \"output_schema\": null,\n      \"parameters\":
+        {\n        \"properties\": {\n          \"a\": {\n            \"title\": \"A\",\n
+        \           \"type\": \"integer\"\n          },\n          \"b\": {\n            \"title\":
+        \"B\",\n            \"type\": \"integer\"\n          }\n        },\n        \"required\":
+        [\n          \"a\",\n          \"b\"\n        ],\n        \"title\": \"add_integers_tool_args\",\n
+        \       \"type\": \"object\",\n        \"additionalProperties\": false\n      },\n
+        \     \"strict\": true\n    }\n  ],\n  \"top_logprobs\": 0,\n  \"top_p\":
+        1.0,\n  \"truncation\": \"disabled\",\n  \"usage\": {\n    \"input_tokens\":
+        156,\n    \"input_tokens_details\": {\n      \"cache_write_tokens\": 0,\n
+        \     \"cached_tokens\": 0\n    },\n    \"output_tokens\": 22,\n    \"output_tokens_details\":
+        {\n      \"reasoning_tokens\": 0\n    },\n    \"total_tokens\": 178\n  },\n
+        \ \"user\": null,\n  \"metadata\": {}\n}"
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      cf-ray:
+      - a230e106d8fd7de3-DFW
+      connection:
+      - keep-alive
+      content-length:
+      - '3265'
+      content-type:
+      - application/json
+      date:
+      - Thu, 30 Jul 2026 02:19:34 GMT
+      openai-organization:
+      - eightytwentylabs
+      openai-processing-ms:
+      - '1660'
+      openai-project:
+      - proj_lolRwA9UN0iczul3THcmE6D6
+      openai-version:
+      - '2020-10-01'
+      server:
+      - cloudflare
+      set-cookie:
+      - __cf_bm=cUy0HWC4lnIMOqOzcTYwNZ9Or.Op3jO4Myu5IMAqWac-1785377972.298367-1.0.1.1-4XitWeo_VLNqAZLWnNu0xrK_g2Wd0R2ygtrMRXMsFKFSz9ZBP3gZpDuExT2k1GEMr36jgyekXAq6h.kW3kCktvdkTi3dax.fqwBgnicr_kgaOIje9W9AC5zNdeJix4z4;
+        HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Thu,
+        30 Jul 2026 02:49:34 GMT
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      x-content-type-options:
+      - nosniff
+      x-ratelimit-limit-requests:
+      - '30000'
+      x-ratelimit-limit-tokens:
+      - '150000000'
+      x-ratelimit-remaining-requests:
+      - '29999'
+      x-ratelimit-remaining-tokens:
+      - '149999627'
+      x-ratelimit-reset-requests:
+      - 2ms
+      x-ratelimit-reset-tokens:
+      - 0s
+      x-request-id:
+      - req_c43ae4de19884ee88d2d68e3ebd19114
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"include":[],"input":[{"role":"user","content":"Please add 5 and 7 for
+      me."},{"arguments":"{\"a\":5,\"b\":7}","call_id":"call_o5DRgRPEiZbjyFRLDazy0ESI","name":"add_integers_tool","type":"function_call","id":"fc_08188c18002807eb006a6ab4b661f081908ad298e956cac9da","status":"completed"},{"call_id":"call_o5DRgRPEiZbjyFRLDazy0ESI","output":"12","type":"function_call_output"}],"instructions":"You
+      are a strict test agent. When asked to add two integers, you must call the add_integers_tool
+      with JSON arguments containing keys ''a'' and ''b''. After receiving the tool
+      result, reply with the single word ''ack'' followed by the numeric result.","model":"gpt-4o-mini","prompt_cache_key":"omniagents:67c7ab807a406c5c625fcfd3ec9796ba","prompt_cache_retention":"24h","temperature":0.0,"tools":[{"name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Echo
+      text for verification."},{"name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Return
+      the sum of two integers."}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      authorization:
+      - DUMMY
+      connection:
+      - keep-alive
+      content-length:
+      - '1357'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=cUy0HWC4lnIMOqOzcTYwNZ9Or.Op3jO4Myu5IMAqWac-1785377972.298367-1.0.1.1-4XitWeo_VLNqAZLWnNu0xrK_g2Wd0R2ygtrMRXMsFKFSz9ZBP3gZpDuExT2k1GEMr36jgyekXAq6h.kW3kCktvdkTi3dax.fqwBgnicr_kgaOIje9W9AC5zNdeJix4z4
+      host:
+      - api.openai.com
+      user-agent:
+      - Agents/Python 0.16.1
+      x-stainless-arch:
+      - x64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 2.44.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '0'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.11
+    method: POST
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: "{\n  \"id\": \"resp_08188c18002807eb006a6ab4b70b0881909f8bf034abbb9e61\",\n
+        \ \"object\": \"response\",\n  \"created_at\": 1785377975,\n  \"status\":
+        \"completed\",\n  \"background\": false,\n  \"billing\": {\n    \"payer\":
+        \"developer\"\n  },\n  \"completed_at\": 1785377976,\n  \"error\": null,\n
+        \ \"frequency_penalty\": 0.0,\n  \"incomplete_details\": null,\n  \"instructions\":
+        \"You are a strict test agent. When asked to add two integers, you must call
+        the add_integers_tool with JSON arguments containing keys 'a' and 'b'. After
+        receiving the tool result, reply with the single word 'ack' followed by the
+        numeric result.\",\n  \"max_output_tokens\": null,\n  \"max_tool_calls\":
+        null,\n  \"model\": \"gpt-4o-mini-2024-07-18\",\n  \"moderation\": null,\n
+        \ \"output\": [\n    {\n      \"id\": \"msg_08188c18002807eb006a6ab4b84a448190a306f5041ed0a59f\",\n
+        \     \"type\": \"message\",\n      \"status\": \"completed\",\n      \"content\":
+        [\n        {\n          \"type\": \"output_text\",\n          \"annotations\":
+        [],\n          \"logprobs\": [],\n          \"text\": \"ack 12\"\n        }\n
+        \     ],\n      \"role\": \"assistant\"\n    }\n  ],\n  \"parallel_tool_calls\":
+        true,\n  \"presence_penalty\": 0.0,\n  \"previous_response_id\": null,\n  \"prompt_cache_key\":
+        \"omniagents:67c7ab807a406c5c625fcfd3ec9796ba\",\n  \"prompt_cache_retention\":
+        \"24h\",\n  \"reasoning\": {\n    \"context\": null,\n    \"effort\": null,\n
+        \   \"summary\": null\n  },\n  \"safety_identifier\": null,\n  \"service_tier\":
+        \"default\",\n  \"store\": true,\n  \"temperature\": 0.0,\n  \"text\": {\n
+        \   \"format\": {\n      \"type\": \"text\"\n    },\n    \"verbosity\": \"medium\"\n
+        \ },\n  \"tool_choice\": \"auto\",\n  \"tool_usage\": {\n    \"image_gen\":
+        {\n      \"input_tokens\": 0,\n      \"input_tokens_details\": {\n        \"image_tokens\":
+        0,\n        \"text_tokens\": 0\n      },\n      \"output_tokens\": 0,\n      \"output_tokens_details\":
+        {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"total_tokens\":
+        0\n    },\n    \"web_search\": {\n      \"num_requests\": 0\n    }\n  },\n
+        \ \"tools\": [\n    {\n      \"type\": \"function\",\n      \"description\":
+        \"Echo text for verification.\",\n      \"name\": \"echo_text_tool\",\n      \"output_schema\":
+        null,\n      \"parameters\": {\n        \"properties\": {\n          \"text\":
+        {\n            \"title\": \"Text\",\n            \"type\": \"string\"\n          }\n
+        \       },\n        \"required\": [\n          \"text\"\n        ],\n        \"title\":
+        \"echo_text_tool_args\",\n        \"type\": \"object\",\n        \"additionalProperties\":
+        false\n      },\n      \"strict\": true\n    },\n    {\n      \"type\": \"function\",\n
+        \     \"description\": \"Return the sum of two integers.\",\n      \"name\":
+        \"add_integers_tool\",\n      \"output_schema\": null,\n      \"parameters\":
+        {\n        \"properties\": {\n          \"a\": {\n            \"title\": \"A\",\n
+        \           \"type\": \"integer\"\n          },\n          \"b\": {\n            \"title\":
+        \"B\",\n            \"type\": \"integer\"\n          }\n        },\n        \"required\":
+        [\n          \"a\",\n          \"b\"\n        ],\n        \"title\": \"add_integers_tool_args\",\n
+        \       \"type\": \"object\",\n        \"additionalProperties\": false\n      },\n
+        \     \"strict\": true\n    }\n  ],\n  \"top_logprobs\": 0,\n  \"top_p\":
+        1.0,\n  \"truncation\": \"disabled\",\n  \"usage\": {\n    \"input_tokens\":
+        190,\n    \"input_tokens_details\": {\n      \"cache_write_tokens\": 0,\n
+        \     \"cached_tokens\": 0\n    },\n    \"output_tokens\": 5,\n    \"output_tokens_details\":
+        {\n      \"reasoning_tokens\": 0\n    },\n    \"total_tokens\": 195\n  },\n
+        \ \"user\": null,\n  \"metadata\": {}\n}"
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      cf-ray:
+      - a230e116ed9f7de3-DFW
+      connection:
+      - keep-alive
+      content-length:
+      - '3324'
+      content-type:
+      - application/json
+      date:
+      - Thu, 30 Jul 2026 02:19:36 GMT
+      openai-organization:
+      - eightytwentylabs
+      openai-processing-ms:
+      - '1464'
+      openai-project:
+      - proj_lolRwA9UN0iczul3THcmE6D6
+      openai-version:
+      - '2020-10-01'
+      server:
+      - cloudflare
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      x-content-type-options:
+      - nosniff
+      x-ratelimit-limit-requests:
+      - '30000'
+      x-ratelimit-limit-tokens:
+      - '150000000'
+      x-ratelimit-remaining-requests:
+      - '29999'
+      x-ratelimit-remaining-tokens:
+      - '149999592'
+      x-ratelimit-reset-requests:
+      - 2ms
+      x-ratelimit-reset-tokens:
+      - 0s
+      x-request-id:
+      - req_2d57caaa1d664df18f8e76160e45b96c
+    status:
+      code: 200
+      message: OK
+version: 1

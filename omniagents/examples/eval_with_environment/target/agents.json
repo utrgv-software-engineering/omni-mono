@@ -1,0 +1,9 @@
+{
+  "entrypoint": "demo_agent",
+  "agents": [
+    {
+      "key": "demo_agent",
+      "file": "/home/emm/code/omniagents/examples/eval_with_environment/agents/demo_agent/agent.yml"
+    }
+  ]
+}

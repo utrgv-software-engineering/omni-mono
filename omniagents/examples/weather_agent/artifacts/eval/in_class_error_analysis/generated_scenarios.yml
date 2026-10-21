@@ -1,0 +1,187 @@
+scenarios:
+- id: 1fa663d27e858328
+  name: paris-casual-request
+  prompt: Hey there! Could you let me know what the weather is like in Paris, France
+    today?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 8644e34c49533c3a
+  name: tokyo-weather-today
+  prompt: Hi! I'm curious—what's the current weather in Tokyo, Japan?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 0c2fceded6291ab7
+  name: san-francisco-forecast
+  prompt: Good morning! Can you give me the weather forecast for San Francisco, CA,
+    USA, please?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 5a6284adbbfc0ee4
+  name: berlin-conditions
+  prompt: Hello! Do you have the latest weather report for Berlin, Germany?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 5be03737a14558c5
+  name: sydney-weather
+  prompt: Hey, could you tell me how the weather is in Sydney, NSW, Australia right
+    now?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 654e097701473ee7
+  name: toronto-current-weather
+  prompt: Hi there! May I have the current weather in Toronto, ON, Canada, please?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 8c05308b317a5903
+  name: zurich-update
+  prompt: Would you be able to share the weather update for Zurich, Switzerland? Thanks!
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 3620bcff6ebbd2e1
+  name: reykjavik-query
+  prompt: Hello! What's the weather like in Reykjavik, Iceland today?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: 1ffabb06176bc19b
+  name: cairo-request
+  prompt: Hi, could you give me the weather report for Cairo, Egypt, please?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: e44d853f1df40e3c
+  name: oslo-forecast-please
+  prompt: Hey! Can you check the forecast for Oslo, Norway for me? Thanks a lot!
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+- id: ac56d9f59c0054dc
+  name: friendly-springfield-weather
+  prompt: Hey there! Could you let me know what the weather is like in Springfield
+    today? Thanks!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: 841e3f99ba4df49c
+  name: polite-portland-forecast
+  prompt: Hi! Can you tell me the weather forecast for Portland, please?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: aacadcc1394527d1
+  name: curious-san-jose
+  prompt: I was wondering, what's the weather like in San Jose right now?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: dedb3cd1cb2d9298
+  name: columbus-inquiry
+  prompt: Good morning! Could you give me an update on the current weather in Columbus?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: 0186629c5cf4ffc0
+  name: helpful-request-alexandria
+  prompt: Hey, would you mind checking the weather in Alexandria for me? Thanks a
+    lot!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: 11014a42393a852a
+  name: cheerful-franklin-weather
+  prompt: Could you please share what the weather's doing in Franklin today?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: 08c309ccdeb39d32
+  name: pleasant-madison-weather
+  prompt: Hi! I'd appreciate a quick weather update for Madison, if you don't mind.
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: a7aa603e7fe5cc58
+  name: greenville-today-update
+  prompt: Would you be able to tell me how the weather is in Greenville right now?
+    Thanks!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: aae9a921ad113b58
+  name: conversational-rochester-weather
+  prompt: Hello! Can you provide the latest weather information for Rochester, please?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+- id: 2009736ade33ed24
+  name: friendly-richmond-forecast
+  prompt: Hey! What's the weather like in Richmond these days? Thank you!
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption

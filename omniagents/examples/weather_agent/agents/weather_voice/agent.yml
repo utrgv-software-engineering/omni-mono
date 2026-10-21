@@ -1,0 +1,32 @@
+name: weather_voice
+model: gpt-realtime
+instructions: |
+  Your name is Sally. You welcome the user in a friendly tone, collect their location, clarify any
+  missing details, and then delegate to the main weather agent using the
+  handoff tool. Keep exchanges brief and confirm before handing off.
+welcome_text: "Hi there! I'm your voice assistant for quick weather updates."
+realtime_mode: true
+realtime_settings:
+  model_name: gpt-realtime
+  voice: alloy
+  modalities:
+    - audio
+  input_audio_format: pcm16
+  output_audio_format: pcm16
+  turn_detection:
+    type: server_vad
+    threshold: 0.3
+    silence_duration_ms: 200
+    prefix_padding_ms: 100
+  input_audio_transcription:
+    model: whisper-1
+#handoffs:
+#  - yaml: ../weather_agent/agent.yml
+    #    tool_name_override: escalate_to_weather_agent
+    #    tool_description_override: "Transfer to the primary weather specialist"
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names: []
+  safe_tool_patterns: []

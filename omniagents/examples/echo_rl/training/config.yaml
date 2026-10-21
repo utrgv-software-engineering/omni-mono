@@ -1,0 +1,41 @@
+# Training config for the terminal agent (GRPO + optional ECHO).
+# Mirrors the echo-rl recipe at laptop scale. The only knob that toggles ECHO
+# vs the GRPO baseline is echo.world_model_coeff (0.0 = baseline, 0.05 = ECHO).
+
+model: Qwen/Qwen2.5-0.5B-Instruct
+default_image: python:3.11-slim          # used by bundled tasks that don't ship one
+
+dataset:
+  source: builtin                        # builtin | openthoughts | echo_parquet
+  split: train                           # train on the "train" split (builtin only)
+  limit: null                            # cap number of tasks (null = all)
+  # val_split: val                       # held-out tasks (see evaluations/README.md)
+  # categories: [file-ops, data-processing]   # builtin-only tag filter
+  # data_files: /path/to/echo/*.parquet       # echo_parquet only
+  #
+  # Verifier-free "world_model_only" tasks in the corpus feed ECHO's
+  # environment-prediction loss but contribute no policy gradient. They are
+  # included automatically; with world_model_coeff=0 (baseline) they are no-ops.
+
+grpo:
+  num_train_epochs: 1
+  per_device_batch_size: 2
+  gradient_accumulation_steps: 1
+  num_generations: 2                     # echo-rl uses 16; small here for laptops
+  max_completion_length: 256
+  temperature: 0.8
+  learning_rate: 1.0e-6
+  max_grad_norm: 0.2
+  max_tool_calling_iterations: 4
+
+echo:
+  world_model_coeff: 0.05                # 0.0 -> GRPO baseline; 0.05 -> ECHO
+  world_loss_normalization: selected_tokens
+
+runtime:
+  exec_timeout: 30.0
+  verifier_timeout: 60.0
+
+output_dir: results/echo
+report_to: none                          # or "wandb"
+logging_steps: 1

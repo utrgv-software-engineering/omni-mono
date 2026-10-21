@@ -1,0 +1,2 @@
+FLUTTER_ROOT=$(PROJECT_DIR)/../.fvm/flutter_sdk
+DART_SDK=$(FLUTTER_ROOT)/bin/cache/dart-sdk

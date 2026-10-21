@@ -1,0 +1,337 @@
+[project]
+name = "omniagents"
+dynamic = ["version"]
+description = "OmniAgents"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Intel macOS wheels bundle the pinned native engine through setup.py.
+    "quickjs-ng==0.17.0.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "openai-agents[realtime]>=0.16.0,<0.17",
+    # openai 2.45.0 made InputTokensDetails.cache_write_tokens a REQUIRED
+    # field; openai-agents 0.16.x constructs InputTokensDetails(cached_tokens=0)
+    # and crashes on every run ("Field required"). Lift this cap only together
+    # with the openai-agents 0.17+ bump that handles the new field.
+    "openai<2.45",
+    "python-dotenv",
+    "pydantic-core==2.41.4",
+    "pydantic==2.12.3",
+    "PyYAML",
+    "Jinja2",
+    "requests",
+    "beautifulsoup4",
+    "pygit2",
+    "pathspec>=0.12",
+    "jsonref>=1.0.0",
+]
+
+[project.scripts]
+omniagents = "omniagents.cli:main"
+
+[project.optional-dependencies]
+voice = [
+    "openai-agents[voice]>=0.16.0,<0.17",
+]
+litellm = [
+    "openai-agents[litellm]>=0.16.0,<0.17",
+]
+studio = [
+    "httpx>=0.27.0",
+]
+server = [
+    "fastapi[all]>=0.115.12",
+    "uvicorn>=0.34.1",
+    # Host terminals on Windows (ConPTY); POSIX hosts use the stdlib pty.
+    "pywinpty>=2.0.14; sys_platform == 'win32'",
+]
+web = [
+    "fastapi[all]>=0.115.12",
+    "uvicorn>=0.34.1",
+]
+studio-server = [
+    "fastapi[all]>=0.115.12",
+    "uvicorn>=0.34.1",
+]
+docs = [
+    "mkdocs-material>=9.5.0",
+]
+markdown = [
+    # convert_to_markdown builtin tool (rich-format → Markdown extraction).
+    "markitdown[all,docx,pdf]>=0.1.1",
+]
+oidc = [
+    "PyJWT[crypto]>=2.8.0",
+]
+sqlcipher = [
+    "pysqlcipher3>=1.2.0",
+]
+session-sqlalchemy = [
+    "openai-agents[sqlalchemy]>=0.16.0,<0.17",
+]
+session-redis = [
+    "openai-agents[redis]>=0.16.0,<0.17",
+]
+session-mongodb = [
+    "openai-agents[mongodb]>=0.16.0,<0.17",
+]
+session-encrypted = [
+    "openai-agents[encrypt]>=0.16.0,<0.17",
+]
+session-postgres = [
+    "psycopg[binary]>=3.2",
+    "psycopg_pool>=3.2",
+]
+audio-blob = [
+    "azure-storage-blob>=12.20",
+]
+sandbox-docker = [
+    "openai-agents[docker]>=0.16.0,<0.17",
+]
+sandbox-e2b = [
+    "openai-agents[e2b]>=0.16.0,<0.17",
+]
+sandbox-modal = [
+    "openai-agents[modal]>=0.16.0,<0.17",
+]
+sandbox-runloop = [
+    "openai-agents[runloop]>=0.16.0,<0.17",
+]
+sandbox-daytona = [
+    "openai-agents[daytona]>=0.16.0,<0.17",
+]
+sandbox-blaxel = [
+    "openai-agents[blaxel]>=0.16.0,<0.17",
+]
+sandbox-vercel = [
+    "openai-agents[vercel]>=0.16.0,<0.17",
+]
+sandbox-cloudflare = [
+    "openai-agents[cloudflare]>=0.16.0,<0.17",
+]
+sandbox-bashkit = [
+    "bashkit>=0.14.4,<0.15",
+]
+presidio = [
+    "presidio-analyzer>=2.2.0",
+    "presidio-anonymizer>=2.2.0",
+]
+platform = [
+    "PyJWT[crypto]>=2.8.0",
+]
+enterprise = ["omniagents[oidc,presidio,platform]"]
+all = [
+    "omniagents[server,web,studio,studio-server,voice,litellm,markdown,oidc,presidio,platform,session-sqlalchemy,session-redis,session-mongodb,session-encrypted,session-postgres,audio-blob,sandbox-docker,sandbox-e2b,sandbox-modal,sandbox-runloop,sandbox-daytona,sandbox-blaxel,sandbox-vercel,sandbox-cloudflare,sandbox-bashkit]",
+]
+training = [
+    # GRPO/SFT agent fine-tuning (omniagents.training).
+    # transformers>=5.0.0 is required for TRL's tool-using GRPO rollout (which
+    # produces the tool_mask the ECHO world-model loss relies on); jmespath is
+    # required by TRL to parse tool-call responses. trl is pinned to 0.28-0.29:
+    # 0.27 is incompatible with transformers 5 (import_utils change), and this
+    # range is where EchoGRPOTrainer's hooks into TRL internals are verified.
+    "torch>=2.0",
+    "transformers>=5.0.0",
+    "trl>=0.28,<0.30",
+    "accelerate>=1.4.0",
+    "datasets>=2.0",
+    "jmespath>=1.0",
+    "peft>=0.12",            # LoRA / QLoRA (laptop/consumer-GPU training)
+    "bitsandbytes>=0.43",    # 4-bit base for QLoRA (CUDA only)
+    # vLLM (the generation throughput lever) is intentionally NOT pinned here:
+    # it hard-pins torch to a specific version, so the right vLLM depends on
+    # your torch/transformers/CUDA stack. For transformers 5.x install
+    # `vllm==0.21.0` (pulls torch 2.11) and run with VLLM_PLUGINS="". See
+    # examples/echo_rl/README.md ("Faster training with vLLM").
+]
+dev = [
+    "datamodel-code-generator==0.71.0",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-xdist",
+    "pytest-timeout",
+    "bump2version",
+    "black==26.5.1",
+    "mypy==1.19.0",
+    "types-PyYAML>=6.0",
+    "coverage[toml]",
+    "pytest-cov",
+    "hypothesis>=6.142.4",
+    "fastapi[all]>=0.115.12",
+    "mkdocs-material>=9.5.0",
+    "vcrpy>=5.1.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+# Fail loudly instead of hanging forever when a test blocks on I/O that
+# never arrives (e.g. a websocket receive waiting on a reply the server
+# will never send). No single test should legitimately take this long.
+timeout = 120
+
+[tool.coverage.run]
+branch = true
+source = ["omniagents"]
+omit = [
+    "omniagents/backends/ink/tui/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.coverage.paths]
+source = [
+    "omniagents",
+    "*/site-packages/omniagents",
+]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["omniagents"]
+# Project templates are Jinja-style Python with `{placeholder}` syntax —
+# not valid Python (black CI excludes them for the same reason).
+exclude = ['^omniagents/core/project/templates/']
+check_untyped_defs = true
+# Third-party deps without stubs or py.typed (openai-agents extras, pygit2,
+# jsonref, litellm, torch/trl, azure SDKs, ...).
+ignore_missing_imports = true
+
+# typecheck-debt — these modules predate the typecheck gate and still carry
+# real errors (417 across the 25 modules below when the gate landed). They
+# are ratchet targets: fix a module, delete its line here. Do NOT add new
+# modules to this list.
+[[tool.mypy.overrides]]
+module = [
+    "omniagents.cli",                          # 52 errors
+    "omniagents.studio.server.api",            # 53 errors
+    "omniagents.core.runtime.bridge",          # 40 errors
+    "omniagents.core.agents.service",          # 31 errors
+    "omniagents.core.training.grpo",           # 30 errors
+    "omniagents.rpc.realtime_session",         # 26 errors
+    "omniagents.rpc.transport.websocket",      # 24 errors
+    "omniagents.core.runtime.runner",          # 23 errors
+    "omniagents.core.agents.builder",          # 23 errors
+    "omniagents.core.sandbox.docker_extended", # 20 errors
+    "omniagents.core.runtime.serve_harness",   # 16 errors
+    "omniagents.builtin.tools.file_tools",     # 16 errors
+    "omniagents.notebook.evaluation",          # 15 errors
+    "omniagents.core.eval.optimize",           # 15 errors
+    "omniagents.rpc.agents.remote",            # 13 errors
+    "omniagents.core.training.sft",            # 11 errors
+    "omniagents.builtin.tools.youtube_search", # 11 errors
+    "omniagents.builtin.tools.scholar_search", # 11 errors
+    "omniagents.core.tools.discovery",         # 10 errors
+    "omniagents.core.eval.scenarios",          # 10 errors
+    "omniagents.core.eval.container_routing",  # 10 errors
+    "omniagents.core.config.loader",           # 9 errors
+    "omniagents.core.sandbox",                 # 8 errors (__init__)
+    "omniagents.core.agents.factory",          # 8 errors
+]
+ignore_errors = true
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[project.entry-points."omniagents.providers"]
+auth_platform = "omniagents.core.providers.platform.auth:PlatformAuthProvider"
+
+[project.entry-points."omniagents.backends"]
+server = "omniagents.backends.server:ServerBackend"
+ink = "omniagents.backends.ink:InkBackend"
+web = "omniagents.backends.web:WebBackend"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "datamodel-code-generator==0.71.0",
+    "black==26.5.1",
+    "bump2version",
+    "coverage[toml]",
+    "fastapi[all]>=0.115.12",
+    "hypothesis>=6.142.4",
+    "mkdocs-material>=9.5.0",
+    "mypy==1.19.0",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-xdist",
+    "pytest-timeout",
+    "types-PyYAML>=6.0",
+    "vcrpy>=5.1.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["omniagents*"]
+
+[tool.setuptools]
+license-files = ["LICENSE*", "vendor/quickjs-ng/LICENSE", "vendor/quickjs-ng/upstream-quickjs/LICENSE"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+# Built-in capability definitions are data-only YAML in a non-package subdir
+# (builtin/capabilities/), so the packages-find scan misses them and they get
+# dropped from the wheel — leaving web/filesystem/artifacts/etc. unavailable at
+# runtime ("capability 'X' not found"). Ship them via the builtin package.
+"omniagents.builtin" = [
+    "capabilities/*.yml",
+]
+# Guardian reviewer risk policy and plan-completion review policy —
+# data files read at review time.
+"omniagents.core.agents" = [
+    "guardian_policy.md",
+    "plan_review_policy.md",
+]
+# Ensure the Ink TUI TypeScript sources are included in wheels/sdists
+"omniagents.backends.ink" = [
+    "tui/package.json",
+    "tui/tsconfig.json",
+    "tui/src/**/*.ts",
+    "tui/src/**/*.tsx",
+    "tui/dist/*",
+    "tui/dist/**/*",
+]
+"omniagents.backends.web" = [
+    "ui/dist/*",
+    "ui/dist/**/*",
+]
+"omniagents.studio.tracing" = [
+    "static/*",
+    "static/assets/*",
+]
+"omniagents.studio.server" = [
+    "static/*",
+    "static/assets/*",
+]
+"omniagents.core.project" = [
+    "templates/*",
+    "templates/**/*",
+]
+# Pyodide worker — pure JS, no Python at runtime, but the .mjs has to ship
+# with the wheel so PyodideWorkspace can spawn it via importlib.resources.
+"omniagents.workspace.pyodide_worker" = [
+    "worker.mjs",
+    "package.json",
+    "README.md",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "omniagents._version.__version__"}

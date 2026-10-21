@@ -1,0 +1,7 @@
+--extra-index-url https://pypi.fury.io/ericmichael/
+openai==1.99.9
+omniagents[all]=={omniagents_version}
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pygit2>=1.13.0
+black>=24.0

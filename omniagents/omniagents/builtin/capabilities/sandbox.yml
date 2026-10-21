@@ -1,0 +1,32 @@
+name: sandbox
+# Two surfaces with a deliberate authority split (security property):
+#
+# * tools: — the AGENT's surface is read-only observation. It can see
+#   which environment its filesystem/shell tools run in and observe readiness.
+# * server_functions: — the OPERATOR's surface (launcher / slash
+#   commands over the server-function channel). Server functions are
+#   never added to the model's tool schema, so the LLM cannot invoke the
+#   pause/unpause/snapshot lifecycle.
+#
+# Every operation resolves the lifecycle controller from the current
+# environment lease. Profile changes happen through AgentHost materialization
+# and Thread rebind, outside this capability.
+tools:
+  - sandbox_get_state
+  - sandbox_wait_until_ready
+server_functions:
+  - sandbox.pause
+  - sandbox.unpause
+  - sandbox.discard_snapshot
+  # Live egress toggle (docker): operator-only like the rest — the agent
+  # must never be able to switch its own network (or approval tier) back on.
+  - sandbox.set_network
+  - sandbox.get_network
+instructions: |
+  Observe the environment your filesystem/shell tools run in. You CANNOT change
+  it — selecting another profile is an operator action the user triggers
+  in the UI and a security boundary. You can only look and wait:
+
+  - `sandbox_get_state()` — the current profile, backend, and readiness.
+  - `sandbox_wait_until_ready(timeout_seconds=120)` — blocks until the current
+    environment reports ready and returns immediately when it already is.

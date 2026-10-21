@@ -1,0 +1,40 @@
+name: Publish to Gemfury
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build
+      - name: Build distributions
+        run: python -m build
+      - name: Publish to Gemfury
+        env:
+          FURY_USER: ${{ secrets.FURY_USER }}
+          FURY_TOKEN: ${{ secrets.FURY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${FURY_USER:-}" ] || [ -z "${FURY_TOKEN:-}" ]; then
+            echo "FURY_USER and FURY_TOKEN secrets must be set"
+            exit 1
+          fi
+          for file in dist/*; do
+            if [ -f "$file" ]; then
+              echo "Uploading $file to Gemfury"
+              curl -f -sS -F package=@"$file" "https://${FURY_TOKEN}@push.fury.io/${FURY_USER}/"
+            fi
+          done

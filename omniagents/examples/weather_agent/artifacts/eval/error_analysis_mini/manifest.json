@@ -1,0 +1,11 @@
+{
+  "timestamp": "2025_10_08_14_21_41",
+  "name": "error_analysis_mini",
+  "counts": {
+    "total": 20
+  },
+  "source": "/Users/ericmartinez/code/omniagents/examples/weather_agent/target/evaluation_compiled.yml",
+  "workflow_generate": "weather_agent_scenarios_error_analysis_mini_2025_10_08_14_21_41_generate",
+  "workflow_run": "weather_agent_scenarios_error_analysis_mini_2025_10_08_14_22_04",
+  "workflow_run_at": "2025-10-08T19:28:58.613830Z"
+}

@@ -1,0 +1,4 @@
+product:
+  name: nosamples_demo
+agents:
+  entrypoint: nosamples_demo

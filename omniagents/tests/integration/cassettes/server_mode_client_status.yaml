@@ -1,0 +1,216 @@
+interactions:
+- request:
+    body: '{"data":[{"object":"trace","id":"trace_7159a9cc6de946a289630a441a707c2e","workflow_name":"omniagents_conversation","group_id":"session_5692d61c-1d3d-4f9b-ab94-557103a8accf","metadata":null},{"object":"trace.span","id":"span_9ecd95c399e14383b4adb012","trace_id":"trace_7159a9cc6de946a289630a441a707c2e","parent_id":"span_e1704262bb33459eb50f34f1","started_at":"2026-07-30T02:19:31.879268+00:00","ended_at":"2026-07-30T02:19:34.844072+00:00","span_data":{"type":"response","response_id":"resp_08188c18002807eb006a6ab4b509d48190abe730ae81db28e2"},"error":null},{"object":"trace.span","id":"span_3fea089798694fa4919d10e7","trace_id":"trace_7159a9cc6de946a289630a441a707c2e","parent_id":"span_e1704262bb33459eb50f34f1","started_at":"2026-07-30T02:19:34.845546+00:00","ended_at":"2026-07-30T02:19:34.846014+00:00","span_data":{"type":"function","name":"add_integers_tool","input":"{\"a\":5,\"b\":7}","output":"12","mcp_data":null},"error":null},{"object":"trace.span","id":"span_e1704262bb33459eb50f34f1","trace_id":"trace_7159a9cc6de946a289630a441a707c2e","parent_id":"span_99eded41545f468fad60207d","started_at":"2026-07-30T02:19:31.874737+00:00","ended_at":"2026-07-30T02:19:34.846307+00:00","span_data":{"type":"custom","name":"turn","data":{"sdk_span_type":"turn","turn":1,"agent_name":"Server
+      RPC OpenAI","usage":{"input_tokens":156,"output_tokens":22,"cached_input_tokens":0}}},"error":null},{"object":"trace.span","id":"span_2ac25d09d7014ac3b54ace0e","trace_id":"trace_7159a9cc6de946a289630a441a707c2e","parent_id":"span_09ab7c9814cc4de593cf544d","started_at":"2026-07-30T02:19:34.848230+00:00","ended_at":"2026-07-30T02:19:36.540886+00:00","span_data":{"type":"response","response_id":"resp_08188c18002807eb006a6ab4b70b0881909f8bf034abbb9e61"},"error":null},{"object":"trace.span","id":"span_09ab7c9814cc4de593cf544d","trace_id":"trace_7159a9cc6de946a289630a441a707c2e","parent_id":"span_99eded41545f468fad60207d","started_at":"2026-07-30T02:19:34.847677+00:00","ended_at":"2026-07-30T02:19:36.541986+00:00","span_data":{"type":"custom","name":"turn","data":{"sdk_span_type":"turn","turn":2,"agent_name":"Server
+      RPC OpenAI","usage":{"input_tokens":190,"output_tokens":5,"cached_input_tokens":0}}},"error":null},{"object":"trace.span","id":"span_99eded41545f468fad60207d","trace_id":"trace_7159a9cc6de946a289630a441a707c2e","parent_id":"span_7734a465aa824990893c98af","started_at":"2026-07-30T02:19:31.874701+00:00","ended_at":"2026-07-30T02:19:36.544514+00:00","span_data":{"type":"agent","name":"Server
+      RPC OpenAI","handoffs":[],"tools":["echo_text_tool","add_integers_tool"],"output_type":"str"},"error":null},{"object":"trace.span","id":"span_7734a465aa824990893c98af","trace_id":"trace_7159a9cc6de946a289630a441a707c2e","parent_id":null,"started_at":"2026-07-30T02:19:31.874316+00:00","ended_at":"2026-07-30T02:19:36.544542+00:00","span_data":{"type":"custom","name":"task","data":{"sdk_span_type":"task","name":"omniagents_conversation","usage":{"input_tokens":346,"output_tokens":27,"cached_input_tokens":0,"requests":2,"total_tokens":373}}},"error":null},{"object":"trace","id":"trace_a44afc8455964693b4a62389a7335d0a","workflow_name":"omniagents_conversation","group_id":"session_dd94afab-49cd-4d3a-aa9c-97751f18e66d","metadata":null}]}'
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      authorization:
+      - DUMMY
+      connection:
+      - keep-alive
+      content-length:
+      - '3247'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+      openai-beta:
+      - traces=v1
+      user-agent:
+      - python-httpx/0.28.1
+    method: POST
+    uri: https://api.openai.com/v1/traces/ingest
+  response:
+    body:
+      string: ''
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      cf-ray:
+      - a230e1245f8b47ab-DFW
+      connection:
+      - keep-alive
+      date:
+      - Thu, 30 Jul 2026 02:19:38 GMT
+      openai-organization:
+      - eightytwentylabs
+      openai-processing-ms:
+      - '611'
+      openai-project:
+      - proj_lolRwA9UN0iczul3THcmE6D6
+      openai-version:
+      - '2020-10-01'
+      server:
+      - cloudflare
+      set-cookie:
+      - __cf_bm=JFgGro.AZG9prUljXLsikvVGeMlDaaB3UCpGdU.8g5A-1785377977.020634-1.0.1.1-gO40dPoBI5msx9C27glRVt60IZX8uXv5hK4YSZ.sEIhJHT_NrGvYYk5uXJ6CZT_p9jN9AhI8DMPc6xTd0L2eE427HLfNGutnfaaROa.HirXACtQJU8pkoI4DvCzseFpP;
+        HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Thu,
+        30 Jul 2026 02:49:38 GMT
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      x-content-type-options:
+      - nosniff
+      x-openai-proxy-wasm:
+      - v0.1
+      x-request-id:
+      - req_6e44064575b141e3a84276f48151a009
+    status:
+      code: 204
+      message: No Content
+- request:
+    body: '{"include":[],"input":[{"role":"user","content":"Status check run."}],"instructions":"You
+      are a strict test agent. When asked to add two integers, you must call the add_integers_tool
+      with JSON arguments containing keys ''a'' and ''b''. After receiving the tool
+      result, reply with the single word ''ack'' followed by the numeric result.","model":"gpt-4o-mini","prompt_cache_key":"omniagents:67c7ab807a406c5c625fcfd3ec9796ba","prompt_cache_retention":"24h","temperature":0.0,"tool_choice":"auto","tools":[{"name":"echo_text_tool","parameters":{"properties":{"text":{"title":"Text","type":"string"}},"required":["text"],"title":"echo_text_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Echo
+      text for verification."},{"name":"add_integers_tool","parameters":{"properties":{"a":{"title":"A","type":"integer"},"b":{"title":"B","type":"integer"}},"required":["a","b"],"title":"add_integers_tool_args","type":"object","additionalProperties":false},"strict":true,"type":"function","description":"Return
+      the sum of two integers."}]}'
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      authorization:
+      - DUMMY
+      connection:
+      - keep-alive
+      content-length:
+      - '1073'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=cUy0HWC4lnIMOqOzcTYwNZ9Or.Op3jO4Myu5IMAqWac-1785377972.298367-1.0.1.1-4XitWeo_VLNqAZLWnNu0xrK_g2Wd0R2ygtrMRXMsFKFSz9ZBP3gZpDuExT2k1GEMr36jgyekXAq6h.kW3kCktvdkTi3dax.fqwBgnicr_kgaOIje9W9AC5zNdeJix4z4
+      host:
+      - api.openai.com
+      user-agent:
+      - Agents/Python 0.16.1
+      x-stainless-arch:
+      - x64
+      x-stainless-async:
+      - async:asyncio
+      x-stainless-lang:
+      - python
+      x-stainless-os:
+      - Linux
+      x-stainless-package-version:
+      - 2.44.0
+      x-stainless-read-timeout:
+      - '600'
+      x-stainless-retry-count:
+      - '1'
+      x-stainless-runtime:
+      - CPython
+      x-stainless-runtime-version:
+      - 3.13.11
+    method: POST
+    uri: https://api.openai.com/v1/responses
+  response:
+    body:
+      string: "{\n  \"id\": \"resp_0effa248ff030a84006a6ab4b94f248193b72ae9d04d71b273\",\n
+        \ \"object\": \"response\",\n  \"created_at\": 1785377977,\n  \"status\":
+        \"completed\",\n  \"background\": false,\n  \"billing\": {\n    \"payer\":
+        \"developer\"\n  },\n  \"completed_at\": 1785377979,\n  \"error\": null,\n
+        \ \"frequency_penalty\": 0.0,\n  \"incomplete_details\": null,\n  \"instructions\":
+        \"You are a strict test agent. When asked to add two integers, you must call
+        the add_integers_tool with JSON arguments containing keys 'a' and 'b'. After
+        receiving the tool result, reply with the single word 'ack' followed by the
+        numeric result.\",\n  \"max_output_tokens\": null,\n  \"max_tool_calls\":
+        null,\n  \"model\": \"gpt-4o-mini-2024-07-18\",\n  \"moderation\": null,\n
+        \ \"output\": [\n    {\n      \"id\": \"msg_0effa248ff030a84006a6ab4b9e9048193897bafc96b47acad\",\n
+        \     \"type\": \"message\",\n      \"status\": \"completed\",\n      \"content\":
+        [\n        {\n          \"type\": \"output_text\",\n          \"annotations\":
+        [],\n          \"logprobs\": [],\n          \"text\": \"All systems operational.
+        How can I assist you today?\"\n        }\n      ],\n      \"role\": \"assistant\"\n
+        \   }\n  ],\n  \"parallel_tool_calls\": true,\n  \"presence_penalty\": 0.0,\n
+        \ \"previous_response_id\": null,\n  \"prompt_cache_key\": \"omniagents:67c7ab807a406c5c625fcfd3ec9796ba\",\n
+        \ \"prompt_cache_retention\": \"24h\",\n  \"reasoning\": {\n    \"context\":
+        null,\n    \"effort\": null,\n    \"summary\": null\n  },\n  \"safety_identifier\":
+        null,\n  \"service_tier\": \"default\",\n  \"store\": true,\n  \"temperature\":
+        0.0,\n  \"text\": {\n    \"format\": {\n      \"type\": \"text\"\n    },\n
+        \   \"verbosity\": \"medium\"\n  },\n  \"tool_choice\": \"auto\",\n  \"tool_usage\":
+        {\n    \"image_gen\": {\n      \"input_tokens\": 0,\n      \"input_tokens_details\":
+        {\n        \"image_tokens\": 0,\n        \"text_tokens\": 0\n      },\n      \"output_tokens\":
+        0,\n      \"output_tokens_details\": {\n        \"image_tokens\": 0,\n        \"text_tokens\":
+        0\n      },\n      \"total_tokens\": 0\n    },\n    \"web_search\": {\n      \"num_requests\":
+        0\n    }\n  },\n  \"tools\": [\n    {\n      \"type\": \"function\",\n      \"description\":
+        \"Echo text for verification.\",\n      \"name\": \"echo_text_tool\",\n      \"output_schema\":
+        null,\n      \"parameters\": {\n        \"properties\": {\n          \"text\":
+        {\n            \"title\": \"Text\",\n            \"type\": \"string\"\n          }\n
+        \       },\n        \"required\": [\n          \"text\"\n        ],\n        \"title\":
+        \"echo_text_tool_args\",\n        \"type\": \"object\",\n        \"additionalProperties\":
+        false\n      },\n      \"strict\": true\n    },\n    {\n      \"type\": \"function\",\n
+        \     \"description\": \"Return the sum of two integers.\",\n      \"name\":
+        \"add_integers_tool\",\n      \"output_schema\": null,\n      \"parameters\":
+        {\n        \"properties\": {\n          \"a\": {\n            \"title\": \"A\",\n
+        \           \"type\": \"integer\"\n          },\n          \"b\": {\n            \"title\":
+        \"B\",\n            \"type\": \"integer\"\n          }\n        },\n        \"required\":
+        [\n          \"a\",\n          \"b\"\n        ],\n        \"title\": \"add_integers_tool_args\",\n
+        \       \"type\": \"object\",\n        \"additionalProperties\": false\n      },\n
+        \     \"strict\": true\n    }\n  ],\n  \"top_logprobs\": 0,\n  \"top_p\":
+        1.0,\n  \"truncation\": \"disabled\",\n  \"usage\": {\n    \"input_tokens\":
+        150,\n    \"input_tokens_details\": {\n      \"cache_write_tokens\": 0,\n
+        \     \"cached_tokens\": 0\n    },\n    \"output_tokens\": 13,\n    \"output_tokens_details\":
+        {\n      \"reasoning_tokens\": 0\n    },\n    \"total_tokens\": 163\n  },\n
+        \ \"user\": null,\n  \"metadata\": {}\n}"
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      cf-cache-status:
+      - DYNAMIC
+      cf-ray:
+      - a230e125ce5066f5-DFW
+      connection:
+      - keep-alive
+      content-length:
+      - '3371'
+      content-type:
+      - application/json
+      date:
+      - Thu, 30 Jul 2026 02:19:39 GMT
+      openai-organization:
+      - eightytwentylabs
+      openai-processing-ms:
+      - '2305'
+      openai-project:
+      - proj_lolRwA9UN0iczul3THcmE6D6
+      openai-version:
+      - '2020-10-01'
+      server:
+      - cloudflare
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      x-content-type-options:
+      - nosniff
+      x-ratelimit-limit-requests:
+      - '30000'
+      x-ratelimit-limit-tokens:
+      - '150000000'
+      x-ratelimit-remaining-requests:
+      - '29999'
+      x-ratelimit-remaining-tokens:
+      - '149999632'
+      x-ratelimit-reset-requests:
+      - 2ms
+      x-ratelimit-reset-tokens:
+      - 0s
+      x-request-id:
+      - req_f7adaf25ddc640779afed4d30001151b
+    status:
+      code: 200
+      message: OK
+version: 1

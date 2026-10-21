@@ -1,0 +1,22 @@
+name: goal
+tools:
+  - goal_complete
+server_functions:
+  - goal
+  - goal.stop
+  - goal.status
+  - goal.pause
+  - goal.resume
+instructions: |
+  When the user starts an autonomous loop with /goal, you'll receive
+  continuation prompts between turns. Call `goal_complete` once when
+  the goal is achieved and verified, or when you've reached a true
+  blocker (missing credentials, external system unavailable,
+  contradictory requirements). The call stops the loop — no further
+  continuation notifications will arrive.
+
+  - Pass `reason="achieved"` (default) or `reason="blocked"`.
+  - Pass `evidence` — a one-line auditable artifact backing the claim
+    (what you checked and what it showed, or the blocker).
+  - The call renders nothing in the transcript; the goal panel reflects
+    the terminal state on its own.

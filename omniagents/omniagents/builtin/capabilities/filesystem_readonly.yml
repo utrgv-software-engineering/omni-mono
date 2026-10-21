@@ -1,0 +1,14 @@
+name: filesystem_readonly
+tools:
+  - read_file
+  - read_image
+  - list_directory
+instructions: |
+  Read-only filesystem access:
+  - `read_file` and `list_directory` for inspection.
+  - There are no dedicated glob/grep tools. For file discovery by name or
+    pattern, and for searching file contents, run `rg --files -g '<glob>'`
+    and `rg <pattern>` through `execute_bash` — it is faster, and it pipes
+    and chains (`| head`, `| xargs`) in ways a dedicated tool cannot.
+  - `read_image` to load a local image file into the conversation.
+  Do not modify files — no write, edit, or patch tools are available.

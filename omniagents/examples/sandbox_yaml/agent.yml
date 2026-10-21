@@ -1,0 +1,29 @@
+name: Sandbox Demo (YAML)
+model: gpt-5.2
+instructions_file: instructions.md
+welcome_text: "Ask me to inspect the sandbox workspace."
+
+# SDK 0.14+ sandbox configuration. The unix_local client runs the sandbox
+# directly on the host machine in a temporary workspace directory, so this
+# example needs no external infrastructure (Docker, E2B, Modal, ...).
+#
+# When `use_sandbox_agent` is true, OmniAgents builds a SandboxAgent
+# (subclass of Agent) instead of a plain Agent so the SDK wires the
+# capability tools (filesystem patches, shell exec, etc.) automatically.
+sandbox:
+  use_sandbox_agent: true
+
+  client:
+    type: unix_local
+
+  manifest:
+    root: /workspace
+    entries:
+      README.md:
+        type: file
+        content: "# Sandbox demo\n\nHello from a SandboxAgent.\n"
+
+  capabilities:
+    - filesystem
+    - shell
+    - compaction

@@ -1,0 +1,49 @@
+name: Hosted Tools Demo (YAML)
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "Ask me to search the web, search a vector store, run code, or generate an image."
+
+# Hosted tools are SDK-native: they're managed by OpenAI's API, not by your
+# Python tool functions. Reference them via a dict with a `hosted:` key. Any
+# additional keys are forwarded to the SDK constructor.
+#
+# You can mix hosted tools and locally-discovered function tools in the same
+# list — strings still resolve to discovered @function_tool functions.
+tools:
+  # Web search — no extra config needed.
+  - hosted: web_search
+
+  # Web search with options.
+  - hosted: web_search
+    search_context_size: high
+    user_location:
+      type: approximate
+      country: US
+
+  # File search against an OpenAI vector store.
+  - hosted: file_search
+    vector_store_ids:
+      - vs_replace_with_your_vector_store_id
+    max_num_results: 5
+    include_search_results: true
+
+  # Code interpreter (auto-provisioned container by default).
+  - hosted: code_interpreter
+    container:
+      type: auto
+
+  # Image generation with optional knobs.
+  - hosted: image_generation
+    quality: high
+    size: "1024x1024"
+
+  # Hosted MCP — point the LLM at a remote MCP server.
+  - hosted: hosted_mcp
+    server_label: my_mcp
+    server_url: https://mcp.example.com
+    require_approval: never
+
+  # Hosted shell (container_auto). For a local executor, register from Python.
+  - hosted: shell
+    environment:
+      type: container_auto

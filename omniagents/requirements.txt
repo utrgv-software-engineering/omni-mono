@@ -1,0 +1,13 @@
+flet[all]==0.27.6
+pydantic-core==2.41.4
+pydantic==2.12.3
+openai-agents[realtime]>=0.16.0,<0.17
+python-dotenv
+PyYAML
+requests
+beautifulsoup4
+pygit2
+fastapi[all]>=0.115.12
+uvicorn>=0.34.1
+pytest
+vcrpy>=5.1.0

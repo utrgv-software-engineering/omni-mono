@@ -1,0 +1,134 @@
+"""Session recap: a short, human-friendly catch-up note.
+
+``generate_recap`` flattens the session transcript, runs the installed
+summarizer over it, and returns the text; ``generate_and_broadcast_recap``
+additionally pushes it to the client via the ``ui.recap`` client function
+(a notifications-style panel). Unlike checkpoint compaction, a recap is a
+read-only side view — session history is never mutated.
+
+Like compaction, the *summarizer* resolves by convention: a project that
+ships an agent named :data:`CONVENTIONAL_RECAP_AGENT` (``recapper``) gets
+a summarizer that runs it one-shot under the agent's own instructions on
+the utility-run model resolution — no install call needed. The recap
+prompt is product content; ``omniagents new`` scaffolds a starter
+``agents/recapper/`` the product owns. :func:`set_recap_summarizer`
+remains the override seam for products with summarization policy of
+their own (an explicit install always wins). The builtin ``recap``
+capability pack exposes ``/recap`` over this module.
+
+Lifted from omni-code.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Awaitable, Callable, Optional
+
+from omniagents.core.runtime.compaction import (
+    extract_transcript,
+    extract_user_messages,
+    format_user_messages_block,
+)
+
+__all__ = [
+    "CONVENTIONAL_RECAP_AGENT",
+    "set_recap_summarizer",
+    "recap_summarizer",
+    "generate_recap",
+    "generate_and_broadcast_recap",
+]
+
+#: Project-agent key the conventional recap summarizer runs.
+CONVENTIONAL_RECAP_AGENT = "recapper"
+
+
+# async (prompt: str, *, service, session) -> str
+RecapSummarizer = Callable[..., Awaitable[str]]
+
+_SUMMARIZER: Optional[RecapSummarizer] = None
+
+
+def set_recap_summarizer(summarizer: Optional[RecapSummarizer]) -> None:
+    """Install an explicit recap summarizer (wins over the convention).
+
+    The callable receives ``(prompt, *, service, session)`` and returns
+    the recap text. Most products don't need this: shipping a
+    ``recapper`` project agent activates the conventional summarizer
+    (see :func:`recap_summarizer`). Installing ``None`` restores the
+    conventional fallback.
+    """
+    global _SUMMARIZER
+    _SUMMARIZER = summarizer
+
+
+def recap_summarizer() -> Optional[RecapSummarizer]:
+    """The active recap summarizer.
+
+    An explicitly-installed summarizer wins; otherwise the conventional
+    one — a one-shot run of the project's ``recapper`` agent under its
+    own instructions
+    (:func:`omniagents.core.runtime.conventional_service_summarizer`) —
+    when the installed project ships that agent. ``None`` when neither
+    exists.
+    """
+    if _SUMMARIZER is not None:
+        return _SUMMARIZER
+    from omniagents.core.runtime.ephemeral import conventional_service_summarizer
+
+    return conventional_service_summarizer(CONVENTIONAL_RECAP_AGENT)
+
+
+def build_recap_prompt(history: list) -> str:
+    """The transcript payload handed to the summarizer."""
+    transcript = extract_transcript(history)
+    user_messages = extract_user_messages(history)
+    user_messages_block = format_user_messages_block(user_messages)
+    return (
+        "All user messages (verbatim; last is highlighted):\n"
+        f"{user_messages_block}\n\n"
+        "Conversation transcript (raw items; includes tool calls/outputs):\n"
+        f"{transcript}"
+    )
+
+
+async def generate_recap(service: Any, session: Any) -> str:
+    """Build a transcript and run the summarizer over it. Pure: returns
+    the recap text, no history mutation, no UI side effects."""
+    history = list(getattr(session, "history", []) or [])
+    if not history:
+        return "Nothing to recap yet — this session hasn't started."
+
+    summarizer = recap_summarizer()
+    if summarizer is None:
+        return (
+            "Recap is unavailable: no recap summarizer is installed "
+            "(see omniagents.core.runtime.recap.set_recap_summarizer)."
+        )
+
+    prompt = build_recap_prompt(history)
+    text = await summarizer(prompt, service=service, session=session)
+    return (text or "").strip() or "(no recap produced)"
+
+
+async def _broadcast_recap(service: Any, session: Any, text: str) -> None:
+    if service is None or session is None:
+        return
+    try:
+        await service.request_client_function(
+            "ui.recap",
+            {"text": text},
+            session=session,
+            expect_result=False,
+        )
+    except Exception:
+        # Fire-and-forget; the slash path also returns the text so a missed
+        # broadcast isn't fatal for the interactive case.
+        pass
+
+
+async def generate_and_broadcast_recap(service: Any, session: Any) -> str:
+    """Programmatic entry point: produce the recap AND push it to the client
+    panel. Use this from non-interactive triggers (idle hooks, ticket
+    completion, etc.) where there's no slash-command return value to ride."""
+    text = await generate_recap(service, session)
+    await _broadcast_recap(service, session, text)
+    return text

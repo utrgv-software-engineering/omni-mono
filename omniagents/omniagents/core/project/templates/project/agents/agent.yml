@@ -1,0 +1,8 @@
+name: {sanitized}
+label: {label}
+description: "A helpful AI agent. Customize this description."
+model: {model}
+instructions_file: instructions.md
+welcome_text: "Hello from {sanitized}."
+
+tools: {tools}

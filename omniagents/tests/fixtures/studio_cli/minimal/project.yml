@@ -1,0 +1,6 @@
+product:
+  name: studio_cli_demo
+agents:
+  entrypoint: smoke
+tracing:
+  name: smoke_trace

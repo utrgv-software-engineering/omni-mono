@@ -1,0 +1,21 @@
+name: Time Keeper
+model: gpt-4o
+instructions: |
+  You provide time information.
+  Be very brief and to the point.
+  Always use the get_current_time tool to provide accurate time.
+
+welcome_text: "I'm the Time Keeper. Ask me about the current time!"
+
+# Point to the parent directory's tools folder
+additional_tools_dirs:
+  - ../tools
+
+tools:
+  - get_current_time
+
+# Safety configuration
+use_safe_agent: true
+safe_agent_options:
+  safe_tool_names:
+    - get_current_time  # This tool doesn't need approval

@@ -1,0 +1,60 @@
+# Laptop / consumer-GPU config: LoRA (optionally 4-bit QLoRA) so a capable
+# model fits in limited VRAM. Use for development and SMALL-SCALE experiments —
+# LoRA solves *memory*, not *throughput*: GRPO still runs many multi-turn Docker
+# rollouts per step, so a full publishable run is still server-GPU territory.
+#
+#   python examples/echo_rl/training/train.py --config training/config.laptop_lora.yaml
+#
+# Model choice by hardware:
+#   * CUDA laptop (8-16GB): set lora.load_in_4bit: true and model: Qwen/Qwen3-8B (QLoRA)
+#   * CUDA laptop (smaller) / Mac MPS: keep 4bit off, use a ~1.5-3B model (LoRA on bf16)
+
+model: Qwen/Qwen2.5-1.5B-Instruct      # broadly fits; bump to 8B with load_in_4bit on CUDA
+default_image: python:3.11-slim
+
+dataset:
+  source: builtin
+  split: train
+  limit: null
+
+grpo:
+  num_train_epochs: 1
+  per_device_batch_size: 2
+  gradient_accumulation_steps: 2
+  num_generations: 4
+  max_completion_length: 512
+  temperature: 0.8
+  learning_rate: 1.0e-5                 # LoRA tolerates a higher LR than full FT
+  max_grad_norm: 0.3
+  max_tool_calling_iterations: 6
+
+lora:
+  use_lora: true
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  load_in_4bit: false                   # true = QLoRA (CUDA + bitsandbytes only)
+  gradient_checkpointing: true          # extra memory headroom
+
+# vLLM-accelerated generation (the throughput lever). Off by default; enable
+# with --use-vllm or use_vllm: true. On a single 8GB GPU (colocate), keep
+# gpu_memory_utilization low and max_model_len small or KV reserve OOMs.
+vllm:
+  use_vllm: false
+  mode: colocate
+  gpu_memory_utilization: 0.25
+  max_model_len: 2048
+
+echo:
+  world_model_coeff: 0.05
+  world_loss_normalization: selected_tokens
+
+runtime:
+  exec_timeout: 30.0
+  verifier_timeout: 60.0
+
+seed: 0
+output_dir: results/laptop_lora
+report_to: none
+logging_steps: 1
+save_model: true

@@ -1,0 +1,571 @@
+import asyncio
+import types
+
+import pytest
+
+from omniagents.execution import AgentHostResources
+from omniagents.core.agents.service import AgentService
+from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
+
+from .test_agent_builder import make_spec
+
+
+def build_service() -> AgentService:
+    return AgentService(
+        make_spec(),
+        AgentHostResources.create("test-unit-core-agent_service_aux-host"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_stop_run_delegates_to_session_manager():
+    service = build_service()
+
+    class StubManager:
+        def __init__(self):
+            self.cancel_called_with = None
+
+        async def cancel(self, run_id: str) -> bool:
+            self.cancel_called_with = run_id
+            return True
+
+    manager = StubManager()
+    service._session_manager = manager
+
+    result = await service.stop_run("run-123")
+
+    assert result is True
+    assert manager.cancel_called_with == "run-123"
+
+
+@pytest.mark.asyncio
+async def test_stop_run_cancels_active_run(monkeypatch):
+    service = build_service()
+
+    class RecordingChannel:
+        def __init__(self):
+            self.calls = []
+
+        async def async_call(self, method: str, args: dict | None = None):
+            self.calls.append((method, args or {}))
+
+    channel = RecordingChannel()
+    service.channel = channel
+
+    async def fake_builder(self, session_arg, approval_callback, *, spec=None, **_):
+        return object()
+
+    service._build_agent_for_session = types.MethodType(fake_builder, service)
+
+    started = asyncio.Event()
+
+    async def fake_stream(agent, prompt, session_arg, channel_arg, **kwargs):
+        started.set()
+        try:
+            while True:
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
+
+    monkeypatch.setattr(
+        "omniagents.core.agents.service.stream_agent",
+        fake_stream,
+    )
+
+    response = await service.start_run("prompt", {"mode": "none"})
+    run_id = response["run_id"]
+    session = service._session_manager.get_by_run_id(run_id)
+    task = session.current_task
+
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert run_id in session.run_channels
+
+    stopped = await service.stop_run(run_id)
+
+    assert stopped is True
+
+    [result] = await asyncio.gather(task, return_exceptions=True)
+
+    for _ in range(10):
+        if run_id not in session.run_channels:
+            break
+        await asyncio.sleep(0.05)
+
+    assert isinstance(result, asyncio.CancelledError)
+    assert run_id not in session.run_channels
+    assert session.current_task is None
+
+    end_events = [call for call in channel.calls if call[0] == "run_end"]
+    assert end_events
+    payload = end_events[-1][1]
+    assert payload["run_id"] == run_id
+    assert payload["end_reason"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_send_user_message_appends_history():
+    service = build_service()
+    # A real session: the message must land in the canonical thread, so a
+    # bare stub with only append_message no longer models the contract.
+    session = service._session_manager.get_or_create(None)
+
+    class StubManager:
+        def get_by_run_id(self, run_id: str):
+            assert run_id == "run-123"
+            return session
+
+    service._session_manager = StubManager()
+
+    await service.send_user_message("run-123", "hello")
+
+    assert session.history[-1] == {"role": "user", "content": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_send_user_message_missing_session_raises():
+    service = build_service()
+
+    class StubManager:
+        def get_by_run_id(self, run_id: str):
+            assert run_id == "missing"
+            return None
+
+    service._session_manager = StubManager()
+
+    with pytest.raises(RuntimeError):
+        await service.send_user_message("missing", "hello")
+
+
+@pytest.mark.asyncio
+async def test_client_functions_records_capabilities():
+    service = build_service()
+    channel = object()
+    service.channel = channel
+
+    result = await service.client_functions(
+        version=2,
+        functions=[{"name": "ping"}],
+    )
+
+    assert result is True
+    assert service._client_capabilities[channel] == {
+        "version": 2,
+        "functions": [{"name": "ping"}],
+    }
+
+
+class RespondingChannel:
+    def __init__(self, service: AgentService, response: dict):
+        self.service = service
+        self.response = response
+        self.calls: list[tuple[str, dict]] = []
+
+    async def async_call(self, method: str, args: dict | None = None):
+        self.calls.append((method, args or {}))
+        if method == "client_request" and args is not None:
+            loop = asyncio.get_running_loop()
+            loop.call_soon(
+                loop.create_task,
+                self.service.client_response(
+                    args["request_id"],
+                    self.response.get("ok", True),
+                    self.response.get("result"),
+                    self.response.get("error"),
+                ),
+            )
+
+
+class SilentChannel:
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    async def async_call(self, method: str, args: dict | None = None):
+        self.calls.append((method, args or {}))
+
+
+class FailingChannel:
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    async def async_call(self, method: str, args: dict | None = None):
+        self.calls.append((method, args or {}))
+        raise RuntimeError("fail")
+
+
+@pytest.mark.asyncio
+async def test_request_client_function_waits_for_response():
+    service = build_service()
+    session = types.SimpleNamespace(id="sess-1", channels=[], run_channels={})
+    channel = RespondingChannel(
+        service,
+        {"ok": True, "result": {"value": 42}, "error": None},
+    )
+    session.channels.append(channel)
+
+    result = await service.request_client_function(
+        "demo",
+        {"x": 1},
+        session=session,
+        expect_result=True,
+    )
+
+    assert result == {"ok": True, "result": {"value": 42}, "error": None}
+    requests = [call for call in channel.calls if call[0] == "client_request"]
+    assert len(requests) == 1
+    method, payload = requests[0]
+    assert method == "client_request"
+    assert payload["function"] == "demo"
+    assert payload["args"] == {"x": 1}
+    assert payload["session_id"] == "sess-1"
+    # Resolving the request broadcasts a dismissal so other tabs showing
+    # the same prompt can close it.
+    resolved = [call for call in channel.calls if call[0] == "client_request_resolved"]
+    assert len(resolved) == 1
+    assert resolved[0][1]["request_id"] == payload["request_id"]
+
+
+@pytest.mark.asyncio
+async def test_request_client_function_timeout_returns_none():
+    service = build_service()
+    session = types.SimpleNamespace(id="sess-2", channels=[], run_channels={})
+    channel = SilentChannel()
+    session.channels.append(channel)
+
+    result = await service.request_client_function(
+        "demo",
+        {"x": 1},
+        session=session,
+        expect_result=True,
+        timeout_ms=1,
+    )
+
+    assert result is None
+    assert channel.calls[0][0] == "client_request"
+
+
+@pytest.mark.asyncio
+async def test_request_client_function_reports_delivery_without_result():
+    service = build_service()
+    session = types.SimpleNamespace(id="sess-3", channels=[], run_channels={})
+    channel = SilentChannel()
+    session.channels.append(channel)
+
+    delivered = await service.request_client_function(
+        "ping",
+        {"y": 2},
+        session=session,
+    )
+
+    assert delivered is True
+    assert channel.calls[0][0] == "client_request"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delivered", [True, False])
+async def test_set_client_status_reflects_delivery(delivered):
+    service = build_service()
+    captured = {}
+
+    async def fake_request(
+        self,
+        function: str,
+        args: dict | None = None,
+        *,
+        session=None,
+        run_id=None,
+        timeout_ms=None,
+        idempotency_key=None,
+        expect_result=False,
+    ):
+        captured["function"] = function
+        captured["args"] = args
+        captured["session"] = session
+        captured["run_id"] = run_id
+        return delivered
+
+    service.request_client_function = types.MethodType(fake_request, service)
+    session = types.SimpleNamespace(id="sess", channels=[], run_channels={})
+
+    result = await service.set_client_status(
+        "Working",
+        session=session,
+        run_id="run-5",
+        show_spinner=False,
+    )
+
+    assert result is bool(delivered)
+    assert captured == {
+        "function": "ui.set_status",
+        "args": {"text": "Working", "show_spinner": False},
+        "session": session,
+        "run_id": "run-5",
+    }
+
+
+@pytest.mark.asyncio
+async def test_safe_notify_returns_false_on_exception():
+    service = build_service()
+    channel = FailingChannel()
+
+    result = await service._safe_notify(channel, "event", {"value": 1})
+
+    assert result is False
+    assert channel.calls == [("event", {"value": 1})]
+
+
+@pytest.mark.asyncio
+async def test_broadcast_session_removes_dead_channels():
+    service = build_service()
+    session = service._session_manager.get_or_create()
+    good = SilentChannel()
+    bad = FailingChannel()
+    session.channels.extend([good, bad])
+
+    delivered = await service._broadcast_session(session, "event", {"k": "v"})
+
+    assert delivered is True
+    assert good.calls == [("event", {"k": "v"})]
+    assert bad not in session.channels
+
+
+@pytest.mark.asyncio
+async def test_broadcast_session_queues_when_no_channels():
+    service = build_service()
+    session = service._session_manager.get_or_create()
+    session.channels.clear()
+    session.pending_events = []
+
+    delivered = await service._broadcast_session(
+        session,
+        "notice",
+        {"x": 1},
+        queue_if_unseen=True,
+    )
+
+    assert delivered is False
+    assert session.pending_events == [("notice", {"x": 1})]
+
+
+@pytest.mark.asyncio
+async def test_register_server_function_metadata_and_invocation():
+    service = build_service()
+    calls = []
+
+    async def on_invoke(service_arg, session_arg, args):
+        calls.append(("on_invoke", session_arg, args))
+        return "via-on"
+
+    def handler(service_arg, session_arg, args):
+        calls.append(("handler", session_arg.id if session_arg else None, args))
+        return {"handled": True}
+
+    handler._server_function_strict = False
+
+    service.register_server_function(
+        "with_on_invoke",
+        handler,
+        resource_scope=ResourceScope.THREAD,
+        execution_requirements=ExecutionRequirement.NONE,
+        description="desc",
+        params_schema={"type": "object"},
+        result_schema={"type": "string"},
+        on_invoke=on_invoke,
+        strict=True,
+    )
+    service.register_server_function(
+        "direct_handler",
+        handler,
+        resource_scope=ResourceScope.THREAD,
+        execution_requirements=ExecutionRequirement.NONE,
+    )
+
+    session = service._session_manager.get_or_create()
+
+    result_on = await service.server_call(
+        "with_on_invoke",
+        {"value": 1},
+        session_id=session.id,
+    )
+    result_direct = await service.server_call(
+        "direct_handler",
+        {"x": 2},
+        session_id=session.id,
+    )
+
+    assert result_on == "via-on"
+    assert result_direct == {"handled": True}
+    assert calls[0][0] == "on_invoke"
+    assert calls[0][1] is session
+    assert calls[0][2] == {"value": 1}
+    assert calls[1] == ("handler", session.id, {"x": 2})
+
+    metadata = await service.list_server_functions()
+    # Built-in server functions (session.ensure, mcp.*) register ahead of
+    # ours, so look entries up by name instead of assuming positions.
+    by_name = {entry["name"]: entry for entry in metadata}
+    assert by_name["session.ensure"] == {
+        "name": "session.ensure",
+        "description": "Ensure a session exists and persist non-execution metadata.",
+        "params_schema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"},
+                "context": {"type": "object"},
+                "variables": {"type": "object"},
+            },
+            "additionalProperties": False,
+        },
+        "result_schema": {
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string"},
+                "context": {"type": "object"},
+                "variables": {"type": "object"},
+            },
+            "required": ["session_id"],
+        },
+        "strict": False,
+        "resource_scope": "thread",
+        "execution_requirements": [],
+    }
+    assert by_name["with_on_invoke"] == {
+        "name": "with_on_invoke",
+        "description": "desc",
+        "params_schema": {"type": "object"},
+        "result_schema": {"type": "string"},
+        "strict": True,
+        "resource_scope": "thread",
+        "execution_requirements": [],
+    }
+    assert by_name["direct_handler"] == {
+        "name": "direct_handler",
+        "description": None,
+        "params_schema": None,
+        "result_schema": None,
+        "strict": False,
+        "resource_scope": "thread",
+        "execution_requirements": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_server_call_unknown_function_raises():
+    service = build_service()
+
+    with pytest.raises(ValueError):
+        await service.server_call("missing")
+
+
+@pytest.mark.asyncio
+async def test_session_ensure_persists_metadata_but_strips_execution_routing():
+    service = build_service()
+
+    result = await service.server_call(
+        "session.ensure",
+        {
+            "workspace_root": "/attempted/workspace",
+            "context": {"label": "context", "environment_id": "attempted-env"},
+            "variables": {"theme": "dark", "workspace_id": "attempted-workspace"},
+        },
+    )
+
+    session_id = result["session_id"]
+    assert result["context"] == {"label": "context", "session_id": session_id}
+    assert result["variables"] == {"theme": "dark"}
+
+    new_service = build_service()
+    restored = new_service._session_manager.get_or_create(session_id)
+    assert restored.context == {"label": "context", "session_id": session_id}
+    assert restored.variables == {"theme": "dark"}
+
+
+@pytest.mark.asyncio
+async def test_devbox_files_rpc_uses_the_live_sandbox_workspace():
+    from omniagents.core.runtime.serve_harness import (
+        _register_execution_environment,
+    )
+
+    class FakeSandboxSession:
+        def __init__(self):
+            self.exec_users = []
+            self.ls_users = []
+
+        async def exec(self, *args, user=None, **kwargs):
+            self.exec_users.append(user)
+            return types.SimpleNamespace(exit_code=0, stdout=b"", stderr=b"")
+
+        async def ls(self, path, user=None):
+            self.ls_users.append(user)
+            return [
+                types.SimpleNamespace(
+                    path="/workspace/README.md",
+                    kind="file",
+                    size=12,
+                )
+            ]
+
+    service = build_service()
+    sandbox_session = FakeSandboxSession()
+    app = types.SimpleNamespace(state=types.SimpleNamespace(agent_service=service))
+    await _register_execution_environment(
+        app,
+        environment_id="environment-1",
+        workspace_id="workspace-1",
+        owner_user_id=None,
+        session=sandbox_session,
+        root="/workspace",
+        run_as="1000:1000",
+    )
+    listing = await service.fs_list("environment-1", ".")
+
+    assert listing == {
+        "path": ".",
+        "entries": [
+            {
+                "path": "README.md",
+                "type": "file",
+                "size": 12,
+                "mtime": None,
+                "writable": True,
+            }
+        ],
+        "truncated": False,
+        "writable": True,
+    }
+    assert sandbox_session.exec_users
+    assert set(sandbox_session.exec_users) == {"1000:1000"}
+    assert sandbox_session.ls_users == ["1000:1000"]
+
+
+@pytest.mark.asyncio
+async def test_tool_approval_always_routes_mcp_tuple_to_mcp_allowlist():
+    """Always-approving an MCP-derived call lands the (server, tool) tuple in
+    ``always_allow_mcp_tools``; plain tools keep landing in the flat set."""
+    service = build_service()
+    sess = types.SimpleNamespace(id="s1", channels=[])
+    # Durable persistence of the decision is covered elsewhere; this test is
+    # about which allow-list the identity lands in.
+    service._persist_approval_decision = lambda *a, **k: None
+
+    # MCP-derived call: tracker holds the identity tuple.
+    fut = asyncio.get_event_loop().create_future()
+    sess._pending_approval_tool_names = {"call-mcp": ("omni-projects", "create_ticket")}
+    service._pending_tool_approvals["call-mcp"] = (fut, sess)
+    ok = await service.tool_approval_response(
+        "call-mcp", "approve", always_approve=True
+    )
+    assert ok is True
+    assert ("omni-projects", "create_ticket") in sess.always_allow_mcp_tools
+    assert not getattr(sess, "always_allow_tools", None)
+    assert (await fut)["decision"] == "approve"
+
+    # Plain function tool: tracker holds the bare name.
+    fut2 = asyncio.get_event_loop().create_future()
+    sess._pending_approval_tool_names["call-fn"] = "execute_bash"
+    service._pending_tool_approvals["call-fn"] = (fut2, sess)
+    ok2 = await service.tool_approval_response(
+        "call-fn", "approve", always_approve=True
+    )
+    assert ok2 is True
+    assert "execute_bash" in sess.always_allow_tools
+    assert ("omni-projects", "create_ticket") in sess.always_allow_mcp_tools

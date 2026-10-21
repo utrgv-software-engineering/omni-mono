@@ -1,0 +1,57 @@
+# Example: YAML configuration with environment variable substitution
+#
+# Run with default values:
+#   python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml
+#
+# Run with custom environment variables:
+#   USER_NAME="Bob" USER_LOCATION="New York" python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml
+#
+# Or export them first:
+#   export USER_NAME="Bob Smith"
+#   export APP_ENV="production"
+#   python -m omniagents.cli run -c examples/dynamic_instructions/4_omniagents_yaml.yaml
+
+name: Personal Assistant
+model: gpt-4o-mini
+
+# Instructions with Jinja2 template syntax
+# These will be rendered on every message with the current context
+instructions: |
+  You are a helpful personal assistant for {{ user_name }}.
+  
+  User Profile:
+  - Name: {{ user_name }}
+  - Age: {{ age }} years old
+  - Location: {{ location }}
+  - Occupation: {{ occupation }}
+  - Interests: {{ interests }}
+  
+  Communication style: {{ communication_style }}
+  
+  Always personalize your responses based on this information.
+  Address the user by name and reference their context when relevant.
+
+# Variables that will be:
+# 1. Substituted into instructions via Jinja2 templating
+# 2. Available to tools via RunContextWrapper
+# 3. Support environment variable substitution with ${VAR_NAME:-default}
+#
+# You can use:
+#   ${VAR_NAME} - Will error if VAR_NAME is not set
+#   ${VAR_NAME:-default} - Uses 'default' if VAR_NAME is not set
+#   ${VAR_NAME:?error message} - Shows error message if VAR_NAME is not set
+variables:
+  # These use environment variables with defaults
+  user_name: "${USER_NAME:-Alice Chen}"
+  age: 28  # Numbers stay as literals
+  location: "${USER_LOCATION:-San Francisco, CA}"
+  occupation: "${USER_JOB:-Software Engineer}"
+  interests: "hiking, photography, and cooking"
+  communication_style: "Be professional but friendly, use clear and concise language"
+  
+  # Example of dev vs prod configuration
+  environment: "${APP_ENV:-development}"
+  debug_mode: "${DEBUG:-false}"
+
+# Optional: You can include tools that access context
+tools: []

@@ -1,0 +1,9 @@
+scenarios:
+  - id: gen-1
+    name: generated-one
+    prompt: Generated scenario prompt.
+    dimensions:
+      topic: science
+  - id: gen-2
+    name: generated-two
+    prompt: Second generated scenario.

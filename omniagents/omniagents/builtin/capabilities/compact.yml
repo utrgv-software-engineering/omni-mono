@@ -1,0 +1,5 @@
+name: compact
+# Control-plane only: /compact uses configured native Responses compaction.
+# Sessions without native compaction use the product's checkpoint summarizer.
+server_functions:
+  - compact

@@ -1,0 +1,420 @@
+"""Per-session terminal lifecycle manager.
+
+Thin orchestrator over a :class:`PtyBackend`: tracks descriptors per
+(session_id, terminal_id), enforces a per-terminal attach-once auth
+token, and pumps bytes from the backend's stream into a queue the
+WebSocket route in :mod:`omniagents.backends.server.app` drains.
+
+The manager has no opinion on WHERE the shell runs — that's the
+backend's job. :class:`HostPtyBackend` runs the shell as a subprocess
+of the omniagents server (the historical default, preserved for the
+standalone web UI). :class:`SessionPtyBackend` routes through a
+:class:`PtyStreamingSession` so the shell lives inside the user's
+sandbox (`omni serve` wires this up).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, cast
+
+from omniagents.rpc.terminal_backends import (
+    host_pty_backend,
+    PtyBackend,
+    PtyHandle,
+    PtyOpenError,
+    decode_input,
+    encode_output,
+    new_terminal_id,
+    new_terminal_token,
+)
+from omniagents.rpc.transport import (
+    BoundedTransportQueue,
+    QueueClosedError,
+    QueuePolicy,
+    TransportOverloadedError,
+)
+
+
+class TerminalError(Exception):
+    pass
+
+
+class TerminalAuthorizationError(TerminalError):
+    pass
+
+
+class TerminalNotFoundError(TerminalError):
+    pass
+
+
+@dataclass
+class TerminalDescriptor:
+    session_id: str
+    environment_id: Optional[str]
+    environment_generation: Optional[int]
+    terminal_id: str
+    token: str
+    owner_user_id: Optional[str]
+    backend: PtyBackend
+    handle: PtyHandle
+    created_at: datetime
+    cols: int
+    rows: int
+    shell: str
+    cwd: Optional[str]
+    output_queue: BoundedTransportQueue[bytes]
+    reader_task: Optional[asyncio.Task]
+    exit_code: Optional[int] = None
+    consumer_attached: bool = False
+    closed: bool = False
+
+
+class TerminalManager:
+    """Track and authorize per-session interactive terminals."""
+
+    def __init__(
+        self,
+        *,
+        backend: Optional[PtyBackend] = None,
+        default_shell: Optional[str] = None,
+        default_cwd: Optional[str] = None,
+        default_user: Optional[str] = None,
+        output_max_chunks: int = 256,
+        output_max_bytes: int = 4 * 1024 * 1024,
+        authorization_policy: Optional[Any] = None,
+    ) -> None:
+        # Backends type their methods against their own concrete handle
+        # (PtyHandle is opaque per backend), so mypy can't prove structural
+        # conformance to the PtyBackend protocol.
+        self._backend: PtyBackend = (
+            backend if backend is not None else cast(PtyBackend, host_pty_backend())
+        )
+        self._default_shell = default_shell
+        self._default_cwd = default_cwd
+        self._default_user = default_user
+        self._output_max_chunks = output_max_chunks
+        self._output_max_bytes = output_max_bytes
+        # Authorization mode for attach checks. Permissive by default (a
+        # manager used outside an authenticated server has one principal);
+        # the /ws/terminal route installs the deployment's real policy.
+        from omniagents.rpc.auth import AuthorizationPolicy
+
+        self.authorization_policy = authorization_policy or AuthorizationPolicy(
+            enforced=False
+        )
+        self._terminals: Dict[str, Dict[str, TerminalDescriptor]] = {}
+        self._lock = asyncio.Lock()
+        # Per-terminal coalescing for resize calls — xterm.js can fire
+        # multiple resize events per frame during a window drag, and
+        # backend resizes are non-trivial (ioctl or docker exec_resize).
+        # Each entry holds the latest pending (cols, rows); the worker
+        # task collapses bursts to a single trailing call.
+        self._resize_pending: Dict[str, tuple[int, int]] = {}
+        self._resize_tasks: Dict[str, asyncio.Task] = {}
+
+    @property
+    def backend(self) -> PtyBackend:
+        return self._backend
+
+    async def create_terminal(
+        self,
+        session_id: str,
+        *,
+        shell: Optional[str] = None,
+        cwd: Optional[str] = None,
+        cols: Optional[int] = None,
+        rows: Optional[int] = None,
+        user: Optional[str] = None,
+        owner_user_id: Optional[str] = None,
+        backend: Optional[PtyBackend] = None,
+        environment_id: Optional[str] = None,
+        environment_generation: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        if not session_id:
+            raise TerminalError("session_id required")
+        resolved_shell = self._resolve_shell(shell)
+        resolved_cwd = self._resolve_cwd(cwd)
+        resolved_user = user if user and user.strip() else self._default_user
+        width = cols if cols and cols > 0 else 80
+        height = rows if rows and rows > 0 else 24
+
+        selected_backend = backend or self._backend
+        try:
+            handle = await selected_backend.start(
+                shell=resolved_shell,
+                cwd=resolved_cwd,
+                cols=width,
+                rows=height,
+                user=resolved_user,
+            )
+        except PtyOpenError as e:
+            raise TerminalError(str(e)) from e
+
+        token = new_terminal_token()
+        terminal_id = new_terminal_id()
+        descriptor = TerminalDescriptor(
+            session_id=session_id,
+            environment_id=environment_id,
+            environment_generation=environment_generation,
+            terminal_id=terminal_id,
+            token=token,
+            owner_user_id=owner_user_id,
+            backend=selected_backend,
+            handle=handle,
+            created_at=datetime.now(timezone.utc),
+            cols=width,
+            rows=height,
+            shell=resolved_shell,
+            cwd=resolved_cwd,
+            output_queue=BoundedTransportQueue(
+                resource="terminal_output",
+                max_messages=self._output_max_chunks,
+                max_bytes=self._output_max_bytes,
+            ),
+            reader_task=None,
+        )
+        descriptor.reader_task = asyncio.create_task(self._reader_loop(descriptor))
+        async with self._lock:
+            bucket = self._terminals.setdefault(session_id, {})
+            bucket[terminal_id] = descriptor
+        return {
+            "terminal_id": terminal_id,
+            "token": token,
+            "shell": resolved_shell,
+            "cwd": resolved_cwd,
+            "created_at": descriptor.created_at.isoformat(),
+            "cols": width,
+            "rows": height,
+        }
+
+    async def authorize(
+        self,
+        session_id: str,
+        terminal_id: str,
+        token: str,
+        *,
+        principal: Optional[Any] = None,
+    ) -> TerminalDescriptor:
+        """Authorize a one-time attach.
+
+        Requires the per-terminal attach token AND that *principal* (a
+        ``UserIdentity``) is the terminal's owner. A stolen attach token is
+        useless without the owner's connection credentials. Under enforced
+        authorization an *unowned* terminal is not attachable either — an
+        absent owner is never consent; single-user deployments keep the
+        historical behavior via the permissive default policy.
+        """
+        async with self._lock:
+            terminal = self._terminals.get(session_id, {}).get(terminal_id)
+            if terminal is None:
+                raise TerminalNotFoundError("terminal not found")
+            if not hmac.compare_digest(terminal.token, token):
+                raise TerminalAuthorizationError("invalid terminal token")
+            if not self.authorization_policy.can_access(
+                principal, terminal.owner_user_id
+            ):
+                raise TerminalAuthorizationError(
+                    "not authorized to attach to this terminal"
+                )
+            if terminal.closed:
+                raise TerminalNotFoundError("terminal closed")
+            if terminal.consumer_attached:
+                raise TerminalAuthorizationError("terminal already attached")
+            terminal.consumer_attached = True
+            return terminal
+
+    async def close_terminal(
+        self,
+        session_id: str,
+        terminal_id: str,
+        *,
+        environment_id: Optional[str] = None,
+    ) -> None:
+        if environment_id is not None:
+            async with self._lock:
+                terminal = self._terminals.get(session_id, {}).get(terminal_id)
+                if terminal is not None and terminal.environment_id != environment_id:
+                    raise TerminalAuthorizationError(
+                        "terminal belongs to a different execution environment"
+                    )
+        terminal = await self._pop_terminal(session_id, terminal_id)
+        if terminal is None:
+            return
+        await self._shutdown_terminal(terminal)
+
+    async def cleanup_session(self, session_id: str) -> None:
+        async with self._lock:
+            terminals = list(self._terminals.pop(session_id, {}).values())
+        for terminal in terminals:
+            await self._shutdown_terminal(terminal)
+
+    async def write_input(self, terminal: TerminalDescriptor, data: bytes) -> None:
+        if terminal.closed or not data:
+            return
+        await terminal.backend.write(terminal.handle, data)
+
+    async def resize(self, terminal: TerminalDescriptor, cols: int, rows: int) -> None:
+        if terminal.closed:
+            return
+        cols = max(10, int(cols))
+        rows = max(5, int(rows))
+        terminal.cols = cols
+        terminal.rows = rows
+
+        key = f"{terminal.session_id}:{terminal.terminal_id}"
+        self._resize_pending[key] = (cols, rows)
+        existing = self._resize_tasks.get(key)
+        if existing is not None and not existing.done():
+            return  # the running task will pick up the latest pending value
+        self._resize_tasks[key] = asyncio.create_task(
+            self._apply_resize_worker(key, terminal)
+        )
+
+    async def _apply_resize_worker(
+        self, key: str, terminal: TerminalDescriptor
+    ) -> None:
+        try:
+            # 16 ms coalescing window — collapses xterm's resize-storm
+            # during a window drag into a single trailing backend call.
+            await asyncio.sleep(0.016)
+            while True:
+                pending = self._resize_pending.pop(key, None)
+                if pending is None:
+                    return
+                cols, rows = pending
+                if terminal.closed:
+                    return
+                try:
+                    await terminal.backend.resize(terminal.handle, cols, rows)
+                except Exception:
+                    pass
+                # If another resize landed during the await, loop and
+                # apply it too; otherwise exit.
+                if key not in self._resize_pending:
+                    return
+        finally:
+            self._resize_tasks.pop(key, None)
+
+    async def read_output(self, terminal: TerminalDescriptor) -> Optional[bytes]:
+        try:
+            return await terminal.output_queue.get()
+        except QueueClosedError:
+            return None
+
+    async def _pop_terminal(
+        self, session_id: str, terminal_id: str
+    ) -> Optional[TerminalDescriptor]:
+        async with self._lock:
+            bucket = self._terminals.get(session_id)
+            if not bucket:
+                return None
+            terminal = bucket.pop(terminal_id, None)
+            if terminal is None:
+                return None
+            if not bucket:
+                self._terminals.pop(session_id, None)
+            terminal.closed = True
+            return terminal
+
+    async def _shutdown_terminal(self, terminal: TerminalDescriptor) -> None:
+        terminal.closed = True
+        if terminal.reader_task and not terminal.reader_task.done():
+            terminal.reader_task.cancel()
+            try:
+                await terminal.reader_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        try:
+            await terminal.backend.close(terminal.handle)
+        except Exception:
+            pass
+        try:
+            terminal.exit_code = await terminal.backend.exit_code(terminal.handle)
+        except Exception:
+            pass
+        await terminal.output_queue.close()
+
+    async def _reader_loop(self, terminal: TerminalDescriptor) -> None:
+        output_error: BaseException | None = None
+        try:
+            async for chunk in terminal.backend.stream(terminal.handle):
+                if not chunk:
+                    continue
+                await terminal.output_queue.put(
+                    chunk,
+                    size=len(chunk),
+                    policy=QueuePolicy.COALESCE_APPEND,
+                    key=terminal.terminal_id,
+                    event_class="terminal_output",
+                    merge=lambda previous, current: previous + current,
+                    merged_size=len,
+                )
+        except asyncio.CancelledError:
+            pass
+        except TransportOverloadedError as exc:
+            output_error = exc
+            try:
+                await terminal.backend.close(terminal.handle)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        finally:
+            try:
+                terminal.exit_code = await terminal.backend.exit_code(terminal.handle)
+            except Exception:
+                pass
+            terminal.closed = True
+            await terminal.output_queue.close(output_error)
+            await self._discard_terminal(terminal)
+
+    async def _discard_terminal(self, terminal: TerminalDescriptor) -> None:
+        async with self._lock:
+            bucket = self._terminals.get(terminal.session_id)
+            if not bucket:
+                return
+            bucket.pop(terminal.terminal_id, None)
+            if not bucket:
+                self._terminals.pop(terminal.session_id, None)
+
+    def _resolve_shell(self, shell: Optional[str]) -> str:
+        if shell and shell.strip():
+            return shell.strip()
+        if self._default_shell and self._default_shell.strip():
+            return self._default_shell.strip()
+        import os
+
+        env_shell = os.environ.get("SHELL")
+        if env_shell and env_shell.strip():
+            return env_shell.strip()
+        return "/bin/bash"
+
+    def _resolve_cwd(self, cwd: Optional[str]) -> Optional[str]:
+        if cwd and cwd.strip():
+            return cwd
+        if self._default_cwd and self._default_cwd.strip():
+            return self._default_cwd
+        return None
+
+    @staticmethod
+    def encode_output(data: bytes) -> str:
+        return encode_output(data)
+
+    @staticmethod
+    def decode_input(data: str) -> bytes:
+        return decode_input(data)
+
+
+__all__ = [
+    "TerminalManager",
+    "TerminalDescriptor",
+    "TerminalError",
+    "TerminalAuthorizationError",
+    "TerminalNotFoundError",
+]

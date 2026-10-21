@@ -1,0 +1,44 @@
+name: Main Coordinator
+model: gpt-4o
+instructions_file: instructions.md
+welcome_text: "I'm the Main Coordinator. I can help with various tasks by delegating to specialized agents."
+
+# Mixed handoffs: external YAML references and inline definitions
+handoffs:
+  # External YAML reference for complex agent
+  - yaml: ./agents/math_expert.yaml
+    
+  # Inline definition for simple agent
+  - inline:
+      name: Simple Greeter
+      model: gpt-4o
+      instructions: |
+        You are a friendly greeter agent.
+        Respond to greetings warmly and briefly.
+        Always be positive and encouraging.
+      welcome_text: "Hello! I'm the Simple Greeter!"
+    tool_name_override: "transfer_to_greeter"
+    tool_description_override: "Transfer to the greeting specialist for warm welcomes"
+    
+  # Another inline agent with tools
+  - inline:
+      name: Quick Calculator
+      model: gpt-4o
+      instructions: "You perform quick calculations. Use the calculate tool for all math operations."
+      tools:
+        - calculate
+      use_safe_agent: true
+      safe_agent_options:
+        safe_tool_names:
+          - calculate
+    
+  # External reference with overrides
+  - yaml: ./agents/researcher.yaml
+    tool_name_override: "transfer_to_research"
+    tool_description_override: "Hand off to the research specialist for in-depth information gathering"
+
+# Safety settings for main agent
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true

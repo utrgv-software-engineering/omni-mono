@@ -1,0 +1,30 @@
+# Held-out TEST split (split: test) — never trained or validated on.
+#
+# In-distribution `val` measures held-out generalization within the training
+# distribution; `test` is for OUT-OF-DISTRIBUTION generalization, the claim that
+# actually makes a result publishable. These bundled tasks are deliberately
+# multi-step / cross-category to differ from the train tasks, but for a real
+# experiment your test set should be a genuinely different distribution — e.g.
+# the held-out OpenThoughts split or an external suite (TerminalBench-style).
+# Evaluate with: experiments/evaluate.py --split test
+- id: pipeline_top_word
+  prompt: >
+    In /work/log.txt, find the most frequent whitespace-separated word and write
+    it (just the word) to /work/answer.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && printf 'a b a c a b d a\\n' > /work/log.txt"
+  verifier: 'test "$(cat /work/answer.txt)" = "a"'
+  tags: [ood, data-processing]
+  split: test
+
+- id: build_and_run
+  prompt: >
+    Create /work/sum.py that reads two integers from /work/in.txt (one per line)
+    and prints their sum, then run it so it outputs the sum to /work/out.txt.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work && printf '17\\n25\\n' > /work/in.txt"
+  verifier: 'test "$(cat /work/out.txt)" = "42"'
+  tags: [ood, dev-tooling]
+  split: test

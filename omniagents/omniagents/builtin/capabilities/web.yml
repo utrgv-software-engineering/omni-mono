@@ -1,0 +1,10 @@
+name: web
+tools:
+  - web_fetch
+  - download_file
+instructions: |
+  Provider-agnostic web access:
+  - `web_fetch` to read a known URL's content.
+  - `download_file` to save a file from a URL into the workspace.
+  For search, see the `serpapi` capability (separate because it requires a
+  SerpAPI key).

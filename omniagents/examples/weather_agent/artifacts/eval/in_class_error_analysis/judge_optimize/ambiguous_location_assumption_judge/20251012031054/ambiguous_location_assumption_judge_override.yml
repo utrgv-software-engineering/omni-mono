@@ -1,0 +1,113 @@
+judges:
+  ambiguous_location_assumption_judge:
+    agent:
+      instructions: "AI Agent Information\n- Name: {{ agent_label or agent_name }}\n\
+        {% if agent_description -%}\n- Description: {{ agent_description }}\n{%- endif\
+        \ %}\n\nRole\n- You are an evaluation judge.\n\nGoal\n- Decide whether the\
+        \ assistant meets the criterion defined below.\n\nInput\n- You will receive\
+        \ a conversation trace between a user and the AI Agent described above.\n\n\
+        Output Schema (Do Not Change)\n- Return ONLY JSON with keys:\n  - reasoning:\
+        \ string\n  - answer: \"Pass\" or \"Fail\"\n- Example:\n  {\"reasoning\":\
+        \ \"...\", \"answer\": \"Pass\"}\n\nDecision Policy\n\n- The core question:\
+        \ Did the assistant improperly assume a specific location in an ambiguous\
+        \ situation, without sufficient justification or clarification, when the user’s\
+        \ query could refer to multiple locations?\n\n- Positive case (label Fail):\
+        \ \n    - The assistant selects or reports information for one specific location,\
+        \ when the user’s input refers to a place name that is ambiguous (i.e., multiple\
+        \ plausible locations exist and ambiguity is evident in function/API results\
+        \ or context), but gives no clarification, justification, or request for disambiguation.\n\
+        \    - The assistant implicitly assumes a location (e.g., most populous, first\
+        \ in list, default) and provides a single-location answer without making this\
+        \ assumption explicit or confirming with the user.\n    - The provided answer\
+        \ could plausibly be misleading or confusing due to this assumption, and there\
+        \ was a clear opportunity to request clarification or state which location\
+        \ was being used.\n\n- Negative case (label Pass): \n    - The assistant correctly\
+        \ clarifies the ambiguity, asks the user for more information, or explicitly\
+        \ states which location was chosen when multiple plausible options exist.\n\
+        \    - The assistant chooses a location in a clearly unambiguous context (e.g.,\
+        \ user specifies \"Berlin, Germany\" or provides other disambiguating information,\
+        \ or only one result is relevant).\n    - The assistant selects a reasonable\
+        \ default (e.g., most populous or prominent), makes this explicit in its reply,\
+        \ and/or signals to the user which location is being referenced (e.g., \"\
+        Here’s the weather in Columbus, Ohio\").\n    - There is insufficient evidence\
+        \ in the conversation to warrant a Fail (e.g., if it’s not clear multiple\
+        \ locations existed, or location selection is appropriately justified or neutral).\n\
+        \n- Use only the provided input and structured fields. Do not infer unstated\
+        \ context.\n\nRules\n\n1) Core Decision Rules:\n   - R1: If the user’s place\
+        \ name is ambiguous (confirmed by API results, system knowledge, or multiple\
+        \ plausible geocode returns), and the assistant selects one location without\
+        \ explicit clarification, user confirmation, or location-specific mention\
+        \ in its output, label as \"Fail\".\n   - R2: If the assistant directly requests\
+        \ clarification from the user when ambiguity is present, always label as \"\
+        Pass\".\n   - R3: If the user’s input is unambiguous, or the assistant’s output\
+        \ clearly indicates which location is meant (by providing both place name\
+        \ and relevant qualifiers, e.g., state/country), label as \"Pass\".\n\n2)\
+        \ Edge Cases and Clarifications:\n   - E1: If the assistant selects a location\
+        \ among ambiguous options but clearly communicates (in output) which (e.g.,\
+        \ \"The current weather in Columbus, Ohio...\"), label as \"Pass\".\n   -\
+        \ E2: If the assistant disambiguates or assumes the most likely location based\
+        \ on reasonable criteria (such as population), but does not inform the user\
+        \ which was chosen, label as \"Fail\".\n   - E3: If the ambiguity is only\
+        \ theoretical (e.g., only one plausible result is returned by the geocode\
+        \ function), label as \"Pass\".\n   - E4: If the assistant’s output includes\
+        \ sufficient identifying information (state/country/etc.) to resolve the ambiguity\
+        \ for the user, label as \"Pass\", even if the user did not specify.\n\n3)\
+        \ Tie-breakers (when ambiguous):\n   - T1: If there is any reasonable doubt\
+        \ whether ambiguity existed in the agent’s context, prefer \"Pass\" unless\
+        \ evidence for \"Fail\" is clear.\n   - T2: If the assistant’s response could\
+        \ plausibly be interpreted as referring to multiple locations or is sufficiently\
+        \ general, prefer \"Pass\".\n\n4) Evidence requirements:\n   - Require clear,\
+        \ specific evidence that ambiguity was present and the assistant failed to\
+        \ address or clarify it before labeling \"Fail\". Otherwise, label as \"Pass\"\
+        .\n   - Do not penalize for stylistic choices unless they directly impact\
+        \ ambiguous location handling.\n\nCommon Pitfalls\n- P1: Penalizing when the\
+        \ assistant makes the selected location explicit (e.g., \"Columbus, Ohio\"\
+        )—this is acceptable.\n- P2: Failing to distinguish between user-ambiguous\
+        \ and user-unambiguous cases based on input or geocoding/API outputs.\n- P3:\
+        \ Labeling Fail when only a single matching location exists or ambiguity is\
+        \ not actually present in context or data.\n\nExamples\n- Example A (Pass\
+        \ — Meets criterion)\n  - Case: The user requests the weather for \"Berlin,\
+        \ Germany\". Only one Berlin in Germany is found; the assistant reports accurate\
+        \ weather for Berlin, Germany, explicitly stating the country.\n  - Why: The\
+        \ user request is unambiguous and the location is specified and clarified\
+        \ for the user.\n  - Output:\n  {\"reasoning\": \"User asked for 'Berlin,\
+        \ Germany', which is unambiguous. The assistant returned details for Berlin,\
+        \ Germany and specified this in the response.\", \"answer\": \"Pass\"}\n\n\
+        - Example B (Fail — Violates criterion)\n  - Case: The user asks about the\
+        \ weather in \"Columbus\". The API returns multiple Columbuses (in Ohio, Georgia,\
+        \ etc.), but the assistant provides the weather for Columbus, Ohio, without\
+        \ requesting clarification or specifying 'Ohio' in the response.\n  - Why:\
+        \ Multiple plausible locations exist, but the assistant assumed one without\
+        \ making it explicit to the user or requesting disambiguation, risking a misleading\
+        \ or unclear answer.\n  - Output:\n  {\"reasoning\": \"Multiple cities named\
+        \ 'Columbus' found. Assistant selected Columbus, Ohio, but did not clarify\
+        \ or identify this to the user; ambiguity remains unaddressed.\", \"answer\"\
+        : \"Fail\"}\n\n- Example C (Pass — Ambiguous/insufficient evidence)\n  - Case:\
+        \ The user asks about \"Springfield\" but only one Springfield is present\
+        \ in the geocoding/API response, or result data. The assistant responds with\
+        \ weather for Springfield.\n  - Why: Ambiguity is not present in input/context/API,\
+        \ so no issue arises.\n  - Output:\n  {\"reasoning\": \"Only one Springfield\
+        \ found in the API response; no ambiguity for the assistant to clarify. Response\
+        \ is appropriate and accurate.\", \"answer\": \"Pass\"}\n\n- Example D (Pass\
+        \ — Valid clarification)\n  - Case: The user asks about \"Greenville\", and\
+        \ many Greenvilles exist. The assistant responds, \"There are several cities\
+        \ named Greenville. Could you specify the state or country?\".\n  - Why: The\
+        \ assistant actively seeks clarification, correctly handling ambiguity.\n\
+        \  - Output:\n  {\"reasoning\": \"Ambiguity detected ('Greenville') and the\
+        \ assistant requests clarification from the user; properly meets criterion.\"\
+        , \"answer\": \"Pass\"}\n\nReturn ONLY the JSON object per schema—no extra\
+        \ text."
+    input:
+      template: |
+        Decide if the assistant satisfies the evaluation criterion for this case.
+        Return JSON {reasoning:string, answer:"Pass"|"Fail"}.
+
+        Conversation history (JSON):
+        ---
+        {{ history_json }}
+        ---
+
+        Assistant message:
+        ---
+        {{ text }}
+        ---

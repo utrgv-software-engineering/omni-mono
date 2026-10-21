@@ -1,0 +1,123 @@
+/**
+ * Simple markdown rendering for terminal output
+ * Matches key features of Bubbletea's Glamour markdown rendering
+ * Uses ANSI escape codes to style text with Tokyo Night theme colors
+ */
+
+import chalk from "chalk";
+import { Theme } from "../theme.js";
+
+/**
+ * Render markdown text to terminal-formatted string
+ * This matches how Bubbletea uses Glamour to render assistant messages
+ *
+ * Supports:
+ * - Code blocks (```)
+ * - Inline code (`)
+ * - Bold (**)
+ * - Italic (*)
+ * - Headers (#)
+ * - Lists (-, *, numbered)
+ * - Links [text](url)
+ */
+export function renderMarkdown(markdown: string): string {
+  try {
+    const output = markdown;
+
+    // Process line by line to handle code blocks and lists
+    const lines = output.split("\n");
+    const processedLines: string[] = [];
+    let inCodeBlock = false;
+    let codeBlockContent: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Handle code blocks
+      if (line.trim().startsWith("```")) {
+        if (!inCodeBlock) {
+          // Start of code block
+          inCodeBlock = true;
+          codeBlockContent = [];
+        } else {
+          // End of code block
+          inCodeBlock = false;
+          // Render code block with purple color (matching Tokyo Night)
+          if (codeBlockContent.length > 0) {
+            processedLines.push(
+              chalk.hex(Theme.textSecondary)(codeBlockContent.join("\n")),
+            );
+          }
+          codeBlockContent = [];
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        codeBlockContent.push(line);
+        continue;
+      }
+
+      // Handle headers
+      const headerMatch = line.match(/^(#{1,6})\s+(.+)$/);
+      if (headerMatch) {
+        const text = headerMatch[2];
+        // Bold blue for headers (matching Glamour)
+        processedLines.push(chalk.bold.hex(Theme.accentAgent)(text));
+        continue;
+      }
+
+      // Handle lists
+      const listMatch = line.match(/^(\s*)([-*]|\d+\.)\s+(.+)$/);
+      if (listMatch) {
+        const indent = listMatch[1];
+        const text = listMatch[3];
+        // Process inline markdown in list items
+        const processedText = processInlineMarkdown(text);
+        processedLines.push(`${indent}• ${processedText}`);
+        continue;
+      }
+
+      // Process inline markdown for regular lines
+      processedLines.push(processInlineMarkdown(line));
+    }
+
+    return processedLines.join("\n");
+  } catch (error) {
+    // Fallback to plain text if markdown rendering fails
+    console.error("Markdown rendering failed:", error);
+    return markdown;
+  }
+}
+
+/**
+ * Process inline markdown elements (bold, italic, code, links)
+ */
+function processInlineMarkdown(text: string): string {
+  const segments = text.split(/(`[^`]+`)/g);
+
+  const processed = segments
+    .map((segment) => {
+      if (segment.startsWith("`") && segment.endsWith("`")) {
+        const code = segment.slice(1, -1);
+        return chalk.hex(Theme.textSecondary)(code);
+      }
+
+      let s = segment;
+
+      s = s.replace(/\*\*([^*]+)\*\*/g, (_, t) => chalk.bold(t));
+      s = s.replace(/__([^_]+)__/g, (_, t) => chalk.bold(t));
+
+      s = s.replace(/\*([^*]+)\*/g, (_, t) => chalk.italic(t));
+      s = s.replace(/_([^_]+)_/g, (_, t) => chalk.italic(t));
+
+      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t) =>
+        chalk.hex(Theme.stateActive)(t),
+      );
+
+      return s;
+    })
+    .join("");
+
+  return processed;
+}

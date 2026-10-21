@@ -1,0 +1,91 @@
+scenarios:
+- id: 5be03737a14558c5
+  name: sydney-weather
+  prompt: Hey, could you tell me how the weather is in Sydney, NSW, Australia right
+    now?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  label: false
+  target_category: ambiguous_location_assumption
+- id: aae9a921ad113b58
+  name: conversational-rochester-weather
+  prompt: Hello! Can you provide the latest weather information for Rochester, please?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+  label: true
+  target_category: ambiguous_location_assumption
+- id: 8644e34c49533c3a
+  name: tokyo-weather-today
+  prompt: Hi! I'm curious—what's the current weather in Tokyo, Japan?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  label: false
+  target_category: ambiguous_location_assumption
+- id: aacadcc1394527d1
+  name: curious-san-jose
+  prompt: I was wondering, what's the weather like in San Jose right now?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+  label: true
+  target_category: ambiguous_location_assumption
+- id: 11014a42393a852a
+  name: cheerful-franklin-weather
+  prompt: Could you please share what the weather's doing in Franklin today?
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+  label: true
+  target_category: ambiguous_location_assumption
+- id: 0c2fceded6291ab7
+  name: san-francisco-forecast
+  prompt: Good morning! Can you give me the weather forecast for San Francisco, CA,
+    USA, please?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  label: false
+  target_category: ambiguous_location_assumption
+- id: 1ffabb06176bc19b
+  name: cairo-request
+  prompt: Hi, could you give me the weather report for Cairo, Egypt, please?
+  dimensions:
+    location_ambiguity: unambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  label: false
+  target_category: ambiguous_location_assumption
+- id: 08c309ccdeb39d32
+  name: pleasant-madison-weather
+  prompt: Hi! I'd appreciate a quick weather update for Madison, if you don't mind.
+  dimensions:
+    location_ambiguity: ambiguous
+    user_intent: simple_check
+    query_style: conversational
+  measures: []
+  failure_categories:
+  - ambiguous_location_assumption
+  label: true
+  target_category: ambiguous_location_assumption

@@ -1,0 +1,24 @@
+evaluation:
+  synthetic_data_generation:
+    dimensions:
+      - name: tone
+        label: Tone
+        description: Tone of the response
+        values:
+          - name: friendly
+            label: Friendly
+            description: Friendly tone
+            examples:
+              - Keep it light.
+          - name: neutral
+            label: Neutral
+            examples: []
+  failure_categories:
+    - name: Quality Issues
+      description: Responses that lack quality
+      measures:
+        - response_coherence
+  measures:
+    - name: response_coherence
+      label: Response Coherence
+      description: Checks whether the response stays coherent.

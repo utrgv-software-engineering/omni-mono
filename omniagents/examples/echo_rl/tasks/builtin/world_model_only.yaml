@@ -1,0 +1,31 @@
+# Verifier-free tasks (world_model_only: true).
+#
+# These have NO verifier and contribute NO policy-gradient signal: the verifier
+# returns a constant, so the group's advantage is zero. They exist only to feed
+# ECHO's environment-prediction loss — the agent still runs commands and sees
+# real terminal output, and predicting that output trains its world model.
+#
+# This mirrors echo-rl's "verifier-free adaptation": fold in (often OOD) tasks
+# you can't or don't want to score, and learn from the environment stream alone.
+# Requires ECHO (world_model_coeff > 0); with the GRPO baseline they are no-ops.
+- id: explore_repo
+  prompt: >
+    Explore the project under /work: list files, read the README, and inspect
+    the source. Report what the project does.
+  image: python:3.11-slim
+  setup:
+    - "mkdir -p /work/proj && printf '# Widget\\nA tiny widget library.\\n' > /work/proj/README.md"
+    - "printf 'def make():\\n    return \"widget\"\\n' > /work/proj/widget.py"
+  verifier: ""            # none — world_model_only
+  tags: [exploration]
+  world_model_only: true
+
+- id: inspect_system
+  prompt: >
+    Investigate the environment: check the Python version, list installed pip
+    packages, and look at the directory structure under /. Summarize what you find.
+  image: python:3.11-slim
+  setup: ["mkdir -p /work"]
+  verifier: ""            # none — world_model_only
+  tags: [exploration]
+  world_model_only: true

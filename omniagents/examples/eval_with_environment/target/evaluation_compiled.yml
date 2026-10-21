@@ -1,0 +1,71 @@
+name: demo_agent
+model: gpt-4.1
+instructions: 'You are a helpful assistant that can look up and manage bookings.
+
+  When a user wants to make a booking, collect all required information
+
+  and use the available tools to complete the request.
+
+  '
+tools:
+- create_booking
+- get_booking
+use_safe_agent: false
+evaluation:
+  defaults:
+    max_turns: 10
+    runs_per_prompt: 1
+  environment:
+    type: booking_demo
+    api_base_url: http://localhost:3000
+  scenarios:
+  - name: simple_booking_lookup
+    prompt: What's the status of booking ABC123?
+    fixture: fixtures/existing_booking.json
+    measures:
+    - booking_found
+    - correct_booking_id
+  - name: multi_turn_booking_flow
+    fixture: fixtures/available_slots.json
+    user_persona:
+      goal: Book a meeting room for tomorrow at 2pm for 2 hours
+      info:
+        name: Jane Smith
+        email: jane@example.com
+        department: Engineering
+      behavior: cooperative
+      agent_description: a booking assistant
+      model: gpt-4o-mini
+    max_turns: 8
+    measures:
+    - booking_created
+    - correct_time_slot
+    - user_info_collected
+  - name: vague_user_booking
+    fixture: fixtures/available_slots.json
+    user_persona:
+      goal: Book something for a team meeting
+      info:
+        name: Bob Johnson
+        team_size: 5
+      behavior: vague
+      agent_description: a booking assistant
+    max_turns: 12
+    measures:
+    - clarification_requested
+    - booking_created
+  metrics:
+  - name: booking_success_rate
+    label: Booking Success Rate
+    type: pass_rate
+    source_measure: booking_created
+    target:
+      op: '>='
+      value: 0.9
+  - name: info_collection_rate
+    label: User Info Collection Rate
+    type: pass_rate
+    source_measure: user_info_collected
+    target:
+      op: '>='
+      value: 0.95

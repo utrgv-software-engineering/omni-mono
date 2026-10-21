@@ -1,0 +1,3 @@
+# Compatibility name for existing project configurations.
+name: swarms
+extends: workers

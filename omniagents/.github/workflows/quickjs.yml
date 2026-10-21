@@ -1,0 +1,53 @@
+name: QuickJS platform smoke
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ['3.11', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: "python -m pip install --only-binary=:all: quickjs-ng==0.17.0.1"
+      - name: Worker IPC smoke without host callbacks
+        shell: python
+        run: |
+          import json, subprocess, sys
+          worker = 'omniagents/core/orchestration/worker.py'
+          result = subprocess.run([sys.executable, '-I', worker], input=json.dumps({'version':1,'code':'text(typeof process); text(2+2)','cpu_seconds':5})+'\n', text=True, capture_output=True, timeout=15, check=True)
+          frame = json.loads(result.stdout)
+          assert [r['value'] for r in frame['requests']] == ['undefined','4']
+          assert frame['done'] and not frame['error']
+
+  intel-macos:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install build
+      - run: python -m build --wheel
+      - run: "python -m pip install --no-deps --only-binary=:all: dist/*.whl"
+      - name: Test shipped Intel engine
+        shell: python
+        run: |
+          import json, subprocess, sys, tempfile
+          locate = 'from pathlib import Path; import omniagents; from omniagents import _quickjs; assert _quickjs.Context().eval("40+2") == 42; print(Path(omniagents.__file__).parent / "core/orchestration/worker.py")'
+          worker = subprocess.check_output([sys.executable, '-I', '-c', locate], text=True).strip()
+          with tempfile.TemporaryDirectory() as cwd:
+            result = subprocess.run([sys.executable, '-I', worker], input=json.dumps({'version':1,'code':'text(typeof process); text(await Promise.resolve(42))','cpu_seconds':5})+'\n', text=True, capture_output=True, timeout=15, cwd=cwd, check=True)
+          frame = json.loads(result.stdout)
+          assert [r['value'] for r in frame['requests']] == ['undefined','42']
+          assert frame['done'] and not frame['error']
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quickjs-intel-macos-wheel
+          path: dist/*.whl

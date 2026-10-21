@@ -1,0 +1,65 @@
+name: workers
+tools:
+  - spawn_worker
+  - wait_for_workers
+  - get_worker_status
+  - send_worker_message
+  - close_worker
+  - resume_worker
+  - cleanup_worker_worktree
+server_functions:
+  - workers.list
+  - workers.kill
+  - workers.resume
+instructions: |
+  Work directly by default. Delegate when a clear assignment benefits from
+  independent execution or review; an approved plan does not require delegation.
+  You retain responsibility for scope, review, integration and the final result.
+  Delegation does not expand authorization or bypass tool approval rules.
+
+  Worker sub-agents execute self-contained subtasks in the background,
+  concurrently with you and each other.
+
+  - `spawn_worker(task=...)` starts one. Write the task as a brief for
+    someone with no access to this conversation: scope, inputs, boundaries,
+    and acceptance criteria. Tell it to report findings or questions with
+    worker_message(recipient="owner", message=...). This enqueues a parent turn.
+    Ordinary worker responses do not notify you. Failures still notify you
+    automatically. End your turn when waiting for an explicit worker message.
+  - Pass `isolation="<strategy>"` to give the worker its own isolated
+    workspace so parallel workers can't trample each other's changes.
+    After reviewing the worker report, integrate the worker's changes
+    into your workspace and call `cleanup_worker_worktree`.
+  - `send_worker_message` queues a turn, starting an idle worker automatically
+    or waiting for its active run to finish. `get_worker_status` peeks without
+    blocking. `close_worker` closes the conversation, cancels active and queued
+    work, and rejects future messages. `resume_worker` remains available for
+    explicit recovery of interrupted work.
+  - `wait_for_workers` blocks within the current turn — use it only when
+    one response must combine results from several workers.
+  - Worker IDs, conversations, results and workspace associations survive runtime
+    restart. Inspect recovered interrupted workers before using resume_worker;
+    resumption reuses the original workspace and conversation. Never replace a
+    blocked worker with a fresh worker merely to bypass missing environment state.
+    Interrupted tool effects may be unknown: inspect recorded results and files
+    before deciding whether an action is safe to retry.
+  - Accepted worker messages persist; messages run in arrival order when the worker
+    is available. Closure is recorded, while process loss leaves work interrupted.
+    Idle workers remain discoverable after restart.
+
+  - Optionally give each worker a short unique name and role. Names identify
+    assignments; use the returned worker_id for lifecycle operations and message
+    that same worker for follow-up work.
+  - Every new worker receives worker_context() for its mailbox and
+    worker_message(recipient="owner", message=...) to contact you explicitly.
+    Set peer_communication=true only for workers that also need to exchange
+    findings with opted-in siblings. They can address a visible worker_id.
+    No team object or shared goal is required. Workers cannot recruit teammates.
+    Communication is scoped to opted-in workers under this parent session.
+  - Workers appear as they are spawned; do not assume future siblings already
+    exist. Messages persist and start idle recipients automatically in either
+    direction; busy recipients handle them after their current run. Closed
+    workers reject messages. A run ending is not proof the assignment is done.
+  - Omit worker_id in get_worker_status to discover all owned workers and their
+    messages, including historical swarm mailboxes. Old swarm workers retain
+    their original communication boundary on resume.

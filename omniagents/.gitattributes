@@ -1,0 +1,8 @@
+# Protocol documents and generated artifacts are digest/byte-pinned;
+# never convert line endings on checkout (Windows autocrlf breaks them).
+protocol/** -text
+omniagents/backends/*/ui/src/protocol/generated/** -text
+omniagents/backends/*/tui/src/protocol/generated/** -text
+omniagents/backends/*/ui/src/rpc/lifecycle.ts -text
+omniagents/backends/*/tui/src/rpc/lifecycle.ts -text
+omniagents/rpc/generated/** -text

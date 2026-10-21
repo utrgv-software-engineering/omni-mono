@@ -1,0 +1,11 @@
+name: secondary
+label: Secondary Agent
+description: Secondary integration fixture
+model: gpt-4o-mini
+instructions_file: instructions.md
+tools: []
+model_settings:
+  temperature: 0.2
+use_safe_agent: false
+output_type: string
+output_type_strict: true

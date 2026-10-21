@@ -1,0 +1,6 @@
+name: recap
+# Control-plane only: /recap produces a short catch-up note in the client
+# panel. Products install a summarizer via
+# omniagents.core.runtime.recap.set_recap_summarizer.
+server_functions:
+  - recap

@@ -1,0 +1,32 @@
+# Pinned, verified stack for the echo_rl RL training example.
+#
+# These versions are TIGHTLY COUPLED and were validated end-to-end (GRPO + ECHO
+# + LoRA + Docker sandbox + vLLM generation) on a CUDA GPU (tested on an 8GB
+# RTX 3060 Ti). The loose ranges in pyproject's [training] extra are NOT enough
+# to reproduce the vLLM-capable stack — use this lock for that.
+#
+# Why pinned (the coupling that bit us):
+#   * vLLM 0.21 hard-pins torch==2.11 and requires transformers>=5.6 (it rejects
+#     5.0-5.5). transformers>=5 is in turn required by TRL's tool-using GRPO.
+#   * vLLM 0.12-0.18 pin transformers<5 -> incompatible with tool-using GRPO.
+#   * TRL 0.29 "officially" supports vLLM 0.10.2-0.12.0 but the colocate path
+#     works at runtime with 0.21 (only combo that keeps transformers 5).
+#
+# Install (order matters: install vLLM first; it pulls the right torch):
+#   pip install "vllm==0.21.0"
+#   pip install -r examples/echo_rl/requirements.txt
+# Run with VLLM_PLUGINS="" to avoid unrelated third-party vLLM plugins crashing
+# startup. CPU/Mac (no CUDA): omit vllm and bitsandbytes; use LoRA (not QLoRA).
+
+# --- version-coupled core (exact pins) ---
+torch==2.11.0
+transformers==5.9.0
+trl==0.29.1
+vllm==0.21.0            # CUDA only; the generation throughput lever
+
+# --- not tightly coupled (floors; newer is fine) ---
+accelerate>=1.4.0
+datasets>=2.0
+jmespath>=1.0
+peft>=0.17              # LoRA / QLoRA
+bitsandbytes>=0.43      # QLoRA 4-bit base (CUDA only)
