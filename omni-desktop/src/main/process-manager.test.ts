@@ -20,7 +20,6 @@ const hoisted = vi.hoisted(() => ({
     rebuild: ReturnType<typeof vi.fn>;
     getStatus: ReturnType<typeof vi.fn>;
     getRuntimeConnection: ReturnType<typeof vi.fn>;
-    getManagementMutationCapabilities: ReturnType<typeof vi.fn>;
     getManagementAccountStatus: ReturnType<typeof vi.fn>;
     getManagementMcpStatus: ReturnType<typeof vi.fn>;
     callManagementAdmin: ReturnType<typeof vi.fn>;
@@ -52,7 +51,6 @@ vi.mock('@/main/agent-process', () => ({
       baseUrl: 'http://127.0.0.1:9000',
       authToken: 'ordinary-consumer-token',
     }));
-    getManagementMutationCapabilities = vi.fn(async () => ({ validateConfig: true, writeConfig: true }));
     getManagementAccountStatus = vi.fn(async () => ({
       providers: [{ id: 'openai-chatgpt', state: 'signed_out', identity: null }],
       mutation_persistence: { codex_oauth: { durable: true, scope: 'host' } },
@@ -298,7 +296,6 @@ describe('ProcessManager', () => {
       await expect(pm.ensureManagementConnection()).resolves.toEqual({
         baseUrl: 'http://127.0.0.1:9000',
         authToken: 'ordinary-consumer-token',
-        mutationCapabilities: { validateConfig: true, writeConfig: true },
       });
 
       const host = hoisted.agentProcessInstances[0]!;
@@ -307,7 +304,6 @@ describe('ProcessManager', () => {
       );
       expect(host.configureConsumer).not.toHaveBeenCalled();
       expect(host.getRuntimeConnection).toHaveBeenCalledOnce();
-      expect(host.getManagementMutationCapabilities).toHaveBeenCalledOnce();
     });
 
     it('deduplicates concurrent management connection requests', async () => {
@@ -321,16 +317,15 @@ describe('ProcessManager', () => {
     });
 
     it('routes only allowlisted mutations through the host admin client', async () => {
-      const { pm } = makePm();
+      const { pm } = makePm({ durableLocalMcpMutations: true });
 
-      await expect(
-        pm.mutateManagement({ method: 'validate_config', params: { updates: { temperature: 0.2 } } })
-      ).resolves.toEqual({ ok: true, method: 'validate_config' });
+      await expect(pm.mutateManagement({ method: 'mcp_reload_server', params: {} })).resolves.toEqual({
+        ok: true,
+        method: 'mcp_reload_server',
+      });
 
       const host = hoisted.agentProcessInstances[0]!;
-      expect(host.callManagementAdmin).toHaveBeenCalledWith('validate_config', {
-        updates: { temperature: 0.2 },
-      });
+      expect(host.callManagementAdmin).toHaveBeenCalledWith('mcp_reload_server', {});
       await expect(pm.mutateManagement({ method: 'agent_host_list_resources', params: {} })).rejects.toThrow(
         'not allowed'
       );
@@ -436,10 +431,6 @@ describe('ProcessManager', () => {
       await expect(
         noAccount.mutateManagement({ method: 'account_logout', params: { provider: 'openai-chatgpt' } })
       ).rejects.toThrow('outside local single-user Electron');
-
-      await expect(
-        noAccount.mutateManagement({ method: 'write_config', params: { updates: { enabled: true } } })
-      ).resolves.toEqual({ ok: true, method: 'write_config' });
     });
 
     it('rejects managed omni-projects mutations before invoking the runtime', async () => {

@@ -93,16 +93,13 @@ describe('ProductManagementProvider', () => {
     const ensureConnection = vi.fn(async () => ({
       baseUrl: 'http://runtime.test',
       authToken: 'ordinary-token',
-      mutationCapabilities: { validateConfig: true, writeConfig: true },
     }));
     const createClient = vi.fn(() => client);
 
     const Harness = () => {
       const management = useProductManagement();
       const snapshot = useProductManagementSnapshot();
-      return (
-        <span>{`${management.status}:${snapshot.status}:${management.mutationCapabilities.validateConfig}:${management.mutationCapabilities.writeConfig}`}</span>
-      );
+      return <span>{`${management.status}:${snapshot.status}`}</span>;
     };
 
     act(() => {
@@ -118,7 +115,7 @@ describe('ProductManagementProvider', () => {
     });
 
     expect(client.connect).toHaveBeenCalledOnce();
-    await vi.waitFor(() => expect(container.textContent).toBe('ready:ready:true:true'));
+    await vi.waitFor(() => expect(container.textContent).toBe('ready:ready'));
     expect(ensureConnection).toHaveBeenCalledOnce();
     expect(createClient).toHaveBeenCalledWith('ws://runtime.test/ws', 'ordinary-token');
   });
@@ -129,7 +126,6 @@ describe('ProductManagementProvider', () => {
     const connection = {
       baseUrl: 'http://old.test',
       authToken: 'ordinary-token',
-      mutationCapabilities: { validateConfig: true, writeConfig: true },
     };
     const ensureConnection = vi.fn(async () => connection);
     const createClient = vi.fn().mockReturnValueOnce(oldClient).mockReturnValueOnce(newClient);
@@ -159,7 +155,6 @@ describe('ProductManagementProvider', () => {
     const connection = {
       baseUrl: 'http://new.test',
       authToken: 'ordinary-token',
-      mutationCapabilities: { validateConfig: true, writeConfig: true },
     };
     let resolveOld!: (value: typeof connection) => void;
     const ensureConnection = vi

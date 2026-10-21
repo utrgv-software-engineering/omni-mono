@@ -1722,18 +1722,6 @@ export type AgentRuntimeConnection = {
   authToken?: string;
 };
 
-/** Mutation availability reported by main's privileged management broker.
- * This contains capability booleans only; the admin credential never crosses
- * the IPC boundary. */
-export type ManagementMutationCapabilities = {
-  validateConfig: boolean;
-  writeConfig: boolean;
-};
-
-export type ManagementRuntimeConnection = AgentRuntimeConnection & {
-  mutationCapabilities: ManagementMutationCapabilities;
-};
-
 /**
  * Complete address of a materialized AgentHost execution environment.
  *
@@ -2777,7 +2765,7 @@ type AgentProcessIpcEvents = Namespaced<
 type ManagementRuntimeIpcEvents = Namespaced<
   'management-runtime',
   {
-    ensure: () => ManagementRuntimeConnection;
+    ensure: () => AgentRuntimeConnection;
     /** Closed main-process broker. The control/admin credential never appears
      * in this request or response and arbitrary RPC methods are rejected. */
     mutate: (request: ManagementAdminRequest) => ManagementAdminResult;

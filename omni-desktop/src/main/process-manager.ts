@@ -31,9 +31,9 @@ import type {
   AgentProcessStatus,
   AgentProcessStopOptions,
   AgentProcessStopResult,
+  AgentRuntimeConnection,
   GitCredential,
   IpcRendererEvents,
-  ManagementRuntimeConnection,
   Project,
   SandboxPauseResult,
   SandboxSwitchResult,
@@ -109,7 +109,7 @@ export class ProcessManager {
       .then(() => this.runtimeJournal?.recoverAbandoned());
     return this.runtimeRecovery;
   };
-  private pendingManagementConnection: Promise<ManagementRuntimeConnection> | null = null;
+  private pendingManagementConnection: Promise<AgentRuntimeConnection> | null = null;
   /** Monotonic consumer intent; async results may publish only if their epoch still wins. */
   private consumerEpochs = new Map<string, number>();
   private sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
@@ -776,7 +776,7 @@ export class ProcessManager {
    * renderer credential is returned; the AgentHost control token remains
    * encapsulated by AgentProcess and its main-process control client.
    */
-  ensureManagementConnection = (): Promise<ManagementRuntimeConnection> => {
+  ensureManagementConnection = (): Promise<AgentRuntimeConnection> => {
     if (this.changingModels) {
       return Promise.reject(new Error('AI settings are changing. Please retry shortly.'));
     }
@@ -794,7 +794,7 @@ export class ProcessManager {
     return operation;
   };
 
-  private ensureManagementConnectionImpl = async (): Promise<ManagementRuntimeConnection> => {
+  private ensureManagementConnectionImpl = async (): Promise<AgentRuntimeConnection> => {
     const processId = '__product_management__';
     // Profile definitions are consumer-environment concerns; no sandbox is
     // being created here.
@@ -807,14 +807,11 @@ export class ProcessManager {
       if (created || !['starting', 'connecting', 'running'].includes(statusType)) {
         await proc.start(startArg);
       }
-      const [connection, mutationCapabilities] = await Promise.all([
-        proc.getRuntimeConnection(),
-        proc.getManagementMutationCapabilities(),
-      ]);
+      const connection = await proc.getRuntimeConnection();
       // Host MCP ownership transfer is a readiness side effect. It must not
       // make the legacy settings read wait for a cold runtime to boot.
       await this.onManagementReady?.(proc);
-      return { ...connection, mutationCapabilities };
+      return connection;
     } catch (error) {
       this.processes.delete(processId);
       const detached = this.agentHosts.detach(processId);

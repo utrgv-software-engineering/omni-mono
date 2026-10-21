@@ -27,7 +27,6 @@ import type {
   AgentRuntimeConnection,
   ExecutionTarget,
   LogEntry,
-  ManagementMutationCapabilities,
   SandboxPauseResult,
   WithTimestamp,
   WorkspaceMountDescriptor,
@@ -611,23 +610,6 @@ export class AgentProcess {
     return {
       baseUrl: data.uiUrl,
       ...(data.authToken ? { authToken: data.authToken } : {}),
-    };
-  };
-
-  /** Report only the operations negotiated by main's privileged control
-   * client. No control credential or generic RPC surface leaves this class. */
-  getManagementMutationCapabilities = async (): Promise<ManagementMutationCapabilities> => {
-    const data = await this.waitForRunningData();
-    if (!data.wsUrl || !this.agentHostControlToken) {
-      return { validateConfig: false, writeConfig: false };
-    }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    const operations = new Set(await control.getExperimentalOperations());
-    return {
-      validateConfig: operations.has('validate_config'),
-      writeConfig: operations.has('write_config'),
     };
   };
 

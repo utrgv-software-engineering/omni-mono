@@ -9,7 +9,6 @@ import {
   Puzzle,
   Rocket,
   Settings,
-  ShieldCheck,
   SlidersHorizontal,
   SquareTerminal,
   User,
@@ -41,7 +40,6 @@ import { SettingsModalHotkeysTab } from '@/renderer/features/SettingsModal/Setti
 import { SettingsModalNetworkTab } from '@/renderer/features/SettingsModal/SettingsModalNetworkTab';
 import { SettingsModalProjectsTab } from '@/renderer/features/SettingsModal/SettingsModalProjectsTab';
 import { SettingsModalResetButton } from '@/renderer/features/SettingsModal/SettingsModalResetButton';
-import { SettingsModalRuntimePolicyTab } from '@/renderer/features/SettingsModal/SettingsModalRuntimePolicyTab';
 import { SettingsModalWorkspaceTab } from '@/renderer/features/SettingsModal/SettingsModalWorkspaceTab';
 
 type SettingsTab =
@@ -55,8 +53,7 @@ type SettingsTab =
   | 'Workspace'
   | 'Environment'
   | 'Git'
-  | 'Network'
-  | 'Runtime Policy';
+  | 'Network';
 
 type TabDef = { value: SettingsTab; label: string; icon: React.JSX.Element };
 
@@ -85,7 +82,6 @@ const TAB_GROUPS: ReadonlyArray<{ label: string | null; tabs: ReadonlyArray<TabD
       { value: 'Environment', label: 'Environment', icon: <SquareTerminal /> },
       { value: 'Git', label: 'Git', icon: <GitBranch /> },
       { value: 'Network', label: 'Network', icon: <Globe /> },
-      { value: 'Runtime Policy', label: 'Runtime Policy', icon: <ShieldCheck /> },
     ],
   },
 ];
@@ -211,7 +207,6 @@ export const SettingsPage = memo(() => {
           {shownTab === 'Environment' && <SettingsModalEnvironmentTab />}
           {shownTab === 'Git' && <SettingsModalGitTab />}
           {shownTab === 'Network' && <SettingsModalNetworkTab />}
-          {shownTab === 'Runtime Policy' && <SettingsModalRuntimePolicyTab />}
           {shownTab === 'General' && (
             <div className="pt-4 border-t border-border">
               <SettingsModalResetButton />

@@ -2,13 +2,11 @@ import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/protocol/gui-
 
 import { AccountManagementClient } from './account-management';
 import type { RPCConnectionState } from './client';
-import { LayeredConfigClient } from './layered-config';
 import { McpManagementClient } from './mcp-management';
 import { ModelCatalogClient } from './model-catalog';
 
 export const MANAGEMENT_EXPERIMENTAL_OPERATIONS = {
   mcp: ['mcp_read_resource', 'mcp_call_tool', 'mcp_get_prompt'],
-  config: ['get_config', 'validate_config', 'write_config'],
 } as const;
 
 export interface ManagementTransport {
@@ -38,15 +36,11 @@ export type ModelCatalogSnapshot = Awaited<ReturnType<ModelCatalogClient['listMo
 export type ProviderCatalogSnapshot = Awaited<ReturnType<ModelCatalogClient['listProviders']>>;
 export type AccountStatusSnapshot = Awaited<ReturnType<AccountManagementClient['status']>>;
 export type McpManagementSnapshot = Awaited<ReturnType<McpManagementClient['listServers']>>;
-export type LayeredConfigSnapshot = Awaited<ReturnType<LayeredConfigClient['getConfig']>>;
 
 export type ManagementExperimentalSupport = {
   mcpReadResource: boolean;
   mcpCallTool: boolean;
   mcpGetPrompt: boolean;
-  configRead: boolean;
-  configValidate: boolean;
-  configWrite: boolean;
 };
 
 export type ManagementRepositoryStatus = 'disconnected' | 'loading' | 'ready' | 'degraded';
@@ -60,11 +54,10 @@ export type ManagementSnapshot = {
   providers: ManagementResource<ProviderCatalogSnapshot>;
   accounts: ManagementResource<AccountStatusSnapshot>;
   mcp: ManagementResource<McpManagementSnapshot>;
-  config: ManagementResource<LayeredConfigSnapshot>;
 };
 
 type RefreshScope = 'all' | 'accounts' | 'mcp';
-type ManagementResourceKey = 'models' | 'providers' | 'accounts' | 'mcp' | 'config';
+type ManagementResourceKey = 'models' | 'providers' | 'accounts' | 'mcp';
 type Listener = () => void;
 
 const emptyResource = <T>(): ManagementResource<T> => ({
@@ -78,9 +71,6 @@ const initialExperimentalSupport = (): ManagementExperimentalSupport => ({
   mcpReadResource: false,
   mcpCallTool: false,
   mcpGetPrompt: false,
-  configRead: false,
-  configValidate: false,
-  configWrite: false,
 });
 
 function errorMessage(error: unknown): string {
@@ -99,7 +89,6 @@ export class ManagementRepository {
   readonly modelCatalog: ModelCatalogClient;
   readonly accountManagement: AccountManagementClient;
   readonly mcpManagement: McpManagementClient;
-  readonly layeredConfig: LayeredConfigClient;
 
   private snapshotValue: ManagementSnapshot = {
     revision: 0,
@@ -110,7 +99,6 @@ export class ManagementRepository {
     providers: emptyResource(),
     accounts: emptyResource(),
     mcp: emptyResource(),
-    config: emptyResource(),
   };
   private listeners = new Set<Listener>();
   private unsubscribers: Array<() => void> = [];
@@ -123,7 +111,6 @@ export class ManagementRepository {
     this.accountManagement = new AccountManagementClient(rpc);
     const supportsExperimentalOperation = (operation: string) => rpc.supportsExperimentalOperation(operation);
     this.mcpManagement = new McpManagementClient(rpc, supportsExperimentalOperation);
-    this.layeredConfig = new LayeredConfigClient(rpc, supportsExperimentalOperation);
   }
 
   getSnapshot = (): ManagementSnapshot => this.snapshotValue;
@@ -199,9 +186,6 @@ export class ManagementRepository {
       mcpReadResource: this.rpc.supportsExperimentalOperation('mcp_read_resource'),
       mcpCallTool: this.rpc.supportsExperimentalOperation('mcp_call_tool'),
       mcpGetPrompt: this.rpc.supportsExperimentalOperation('mcp_get_prompt'),
-      configRead: this.rpc.supportsExperimentalOperation('get_config'),
-      configValidate: this.rpc.supportsExperimentalOperation('validate_config'),
-      configWrite: this.rpc.supportsExperimentalOperation('write_config'),
     };
   }
 
@@ -225,25 +209,17 @@ export class ManagementRepository {
   private async performRefresh(scope: RefreshScope, generation: number): Promise<void> {
     const keys: ManagementResourceKey[] =
       scope === 'all'
-        ? ['models', 'providers', 'accounts', 'mcp', 'config']
+        ? ['models', 'providers', 'accounts', 'mcp']
         : scope === 'accounts'
           ? ['models', 'providers', 'accounts']
           : ['mcp'];
     const loadingPatch: Partial<ManagementSnapshot> = {};
     for (const key of keys) {
-      if (key === 'config' && !this.snapshotValue.experimental.configRead) {
-        loadingPatch.config = {
-          ...this.snapshotValue.config,
-          status: 'unsupported',
-          error: null,
-        };
-      } else {
-        loadingPatch[key] = {
-          ...this.snapshotValue[key],
-          status: 'loading',
-          error: null,
-        } as never;
-      }
+      loadingPatch[key] = {
+        ...this.snapshotValue[key],
+        status: 'loading',
+        error: null,
+      } as never;
     }
     this.commit(loadingPatch);
 
@@ -259,9 +235,6 @@ export class ManagementRepository {
     }
     if (keys.includes('mcp')) {
       tasks.push(this.load('mcp', () => this.mcpManagement.listServers(), generation));
-    }
-    if (keys.includes('config') && this.snapshotValue.experimental.configRead) {
-      tasks.push(this.load('config', () => this.layeredConfig.getConfig(), generation));
     }
     await Promise.all(tasks);
   }
@@ -308,7 +281,7 @@ export class ManagementRepository {
     if (snapshot.connection !== 'connected') {
       return 'disconnected';
     }
-    const resources = [snapshot.models, snapshot.providers, snapshot.accounts, snapshot.mcp, snapshot.config];
+    const resources = [snapshot.models, snapshot.providers, snapshot.accounts, snapshot.mcp];
     if (resources.some((resource) => resource.status === 'loading' || resource.status === 'idle')) {
       return 'loading';
     }

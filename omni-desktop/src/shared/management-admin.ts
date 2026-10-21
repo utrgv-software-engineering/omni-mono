@@ -7,8 +7,6 @@ import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
  * generic control-token tunnel.
  */
 export const MANAGEMENT_ADMIN_METHODS = [
-  'validate_config',
-  'write_config',
   'account_login_start',
   'account_login_complete',
   'account_login_cancel',

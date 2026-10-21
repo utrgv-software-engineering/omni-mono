@@ -9,20 +9,6 @@ import { managementAdminApi } from './management-admin';
 describe('managementAdminApi', () => {
   beforeEach(() => mocks.invoke.mockReset());
 
-  it('sends config validation through the closed main-process mutation channel', async () => {
-    mocks.invoke.mockResolvedValue({
-      valid: true,
-      errors: [],
-      reload: { hot: ['temperature'], session: [], restart: [] },
-    });
-
-    await expect(managementAdminApi.validateConfig({ temperature: 0.2 })).resolves.toMatchObject({ valid: true });
-    expect(mocks.invoke).toHaveBeenCalledWith('management-runtime:mutate', {
-      method: 'validate_config',
-      params: { updates: { temperature: 0.2 } },
-    });
-  });
-
   it('uses generated MCP mutation fields and strict result decoding', async () => {
     mocks.invoke.mockResolvedValue({ ok: true, server_name: 'github' });
 

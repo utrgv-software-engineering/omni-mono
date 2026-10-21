@@ -1,12 +1,7 @@
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { emitter, wsEmitter } from '@/renderer/services/ipc';
-import type {
-  ManagementMutationCapabilities,
-  ManagementRuntimeConnection,
-  ReasoningEffort,
-  RuntimeModelList,
-} from '@/shared/types';
+import type { AgentRuntimeConnection, ReasoningEffort, RuntimeModelList } from '@/shared/types';
 
 import { RPCClient } from './rpc/client';
 import { ManagementRepository, type ManagementSnapshot, type ManagementTransport } from './rpc/management-repository';
@@ -26,20 +21,13 @@ type ProductManagementContextValue = {
   repository: ManagementRepository | null;
   status: ProductManagementBootstrapStatus;
   error: string | null;
-  mutationCapabilities: ManagementMutationCapabilities;
   refresh: () => Promise<ManagementSnapshot>;
-};
-
-const NO_MUTATION_CAPABILITIES: ManagementMutationCapabilities = {
-  validateConfig: false,
-  writeConfig: false,
 };
 
 const FALLBACK_CONTEXT: ProductManagementContextValue = {
   repository: null,
   status: 'error',
   error: 'Product management runtime is unavailable',
-  mutationCapabilities: NO_MUTATION_CAPABILITIES,
   refresh: async () => EMPTY_SNAPSHOT,
 };
 
@@ -53,21 +41,17 @@ const EMPTY_SNAPSHOT: ManagementSnapshot = {
     mcpReadResource: false,
     mcpCallTool: false,
     mcpGetPrompt: false,
-    configRead: false,
-    configValidate: false,
-    configWrite: false,
   },
   models: { status: 'idle', data: null, error: null, updatedAt: null },
   providers: { status: 'idle', data: null, error: null, updatedAt: null },
   accounts: { status: 'idle', data: null, error: null, updatedAt: null },
   mcp: { status: 'idle', data: null, error: null, updatedAt: null },
-  config: { status: 'idle', data: null, error: null, updatedAt: null },
 };
 
 const noSubscribe = (): (() => void) => () => {};
 const getEmptySnapshot = (): ManagementSnapshot => EMPTY_SNAPSHOT;
 const defaultClientFactory: ProductManagementClientFactory = (url, token) => new RPCClient(url, token);
-const ensureProductConnection = (): Promise<ManagementRuntimeConnection> => emitter.invoke('management-runtime:ensure');
+const ensureProductConnection = (): Promise<AgentRuntimeConnection> => emitter.invoke('management-runtime:ensure');
 
 /**
  * Product-scoped management runtime for surfaces that exist independently of
@@ -82,7 +66,7 @@ export const ProductManagementProvider = ({
   retryDelayMs = 5_000,
 }: {
   children: ReactNode;
-  ensureConnection?: () => Promise<ManagementRuntimeConnection>;
+  ensureConnection?: () => Promise<AgentRuntimeConnection>;
   createClient?: ProductManagementClientFactory;
   retryDelayMs?: number;
 }) => {
@@ -90,7 +74,6 @@ export const ProductManagementProvider = ({
     repository: null,
     status: 'starting',
     error: null,
-    mutationCapabilities: NO_MUTATION_CAPABILITIES,
     refresh: async () => EMPTY_SNAPSHOT,
   });
 
@@ -129,7 +112,7 @@ export const ProductManagementProvider = ({
             return;
           }
           const config = resolveUiConfig(connection);
-          const key = JSON.stringify([config.wsBaseUrl, config.token, connection.mutationCapabilities]);
+          const key = JSON.stringify([config.wsBaseUrl, config.token]);
           // A transient launcher disconnect need not disturb an unchanged
           // runtime. A new backend, however, returns a new endpoint/lease;
           // reconnecting the old RPC URL forever cannot recover that lease.
@@ -149,7 +132,6 @@ export const ProductManagementProvider = ({
               repository,
               status: connectionState === 'connected' ? 'ready' : 'connecting',
               error: null,
-              mutationCapabilities: connection.mutationCapabilities,
               refresh: async () => {
                 if (!repository) {
                   return EMPTY_SNAPSHOT;
@@ -163,7 +145,6 @@ export const ProductManagementProvider = ({
             repository,
             status: 'connecting',
             error: null,
-            mutationCapabilities: connection.mutationCapabilities,
             refresh: async () => {
               if (!repository) {
                 return EMPTY_SNAPSHOT;
@@ -182,7 +163,6 @@ export const ProductManagementProvider = ({
             repository: current.repository,
             status: 'error',
             error: error instanceof Error ? error.message : String(error),
-            mutationCapabilities: current.mutationCapabilities,
             refresh: current.refresh,
           }));
           // A fresh install or onboarding credential write can make the
@@ -219,8 +199,8 @@ export const ProductManagementProvider = ({
 };
 
 export const useProductManagement = (): Omit<ProductManagementContextValue, 'repository' | 'refresh'> => {
-  const { status, error, mutationCapabilities } = useContext(ProductManagementContext);
-  return { status, error, mutationCapabilities };
+  const { status, error } = useContext(ProductManagementContext);
+  return { status, error };
 };
 
 /** Read-only refresh boundary. Product management mutations are intentionally
