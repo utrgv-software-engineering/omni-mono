@@ -23,8 +23,9 @@ The launcher spawns the product CLI with:
 <prog> serve --output json
     --auth-token <client-secret>
     --agent-host-control-token <control-secret>
+    --exit-on-stdin-close
     [--credential <json>]...
-    --snapshot-dir <dir>
+    [--snapshot-dir <dir>]
 ```
 
 There is no port flag: serve picks a free port and reports it in the
@@ -35,8 +36,9 @@ readiness payload. Flag semantics:
 | `--output json` | yes | Emit the machine-readable readiness line (the only format launchers parse). |
 | `--auth-token <client-secret>` | yes | Authenticate ordinary launcher/renderer RPC clients. This value is reported as `auth_token` in readiness. |
 | `--agent-host-control-token <control-secret>` | yes | Authenticate the launcher main process for privileged AgentHost workspace, profile, environment, and binding operations. It must differ from the client secret and is never reported in readiness. |
-| `--credential <json>` | repeatable | One boot-time git/CLI credential descriptor per flag (see below). |
-| `--snapshot-dir <dir>` | yes (launcher always passes it) | Root directory for Workspace snapshots. Each registered Workspace supplies its own `snapshot_ref`. |
+| `--exit-on-stdin-close` | recommended | Shut down when stdin reaches EOF. The launcher spawns serve with a stdin pipe it never writes, so serve exits with the launcher even after a launcher crash. |
+| `--credential <json>` | repeatable | One boot-time git/CLI credential descriptor per flag (see below). Container profiles only; host mode skips it. |
+| `--snapshot-dir <dir>` | optional | Root directory for Workspace snapshots. Each registered Workspace supplies its own `snapshot_ref`. Container profiles only; host mode never snapshots. |
 
 Additional flags exist (`--host`, `--port`, `--agent-project`, `--agent`,
 `--output human`) for tests, scripting and terminal users; launchers do not

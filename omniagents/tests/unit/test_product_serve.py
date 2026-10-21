@@ -43,9 +43,9 @@ def _fresh_identity():
 
 
 def _launcher_argv_full() -> list[str]:
-    """The launcher's argv, every optional branch taken, in the launcher's
-    append order. The leading 'serve' word is consumed by product_cli
-    dispatch; the parser sees everything after it."""
+    """The launcher's argv plus the optional container-profile flags. The
+    leading 'serve' word is consumed by product_cli dispatch; the parser sees
+    everything after it."""
     args: list[str] = [
         "--output",
         "json",
@@ -53,8 +53,9 @@ def _launcher_argv_full() -> list[str]:
         "client-secret",
         "--agent-host-control-token",
         "control-secret",
+        "--exit-on-stdin-close",
     ]
-    # for (const cred of arg.credentials) → one --credential per host
+    # Container profiles: one --credential per linked host
     args += [
         "--credential",
         json.dumps(
@@ -65,7 +66,7 @@ def _launcher_argv_full() -> list[str]:
             }
         ),
     ]
-    args += ["--snapshot-dir", "/home/u/.config/omni/snapshots"]  # unconditional
+    args += ["--snapshot-dir", "/home/u/.config/omni/snapshots"]
     return args
 
 
@@ -76,6 +77,7 @@ def test_serve_parser_accepts_launcher_argv_full():
     assert ns.output == "json"
     assert ns.auth_token == "client-secret"
     assert ns.agent_host_control_token == "control-secret"
+    assert ns.exit_on_stdin_close is True
     assert len(ns.credentials) == 1
     assert json.loads(ns.credentials[0])["tokenEnv"] == "GIT_TOKEN_0"
     assert ns.snapshot_dir == Path("/home/u/.config/omni/snapshots")
@@ -92,15 +94,30 @@ def test_serve_parser_accepts_launcher_argv_minimal():
             "client-secret",
             "--agent-host-control-token",
             "control-secret",
-            "--snapshot-dir",
-            "/home/u/.config/omni/snapshots",
         ]
     )
     assert ns.credentials == []
+    assert ns.snapshot_dir is None
+    assert ns.exit_on_stdin_close is False
     # Serve picks its own port — the launcher passes no port flag.
     assert ns.port == 0
     assert ns.auth_token == "client-secret"
     assert ns.agent_host_control_token == "control-secret"
+
+
+def test_stdin_eof_watch_fires_once_stdin_closes(monkeypatch):
+    import io
+    import threading
+
+    from omniagents import product_serve
+
+    class _Stdin:
+        buffer = io.BytesIO(b"ignored")
+
+    monkeypatch.setattr(product_serve.sys, "stdin", _Stdin())
+    fired = threading.Event()
+    product_serve._watch_stdin_eof(fired.set)
+    assert fired.wait(timeout=5)
 
 
 def test_serve_parser_accepts_private_agent_host_control_token():

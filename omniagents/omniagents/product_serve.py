@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import signal
@@ -124,6 +125,15 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
         help="Agent key in project.yml (default: entrypoint).",
     )
     p.add_argument(
+        "--exit-on-stdin-close",
+        action="store_true",
+        help=(
+            "Shut down when stdin reaches EOF. A launcher holds the pipe open "
+            "for the child's lifetime, so the server exits with its launcher "
+            "even when the launcher crashes."
+        ),
+    )
+    p.add_argument(
         "--output",
         choices=["json", "human"],
         default="json",
@@ -139,6 +149,22 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _watch_stdin_eof(on_eof: Any) -> None:
+    """Call *on_eof* once stdin reaches EOF (the launcher's end closed)."""
+    import threading
+
+    def _read() -> None:
+        with contextlib.suppress(OSError, ValueError):
+            while sys.stdin.buffer.read(4096):
+                pass
+        try:
+            on_eof()
+        except RuntimeError:
+            pass  # the event loop already closed: serve is exiting anyway
+
+    threading.Thread(target=_read, name="stdin-eof-watch", daemon=True).start()
 
 
 def _pick_port(host: str, requested: int) -> int:
@@ -415,6 +441,9 @@ async def _serve(args: argparse.Namespace) -> int:
         _request_stop()
 
     server.handle_exit = _handle_exit  # type: ignore[method-assign]
+
+    if args.exit_on_stdin_close:
+        _watch_stdin_eof(lambda: loop.call_soon_threadsafe(_request_stop))
 
     try:
         await server.serve()
