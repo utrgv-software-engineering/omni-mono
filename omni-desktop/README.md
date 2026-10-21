@@ -1,6 +1,6 @@
 # Omni Code Launcher
 
-A desktop application for managing [Omni Code](https://github.com/ericmichael/omni-code) installations and sandboxes on Windows, macOS (Apple Silicon) and Linux.
+A desktop application for managing [Omni Code](https://github.com/utrgv-software-engineering/omni-mono/tree/main/omni-code) installations and sandboxes on Windows, macOS (Apple Silicon) and Linux.
 
 The launcher handles installing the Omni Code runtime, managing Python environments, and launching Docker-based sandboxes with optional code-server and noVNC desktop access.
 
@@ -42,8 +42,8 @@ Download the latest release from [GitHub Releases](https://github.com/ericmichae
 ### Quick Start
 
 ```sh
-git clone https://github.com/ericmichael/omni-desktop.git
-cd omni-desktop
+git clone https://github.com/utrgv-software-engineering/omni-mono.git
+cd omni-mono/omni-desktop
 npm i
 npm run dev
 ```

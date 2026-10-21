@@ -12,7 +12,8 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git@github.com:ericmichael/omni-desktop.git"
+    "url": "git@github.com:utrgv-software-engineering/omni-mono.git",
+    "directory": "omni-desktop"
   },
   "scripts": {
     "build:packages": "npm run build --workspaces --if-present",

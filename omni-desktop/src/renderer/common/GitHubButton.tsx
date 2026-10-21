@@ -10,7 +10,7 @@ const GitHubIcon = () => (
 
 export const GitHubButton = memo(() => {
   return (
-    <a href="https://github.com/ericmichael/omni-code" target="_blank" rel="noopener noreferrer">
+    <a href="https://github.com/utrgv-software-engineering/omni-mono" target="_blank" rel="noopener noreferrer">
       <Button type="button" variant="ghost" size="icon" aria-label="GitHub">
         <GitHubIcon />
       </Button>

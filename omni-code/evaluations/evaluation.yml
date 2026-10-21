@@ -52,10 +52,10 @@ evaluation:
       config_name: omni_code
       server_name: omni-projects
       command: { env_var: OMNI_PROJECTS_MCP_NODE, default: node }
-      # $OMNI_PROJECTS_MCP_CLI overrides the launcher's default build path.
+      # $OMNI_PROJECTS_MCP_CLI overrides omni-desktop's default build path.
       cli:
         env_var: OMNI_PROJECTS_MCP_CLI
-        default: ~/Omni/Workspace/launcher/packages/projects-mcp/dist/cli.js
+        default: ~/Omni/Workspace/omni-mono/omni-desktop/packages/projects-mcp/dist/cli.js
       args: ["${cli}", "--db-path", "${db_path}", "--pages-dir", "${pages_dir}"]
       db_dest: projects.db
       pages_dest: projects

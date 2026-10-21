@@ -49,8 +49,8 @@ pip install --index-url https://pypi.fury.io/ericmichael/ --extra-index-url http
 For development or if you want the latest unreleased features:
 
 ```bash
-git clone https://github.com/utrgv-software-engineering/omniagents.git
-cd omniagents
+git clone https://github.com/utrgv-software-engineering/omni-mono.git
+cd omni-mono/omniagents
 pip install -e ".[all]"
 ```
 
