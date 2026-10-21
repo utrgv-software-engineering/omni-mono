@@ -106,5 +106,6 @@ class UserMcpFixtureStager:
 
     def env_vars(self) -> Dict[str, str]:
         """Env vars to merge into ``get_env_vars()`` so spec loading sees
-        the staged config."""
-        return {"XDG_CONFIG_HOME": str(self.xdg_root)}
+        the staged config: ``XDG_CONFIG_HOME`` is the config root on POSIX,
+        ``APPDATA`` on Windows."""
+        return {"XDG_CONFIG_HOME": str(self.xdg_root), "APPDATA": str(self.xdg_root)}
