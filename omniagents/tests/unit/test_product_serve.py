@@ -232,7 +232,7 @@ def test_describe_reports_identity_and_protocol(tmp_path, capsys, monkeypatch):
         "index_url": "https://pypi.example.test/acme/acme-code/",
         "command_hint": "acme update",
     }
-    assert out["serve_protocol"] == SERVE_PROTOCOL_VERSION == 2
+    assert out["serve_protocol"] == SERVE_PROTOCOL_VERSION == 3
 
 
 def test_describe_null_update_block(tmp_path, capsys):

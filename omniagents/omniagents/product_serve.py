@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional
 #: error protocol) documented in
 #: ``docs/serve-protocol.md``. Reported by ``<prog> describe`` so the
 #: launcher can verify compatibility before spawning.
-SERVE_PROTOCOL_VERSION = 2
+SERVE_PROTOCOL_VERSION = 3
 
 __all__ = [
     "SERVE_PROTOCOL_VERSION",

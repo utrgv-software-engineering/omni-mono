@@ -1,6 +1,6 @@
 # Serve Protocol
 
-**Protocol version: 2** (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`)
+**Protocol version: 3** (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`)
 
 The wire contract between a desktop/cloud **launcher** and a product's
 reserved `serve` subcommand
@@ -147,7 +147,7 @@ prints one JSON object:
  "config_dir": "<resolved absolute path>",
  "env_prefix": "<ENV_PREFIX>",
  "update": {"index_url": "<pep503 page>", "command_hint": "<prog> update"} | null,
- "serve_protocol": 2}
+ "serve_protocol": 3}
 ```
 
 `serve_protocol` is the version of this document the installation
