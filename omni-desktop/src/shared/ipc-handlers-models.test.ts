@@ -16,7 +16,6 @@ function setup() {
   };
   const handlers = new Map<string, (...args: any[]) => any>();
   const after = vi.fn();
-  const stopAndWrite = vi.fn(async (_event, write) => write());
   registerSettingsConfigHandlers(
     { handle: (name: string, fn: any) => handlers.set(name, fn) } as IIpcListener,
     () =>
@@ -26,10 +25,9 @@ function setup() {
           config = next;
         },
       }) as never,
-    after,
-    { writeModels: stopAndWrite }
+    after
   );
-  return { read: () => config, set: handlers.get('settings:set-models-config')!, after, stopAndWrite };
+  return { read: () => config, set: handlers.get('settings:set-models-config')!, after };
 }
 
 describe('workspace provider changes', () => {
@@ -37,7 +35,7 @@ describe('workspace provider changes', () => {
     const h = setup();
     await expect(h.set(null, { ...h.read(), default: 'personal/b' })).rejects.toThrow('Confirm');
     expect(h.read().default).toBe('company/a');
-    expect(h.stopAndWrite).not.toHaveBeenCalled();
+    expect(h.after).not.toHaveBeenCalled();
     await h.set(
       null,
       { ...h.read(), default: 'personal/b' },
@@ -45,7 +43,7 @@ describe('workspace provider changes', () => {
     );
     expect(h.read().default).toBe('personal/b');
     expect(h.read().provider_scope_version).toBe(1);
-    expect(h.stopAndWrite).toHaveBeenCalledOnce();
+    expect(h.after).toHaveBeenCalledOnce();
   });
   it('rejects a stale window even if it previously confirmed a switch', async () => {
     const h = setup();
@@ -61,7 +59,7 @@ describe('workspace provider changes', () => {
     const next = structuredClone(h.read());
     Object.assign(next.providers.company!.models.a!, { api_key: 'do-not-disclose' });
     await expect(h.set(null, next)).rejects.toThrow('provider-only');
-    expect(h.stopAndWrite).not.toHaveBeenCalled();
+    expect(h.after).not.toHaveBeenCalled();
     expect(h.after).not.toHaveBeenCalled();
   });
   it('does not silently acknowledge old mixed-provider conversations on an ordinary settings save', async () => {

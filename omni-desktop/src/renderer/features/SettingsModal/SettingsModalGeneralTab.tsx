@@ -9,7 +9,6 @@ import {
 import { SettingsModalInstallApp } from '@/renderer/features/SettingsModal/SettingsModalInstallApp';
 import { SettingsModalNotifications } from '@/renderer/features/SettingsModal/SettingsModalNotifications';
 import { SettingsModalOptInToLauncherPrereleases } from '@/renderer/features/SettingsModal/SettingsModalOptInToLauncherPrereleases';
-import { SettingsModalPreviewFeatures } from '@/renderer/features/SettingsModal/SettingsModalPreviewFeatures';
 import { isElectron } from '@/renderer/services/ipc';
 
 /**
@@ -31,7 +30,6 @@ export const SettingsModalGeneralTab = memo(() => {
       <SettingsSection title="Features">
         <Card>
           <CardContent className={settingsCardContentClassName}>
-            <SettingsModalPreviewFeatures />
             {/* Renders nothing unless the browser reports installability. */}
             <SettingsModalInstallApp />
             {/* Launcher auto-update is Electron-only; cloud updates via the container image. */}

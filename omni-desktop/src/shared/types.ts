@@ -102,7 +102,6 @@ export type StoreData = {
   launcherWindowProps?: WindowProps;
   appWindowProps?: WindowProps;
   optInToLauncherPrereleases: boolean;
-  previewFeatures: boolean;
   /** System notifications when a backgrounded agent finishes or needs approval. */
   notifyOnAgentAttention: boolean;
   /** "Text size" in percent (90 | 100 | 110 | 125), applied as the CSS root
@@ -419,10 +418,6 @@ export const schema: Schema<StoreData> = {
   launcherWindowProps: winSizePropsSchema,
   appWindowProps: winSizePropsSchema,
   optInToLauncherPrereleases: {
-    type: 'boolean',
-    default: false,
-  },
-  previewFeatures: {
     type: 'boolean',
     default: false,
   },

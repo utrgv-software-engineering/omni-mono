@@ -8,7 +8,6 @@ import type { OperatingSystem, StoreData } from '@/shared/types';
 
 const getDefaults = (): StoreData => ({
   optInToLauncherPrereleases: false,
-  previewFeatures: false,
   notifyOnAgentAttention: false,
   textScale: 100,
   voicePersonas: [],

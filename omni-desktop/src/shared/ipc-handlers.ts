@@ -138,7 +138,6 @@ export interface SettingsConfigStore {
 export interface SettingsConfigHooks {
   readModels?: (event: unknown) => ModelsConfig;
   saveModels?: (event: unknown, config: ModelsConfig) => void;
-  writeModels?: (event: unknown, write: () => void) => Promise<void>;
   /** Run before returning the local MCP document so ownership transfer can
    * complete before a renderer selects its canonical CRUD path. */
   beforeGetMcp?: (event: unknown) => void | Promise<void>;
@@ -194,11 +193,7 @@ export function registerSettingsConfigHandlers(
             }
             afterWrite(e);
           };
-          if (hooks.writeModels) {
-            await hooks.writeModels(e, write);
-          } else {
-            write();
-          }
+          write();
         });
       pendingModelWrite = operation;
       return operation;

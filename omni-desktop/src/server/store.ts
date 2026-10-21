@@ -9,7 +9,6 @@ const STORE_PATH = join(homedir(), '.config', 'Omni Code', 'config.json');
 
 export const DEFAULTS: StoreData = {
   optInToLauncherPrereleases: false,
-  previewFeatures: false,
   notifyOnAgentAttention: false,
   textScale: 100,
   voicePersonas: [],
