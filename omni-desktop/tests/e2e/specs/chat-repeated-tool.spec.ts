@@ -10,8 +10,6 @@ test('preserves separate tool calls when the provider reuses an ID in later runs
   await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
   const id = await page.locator('[data-deck-column]').first().getAttribute('data-deck-column');
   const tile = page.locator(`[data-deck-column="${id}"]`);
-  await tile.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   for (const run of [1, 2]) {
     await tile.getByRole('textbox').fill(`REPEAT_TOOL_${run}`);
     await tile.getByRole('textbox').press('Enter');

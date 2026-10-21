@@ -8,8 +8,6 @@ test('retains an aborted attachment across reload and sends its bytes once on re
   const page = app.page;
   const input = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(input).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await input.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
   await input.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });

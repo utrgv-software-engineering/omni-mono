@@ -25,18 +25,14 @@ export type SeedState =
   | 'blank'
   | 'provider-switch'
   | 'codex-account'
-  | 'mcp-migration'
-  | 'planning'
+  | 'mcp-fixture'
+  | 'seeded-project'
   | 'no-workspace'
   | 'workspace-files'
   | 'workspace-git'
   | 'pooled-workspaces'
-  | 'pooled-devboxes'
   | 'lazy-ready'
-  | 'lazy-host-first-message'
-  | 'lazy-devbox-first-message'
-  | 'lazy-error-pending'
-  | 'lazy-error-empty';
+  | 'lazy-host-first-message';
 
 export type E2eCodexCredentialState = {
   exists: boolean;
@@ -46,17 +42,10 @@ export type E2eCodexCredentialState = {
 export type E2eMcpConfigState = {
   exists: boolean;
   mode: number | null;
-  ownedByOmniagents: boolean;
-  migratedServerPresent: boolean;
-  migratedServerUpdated: boolean;
-  migratedSecretPreserved: boolean;
   createdServerPresent: boolean;
   createdServerUpdated: boolean;
-  managedServerPresent: boolean;
 };
 
-export const E2E_MCP_SECRET = 'e2e-mcp-secret-never-render';
-export const E2E_MCP_SERVER_NAME = 'legacy-safe';
 export const E2E_MCP_CREATED_SERVER_NAME = 'e2e-created';
 export const E2E_MCP_FIXTURE_FILE = 'e2e-mcp-server.mjs';
 
@@ -153,8 +142,10 @@ input.on('line', (line) => {
 });
 `;
 
-const electronCodexCredentialPath = (state: E2eState): string =>
-  path.join(state.xdgConfigHome, 'omni_code', 'codex.json');
+/** The runtime's config dir (models.json, mcp.json, codex.json) in both modes. */
+const productConfigDir = (state: E2eState): string => path.join(state.xdgConfigHome, 'omni_code');
+
+const electronCodexCredentialPath = (state: E2eState): string => path.join(productConfigDir(state), 'codex.json');
 
 export function inspectElectronCodexCredential(state: E2eState): E2eCodexCredentialState {
   const credentialPath = electronCodexCredentialPath(state);
@@ -178,26 +169,16 @@ function nestedRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export function inspectElectronMcpConfig(state: E2eState): E2eMcpConfigState {
-  const mcpPath = path.join(state.xdgConfigHome, 'omni_code', 'mcp.json');
-  const launcherPath = path.join(state.xdgConfigHome, 'Omni Code', 'config.json');
-  const launcher = readJsonRecord(launcherPath);
+  const mcpPath = path.join(productConfigDir(state), 'mcp.json');
   const mcp = readJsonRecord(mcpPath);
   const servers = nestedRecord(mcp?.['mcpServers']) ?? {};
-  const migrated = nestedRecord(servers[E2E_MCP_SERVER_NAME]);
   const created = nestedRecord(servers[E2E_MCP_CREATED_SERVER_NAME]);
-  const migratedEnv = nestedRecord(migrated?.['env']);
-  const migratedArgs = Array.isArray(migrated?.['args']) ? migrated.args : [];
   const createdArgs = Array.isArray(created?.['args']) ? created.args : [];
   return {
     exists: mcp !== null,
     mode: existsSync(mcpPath) ? statSync(mcpPath).mode & 0o777 : null,
-    ownedByOmniagents: launcher?.['mcpConfigOwnership'] === 'omniagents',
-    migratedServerPresent: migrated !== null,
-    migratedServerUpdated: migratedArgs.includes('--updated'),
-    migratedSecretPreserved: migratedEnv?.['E2E_MCP_TOKEN'] === E2E_MCP_SECRET,
     createdServerPresent: created !== null,
     createdServerUpdated: createdArgs.includes('--created-v2'),
-    managedServerPresent: nestedRecord(servers['omni-projects']) !== null,
   };
 }
 
@@ -225,8 +206,6 @@ const workspaceFilesSeed = (workspaceDir: string) => ({
       projectId: 'proj_e2e_workspace_files',
       sessionId: 'session-e2e-workspace-files',
       workspaceDir,
-      profileName: 'host',
-      profileNameExplicit: true,
       createdAt: seededAt,
       activatedAt: seededAt,
     },
@@ -259,8 +238,6 @@ const workspaceGitSeed = (workspaceDir: string) => ({
       projectId: 'proj_e2e_workspace_git',
       sessionId: 'session-e2e-workspace-git',
       workspaceDir,
-      profileName: 'host',
-      profileNameExplicit: true,
       createdAt: seededAt,
       activatedAt: seededAt,
     },
@@ -272,19 +249,17 @@ const workspaceGitSeed = (workspaceDir: string) => ({
       sessionId: 'session-e2e-workspace-git',
       title: 'Canonical workspace thread',
       lastActiveAt: seededAt + 2,
-      profileName: 'host',
       projectId: 'proj_e2e_workspace_git',
     },
     {
       sessionId: 'session-e2e-retained-thread',
       title: 'Retained canonical thread',
       lastActiveAt: seededAt + 1,
-      profileName: 'host',
     },
   ],
 });
 
-const pooledWorkspacesSeed = (workspaceDir: string, profileName: 'host' | 'devbox' = 'host') => {
+const pooledWorkspacesSeed = (workspaceDir: string) => {
   const alphaDir = path.join(workspaceDir, 'alpha');
   const betaDir = path.join(workspaceDir, 'beta');
   return {
@@ -326,8 +301,6 @@ const pooledWorkspacesSeed = (workspaceDir: string, profileName: 'host' | 'devbo
         projectId: 'proj_e2e_pool_alpha',
         sessionId: 'session-e2e-pool-alpha',
         workspaceDir: alphaDir,
-        profileName,
-        profileNameExplicit: true,
         createdAt: seededAt,
         activatedAt: seededAt,
       },
@@ -336,8 +309,6 @@ const pooledWorkspacesSeed = (workspaceDir: string, profileName: 'host' | 'devbo
         projectId: 'proj_e2e_pool_beta',
         sessionId: 'session-e2e-pool-beta',
         workspaceDir: betaDir,
-        profileName,
-        profileNameExplicit: true,
         createdAt: seededAt + 1,
         activatedAt: seededAt + 1,
       },
@@ -399,7 +370,7 @@ function seedPooledWorkspaces(workspaceDir: string): void {
   writeFileSync(path.join(betaDir, 'identity.txt'), 'beta workspace\n', 'utf-8');
 }
 
-const planningSeed = {
+const seededProject = {
   projects: [
     {
       id: 'proj_e2e_seed',
@@ -409,92 +380,16 @@ const planningSeed = {
       createdAt: seededAt,
     },
   ],
-  milestones: [],
-  tickets: [],
-  pages: [
-    {
-      id: 'pg_e2e_seed_root',
-      projectId: 'proj_e2e_seed',
-      parentId: null,
-      title: 'Seeded Project',
-      sortOrder: 0,
-      isRoot: true,
-      kind: 'doc',
-      createdAt: seededAt,
-      updatedAt: seededAt,
-    },
-    {
-      id: 'pg_e2e_seed_spec',
-      projectId: 'proj_e2e_seed',
-      parentId: 'pg_e2e_seed_root',
-      title: 'Seeded Spec',
-      sortOrder: 1,
-      kind: 'doc',
-      createdAt: seededAt,
-      updatedAt: seededAt,
-    },
-  ],
-  inboxItems: [
-    {
-      id: 'inbox_e2e_seed',
-      title: 'Seeded inbox item',
-      status: 'new',
-      createdAt: seededAt,
-      updatedAt: seededAt,
-    },
-  ],
 };
 
 function launcherConfig(seedState: SeedState, workspaceDir: string) {
-  const errorProfile = 'missing-e2e-profile';
-  const lazyState = [
-    'no-workspace',
-    'lazy-ready',
-    'lazy-host-first-message',
-    'lazy-devbox-first-message',
-    'lazy-error-pending',
-    'lazy-error-empty',
-  ].includes(seedState);
-  const errorWithoutPending = seedState === 'lazy-error-empty';
-  const hostFirstMessage = seedState === 'lazy-host-first-message';
-  const devboxFirstMessage = seedState === 'lazy-devbox-first-message';
-  const firstMessage = hostFirstMessage || devboxFirstMessage;
-  const firstMessageTabId = hostFirstMessage ? 'chat-e2e-host-first-message' : 'chat-e2e-devbox-first-message';
+  const lazyState = ['no-workspace', 'lazy-ready', 'lazy-host-first-message'].includes(seedState);
+  const firstMessage = seedState === 'lazy-host-first-message';
+  const firstMessageTabId = 'chat-e2e-host-first-message';
   const isolatedRunId = path.basename(path.dirname(workspaceDir));
   return {
-    schemaVersion: 28,
     onboardingComplete: true,
-    defaultProfileName: seedState.startsWith('lazy-error') ? errorProfile : firstMessage ? 'devbox' : 'host',
-    modelsConfig:
-      seedState === 'provider-switch'
-        ? {
-            ...e2eModelsConfig(),
-            providers: {
-              ...e2eModelsConfig().providers,
-              second: {
-                type: 'openai-compatible',
-                base_url: 'http://127.0.0.1:9/v1',
-                api_key: 'test-only',
-                models: { 'second-model': { model: 'second-model', label: 'Second provider model' } },
-              },
-            },
-          }
-        : e2eModelsConfig(),
     envVars: '',
-    ...(seedState === 'mcp-migration'
-      ? {
-          mcpConfig: {
-            mcpServers: {
-              [E2E_MCP_SERVER_NAME]: {
-                type: 'stdio',
-                command: process.execPath,
-                args: [path.join(workspaceDir, E2E_MCP_FIXTURE_FILE)],
-                env: { E2E_MCP_TOKEN: E2E_MCP_SECRET },
-              },
-            },
-          },
-        }
-      : {}),
     ...(seedState !== 'no-workspace'
       ? {
           workspaceDir:
@@ -507,27 +402,59 @@ function launcherConfig(seedState: SeedState, workspaceDir: string) {
             {
               id: firstMessage ? firstMessageTabId : 'chat-e2e-lazy',
               projectId: null,
-              profileName: seedState.startsWith('lazy-error') ? errorProfile : firstMessage ? 'devbox' : 'host',
-              profileNameExplicit: seedState.startsWith('lazy-error') || devboxFirstMessage,
               createdAt: seededAt,
-              ...(firstMessage
-                ? {
-                    sessionId: `session-${isolatedRunId}`,
-                    snapshotRef: `snapshot-${isolatedRunId}`,
-                  }
-                : {}),
-              ...(errorWithoutPending ? { sessionId: 'session-e2e-lazy-error', activatedAt: seededAt } : {}),
+              ...(firstMessage ? { sessionId: `session-${isolatedRunId}` } : {}),
             },
           ],
           activeCodeTabId: firstMessage ? firstMessageTabId : 'chat-e2e-lazy',
         }
       : {}),
-    ...(seedState === 'planning' ? planningSeed : {}),
+    ...(seedState === 'seeded-project' ? seededProject : {}),
     ...(seedState === 'workspace-files' ? workspaceFilesSeed(workspaceDir) : {}),
     ...(seedState === 'workspace-git' ? workspaceGitSeed(workspaceDir) : {}),
     ...(seedState === 'pooled-workspaces' ? pooledWorkspacesSeed(workspaceDir) : {}),
-    ...(seedState === 'pooled-devboxes' ? pooledWorkspacesSeed(workspaceDir, 'devbox') : {}),
   };
+}
+
+function productModelsConfig(seedState: SeedState) {
+  const base = e2eModelsConfig();
+  if (seedState !== 'provider-switch') {
+    return base;
+  }
+  return {
+    ...base,
+    providers: {
+      ...base.providers,
+      second: {
+        type: 'openai-compatible',
+        base_url: 'http://127.0.0.1:9/v1',
+        api_key: 'test-only',
+        models: { 'second-model': { model: 'second-model', label: 'Second provider model' } },
+      },
+    },
+  };
+}
+
+/** Workspace fixtures plus the runtime-owned models.json, shared by both modes. */
+function seedCommonState(state: E2eState, seedState: SeedState): void {
+  if (seedState === 'mcp-fixture') {
+    seedMcpFixture(state.workspaceDir);
+  }
+  if (seedState === 'workspace-files') {
+    seedWorkspaceFiles(state.workspaceDir);
+  }
+  if (seedState === 'workspace-git') {
+    seedWorkspaceGit(state.workspaceDir);
+  }
+  if (seedState === 'pooled-workspaces') {
+    seedPooledWorkspaces(state.workspaceDir);
+  }
+  mkdirSync(productConfigDir(state), { recursive: true });
+  writeFileSync(
+    path.join(productConfigDir(state), 'models.json'),
+    `${JSON.stringify(productModelsConfig(seedState), null, 2)}\n`,
+    { encoding: 'utf-8', mode: 0o600 }
+  );
 }
 
 export function createE2eState(label: string): E2eState {
@@ -549,18 +476,7 @@ export function createE2eState(label: string): E2eState {
 }
 
 export function seedServerState(state: E2eState, seedState: SeedState): void {
-  if (seedState === 'mcp-migration') {
-    seedMcpFixture(state.workspaceDir);
-  }
-  if (seedState === 'workspace-files') {
-    seedWorkspaceFiles(state.workspaceDir);
-  }
-  if (seedState === 'workspace-git') {
-    seedWorkspaceGit(state.workspaceDir);
-  }
-  if (seedState === 'pooled-workspaces' || seedState === 'pooled-devboxes') {
-    seedPooledWorkspaces(state.workspaceDir);
-  }
+  seedCommonState(state, seedState);
   const configDir = path.join(state.homeDir, '.config', 'Omni Code');
   mkdirSync(configDir, { recursive: true });
   writeFileSync(
@@ -571,18 +487,7 @@ export function seedServerState(state: E2eState, seedState: SeedState): void {
 }
 
 export function seedElectronState(state: E2eState, seedState: SeedState): void {
-  if (seedState === 'mcp-migration') {
-    seedMcpFixture(state.workspaceDir);
-  }
-  if (seedState === 'workspace-files') {
-    seedWorkspaceFiles(state.workspaceDir);
-  }
-  if (seedState === 'workspace-git') {
-    seedWorkspaceGit(state.workspaceDir);
-  }
-  if (seedState === 'pooled-workspaces' || seedState === 'pooled-devboxes') {
-    seedPooledWorkspaces(state.workspaceDir);
-  }
+  seedCommonState(state, seedState);
   const configDir = path.join(state.xdgConfigHome, 'Omni Code');
   mkdirSync(configDir, { recursive: true });
   writeFileSync(
@@ -590,9 +495,7 @@ export function seedElectronState(state: E2eState, seedState: SeedState): void {
     `${JSON.stringify(launcherConfig(seedState, state.workspaceDir), null, 2)}\n`,
     'utf-8'
   );
-  const productConfigDir = path.join(state.xdgConfigHome, 'omni_code');
   if (seedState === 'codex-account') {
-    mkdirSync(productConfigDir, { recursive: true });
     const destination = electronCodexCredentialPath(state);
     writeFileSync(destination, `${JSON.stringify(syntheticCodexTokens, null, 2)}\n`, {
       encoding: 'utf-8',
@@ -604,7 +507,6 @@ export function seedElectronState(state: E2eState, seedState: SeedState): void {
 
   const codexPath = process.env.E2E_REAL_CODEX_FILE;
   if (codexPath) {
-    mkdirSync(productConfigDir, { recursive: true });
     const destination = electronCodexCredentialPath(state);
     copyFileSync(codexPath, destination);
     chmodSync(destination, 0o600);

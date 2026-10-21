@@ -58,8 +58,6 @@ test('rejects a legacy peer and sends the pending message once after a compatibl
   await page.reload();
   const input = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(input).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   const prompt = 'PROTOCOL_VERSION_PENDING_MESSAGE';
   await input.fill(prompt);
   await input.press('Enter');

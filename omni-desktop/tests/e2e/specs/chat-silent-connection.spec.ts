@@ -49,8 +49,6 @@ test('recovers silently stalled RPC sockets while preserving each visible tile d
   await page.reload();
   let input = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(input).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await input.fill('SILENT_CONNECTION_SETUP');
   await input.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
@@ -60,11 +58,6 @@ test('recovers silently stalled RPC sockets while preserving each visible tile d
   const second = page.locator('[data-deck-column]').nth(1);
   input = first.getByRole('textbox', { name: 'How can I help you today?' });
   const otherInput = second.getByRole('textbox', { name: 'How can I help you today?' });
-  const picker = second.getByRole('button', { name: 'Workstation', exact: true });
-  if (await picker.isVisible()) {
-    await picker.click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-  }
   await otherInput.fill('SILENT_SECOND_TILE');
   await otherInput.press('Enter');
   await expect(second.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { invokeApp } from 'tests/e2e/support/invoke';
 import { attachProofScreenshot } from 'tests/e2e/support/proof';
 
 type RunningStatus = {
@@ -15,23 +16,32 @@ type RunningStatus = {
 
 test.use({ seedState: 'pooled-workspaces' });
 
+type AgentStatus = {
+  type?: string;
+  data?: {
+    wsUrl?: string;
+    agentHostId?: string;
+    workspaceId?: string;
+    environmentId?: string;
+    authToken?: string;
+  };
+};
+
 async function processStatus(page: Page, processId: string): Promise<RunningStatus | { type: string }> {
-  return page.evaluate(async (id) => {
-    const status = await window.electron.ipcRenderer.invoke('agent-process:get-status', id);
-    if (status?.type !== 'running') {
-      return { type: status?.type ?? 'uninitialized' };
-    }
-    return {
-      type: status.type,
-      data: {
-        wsUrl: status.data.wsUrl,
-        agentHostId: status.data.agentHostId,
-        workspaceId: status.data.workspaceId,
-        environmentId: status.data.environmentId,
-        hasAuthToken: typeof status.data.authToken === 'string' && status.data.authToken.length > 0,
-      },
-    };
-  }, processId);
+  const status = await invokeApp<AgentStatus | null>(page, 'agent-process:get-status', processId);
+  if (status?.type !== 'running' || !status.data) {
+    return { type: status?.type ?? 'uninitialized' };
+  }
+  return {
+    type: 'running',
+    data: {
+      wsUrl: status.data.wsUrl,
+      agentHostId: status.data.agentHostId,
+      workspaceId: status.data.workspaceId,
+      environmentId: status.data.environmentId,
+      hasAuthToken: typeof status.data.authToken === 'string' && status.data.authToken.length > 0,
+    },
+  };
 }
 
 async function openIdentityFile(page: Page, sessionName: string, expectedIdentity: string): Promise<void> {

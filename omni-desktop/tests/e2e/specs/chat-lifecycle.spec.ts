@@ -45,8 +45,6 @@ test('reconciles an accepted send after its RPC reply is lost', async ({ app }, 
   const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(composer).toBeVisible({ timeout: 90_000 });
   await dropAcceptedReply(page);
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
   await composer.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });
@@ -71,8 +69,6 @@ test('delivers an attachment when replying to an agent question', async ({ app }
   const page = app.page;
   const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(composer).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('ASK_WITH_IMAGE');
   await composer.press('Enter');
   await expect(page.getByText('Please attach the requested image', { exact: true }).last()).toBeVisible({
@@ -106,8 +102,6 @@ test('restores unsent text and attachment bytes after a renderer restart', async
   const page = app.page;
   const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(composer).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
   await composer.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });
@@ -153,8 +147,6 @@ test('keeps an in-flight reply and draft with their conversation while switching
   const page = app.page;
   const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(composer).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('WAIT_FOR_SESSION_A');
   await composer.press('Enter');
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible({ timeout: 240_000 });
@@ -166,11 +158,6 @@ test('keeps an in-flight reply and draft with their conversation while switching
   }
   await expect(focusLayout).toHaveAttribute('aria-checked', 'true');
   await expect(composer).toHaveValue('');
-  const workstation = page.getByRole('button', { name: 'Workstation', exact: true });
-  if (await workstation.isVisible()) {
-    await workstation.click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-  }
   await composer.fill('PROMPT_FOR_SESSION_B');
   await composer.press('Enter');
   await expect(page.getByText('SESSION_B_REPLY', { exact: true }).last()).toBeVisible({ timeout: 120_000 });
@@ -198,8 +185,6 @@ test('keeps the chosen model and a follow-up draft across first-message startup'
   await page.getByRole('menuitemradio', { name: /GPT 5\.2 Mini E2E/ }).click();
   await expect(model).toContainText('GPT 5.2 Mini E2E');
   await attachProofPng(testInfo, 'model selectable before first message', await app.captureScreenshot());
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
   await composer.press('Enter');
   await expect(composer).toHaveValue('');
@@ -219,8 +204,6 @@ test('delivers an image queued during an active response', async ({ app }, testI
   const page = app.page;
   const composer = page.getByPlaceholder('How can I help you today?');
   await expect(composer).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await composer.fill('WAIT_FOR_QUEUED_IMAGE');
   await composer.press('Enter');
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible({ timeout: 240_000 });

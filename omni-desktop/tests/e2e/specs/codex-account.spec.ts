@@ -4,7 +4,7 @@ import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'codex-account' });
 
-test.describe('ChatGPT account ownership cutover', () => {
+test.describe('ChatGPT account', () => {
   test('keeps a canonical logout durable across an Electron restart', async ({ app, mode }, testInfo) => {
     test.skip(mode !== 'electron-local', 'Host-scoped ChatGPT credentials belong to the Electron-local runtime');
     test.setTimeout(300_000);

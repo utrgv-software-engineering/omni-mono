@@ -13,8 +13,6 @@ test('retrieves omitted text from saved tool output after restart', async ({ app
   );
   let page = app.page;
   await expect(page.getByPlaceholder('How can I help you today?')).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await page
     .getByPlaceholder('How can I help you today?')
     .fill(`RETAINED_OUTPUT_PROOF ${path.join(app.workspaceDir, 'oversized-output.txt')}`);

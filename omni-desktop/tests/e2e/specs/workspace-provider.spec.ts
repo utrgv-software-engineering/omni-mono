@@ -12,9 +12,7 @@ test('changes the workspace provider only after confirmation and persists it', a
   await page.getByRole('button', { name: 'AI', exact: true }).click();
   const provider = page.getByLabel('Provider', { exact: true });
   await expect(provider).toHaveValue('sandbox');
-  await expect(
-    page.getByText('All projects, residents, subagents, reviews, and recaps use this provider.')
-  ).toBeVisible();
+  await expect(page.getByText('All chats, projects, subagents, reviews, and recaps use this provider.')).toBeVisible();
   await expect(page.getByLabel('Default model').locator('option[value^="codex/"]')).toHaveCount(0);
   await expect(provider.locator('option[value="second"]')).toHaveCount(1, { timeout: 120_000 });
   await provider.selectOption('second');

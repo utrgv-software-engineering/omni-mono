@@ -65,11 +65,6 @@ test('large persisted histories stay isolated while scrolling, streaming and swi
       await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
     }
     const column = page.locator('[data-deck-column]').nth(i);
-    const picker = column.getByRole('button', { name: 'Workstation', exact: true });
-    if (await picker.isVisible()) {
-      await picker.click();
-      await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-    }
     await inputs.nth(i).fill(`LARGE_HISTORY_${i}`);
     await inputs.nth(i).press('Enter');
     await expect(column.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });

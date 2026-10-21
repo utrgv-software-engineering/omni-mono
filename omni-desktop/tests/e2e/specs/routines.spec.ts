@@ -1,7 +1,7 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
 import { openRoutines } from 'tests/e2e/support/app';
 
-test.use({ seedState: 'planning' });
+test.use({ seedState: 'seeded-project' });
 
 test.describe('routines', () => {
   test('creates, edits, pauses, runs, opens, and deletes a desktop scheduled task', async ({ app }) => {
@@ -20,7 +20,6 @@ test.describe('routines', () => {
       ).toBeVisible();
       await expect(app.page.getByText(/auto[- ]approve all/i)).toHaveCount(0);
       await app.page.getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Seeded Project' });
-      await expect(app.page.getByRole('button', { name: /This computer/ })).toBeVisible();
       await app.page.getByRole('button', { name: 'Create routine' }).click();
       await expect(app.page.getByText('E2E morning review').first()).toBeVisible();
       await expect(app.page.getByText(/Daily at 09:00/).first()).toBeVisible();
@@ -36,7 +35,6 @@ test.describe('routines', () => {
         app.page.getByText('No MCP server and tool pairs are always allowed for this routine.')
       ).toBeVisible();
       await expect(app.page.locator('div').filter({ hasText: /^Seeded Project$/ })).toBeVisible();
-      await expect(app.page.getByText('This computer (no sandbox)').first()).toBeVisible();
     });
 
     await test.step('edit routine', async () => {

@@ -45,8 +45,6 @@ test('a competing approval reply and remote archive converge in both windows', a
   test.setTimeout(180_000);
   const a = app.page;
   await expect(input(a)).toBeVisible({ timeout: 90_000 });
-  await a.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await a.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await input(a).fill('TILE_APPROVAL_C_SHARED');
   await input(a).press('Enter');
   await expect(a.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
@@ -92,7 +90,6 @@ test('a competing approval reply and remote archive converge in both windows', a
     await a.getByRole('button', { name: 'Session menu', exact: true }).click();
     await a.getByRole('menuitem', { name: 'Archive session', exact: true }).click();
     await expect(b.getByRole('log').filter({ hasText: 'TILE_APPROVAL_C_SHARED' })).toHaveCount(0);
-    await expect.poll(() => app.inspectChatCleanup().jobs.length).toBe(0);
     await attachProofPng(info, 'remote archive retires second window', await b.screenshot());
   } finally {
     await b.close();
@@ -104,8 +101,6 @@ test('two windows converge on model and reviewer settings for the same live sess
   test.setTimeout(180_000);
   const a = app.page;
   await expect(input(a)).toBeVisible({ timeout: 90_000 });
-  await a.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await a.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await input(a).fill('SHARED_SESSION_SETTINGS');
   await input(a).press('Enter');
   await expect(a.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
