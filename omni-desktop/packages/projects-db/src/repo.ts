@@ -27,10 +27,9 @@ import type {
  * cross-process notification.
  *
  * This is the sync core: the Electron desktop app, the MCP server, and the
- * one-time JSON→SQLite migration all use it directly. The launcher's
- * backend-agnostic data layer talks to it through `SqliteProjectsRepo`
- * (sqlite-repo.ts), which adapts these sync methods to the async
- * {@link IProjectsRepo} contract that Postgres also satisfies.
+ * one-time JSON→SQLite migration all use it directly. The launcher's async
+ * data layer talks to it through `SqliteProjectsRepo` (sqlite-repo.ts), which
+ * adapts these sync methods to the async {@link IProjectsRepo} contract.
  */
 export class ProjectsRepo {
   private stmts: ReturnType<typeof prepareStatements>;

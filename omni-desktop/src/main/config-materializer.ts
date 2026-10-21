@@ -1,179 +1,44 @@
 /**
- * Materialize the agent's on-disk config from the (per-tenant, in cloud) store.
+ * Materialize the agent's on-disk config from the store.
  *
- * Cloud settings own `models.json`; local callers preserve the shared model
- * file with `writeModels: false`. Other settings remain store-backed; `omni serve` still reads them as files from its config dir
- * (resolved via `XDG_CONFIG_HOME`). This module bridges the two.
- *
- * Two modes:
- *   - `'plaintext'` (local): write owned configs verbatim. Local models are
- *     read and written directly by local-model-config.ts, not rematerialized.
- *   - `'refs'` (cloud): rewrite every secret field to a stable `${OMNI_SECRET_*}`
- *     reference and return the real values as an env map. The launcher injects
- *     that map into the agent process env (`getExtraEnv`), and the agent's
- *     loaders (`_expand_env_vars`) resolve the refs at load — so a provider key
- *     or MCP secret never lands on the shared, ephemeral container disk.
- *
- * `collectSecretEnv` exposes the same secret map without writing files, for the
- * spawn-time env injection. It and `materializeAgentConfig` share one walk so
- * the on-disk refs and the injected env keys can never drift.
+ * MCP servers and network policy are store-backed, but `omni serve` reads them
+ * as files from its config dir (resolved via `XDG_CONFIG_HOME`). This module
+ * bridges the two. Models are not materialized here: local-model-config.ts
+ * reads and writes the shared `models.json` directly.
  */
-import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { containsEnvRef } from '@/lib/agent-config';
 import { type ManagedMcpEntry, mergeManagedMcpEntry } from '@/shared/mcp-entry';
-import type { McpConfig, ModelsConfig, NetworkConfig } from '@/shared/types';
-
-export type MaterializeMode = 'plaintext' | 'refs';
-
-/** `{ envVarName: plaintextSecret }` — spread into the agent process env. */
-export type SecretEnv = Record<string, string>;
-
-/**
- * Stable env-var name for a secret, derived from its JSON path (not its value)
- * so the same field always maps to the same ref: re-materializing after an
- * unrelated edit yields an identical file (no churn), and rotating a value
- * keeps the ref. The name matches `[A-Z0-9_]+`, safe for the expansion regex.
- */
-function secretRefName(scope: 'MODELS' | 'MCP', jsonPath: string): string {
-  const hash = createHash('sha256').update(jsonPath).digest('hex').slice(0, 16);
-  return `OMNI_SECRET_${scope}_${hash}`;
-}
-
-/** A value is a candidate secret when it's a non-empty string with no user `${ref}`. */
-function isLiteralSecret(value: unknown): value is string {
-  return typeof value === 'string' && value !== '' && !containsEnvRef(value);
-}
-
-/**
- * Rewrite `providers[*].api_key` to refs.
- * These are the only credential-bearing fields, and the only ones omni-code
- * runs through `_expand_env_vars` — a ref anywhere else would not resolve.
- */
-function extractModelSecrets(models: ModelsConfig): { sanitized: ModelsConfig; secrets: SecretEnv } {
-  const secrets: SecretEnv = {};
-  const providers: ModelsConfig['providers'] = {};
-
-  for (const [provName, prov] of Object.entries(models.providers)) {
-    const nextProvider = { ...prov };
-    if (isLiteralSecret(prov.api_key)) {
-      const ref = secretRefName('MODELS', `providers.${provName}.api_key`);
-      secrets[ref] = prov.api_key;
-      nextProvider.api_key = `\${${ref}}`;
-    }
-
-    // Legacy invalid models remain invalid so the runtime refuses them. Keep
-    // their secrets out of cloud files while Settings offers explicit repair.
-    nextProvider.models = Object.fromEntries(
-      Object.entries(prov.models).map(([id, model]) => {
-        const legacy = model as typeof model & { api_key?: string };
-        return [id, legacy.api_key ? { ...model, api_key: '__PROVIDER_CONFIGURATION_REQUIRED__' } : model];
-      })
-    );
-    providers[provName] = nextProvider;
-  }
-
-  return { sanitized: { ...models, providers }, secrets };
-}
-
-/**
- * Rewrite every value under `mcpServers[*].env` and `mcpServers[*].headers` to
- * refs. omniagents expands the whole server entry recursively, so rewriting all
- * env/header values is correct — and a "looks secret" heuristic would be unsafe
- * (a custom header or proxy URL can be a credential). The managed `omni-projects`
- * entry's `${OMNI_RUNTIME_TOKEN}` header is already a ref, so it's left as-is.
- */
-function extractMcpSecrets(mcp: McpConfig): { sanitized: McpConfig; secrets: SecretEnv } {
-  const secrets: SecretEnv = {};
-  const mcpServers: McpConfig['mcpServers'] = {};
-
-  for (const [name, server] of Object.entries(mcp.mcpServers)) {
-    const next = { ...server };
-    for (const field of ['env', 'headers'] as const) {
-      const map = server[field];
-      if (!map) {
-        continue;
-      }
-      const nextMap: Record<string, string> = {};
-      for (const [key, value] of Object.entries(map)) {
-        if (isLiteralSecret(value)) {
-          const ref = secretRefName('MCP', `mcpServers.${name}.${field}.${key}`);
-          secrets[ref] = value;
-          nextMap[key] = `\${${ref}}`;
-        } else {
-          nextMap[key] = value;
-        }
-      }
-      next[field] = nextMap;
-    }
-    mcpServers[name] = next;
-  }
-
-  return { sanitized: { ...mcp, mcpServers }, secrets };
-}
-
-/**
- * The secret env map for a tenant, without touching disk — used by the agent
- * spawn's `getExtraEnv`. Operates on the user's own configs; the managed MCP
- * entry carries no literal secret (only the `${OMNI_RUNTIME_TOKEN}` ref), so it
- * contributes nothing here and is intentionally omitted.
- */
-export function collectSecretEnv(models: ModelsConfig, mcp: McpConfig): SecretEnv {
-  return {
-    ...extractModelSecrets(models).secrets,
-    ...extractMcpSecrets(mcp).secrets,
-  };
-}
+import type { McpConfig, NetworkConfig } from '@/shared/types';
 
 function writeJson(path: string, data: unknown): void {
-  // 0600 — matches omni-code's models.json permissions; in plaintext mode the
-  // file holds real secrets, so keep it owner-only on every config.
+  // 0600 — the files can hold real secrets (MCP headers/env), so keep them
+  // owner-only.
   writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
 }
 
 /**
- * Write the three agent config files into `configDir`, merging the managed
- * `omni-projects` MCP entry on top of the tenant's own servers. Returns the
- * secret env map (empty in `'plaintext'` mode). `.env` is deliberately NOT
- * written here — see the callers: desktop writes a real `.env`, cloud injects
- * it straight into the agent env.
+ * Write `mcp.json` and `network.json` into `configDir`, merging the managed
+ * `omni-projects` MCP entry on top of the user's own servers. `.env` is
+ * deliberately NOT written here — the callers write it next to these files.
  */
 export function materializeAgentConfig(opts: {
   configDir: string;
-  models: ModelsConfig;
   mcp: McpConfig;
   network: NetworkConfig;
-  mode: MaterializeMode;
   managedMcpEntry: ManagedMcpEntry;
   /** Local Electron relinquishes mcp.json after canonical ownership transfer.
-   * Other configs remain Desktop-owned and continue to materialize. */
+   * The network config remains Desktop-owned and continues to materialize. */
   writeMcp?: boolean;
-  writeModels?: boolean;
-}): { secretEnv: SecretEnv } {
-  const { configDir, models, mcp, network, mode, managedMcpEntry, writeMcp = true } = opts;
+}): void {
+  const { configDir, mcp, network, managedMcpEntry, writeMcp = true } = opts;
   mkdirSync(configDir, { recursive: true });
-
-  const mergedMcp: McpConfig = { ...mcp, mcpServers: mergeManagedMcpEntry(mcp.mcpServers, managedMcpEntry) };
-
-  if (mode === 'plaintext') {
-    if (opts.writeModels !== false) {
-      writeJson(join(configDir, 'models.json'), models);
-    }
-    if (writeMcp) {
-      writeJson(join(configDir, 'mcp.json'), mergedMcp);
-    }
-    writeJson(join(configDir, 'network.json'), network);
-    return { secretEnv: {} };
-  }
-
-  const modelsOut = extractModelSecrets(models);
-  const mcpOut = extractMcpSecrets(mergedMcp);
-  writeJson(join(configDir, 'models.json'), modelsOut.sanitized);
   if (writeMcp) {
-    writeJson(join(configDir, 'mcp.json'), mcpOut.sanitized);
+    writeJson(join(configDir, 'mcp.json'), {
+      ...mcp,
+      mcpServers: mergeManagedMcpEntry(mcp.mcpServers, managedMcpEntry),
+    });
   }
   writeJson(join(configDir, 'network.json'), network);
-  return { secretEnv: { ...modelsOut.secrets, ...mcpOut.secrets } };
 }

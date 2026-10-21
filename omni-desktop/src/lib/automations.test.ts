@@ -36,7 +36,6 @@ describe('matchesChannelMessage', () => {
 
   it('matches human posts in the trigger channel only', () => {
     expect(matchesChannelMessage(trigger, { channel: 'team', from: 'user', text: 'hi' })).toBe(true);
-    expect(matchesChannelMessage(trigger, { channel: 'team', from: 'human:alice', text: 'hi' })).toBe(true);
     expect(matchesChannelMessage(trigger, { channel: 'other', from: 'user', text: 'hi' })).toBe(false);
   });
 

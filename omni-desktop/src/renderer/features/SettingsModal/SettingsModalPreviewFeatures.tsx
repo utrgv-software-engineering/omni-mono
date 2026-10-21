@@ -1,30 +1,20 @@
 import { useStore } from '@nanostores/react';
 import { Eye } from 'lucide-react';
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback } from 'react';
 
 import { Checkbox } from '@/renderer/ds/ui/checkbox';
 import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 
 export const SettingsModalPreviewFeatures = memo(() => {
   const { previewFeatures } = useStore(persistedStoreApi.$atom);
-  const [isEnterprise, setIsEnterprise] = useState(false);
-  useEffect(() => {
-    emitter.invoke('platform:is-enterprise').then(setIsEnterprise);
+  const onChange = useCallback((checked: boolean) => {
+    persistedStoreApi.setKey('previewFeatures', checked);
+    // GA users (no preview features) fall back to the no-isolation `host` profile.
+    if (!checked) {
+      persistedStoreApi.setKey('defaultProfileName', 'host');
+    }
   }, []);
-  const onChange = useCallback(
-    (checked: boolean) => {
-      persistedStoreApi.setKey('previewFeatures', checked);
-      // GA users (no preview features, no enterprise) fall back to the
-      // no-isolation `host` profile. Enterprise stays on whatever profile
-      // the user selected since the platform path is its own surface.
-      if (!checked && !isEnterprise) {
-        persistedStoreApi.setKey('defaultProfileName', 'host');
-      }
-    },
-    [isEnterprise]
-  );
 
   return (
     <div className="flex flex-col gap-2">

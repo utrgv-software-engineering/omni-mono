@@ -317,13 +317,11 @@ export function loginWithBrowser(openUrl: (url: string) => void): Promise<CodexS
  * the `authorization_code` at `/oauth/token` for an access/refresh pair and
  * persist them where the runtime reads them.
  *
- * Use this everywhere a browser PKCE flow is impractical (server mode, cloud
- * deployment). 15-minute timeout, mirroring the Python default.
+ * Use this everywhere a browser PKCE flow is impractical (server mode). 15-minute timeout, mirroring the Python default.
  */
 export async function loginWithDeviceFlow(opts: {
   onCode: (code: CodexDeviceCode) => void;
-  /** Custom persistence. Defaults to writing the shared file (Electron + local
-   *  SQLite server). Cloud server passes a callback that writes to PgSecretStore. */
+  /** Custom persistence. Defaults to writing the shared `codex.json`. */
   save?: (tokens: CodexTokens) => void | Promise<void>;
   signal?: AbortSignal;
 }): Promise<CodexStatus> {

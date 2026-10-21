@@ -2,7 +2,7 @@
  * Sandboxes → Health: is the substrate able to run sandboxes right now?
  *
  * - Docker probe (`sandbox:substrate-status`) — runs backend-side, so on a
- *   WSL/cloud-linked client it reports the daemon's Docker, not Windows'.
+ *   WSL-linked client it reports the daemon's Docker, not Windows'.
  * - WSL daemon row (Windows, WSL-linked only) — fed by polling `wsl:status`
  *   via `localEmitter`; the daemon manager lives in local Electron main.
  *   Docker bootstrap (`wsl:install-docker` / `wsl:start-docker`) is also
@@ -11,8 +11,6 @@
  *   `sandbox:image-status`, with pull + prune-dangling actions.
  * - Read-only backend-link summary. Link management stays in Settings
  *   (sandboxes-tab-plan.md Decision 5) — this only deep-links there.
- * - `MachinesCard` — computer-as-sandbox targets live here (Decision 6).
- *   The card self-hides unless cloud-linked, so it mounts unconditionally.
  */
 
 import { useStore } from '@nanostores/react';
@@ -40,17 +38,8 @@ import {
   $substrateStatus,
   refreshSandboxSubstrate,
 } from '@/renderer/features/Sandboxes/state';
-import { MachinesCard } from '@/renderer/features/SettingsModal/MachinesCard';
 import { openSettingsTab } from '@/renderer/features/SettingsModal/settings-nav';
-import {
-  emitter,
-  isCloudLinked,
-  isElectron,
-  isServerLinked,
-  isWslLinked,
-  localEmitter,
-  serverOrigin,
-} from '@/renderer/services/ipc';
+import { emitter, isElectron, isServerLinked, isWslLinked, localEmitter, serverOrigin } from '@/renderer/services/ipc';
 import type { SandboxImageStatus, SandboxSubstrateStatus, WslBackendStatus } from '@/shared/types';
 
 type StatusLine = { text: string; tone: 'ok' | 'warn' | 'error' | 'muted' };
@@ -105,9 +94,6 @@ const wslStatusLine = (status: WslBackendStatus | null): StatusLine => {
 
 /** One line describing where the backend runs — the read-only link summary. */
 const backendSummary = (): string => {
-  if (isCloudLinked) {
-    return `Connected to a cloud launcher at ${serverOrigin()}`;
-  }
   if (isWslLinked) {
     return `Backend running in WSL at ${serverOrigin()}`;
   }
@@ -414,8 +400,6 @@ export const HealthPane = memo(() => {
           </div>
         </CardContent>
       </Card>
-
-      <MachinesCard />
     </div>
   );
 });

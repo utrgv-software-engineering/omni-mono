@@ -112,10 +112,6 @@ vi.mock('@/main/agent-host-control-client', () => ({
 
 vi.mock('shell-env', () => ({ shellEnvSync: () => ({}) }));
 vi.mock('@/lib/pty-utils', () => ({ DEFAULT_ENV: {} }));
-vi.mock('@/main/workspace-sync', () => ({
-  uploadWorkspace: vi.fn(async () => {}),
-  downloadWorkspace: vi.fn(async () => {}),
-}));
 vi.mock('@/lib/simple-logger', () => ({
   SimpleLogger: class {
     constructor(_handler: unknown) {}
@@ -146,7 +142,6 @@ import { EventEmitter } from 'node:events';
 import path from 'node:path';
 
 import { AgentProcess, type AgentProcessStartArg } from '@/main/agent-process';
-import type { IComputeClient, PlatformSession } from '@/main/platform-client';
 import type { AgentProcessStatus, WithTimestamp } from '@/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -208,7 +203,6 @@ const makeHarness = (
   });
 
   const proc = new AgentProcess({
-    mode: 'serve',
     ipcRawOutput: () => {},
     onStatusChange: (s) => statuses.push(s),
     fetchFn: fetchFn as unknown as typeof globalThis.fetch,
@@ -858,84 +852,5 @@ describe('AgentProcess (serve mode)', () => {
     });
     expect(isDirSpy).not.toHaveBeenCalled();
     expect(spawnCallCount()).toBe(1);
-  });
-});
-
-describe('AgentProcess (platform compute mode)', () => {
-  it('publishes complete routed AgentHost data with only the ordinary consumer credential', async () => {
-    const ready: PlatformSession = {
-      sessionId: 'platform-session-1',
-      status: 'active',
-      agentHostId: 'remote-agent-host-1',
-      workspaceId: 'remote-workspace-1',
-      environmentId: 'remote-environment-1',
-      environmentGeneration: 7,
-      workspaceRoot: '/workspace/project',
-      defaultCwd: '/workspace/project',
-      services: { code_server: 'https://code.example.test' },
-      consumerCredential: { token: 'ordinary-consumer-token', scope: 'consumer', kind: 'ordinary' },
-      websocketUrl: 'wss://runtime.example.test/ws',
-      containerId: 'remote-container-1',
-    };
-    const computeClient: IComputeClient = {
-      confirmsReadiness: true,
-      startSession: vi.fn(
-        async (): Promise<PlatformSession> => ({ ...ready, status: 'pending', websocketUrl: undefined })
-      ),
-      waitForSession: vi.fn(async () => ready),
-      stopSession: vi.fn(async () => {}),
-      finalizeWorkspace: vi.fn(async () => ({ downloadSasUrl: 'https://download.example.test' })),
-    };
-    const statuses: WithTimestamp<AgentProcessStatus>[] = [];
-    const proc = new AgentProcess({
-      mode: 'compute',
-      computeClient,
-      ipcRawOutput: () => {},
-      onStatusChange: (status) => statuses.push(status),
-    });
-
-    await proc.start({ profileName: 'platform', sources: [], sessionId: 'conversation-1' });
-
-    const running = statuses.at(-1);
-    expect(running).toMatchObject({
-      type: 'running',
-      data: {
-        uiUrl: 'https://runtime.example.test',
-        wsUrl: 'wss://runtime.example.test/ws',
-        agentHostId: 'remote-agent-host-1',
-        workspaceId: 'remote-workspace-1',
-        environmentId: 'remote-environment-1',
-        environmentGeneration: 7,
-        workspaceRoot: '/workspace/project',
-        defaultCwd: '/workspace/project',
-        services: { code_server: 'https://code.example.test' },
-        authToken: 'ordinary-consumer-token',
-        containerId: 'remote-container-1',
-      },
-    });
-    if (running?.type === 'running') {
-      expect(running.data.uiUrl).not.toContain('token');
-      expect(JSON.stringify(running.data)).not.toContain('admin');
-    }
-    await proc.bindSession('agent:remote', 'resident-remote-2026-09-13');
-    expect(hoisted.controlCalls.at(-1)).toMatchObject({
-      method: 'agent_host_bind_thread',
-      params: {
-        thread_id: 'resident-remote-2026-09-13',
-        binding: {
-          workspace_id: 'remote-workspace-1',
-          environment_selection: {
-            mode: 'existing',
-            environment_id: 'remote-environment-1',
-            environment_generation: 7,
-          },
-        },
-      },
-    });
-    vi.mocked(computeClient.stopSession).mockRejectedValueOnce(new Error('remote stop unavailable'));
-    await expect(proc.stop()).rejects.toThrow('remote stop unavailable');
-    await expect(proc.stop()).resolves.toMatchObject({ scope: 'compute', shutdown: 'graceful' });
-    expect(computeClient.stopSession).toHaveBeenNthCalledWith(1, 'platform-session-1');
-    expect(computeClient.stopSession).toHaveBeenNthCalledWith(2, 'platform-session-1');
   });
 });

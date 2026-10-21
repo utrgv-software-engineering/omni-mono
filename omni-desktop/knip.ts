@@ -27,7 +27,6 @@ const config = {
   },
   ignoreDependencies: [
     // Optional/runtime provider packages and UI dependencies kept for feature-gated code paths.
-    '@azure/storage-blob',
     '@fastify/http-proxy',
     '@radix-ui/react-collapsible',
     '@radix-ui/react-dropdown-menu',
@@ -49,8 +48,6 @@ const config = {
   ignoreBinaries: [
     // This is included with @electron/forge
     'electron-rebuild',
-    // npm scripts intentionally execute the repo-local helper by path.
-    'scripts/build-launcher-image.sh',
   ],
   ignore: [
     'forge.*.ts',
@@ -86,7 +83,6 @@ const config = {
     'src/renderer/omniagents-ui/components/ui/textarea.tsx',
     'src/renderer/omniagents-ui/shared/MarkdownMessage.tsx',
     'src/server/electron-store-shim.ts',
-    'src/server/pg-settings-store.ts',
   ],
   paths: {
     'assets/*': ['assets/*'],

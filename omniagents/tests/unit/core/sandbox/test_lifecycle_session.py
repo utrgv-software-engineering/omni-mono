@@ -132,9 +132,8 @@ def test_mixin_wraps_in_lifecycle_session():
 
 def test_all_extended_clients_carry_the_mixin():
     from omniagents.core.sandbox.docker_extended import ExtendedDockerSandboxClient
-    from omniagents.core.sandbox.host_bridge import HostBridgeSandboxClient
 
-    clients: list[type] = [ExtendedDockerSandboxClient, HostBridgeSandboxClient]
+    clients: list[type] = [ExtendedDockerSandboxClient]
     if sys.platform != "win32":  # the unix_local sandbox is POSIX-only
         from omniagents.core.sandbox.unix_local_extended import (
             ExtendedUnixLocalSandboxClient,

@@ -1283,7 +1283,7 @@ class McpServerManager:
         self.oauth.forget(server_name)
         return {"ok": True, "server_name": server_name}
 
-    # -- probe (management-plane discovery) ------------------------------
+    # -- probe (out-of-session discovery) --------------------------------
 
     async def probe_server(self, server_name: str) -> Dict[str, Any]:
         """Connect once out-of-session and capture the full snapshot.

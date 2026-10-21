@@ -18,7 +18,6 @@ import {
   DropdownMenuTrigger,
 } from '@/renderer/ds/ui/dropdown-menu';
 import { Input } from '@/renderer/ds/ui/input';
-import { $currentPrincipal } from '@/renderer/features/Teams/state';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { DEFAULT_PIPELINE } from '@/shared/pipeline-defaults';
 import { isActivePhase } from '@/shared/ticket-phase';
@@ -102,7 +101,6 @@ TaskRow.displayName = 'TaskRow';
 export const WorkAllView = memo(() => {
   const store = useStore(persistedStoreApi.$atom);
   const assigneeFilter = useStore($assigneeFilter);
-  const currentPrincipal = useStore($currentPrincipal);
 
   const [query, setQuery] = useState('');
   const [projectFilter, setProjectFilter] = useState<ProjectId | 'all'>('all');
@@ -135,11 +133,7 @@ export const WorkAllView = memo(() => {
       if (projectFilter !== 'all' && t.projectId !== projectFilter) {
         return false;
       }
-      if (assigneeFilter === 'me') {
-        if (!currentPrincipal || t.assignee !== currentPrincipal) {
-          return false;
-        }
-      } else if (assigneeFilter === 'unassigned') {
+      if (assigneeFilter === 'unassigned') {
         if (t.assignee) {
           return false;
         }
@@ -151,7 +145,7 @@ export const WorkAllView = memo(() => {
       }
       return true;
     });
-  }, [store.tickets, query, projectFilter, assigneeFilter, currentPrincipal]);
+  }, [store.tickets, query, projectFilter, assigneeFilter]);
 
   const grouped = useMemo(() => groupTasks(filtered, pipelineFor), [filtered, pipelineFor]);
 

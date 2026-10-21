@@ -16,7 +16,7 @@ import { WebSocket } from 'ws';
 import type { ProcessManager } from '@/main/process-manager';
 import { ResidentAgentManager } from '@/main/resident-agent-manager';
 import { registerChatWsRoute } from '@/server/chat-ws';
-import { signRuntimeToken } from '@/server/runtime-token';
+import { signWsToken } from '@/server/ws-token';
 import { CHAT_METHOD_NAMES, CHAT_NOTIFICATION_NAMES, type StoreData } from '@/shared/types';
 
 const SECRET = 'test-secret';
@@ -50,10 +50,8 @@ beforeEach(async () => {
   await fastify.register(fastifyWebsocket);
   await fastify.register(async (f) => {
     registerChatWsRoute(f, {
-      runtimeTokenSecret: SECRET,
-      getResidentManager: () => manager,
-      teamsEnabled: false,
-      principalClaims: () => ({}),
+      wsTokenSecret: SECRET,
+      residentManager: manager,
       bridgeKeys: [BRIDGE_KEY],
     });
   });
@@ -79,8 +77,7 @@ afterEach(async () => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-const mintToken = (): string =>
-  signRuntimeToken(SECRET, { purpose: 'launcher', tenantId: 'local', principalId: 'local', sessionId: 's1' }, 300);
+const mintToken = (): string => signWsToken(SECRET, { sessionId: 's1' }, 300);
 
 type Rpc = {
   ws: WebSocket;
@@ -147,11 +144,6 @@ const closedWith = (token: string): Promise<number> => {
 };
 
 describe('auth', () => {
-  it('does not promote a sandbox runtime credential into a human chat connection', async () => {
-    expect(
-      await closedWith(signRuntimeToken(SECRET, { tenantId: 'local', principalId: 'local', sessionId: 'runtime' }))
-    ).toBe(4401);
-  });
   it('closes 4401 without a token or with a forged one', async () => {
     expect(await closedWith('')).toBe(4401);
     expect(await closedWith('not-a-real-token')).toBe(4401);
@@ -159,7 +151,7 @@ describe('auth', () => {
 });
 
 describe('JSON-RPC surface', () => {
-  it('answers hello with the collective-user identity in single-user mode', async () => {
+  it('answers hello with the collective-user identity', async () => {
     const rpc = await connect(mintToken());
     expect(await rpc.call('chat.hello')).toEqual({
       protocol: 'chat-v1',

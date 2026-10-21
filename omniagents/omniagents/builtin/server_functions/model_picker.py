@@ -446,12 +446,6 @@ async def list_model_providers() -> dict:
             "current": None,
             "error": "Workspace provider selection is not enabled.",
         }
-    if store._governed():
-        return {
-            "providers": [],
-            "current": store.selected_provider(),
-            "error": "Provider selection is managed by your organization.",
-        }
     default = store.get_default_model_name()
     providers = {}
     for model in store.list_text_models():

@@ -1,16 +1,14 @@
-"""Reserved ``<prog> serve`` / ``<prog> sandbox-host`` — the launcher contract.
+"""Reserved ``<prog> serve`` — the launcher contract.
 
 Any product with a ``product:`` block in its project.yml gets a
 launcher-compatible agent server from convention: ``<prog> serve`` brings
 up a long-lived sandbox session (or the no-sandbox ``host`` target)
 against the product's layered profile chain, runs the product's
 entrypoint agent over it behind FastAPI/uvicorn, and emits the single
-JSON readiness line the desktop launcher parses. ``<prog> sandbox-host``
-is the laptop half of "computer-as-sandbox": it exposes this machine's
-exec/file/PTY surface over a WebSocket for a cloud serve process.
+JSON readiness line the desktop launcher parses.
 
-Both are mounted as reserved subcommands by
-:mod:`omniagents.product_cli`; a product may still override them via its
+It is mounted as a reserved subcommand by
+:mod:`omniagents.product_cli`; a product may still override it via its
 ``cli.extensions`` ``COMMANDS`` mapping, but the defaults here are
 launcher-complete. The wire contract (spawn argv, readiness payload,
 error protocol) is versioned as :data:`SERVE_PROTOCOL_VERSION` and
@@ -18,7 +16,7 @@ documented in ``docs/serve-protocol.md`` — that document is what the
 launcher targets; treat any change to the payload or flags as a protocol
 revision.
 
-Lifted from omni-code's ``serve_cli.py`` / ``sandbox_host_cli.py``; the
+Lifted from omni-code's ``serve_cli.py``; the
 session lifecycle itself lives in
 :mod:`omniagents.core.runtime.serve_harness`.
 """
@@ -37,7 +35,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 #: Version of the serve wire contract (spawn argv + readiness payload +
-#: error protocol + sandbox-host handshake) documented in
+#: error protocol) documented in
 #: ``docs/serve-protocol.md``. Reported by ``<prog> describe`` so the
 #: launcher can verify compatibility before spawning.
 SERVE_PROTOCOL_VERSION = 2
@@ -47,8 +45,6 @@ __all__ = [
     "build_serve_parser",
     "build_readiness_payload",
     "serve_main",
-    "sandbox_host_main",
-    "exec_port_payload",
 ]
 
 
@@ -464,70 +460,3 @@ def serve_main(argv: Optional[List[str]] = None) -> int:
     except KeyboardInterrupt:
         return 0
 
-
-# ---------------------------------------------------------------------------
-# sandbox-host — turn this machine into a remote sandbox backend
-# ---------------------------------------------------------------------------
-
-
-def exec_port_payload(port: int, host: str) -> Dict[str, Any]:
-    """The first-stdout-line handshake of ``<prog> sandbox-host``.
-
-    The launcher reads the first stdout line as JSON and registers
-    ``exec_port`` with its cloud relay; ``host`` is informational.
-    """
-    return {"exec_port": port, "host": host}
-
-
-async def _run_sandbox_host(host: str, port: int, workspace: Optional[str]) -> None:
-    import websockets
-
-    from omniagents.core.sandbox.host_bridge import serve_host_connection
-
-    async def handler(ws: Any) -> None:
-        await serve_host_connection(ws, workspace_root=workspace)
-
-    async with websockets.serve(handler, host, port, max_size=None) as server:
-        bound = next(iter(server.sockets)).getsockname()
-        sys.stdout.write(json.dumps(exec_port_payload(bound[1], host)) + "\n")
-        sys.stdout.flush()
-        await asyncio.Future()  # run forever
-
-
-def sandbox_host_main(argv: Optional[List[str]] = None) -> int:
-    """The reserved ``<prog> sandbox-host`` entry point.
-
-    The host (laptop) half of "computer-as-sandbox": the agent runs
-    elsewhere (a cloud ``<prog> serve``); this process exposes the sandbox
-    surface — exec / file IO / PTYs / exposed ports — over a WebSocket so
-    a cloud ``HostBridgeSandboxSession`` can drive *this* machine's
-    filesystem. The wire protocol + per-connection session handling live
-    in :func:`omniagents.core.sandbox.host_bridge.serve_host_connection`
-    (co-located with the cloud client so the protocol is defined once);
-    this is just the CLI: bind a loopback WebSocket, hand each connection
-    to that handler, and print ``{"exec_port": N}`` on stdout so the
-    launcher can register the port with its cloud relay. One long-lived
-    server serves many sessions (one per connection).
-    """
-    from omniagents.core.product import product_info
-
-    parser = argparse.ArgumentParser(prog=f"{product_info().prog} sandbox-host")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=0,
-        help="Port to bind (0 = auto; the chosen port is printed as JSON).",
-    )
-    parser.add_argument(
-        "--workspace",
-        default=None,
-        help="Local workspace dir to root every session at (overrides the "
-        "cloud-sent manifest root, which reflects the cloud's paths).",
-    )
-    args = parser.parse_args(argv)
-    try:
-        asyncio.run(_run_sandbox_host(args.host, args.port, args.workspace))
-    except KeyboardInterrupt:
-        return 0
-    return 0

@@ -99,8 +99,8 @@ export const OmniAgentsApp = ({
   providerChildren,
 }: OmniAgentsAppProps) => {
   // Resolve relative ``/proxy/...`` payloads against the launcher's actual
-  // origin — same-origin in browser server mode, cloud baseUrl in
-  // cloud-linked Electron. An absolute connection base ignores the fallback.
+  // origin — same-origin in browser server mode, backend baseUrl in
+  // remote-linked Electron. An absolute connection base ignores the fallback.
   const normalizedConnection = useMemo<AgentRuntimeConnection>(
     () => ({ ...connection, baseUrl: new URL(connection.baseUrl, serverOrigin()).toString() }),
     [connection.authToken, connection.baseUrl]

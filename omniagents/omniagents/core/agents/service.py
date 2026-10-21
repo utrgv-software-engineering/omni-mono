@@ -539,19 +539,6 @@ class AgentService(RpcMethodsBase):
         except Exception:
             pass
 
-        # Auto-activate platform providers if credentials are available.
-        # Checks OMNI_PLATFORM_URL env var or ~/.config/omni_code/platform.json.
-        # Merges platform security config into the spec so audit, auth, and
-        # policy providers activate without manual project.yml configuration.
-        try:
-            from omniagents.core.providers.platform.bootstrap import (
-                maybe_inject_platform_config,
-            )
-
-            maybe_inject_platform_config(self.spec)
-        except Exception:
-            pass
-
         # Set up session encryption provider if configured
         try:
             sec = getattr(self.spec, "security_config", None) or {}
@@ -679,18 +666,6 @@ class AgentService(RpcMethodsBase):
                             secrets_provider=_secrets_provider,
                         ),
                     )
-                elif audit_backend == "remote":
-                    from omniagents.core.providers.platform.audit import (
-                        create_remote_audit_hook,
-                    )
-
-                    self.register_runtime_hook(
-                        "audit",
-                        create_remote_audit_hook(
-                            audit_cfg,
-                            project_slug=project_slug,
-                        ),
-                    )
         except Exception:
             pass
 
@@ -713,20 +688,6 @@ class AgentService(RpcMethodsBase):
                         pass
 
                 self.register_runtime_hook("audit", _notification_hook)
-        except Exception:
-            pass
-
-        # Register platform policy hook if configured
-        try:
-            policy_cfg = (sec.get("providers") or {}).get("policy")
-            if policy_cfg and policy_cfg.get("type") == "platform":
-                from omniagents.core.providers.platform.policy import (
-                    create_policy_hook,
-                )
-
-                self.register_runtime_hook(
-                    "run_started", create_policy_hook(policy_cfg)
-                )
         except Exception:
             pass
 

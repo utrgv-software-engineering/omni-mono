@@ -3,7 +3,7 @@
 **Protocol version: 2** (`omniagents.product_serve.SERVE_PROTOCOL_VERSION`)
 
 The wire contract between a desktop/cloud **launcher** and a product's
-reserved `serve` / `sandbox-host` subcommands
+reserved `serve` subcommand
 (`omniagents.product_serve`, mounted by `omniagents.product_cli`). Any
 product with a `product:` block in its `project.yml` speaks this
 protocol from convention; this document is what launchers target.
@@ -125,27 +125,6 @@ Shutdown is signal-driven (SIGTERM/SIGINT/SIGHUP): serve skips the
 graceful drain, quiesces in-flight runs (bounded), and always reaches
 teardown — which persists the workspace snapshot unless
 `sandbox.discard_snapshot` was called.
-
-## `<prog> sandbox-host`
-
-The laptop half of computer-as-sandbox. Spawn:
-
-```
-<prog> sandbox-host --host 127.0.0.1 --port 0 --workspace <ws>
-```
-
-The **first stdout line** is the handshake:
-
-```json
-{"exec_port": <bound port>, "host": "127.0.0.1"}
-```
-
-The launcher registers `exec_port` with its relay; a cloud
-`HostBridgeSandboxSession` then drives this machine's exec/file/PTY
-surface over the WebSocket
-(`omniagents.core.sandbox.host_bridge.serve_host_connection`). One
-long-lived server serves many sessions (one per connection). `--port 0`
-(the launcher's spawn) binds an ephemeral port.
 
 ## `<prog> describe`
 

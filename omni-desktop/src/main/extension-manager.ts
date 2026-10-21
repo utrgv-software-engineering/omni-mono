@@ -362,7 +362,7 @@ const sleep = (ms: number): Promise<void> =>
 
 /**
  * Register extension:* handlers. `resolve(event) => ExtensionManager` picks the
- * instance — `() => mgr` for Electron, or per-tenant on the server. Returns the
+ * instance (`() => mgr` in both shells). Returns the
  * channel names registered.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */

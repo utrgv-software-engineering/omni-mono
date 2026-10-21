@@ -11,12 +11,6 @@ from .store import (
     litellm_api_key_env,
     normalize_model_name,
 )
-from .governed import (
-    GOVERNED_CONFIG_FILENAME,
-    governed_config_path,
-    load_governed_config,
-    write_governed_config,
-)
 
 __all__ = [
     "MODELS_CONFIG_VERSION",
@@ -24,10 +18,6 @@ __all__ = [
     "expand_env_vars",
     "litellm_api_key_env",
     "normalize_model_name",
-    "GOVERNED_CONFIG_FILENAME",
-    "governed_config_path",
-    "load_governed_config",
-    "write_governed_config",
     "resolve_model_runtime",
     "resolve_service_model_runtime",
     "provider_from_runtime",

@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react';
 import { Edit, Ellipsis, ExternalLink, Play, Plus, Trash2 } from 'lucide-react';
 import type { ComponentProps } from 'react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState } from 'react';
 
 import { formatDuration, formatTimestamp } from '@/lib/format-time';
 import { useIsDesktop } from '@/renderer/common/use-is-desktop';
@@ -36,8 +36,6 @@ import { Textarea } from '@/renderer/ds/ui/textarea';
 import { getProfileMenuLabel } from '@/renderer/features/SandboxProfile/profile-list';
 import { SandboxPicker } from '@/renderer/features/SandboxProfile/SandboxPicker';
 import { toast } from '@/renderer/features/Toast/state';
-import { emitter } from '@/renderer/services/ipc';
-import { $machines } from '@/renderer/services/machines';
 import { scheduledTaskApi } from '@/renderer/services/scheduled-tasks';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type {
@@ -171,10 +169,8 @@ const createEmptyFormState = (defaultProfileName: string | undefined): RoutineFo
  */
 export const ScheduledTasks = memo(() => {
   const store = useStore(persistedStoreApi.$atom);
-  const machines = useStore($machines);
   const isDesktop = useIsDesktop();
 
-  const [isEnterprise, setIsEnterprise] = useState(false);
   const [createForm, setCreateForm] = useState<RoutineFormState>(() => createEmptyFormState(store.defaultProfileName));
   // Selection lives in `$routinesView` (like the Inbox tab's `$inboxView`),
   // so cross-tab jumps can land on a specific routine.
@@ -188,13 +184,6 @@ export const ScheduledTasks = memo(() => {
   const [error, setError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ScheduledTask | null>(null);
-
-  useEffect(() => {
-    emitter
-      .invoke('platform:is-enterprise')
-      .then(setIsEnterprise)
-      .catch(() => setIsEnterprise(false));
-  }, []);
 
   const sorted = useMemo(
     () =>
@@ -213,9 +202,7 @@ export const ScheduledTasks = memo(() => {
   const isEditing = selectedTask !== null && editingTaskId === selectedTask.id && editForm !== null;
 
   const sandboxContext: ComponentProps<typeof SandboxPicker>['context'] = {
-    isEnterprise,
     available: store.availableSandboxProfiles,
-    machines,
   };
 
   // ----- handlers -----
@@ -398,7 +385,6 @@ export const ScheduledTasks = memo(() => {
             value={createForm}
             projects={store.projects}
             sandboxContext={sandboxContext}
-            machines={machines}
             submitLabel="Create routine"
             error={error}
             onChange={setCreateForm}
@@ -425,7 +411,6 @@ export const ScheduledTasks = memo(() => {
             value={editForm}
             projects={store.projects}
             sandboxContext={sandboxContext}
-            machines={machines}
             submitLabel="Save changes"
             error={editError}
             showEnabled
@@ -441,7 +426,6 @@ export const ScheduledTasks = memo(() => {
     <RoutineDetail
       task={selectedTask}
       projects={store.projects}
-      machines={machines}
       busy={busyTaskId === selectedTask.id}
       onRunNow={runNow}
       onStartEdit={startEdit}
@@ -594,7 +578,6 @@ RoutineRow.displayName = 'RoutineRow';
 type RoutineDetailProps = {
   task: ScheduledTask;
   projects: Project[];
-  machines: Parameters<typeof getProfileMenuLabel>[1];
   busy: boolean;
   onRunNow: (task: ScheduledTask) => Promise<void>;
   onStartEdit: (task: ScheduledTask) => void;
@@ -606,7 +589,6 @@ type RoutineDetailProps = {
 const RoutineDetail = ({
   task,
   projects,
-  machines,
   busy,
   onRunNow,
   onStartEdit,
@@ -615,7 +597,7 @@ const RoutineDetail = ({
   onOpenSession,
 }: RoutineDetailProps) => {
   const project = projectLabel(task, projects);
-  const sandbox = task.profileName ? getProfileMenuLabel(task.profileName, machines) : 'Default sandbox';
+  const sandbox = task.profileName ? getProfileMenuLabel(task.profileName) : 'Default sandbox';
   const allowedToolNames = task.allowedToolNames ?? [];
   const allowedMcpTools = task.allowedMcpTools ?? [];
   const runs = (task.history ?? []).slice(0, 5);
@@ -835,7 +817,6 @@ type RoutineFormProps = {
   value: RoutineFormState;
   projects: Project[];
   sandboxContext: ComponentProps<typeof SandboxPicker>['context'];
-  machines: Parameters<typeof getProfileMenuLabel>[1];
   submitLabel: string;
   error?: string | null;
   showEnabled?: boolean;
@@ -849,7 +830,6 @@ const RoutineForm = ({
   value,
   projects,
   sandboxContext,
-  machines,
   submitLabel,
   error,
   showEnabled = false,
@@ -902,9 +882,7 @@ const RoutineForm = ({
             context={sandboxContext}
           />
 
-          <span className="text-muted-foreground text-xs leading-5">
-            {getProfileMenuLabel(value.profileName, machines)}
-          </span>
+          <span className="text-muted-foreground text-xs leading-5">{getProfileMenuLabel(value.profileName)}</span>
         </div>
       </Field>
       <Field>

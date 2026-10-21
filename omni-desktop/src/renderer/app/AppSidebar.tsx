@@ -4,7 +4,6 @@ import {
   Bot,
   Box,
   CalendarClock,
-  ChartNoAxesColumnIncreasing,
   Columns3,
   Ellipsis,
   Inbox,
@@ -14,7 +13,7 @@ import {
   Settings,
   SquarePen,
 } from 'lucide-react';
-import { memo, useCallback, useEffect, useState } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 
 import { OmniLogo } from '@/renderer/common/AsciiLogo';
 import { cn } from '@/renderer/ds/cn';
@@ -24,7 +23,7 @@ import { Button } from '@/renderer/ds/ui/button';
  * and the per-tab sidebars. Three zones — fixed surface rows (New chat,
  * Inbox, Tasks, Activity) whose badges make the sidebar the attention surface;
  * container sections (Projects, Channels, DMs); and a pinned management
- * cluster (Agents, Routines, Dashboards, Plugins, Settings).
+ * cluster (Agents, Routines, Plugins, Settings).
  *
  * On mobile the same nav is an overlay DRAWER (the ChatGPT/Gmail model):
  * the app lands on the working surface, and each surface's header carries a
@@ -58,10 +57,8 @@ import { $activeInboxCount } from '@/renderer/features/Inbox/state';
 import { ChannelsSection, DmsSection } from '@/renderer/features/Residents/sidebar-sections';
 import { $residentsView, goToRoster } from '@/renderer/features/Residents/state';
 import { goToRoutine } from '@/renderer/features/ScheduledTasks/state';
-import { TeamSwitcher } from '@/renderer/features/Teams/TeamSwitcher';
 import { ProjectsSection } from '@/renderer/features/Tickets/ProjectsSection';
 import { $needsYouCount, $tickets, $ticketsView, ticketApi, viewToNavValue } from '@/renderer/features/Tickets/state';
-import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { LayoutMode } from '@/shared/types';
 
@@ -74,14 +71,6 @@ export const AppSidebar = memo(() => {
   const needsYouCount = useStore($needsYouCount);
   const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
   const { recent: recentConversations, sessionTitles } = useRecentConversations(store.codeTabs ?? []);
-
-  const [isEnterprise, setIsEnterprise] = useState(false);
-  useEffect(() => {
-    emitter
-      .invoke('platform:is-enterprise')
-      .then(setIsEnterprise)
-      .catch(() => setIsEnterprise(false));
-  }, []);
 
   // iOS standalone clips element painting at the layout viewport, so the
   // band below it can only ever show the html/body backstop. With the
@@ -135,7 +124,6 @@ export const AppSidebar = memo(() => {
     goToRoutine();
     closeDrawer();
   }, [closeDrawer]);
-  const handleDashboards = useCallback(() => setMode('dashboards'), [setMode]);
   const handlePlugins = useCallback(() => setMode('plugins'), [setMode]);
   const handleSandboxes = useCallback(() => setMode('sandboxes'), [setMode]);
   const handleGallery = useCallback(() => setMode('gallery'), [setMode]);
@@ -159,12 +147,7 @@ export const AppSidebar = memo(() => {
   // The More row owns every management surface — it paints selected when
   // any of them is frontmost, so "where am I" survives the collapse.
   const moreSelected =
-    rosterSelected ||
-    routinesSelected ||
-    mode === 'dashboards' ||
-    mode === 'plugins' ||
-    mode === 'sandboxes' ||
-    mode === 'gallery';
+    rosterSelected || routinesSelected || mode === 'plugins' || mode === 'sandboxes' || mode === 'gallery';
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -172,7 +155,6 @@ export const AppSidebar = memo(() => {
         <div className="flex shrink-0 items-center gap-2 pt-8 pr-1 pb-5 pl-5">
           <OmniLogo />
           <h2 className={cn('min-w-0 truncate font-display text-lg font-semibold tracking-tight')}>Omni</h2>
-          <TeamSwitcher />
           <Button
             type="button"
             variant="ghost"
@@ -256,12 +238,6 @@ export const AppSidebar = memo(() => {
                     <CalendarClock />
                     Routines
                   </DropdownMenuItem>
-                  {isEnterprise && (
-                    <DropdownMenuItem onClick={handleDashboards}>
-                      <ChartNoAxesColumnIncreasing />
-                      Dashboards
-                    </DropdownMenuItem>
-                  )}
                   <DropdownMenuItem onClick={handlePlugins}>
                     <Puzzle />
                     Plugins

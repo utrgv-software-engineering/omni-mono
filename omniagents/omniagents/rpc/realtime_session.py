@@ -417,9 +417,7 @@ class RealtimeSession:
         self._project_slug = getattr(spec, "project_slug", None)
         self._agent_slug = getattr(spec, "agent_slug", None)
 
-        # Initialize audio storage — backend chosen by env
-        # (OMNIAGENTS_AUDIO_BACKEND=blob|fs). Local FS is the default and
-        # matches the pre-refactor behaviour.
+        # Initialize audio storage (local filesystem unless injected).
         if audio_storage:
             self.audio_storage = audio_storage
         else:

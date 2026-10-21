@@ -2,14 +2,12 @@
  * One-time import of the agent's on-disk config files into the store.
  *
  * Before v23 the Settings UI wrote `models.json` / `mcp.json` / `network.json`
- * / `.env` directly to the config dir. Those are now store-backed (per-tenant
- * in cloud) and the files are a derived artifact. This migration lifts any
+ * / `.env` directly to the config dir. Those are now store-backed and the
+ * files are a derived artifact. This migration lifts any
  * existing files into the store once, then `config-materializer.ts` owns the
  * files going forward.
  *
- * Idempotent (guarded by `agentConfigMigratedFromFiles`) and conservative: it
- * runs only for desktop and the local single-tenant server — cloud tenants
- * start empty, so a shared container file is never imported into a tenant.
+ * Idempotent (guarded by `agentConfigMigratedFromFiles`).
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';

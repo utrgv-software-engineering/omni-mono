@@ -8,8 +8,6 @@ Pins the launcher wire contract documented in docs/serve-protocol.md
   lists here are constructed literally from that code;
 - the readiness payload is field-for-field the launcher's
   SandboxJsonPayload shape, including key order;
-- the sandbox-host first-stdout-line handshake is ``{"exec_port": N,
-  "host": ...}``;
 - ``<prog> describe --json`` reports identity + serve_protocol.
 
 Any change that breaks these tests is a serve-protocol revision: update
@@ -28,7 +26,6 @@ from omniagents.product_serve import (
     SERVE_PROTOCOL_VERSION,
     build_readiness_payload,
     build_serve_parser,
-    exec_port_payload,
 )
 
 
@@ -180,21 +177,6 @@ def test_readiness_payload_auth_token(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# sandbox-host handshake
-# ---------------------------------------------------------------------------
-
-
-def test_sandbox_host_exec_port_line_format():
-    payload = exec_port_payload(43999, "127.0.0.1")
-    line = json.dumps(payload) + "\n"
-    parsed = json.loads(line)
-    assert parsed == {"exec_port": 43999, "host": "127.0.0.1"}
-    assert isinstance(parsed["exec_port"], int)
-    # The launcher parses the FIRST stdout line — one line, newline-terminated.
-    assert line.endswith("\n") and line.count("\n") == 1
-
-
-# ---------------------------------------------------------------------------
 # describe
 # ---------------------------------------------------------------------------
 
@@ -304,12 +286,10 @@ def test_product_default_profile_none_without_manifest():
 # ---------------------------------------------------------------------------
 
 
-def test_serve_and_sandbox_host_are_reserved():
+def test_serve_and_describe_are_reserved():
     from omniagents.product_cli import RESERVED_COMMANDS, dispatches_to_command
 
     assert "serve" in RESERVED_COMMANDS
-    assert "sandbox-host" in RESERVED_COMMANDS
     assert "describe" in RESERVED_COMMANDS
     assert dispatches_to_command(["serve", "--output", "json"])
-    assert dispatches_to_command(["sandbox-host", "--port", "0"])
     assert dispatches_to_command(["describe", "--json"])

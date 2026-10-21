@@ -50,7 +50,7 @@ export type WindowProps = {
 /**
  * Data stored in the electron store.
  */
-export type LayoutMode = 'work' | 'chat' | 'dashboards' | 'agents' | 'plugins' | 'sandboxes' | 'settings' | 'gallery';
+export type LayoutMode = 'work' | 'chat' | 'agents' | 'plugins' | 'sandboxes' | 'settings' | 'gallery';
 export type OmniTheme =
   | 'omni'
   | 'teams-light'
@@ -104,21 +104,6 @@ export type SandboxSubstrateStatus = {
   dockerVersion?: string;
 };
 
-/**
- * Platform credentials for enterprise mode.
- * The platform URL is baked in at build time via OMNI_PLATFORM_URL.
- * These credentials are stored after the user signs in via device code flow.
- * When absent, the launcher runs in open-source mode with local Docker.
- */
-export type PlatformCredentials = {
-  accessToken: string;
-  refreshToken: string;
-  userEmail?: string;
-  userName?: string;
-  userRole?: string;
-  domains?: Array<{ id: number; name: string; slug: string }>;
-};
-
 export type AudioSettings = {
   /** mediaDevices deviceId for the input mic. Null = OS default. */
   inputDeviceId: string | null;
@@ -127,30 +112,6 @@ export type AudioSettings = {
   echoCancellation: boolean;
   noiseSuppression: boolean;
   autoGainControl: boolean;
-};
-
-/**
- * Identity claims pulled from the AAD token (id_token / access_token) at
- * link time. Only the bits we display + the oid used for cross-tab identity.
- */
-export type CloudAccount = {
-  /** Stable AAD object id. Survives email + display-name changes. */
-  oid: string;
-  /** Display name from the id_token (preferred for UI). */
-  name?: string;
-  /** Email / UPN. */
-  email?: string;
-};
-
-export type CloudBackend = {
-  kind: 'cloud';
-  /** Origin of the launcher cloud (e.g. ``https://omni.example.com``). */
-  url: string;
-  /** AAD tenant the cloud is registered in. Cached from /.well-known/omni-cloud. */
-  tenantId: string;
-  /** AAD client id of the launcher's app registration. Used for token refresh. */
-  clientId: string;
-  account: CloudAccount;
 };
 
 export type WslBackend = {
@@ -176,10 +137,10 @@ export type ServerBackend = {
   url: string;
 };
 
-export type RemoteBackend = CloudBackend | WslBackend | ServerBackend;
+export type RemoteBackend = WslBackend | ServerBackend;
 
 /** Shape injected into the renderer via preload — wsl kind carries the resolved live URL. */
-export type RemoteBackendBootstrap = CloudBackend | (WslBackend & { url: string }) | ServerBackend;
+export type RemoteBackendBootstrap = (WslBackend & { url: string }) | ServerBackend;
 
 /**
  * One member of the resident-agent roster (docs/resident-agents-plan.md):
@@ -536,13 +497,13 @@ export type StoreData = {
    * Name of the default sandbox profile. Resolved at launch time against
    * the launcher's profile chain (built-in → user-default → per-project).
    * Built-in profiles always present: `host` (no isolation, unix_local) and
-   * `devbox` (docker with code-server + VNC). Enterprise adds `platform`.
+   * `devbox` (docker with code-server + VNC).
    */
   defaultProfileName: string;
   /**
    * Sandbox profiles the UI picker should offer. When set by the backend,
    * the picker shows exactly these. Unset → the renderer falls back to the
-   * built-in list (`host`/`devbox`, plus `platform` on enterprise builds).
+   * built-in list (`host`/`devbox`).
    */
   availableSandboxProfiles?: string[];
   launcherWindowProps?: WindowProps;
@@ -585,14 +546,6 @@ export type StoreData = {
    * non-null the renderer routes its transport to the backend over WebSocket
    * instead of using local Electron IPC, so chat sessions, projects, tickets
    * etc. live in the backend's store.
-   *
-   * ``kind: 'cloud'`` — a deployed cloud launcher (Bearer-authenticated
-   * against AAD). ``url`` is the launcher origin (no trailing slash);
-   * ``tenantId`` + ``clientId`` are discovered from
-   * ``<url>/.well-known/omni-cloud`` at link time so the renderer doesn't
-   * need them — they're cached here for token refresh. ``account`` is what
-   * we display in the UI; the access + refresh tokens themselves live in
-   * the local secret store (`git-secrets.json`) under the ``entra`` id.
    *
    * ``kind: 'wsl'`` — the server build running as a daemon inside a WSL
    * distro on this machine (Windows only), authenticated by a per-boot
@@ -643,9 +596,6 @@ export type StoreData = {
   activeCodeTabId: CodeTabId | null;
   codeLayoutMode: CodeLayoutMode;
   activeTicketId: TicketId | null;
-
-  // Enterprise platform (optional — when set, enables enterprise mode)
-  platform?: PlatformCredentials;
 
   /**
    * Per-extension enabled flag. Missing/false means the extension is dormant
@@ -700,26 +650,21 @@ export type StoreData = {
   /**
    * Agent model providers — the source of truth for what the desktop wrote to
    * `models.json`. Materialized to `<configDir>/models.json` at agent launch.
-   * In cloud, provider/model `api_key` values are rewritten to `${OMNI_SECRET_*}`
-   * refs on disk and the real values injected into the agent env, so secrets
-   * never touch the (shared, ephemeral) container disk. See `config-materializer.ts`.
+   * See `config-materializer.ts`.
    */
   modelsConfig: ModelsConfig;
-  /** Agent MCP servers (`mcp.json`). Same materialization + secret handling as `modelsConfig`. */
+  /** Agent MCP servers (`mcp.json`). Same materialization as `modelsConfig`. */
   mcpConfig: McpConfig;
   /** Sandbox network egress policy (`network.json`). Non-secret; materialized verbatim. */
   networkConfig: NetworkConfig;
   /**
-   * Raw `.env` contents for the agent. On desktop, materialized to a real
-   * `.env` file. In cloud, parsed and injected directly into the agent process
-   * env (a `.env` *is* the env — no file is written).
+   * Raw `.env` contents for the agent, materialized to a real `.env` file.
    */
   envVars: string;
   /**
    * One-shot guard for the v23 migration that imported pre-existing on-disk
    * `models.json`/`mcp.json`/`network.json`/`.env` into the store keys above.
-   * Set once the import runs (desktop + local single-tenant server only — cloud
-   * tenants start empty so a shared file never leaks across tenants).
+   * Set once the import runs.
    */
   agentConfigMigratedFromFiles?: boolean;
 
@@ -729,7 +674,7 @@ export type StoreData = {
    * and OAuth stores. Once set, Desktop must never materialize mcp.json again;
    * canonical Omniagents CRUD/auth RPCs are its sole writer.
    *
-   * Server and multi-user deployments ignore this host-local marker.
+   * Server deployments ignore this host-local marker.
    */
   mcpConfigOwnership?: 'omniagents';
 
@@ -740,8 +685,7 @@ export type StoreData = {
    * remain available as a migration fallback. After it, account mutations fail
    * closed instead of writing/removing `codex.json` behind Omniagents' back.
    *
-   * Server and multi-user deployments never read or write this host-local
-   * marker; they retain their per-principal secret-store ownership.
+   * Server deployments never read or write this host-local marker.
    */
   codexAccountOwnership?: 'omniagents';
 
@@ -1182,32 +1126,12 @@ export const schema: Schema<StoreData> = {
     default: false,
   },
   remoteBackend: {
-    // Discriminated union — see RemoteBackend. Persisted `cloudMode` values
-    // from older builds fail validation here and are wiped by
-    // `clearInvalidConfig: true` (intentional: cloud users relink once).
+    // Discriminated union — see RemoteBackend. Persisted values of removed
+    // kinds fail validation here and are wiped by `clearInvalidConfig: true`.
     type: ['object', 'null'],
     default: null,
     anyOf: [
       { type: 'null' },
-      {
-        type: 'object',
-        properties: {
-          kind: { const: 'cloud' },
-          url: { type: 'string' },
-          tenantId: { type: 'string' },
-          clientId: { type: 'string' },
-          account: {
-            type: 'object',
-            properties: {
-              name: { type: 'string' },
-              email: { type: 'string' },
-              oid: { type: 'string' },
-            },
-            required: ['oid'],
-          },
-        },
-        required: ['kind', 'url', 'tenantId', 'clientId', 'account'],
-      },
       {
         type: 'object',
         properties: {
@@ -1538,17 +1462,6 @@ export const schema: Schema<StoreData> = {
       required: ['id', 'projectId', 'title', 'description', 'priority', 'blockedBy', 'createdAt', 'updatedAt'],
     },
   },
-  platform: {
-    type: 'object',
-    properties: {
-      accessToken: { type: 'string' },
-      refreshToken: { type: 'string' },
-      userEmail: { type: 'string' },
-      userName: { type: 'string' },
-      userRole: { type: 'string' },
-      domains: { type: 'array', items: { type: 'object' } },
-    },
-  },
   enabledExtensions: {
     type: 'object',
     additionalProperties: { type: 'boolean' },
@@ -1779,26 +1692,11 @@ type OkStatus<StatusType extends string, Data = void> = Data extends void
 
 /**
  * A status object that contains an error message and optionally some context. It represents an ERROR/bad status.
- *
- * `kind` is an optional discriminant the renderer reads to render specialised
- * banners (e.g. `'host-offline'` triggers the "your laptop is offline" banner
- * with the machine label; `'machine-at-capacity'` triggers the "stop a
- * session or switch to cloud" banner). Absent `kind` ⇒ generic "something
- * went wrong" surface with `message`.
  */
 type ErrorStatus = {
   type: 'error';
   error: {
     message: string;
-    kind?: 'host-offline' | 'machine-at-capacity' | 'message';
-    /** Populated when `kind === 'host-offline' | 'machine-at-capacity'`. */
-    machineId?: string;
-    /** Populated when `kind === 'host-offline' | 'machine-at-capacity'`. */
-    machineLabel?: string;
-    /** Populated when `kind === 'machine-at-capacity'`. */
-    maxSessions?: number;
-    /** Populated when `kind === 'machine-at-capacity'`. */
-    currentSessions?: number;
     context?: Record<string, unknown>;
   };
 };
@@ -1938,26 +1836,6 @@ export type AgentProcessData = {
    * Transitional UI state while a profile replacement is being prepared.
    */
   switching?: boolean;
-  /**
-   * Computer-as-sandbox: true while the laptop hosting this session's sandbox
-   * (`local:<machineId>`) is offline (its WS to the cloud dropped). The agent
-   * itself keeps running in the cloud — chat history + the conversation UI stay
-   * up — but its tools (exec/file/PTY) are unreachable. The renderer overlays a
-   * non-destructive "Your laptop is offline" banner over the still-running
-   * session rather than tearing it down. Cleared (and the sandbox re-established)
-   * when the laptop reconnects.
-   */
-  hostOffline?: boolean;
-  /** Friendly label of the offline host, for the banner. */
-  hostOfflineMachineLabel?: string;
-  /**
-   * Where this agent process is anchored — `'cloud'` for ACI/platform/local-
-   * laptop-running-omni-serve, `{kind: 'local', machineId}` for sessions the
-   * cloud dispatched to a registered Electron via reverse-RPC. Used by
-   * Settings → Machines and (Phase 7) the developer logs to associate
-   * activity with the right machine.
-   */
-  computeLocation?: 'cloud' | { kind: 'local'; machineId: string };
 };
 
 export type AgentProcessStatus =
@@ -2618,9 +2496,7 @@ export type Ticket = {
   /** Agent/human comments — serves as persistent memory across runs. */
   comments?: TicketComment[];
   /**
-   * Assigned member's principal id (cloud/teams). Drives per-user WIP and the
-   * weekly review ("my work"). Undefined = unassigned; single-user (Electron/
-   * local) installs leave it unset.
+   * Assigned principal id (a resident `agent:<id>`). Undefined = unassigned.
    */
   assignee?: string;
   /** History of supervisor runs on this ticket. */
@@ -2924,7 +2800,7 @@ export type SandboxSwitchResult = {
   ok: boolean;
   /** New profile name once switched (display label). */
   profile?: string;
-  /** New backend client type (`docker` / `host_bridge` / …). */
+  /** New backend client type (`docker` / `unix_local` / …). */
   backend?: string;
   /** New container id (docker); absent for unix_local. */
   containerId?: string;
@@ -3059,57 +2935,6 @@ export type CodexAuthStatus = {
 /** Device-flow code surface for the renderer to display while `codex:link` polls. */
 export type CodexDeviceCode = { userCode: string; verificationUri: string };
 
-/**
- * Cloud-link API. ``cloud:link`` opens the AAD device-code flow against the
- * launcher discovered via *url*, surfaces the user code through
- * ``cloud:device-code``, polls until approved, then persists the tokens +
- * the ``remoteBackend`` flag in the store. The renderer is expected to reload
- * after a successful link so the transport switches to the cloud variant
- * at boot. ``cloud:unlink`` clears both. ``cloud:get-access-token`` is the
- * renderer's hook for fetching a fresh Bearer (refreshes via the stored
- * refresh token when near-expiry).
- */
-type CloudIpcEvents = Namespaced<
-  'cloud',
-  {
-    status: () => CloudStatus;
-    link: (url: string) => CloudStatus;
-    unlink: () => void;
-    'get-access-token': () => string;
-    /**
-     * Fetch a fresh WS auth token from the linked cloud's ``/api/ws-token``.
-     * Runs in main so the request escapes the renderer's CORS sandbox — the
-     * Bearer header would otherwise trigger a CORS preflight that EasyAuth's
-     * 302-to-AAD-login can't satisfy. Returns the opaque token the renderer
-     * passes in the WebSocket upgrade URL.
-     */
-    'get-ws-token': () => string;
-    /**
-     * Local Electron's persisted machine identity (id + editable label +
-     * platform). Used by the renderer's Settings → Cloud card to render the
-     * "this is what the cloud sees you as" chip and to compare against the
-     * cloud-side machines list to mark the calling row as `isSelf`.
-     */
-    'get-machine-identity': () => MachineIdentity;
-    /**
-     * Rename the local Electron's machine label. Persisted to
-     * `<configDir>/machine.json` and (when cloud-linked) replayed to the cloud
-     * via `machine:register` so the new label flows through.
-     */
-    'set-machine-label': (label: string) => MachineIdentity;
-  }
->;
-
-export type CloudStatus =
-  | { connected: false }
-  | {
-      connected: true;
-      url: string;
-      tenantId: string;
-      clientId: string;
-      account: CloudAccount;
-    };
-
 /** One installed WSL distro, from `wsl.exe -l -q` (+ default marker). */
 export type WslDistro = { name: string; isDefault: boolean };
 
@@ -3134,8 +2959,8 @@ export type WslBackendStatus = {
  * main via `localEmitter`). ``wsl:detect`` probes `wsl.exe` and lists
  * distros. ``wsl:link`` provisions the daemon payload into *distro*,
  * persists the ``remoteBackend`` flag, and relaunches the app so the
- * renderer boots on the WS transport. Disconnecting reuses ``cloud:unlink``
- * (the shared disconnect + relaunch path for both kinds).
+ * renderer boots on the WS transport. Disconnecting is
+ * ``remote-backend:unlink``.
  * ``wsl:get-ws-token`` mints a WS auth token signed with the daemon's
  * shared secret (per-boot, or durable in persistent mode) — no HTTP fetch.
  * ``wsl:set-persistent`` flips persistent daemon mode, restarting the daemon
@@ -3171,12 +2996,11 @@ type WslIpcEvents = Namespaced<
  * Self-hosted-server link API (all channels resolve in LOCAL Electron main
  * via `localEmitter`). ``server:link`` validates *url* (``/api/health`` +
  * ``/api/ws-token`` must answer), persists the ``remoteBackend`` flag, and
- * relaunches the app so the renderer boots on the WS transport. No Entra,
- * no wsl.exe — auth is the server's own ``/api/ws-token``, which the server
+ * relaunches the app so the renderer boots on the WS transport. No
+ * wsl.exe — auth is the server's own ``/api/ws-token``, which the server
  * gates to loopback + ``OMNI_TRUSTED_CIDRS``. ``server:get-ws-token`` runs
- * the fetch in main (Node fetch, no CORS), like the cloud variant.
- * Disconnecting reuses ``cloud:unlink`` (the shared disconnect + relaunch
- * path for all kinds).
+ * the fetch in main (Node fetch, no CORS). Disconnecting is
+ * ``remote-backend:unlink``.
  */
 type ServerIpcEvents = Namespaced<
   'server',
@@ -3186,84 +3010,14 @@ type ServerIpcEvents = Namespaced<
   }
 >;
 
-/** Stable identity persisted in `<configDir>/machine.json`. */
-export type MachineIdentity = {
-  machineId: string;
-  label: string;
-  platform: string;
-};
-
-/**
- * Per-(principal) summary of a machine the cloud has seen. Used by the
- * Settings → Machines card and the SandboxPicker. `online` reflects whether
- * the cloud currently holds a live WS for that id; `isSelf` is `true` when
- * `machineId` matches the calling Electron's own identity.
- */
-export type MachineSummary = {
-  machineId: string;
-  label: string;
-  platform: string;
-  online: boolean;
-  isSelf: boolean;
-  registeredAt: string;
-  lastSeenAt: string;
-};
-
-/**
- * Per-principal machine registry — the cloud-side view of every Electron the
- * user has signed in from. Powers the SandboxPicker's "My computers" group
- * and the Settings → Machines card. No-op in single-user/local mode (returns
- * an empty list).
- *
- * `register` is invoked by the cloud-linked Electron over its existing WS at
- * boot; the cloud upserts the row scoped to the authenticated principal.
- * Removing a machine is explicit and severs its right to receive reverse-RPC
- * dispatches even if it later reconnects with the same id.
- */
-type MachineIpcEvents = Namespaced<
-  'machine',
-  {
-    register: (info: MachineIdentity) => { accepted: boolean };
-    list: () => MachineSummary[];
-    rename: (machineId: string, label: string) => MachineSummary[];
-    remove: (machineId: string) => MachineSummary[];
-  }
->;
-
-/**
- * Renderer→main bridge for cloud reverse-RPC dispatch. The renderer owns the
- * cloud WS (in cloud-linked Electron) but compute lives in main; when the
- * cloud sends a `reverse-invoke`, the renderer forwards it through this one
- * channel and main resolves it against a per-channel registry.
- *
- * NOT user-callable — internal plumbing. Carries arbitrary (channel, args).
- */
-type ReverseRpcIpcEvents = {
-  'reverse-rpc:dispatch': (channel: string, args: unknown[]) => unknown;
-  /**
-   * Laptop → cloud: a WS frame inbound from the local omni-serve that the
-   * cloud should forward to the renderer end of the tunnel. The cloud's
-   * local-tunnel-proxy registers a per-tunnel routing entry keyed by
-   * `tunnelId` and pipes the bytes onto the awaiting client WebSocket.
-   *
-   * Sent via `localEmitter.invoke` from renderer→main path: main pushes a
-   * `tunnel:emit-incoming` event the renderer translates into this WS-invoke.
-   * Returns `void` (fire-and-forget; we ignore the ack).
-   */
-  'tunnel:incoming': (event: { tunnelId: string; dataBase64: string; binary: boolean; close?: boolean }) => void;
-};
-
-/** Device-code payload for the renderer to display while `cloud:link` polls. */
-export type CloudDeviceCode = {
-  userCode: string;
-  verificationUri: string;
-  verificationUriComplete?: string;
-};
+/** Shared disconnect for every remote-backend kind: clears the
+ *  ``remoteBackend`` flag and relaunches into standalone-local mode. */
+type RemoteBackendIpcEvents = Namespaced<'remote-backend', { unlink: () => void }>;
 
 /**
  * Typed agent-config API. Replaces the path-based `config:*` file I/O for the
- * four Settings configs whose source of truth is the (per-tenant, in cloud)
- * store rather than a file: model providers, MCP servers, network policy, and
+ * four Settings configs whose source of truth is the store rather than a
+ * file: model providers, MCP servers, network policy, and
  * `.env`. The backend persists them as store keys and re-materializes the
  * agent's on-disk config; the renderer never names a file path.
  */
@@ -3307,86 +3061,6 @@ type GitCredentialIpcEvents = Namespaced<
     list: () => GitCredential[];
     set: (input: GitCredentialInput) => GitCredential[];
     delete: (id: string) => GitCredential[];
-  }
->;
-
-/** Team role within a team (cloud/teams mode). */
-export type TeamRole = 'owner' | 'admin' | 'member';
-
-/** A team the current user belongs to, with their role. */
-export type TeamSummary = {
-  id: string;
-  label: string;
-  kind: 'personal' | 'shared';
-  role: TeamRole;
-};
-
-/** A member of a team (admin views). */
-export type TeamMember = {
-  userId: string;
-  email: string | null;
-  displayName: string | null;
-  role: TeamRole;
-};
-
-/** A pending invitation to a team. */
-export type TeamInvitation = {
-  id: string;
-  email: string;
-  role: 'admin' | 'member';
-  token: string;
-};
-
-/**
- * Teams control plane (cloud only). Membership reads are scoped to the caller;
- * mutations are role-gated server-side. Switching the active team is a
- * client-side reconnect with `?team=<id>`, not a channel here. No-op in
- * single-user/local mode (returns empty / the implicit personal team).
- */
-type TeamIpcEvents = Namespaced<
-  'team',
-  {
-    list: () => TeamSummary[];
-    'get-my-role': () => TeamRole | null;
-    /** The caller's principal id in teams/cloud mode; null in single-user/local (drives "my work" filters). */
-    whoami: () => string | null;
-    create: (label: string) => TeamSummary[];
-    /** Leave the active team. Owners must transfer ownership first. */
-    leave: () => TeamSummary[];
-    rename: (label: string) => TeamSummary[];
-    /** Delete the active team (owner only; non-personal, no projects). */
-    delete: () => TeamSummary[];
-    'transfer-ownership': (userId: string) => TeamMember[];
-    invite: (email: string, role: 'admin' | 'member') => TeamInvitation[];
-    'accept-invite': (token: string) => TeamSummary[];
-    'revoke-invite': (id: string) => TeamInvitation[];
-    'list-members': () => TeamMember[];
-    'remove-member': (userId: string) => TeamMember[];
-    'set-role': (userId: string, role: TeamRole) => TeamMember[];
-    'list-invites': () => TeamInvitation[];
-  }
->;
-
-/** Which parts of the team-base agent config are currently set. */
-export type TeamDefaultsStatus = {
-  hasModels: boolean;
-  hasMcp: boolean;
-  hasEnv: boolean;
-  hasNetwork: boolean;
-};
-
-/**
- * Team-base (shared) agent config editing. Admin-gated server-side.
- * `publish-from-mine` adopts the caller's effective models/mcp/env/network as the
- * team default for everyone; `clear` removes the team base (members fall back to
- * their own overlay). No-op (all false) in single-user/local mode.
- */
-type TeamSettingsIpcEvents = Namespaced<
-  'team-settings',
-  {
-    status: () => TeamDefaultsStatus;
-    'publish-from-mine': () => TeamDefaultsStatus;
-    clear: () => TeamDefaultsStatus;
   }
 >;
 
@@ -3608,7 +3282,7 @@ type ProjectIpcEvents = Namespaced<
     'stop-supervisor': (ticketId: TicketId) => void;
     'send-supervisor-message': (ticketId: TicketId, message: string) => void;
     'reset-supervisor-session': (ticketId: TicketId) => void;
-    /** Assign (string principal id) or unassign (null) a ticket. Team ownership is unaffected; any member may call. */
+    /** Assign (string principal id) or unassign (null) a ticket. */
     'assign-ticket': (ticketId: TicketId, assignee: string | null) => void;
     /**
      * Retry the deferred cleanup for a completed ticket whose worktree was
@@ -3843,35 +3517,6 @@ type RoutineIpcEvents = Namespaced<
 >;
 
 /**
- * Platform API. Main process handles these events, renderer process invokes them.
- * Only functional in enterprise builds (OMNI_PLATFORM_URL set at build time).
- */
-export type PlatformDashboard = {
-  resource_id: number;
-  name: string;
-  dashboard_id: string;
-  workspace_url: string;
-  widget_count: number;
-  embed_url: string;
-};
-
-type PlatformIpcEvents = Namespaced<
-  'platform',
-  {
-    /** Returns true if this is an enterprise build with a baked-in platform URL. */
-    'is-enterprise': () => boolean;
-    /** Returns current auth state. */
-    'get-auth': () => PlatformCredentials | null;
-    /** Initiates device code flow. Returns user_code + verification_uri for user to open. */
-    'sign-in': () => { userCode: string; verificationUri: string; message: string };
-    /** Signs out — clears stored credentials. */
-    'sign-out': () => void;
-    /** Fetch entitled dashboards from platform policy. */
-    'get-dashboards': () => PlatformDashboard[];
-  }
->;
-
-/**
  * Milestone API. Main process handles these events, renderer process invokes them.
  */
 type MilestoneIpcEvents = Namespaced<
@@ -3987,39 +3632,6 @@ type InboxIpcEvents = Namespaced<
   }
 >;
 
-// ---------------------------------------------------------------------------
-// Workspace sync types
-// ---------------------------------------------------------------------------
-
-export type WorkspaceSyncState = 'stopped' | 'starting' | 'syncing' | 'watching' | 'error';
-
-export type WorkspaceSyncStatus = {
-  state: WorkspaceSyncState;
-  /** Files uploaded since sync started. */
-  filesUploaded: number;
-  /** Files downloaded since sync started. */
-  filesDownloaded: number;
-  /** Timestamp of the last completed sync operation. */
-  lastSyncAt: number | null;
-  /** Human-readable error (only when state === 'error'). */
-  error?: string;
-  /** Progress of the current batch operation (if any). */
-  progress?: {
-    /** What we're doing right now. */
-    phase: 'uploading' | 'downloading' | 'reconciling';
-    /** Total files in the current batch. */
-    totalFiles: number;
-    /** Files completed so far. */
-    completedFiles: number;
-    /** Observed bytes per second (smoothed). */
-    bytesPerSecond: number;
-    /** Estimated seconds remaining (null if unknown). */
-    etaSeconds: number | null;
-    /** Timestamp when this batch started. */
-    startedAt: number;
-  };
-};
-
 /**
  * Extension API. Built-in (and eventually user-managed) external tools the
  * launcher orchestrates as local subprocesses. Marimo is the seed consumer.
@@ -4037,19 +3649,6 @@ type ExtensionIpcEvents = Namespaced<
     'ensure-instance': (id: string, cwd: string) => ExtensionEnsureResult;
     'release-instance': (id: string, cwd: string) => void;
     'get-logs': (id: string, cwd: string) => string;
-  }
->;
-
-/**
- * Workspace sync IPC events. Renderer invokes, main handles.
- */
-type WorkspaceSyncIpcEvents = Namespaced<
-  'workspace-sync',
-  {
-    start: (projectId: string, workspaceDir: string) => void;
-    stop: (projectId: string) => void;
-    'get-status': (projectId: string) => WorkspaceSyncStatus;
-    'get-share-name': (projectId: string) => string | null;
   }
 >;
 
@@ -4380,15 +3979,11 @@ export type IpcEvents = UserProfileIpcEvents &
   AutomationIpcEvents &
   ConfigIpcEvents &
   CodexIpcEvents &
-  CloudIpcEvents &
   WslIpcEvents &
   ServerIpcEvents &
-  MachineIpcEvents &
-  ReverseRpcIpcEvents &
+  RemoteBackendIpcEvents &
   SettingsConfigIpcEvents &
   GitCredentialIpcEvents &
-  TeamIpcEvents &
-  TeamSettingsIpcEvents &
   GithubIpcEvents &
   AzureIpcEvents &
   SkillsIpcEvents &
@@ -4397,9 +3992,7 @@ export type IpcEvents = UserProfileIpcEvents &
   PageIpcEvents &
   InboxIpcEvents &
   MigrationIpcEvents &
-  PlatformIpcEvents &
   ExtensionIpcEvents &
-  WorkspaceSyncIpcEvents &
   AppControlIpcEvents &
   BrowserIpcEvents &
   SupervisorIpcEvents &
@@ -4514,9 +4107,6 @@ type ProjectIpcRendererEvents = Namespaced<
 >;
 
 /**
- * Platform events. Main process emits these events, renderer process listens to them.
- */
-/**
  * Page content events. Main process emits when a watched page file changes on
  * disk due to an external edit (e.g. the user edited a page in their IDE, or
  * an MCP client like Claude Desktop wrote into `<config>/pages/<projectId>/`).
@@ -4529,14 +4119,6 @@ type PageIpcRendererEvents = Namespaced<
   }
 >;
 
-type PlatformIpcRendererEvents = Namespaced<
-  'platform',
-  {
-    /** Emitted when auth state changes (sign in / sign out / token refresh). */
-    'auth-changed': [PlatformCredentials | null];
-  }
->;
-
 /**
  * Extension events. Main process emits these, renderer listens. Status
  * updates fire on every state transition (idle → starting → running → idle/error)
@@ -4546,16 +4128,6 @@ type ExtensionIpcRendererEvents = Namespaced<
   'extension',
   {
     'status-changed': [string, string, ExtensionInstanceState];
-  }
->;
-
-/**
- * Workspace sync events. Main process emits these, renderer listens.
- */
-type WorkspaceSyncIpcRendererEvents = Namespaced<
-  'workspace-sync',
-  {
-    'status-changed': [string, WorkspaceSyncStatus];
   }
 >;
 
@@ -4643,42 +4215,14 @@ type GithubIpcRendererEvents = Namespaced<'github', { 'device-code': [GithubDevi
 /** Main→renderer: the device-flow user code to display while `codex:link` polls. */
 type CodexIpcRendererEvents = Namespaced<'codex', { 'device-code': [CodexDeviceCode] }>;
 
-/** Main→renderer: the AAD device-code to display while `cloud:link` polls. */
-type CloudIpcRendererEvents = Namespaced<'cloud', { 'device-code': [CloudDeviceCode] }>;
-
 /** Main→renderer: WslBackendManager status pushes (Windows only). Broadcast
  *  on every state transition so the settings card tracks the daemon live. */
 type WslIpcRendererEvents = Namespaced<'wsl', { 'status-changed': [WslBackendStatus] }>;
 
-/**
- * Main→renderer: pushed by the cloud whenever a principal's machine list
- * changes (registration, label edit, removal, online/offline). The renderer
- * mirrors it into a nanostore so the picker and Settings card refresh in
- * place without polling.
- */
-type MachineIpcRendererEvents = Namespaced<'machine', { 'list-changed': [MachineSummary[]] }>;
-
-/**
- * Main → renderer (cloud-linked Electron only): an inbound tunnel frame from
- * local omni-serve that the cloud expects on its `tunnel:incoming` WS
- * channel. The renderer's tunnel bridge re-emits it onto the cloud WS via
- * `emitter.invoke('tunnel:incoming', event)`. No-op outside cloud-linked
- * mode (the listener is never attached).
- */
-type TunnelIpcRendererEvents = Namespaced<
-  'tunnel',
-  {
-    'emit-incoming': [{ tunnelId: string; dataBase64: string; binary: boolean; close?: boolean }];
-  }
->;
-
 export type IpcRendererEvents = TerminalIpcRendererEvents &
   GithubIpcRendererEvents &
   CodexIpcRendererEvents &
-  CloudIpcRendererEvents &
   WslIpcRendererEvents &
-  MachineIpcRendererEvents &
-  TunnelIpcRendererEvents &
   MainProcessIpcRendererEvents &
   OmniInstallProcessIpcRendererEvents &
   VoiceIpcRendererEvents &
@@ -4688,9 +4232,7 @@ export type IpcRendererEvents = TerminalIpcRendererEvents &
   ProjectIpcRendererEvents &
   PageIpcRendererEvents &
   ToastIpcRendererEvents &
-  PlatformIpcRendererEvents &
   ExtensionIpcRendererEvents &
-  WorkspaceSyncIpcRendererEvents &
   BrowserIpcRendererEvents &
   SupervisorIpcRendererEvents &
   RoutineIpcRendererEvents &

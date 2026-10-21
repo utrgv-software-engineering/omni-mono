@@ -41,7 +41,6 @@ import {
 import { agentConfigApi } from '@/renderer/services/config';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { isLocalVoiceCapable } from '@/renderer/services/voice-client';
 import type {
   CodexDeviceCode,
   ModelEntry,
@@ -327,7 +326,6 @@ export const SettingsModalAiTab = memo(() => {
   // Local is the launcher-side on-device stack (Parakeet + Pocket), persisted
   // separately. They're mutually exclusive.
   const localVoiceEnabled = useStore(persistedStoreApi.$atom).localVoiceEnabled;
-  const localVoiceCapable = isLocalVoiceCapable();
   const onChangeVoiceProvider = useCallback(
     (value: string) => {
       void persistedStoreApi.setKey('localVoiceEnabled', value === 'local');
@@ -631,11 +629,8 @@ export const SettingsModalAiTab = memo(() => {
                   Hosted
                 </label>
 
-                <label
-                  className="inline-flex items-center gap-2 text-sm"
-                  title={localVoiceCapable ? undefined : 'Not available in this deployment'}
-                >
-                  <RadioGroupItem value="local" disabled={!localVoiceCapable} />
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <RadioGroupItem value="local" />
                   Local
                 </label>
               </RadioGroup>

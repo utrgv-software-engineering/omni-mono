@@ -42,7 +42,6 @@ vi.mock('@/main/profile-resolver', () => ({
 
 vi.mock('shell-env', () => ({ shellEnvSync: () => ({}) }));
 vi.mock('@/lib/pty-utils', () => ({ DEFAULT_ENV: {} }));
-vi.mock('@/main/workspace-sync', () => ({ downloadWorkspace: vi.fn(async () => {}) }));
 vi.mock('@/lib/simple-logger', () => ({
   SimpleLogger: class {
     constructor(_handler: unknown) {}
@@ -170,7 +169,6 @@ describe('AgentProcess dial auth (serve mode)', () => {
     const statuses: WithTimestamp<AgentProcessStatus>[] = [];
     const rawOutput: string[] = [];
     const proc = new AgentProcess({
-      mode: 'serve',
       ipcRawOutput: (data) => rawOutput.push(data),
       onStatusChange: (s) => statuses.push(s),
       // uiUrl HTTP readiness probe: always up.
@@ -238,7 +236,6 @@ describe('AgentProcess dial auth (serve mode)', () => {
     hoisted.nextChild = child;
     const statuses: WithTimestamp<AgentProcessStatus>[] = [];
     const proc = new AgentProcess({
-      mode: 'serve',
       ipcRawOutput: () => {},
       onStatusChange: (s) => statuses.push(s),
       fetchFn: (async () => ({ status: 200 })) as unknown as typeof globalThis.fetch,

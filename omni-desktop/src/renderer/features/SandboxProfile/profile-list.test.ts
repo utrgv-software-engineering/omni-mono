@@ -7,7 +7,6 @@ vi.mock('@/renderer/features/Sandboxes/state', () => ({
   $sandboxProfiles: atom<ProfileSummary[]>([]),
   $substrateStatus: atom<SandboxSubstrateStatus | null>(null),
 }));
-vi.mock('@/renderer/services/machines', () => ({ $machines: atom([]) }));
 
 import { getAvailableProfileNames } from '@/renderer/features/SandboxProfile/profile-list';
 
@@ -29,14 +28,13 @@ const discovered = [
 
 describe('getAvailableProfileNames', () => {
   it('never offers the mini computer (wasmbox) yet', () => {
-    const names = getAvailableProfileNames({ isEnterprise: false, discovered, substrate: { docker: 'ok' } });
+    const names = getAvailableProfileNames({ discovered, substrate: { docker: 'ok' } });
     expect(names).not.toContain('wasmbox');
     expect(names).toEqual(expect.arrayContaining(['host', 'devbox', 'team-box']));
   });
 
   it('hides it even when a deployment lists it', () => {
     const names = getAvailableProfileNames({
-      isEnterprise: false,
       available: ['host', 'wasmbox'],
       discovered,
       substrate: { docker: 'ok' },
@@ -45,22 +43,22 @@ describe('getAvailableProfileNames', () => {
   });
 
   it('hides every Docker profile when Docker is missing', () => {
-    const names = getAvailableProfileNames({ isEnterprise: false, discovered, substrate: { docker: 'missing' } });
+    const names = getAvailableProfileNames({ discovered, substrate: { docker: 'missing' } });
     expect(names).toEqual(['host']);
   });
 
   it('keeps Docker profiles when Docker is installed but not running', () => {
-    const names = getAvailableProfileNames({ isEnterprise: false, discovered, substrate: { docker: 'daemon-down' } });
+    const names = getAvailableProfileNames({ discovered, substrate: { docker: 'daemon-down' } });
     expect(names).toContain('devbox');
   });
 
   it('hides nothing before the Docker probe has answered', () => {
-    const names = getAvailableProfileNames({ isEnterprise: false, discovered, substrate: null });
+    const names = getAvailableProfileNames({ discovered, substrate: null });
     expect(names).toContain('devbox');
   });
 
   it('applies the Docker requirement to the fallback list before discovery lands', () => {
-    const names = getAvailableProfileNames({ isEnterprise: false, discovered: [], substrate: { docker: 'missing' } });
+    const names = getAvailableProfileNames({ discovered: [], substrate: { docker: 'missing' } });
     expect(names).toEqual(['host']);
   });
 });

@@ -10,18 +10,15 @@ import { shellEnvSync } from 'shell-env';
 import { assert } from 'tsafe';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import { getProductSlug } from '@/lib/product';
 import { DEFAULT_ENV } from '@/lib/pty-utils';
 import { SimpleLogger } from '@/lib/simple-logger';
 import { wsAuthOptions } from '@/lib/ws-auth';
 import { AgentHostControlClient } from '@/main/agent-host-control-client';
 import { getGitBashEnv } from '@/main/git-bash';
 import { initializeMainRpcConnection } from '@/main/omniagents-rpc-handshake';
-import type { IComputeClient } from '@/main/platform-client';
 import { assertServeProtocolSupported } from '@/main/product-runtime';
 import { resolveProfile } from '@/main/profile-resolver';
 import { getOmniCliPath, getOmniConfigDir, isDirectory, pathExists } from '@/main/util';
-import { downloadWorkspace } from '@/main/workspace-sync';
 import type { ManagementAdminMethod } from '@/shared/management-admin';
 import type {
   AgentProcessData,
@@ -39,20 +36,6 @@ import type {
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-/**
- * Two paths exist after the v22 cut:
- *
- *   - ``serve``   — spawn one targetless ``omni serve`` AgentHost; consumer
- *                   Workspaces and profiles materialize independent execution
- *                   environments through its control plane.
- *   - ``compute`` — delegate the sandbox lifecycle to an {@link IComputeClient}
- *                   instead of spawning ``omni serve`` here. Platform mode
- *                   connects to a remote AgentHost. Computer-as-sandbox uses
- *                   the separate local ``host_bridge`` serve path so it keeps
- *                   the locally validated readiness contract.
- */
-export type AgentProcessMode = 'serve' | 'compute';
 
 /**
  * How one source for the sandbox workspace should be seeded. Mirrors
@@ -117,10 +100,7 @@ export type AgentProcessStartArg = {
    * registered.
    */
   projectId?: string;
-  /**
-   * Delegated-compute session identity. Local AgentHost Workspace identity is
-   * deliberately independent.
-   */
+  /** Conversation Session identity — the AgentHost Thread id. */
   sessionId?: string;
   /** Stable snapshot reference registered with the consumer Workspace. */
   snapshotRef?: string;
@@ -130,27 +110,6 @@ export type AgentProcessStartArg = {
    * its own state dir since there's no project workspace on disk.
    */
   workspaceDir?: string;
-  /** Compute mode: agent slug for the platform's policy resolution. */
-  agentSlug?: string;
-  /** Compute mode: domain slug override. */
-  domain?: string;
-  /** Compute mode: pre-synced share name (skips the one-shot upload). */
-  preSyncedShareName?: string;
-  /** Compute mode: git-remote URL the remote container clones. */
-  gitRepo?: { url: string; branch?: string };
-  /**
-   * Local-compute (computer-as-sandbox) extras forwarded to the
-   * `IComputeClient.startSession` extras param so the laptop's local
-   * `ProcessManager` knows what profile / env / workspace to spawn against.
-   * Ignored by `PlatformClient`.
-   */
-  localComputeExtras?: {
-    sessionId?: string;
-    profileName?: string;
-    workspaceDir?: string;
-    projectId?: string;
-    env?: Record<string, string>;
-  };
   /**
    * `{ envVarName: token }` for private git remotes, merged into the spawned
    * `omni serve` process env. The matching env var *name* is referenced by each
@@ -168,14 +127,6 @@ export type AgentProcessStartArg = {
    * Token values ride in `gitTokenEnv` (process env), referenced here by name.
    */
   credentials?: Array<{ url: string; username: string; tokenEnv: string }>;
-  /**
-   * Explicit profile file path, bypassing name-based resolution. Set by the
-   * cloud for `local:<machineId>` (computer-as-sandbox) sessions: the launcher
-   * writes a per-session `host_bridge` profile (pointing `omni serve`'s sandbox
-   * at the user's laptop via the relay) and passes its path here. When set,
-   * `profileName` is only used for labelling.
-   */
-  explicitProfilePath?: string;
 };
 
 export type AgentHostConsumerRuntime = ExecutionTarget & {
@@ -583,8 +534,6 @@ async function oneShotServerCall(
 // ---------------------------------------------------------------------------
 
 export class AgentProcess {
-  readonly mode: AgentProcessMode;
-
   private status: WithTimestamp<AgentProcessStatus>;
   private ipcRawOutput: (data: string) => void;
   private onStatusChange: (status: WithTimestamp<AgentProcessStatus>) => void;
@@ -595,9 +544,6 @@ export class AgentProcess {
   private jsonEmitted = false;
   private lastStartArg: AgentProcessStartArg | null = null;
   private fetchFn: FetchFn;
-  private computeClient: IComputeClient | null = null;
-  private computeSessionId: string | null = null;
-  private recordCompute?: (profile: string, sessionId: string) => void;
   private getExtraEnv?: () => Record<string, string> | Promise<Record<string, string>>;
   private readonly processStopTimeoutMs: number;
   private readonly stopReconcilePollMs: number;
@@ -620,20 +566,11 @@ export class AgentProcess {
   private intentionallyKilled: WeakSet<ChildProcess> = new WeakSet();
 
   constructor(opts: {
-    mode: AgentProcessMode;
     ipcLogger?: (entry: WithTimestamp<LogEntry>) => void;
     ipcRawOutput: (data: string) => void;
     onStatusChange: (status: WithTimestamp<AgentProcessStatus>) => void;
     fetchFn?: FetchFn;
-    computeClient?: IComputeClient;
-    recordCompute?: (profile: string, sessionId: string) => void;
-    /**
-     * Extra env merged into the spawned `omni serve` (serve mode), evaluated
-     * per start. Cloud uses this to inject a fresh per-tenant
-     * `OMNI_RUNTIME_TOKEN` for the agent's HTTP MCP calls, AND for the
-     * codex-token materialization side effect (writing the per-principal
-     * codex.json to the spawn's config dir before omni-serve starts).
-     */
+    /** Extra env merged into the spawned `omni serve`, evaluated per start. */
     getExtraEnv?: () => Record<string, string> | Promise<Record<string, string>>;
     /** Test/embedding override for the SIGTERM grace period. */
     processStopTimeoutMs?: number;
@@ -644,13 +581,10 @@ export class AgentProcess {
       claim: Omit<import('./chat-runtime-journal').ChatRuntimeClaim, 'machine'>
     ) => void | Promise<void>;
   }) {
-    this.mode = opts.mode;
-    this.recordCompute = opts.recordCompute;
     this.recordConsumer = opts.recordConsumer;
     this.ipcRawOutput = opts.ipcRawOutput;
     this.onStatusChange = opts.onStatusChange;
     this.fetchFn = opts.fetchFn ?? globalThis.fetch;
-    this.computeClient = opts.computeClient ?? null;
     this.getExtraEnv = opts.getExtraEnv;
     this.processStopTimeoutMs = opts.processStopTimeoutMs ?? 30_000;
     this.stopReconcilePollMs = opts.stopReconcilePollMs ?? 250;
@@ -665,10 +599,6 @@ export class AgentProcess {
   // --- Public API ---
 
   getStatus = (): WithTimestamp<AgentProcessStatus> => this.status;
-
-  /** Whether this AgentProcess owns an in-process AgentHost reading the
-   * launcher's host mcp.json. Delegated compute has a different config store. */
-  usesLocalAgentHostConfig = (): boolean => this.mode === 'serve';
 
   /**
    * Wait for the targetless AgentHost and return only its ordinary consumer
@@ -749,9 +679,6 @@ export class AgentProcess {
     workspaceId: string,
     arg: AgentProcessStartArg
   ): Promise<AgentHostConsumerRuntime> => {
-    if (this.mode !== 'serve') {
-      throw new Error('Delegated compute does not support AgentHost consumer configuration');
-    }
     await this.ensureConsumerSources(arg);
     const data = await this.waitForRunningData();
     if (!data.wsUrl || !this.agentHostControlToken) {
@@ -762,9 +689,7 @@ export class AgentProcess {
       (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
     const snapshotRef = arg.snapshotRef ?? workspaceId;
     let materializedEnvironmentId: string | undefined;
-    const resolved = arg.explicitProfilePath
-      ? ({ kind: 'file', path: arg.explicitProfilePath } as const)
-      : resolveProfile(arg.profileName);
+    const resolved = resolveProfile(arg.profileName);
     if (resolved.kind === 'missing') {
       throw new Error(`Profile "${arg.profileName}" is no longer available`);
     }
@@ -939,38 +864,6 @@ export class AgentProcess {
   /** Bind an additional conversation to this consumer's current environment.
    * Daily resident threads share the workspace; they do not provision new sandboxes. */
   bindSession = async (consumerId: string, sessionId: string, runtime?: AgentHostConsumerRuntime): Promise<void> => {
-    if (this.mode === 'compute') {
-      const status = this.getStatus();
-      if (status.type !== 'running') {
-        throw new Error('Resident execution environment is not ready');
-      }
-      const data = status.data;
-      if (
-        !data.wsUrl ||
-        !data.workspaceId ||
-        !data.environmentId ||
-        !Number.isSafeInteger(data.environmentGeneration) ||
-        !data.authToken
-      ) {
-        throw new Error('Remote resident execution environment is unavailable');
-      }
-      // Binding is owner-scoped. Remote consumers use their ordinary credential;
-      // workspace registration and other admin operations remain unavailable.
-      const control =
-        this.agentHostControlClient ??
-        (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, data.authToken));
-      await this.bindConsumer(
-        control,
-        sessionId,
-        {
-          workspaceId: data.workspaceId,
-          environmentId: data.environmentId,
-          environmentGeneration: data.environmentGeneration!,
-        },
-        { consumerId }
-      );
-      return;
-    }
     const registration = this.consumerRegistrations.get(consumerId);
     const control = this.agentHostControlClient;
     if (!control || !registration || !runtime) {
@@ -1116,51 +1009,11 @@ export class AgentProcess {
     this.lastStartArg = arg;
     this.updateStatus({ type: 'starting' });
 
-    if (this.mode === 'compute') {
-      await this.startComputeSession(arg);
-      return;
-    }
-
     await this.startServeSession(arg);
   };
 
   stop = async (): Promise<AgentProcessStopResult> => {
-    if (this.mode === 'compute') {
-      this.updateStatus({ type: 'stopping' });
-      if (this.computeSessionId && this.computeClient) {
-        const sessionId = this.computeSessionId;
-        // Do not drop the only remote session identity on an uncertain stop.
-        // The caller retains its cleanup job and can retry this same session.
-        await this.computeClient.stopSession(sessionId);
-
-        // Download workspace files back from Azure Files share unless the
-        // sync manager handles it or the source is a git-remote (container
-        // pushes to git).
-        if (
-          this.lastStartArg &&
-          this.lastStartArg.workspaceDir &&
-          !this.lastStartArg.preSyncedShareName &&
-          !this.lastStartArg.gitRepo
-        ) {
-          try {
-            this.ipcRawOutput('Finalizing workspace download...\r\n');
-            const { downloadSasUrl } = await this.computeClient.finalizeWorkspace(sessionId);
-            await downloadWorkspace(this.lastStartArg.workspaceDir, downloadSasUrl, this.fetchFn, (msg) =>
-              this.ipcRawOutput(`${msg}\r\n`)
-            );
-            this.ipcRawOutput('Workspace downloaded successfully\r\n');
-          } catch (error) {
-            this.ipcRawOutput(`Workspace download failed: ${(error as Error).message}\r\n`);
-          }
-        }
-
-        this.computeSessionId = null;
-      }
-      this.updateStatus({ type: 'exited' });
-      return this.stopResult('compute', 'graceful');
-    }
-
-    // Serve mode — omni serve detaches from durable container sessions on
+    // omni serve detaches from durable container sessions on
     // SIGTERM (docker containers keep running for reattach), so we just kill
     // the child and let it run its own teardown in its finally block.
     if (!this.childProcess) {
@@ -1213,9 +1066,6 @@ export class AgentProcess {
     target: ExecutionTarget | undefined,
     fn: 'sandbox.pause' | 'sandbox.unpause'
   ): Promise<SandboxPauseResult> => {
-    if (this.mode === 'compute') {
-      return { ok: false, supported: false, reason: 'compute mode does not implement pause yet' };
-    }
     if (this.status.type !== 'running' && this.status.type !== 'connecting') {
       return { ok: false, supported: false, reason: 'sandbox is not running' };
     }
@@ -1409,115 +1259,6 @@ export class AgentProcess {
     }
   };
 
-  // --- Compute mode (IComputeClient-backed PlatformClient) ---
-
-  private startComputeSession = async (arg: AgentProcessStartArg): Promise<void> => {
-    if (!this.computeClient) {
-      this.updateStatus({ type: 'error', error: { message: 'Compute client not configured' } });
-      return;
-    }
-
-    const agentSlug = arg.agentSlug ?? getProductSlug();
-
-    try {
-      this.log.info(c.cyan(`Requesting sandbox from compute backend (agent: ${agentSlug})...\r\n`));
-
-      const session = await this.computeClient.startSession(agentSlug, arg.domain, arg.gitRepo, arg.localComputeExtras);
-      this.computeSessionId = session.sessionId;
-      this.recordCompute?.(arg.profileName, session.sessionId);
-
-      if (arg.gitRepo) {
-        this.log.info(
-          c.cyan(
-            `Container will clone ${arg.gitRepo.url}` + `${arg.gitRepo.branch ? ` (${arg.gitRepo.branch})` : ''}\r\n`
-          )
-        );
-      } else if (arg.preSyncedShareName) {
-        this.log.info(c.cyan(`Using pre-synced share: ${arg.preSyncedShareName}\r\n`));
-      } else {
-        this.log.info(c.yellow('Workspace upload disabled — container starts with an empty workspace\r\n'));
-      }
-
-      this.log.info(c.cyan(`Session ${session.sessionId} created, waiting for container...\r\n`));
-      this.updateStatus({ type: 'connecting', data: { uiUrl: '' } });
-
-      const ready = await this.computeClient.waitForSession(session.sessionId);
-      if (this.isStopping()) {
-        return;
-      }
-
-      const wsUrl = ready.websocketUrl;
-      if (!wsUrl) {
-        throw new Error('Platform compute session became active without websocketUrl');
-      }
-      // The consumer credential stays in structured process data and is sent
-      // through Authorization headers / one-time ticket exchange. It is never
-      // embedded in either renderer-facing URL.
-      const uiUrl = wsUrl.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:').replace(/\/ws$/, '');
-      const data: AgentProcessData = {
-        uiUrl,
-        wsUrl,
-        agentHostId: ready.agentHostId,
-        workspaceId: ready.workspaceId,
-        environmentId: ready.environmentId,
-        environmentGeneration: ready.environmentGeneration,
-        workspaceRoot: ready.workspaceRoot,
-        defaultCwd: ready.defaultCwd,
-        services: ready.services,
-        authToken: ready.consumerCredential.token,
-        ...(ready.containerId ? { containerId: ready.containerId } : {}),
-      };
-
-      // When the compute backend's ``waitForSession`` already guarantees the
-      // sandbox is serving, skip our own HTTP/WS readiness probe.
-      // Alternate trusted adapters may confirm readiness themselves; ordinary
-      // platform sessions retain the independent HTTP/WS probe below.
-      if (this.computeClient.confirmsReadiness) {
-        this.updateStatus({ type: 'running', data });
-        this.log.info(c.green.bold('Compute sandbox started\r\n'));
-        return;
-      }
-
-      this.updateStatus({ type: 'connecting', data });
-      this.log.info(c.cyan('Waiting for compute backend services to accept connections...\r\n'));
-      await this.waitForReady(data);
-    } catch (error) {
-      if (this.isStopping()) {
-        return;
-      }
-      // Surface structured ComputeError envelopes (host-offline, machine-at-
-      // capacity) so the renderer can show the right banner. ComputeError is
-      // shaped { kind, machineId, machineLabel, extras } — `errorEnvelope`
-      // splats those onto the AgentProcessStatus error field.
-      type ErrorVariant = Extract<AgentProcessStatus, { type: 'error' }>;
-      const errorEnvelope: ErrorVariant['error'] = {
-        message: (error as Error).message,
-      };
-      const ce = error as {
-        kind?: 'host-offline' | 'machine-at-capacity' | 'machine-removed';
-        machineId?: string;
-        machineLabel?: string;
-        extras?: Record<string, unknown>;
-      };
-      if (ce.kind === 'host-offline' || ce.kind === 'machine-at-capacity') {
-        errorEnvelope.kind = ce.kind;
-        if (ce.machineId) {
-          errorEnvelope.machineId = ce.machineId;
-        }
-        if (ce.machineLabel) {
-          errorEnvelope.machineLabel = ce.machineLabel;
-        }
-        if (typeof ce.extras?.['maxSessions'] === 'number') {
-          errorEnvelope.maxSessions = ce.extras['maxSessions'] as number;
-        }
-        if (typeof ce.extras?.['currentSessions'] === 'number') {
-          errorEnvelope.currentSessions = ce.extras['currentSessions'] as number;
-        }
-      }
-      this.updateStatus({ type: 'error', error: errorEnvelope });
-    }
-  };
-
   // --- Internals ---
 
   private isStopping = (): boolean => {
@@ -1682,8 +1423,7 @@ export class AgentProcess {
           return;
         }
         this.updateStatus({ type: 'running', data });
-        const label = this.mode === 'compute' ? 'Compute sandbox' : 'Sandbox';
-        this.log.info(c.green.bold(`${label} started\r\n`));
+        this.log.info(c.green.bold('Sandbox started\r\n'));
         return;
       }
       await new Promise<void>((r) => {

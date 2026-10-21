@@ -58,7 +58,6 @@ import type {
   Page,
   Pipeline,
   PlanSnapshotEntry,
-  PlatformCredentials,
   Project,
   ProjectId,
   ProjectSource,
@@ -118,13 +117,6 @@ export interface SupervisorOrchestratorStore {
   setTickets(tickets: Ticket[]): void;
   getProjects(): Project[];
   getWipLimit(): number;
-  /**
-   * The principal whose WIP this is (teams/cloud). When set, WIP enforcement +
-   * the "Right Now" rollup count only tickets assigned to this user. Undefined
-   * in single-user/local mode → counts every active ticket (legacy behavior).
-   */
-  getCurrentPrincipal?(): string | undefined;
-  getPlatformCredentials(): PlatformCredentials | undefined;
   getCodeTabs(): Array<{ id: string; ticketId?: string }>;
   getPersistedTasks(): Task[];
   setPersistedTasks(tasks: Task[]): void;
@@ -716,15 +708,7 @@ export class SupervisorOrchestrator {
    * Paces the autopilot dispatcher against `wipLimit` in `autoDispatchTick`.
    */
   getActiveWipTickets(): Ticket[] {
-    const principal = this.deps.store.getCurrentPrincipal?.();
-    return this.deps.store.getTickets().filter((t) => {
-      if (t.phase === undefined || !isActivePhase(t.phase)) {
-        return false;
-      }
-      // Teams: WIP is personal — count only tickets assigned to this user.
-      // Single-user/local (no principal): count all active (legacy behavior).
-      return principal ? t.assignee === principal : true;
-    });
+    return this.deps.store.getTickets().filter((t) => t.phase !== undefined && isActivePhase(t.phase));
   }
 
   /**

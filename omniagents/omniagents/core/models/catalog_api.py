@@ -6,8 +6,8 @@ The typed contract behind the GUI protocol's model-catalog RPC methods
 — see ``omniagents/rpc/protocol.md`` § "Model & Capability Catalog").
 
 The :class:`~omniagents.core.models.store.ModelConfigStore` remains the
-single source of model/provider truth (defaults → governance → user
-config → live discovery). This module only *shapes* that data into the
+single source of model/provider truth (defaults → user config → live
+discovery). This module only *shapes* that data into the
 stable wire contract every maintained client consumes:
 
 - **Model descriptors** — display metadata, provider identity,
@@ -144,8 +144,6 @@ def _deprecation(merged: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _credential_source(store: ModelConfigStore, merged: Dict[str, Any]) -> str:
-    if merged.get("credential_ref"):
-        return "platform"
     if (merged.get("provider") or "").strip().lower() == "openai-oauth":
         return "oauth"
     if merged.get("api_key"):
@@ -199,8 +197,7 @@ def _availability(
             _reason(
                 "missing_credentials",
                 "No API key or credential is configured for this model.",
-                "Add an API key for the provider or sign in to the "
-                "management plane.",
+                "Add an API key for the provider.",
             )
         )
 

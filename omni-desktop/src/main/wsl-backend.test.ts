@@ -16,7 +16,7 @@ import {
   type SpawnWsl,
   type WslDaemonChild,
 } from '@/main/wsl-backend';
-import { verifyRuntimeToken } from '@/server/runtime-token';
+import { verifyWsToken } from '@/server/ws-token';
 import type { WslBackend } from '@/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -416,25 +416,24 @@ describe('daemon restart backoff', () => {
 });
 
 describe('token minting', () => {
-  it('mints tokens that round-trip through verifyRuntimeToken with the spawned secret', async () => {
+  it('mints tokens that round-trip through verifyWsToken with the spawned secret', async () => {
     const { manager, cleanup, spawns } = makeManager({ respond: () => ok(), fetchOk: false });
     try {
       await manager.start('Ubuntu-22.04');
       const spawned = spawns.at(0);
       expect(spawned).toBeDefined();
-      const secretArg = spawned?.args.find((a) => a.startsWith('OMNI_RUNTIME_TOKEN_SECRET='));
+      const secretArg = spawned?.args.find((a) => a.startsWith('OMNI_WS_TOKEN_SECRET='));
       expect(secretArg).toBeDefined();
-      const secret = (secretArg ?? '').slice('OMNI_RUNTIME_TOKEN_SECRET='.length);
+      const secret = (secretArg ?? '').slice('OMNI_WS_TOKEN_SECRET='.length);
       expect(secret).toMatch(/^[0-9a-f]{64}$/);
 
       const token = manager.getWsToken();
-      const claims = verifyRuntimeToken(secret, token);
+      const claims = verifyWsToken(secret, token);
       expect(claims).not.toBeNull();
-      expect(claims?.tenantId).toBe('local');
       expect(claims?.sessionId).toMatch(/^[0-9a-f-]{36}$/);
 
       // Tampered tokens verify to null.
-      expect(verifyRuntimeToken(secret, `${token}x`)).toBeNull();
+      expect(verifyWsToken(secret, `${token}x`)).toBeNull();
     } finally {
       cleanup();
     }
@@ -602,9 +601,8 @@ describe('persistent daemon mode', () => {
       expect(runCalls.some(isDetachedSpawnCall)).toBe(false);
       expect(runCalls.some(isProvisionCall)).toBe(false);
       expect(runCalls.some(isReapCall)).toBe(false);
-      const claims = verifyRuntimeToken(STORED_SECRET, manager.getWsToken());
+      const claims = verifyWsToken(STORED_SECRET, manager.getWsToken());
       expect(claims).not.toBeNull();
-      expect(claims?.tenantId).toBe('local');
     } finally {
       cleanup();
     }
@@ -627,7 +625,7 @@ describe('persistent daemon mode', () => {
       const detached = runCalls.find(isDetachedSpawnCall);
       expect(detached).toBeDefined();
       // The durable secret is reused for the fresh daemon; no tracked child.
-      expect(detached?.args.join(' ')).toContain(`OMNI_RUNTIME_TOKEN_SECRET=${STORED_SECRET}`);
+      expect(detached?.args.join(' ')).toContain(`OMNI_WS_TOKEN_SECRET=${STORED_SECRET}`);
       expect(spawns).toHaveLength(0);
       expect(manager.getStatus().state).toBe('running');
       expect(storeSet).toHaveBeenLastCalledWith('remoteBackend', {
@@ -703,7 +701,7 @@ describe('persistent daemon mode', () => {
       expect(runCalls.some(isReapCall)).toBe(true);
       expect(secretState.value).toMatch(/^[0-9a-f]{64}$/);
       const detached = runCalls.find(isDetachedSpawnCall);
-      expect(detached?.args.join(' ')).toContain(`OMNI_RUNTIME_TOKEN_SECRET=${secretState.value}`);
+      expect(detached?.args.join(' ')).toContain(`OMNI_WS_TOKEN_SECRET=${secretState.value}`);
       expect(spawns).toHaveLength(1);
       expect(storeSet).toHaveBeenLastCalledWith('remoteBackend', {
         kind: 'wsl',

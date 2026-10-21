@@ -1,27 +1,13 @@
 /**
- * Backend-agnostic contract for project-data persistence.
- *
- * Two implementations satisfy this interface:
- *   - `SqliteProjectsRepo` (sqlite-repo.ts) — thin async adapter over the
- *     synchronous `ProjectsRepo`. Used by the Electron desktop app and the
- *     single-tenant local server (one `projects.db` file).
- *   - `PgProjectsRepo` (future) — Postgres-backed, constructed with a
- *     `tenantId` so every query is tenant-scoped by construction, backed by
- *     row-level security. Used by the multi-tenant cloud deployment.
- *
- * The methods are **async** even though SQLite is synchronous: Postgres
- * drivers are async, so the contract has to be `Promise`-returning for both
- * backends to satisfy it. The SQLite adapter just wraps its sync calls.
- *
- * Tenancy is NOT expressed in these signatures — it's baked into the
- * implementation instance (the SQLite repo is single-tenant; the Pg repo
- * closes over a tenant). Callers never pass a tenant id, so they cannot
- * accidentally read across tenants.
+ * Async contract for project-data persistence, implemented by
+ * `SqliteProjectsRepo` (sqlite-repo.ts) — a thin async adapter over the
+ * synchronous `ProjectsRepo`, used by the Electron desktop app and the server
+ * build (one `projects.db` file).
  *
  * Change-tracking (`getChangeSeq`/`bumpChangeSeq`) is intentionally absent:
  * it's a SQLite-specific cross-process notification mechanism (the
- * `_change_seq` table polled by db-change-watcher). Postgres uses LISTEN/
- * NOTIFY instead, so it doesn't belong in the shared data contract.
+ * `_change_seq` table polled by db-change-watcher) that consumers reach
+ * through the sync `ProjectsRepo`.
  */
 import type { ColumnCategory } from './defaults.js';
 import type {
@@ -197,7 +183,7 @@ export interface IProjectsRepo {
   }): Promise<ResidentMessageRow[]>;
   /** Newest `limit` rows in ascending id order (the snapshot tail). */
   listResidentMessages(limit: number): Promise<ResidentMessageRow[]>;
-  /** Log bound: keep the newest `keep` rows (per tenant on Postgres). */
+  /** Log bound: keep the newest `keep` rows. */
   pruneResidentMessages(keep: number): Promise<void>;
 
   // ---- Resident alarms ----

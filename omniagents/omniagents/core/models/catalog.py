@@ -20,8 +20,8 @@ sibling file ships in the wheel exactly like ``project.yml`` itself.
 Catalog schema (``models.yml``) — the exact shape
 :class:`ModelConfigStore` consumes::
 
-    default_model: gpt-5.1     # fallback default ref when neither
-                               #   governance nor the user set one (optional)
+    default_model: gpt-5.1     # fallback default ref when the user
+                               #   set none (optional)
     default_provider: openai   # provider implied by unprefixed model refs
                                #   (optional; default "openai")
     providers:                 # -> the store's default_providers layer
@@ -43,7 +43,7 @@ Catalog schema (``models.yml``) — the exact shape
 
 Provider/model entries are passed to the store verbatim — every key the
 store understands in ``models.json`` providers (``base_url``,
-``api_version``, ``realtime``, ``reasoning``, ``credential_ref``, ...)
+``api_version``, ``realtime``, ``reasoning``, ...)
 is valid here.
 
 The installed store uses the *conventional hooks*:
@@ -51,16 +51,9 @@ The installed store uses the *conventional hooks*:
 - ``config_dir`` — the installed product identity's config dir
   (late-bound through :func:`omniagents.core.product.product_info`).
 - ``default_providers`` / ``default_model_fallback`` — the catalog data.
-- ``governed_config`` — the standard governed file
-  (``models.governed.json`` in the product config dir), gated on
-  management-plane authentication (a stale governed cache must not
-  override user settings when signed out) and re-applied once from the
-  platform policy when credentials exist but the cache is missing.
 - ``oauth_models`` / ``oauth_authenticated`` — the framework codex
   provider (live model discovery + sign-in state), wired only when the
   catalog contains an ``openai-oauth`` provider.
-- ``credential_resolver`` — conventional platform credential vending
-  (:func:`omniagents.core.providers.platform.credentials.fetch_provider_credential`).
 
 Install timing (documented contract):
 
@@ -275,40 +268,6 @@ def _conventional_config_dir() -> Path:
     return product_info().config_dir()
 
 
-def _conventional_governed_config() -> Optional[Dict[str, Any]]:
-    """Management-plane model governance — only when authenticated.
-
-    A stale governed config on disk must not override user settings when
-    the user is not connected to the management plane. When credentials
-    exist but the governed cache is missing, re-apply governance once
-    from the platform policy.
-    """
-    try:
-        from omniagents.core.providers.platform import client
-
-        if not client.is_authenticated():
-            return None
-
-        from .governed import apply_platform_model_governance, load_governed_config
-
-        config_dir = _conventional_config_dir()
-        governed = load_governed_config(config_dir)
-        if not governed:
-            apply_platform_model_governance(config_dir)
-            governed = load_governed_config(config_dir)
-        return governed
-    except Exception:
-        return None
-
-
-def _conventional_credential_resolver(ref: str) -> Optional[Dict[str, Any]]:
-    from omniagents.core.providers.platform.credentials import (
-        fetch_provider_credential,
-    )
-
-    return fetch_provider_credential(ref)
-
-
 def _codex_models() -> Optional[Dict[str, Dict[str, Any]]]:
     from omniagents.core.providers.codex import list_codex_models
 
@@ -329,10 +288,8 @@ def build_catalog_store(catalog: ModelCatalog) -> ModelConfigStore:
         config_dir=_conventional_config_dir,
         default_providers=lambda: copy.deepcopy(catalog.providers),
         default_model_fallback=lambda: catalog.default_model,
-        governed_config=_conventional_governed_config,
         oauth_models=_codex_models if has_oauth else None,
         oauth_authenticated=_codex_authenticated if has_oauth else None,
-        credential_resolver=_conventional_credential_resolver,
         default_provider_name=catalog.default_provider,
         single_provider=catalog.single_provider,
     )

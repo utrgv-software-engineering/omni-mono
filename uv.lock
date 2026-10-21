@@ -546,21 +546,6 @@ wheels = [
 ]
 
 [[package]]
-name = "azure-storage-blob"
-version = "12.31.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "azure-core" },
-    { name = "cryptography" },
-    { name = "isodate" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/26/ca/5299cedef5957dd838d4dc46f97bea37335bb39f6610d72b27e1a3317650/azure_storage_blob-12.31.0.tar.gz", hash = "sha256:997b393cfcbdc4b186d5911790d91f80387f7edc12c4d73eab963a2d26e5b2a9", size = 670868, upload-time = "2026-09-30T21:23:22.837Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/57/d1f45fbccc0dfbe6b6db7e5fa06199e35219c712f3743677bec1b4e7d78b/azure_storage_blob-12.31.0-py3-none-any.whl", hash = "sha256:0c0cb601d3462491d09ea96023cd791bb9dd4b173bf950daf3cff34ff47ba5b5", size = 455738, upload-time = "2026-09-30T21:23:24.944Z" },
-]
-
-[[package]]
 name = "babel"
 version = "2.18.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4346,7 +4331,6 @@ dependencies = [
 
 [package.optional-dependencies]
 all = [
-    { name = "azure-storage-blob" },
     { name = "bashkit" },
     { name = "fastapi", extra = ["all"] },
     { name = "httpx" },
@@ -4359,9 +4343,6 @@ all = [
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pywinpty", marker = "sys_platform == 'win32'" },
     { name = "uvicorn" },
-]
-audio-blob = [
-    { name = "azure-storage-blob" },
 ]
 dev = [
     { name = "black" },
@@ -4384,11 +4365,6 @@ dev = [
 docs = [
     { name = "mkdocs-material" },
 ]
-enterprise = [
-    { name = "presidio-analyzer" },
-    { name = "presidio-anonymizer" },
-    { name = "pyjwt", extra = ["crypto"] },
-]
 litellm = [
     { name = "openai-agents", extra = ["litellm"] },
 ]
@@ -4396,9 +4372,6 @@ markdown = [
     { name = "markitdown", extra = ["all", "docx", "pdf"] },
 ]
 oidc = [
-    { name = "pyjwt", extra = ["crypto"] },
-]
-platform = [
     { name = "pyjwt", extra = ["crypto"] },
 ]
 presidio = [
@@ -4504,7 +4477,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'training'", specifier = ">=1.4.0" },
-    { name = "azure-storage-blob", marker = "extra == 'audio-blob'", specifier = ">=12.20" },
     { name = "bashkit", marker = "extra == 'sandbox-bashkit'", specifier = ">=0.14.4,<0.15" },
     { name = "beautifulsoup4" },
     { name = "bitsandbytes", marker = "extra == 'training'", specifier = ">=0.43" },
@@ -4526,8 +4498,7 @@ requires-dist = [
     { name = "mkdocs-material", marker = "extra == 'dev'", specifier = ">=9.5.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==2.4.0" },
-    { name = "omniagents", extras = ["audio-blob", "litellm", "markdown", "oidc", "platform", "presidio", "sandbox-bashkit", "sandbox-blaxel", "sandbox-cloudflare", "sandbox-daytona", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-vercel", "server", "session-encrypted", "session-mongodb", "session-postgres", "session-redis", "session-sqlalchemy", "studio", "studio-server", "voice", "web"], marker = "extra == 'all'", editable = "omniagents" },
-    { name = "omniagents", extras = ["oidc", "platform", "presidio"], marker = "extra == 'enterprise'", editable = "omniagents" },
+    { name = "omniagents", extras = ["litellm", "markdown", "oidc", "presidio", "sandbox-bashkit", "sandbox-blaxel", "sandbox-cloudflare", "sandbox-daytona", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-vercel", "server", "session-encrypted", "session-mongodb", "session-postgres", "session-redis", "session-sqlalchemy", "studio", "studio-server", "voice", "web"], marker = "extra == 'all'", editable = "omniagents" },
     { name = "openai", specifier = "<2.45" },
     { name = "openai-agents", extras = ["blaxel"], marker = "extra == 'sandbox-blaxel'", specifier = ">=0.16.0,<0.17" },
     { name = "openai-agents", extras = ["cloudflare"], marker = "extra == 'sandbox-cloudflare'", specifier = ">=0.16.0,<0.17" },
@@ -4554,7 +4525,6 @@ requires-dist = [
     { name = "pydantic-core", specifier = "==2.41.4" },
     { name = "pygit2" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'oidc'", specifier = ">=2.8.0" },
-    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'platform'", specifier = ">=2.8.0" },
     { name = "pysqlcipher3", marker = "extra == 'sqlcipher'", specifier = ">=1.2.0" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
@@ -4576,7 +4546,7 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.1" },
     { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=5.1.0" },
 ]
-provides-extras = ["voice", "litellm", "studio", "server", "web", "studio-server", "docs", "markdown", "oidc", "sqlcipher", "session-sqlalchemy", "session-redis", "session-mongodb", "session-encrypted", "session-postgres", "audio-blob", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-daytona", "sandbox-blaxel", "sandbox-vercel", "sandbox-cloudflare", "sandbox-bashkit", "presidio", "platform", "enterprise", "all", "training", "dev"]
+provides-extras = ["voice", "litellm", "studio", "server", "web", "studio-server", "docs", "markdown", "oidc", "sqlcipher", "session-sqlalchemy", "session-redis", "session-mongodb", "session-encrypted", "session-postgres", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-daytona", "sandbox-blaxel", "sandbox-vercel", "sandbox-cloudflare", "sandbox-bashkit", "presidio", "all", "training", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

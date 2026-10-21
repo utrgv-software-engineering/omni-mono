@@ -103,7 +103,6 @@ describe('channel audience', () => {
 describe('participant grammar', () => {
   it('classifies every stored from-id form', () => {
     expect(participantKind('user')).toBe('human');
-    expect(participantKind('human:alice')).toBe('human');
     expect(participantKind('ext:slack:U7')).toBe('external');
     expect(participantKind('system')).toBe('system');
     // Bare roster ids (legacy slugs and opaque res_* ids) stay agents.
@@ -113,7 +112,6 @@ describe('participant grammar', () => {
 
   it('human vs human-grade: bridged users count as people for wake purposes', () => {
     expect(isHumanParticipant('user')).toBe(true);
-    expect(isHumanParticipant('human:alice')).toBe(true);
     expect(isHumanParticipant('ext:slack:U7')).toBe(false);
     expect(isHumanGradeParticipant('ext:slack:U7')).toBe(true);
     expect(isHumanGradeParticipant('scout')).toBe(false);
@@ -124,18 +122,18 @@ describe('participant grammar', () => {
     expect(dmChannelId('user', 'scout')).toBe('dm:scout:user');
     expect(dmParticipants('dm:scout:user')).toEqual(['scout', 'user']);
     // Namespaced participants switch to the `~` pair separator.
-    const personal = dmChannelId('human:alice', 'res_1');
-    expect(personal).toBe('dm:human:alice~res_1');
-    expect(dmParticipants(personal)).toEqual(['human:alice', 'res_1']);
+    const personal = dmChannelId('ext:slack:alice', 'res_1');
+    expect(personal).toBe('dm:ext:slack:alice~res_1');
+    expect(dmParticipants(personal)).toEqual(['ext:slack:alice', 'res_1']);
     const bridged = dmChannelId('ext:slack:U7', 'res_1');
     expect(dmParticipants(bridged)).toEqual(['ext:slack:U7', 'res_1']);
     // Order-insensitive either way.
-    expect(dmChannelId('res_1', 'human:alice')).toBe(personal);
+    expect(dmChannelId('res_1', 'ext:slack:alice')).toBe(personal);
   });
 
   it('humanHandle derives from the display name, else the id tail', () => {
-    expect(humanHandle('human:abc123', 'Alice Vimes')).toBe('alice-vimes');
-    expect(humanHandle('human:abc123')).toBe('abc123');
+    expect(humanHandle('ext:slack:abc123', 'Alice Vimes')).toBe('alice-vimes');
+    expect(humanHandle('ext:slack:abc123')).toBe('abc123');
     expect(humanHandle('ext:slack:U7')).toBe('u7');
   });
 
@@ -143,12 +141,12 @@ describe('participant grammar', () => {
     const humans = knownHumansFromLog([
       { from: 'user' },
       { from: 'scout', fromName: 'Scout' },
-      { from: 'human:alice', fromName: 'Alice' },
-      { from: 'human:alice', fromName: 'Alice V.' },
+      { from: 'ext:slack:alice', fromName: 'Alice' },
+      { from: 'ext:slack:alice', fromName: 'Alice V.' },
       { from: 'ext:slack:U7', fromName: 'Sam' },
     ]);
     expect([...humans.entries()]).toEqual([
-      ['human:alice', 'Alice V.'],
+      ['ext:slack:alice', 'Alice V.'],
       ['ext:slack:U7', 'Sam'],
     ]);
   });
@@ -222,28 +220,11 @@ describe('directed traffic', () => {
     expect(directed(7)).toBe(true);
   });
 
-  it('scopes personal DM threads to their named participant (viewer-aware)', () => {
-    const personal = { channel: dmChannelId('human:alice', 'scout'), from: 'scout' };
-    // Directed at Alice, not at other viewers; the collective thread stays
-    // directed at everyone.
-    expect(isDirectedAtUser(personal, () => undefined, 'human:alice')).toBe(true);
-    expect(isDirectedAtUser(personal, () => undefined, 'human:bob')).toBe(false);
+  it("counts the collective DM thread but not bridged users' personal threads", () => {
+    const personal = { channel: dmChannelId('ext:slack:alice', 'scout'), from: 'scout' };
     expect(isDirectedAtUser(personal, () => undefined)).toBe(false);
     const collective = { channel: dmChannelId(USER_PARTICIPANT, 'scout'), from: 'scout' };
-    expect(isDirectedAtUser(collective, () => undefined, 'human:bob')).toBe(true);
-  });
-
-  it('treats named humans like the collective user (v1 collective view)', () => {
-    const authorsOf = rootAuthors([
-      { id: 10, from: 'human:alice' },
-      { id: 11, from: 'scout' },
-    ]);
-    const lookup = (rootId: number): string | undefined => authorsOf.get(rootId);
-    // A named human's own post is never directed AT the humans…
-    expect(isDirectedAtUser({ channel: 'team', from: 'human:alice' }, lookup)).toBe(false);
-    // …but an agent answering a thread a named human rooted is.
-    expect(isDirectedAtUser({ channel: 'team', from: 'scout', replyTo: 10 }, lookup)).toBe(true);
-    expect(isDirectedAtUser({ channel: 'team', from: 'scout', replyTo: 11 }, lookup)).toBe(false);
+    expect(isDirectedAtUser(collective, () => undefined)).toBe(true);
   });
 
   it("never counts the user's own posts", () => {

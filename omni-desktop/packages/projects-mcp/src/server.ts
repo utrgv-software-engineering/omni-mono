@@ -12,19 +12,12 @@ import { registerTicketTools } from './tools/tickets.js';
 
 export interface ProjectsMcpContext {
   listSandboxProfiles?: () => Promise<Array<{ name: string; label?: string; available?: boolean; source?: string }>>;
-  listTeamMembers?: () => Promise<
-    Array<{ user_id: string; display_name?: string | null; email?: string | null; role?: string | null }>
-  >;
   getCurrentPrincipal?: () => Promise<string | null>;
 }
 
 /**
- * Build the omni-projects MCP server over a backend-agnostic
- * {@link IProjectsRepo}. Two callers supply the repo:
- *   - the stdio `cli.ts`, with a `SqliteProjectsRepo` (local desktop / single
- *     tenant);
- *   - the launcher server's HTTP MCP route, with a tenant-scoped
- *     `PgProjectsRepo` (multi-tenant cloud).
+ * Build the omni-projects MCP server over an {@link IProjectsRepo} (the
+ * stdio `cli.ts` supplies a `SqliteProjectsRepo`).
  *
  * Page bodies live in the DB (`getPageContent`/`setPageContent`), so the
  * server no longer touches the filesystem.
@@ -58,24 +51,20 @@ export function createServer(repo: IProjectsRepo, context: ProjectsMcpContext = 
 
   server.tool(
     'list_team_members',
-    'List assignable principals: human team members (empty in single-user/local mode) plus resident agents ' +
-      '(user_id "agent:<id>", role "agent").',
+    'List assignable principals: the resident agents (user_id "agent:<id>", role "agent").',
     {},
     async () => {
-      const humans = context.listTeamMembers ? await context.listTeamMembers() : [];
-      // Residents come straight from the repo — the fold gave the local
-      // stdio server a directory too (docs/residents-in-projects-db-plan.md).
-      const residents = (await repo.listResidents())
+      const members = (await repo.listResidents())
         .filter((r) => r.enabled === 1)
         .map((r) => ({ user_id: `agent:${r.id}`, display_name: r.name, role: 'agent' }));
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ members: [...humans, ...residents] }) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ members }) }] };
     }
   );
 
   server.tool(
     'get_current_principal',
     'Return the current principal ID for assigning tickets to self — `agent:<id>` in a resident agent session, ' +
-      'the user principal in teams mode, null in a single-user/local user session.',
+      'null in a user session.',
     {},
     async () => {
       const principal = context.getCurrentPrincipal ? await context.getCurrentPrincipal() : null;

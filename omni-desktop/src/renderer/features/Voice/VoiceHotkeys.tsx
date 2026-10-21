@@ -21,7 +21,6 @@ import { dmChannelId, USER_PARTICIPANT } from '@/lib/resident-agent';
 import { configuredVoiceMode } from '@/lib/voice-mode';
 import { goToResidentChannel } from '@/renderer/features/Residents/state';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { isLocalVoiceCapable } from '@/renderer/services/voice-client';
 import { getVoiceMic, resolveCodeVoiceScope, startOrArmVoiceMic } from '@/renderer/services/voice-recording';
 
 // keyup too, so a hold can send on release.
@@ -139,7 +138,7 @@ function useVoiceHotkey(
 export function VoiceHotkeys(): null {
   const store = useStore(persistedStoreApi.$atom);
   // Matches the DM mic these hotkeys drive — local only until DM gets hosted.
-  const voiceOn = configuredVoiceMode(store) === 'local' && isLocalVoiceCapable();
+  const voiceOn = configuredVoiceMode(store) === 'local';
 
   useVoiceHotkey(store.voiceToggleHotkey, Boolean(store.voiceToggleHotkey) && voiceOn, resolveColumnScope);
   useVoiceHotkey(

@@ -11,8 +11,7 @@ export const configApi = {
 };
 
 /**
- * Typed agent-config API — the source of truth is the (per-tenant, in cloud)
- * store, not a file path. Replaces the four Settings tabs' `config:*` file I/O;
+ * Typed agent-config API — the source of truth is the store, not a file path. Replaces the four Settings tabs' `config:*` file I/O;
  * the backend persists the value and re-materializes the agent's on-disk config.
  */
 export const agentConfigApi = {

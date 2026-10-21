@@ -114,8 +114,8 @@ export class ProjectManager {
   private sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
 
   /**
-   * When set, all project data is persisted via this async repo (SQLite
-   * locally, Postgres in cloud) and served from {@link cache}. The public
+   * When set, all project data is persisted via this async repo (SQLite) and
+   * served from {@link cache}. The public
    * accessors stay synchronous by reading the in-memory projection; async is
    * confined to {@link init} (hydration) and {@link enqueuePersist}
    * (write-through). Absent → legacy electron-store mode (some tests).
@@ -150,12 +150,11 @@ export class ProjectManager {
 
   /**
    * Synchronous SQLite handle used ONLY by {@link changeWatcher} for
-   * `_change_seq` polling (not part of the async data contract). Absent in
-   * Postgres mode, where external-write detection is LISTEN/NOTIFY instead.
+   * `_change_seq` polling (not part of the async data contract).
    */
   private changeSeqRepo: ProjectsRepo | undefined;
 
-  /** Host skills dir for this manager's projects (per-tenant on the server; default global). */
+  /** Host skills dir for this manager's projects (default global). */
   private skillsDir: string | undefined;
 
   /** Serialized write-through persistence chain — see {@link enqueuePersist}. */
@@ -179,13 +178,7 @@ export class ProjectManager {
   /** Optional AppControlManager — when set, autopilot agents get the `app_*` client tools. */
   private appControlManager?: import('@/main/app-control-manager').AppControlManager;
 
-  /** Cloud override for per-ticket artifact storage (Azure Files on ACI). */
-  private artifactStoreFor?: (ticketId: TicketId) => ArtifactStore | null;
-
-  /** Teams/cloud: the principal this instance serves (per-user WIP/review). */
-  private currentPrincipal?: string;
-
-  /** Teams/cloud: notify a member when assigned a ticket (cross-principal). */
+  /** Notify an assignee (a resident) when assigned a ticket. */
   private onAssign?: (assignee: string, ticket: Ticket) => void;
 
   /**
@@ -222,17 +215,11 @@ export class ProjectManager {
       appControlManager?: import('@/main/app-control-manager').AppControlManager;
       /** Optional async repo. When provided, project data is persisted here and cached in memory. */
       repo?: IProjectsRepo;
-      /** Optional sync SQLite handle for the change-watcher (omit in Postgres mode). */
+      /** Optional sync SQLite handle for the change-watcher. */
       changeSeqRepo?: ProjectsRepo;
-      /** Host skills directory for this manager's projects (per-tenant on the server). */
+      /** Host skills directory for this manager's projects. */
       skillsDir?: string;
-      /** Cloud override: resolve a per-ticket artifact store (e.g. Azure Files
-       *  for ACI). When it returns a store, it wins over the host/docker default. */
-      artifactStoreFor?: (ticketId: TicketId) => ArtifactStore | null;
-      /** Teams/cloud: the principal this manager instance serves. Drives per-user
-       *  WIP + weekly review ("my work"). Undefined in single-user/local mode. */
-      currentPrincipal?: string;
-      /** Teams/cloud: notify a member they were assigned a ticket (cross-principal). */
+      /** Notify an assignee (a resident) they were assigned a ticket. */
       onAssign?: (assignee: string, ticket: Ticket) => void;
       /** Extra keys merged over every snapshot/broadcast (resident mirrors). */
       snapshotExtras?: () => Partial<StoreData>;
@@ -242,8 +229,6 @@ export class ProjectManager {
     this.store = arg.store;
     this.sendToWindow = arg.sendToWindow;
     this.skillsDir = arg.skillsDir;
-    this.artifactStoreFor = arg.artifactStoreFor;
-    this.currentPrincipal = arg.currentPrincipal;
     this.onAssign = arg.onAssign;
     this.snapshotExtras = arg.snapshotExtras;
     this.processManager = arg.processManager;
@@ -364,8 +349,6 @@ export class ProjectManager {
         setTickets: (tickets) => this.setTickets(tickets),
         getProjects: () => this.getProjects(),
         getWipLimit: () => this.store.get('wipLimit') ?? 3,
-        getCurrentPrincipal: () => this.currentPrincipal,
-        getPlatformCredentials: () => this.store.get('platform'),
         getCodeTabs: () => (this.store.get('codeTabs', []) ?? []) as Array<{ id: string; ticketId?: string }>,
         getPersistedTasks: () => (this.repo ? this.cache.tasks : (this.store.get('tasks', []) as Task[])),
         setPersistedTasks: (tasks) => {
@@ -1137,8 +1120,7 @@ export class ProjectManager {
    */
   assignTicket = (id: TicketId, assignee: string | null): void => {
     this.updateTicket(id, { assignee: assignee || undefined });
-    // Notify the assignee (teams/cloud) — skip self-assignment.
-    if (assignee && assignee !== this.currentPrincipal && this.onAssign) {
+    if (assignee && this.onAssign) {
       const ticket = (this.repo ? this.cache.tickets : this.getTickets()).find((t) => t.id === id);
       if (ticket) {
         this.onAssign(assignee, ticket);
@@ -1228,14 +1210,9 @@ export class ProjectManager {
   /**
    * Pick the artifact store for a ticket by its sandbox substrate: a running
    * devbox container → read from the container (`/artifacts` volume) via
-   * `DockerArtifactStore`; otherwise the host dir. (Cloud/ACI injects an
-   * Azure Files store in the server build via `artifactStoreFor`.)
+   * `DockerArtifactStore`; otherwise the host dir.
    */
   private resolveArtifactStore = (ticketId: TicketId): ArtifactStore => {
-    const injected = this.artifactStoreFor?.(ticketId);
-    if (injected) {
-      return injected;
-    }
     const ticket = this.getTicketById(ticketId);
     const containerId = ticket ? (this.processManager?.getProjectContainerId(ticket.projectId) ?? null) : null;
     return containerId
@@ -1756,9 +1733,9 @@ export const createProjectManager = (arg: {
   appControlManager?: import('@/main/app-control-manager').AppControlManager;
   /** Optional async repo. When provided, project data is persisted here and cached in memory. */
   repo?: IProjectsRepo;
-  /** Optional sync SQLite handle for the change-watcher (omit in Postgres mode). */
+  /** Optional sync SQLite handle for the change-watcher. */
   changeSeqRepo?: ProjectsRepo;
-  /** Notify on ticket assignment (resident wakeups; cloud member toasts). */
+  /** Notify on ticket assignment (resident wakeups). */
   onAssign?: (assignee: string, ticket: Ticket) => void;
   /** Extra keys merged over every snapshot/broadcast (resident mirrors). */
   snapshotExtras?: () => Partial<StoreData>;

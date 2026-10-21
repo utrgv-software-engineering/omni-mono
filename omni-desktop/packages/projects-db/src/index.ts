@@ -5,31 +5,10 @@ export type { Migration } from './schema.js';
 export { migrations } from './schema.js';
 export { tx } from './tx.js';
 
-// Repository — sync SQLite core + async backend-agnostic contract/adapter
+// Repository — sync SQLite core + async contract/adapter
 export { ProjectsRepo } from './repo.js';
 export type { ColumnSyncInput, ColumnSyncResult, IProjectsRepo, TicketRemap } from './repo-interface.js';
 export { SqliteProjectsRepo } from './sqlite-repo.js';
-
-// Postgres backend (multi-tenant cloud). Importing these pulls in the `pg`
-// driver, so consumers load them only when OMNI_DATABASE_URL is set.
-export type { Pool as PgPool } from './pg/connection.js';
-export { createPgListener, createPgPool, runPgMigrations } from './pg/connection.js';
-export type { InvitationRow, TeamMembershipRow, TeamRole, TeamRow, TeamWithRole, UserRow } from './pg/control-plane.js';
-export { ControlPlaneRepo } from './pg/control-plane.js';
-export type { MachineRow } from './pg/machines.js';
-export { MachinesRepo } from './pg/machines.js';
-export { PgProjectsRepo } from './pg/pg-repo.js';
-export type { PgMigration } from './pg/schema.js';
-export { pgMigrations } from './pg/schema.js';
-export {
-  loadLegacyUserSettings,
-  loadTeamSettings,
-  loadTenantSettings,
-  loadUserSettings,
-  saveTeamSettings,
-  saveTenantSettings,
-  saveUserSettings,
-} from './pg/settings.js';
 
 // Types
 export type {

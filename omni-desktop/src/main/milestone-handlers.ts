@@ -1,10 +1,9 @@
 /**
  * IPC handler registration for the milestone surface.
  *
- * Takes a `resolve(event)` callback rather than a manager instance so the same
- * registration serves both the single-manager Electron app (`() => mgr`) and
- * the per-tenant server (`event => registry.get(event.tenantId)…`). Returns the
- * channel names registered for cleanup.
+ * Takes a `resolve(event)` callback rather than a manager instance, so the
+ * Electron and server shells register the same handlers over their own
+ * manager (`() => mgr`). Returns the channel names registered for cleanup.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { MilestoneManager } from '@/main/milestone-manager';

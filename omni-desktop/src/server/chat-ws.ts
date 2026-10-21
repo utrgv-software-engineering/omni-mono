@@ -2,8 +2,7 @@
  * /ws/chat — chat-v1's public binding (docs/chat-v1-plan.md).
  *
  * JSON-RPC 2.0 over WebSocket, same framing family as the gui-v1 protocol
- * so client authors reuse patterns. Each connection resolves ONE tenant's
- * ChatService; methods dispatch to the same facade the internal binding
+ * so client authors reuse patterns. Each connection gets a ChatService; methods dispatch to the same facade the internal binding
  * uses, and the manager's chat-event stream fans out as JSON-RPC
  * notifications. There is no replay buffer: the durable log is the replay
  * substrate — clients resume with `chat.list_messages({ after })`.
@@ -13,21 +12,19 @@
  * BRIDGE KEY from `OMNI_CHAT_BRIDGE_KEYS` (comma-separated) is accepted in
  * the same parameter: bridge connections hold the only scope allowed to
  * post `asExternal`, and MUST post that way — a bridge always says who
- * spoke. Bridges bind to `?team=<tenant>` (default tenant otherwise).
+ * spoke.
  */
 
 import { timingSafeEqual } from 'node:crypto';
-import type { IncomingHttpHeaders } from 'node:http';
 
 import type { FastifyInstance } from 'fastify';
 import type { WebSocket } from 'ws';
 
 import { type ChatPoster, ChatService } from '@/main/chat-service';
 import type { ResidentAgentManager } from '@/main/resident-agent-manager';
-import { DEFAULT_TENANT } from '@/server/ws-handler';
 import { CHAT_METHOD_NAMES, type ChatMethodMap } from '@/shared/types';
 
-import { verifyRuntimeToken } from './runtime-token';
+import { verifyWsToken } from './ws-token';
 
 /** JSON-RPC 2.0 error codes (plus chat-v1's app-level -32000 with data.kind). */
 const PARSE_ERROR = -32700;
@@ -56,16 +53,8 @@ export function chatErrorKind(message: string): string {
 }
 
 export type ChatWsDeps = {
-  runtimeTokenSecret: string;
-  getResidentManager: (tenantId: string, principalId?: string) => ResidentAgentManager;
-  teamsEnabled: boolean;
-  ensureUserBootstrapped?: (
-    principal: string,
-    claims: { email?: string; displayName?: string; idp?: string }
-  ) => Promise<void>;
-  resolveActiveTeam?: (principal: string, requested?: string) => Promise<string | null>;
-  /** EasyAuth-derived display info for the upgrade request's headers. */
-  principalClaims: (headers: IncomingHttpHeaders) => { email?: string; displayName?: string; idp?: string };
+  wsTokenSecret: string;
+  residentManager: ResidentAgentManager;
   /** Raw bridge keys (OMNI_CHAT_BRIDGE_KEYS), already split + trimmed. */
   bridgeKeys: readonly string[];
 };
@@ -78,8 +67,6 @@ const constantTimeMatch = (candidate: string, keys: readonly string[]): boolean 
   });
 };
 
-type Resolved = { tenantId: string; principalId: string; poster: ChatPoster };
-
 /**
  * Register the route. Must run inside a fastify scope that already has the
  * websocket plugin (the same plugin block as /ws).
@@ -88,7 +75,6 @@ export function registerChatWsRoute(f: FastifyInstance, deps: ChatWsDeps): void 
   f.get('/ws/chat', { websocket: true }, (socket: WebSocket, request) => {
     const url = new URL(request.url, `http://${request.hostname}`);
     const token = url.searchParams.get('token');
-    const requestedTeam = url.searchParams.get('team') ?? undefined;
     if (!token) {
       socket.close(4401, 'Unauthorized');
       return;
@@ -112,84 +98,30 @@ export function registerChatWsRoute(f: FastifyInstance, deps: ChatWsDeps): void 
     });
 
     void (async (): Promise<void> => {
-      let resolved: Resolved;
+      let poster: ChatPoster;
       if (deps.bridgeKeys.length > 0 && constantTimeMatch(token, deps.bridgeKeys)) {
-        // Bridge scope: a relay for an external network. It binds to an
-        // explicit tenant and always posts asExternal.
-        resolved = {
-          tenantId: requestedTeam ?? DEFAULT_TENANT,
-          principalId: 'bridge',
-          poster: { id: 'bridge', name: null, bridge: true },
-        };
+        // Bridge scope: a relay for an external network. It always posts asExternal.
+        poster = { id: 'bridge', name: null, bridge: true };
       } else {
-        const claims = verifyRuntimeToken(deps.runtimeTokenSecret, token);
-        if (!claims || claims.purpose !== 'launcher') {
+        if (!verifyWsToken(deps.wsTokenSecret, token)) {
           socket.close(4401, 'Unauthorized');
           return;
         }
-        const principal = claims.principalId ?? claims.tenantId;
-        if (!deps.teamsEnabled) {
-          // Single-user mode: the data scope is the principal, and the
-          // caller IS the collective human.
-          resolved = { tenantId: principal, principalId: principal, poster: { id: 'user', name: null } };
-        } else {
-          const info = deps.principalClaims(request.headers);
-          await deps.ensureUserBootstrapped?.(principal, info);
-          const teamId = (await deps.resolveActiveTeam?.(principal, requestedTeam)) ?? null;
-          if (teamId === null) {
-            socket.close(4403, 'Forbidden: not a member of the requested team');
-            return;
-          }
-          resolved = {
-            tenantId: teamId,
-            principalId: principal,
-            // Named principal in a shared team; personal team = collective.
-            poster:
-              teamId === principal
-                ? { id: 'user', name: null }
-                : { id: `human:${principal}`, name: info.displayName ?? null },
-          };
-        }
+        // The caller IS the collective human.
+        poster = { id: 'user', name: null };
       }
 
-      const checkAccess = async (): Promise<boolean> => {
-        if (socket.readyState !== socket.OPEN) {
-          return false;
-        }
-        if (deps.teamsEnabled && !resolved.poster.bridge) {
-          try {
-            if ((await deps.resolveActiveTeam?.(resolved.principalId, resolved.tenantId)) !== resolved.tenantId) {
-              socket.close(4403, 'Team membership revoked');
-              return false;
-            }
-          } catch {
-            socket.close(1011, 'Authorization unavailable');
-            return false;
-          }
-        }
-        return socket.readyState === socket.OPEN;
-      };
-      if (!(await checkAccess())) {
-        return;
-      }
-      const manager = deps.getResidentManager(resolved.tenantId, resolved.principalId);
+      const manager = deps.residentManager;
       await manager.whenReady;
-      if (!(await checkAccess())) {
+      if (socket.readyState !== socket.OPEN) {
         return;
       }
       const service = new ChatService(manager);
 
-      let outbound = Promise.resolve();
       const send = (payload: unknown): void => {
-        // Snapshot now; preserve notification order across async checks.
-        const frame = JSON.stringify(payload);
-        outbound = outbound
-          .then(async () => {
-            if (await checkAccess()) {
-              socket.send(frame);
-            }
-          })
-          .catch(() => socket.close(1011, 'Delivery failed'));
+        if (socket.readyState === socket.OPEN) {
+          socket.send(JSON.stringify(payload));
+        }
       };
 
       // Fan the manager's chat events out as JSON-RPC notifications.
@@ -201,9 +133,6 @@ export function registerChatWsRoute(f: FastifyInstance, deps: ChatWsDeps): void 
       const methods = new Set<string>(CHAT_METHOD_NAMES);
       const receive = (raw: unknown): void => {
         void (async (): Promise<void> => {
-          if (!(await checkAccess())) {
-            return;
-          }
           let msg: { jsonrpc?: string; id?: unknown; method?: unknown; params?: unknown };
           try {
             msg = JSON.parse(String(raw)) as typeof msg;
@@ -227,7 +156,7 @@ export function registerChatWsRoute(f: FastifyInstance, deps: ChatWsDeps): void 
           const method = msg.method as keyof ChatMethodMap;
           const params = (msg.params ?? {}) as never;
           try {
-            const result = await dispatch(service, resolved.poster, method, params);
+            const result = await dispatch(service, poster, method, params);
             send({ jsonrpc: '2.0', id, result });
           } catch (err) {
             const message = (err as Error).message;

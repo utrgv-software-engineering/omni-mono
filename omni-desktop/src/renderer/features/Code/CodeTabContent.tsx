@@ -31,9 +31,7 @@ import { getGreeting } from '@/renderer/omniagents-ui/greeting';
 import { buildProfileLabel } from '@/renderer/omniagents-ui/sandbox-label';
 import { configApi } from '@/renderer/services/config';
 import { emitter, serverOrigin } from '@/renderer/services/ipc';
-import { $machines } from '@/renderer/services/machines';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { isLocalVoiceCapable } from '@/renderer/services/voice-client';
 import { $hoveredVoiceScope, VoiceScopeContext } from '@/renderer/services/voice-recording';
 import type { AppId } from '@/shared/app-registry';
 import type { CodeTab, CodeTabId, ExecutionTarget, TicketId, WorkspaceMountDescriptor } from '@/shared/types';
@@ -147,7 +145,7 @@ const CodeRunningView = memo(
     const pendingPlan = useStore($pendingPlan);
 
     const runtimeConnection = useMemo(() => {
-      // serverOrigin() returns the cloud baseUrl in cloud-linked Electron;
+      // serverOrigin() returns the backend baseUrl in remote-linked Electron;
       // resolving the agent's relative /proxy/... against window.location
       // would (wrongly) anchor to localhost:5173 / file:// in that mode.
       const url = new URL(sandboxUrls.uiUrl, serverOrigin());
@@ -330,14 +328,9 @@ export const CodeTabContent = memo(
       },
       [tab.id]
     );
-    const machines = useStore($machines);
-    const localVoice = store.localVoiceEnabled && isLocalVoiceCapable();
-    const sandboxLabel = useMemo(() => buildProfileLabel(profileName, machines), [profileName, machines]);
+    const localVoice = store.localVoiceEnabled;
+    const sandboxLabel = useMemo(() => buildProfileLabel(profileName), [profileName]);
 
-    const [isEnterprise, setIsEnterprise] = useState(false);
-    useEffect(() => {
-      emitter.invoke('platform:is-enterprise').then(setIsEnterprise);
-    }, []);
     // Subscribe to the discovered catalog so the picker re-renders when the
     // boot-time `sandbox:list-profiles` fetch lands (bundled + user YAMLs).
     const discoveredProfiles = useStore($sandboxProfiles);
@@ -345,16 +338,15 @@ export const CodeTabContent = memo(
     const sandboxOptions = useMemo(
       () =>
         getAvailableProfileNames({
-          isEnterprise,
           available: store.availableSandboxProfiles,
           discovered: discoveredProfiles,
           substrate,
         }).map((name) => ({
           value: name,
-          label: getProfileTitle(name, machines),
+          label: getProfileTitle(name),
           description: getProfileDescription(name) ?? undefined,
         })),
-      [isEnterprise, store.availableSandboxProfiles, discoveredProfiles, substrate, machines]
+      [store.availableSandboxProfiles, discoveredProfiles, substrate]
     );
 
     // Attach-project chip for projectless chats, rendered in the composer chip

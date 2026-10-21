@@ -8,8 +8,8 @@ const CONTAINER_WORKSPACE_ROOT = '/workspace';
 /**
  * Artifacts directory name, kept *inside* the workspace root as a dot-dir
  * sibling of the source mounts (`<workspace>/.omni-artifacts/<ticketId>`). It
- * rides the workspace's existing persistence for free — the docker snapshot tar
- * (devbox) and the Azure Files workspace share (ACI) both capture it — so a
+ * rides the workspace's existing persistence for free (the devbox container
+ * keeps it) — so a
  * ticket's artifacts survive sandbox switches the same way its sources do. The
  * leading dot keeps it out of the per-source seed/diff loop (which globs the
  * non-dot subdirs of the workspace), so it never pollutes a reviewed git tree.

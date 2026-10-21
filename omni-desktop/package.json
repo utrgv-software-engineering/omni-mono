@@ -22,7 +22,6 @@
     "preview": "electron-vite preview",
     "build:devbox": "docker build -t omni-launcher-devbox:local sandbox-image",
     "build:devbox-min": "docker build -f sandbox-image/Dockerfile.min -t omni-launcher-devbox-min:local sandbox-image",
-    "build:image": "scripts/build-launcher-image.sh omni-launcher:local",
     "download:vcredist": "node scripts/download-vcredist.mjs",
     "package": "npm run clean && npm run download:vcredist && npm run build && dotenv -e .env -- electron-builder --config electron-builder.config.ts --publish never",
     "publish": "npm run clean && npm run download:vcredist && npm run build && dotenv -e .env -- electron-builder --config electron-builder.config.ts --publish always",
@@ -151,7 +150,6 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "@azure/storage-blob": "^12.27.0",
     "@codemirror/language": "^6.12.4",
     "@codemirror/language-data": "^6.5.2",
     "@codemirror/state": "^6.7.1",
@@ -215,7 +213,6 @@
     "ogl": "^1.0.11",
     "omni-projects-db": "*",
     "omni-projects-mcp": "*",
-    "pg": "^8.21.0",
     "radix-ui": "^1.6.7",
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.3.0",

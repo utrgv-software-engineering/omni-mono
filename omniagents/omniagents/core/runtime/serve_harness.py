@@ -68,14 +68,13 @@ __all__ = [
 
 
 # Client types whose lifecycle snapshot is a noop: the workspace is
-# durable without a tar archive — a host directory for ``unix_local``,
-# the remote host's disk for ``host_bridge``, and the container's own
+# durable without a tar archive — a host directory for ``unix_local``
+# and the container's own
 # writable layer for ``docker`` (sessions reattach to their recorded
 # container instead of rehydrating an archive).
 NOOP_SNAPSHOT_CLIENT_TYPES: Tuple[str, ...] = (
     "unix_local",
     "docker",
-    "host_bridge",
     # wasm sandbox: bashkit mounts a real host directory and pyodide
     # NODEFS-mounts the same one — the host dir is the durable truth.
     "wasm",
@@ -236,11 +235,7 @@ def _build_snapshot(
     isn't already sitting on disk. Host mode therefore falls through to
     a noop snapshot regardless of ``--snapshot-dir``, which also sidesteps
     the unsafe-symlink accumulation that ``_scrub_workspace_snapshot``
-    exists to mop up. ``host_bridge``: the workspace is a durable
-    directory on the *remote host* (the user's laptop), reachable only
-    via the exec channel. Tarring it back to the serve host's disk would
-    both defeat the privacy intent and be pure overhead — same reasoning
-    as ``unix_local``'s host directory. *no_snapshot_client_types* is
+    exists to mop up. *no_snapshot_client_types* is
     the product knob for that set.
 
     The snapshot id is the Workspace's durable ``snapshot_ref``. A later
@@ -768,7 +763,7 @@ async def bring_up_session(
         # (e.g. a committed `.fvm/flutter_sdk -> /Users/...` absolute symlink
         # in a cloned repo) would make `start()` throw
         # WorkspaceArchiveWriteError and the session would never come up.
-        # No-op for noop-snapshot backends (docker/unix_local/host_bridge).
+        # No-op for noop-snapshot backends (docker/unix_local).
         # Off-loop: the scrub reads and rewrites the whole tar, and
         # bring_up_session runs on the shared serve loop.
         await asyncio.to_thread(_scrub_workspace_snapshot, session)

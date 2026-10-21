@@ -9,7 +9,6 @@ import { Button } from '@/renderer/ds/ui/button';
 import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
 import { Textarea } from '@/renderer/ds/ui/textarea';
 import { $milestones } from '@/renderer/features/Initiatives/state';
-import { $members } from '@/renderer/features/Teams/state';
 import { AssigneePicker } from '@/renderer/features/Tickets/AssigneePicker';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { MilestoneId, Ticket, TicketPriority } from '@/shared/types';
@@ -28,7 +27,6 @@ export const TicketOverviewTab = memo(({ ticket, compact }: TicketOverviewTabPro
   const tickets = useStore($tickets);
   const pipeline = useStore($pipeline);
   const milestones = useStore($milestones);
-  const members = useStore($members);
   const residents = useStore(persistedStoreApi.$atom).residentAgents;
   const [editingDescription, setEditingDescription] = useState(false);
   const [editDescription, setEditDescription] = useState('');
@@ -180,7 +178,7 @@ export const TicketOverviewTab = memo(({ ticket, compact }: TicketOverviewTabPro
 
         <div className="flex flex-col gap-1">
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Assignee</span>
-          {members.length > 0 || residents.some((agent) => agent.enabled) ? (
+          {residents.some((agent) => agent.enabled) ? (
             <AssigneePicker ticketId={ticket.id} assignee={ticket.assignee} />
           ) : (
             <span className="text-sm text-muted-foreground">Unassigned</span>

@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 import re
 from dotenv import load_dotenv
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
@@ -149,174 +149,16 @@ def run_codex_auth_command(
     return 0
 
 
-def run_platform_auth_command(
-    argv: Optional[List[str]] = None,
-    *,
-    prog: Optional[str] = None,
-    slug: Optional[str] = None,
-    config_dir: Optional[Any] = None,
-) -> int:
-    """Run a ``<prog> auth {login,logout,status}`` management-plane command.
-
-    Public so products wrapping the framework CLI can reuse the exact same
-    device-code login / logout / status flow under their own program name
-    instead of copying it. ``prog`` defaults from the installed product
-    identity (``omniagents.core.product.product_info().prog``); an
-    explicit argument wins. ``slug`` and ``config_dir`` bind the shared
-    platform client to the product's policy scope and credential store
-    before the flow runs (mirroring ``run_codex_auth_command``'s
-    token-store binding contract); when omitted, the platform client
-    itself already defaults both from the installed product identity.
-    Returns a process exit status.
-
-    ``argv`` is the argument list after ``auth`` — e.g. ``["login"]``,
-    ``["login", "https://platform.example.edu"]``, ``["logout"]``,
-    ``["status"]``.
-    """
-    import sys
-
-    from omniagents.core.product import product_info
-    from omniagents.core.providers.platform import client
-
-    if prog is None:
-        prog = product_info().prog
-
-    if slug:
-        client.set_product_slug(slug)
-    if config_dir is not None:
-        client.set_credential_store_dir(config_dir)
-
-    argv = list(argv or [])
-    if not argv or argv[0] in {"-h", "--help", "help"}:
-        print(
-            f"usage: {prog} auth <command>\n\n"
-            "Commands:\n"
-            "  login [url]    Authenticate with the management plane\n"
-            "  logout         Clear stored credentials\n"
-            "  status         Show current authentication status\n"
-        )
-        return 0
-
-    command = argv[0]
-    if command == "login":
-        return _platform_auth_login(argv[1:])
-    if command == "logout":
-        return _platform_auth_logout()
-    if command == "status":
-        return _platform_auth_status(prog=prog)
-    print(f"Unknown auth command: {command}", file=sys.stderr)
-    return 1
-
-
-def _platform_auth_login(args: List[str]) -> int:
-    import sys
-
-    from omniagents.core.providers.platform import client
-
-    # URL from args, env, or stored credentials
-    url = args[0] if args else client.get_platform_url()
-
-    if not url:
-        url = input("Platform URL: ").strip()
-
-    if not url:
-        print("No platform URL provided.", file=sys.stderr)
-        return 1
-
-    if not url.startswith("http"):
-        url = f"https://{url}"
-
-    try:
-        creds = client.device_code_login(url)
-        client.save_credentials(creds)
-
-        user = creds.get("user") or {}
-        print(
-            f"Authenticated as {user.get('name', 'unknown')} ({user.get('email', '')})"
-        )
-
-        domains = user.get("domains", [])
-        if domains:
-            print(f"Domains: {', '.join(d['name'] for d in domains)}")
-
-        print(f"\nCredentials saved to {client.credential_path()}")
-        return 0
-    except Exception as e:
-        print(f"Login failed: {e}", file=sys.stderr)
-        return 1
-
-
-def _platform_auth_logout() -> int:
-    from omniagents.core.providers.platform import client
-
-    creds = client.load_credentials()
-    if creds:
-        user = creds.get("user") or {}
-        client.clear_credentials()
-        print(f"Logged out ({user.get('email', 'unknown')})")
-    else:
-        print("Not logged in.")
-    return 0
-
-
-def _platform_auth_status(*, prog: str = "omniagents") -> int:
-    from omniagents.core.providers.platform import client
-
-    url = client.get_platform_url()
-    token = client.get_access_token()
-
-    if not url or not token:
-        print("Not authenticated.")
-        print(f"\nRun: {prog} auth login <platform-url>")
-        return 0
-
-    creds = client.load_credentials()
-    user = (creds.get("user") or {}) if creds else {}
-
-    print(f"Platform:  {url}")
-    print(f"User:      {user.get('name', 'unknown')} ({user.get('email', '')})")
-    print(f"Token:     {token[:20]}...")
-
-    domains = user.get("domains", [])
-    if domains:
-        print(f"Domains:   {', '.join(d['name'] for d in domains)}")
-
-    # Test connectivity
-    try:
-        import requests
-
-        resp = requests.get(
-            f"{url}/api/v1/health",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=5,
-        )
-        if resp.ok:
-            print("Status:    connected")
-        elif resp.status_code == 401:
-            print(f"Status:    token expired (run: {prog} auth login)")
-        else:
-            print(f"Status:    error ({resp.status_code})")
-    except Exception as e:
-        print(f"Status:    unreachable ({e})")
-    return 0
-
-
 def _run_auth_command(args) -> None:
-    """Handle ``omniagents auth {login,logout,status,codex ...}``."""
+    """Handle ``omniagents auth codex {login,logout,status}``."""
     import sys
 
     auth_command = getattr(args, "auth_command", None)
 
     if auth_command == "codex":
         status = run_codex_auth_command(getattr(args, "codex_command", "login"))
-    elif auth_command in {"login", "logout", "status"}:
-        argv = [auth_command]
-        platform_url = getattr(args, "platform_url", None)
-        if platform_url:
-            argv.append(platform_url)
-        status = run_platform_auth_command(argv)
     else:
-        print("usage: omniagents auth {login,logout,status,codex}", file=sys.stderr)
+        print("usage: omniagents auth codex {login,logout,status}", file=sys.stderr)
         sys.exit(1)
 
     if status:
@@ -1439,17 +1281,9 @@ def main():
     )
     judge_opt.set_defaults(apply=False)
 
-    # Auth: management-plane sign-in + ChatGPT (Codex) sign-in.
+    # Auth: ChatGPT (Codex) sign-in.
     auth_parser = subparsers.add_parser("auth", help="Authentication utilities")
     auth_sub = auth_parser.add_subparsers(dest="auth_command")
-    login_parser = auth_sub.add_parser(
-        "login", help="Authenticate with the management plane"
-    )
-    login_parser.add_argument(
-        "platform_url", nargs="?", default=None, help="Platform URL"
-    )
-    auth_sub.add_parser("logout", help="Clear stored platform credentials")
-    auth_sub.add_parser("status", help="Show platform authentication status")
     codex_parser = auth_sub.add_parser("codex", help="ChatGPT (Codex) sign-in")
     codex_parser.add_argument(
         "codex_command",

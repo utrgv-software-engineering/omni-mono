@@ -589,7 +589,7 @@ export class ResidentAgentManager {
 
   constructor(deps: {
     store: ResidentStore;
-    /** Durable-data backend (SQLite locally, tenant-scoped Postgres in cloud). */
+    /** Durable-data backend (SQLite). */
     repo: IProjectsRepo;
     processManager: ProcessManager;
     sendToWindow: SendToWindow;
@@ -599,7 +599,7 @@ export class ResidentAgentManager {
      * suppresses the automatic `onDidAnyChange` broadcast, so every manager
      * that writes store keys must broadcast its own writes (the
      * ScheduledTaskManager idiom). Server mode's wrapper intercepts the
-     * channel and substitutes the tenant snapshot regardless.
+     * channel and substitutes the full snapshot regardless.
      */
     getSnapshot?: () => StoreData | undefined;
     now?: () => number;
@@ -627,8 +627,8 @@ export class ResidentAgentManager {
       }
       return;
     }
-    // No snapshot provider (server mode): the tenant wrapper intercepts the
-    // channel and substitutes its own snapshot, so the payload is moot.
+    // No snapshot provider (server mode): the server wrapper intercepts the
+    // channel and substitutes the full snapshot, so the payload is moot.
     this.sendToWindow('store:changed', undefined);
   }
 
@@ -1129,11 +1129,7 @@ export class ResidentAgentManager {
     }
     const profileName = patch.profileName!;
     this.processManager.validateProfileSelection(profileName);
-    if (
-      !profileName.startsWith('local:') &&
-      profileName !== 'platform' &&
-      resolveProfile(profileName).kind === 'missing'
-    ) {
+    if (resolveProfile(profileName).kind === 'missing') {
       throw new Error(`Execution environment "${profileName}" is unavailable`);
     }
     if (this.runtime(agentId).thinking) {
@@ -1286,8 +1282,7 @@ export class ResidentAgentManager {
 
   /**
    * A human-grade participant posts to a channel: the collective `user`
-   * (default), a named cloud principal (`human:<id>`), or a bridged
-   * external user (`ext:<network>:<id>` — /ws/chat bridge scope). Agents
+   * (default) or a bridged external user (`ext:<network>:<id>` — /ws/chat bridge scope). Agents
    * never come through here; they speak via their client tools. Returns
    * the created message; unknown channels throw (chat-v1's
    * `unknown_channel` corrective, surfaced verbatim to the renderer too).
@@ -1351,7 +1346,7 @@ export class ResidentAgentManager {
         // DM channels are flat — they are threads by construction; `replyTo`
         // is meaningless here and deliberately ignored. Two thread shapes:
         // the collective `user`↔agent thread is every human's, while a
-        // personal thread (`human:*`/`ext:*` participant) is TEAM-VISIBLE
+        // personal thread (`ext:*` participant) is VISIBLE TO ALL
         // but single-writer — only its named participant posts into it
         // (everyone else reads it in Activity, like agent↔agent threads).
         if (humanSide !== USER_PARTICIPANT && from !== humanSide) {

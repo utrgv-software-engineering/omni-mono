@@ -16,7 +16,7 @@
  * frame-ancestors, so this code is a no-op there.
  */
 
-import { isCloudLinked, isElectron, serverOrigin } from '@/renderer/services/ipc';
+import { isElectron, serverOrigin } from '@/renderer/services/ipc';
 
 /** Reverse map populated as we register upstreams, used to "un-proxy" reported URLs. */
 const upstreamByName = new Map<string, string>();
@@ -44,10 +44,10 @@ export type ProxiedSrcResult =
 
 /**
  * The launcher's origin from the renderer's perspective. In browser server
- * mode that's same-origin. In cloud-linked Electron the renderer is loaded
+ * mode that's same-origin. In remote-linked Electron the renderer is loaded
  * from localhost:5173 (dev) or file:// (prod) but the launcher lives at
- * the cloud baseUrl — so all ``/proxy/...`` URL construction and "is this
- * already proxied?" detection must anchor against the cloud, not the
+ * the backend baseUrl — so all ``/proxy/...`` URL construction and "is this
+ * already proxied?" detection must anchor against the backend, not the
  * renderer's own origin.
  */
 const launcherOrigin = (): string => serverOrigin();
@@ -115,7 +115,7 @@ const ensureRegistered = (url: URL): Promise<ProxyRegistrationResult> => {
   }
   const pending: Promise<ProxyRegistrationResult> = (async (): Promise<ProxyRegistrationResult> => {
     try {
-      // Absolute URL so cloud-linked Electron hits the cloud's /proxy/_register
+      // Absolute URL so remote-linked Electron hits the backend's /proxy/_register
       // instead of localhost:5173 (which has no such route). Browser server-
       // mode resolves to same-origin same as before.
       const res = await fetch(`${launcherOrigin()}/proxy/_register`, {
@@ -170,11 +170,7 @@ export const resolveProxiedSrc = async (rawSrc: string): Promise<ProxiedSrcResul
     if (name && !upstreamByName.has(name)) {
       // We don't know the upstream origin from the path alone, so leave it.
     }
-    // In cloud-linked Electron the iframe needs the absolute URL — Vite
-    // would otherwise resolve the relative path against localhost:5173.
-    const iframeSrc = isCloudLinked
-      ? `${launcherOrigin()}${parsed.pathname}${parsed.search}${parsed.hash}`
-      : parsed.pathname + parsed.search + parsed.hash;
+    const iframeSrc = parsed.pathname + parsed.search + parsed.hash;
     const unproxied = unproxyUrl(iframeSrc);
     return {
       ok: true,
@@ -195,13 +191,11 @@ export const resolveProxiedSrc = async (rawSrc: string): Promise<ProxiedSrcResul
       ...(registered.status ? { status: registered.status } : {}),
     };
   }
-  // Absolute when cloud-linked so the iframe doesn't resolve against the
-  // renderer's own origin (localhost:5173 / file://).
   const path = `/proxy/${registered.proxyName}${parsed.pathname}${parsed.search}${parsed.hash}`;
   return {
     ok: true,
     canonicalUrl: parsed.href,
-    iframeSrc: isCloudLinked ? `${launcherOrigin()}${path}` : path,
+    iframeSrc: path,
     proxyName: registered.proxyName,
   };
 };

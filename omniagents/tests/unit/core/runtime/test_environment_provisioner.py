@@ -538,12 +538,6 @@ async def test_devbox_capabilities_reflect_network_truth(monkeypatch, tmp_path):
     assert EnvironmentCapability.CONTAINED not in provisioned.capabilities
     assert EnvironmentCapability.NETWORK in provisioned.capabilities
 
-    # host_bridge (computer-as-sandbox) executes on another machine: kind
-    # remote, never contained.
-    provisioned = await _provision_with({"type": "host_bridge"})
-    assert provisioned.kind is EnvironmentKind.REMOTE
-    assert EnvironmentCapability.CONTAINED not in provisioned.capabilities
-
     # wasm sandbox (bashkit + pyodide): host-placed, genuinely contained,
     # no processes to attach PTYs or services to. Network is OFF by
     # default — the sandbox boots contained-and-offline (auto-approvable)

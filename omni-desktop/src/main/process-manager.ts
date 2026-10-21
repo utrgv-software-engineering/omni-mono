@@ -11,7 +11,6 @@ import { AgentHostManager } from '@/main/agent-host-manager';
 import {
   type AgentHostConsumerRuntime,
   AgentProcess,
-  type AgentProcessMode,
   type AgentProcessSource,
   type AgentProcessStartArg,
   type FetchFn,
@@ -23,7 +22,6 @@ import {
   isMcpManagementMethod,
   isProtectedManagedMcpRequest,
 } from '@/main/local-mcp-config-owner';
-import type { IComputeClient } from '@/main/platform-client';
 import { getDefaultWorkspaceDir } from '@/main/util';
 import { gitTokenEnvName, resolveCredentialForUrl } from '@/shared/git-credentials';
 import type { IIpcListener } from '@/shared/ipc-listener';
@@ -74,52 +72,15 @@ export const isLauncherOwnedDir = (dir: string): boolean => {
 const AUTO_MIRROR_INTERVAL_MS = 15_000;
 
 /**
- * Detect the `local:<machineId>` profile-name shape and pull out the
- * machine id. `null` for non-local profiles.
- */
-export const parseLocalProfile = (profileName: string): string | null => {
-  if (!profileName.startsWith('local:')) {
-    return null;
-  }
-  const id = profileName.slice('local:'.length).trim();
-  return id.length > 0 ? id : null;
-};
-
-/**
- * Computer-as-sandbox: prepares a per-session `host_bridge` sandbox profile
- * pointing the cloud `omni serve`'s sandbox at a user's laptop. Implemented by
- * `HostBridgePreparer` (cloud); injected so `ProcessManager` stays free of
- * server imports. `prepare` asks the laptop to stand up `omni sandbox-host`
- * and returns the profile path; `release` tears it down.
- */
-export interface IHostBridgePreparer {
-  prepare(machineId: string, sandboxKey: string, opts: { workspaceDir?: string }): Promise<{ profilePath: string }>;
-  release(machineId: string, sandboxKey: string): Promise<void>;
-  /** Live online state + friendly label for a machine, for the host-offline
-   *  overlay. Backed by the cloud's `MachineRegistry`. */
-  machineState(machineId: string): { online: boolean; label?: string };
-}
-
-/**
- * Result envelope from `compute:adopt-session` (Phase 6). The cloud calls it
- * after a laptop reconnects; an `adopted: true` flips the cloud's view of
- * the session from `disconnected` → `running` without a fresh spawn.
- */
-export type AgentAdoptResult =
-  | { adopted: true; wsUrl: string; uiUrl: string; containerId?: string }
-  | { adopted: false };
-
-/**
  * Unified process manager for all agent processes (chat + code tabs).
  *
  * Every agent process is keyed by a string ID:
  *   - `"chat"` for the singleton chat process
  *   - A CodeTabId for code-tab processes
  *
- * Profile resolution: per-project override > user-default. The `"platform"`
- * profile routes to `compute` mode (an `IComputeClient` drives lifecycle);
- * everything else shares a compatible targetless ``omni serve`` AgentHost and
- * materializes its profile per consumer.
+ * Profile resolution: per-project override > user-default. Every profile
+ * shares a compatible targetless ``omni serve`` AgentHost and materializes
+ * per consumer.
  */
 export class ProcessManager {
   /** Consumer id -> compatible long-lived AgentHost connection. */
@@ -154,40 +115,12 @@ export class ProcessManager {
   private sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
   private fetchFn: FetchFn;
   private getStoreData: () => ProcessManagerStoreData;
-  /**
-   * Resolves the env merged into each `omni serve` spawn (model API keys,
-   * runtime tokens, codex materialization, etc.).
-   *
-   * Public so the local-compute reverse handlers (cloud-dispatched starts on
-   * this Electron) can swap in the cloud-shipped materialized env per-start
-   * and restore the original afterwards. The cloud serialises its start calls
-   * per machine, so the temporary swap is race-free in that path.
-   *
-   * Receives the process id so per-process identity can ride the env — the
-   * cloud provider mints the runtime token's `agentId` claim from it for
-   * resident (`agent:<id>`) processes.
-   */
-  getExtraEnv?: (processId?: string) => Record<string, string> | Promise<Record<string, string>>;
+  /** Resolves the env merged into each `omni serve` spawn. Receives the
+   *  process id so per-process identity can ride the env. */
+  private getExtraEnv?: (processId?: string) => Record<string, string> | Promise<Record<string, string>>;
   /** Read a git token by credential id (from the SecretStore). Absent → no
    *  private-remote auth (tokens never reach this class except through here). */
   private resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
-  /**
-   * When set, every launch is restricted to these profiles regardless of the
-   * per-project override or user default — a deployment-level allowlist the
-   * user picks within.
-   */
-  private allowedProfileNames?: string[];
-
-  /** Compute backend (omni-platform delegation). Set when configured. */
-  platformClient: IComputeClient | null = null;
-
-  /**
-   * Computer-as-sandbox: prepares a `host_bridge` profile so `local:<machineId>`
-   * launches run `omni serve` HERE (the agent stays put) with the user's laptop
-   * as the sandbox backend. Cloud-only; undefined elsewhere. See
-   * `src/server/host-bridge-preparer.ts`.
-   */
-  private hostBridge?: IHostBridgePreparer;
   /** Blocks local AgentHost operations while the runtime venv is being
    * installed or repaired. In particular, the omni-code console script may
    * exist before the development omniagents overlay is fully installed. */
@@ -203,10 +136,6 @@ export class ProcessManager {
    * channel is usable and never gates the legacy settings read. */
   private onManagementReady?: (proc: AgentProcess) => void | Promise<void>;
 
-  /** processId → machineId for live `local:<machineId>` sessions, so stop()
-   *  can tell the laptop to tear down its `omni sandbox-host`. */
-  private localSandboxKeys = new Map<string, string>();
-
   /** processId → launcher-owned local mounts whose container changes
    *  auto-mirror back to the host (chat scratch dirs, managed project dirs). */
   private mirrorSources = new Map<string, Array<{ mountName: string; workspaceDir: string }>>();
@@ -217,18 +146,10 @@ export class ProcessManager {
     sendToWindow: ProcessManager['sendToWindow'];
     fetchFn?: FetchFn;
     getStoreData?: () => ProcessManagerStoreData;
-    /** Extra env for spawned `omni serve` (e.g. cloud `OMNI_RUNTIME_TOKEN`).
-     *  May be async — used by cloud to materialize per-principal codex tokens
-     *  to the spawn's config dir from PgSecretStore before omni-serve starts.
-     *  Receives the process id (per-process identity, e.g. resident tokens). */
+    /** Extra env for spawned `omni serve`. Receives the process id. */
     getExtraEnv?: (processId?: string) => Record<string, string> | Promise<Record<string, string>>;
     /** Read a git token by credential id, for private-remote auth at clone time. */
     resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
-    /** Restrict launches to these profiles (cloud → the ACI profiles). The
-     * user still picks among them; anything outside falls back to the default. */
-    allowedProfileNames?: string[];
-    /** Computer-as-sandbox preparer (cloud-only). */
-    hostBridge?: IHostBridgePreparer;
     /** Wait for any in-flight local runtime install/repair to settle. */
     waitForRuntimeInstall?: () => Promise<void>;
     /** Permit canonical Codex mutations only in local single-user Electron. */
@@ -244,9 +165,7 @@ export class ProcessManager {
   }) {
     this.sendToWindow = arg.sendToWindow;
     if (arg.runtimeJournalDir) {
-      this.runtimeJournal = new ChatRuntimeJournal(arg.runtimeJournalDir, (profile) =>
-        this.resolveComputeClient(profile)
-      );
+      this.runtimeJournal = new ChatRuntimeJournal(arg.runtimeJournalDir);
       this.runtimeRecovery = this.runtimeJournal.recoverAbandoned();
     }
     this.claimChatRuntime = arg.claimChatRuntime;
@@ -259,8 +178,6 @@ export class ProcessManager {
       }));
     this.getExtraEnv = arg.getExtraEnv;
     this.resolveGitToken = arg.resolveGitToken;
-    this.allowedProfileNames = arg.allowedProfileNames;
-    this.hostBridge = arg.hostBridge;
     this.waitForRuntimeInstall = arg.waitForRuntimeInstall;
     this.durableLocalCodexAccountMutations = arg.durableLocalCodexAccountMutations === true;
     this.durableLocalMcpMutations = arg.durableLocalMcpMutations === true;
@@ -270,22 +187,11 @@ export class ProcessManager {
 
   private resolveProfileName(projectId: string | undefined, override: string | undefined): string {
     const { defaultProfileName, projects } = this.getStoreData();
-    const pick =
+    return (
       override ??
       (projectId ? projects.find((p) => p.id === projectId)?.sandboxProfile : undefined) ??
-      defaultProfileName;
-    // An allow-list (cloud → the ACI profiles) constrains the choice: a pick
-    // outside it (e.g. host/devbox) can't escape, falling back to the default.
-    // Local-machine profiles (`local:<machineId>`) are an implicit override —
-    // they're always allowed because the registry verified the principal owns
-    // the machine before they ever appeared in the picker.
-    if (parseLocalProfile(pick)) {
-      return pick;
-    }
-    if (this.allowedProfileNames && !this.allowedProfileNames.includes(pick)) {
-      return defaultProfileName;
-    }
-    return pick;
+      defaultProfileName
+    );
   }
 
   getExecutionProfile(processId: string): string | undefined {
@@ -297,62 +203,6 @@ export class ProcessManager {
     if (!profileName || this.resolveProfileName(undefined, profileName) !== profileName) {
       throw new Error('This execution environment is not available in this workspace');
     }
-  }
-
-  private resolveMode(profileName: string): AgentProcessMode {
-    // `compute` mode = delegate to an `IComputeClient` (the omni-platform
-    // delegation path). Everything else — including `local:<machineId>`
-    // (computer-as-sandbox) — spawns `omni serve` here; `local:` differs only
-    // in that it runs with a `host_bridge` profile pointing the sandbox at the
-    // user's laptop.
-    if (profileName === 'platform') {
-      return 'compute';
-    }
-    return 'serve';
-  }
-
-  /**
-   * The compute client to drive a launch of *profileName*, or `null` to mean
-   * "spawn omni serve locally (serve mode)". Only the `'platform'` profile
-   * (omni-platform delegation) uses a compute client.
-   */
-  resolveComputeClient(profileName: string): IComputeClient | null {
-    if (profileName === 'platform') {
-      return this.platformClient;
-    }
-    return null;
-  }
-
-  /**
-   * Platform mode only: if the project has a git remote, the container can
-   * clone instead of receiving an upload. Returns undefined for serve mode
-   * (omni serve's manifest materialization handles workspace seeding).
-   */
-  private resolvePlatformGitRepo(
-    profileName: string,
-    workspaceDir: string,
-    projectId: string | undefined
-  ): { url: string; branch?: string } | undefined {
-    if (profileName !== 'platform') {
-      return undefined;
-    }
-    const { projects } = this.getStoreData();
-
-    // Explicit git-remote project (single-source platform path; multi-source
-    // not yet supported in platform mode — first git-remote source wins).
-    if (projectId) {
-      const project = projects.find((p) => p.id === projectId);
-      const gitRemote = project?.sources.find((s) => s.kind === 'git-remote');
-      if (gitRemote?.kind === 'git-remote') {
-        return { url: gitRemote.repoUrl, branch: gitRemote.defaultBranch };
-      }
-    }
-
-    // Local project with git — resolve remote URL so the platform container can clone
-    if (workspaceDir) {
-      return this.resolveGitRemote(workspaceDir);
-    }
-    return undefined;
   }
 
   /** Try to resolve the git remote URL and current branch from a workspace directory. */
@@ -387,19 +237,10 @@ export class ProcessManager {
     }
   }
 
-  private getOrCreate(
-    processId: string,
-    compatibilityKey: string,
-    mode: AgentProcessMode,
-    computeClient?: IComputeClient | null
-  ): { proc: AgentProcess; created: boolean } {
+  private getOrCreate(processId: string, compatibilityKey: string): { proc: AgentProcess; created: boolean } {
     let proc!: AgentProcess;
     const attachment = this.agentHosts.attach(processId, compatibilityKey, () => {
       proc = new AgentProcess({
-        mode,
-        recordCompute: this.runtimeJournal
-          ? (profile, sessionId) => this.runtimeJournal!.recordCompute(processId, profile, sessionId)
-          : undefined,
         recordConsumer: this.runtimeJournal
           ? async (claim) => {
               if (isResidentProcessId(claim.consumerId)) {
@@ -423,7 +264,6 @@ export class ProcessManager {
           }
         },
         fetchFn: this.fetchFn,
-        computeClient: computeClient ?? this.platformClient ?? undefined,
         // Resident agents have distinct principal credentials and therefore
         // never share a compatibility key with interactive tabs or each other.
         getExtraEnv: async () => {
@@ -440,21 +280,11 @@ export class ProcessManager {
     return { proc: attachment.host, created: attachment.created };
   }
 
-  private agentHostCompatibilityKey(processId: string, mode: AgentProcessMode, arg: AgentProcessStartArg): string {
-    // Delegated compute providers have not adopted the multi-environment host
-    // contract yet, so keep those sessions isolated during this first cut.
-    if (mode === 'compute') {
-      return JSON.stringify(['compute', processId, arg.sessionId ?? null]);
-    }
+  private agentHostCompatibilityKey(processId: string, arg: AgentProcessStartArg): string {
     const principalScope = isResidentProcessId(processId) ? processId : 'interactive';
     const credentialScope =
       (arg.credentials?.length ?? 0) > 0 || Object.keys(arg.gitTokenEnv ?? {}).length > 0 ? processId : 'shared';
-    return JSON.stringify({
-      mode,
-      principalScope,
-      credentialScope,
-      hostBridgeMachine: parseLocalProfile(arg.profileName),
-    });
+    return JSON.stringify({ principalScope, credentialScope });
   }
 
   private statusForConsumer(
@@ -466,20 +296,7 @@ export class ProcessManager {
     }
     const runtime = this.consumerRuntimes.get(consumerId);
     if (!runtime) {
-      // Platform compute already returns one fully materialized, consumer-
-      // scoped AgentHost environment. It does not pass through the local
-      // configureConsumer control plane, so its validated status data is the
-      // authoritative runtime rather than a shared-host readiness leak.
-      const data = status.data;
-      return data.agentHostId &&
-        data.workspaceId &&
-        data.environmentId &&
-        Number.isSafeInteger(data.environmentGeneration) &&
-        data.workspaceRoot &&
-        data.defaultCwd &&
-        data.services
-        ? status
-        : null;
+      return null;
     }
     return {
       ...status,
@@ -521,10 +338,6 @@ export class ProcessManager {
     }
     if (opts.snapshotRef) {
       startArg.snapshotRef = opts.snapshotRef;
-    }
-    const gitRepo = this.resolvePlatformGitRepo(profileName, opts.workspaceDir, opts.projectId);
-    if (gitRepo) {
-      startArg.gitRepo = gitRepo;
     }
     // Resolve a stored credential for each private git-remote source, attach the
     // auth hint to the descriptor, and collect the token env (value off-disk).
@@ -838,31 +651,6 @@ export class ProcessManager {
   }
 
   /**
-   * For a `local:<machineId>` profile, ask the laptop (via the host bridge) to
-   * stand up its `omni sandbox-host` and return the path of a per-session
-   * `host_bridge` profile that points this spawn's sandbox at it. The agent
-   * still runs HERE (serve mode); only the sandbox backend is the laptop.
-   * Returns `null` for non-local profiles. The `sandboxKey` is the stable
-   * processId — it keys the laptop's exec server and the relay path.
-   */
-  private async prepareHostBridge(
-    processId: string,
-    profileName: string,
-    workspaceDir: string | undefined
-  ): Promise<string | null> {
-    const machineId = parseLocalProfile(profileName);
-    if (!machineId) {
-      return null;
-    }
-    if (!this.hostBridge) {
-      throw new Error(`local sandbox needs a host bridge (machine ${machineId}) — not available`);
-    }
-    const { profilePath } = await this.hostBridge.prepare(machineId, processId, { workspaceDir });
-    this.localSandboxKeys.set(processId, machineId);
-    return profilePath;
-  }
-
-  /**
    * The fields that decide whether two `start` calls mean "the same sandbox".
    * `extraSources` follows the project scope already captured by
    * `projectId`/`projectIds`.
@@ -1008,17 +796,12 @@ export class ProcessManager {
 
   private ensureManagementConnectionImpl = async (): Promise<ManagementRuntimeConnection> => {
     const processId = '__product_management__';
-    // Profile definitions are consumer-environment concerns. Force the local
-    // targetless host path here even when the user's default is delegated
-    // platform compute or a laptop host_bridge; no sandbox is being created.
+    // Profile definitions are consumer-environment concerns; no sandbox is
+    // being created here.
     const startArg = await this.buildStartArg({ workspaceDir: '', profileNameOverride: 'host' });
-    const mode = this.resolveMode(startArg.profileName);
-    if (mode !== 'serve') {
-      throw new Error('Product management requires a targetless AgentHost');
-    }
     await this.waitForRuntimeInstall?.();
-    const compatibilityKey = this.agentHostCompatibilityKey(processId, mode, startArg);
-    const { proc, created } = this.getOrCreate(processId, compatibilityKey, mode, null);
+    const compatibilityKey = this.agentHostCompatibilityKey(processId, startArg);
+    const { proc, created } = this.getOrCreate(processId, compatibilityKey);
     try {
       const statusType = proc.getStatus().type;
       if (created || !['starting', 'connecting', 'running'].includes(statusType)) {
@@ -1112,9 +895,7 @@ export class ProcessManager {
   private invalidateLocalMcpAgentHosts = async (alreadyReloaded?: AgentProcess): Promise<void> => {
     const hosts = this.agentHosts
       .hosts()
-      .filter(
-        (host) => host !== alreadyReloaded && host.usesLocalAgentHostConfig() && host.getStatus().type === 'running'
-      );
+      .filter((host) => host !== alreadyReloaded && host.getStatus().type === 'running');
     const failures: string[] = [];
     await Promise.all(
       hosts.map(async (host) => {
@@ -1190,23 +971,15 @@ export class ProcessManager {
     const previousWorkspaceId = this.consumerWorkspaceIds.get(processId);
     const previousWorkspaceIdentity = this.consumerWorkspaceIdentities.get(processId);
     const startArg = await this.buildStartArg(opts);
-    const profilePath = await this.prepareHostBridge(processId, startArg.profileName, opts.workspaceDir);
-    if (profilePath) {
-      startArg.explicitProfilePath = profilePath;
-    }
     if (!this.isCurrentConsumerEpoch(processId, epoch)) {
       return;
     }
-    const mode = this.resolveMode(startArg.profileName);
-    const client = this.resolveComputeClient(startArg.profileName);
-    if (mode === 'serve') {
-      await this.waitForRuntimeInstall?.();
-    }
+    await this.waitForRuntimeInstall?.();
     if (!this.isCurrentConsumerEpoch(processId, epoch)) {
       return;
     }
-    const compatibilityKey = this.agentHostCompatibilityKey(processId, mode, startArg);
-    const { proc, created } = this.getOrCreate(processId, compatibilityKey, mode, client);
+    const compatibilityKey = this.agentHostCompatibilityKey(processId, startArg);
+    const { proc, created } = this.getOrCreate(processId, compatibilityKey);
     const preservedAttachment = live === proc;
     try {
       const statusType = proc.getStatus().type;
@@ -1217,33 +990,31 @@ export class ProcessManager {
         await this.retireStaleStart(processId, proc, previousRuntime);
         return;
       }
-      if (mode === 'serve') {
-        const workspaceIdentity = ProcessManager.workspaceIdentity(startArg);
-        const workspaceId =
-          previousWorkspaceId && previousWorkspaceIdentity === workspaceIdentity
-            ? previousWorkspaceId
-            : `workspace_${randomUUID().replaceAll('-', '')}`;
-        const runtime = await proc.configureConsumer(processId, workspaceId, startArg);
-        if (!this.isCurrentConsumerEpoch(processId, epoch)) {
-          const isPriorRuntime =
-            previousRuntime?.environmentId === runtime.environmentId &&
-            previousRuntime.environmentGeneration === runtime.environmentGeneration;
-          if (!isPriorRuntime) {
-            await proc.stopConsumerEnvironment(runtime).catch((error) => {
-              console.warn(`[process-manager] stale environment cleanup failed: ${(error as Error).message}`);
-            });
-          }
-          await this.retireStaleStart(processId, proc, previousRuntime);
-          return;
-        }
-        this.consumerWorkspaceIds.set(processId, workspaceId);
-        this.consumerWorkspaceIdentities.set(processId, workspaceIdentity);
-        this.consumerRuntimes.set(processId, runtime);
-        if (previousRuntime && previousRuntime.environmentId !== runtime.environmentId) {
-          await proc.stopConsumerEnvironment(previousRuntime).catch((error) => {
-            console.warn(`[process-manager] old environment cleanup failed: ${(error as Error).message}`);
+      const workspaceIdentity = ProcessManager.workspaceIdentity(startArg);
+      const workspaceId =
+        previousWorkspaceId && previousWorkspaceIdentity === workspaceIdentity
+          ? previousWorkspaceId
+          : `workspace_${randomUUID().replaceAll('-', '')}`;
+      const runtime = await proc.configureConsumer(processId, workspaceId, startArg);
+      if (!this.isCurrentConsumerEpoch(processId, epoch)) {
+        const isPriorRuntime =
+          previousRuntime?.environmentId === runtime.environmentId &&
+          previousRuntime.environmentGeneration === runtime.environmentGeneration;
+        if (!isPriorRuntime) {
+          await proc.stopConsumerEnvironment(runtime).catch((error) => {
+            console.warn(`[process-manager] stale environment cleanup failed: ${(error as Error).message}`);
           });
         }
+        await this.retireStaleStart(processId, proc, previousRuntime);
+        return;
+      }
+      this.consumerWorkspaceIds.set(processId, workspaceId);
+      this.consumerWorkspaceIdentities.set(processId, workspaceIdentity);
+      this.consumerRuntimes.set(processId, runtime);
+      if (previousRuntime && previousRuntime.environmentId !== runtime.environmentId) {
+        await proc.stopConsumerEnvironment(previousRuntime).catch((error) => {
+          console.warn(`[process-manager] old environment cleanup failed: ${(error as Error).message}`);
+        });
       }
       this.lastStartArgs.set(processId, opts);
       this.trackMirrorSources(processId, startArg.sources);
@@ -1263,11 +1034,6 @@ export class ProcessManager {
       const detached = this.agentHosts.detach(processId);
       if (detached?.lastConsumer) {
         await proc.stop().catch(() => {});
-      }
-      const machineId = this.localSandboxKeys.get(processId);
-      if (machineId && this.hostBridge) {
-        this.localSandboxKeys.delete(processId);
-        void this.hostBridge.release(machineId, processId).catch(() => {});
       }
       throw error;
     }
@@ -1371,11 +1137,6 @@ export class ProcessManager {
     this.consumerWorkspaceIds.delete(processId);
     this.consumerWorkspaceIdentities.delete(processId);
     this.processes.delete(processId);
-    const machineId = this.localSandboxKeys.get(processId);
-    if (machineId && this.hostBridge) {
-      this.localSandboxKeys.delete(processId);
-      void this.hostBridge.release(machineId, processId).catch(() => {});
-    }
     return result;
   };
 
@@ -1447,20 +1208,12 @@ export class ProcessManager {
         : {}),
     };
     const startArg = await this.buildStartArg(merged);
-    const profilePath = await this.prepareHostBridge(processId, startArg.profileName, merged.workspaceDir);
-    if (profilePath) {
-      startArg.explicitProfilePath = profilePath;
-    }
-    const mode = this.resolveMode(startArg.profileName);
-    if (mode === 'serve') {
-      await this.waitForRuntimeInstall?.();
-    }
+    await this.waitForRuntimeInstall?.();
     const previous = this.processes.get(processId);
-    const compatibilityKey = this.agentHostCompatibilityKey(processId, mode, startArg);
-    if (previous && mode === 'serve' && lastOpts) {
+    const compatibilityKey = this.agentHostCompatibilityKey(processId, startArg);
+    if (previous && lastOpts) {
       const previousStartArg = await this.buildStartArg(lastOpts);
-      const previousMode = this.resolveMode(previousStartArg.profileName);
-      const previousKey = this.agentHostCompatibilityKey(processId, previousMode, previousStartArg);
+      const previousKey = this.agentHostCompatibilityKey(processId, previousStartArg);
       const currentWorkspaceId = this.consumerWorkspaceIds.get(processId);
       if (compatibilityKey === previousKey && currentWorkspaceId) {
         const workspaceIdentity = ProcessManager.workspaceIdentity(startArg);
@@ -1505,95 +1258,7 @@ export class ProcessManager {
     // A compatible consumer is attached to the shared host before its own
     // environment finishes materializing. Never expose the shared host's
     // running metadata during that window: the consumer is still starting.
-    const status = tailored ?? { type: 'starting' as const, timestamp: Date.now() };
-    return this.withHostOfflineOverlay(processId, status);
-  };
-
-  /**
-   * Computer-as-sandbox sticky host-offline overlay. For a `running` session
-   * whose laptop (`local:<machineId>`) WS has dropped, flag `data.hostOffline`
-   * so the renderer shows a non-destructive banner over the still-running cloud
-   * session (the agent + chat are in the cloud and unaffected; only its sandbox
-   * tools are unreachable). Poll-driven, so the banner persists across polls and
-   * clears automatically once the machine reconnects (and `resumeOnReconnect`
-   * re-establishes the sandbox). No-op for non-local sessions or when online.
-   */
-  private withHostOfflineOverlay(
-    processId: string,
-    status: WithTimestamp<AgentProcessStatus>
-  ): WithTimestamp<AgentProcessStatus> {
-    const machineId = this.localSandboxKeys.get(processId);
-    if (!machineId || !this.hostBridge || status.type !== 'running') {
-      return status;
-    }
-    const st = this.hostBridge.machineState(machineId);
-    if (st.online) {
-      return status;
-    }
-    return {
-      ...status,
-      data: {
-        ...status.data,
-        hostOffline: true,
-        ...(st.label ? { hostOfflineMachineLabel: st.label } : {}),
-      },
-    };
-  }
-
-  /**
-   * Called when a machine goes offline. Broadcasts a `host-offline` overlay
-   * (`agent-process:status` event) for every running local session on it, so
-   * renderers flip to the banner immediately. The renderer poll early-returns
-   * once a session is `running`, so without this push the overlay would never
-   * surface for a live session (going offline produces no status-change event —
-   * omni-serve keeps running in the cloud).
-   */
-  broadcastHostOffline = (machineId: string): void => {
-    for (const [processId, mid] of this.localSandboxKeys.entries()) {
-      if (mid !== machineId) {
-        continue;
-      }
-      const proc = this.processes.get(processId);
-      if (!proc) {
-        continue;
-      }
-      const overlaid = this.getStatus(processId);
-      if (overlaid.type === 'running' && overlaid.data.hostOffline) {
-        this.sendToWindow('agent-process:status', processId, overlaid);
-      }
-    }
-  };
-
-  /**
-   * Called when a machine reconnects. Rebuilds every local session anchored to
-   * it so the sandbox exec channel is re-established (a fresh `omni sandbox-host`
-   * + `omni serve` with a new host_bridge profile). Chat history survives via
-   * PgSessionStorage and the workspace lives on the laptop's disk, so this is a
-   * clean resume — only an in-flight agent turn (if any) is lost. The cloud's
-   * `localSandboxKeys` is the source of truth (the registry's per-machine anchors
-   * are dropped while the machine is offline; these survive).
-   */
-  resumeOnReconnect = async (machineId: string): Promise<void> => {
-    const toResume = [...this.localSandboxKeys.entries()]
-      .filter(([, mid]) => mid === machineId)
-      .map(([processId]) => processId);
-    for (const processId of toResume) {
-      // Skip if a (re)start is already in flight — guards against WS-reconnect
-      // flapping triggering overlapping rebuilds.
-      const st = this.getStatus(processId).type;
-      if (st === 'starting' || st === 'connecting') {
-        continue;
-      }
-      const opts = this.lastStartArgs.get(processId);
-      if (!opts) {
-        continue;
-      }
-      try {
-        await this.rebuild(processId, opts);
-      } catch (err) {
-        console.error(`[host-bridge] resume rebuild failed for ${processId}:`, (err as Error).message);
-      }
-    }
+    return tailored ?? { type: 'starting' as const, timestamp: Date.now() };
   };
 
   resizePty = (processId: string, cols: number, rows: number): void => {
@@ -1634,7 +1299,7 @@ export class ProcessManager {
     this.mutateConsumer(processId, async () => {
       const proc = this.processes.get(processId);
       const runtime = this.consumerRuntimes.get(processId);
-      if (!proc || proc.getStatus().type !== 'running' || (!runtime && proc.mode !== 'compute')) {
+      if (!proc || proc.getStatus().type !== 'running' || !runtime) {
         throw new Error('Resident execution environment is not ready');
       }
       await proc.bindSession(processId, sessionId, runtime);
@@ -1663,11 +1328,9 @@ export class ProcessManager {
     const nextOpts = { ...previousOpts, profileNameOverride: profileName };
     const previousArg = await this.buildStartArg(previousOpts);
     const nextArg = await this.buildStartArg(nextOpts);
-    const nextMode = this.resolveMode(nextArg.profileName);
-    const previousMode = this.resolveMode(previousArg.profileName);
-    const previousKey = this.agentHostCompatibilityKey(processId, previousMode, previousArg);
-    const nextKey = this.agentHostCompatibilityKey(processId, nextMode, nextArg);
-    if (nextMode !== 'serve' || nextKey !== previousKey) {
+    const previousKey = this.agentHostCompatibilityKey(processId, previousArg);
+    const nextKey = this.agentHostCompatibilityKey(processId, nextArg);
+    if (nextKey !== previousKey) {
       return {
         ok: false,
         fallback: true,
@@ -1795,7 +1458,7 @@ export class ProcessManager {
    * Remember which of a launch's mounts auto-mirror, and make sure the sweep
    * timer is running when at least one process has any. Only docker-backed
    * sessions ever mirror — the sweep keys off `getProcessContainerId`, which
-   * is null for host/ACI/host_bridge backends.
+   * is null for host backends.
    */
   private trackMirrorSources(processId: string, sources: AgentProcessSource[]): void {
     const owned = sources
@@ -1881,9 +1544,8 @@ export class ProcessManager {
 
 /**
  * Register the `agent-process:*` IPC handlers. `resolve(event)` picks the
- * ProcessManager to act on — `() => mgr` for the single-manager Electron app,
- * or `event => registry.get(event.tenantId).processManager` for the per-tenant
- * server. Returns the channel names for cleanup.
+ * ProcessManager to act on (`() => mgr` in both shells). Returns the channel
+ * names for cleanup.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function registerProcessHandlers(ipc: IIpcListener, resolve: (event: unknown) => ProcessManager): string[] {

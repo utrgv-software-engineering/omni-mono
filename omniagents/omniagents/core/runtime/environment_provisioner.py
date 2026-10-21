@@ -170,9 +170,9 @@ _FULL_CAPABILITIES = frozenset(
 
 
 #: Backend client types that are genuine containment boundaries — the
-#: agent's tools cannot reach the hosting machine. ``unix_local`` and
-#: ``host_bridge`` are deliberately absent: they carry sandbox sessions
-#: but execute raw host processes. Unknown client types fail closed to
+#: agent's tools cannot reach the hosting machine. ``unix_local`` is
+#: deliberately absent: it carries sandbox sessions but executes raw
+#: host processes. Unknown client types fail closed to
 #: not-contained.
 _CONTAINED_CLIENT_TYPES = frozenset(
     {
@@ -191,8 +191,7 @@ _CONTAINED_CLIENT_TYPES = frozenset(
 
 #: Truthful placement family per backend client type. Kind records WHERE
 #: the runtime lives — never trust: ``unix_local`` is
-#: host-placed even though it carries sandbox sessions, and ``host_bridge``
-#: executes on another machine entirely. Trust (containment) is the
+#: host-placed even though it carries sandbox sessions. Trust (containment) is the
 #: ``contained`` capability above; terminal routing keys on the lease's
 #: sandbox runtime. Unknown session-backed client types default to CONTAINER.
 _ENVIRONMENT_KINDS = {
@@ -200,7 +199,6 @@ _ENVIRONMENT_KINDS = {
     "unix_local": EnvironmentKind.HOST,
     "wasm": EnvironmentKind.HOST,
     "docker": EnvironmentKind.CONTAINER,
-    "host_bridge": EnvironmentKind.REMOTE,
     "e2b": EnvironmentKind.REMOTE,
     "modal": EnvironmentKind.REMOTE,
     "runloop": EnvironmentKind.REMOTE,

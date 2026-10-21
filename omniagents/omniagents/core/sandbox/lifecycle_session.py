@@ -12,7 +12,7 @@ them first-class on the wrapper so downstream code never touches
 
 Every proxy is **capability-probing**: the wrapper works over any
 backend, including ones without a lifecycle surface (``unix_local``,
-host-bridge, future cloud backends that can only stop+start).
+future cloud backends that can only stop+start).
 
 * ``pause`` / ``unpause`` raise :class:`SandboxLifecycleUnsupported`
   when the backend lacks the method — callers that need graceful
@@ -162,7 +162,7 @@ class LifecycleSessionClientMixin:
     """Wrap sessions in :class:`LifecycleSandboxSession`.
 
     Mixed into the omniagents extended sandbox clients (docker,
-    unix_local, host-bridge) ahead of the SDK base so their
+    unix_local) ahead of the SDK base so their
     ``create``/``resume`` paths — which all funnel through the SDK's
     ``_wrap_session`` — hand back the lifecycle-capable wrapper.
     """

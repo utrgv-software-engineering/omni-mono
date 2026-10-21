@@ -16,7 +16,6 @@ import path from 'node:path';
 
 import { AgentHostControlClient } from './agent-host-control-client';
 import { decodeAgentHostResources } from './agent-process';
-import type { IComputeClient } from './platform-client';
 
 export const runtimeOwner = `${hostname()}:${process.pid}`;
 const processBirth = (pid: number): string | undefined => {
@@ -72,29 +71,7 @@ export type ChatRuntimeClaim = {
 };
 
 export class ChatRuntimeJournal {
-  constructor(
-    private readonly dir: string,
-    private readonly computeClient?: (profile: string) => IComputeClient | null
-  ) {}
-
-  recordCompute(id: string, profile: string, sessionId: string): void {
-    const file = `${this.filename(id)}.compute`;
-    const previous = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
-    const records = [
-      ...previous.filter((entry: { sessionId: string }) => entry.sessionId !== sessionId),
-      { consumerId: id, owner: runtimeOwner, profile, sessionId },
-    ];
-    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-    const temporary = `${file}.${randomUUID()}.tmp`;
-    const fd = openSync(temporary, 'wx', 0o600);
-    try {
-      writeFileSync(fd, JSON.stringify(records));
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(temporary, file);
-  }
+  constructor(private readonly dir: string) {}
 
   private filename(id: string): string {
     return path.join(this.dir, `${createHash('sha256').update(id).digest('hex')}.json`);
@@ -149,25 +126,6 @@ export class ChatRuntimeJournal {
   };
 
   async retire(id: string): Promise<void> {
-    const computeFile = `${this.filename(id)}.compute`;
-    if (existsSync(computeFile)) {
-      const records = JSON.parse(readFileSync(computeFile, 'utf8'));
-      if (!Array.isArray(records)) {
-        throw new Error('Invalid compute ownership journal');
-      }
-      for (const record of records) {
-        if (record.consumerId !== id || typeof record.sessionId !== 'string' || typeof record.profile !== 'string') {
-          throw new Error('Invalid compute ownership journal');
-        }
-        assertCleanupOwner(record.owner);
-        const client = this.computeClient?.(record.profile);
-        if (!client) {
-          throw new Error('Compute cleanup is waiting for its provider');
-        }
-        await client.stopSession(record.sessionId);
-      }
-      unlinkSync(computeFile);
-    }
     for (const claim of this.read(id)) {
       assertCleanupOwner(claim.owner);
       if (claim.machine !== hostname()) {
@@ -248,11 +206,11 @@ export class ChatRuntimeJournal {
     if (!existsSync(this.dir)) {
       return;
     }
-    for (const file of readdirSync(this.dir).filter((name) => name.endsWith('.json') || name.endsWith('.compute'))) {
+    for (const file of readdirSync(this.dir).filter((name) => name.endsWith('.json'))) {
       try {
         const raw = JSON.parse(readFileSync(path.join(this.dir, file), 'utf8')) as ChatRuntimeClaim[];
         const id = raw[0]?.consumerId;
-        if (!id || ![this.filename(id), `${this.filename(id)}.compute`].includes(path.join(this.dir, file))) {
+        if (!id || this.filename(id) !== path.join(this.dir, file)) {
           throw new Error('Invalid recovery journal name');
         }
         if (raw.some((claim) => claim.owner === runtimeOwner)) {

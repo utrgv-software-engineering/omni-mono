@@ -1,9 +1,8 @@
 /**
  * IPC handler registration for the inbox surface.
  *
- * Takes a `resolve(event)` callback (see registerMilestoneHandlers) so the same
- * registration serves the single-manager Electron app and the per-tenant
- * server. Returns the channel names registered for cleanup.
+ * Takes a `resolve(event)` callback (see registerMilestoneHandlers). Returns
+ * the channel names registered for cleanup.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { InboxManager } from '@/main/inbox-manager';

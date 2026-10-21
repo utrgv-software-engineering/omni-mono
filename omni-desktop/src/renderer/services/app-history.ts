@@ -24,7 +24,6 @@ type AppHistoryState = {
 const TAB_TITLES: Record<LayoutMode, string> = {
   work: 'Work',
   chat: 'Chat',
-  dashboards: 'Dashboards',
   agents: 'Agents',
   plugins: 'Plugins',
   sandboxes: 'Sandboxes',

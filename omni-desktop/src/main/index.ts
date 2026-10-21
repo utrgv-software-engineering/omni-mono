@@ -27,18 +27,11 @@ import {
   loginWithDeviceFlow,
   logout as codexLogout,
 } from '@/main/codex-auth';
-import { wireComputeReverseHandlers } from '@/main/compute-reverse-handlers';
 import { migrateAgentConfigFromFiles } from '@/main/config-files-migration';
 import { materializeAgentConfig } from '@/main/config-materializer';
 import { createConsoleManager } from '@/main/console-manager';
 import { rowToProject } from '@/main/db-store-bridge';
 import { createDownloadsManager } from '@/main/downloads-manager';
-import {
-  ensureFreshAccessToken as ensureFreshEntraToken,
-  getStatus as entraStatus,
-  loginWithDeviceFlow as entraLoginWithDeviceFlow,
-  logout as entraLogout,
-} from '@/main/entra-auth';
 import { createExtensionManager } from '@/main/extension-manager';
 import {
   linkWithDeviceFlow as githubLink,
@@ -48,15 +41,12 @@ import {
 import { durableLocalCodexAgentHostEnv, LocalCodexAccountOwner } from '@/main/local-codex-account-owner';
 import { durableLocalMcpAgentHostEnv, LocalMcpConfigOwner } from '@/main/local-mcp-config-owner';
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
-import { getOrCreateMachineIdentity, renameMachine } from '@/main/machine-identity';
 import { MainProcessManager } from '@/main/main-process-manager';
 import { getMcpBinPath } from '@/main/mcp-config-manager';
 import { registerMigrationHandlers } from '@/main/migration-handlers';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
 import { migrateLegacyPagesToConfigDir } from '@/main/pages-relocation-migration';
 import { createPermissionsManager } from '@/main/permissions-manager';
-import { registerPlatformIpc } from '@/main/platform-ipc';
-import { createPlatformClient } from '@/main/platform-mode';
 import { createProcessManager } from '@/main/process-manager';
 import { refreshProductRuntimeInfo } from '@/main/product-runtime';
 import { registerProfileCatalogHandlers } from '@/main/profile-catalog';
@@ -66,7 +56,6 @@ import { closeProjectDb, getDb, openProjectDb } from '@/main/project-db';
 import { createProjectManager } from '@/main/project-manager';
 import { createPullRequestWatcher } from '@/main/pull-request-watcher';
 import { registerResidentHandlers, ResidentAgentManager } from '@/main/resident-agent-manager';
-import { wireReverseRpcRouter } from '@/main/reverse-rpc-bridge';
 import { RoutineBridge } from '@/main/routine-bridge';
 import {
   defaultSandboxInventoryDeps,
@@ -84,7 +73,6 @@ import {
   registerSnapshotHandlers,
 } from '@/main/snapshot-manager';
 import { getStore } from '@/main/store';
-import { wireTunnelReverseHandlers } from '@/main/tunnel-handler';
 import {
   ensureDirectory,
   getDefaultWorkspaceDir,
@@ -95,9 +83,7 @@ import {
   isFile,
 } from '@/main/util';
 import { getVoiceService } from '@/main/voice-service';
-import { WorkspaceSyncManager } from '@/main/workspace-sync-manager';
 import { createWslBackendManager } from '@/main/wsl-backend';
-import { registerTeamHandlers } from '@/server/team-handlers';
 import { tokenLast4 } from '@/shared/git-credentials';
 import {
   registerConfigHandlers,
@@ -271,11 +257,8 @@ function materializeDesktopConfig(): void {
   try {
     materializeAgentConfig({
       configDir: OMNI_CONFIG_DIR,
-      models: readLocalModels(OMNI_CONFIG_DIR, store.get('modelsConfig') ?? emptyModelsConfig()),
-      writeModels: false,
       mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
       network: store.get('networkConfig') ?? emptyNetworkConfig(),
-      mode: 'plaintext',
       managedMcpEntry: buildStdioMcpEntry(getMcpBinPath()),
       writeMcp: store.get('mcpConfigOwnership') !== 'omniagents',
     });
@@ -623,73 +606,8 @@ const [wslBackend, cleanupWslBackend] = createWslBackendManager({
     deleteSecret: () => secretStore.deleteGitToken(WSL_BACKEND_SECRET_ID),
   },
 });
-const { cleanup: cleanupPlatform, refreshPolicy: refreshPlatformPolicy } = registerPlatformIpc({
-  ipc: main.ipc,
-  sendToWindow: main.sendToWindow,
-  store,
-  fetchFn: (input, init) => net.fetch(input as string, init),
-});
-
-// Keep ProcessManager's platform client in sync with auth state.
-// On sign-in/sign-out, the platform client is updated so new sandboxes
-// use the correct mode without requiring an app restart.
-const platformFetchFn = (input: string | URL | Request, init?: RequestInit) => net.fetch(input as string, init);
-
-/** Attach onTokenRefresh so refreshed access tokens are persisted to the store. */
-const withTokenPersistence = (client: ReturnType<typeof createPlatformClient>) => {
-  if (client) {
-    client.onTokenRefresh = (newAccessToken) => {
-      const current = store.get('platform');
-      if (current) {
-        store.set('platform', { ...current, accessToken: newAccessToken });
-      }
-    };
-  }
-  return client;
-};
-
-const syncPlatformClients = (platform?: Parameters<typeof createPlatformClient>[0]) => {
-  const client = withTokenPersistence(createPlatformClient(platform, platformFetchFn));
-  processManager.platformClient = client;
-  return client;
-};
-let platformClient = syncPlatformClients(store.get('platform'));
-store.onDidChange('platform', (newVal) => {
-  platformClient = syncPlatformClients(newVal);
-});
-
-// Background workspace sync manager — like OneDrive for project workspaces.
-const syncManager = new WorkspaceSyncManager({
-  fetchFn: platformFetchFn,
-  platformClient,
-  manifestDir: OMNI_CONFIG_DIR,
-  onStatusChange: (projectId, status) => {
-    main.sendToWindow('workspace-sync:status-changed', projectId, status);
-  },
-});
-store.onDidChange('platform', () => {
-  syncManager.setPlatformClient(platformClient);
-});
-
-// On startup, refresh platform policy if already signed in.
-// This ensures sandbox profiles are up-to-date with the latest entitlements.
-void refreshPlatformPolicy();
-
 main.ipc.handle('main-process:get-status', () => main.getStatus());
 
-// Workspace sync IPC handlers
-main.ipc.handle('workspace-sync:start', (_, projectId, workspaceDir) => {
-  return syncManager.startSync(projectId, workspaceDir);
-});
-main.ipc.handle('workspace-sync:stop', (_, projectId) => {
-  return syncManager.stopSync(projectId);
-});
-main.ipc.handle('workspace-sync:get-status', (_, projectId) => {
-  return syncManager.getStatus(projectId);
-});
-main.ipc.handle('workspace-sync:get-share-name', (_, projectId) => {
-  return syncManager.getShareName(projectId);
-});
 main.ipc.handle('omni-install-process:get-status', () => omniInstall.getStatus());
 
 // Local voice (Option A): launcher-side STT/TTS via the ONNX sidecar. Works in
@@ -725,15 +643,10 @@ async function cleanup() {
   }
   isShuttingDown = true;
 
-  cleanupPlatform();
-  cleanupReverseRpc();
-  cleanupComputeReverse();
-  cleanupTunnelReverse();
   // Non-persistent mode: kills the wsl.exe child, terminating the in-distro
   // daemon. Persistent mode: only stops timers/loops — the daemon keeps
   // running and is adopted on the next boot.
   cleanupWslBackend();
-  await syncManager.dispose();
   const results = await Promise.allSettled([
     cleanupConsole(),
     chatCleanup.dispose(),
@@ -1034,7 +947,6 @@ registerSettingsConfigHandlers(
     materializeDesktopConfig();
     main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
   },
-  {},
   {
     readModels: () => readLocalModels(OMNI_CONFIG_DIR, store.get('modelsConfig') ?? emptyModelsConfig()),
     saveModels: (_event, config) => writeLocalModels(OMNI_CONFIG_DIR, config),
@@ -1056,19 +968,6 @@ registerGitCredentialHandlers(
     main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
   }
 );
-// Desktop has no teams — register the channels as no-ops (controlPlane undefined)
-// so the shared renderer's Teams UI resolves cleanly to "just you".
-registerTeamHandlers(main.ipc, undefined);
-const noTeamDefaults = { hasModels: false, hasMcp: false, hasEnv: false, hasNetwork: false };
-main.ipc.handle('team-settings:status', () => noTeamDefaults);
-main.ipc.handle('team-settings:publish-from-mine', () => noTeamDefaults);
-main.ipc.handle('team-settings:clear', () => noTeamDefaults);
-// Desktop has no teams — these resolve to "just you".
-main.ipc.handle('team:whoami', () => null);
-main.ipc.handle('team:leave', () => []);
-main.ipc.handle('team:rename', () => []);
-main.ipc.handle('team:delete', () => []);
-main.ipc.handle('team:transfer-ownership', () => []);
 registerMigrationHandlers(main.ipc, () => ({
   get: () => store.get('pagesMigration') ?? null,
   set: (value) => {
@@ -1142,38 +1041,15 @@ main.ipc.handle('codex:status', () => localCodexAccount.status());
 
 //#endregion
 
-//#region Cloud link (Electron ↔ deployed launcher via AAD device flow)
+//#region Remote backend link
 
 // Hoisted from the GitHub block below so both regions can fan store changes
 // out to the renderer.
 const broadcastStore = (): void =>
   main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
 
-const cloudStatusFromStore = (): import('@/shared/types').CloudStatus => {
-  const backend = store.get('remoteBackend');
-  if (backend?.kind !== 'cloud') {
-    return { connected: false };
-  }
-  const live = entraStatus();
-  // Belt + suspenders: if the secret store has been cleared out (e.g. user
-  // wiped userData) treat the remoteBackend flag as stale and report
-  // disconnected so the renderer drops back to local mode after a restart.
-  if (!live.signedIn) {
-    return { connected: false };
-  }
-  return {
-    connected: true,
-    url: backend.url,
-    tenantId: backend.tenantId,
-    clientId: backend.clientId,
-    account: backend.account,
-  };
-};
-
-main.ipc.handle('cloud:status', () => cloudStatusFromStore());
-
 /** Restart the Electron app on a short delay so the IPC reply (the new
- *  ``CloudStatus``) flushes to the renderer first. The transport choice is
+ *  ``undefined``) flushes to the renderer first. The transport choice is
  *  baked into the BrowserWindow at creation via ``additionalArguments``, so
  *  flipping the remote backend requires a fresh process — not just a
  *  webContents reload. 200ms is enough for the response handshake without
@@ -1185,54 +1061,10 @@ const restartAfterRemoteBackendChange = (): void => {
   }, 200);
 };
 
-main.ipc.handle('cloud:link', async (_, urlInput) => {
-  const url = String(urlInput ?? '')
-    .trim()
-    .replace(/\/+$/, '');
-  if (!url) {
-    throw new Error('Cloud URL is required');
-  }
-  // 1. Discover the cloud's AAD configuration. Public endpoint, no auth.
-  const discoverRes = await net.fetch(`${url}/.well-known/omni-cloud`);
-  if (!discoverRes.ok) {
-    throw new Error(`Cloud discovery failed (${discoverRes.status}). Is this a launcher URL?`);
-  }
-  const discovered = (await discoverRes.json()) as { tenantId?: string; clientId?: string };
-  if (!discovered.tenantId || !discovered.clientId) {
-    throw new Error('Cloud discovery returned no tenant/client id');
-  }
-  // 2. Drive the AAD device-code flow against the discovered tenant + client.
-  const result = await entraLoginWithDeviceFlow({
-    tenantId: discovered.tenantId,
-    clientId: discovered.clientId,
-    onCode: (code) => main.sendToWindow('cloud:device-code', code),
-  });
-  if (!result.signedIn) {
-    throw new Error('Cloud sign-in did not produce an account');
-  }
-  // 3. Persist the remoteBackend flag, then restart so the renderer picks up
-  //    the cloud transport on its next boot.
-  store.set('remoteBackend', {
-    kind: 'cloud',
-    url,
-    tenantId: discovered.tenantId,
-    clientId: discovered.clientId,
-    account: result.account,
-  });
-  broadcastStore();
-  const status = cloudStatusFromStore();
-  restartAfterRemoteBackendChange();
-  return status;
-});
-
-// Shared disconnect path for ALL remote-backend kinds (cloud, wsl, server):
-// clears the flag and restarts back into standalone-local mode. Entra logout
-// only applies to the cloud kind — wsl and server links never signed in.
-main.ipc.handle('cloud:unlink', async () => {
+// Shared disconnect path for every remote-backend kind (wsl, server): clears
+// the flag and restarts back into standalone-local mode.
+main.ipc.handle('remote-backend:unlink', async () => {
   const prev = store.get('remoteBackend');
-  if (prev?.kind === 'cloud') {
-    entraLogout();
-  }
   // A WSL daemon — persistent or not — must not outlive the link: reap it and
   // drop the durable secret so nothing keeps running (or listening) orphaned.
   if (prev?.kind === 'wsl') {
@@ -1243,69 +1075,6 @@ main.ipc.handle('cloud:unlink', async () => {
   // The live renderer is still configured to use the (now broken) backend
   // transport — restart so it falls back to local Electron IPC.
   restartAfterRemoteBackendChange();
-});
-
-main.ipc.handle('cloud:get-access-token', async () => {
-  const backend = store.get('remoteBackend');
-  if (backend?.kind !== 'cloud') {
-    throw new Error('Not connected to a cloud');
-  }
-  return ensureFreshEntraToken(backend.tenantId, backend.clientId);
-});
-
-// Stable per-install machine identity used by the cloud's "computer-as-
-// sandbox" registry. Lives in `<configDir>/machine.json` so it survives
-// upgrades + electron-store resets. Renderer reads this once at boot to
-// invoke `machine:register` over the WS to the cloud.
-main.ipc.handle('cloud:get-machine-identity', () => {
-  return getOrCreateMachineIdentity(OMNI_CONFIG_DIR);
-});
-
-main.ipc.handle('cloud:set-machine-label', (_, label) => {
-  const next = String(label ?? '').trim() || 'Unnamed machine';
-  return renameMachine(OMNI_CONFIG_DIR, next);
-});
-
-// Wire the renderer → main reverse-RPC dispatcher (Phase 2). The cloud's
-// reverse-invoke frames hit the renderer's WS first; the renderer-side
-// shim (`renderer/services/compute.ts`) forwards them here so main-side
-// compute handlers can resolve them.
-const cleanupReverseRpc = wireReverseRpcRouter(main.ipc);
-
-// Computer-as-sandbox — main handles the cloud's compute:* reverse-RPCs by
-// standing up an `omni sandbox-host` exec server (the agent stays in the
-// cloud; only the sandbox backend runs here).
-const cleanupComputeReverse = wireComputeReverseHandlers();
-
-// Tunnel relay (Phase 3). Inbound WS frames from local omni-serve are
-// pushed to the renderer via this Electron IPC event; the renderer's
-// tunnel bridge re-emits them on the cloud WS via `tunnel:incoming`.
-const cleanupTunnelReverse = wireTunnelReverseHandlers((event) => {
-  main.sendToWindow('tunnel:emit-incoming', event);
-});
-
-// Fetch a WS auth token from the linked cloud's /api/ws-token. The renderer
-// can't do this directly: setting Authorization on a cross-origin GET trips
-// CORS preflight, and EasyAuth's 302 redirect for unauthenticated OPTIONS
-// requests fails the CORS check. Running the fetch in main bypasses CORS
-// entirely (Node's fetch is unrestricted) and returns the opaque WS token.
-main.ipc.handle('cloud:get-ws-token', async () => {
-  const backend = store.get('remoteBackend');
-  if (backend?.kind !== 'cloud') {
-    throw new Error('Not connected to a cloud');
-  }
-  const accessToken = await ensureFreshEntraToken(backend.tenantId, backend.clientId);
-  const res = await net.fetch(`${backend.url}/api/ws-token`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) {
-    throw new Error(`Cloud ws-token fetch failed: ${res.status} ${res.statusText}`);
-  }
-  const data = (await res.json()) as { token?: string };
-  if (!data.token) {
-    throw new Error('Cloud ws-token response missing "token" field');
-  }
-  return data.token;
 });
 
 //#endregion

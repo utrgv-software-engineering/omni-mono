@@ -1,9 +1,7 @@
 /**
- * Local `SecretStore` — shared by the Electron desktop shell and local
- * (single-tenant) server mode, so a credential linked in one is usable in the
- * other. Like the rest of the local data model (`config.json`, projects), the
- * secret file is shared; only the cloud/multi-tenant path diverges (Postgres,
- * `PgSecretStore`).
+ * Local `SecretStore` — shared by the Electron desktop shell and server mode,
+ * so a credential linked in one is usable in the other. Like the rest of the
+ * local data model (`config.json`, projects), the secret file is shared.
  *
  * Storage: AES-256-GCM at rest in `~/.config/Omni Code/git-secrets.json`, keyed
  * by `OMNI_SECRET_KEY` (base64, 32 bytes) when set, else a generated owner-only
@@ -132,8 +130,8 @@ export class LocalSecretStore implements SecretStore {
     return undefined;
   }
 
-  // fs + crypto are synchronous; the interface is async so the Postgres-backed
-  // cloud variant fits behind it, hence the explicit Promise returns.
+  // fs + crypto are synchronous; the SecretStore interface is async, hence the
+  // explicit Promise returns.
   setGitToken(id: string, token: string): Promise<void> {
     const data = this.read();
     data.gitTokens[id] = this.encrypt(token);

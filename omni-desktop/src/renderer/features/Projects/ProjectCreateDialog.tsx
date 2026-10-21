@@ -49,10 +49,6 @@ export const ProjectCreateDialog = memo(
       }
     }, [open]);
 
-    const [isEnterprise, setIsEnterprise] = useState(false);
-    useEffect(() => {
-      emitter.invoke('platform:is-enterprise').then(setIsEnterprise);
-    }, []);
     const storeData = useStore(persistedStoreApi.$atom);
     // Subscribing keeps the options current as discovery lands.
     const discovered = useStore($sandboxProfiles);
@@ -60,12 +56,11 @@ export const ProjectCreateDialog = memo(
     const availableProfiles = useMemo(
       () =>
         getAvailableProfileNames({
-          isEnterprise,
           available: storeData.availableSandboxProfiles,
           discovered,
           substrate,
         }),
-      [isEnterprise, storeData.availableSandboxProfiles, discovered, substrate]
+      [storeData.availableSandboxProfiles, discovered, substrate]
     );
     const suggestedLabel = useMemo(
       () =>

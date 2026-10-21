@@ -7,7 +7,7 @@
 
 import type { LayoutMode } from '@/shared/types';
 
-const VALID_LAYOUT_MODES: LayoutMode[] = ['work', 'chat', 'dashboards', 'agents', 'plugins', 'sandboxes', 'settings'];
+const VALID_LAYOUT_MODES: LayoutMode[] = ['work', 'chat', 'agents', 'plugins', 'sandboxes', 'settings'];
 
 /**
  * Migrate legacy layout modes to current valid modes.

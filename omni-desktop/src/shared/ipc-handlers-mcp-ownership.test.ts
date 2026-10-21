@@ -51,13 +51,9 @@ describe('config ownership hooks', () => {
   it('rejects the legacy full-document MCP setter before mutating the store', async () => {
     const { ipc, handlers } = fakeIpc();
     const set = vi.fn();
-    registerSettingsConfigHandlers(
-      ipc,
-      () => ({ get: vi.fn(), set }) as never,
-      vi.fn(),
-      {},
-      { beforeSetMcp: () => Promise.reject(new Error('canonical owner')) }
-    );
+    registerSettingsConfigHandlers(ipc, () => ({ get: vi.fn(), set }) as never, vi.fn(), {
+      beforeSetMcp: () => Promise.reject(new Error('canonical owner')),
+    });
 
     await expect(
       handlers.get('settings:set-mcp-config')!(

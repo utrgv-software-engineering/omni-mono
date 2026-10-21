@@ -5,7 +5,6 @@ import { AppSidebar } from '@/renderer/app/AppSidebar';
 import { cn } from '@/renderer/ds/cn';
 import { SidebarInset, SidebarProvider } from '@/renderer/ds/ui/sidebar';
 import { Code } from '@/renderer/features/Code/Code';
-import { Dashboards } from '@/renderer/features/Dashboards/Dashboards';
 import { Gallery } from '@/renderer/features/Gallery/Gallery';
 import { OnboardingWizard } from '@/renderer/features/Onboarding/OnboardingWizard';
 import { PluginsView } from '@/renderer/features/Plugins/PluginsView';
@@ -76,7 +75,6 @@ export const MainContent = memo(() => {
     // Chat IS the deck since the tab merge: chat columns and work sessions
     // share one surface (Spaces/Focus), so there's a single panel for both.
     { key: 'chat', Component: Code },
-    { key: 'dashboards', Component: Dashboards },
     // Agents hosts the resident roster, channels/DMs, and the Routines surface.
     { key: 'agents', Component: ResidentsTab },
     { key: 'plugins', Component: PluginsView },

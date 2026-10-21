@@ -14,7 +14,6 @@ const hoisted = vi.hoisted(() => ({
   configureConsumerFailure: null as string | null,
   configureConsumerGate: null as Promise<void> | null,
   agentProcessInstances: [] as Array<{
-    mode: string;
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
     exit: ReturnType<typeof vi.fn>;
@@ -24,7 +23,6 @@ const hoisted = vi.hoisted(() => ({
     getManagementMutationCapabilities: ReturnType<typeof vi.fn>;
     getManagementAccountStatus: ReturnType<typeof vi.fn>;
     getManagementMcpStatus: ReturnType<typeof vi.fn>;
-    usesLocalAgentHostConfig: ReturnType<typeof vi.fn>;
     callManagementAdmin: ReturnType<typeof vi.fn>;
     resizePty: ReturnType<typeof vi.fn>;
     configureConsumer: ReturnType<typeof vi.fn>;
@@ -40,7 +38,6 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('@/main/agent-process', () => ({
   AgentProcess: class MockAgentProcess {
-    mode: string;
     start = vi.fn();
     stop = vi.fn(async () => ({
       scope: 'host',
@@ -71,7 +68,6 @@ vi.mock('@/main/agent-process', () => ({
         managed_servers: ['omni-projects'],
       },
     }));
-    usesLocalAgentHostConfig = vi.fn(() => this.mode === 'serve');
     callManagementAdmin = vi.fn(async (method: string) => ({ ok: true, method }));
     resizePty = vi.fn();
     bindSession = vi.fn(async () => {});
@@ -101,8 +97,7 @@ vi.mock('@/main/agent-process', () => ({
     notifyActivity = vi.fn();
     emitStatus: (status: WithTimestamp<AgentProcessStatus>) => void;
 
-    constructor(opts: { mode: string; onStatusChange: (status: WithTimestamp<AgentProcessStatus>) => void }) {
-      this.mode = opts.mode;
+    constructor(opts: { onStatusChange: (status: WithTimestamp<AgentProcessStatus>) => void }) {
       this.emitStatus = opts.onStatusChange;
       hoisted.agentProcessInstances.push(this);
     }
@@ -134,12 +129,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import {
-  type IHostBridgePreparer,
-  isLauncherOwnedDir,
-  ProcessManager,
-  type ProcessManagerStoreData,
-} from '@/main/process-manager';
+import { isLauncherOwnedDir, ProcessManager, type ProcessManagerStoreData } from '@/main/process-manager';
 import { getDefaultWorkspaceDir } from '@/main/util';
 import { gitTokenEnvName } from '@/shared/git-credentials';
 import type { AgentProcessStatus, GitCredential, Project, WithTimestamp } from '@/shared/types';
@@ -151,7 +141,6 @@ import type { AgentProcessStatus, GitCredential, Project, WithTimestamp } from '
 function makePm(opts?: {
   storeData?: Partial<ProcessManagerStoreData>;
   resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
-  hostBridge?: IHostBridgePreparer;
   waitForRuntimeInstall?: () => Promise<void>;
   durableLocalCodexAccountMutations?: boolean;
   durableLocalMcpMutations?: boolean;
@@ -170,7 +159,6 @@ function makePm(opts?: {
     }) as never,
     getStoreData: () => storeData,
     resolveGitToken: opts?.resolveGitToken,
-    hostBridge: opts?.hostBridge,
     waitForRuntimeInstall: opts?.waitForRuntimeInstall,
     durableLocalCodexAccountMutations: opts?.durableLocalCodexAccountMutations,
     durableLocalMcpMutations: opts?.durableLocalMcpMutations,
@@ -270,37 +258,7 @@ describe('ProcessManager', () => {
     );
   });
 
-  describe('mode resolution', () => {
-    it.each([
-      ['host', 'serve'],
-      ['devbox', 'serve'],
-      ['custom-profile', 'serve'],
-      ['platform', 'compute'],
-    ] as const)('defaultProfileName=%s resolves to mode=%s', async (profileName, expectedMode) => {
-      const { pm } = makePm({ storeData: { defaultProfileName: profileName } });
-      await pm.start('test-1', { workspaceDir: '/tmp/ws' });
-
-      expect(hoisted.agentProcessInstances).toHaveLength(1);
-      expect(hoisted.agentProcessInstances[0]!.mode).toBe(expectedMode);
-    });
-
-    it('per-project sandboxProfile overrides defaultProfileName', async () => {
-      const project: Project = {
-        id: 'proj_1',
-        label: 'Proj',
-        slug: 'proj',
-        sources: [],
-        createdAt: 0,
-        sandboxProfile: 'platform',
-      };
-      const { pm } = makePm({
-        storeData: { defaultProfileName: 'host', projects: [project] },
-      });
-      await pm.start('tab-1', { workspaceDir: '/tmp/ws', projectId: 'proj_1' });
-
-      expect(hoisted.agentProcessInstances[0]!.mode).toBe('compute');
-    });
-
+  describe('start arg', () => {
     it('forwards profileName + projectId in the start arg', async () => {
       const { pm } = makePm({ storeData: { defaultProfileName: 'devbox' } });
       await pm.start('tab-1', { workspaceDir: '/tmp', projectId: 'proj_x' });
@@ -312,54 +270,6 @@ describe('ProcessManager', () => {
           projectId: 'proj_x',
         })
       );
-    });
-
-    it('keeps local-machine compute on the explicitly safe host_bridge serve path', async () => {
-      const hostBridge: IHostBridgePreparer = {
-        prepare: vi.fn(async () => ({ profilePath: '/tmp/host-bridge-machine-1.yml' })),
-        release: vi.fn(async () => {}),
-        machineState: vi.fn(() => ({ online: true, label: 'Laptop' })),
-      };
-      const { pm } = makePm({ storeData: { defaultProfileName: 'local:machine-1' }, hostBridge });
-      await pm.start('tab-local', { workspaceDir: '/tmp/local-workspace' });
-
-      expect(hoisted.agentProcessInstances[0]!.mode).toBe('serve');
-      expect(hoisted.agentProcessInstances[0]!.start).toHaveBeenCalledWith(
-        expect.objectContaining({
-          profileName: 'local:machine-1',
-          explicitProfilePath: '/tmp/host-bridge-machine-1.yml',
-        })
-      );
-    });
-
-    it('forwards complete platform execution routing and consumer credentials to the renderer', async () => {
-      const { pm, sendCalls } = makePm({ storeData: { defaultProfileName: 'platform' } });
-      await pm.start('tab-platform', { workspaceDir: '/tmp/platform-workspace', sessionId: 'conversation-1' });
-      const process = hoisted.agentProcessInstances[0]!;
-      const status: WithTimestamp<AgentProcessStatus> = {
-        type: 'running',
-        timestamp: 10,
-        data: {
-          uiUrl: 'https://runtime.example.test',
-          wsUrl: 'wss://runtime.example.test/ws',
-          agentHostId: 'remote-agent-host-1',
-          workspaceId: 'remote-workspace-1',
-          environmentId: 'remote-environment-1',
-          environmentGeneration: 7,
-          workspaceRoot: '/workspace/project',
-          defaultCwd: '/workspace/project',
-          services: { code_server: 'https://code.example.test' },
-          authToken: 'ordinary-consumer-token',
-        },
-      };
-      process.getStatus.mockReturnValue(status);
-      process.emitStatus(status);
-
-      expect(pm.getStatus('tab-platform')).toEqual(status);
-      expect(sendCalls.at(-1)).toEqual({
-        channel: 'agent-process:status',
-        args: ['tab-platform', status],
-      });
     });
   });
 
@@ -383,7 +293,7 @@ describe('ProcessManager', () => {
     });
 
     it('starts a targetless serve host without materializing an environment', async () => {
-      const { pm } = makePm({ storeData: { defaultProfileName: 'platform' } });
+      const { pm } = makePm({ storeData: { defaultProfileName: 'devbox' } });
 
       await expect(pm.ensureManagementConnection()).resolves.toEqual({
         baseUrl: 'http://127.0.0.1:9000',
@@ -392,7 +302,6 @@ describe('ProcessManager', () => {
       });
 
       const host = hoisted.agentProcessInstances[0]!;
-      expect(host.mode).toBe('serve');
       expect(host.start).toHaveBeenCalledWith(
         expect.objectContaining({ profileName: 'host', workspaceDir: '', sources: [] })
       );
@@ -1441,29 +1350,6 @@ describe('ProcessManager', () => {
         expect.objectContaining({ profileName: 'devbox' })
       );
       expect(host.start).toHaveBeenCalledTimes(1);
-    });
-
-    it('start creates new process when mode changes', async () => {
-      const storeData: ProcessManagerStoreData = {
-        defaultProfileName: 'host',
-        projects: [],
-      };
-      const pm = new ProcessManager({
-        sendToWindow: (() => {}) as never,
-        getStoreData: () => storeData,
-      });
-
-      await pm.start('proc-1', { workspaceDir: '/tmp' });
-      expect(hoisted.agentProcessInstances).toHaveLength(1);
-      expect(hoisted.agentProcessInstances[0]!.mode).toBe('serve');
-
-      // Flip to platform profile — different mode (compute) → new instance
-      storeData.defaultProfileName = 'platform';
-      await pm.start('proc-1', { workspaceDir: '/tmp' });
-
-      expect(hoisted.agentProcessInstances).toHaveLength(2);
-      expect(hoisted.agentProcessInstances[1]!.mode).toBe('compute');
-      expect(hoisted.agentProcessInstances[0]!.exit).toHaveBeenCalled();
     });
 
     it('start adopts a live process instead of restarting it', async () => {

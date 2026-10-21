@@ -454,7 +454,7 @@ describe('runMigrations', () => {
       expect(projects[1]).not.toHaveProperty('sandbox');
     });
 
-    it('v21 → v22 maps platform→platform', () => {
+    it('v21 → v22 maps the removed platform backend to host', () => {
       const store = makeStore({
         schemaVersion: 21,
         sandboxBackend: 'platform',
@@ -462,7 +462,7 @@ describe('runMigrations', () => {
         projects: [],
       });
       runMigrations(store, makeDeps());
-      expect(store.get('defaultProfileName')).toBe('platform');
+      expect(store.get('defaultProfileName')).toBe('host');
     });
 
     it('v21 → v22 maps dropped backends (podman/vm/local/none) to host', () => {
@@ -630,11 +630,11 @@ describe('runMigrations', () => {
         defaultProfileName: 'host',
         tickets: [],
         projects: [{ id: 'p1', label: 'A', sandboxProfile: 'devbox' }],
-        codeTabs: [{ id: 't1', projectId: 'p1', profileName: 'platform', createdAt: 1 }],
+        codeTabs: [{ id: 't1', projectId: 'p1', profileName: 'wasmbox', createdAt: 1 }],
       });
       runMigrations(store, makeDeps());
       const tabs = store.get('codeTabs', []) as Array<Record<string, unknown>>;
-      expect(tabs.find((t) => t.id === 't1')!.profileName).toBe('platform');
+      expect(tabs.find((t) => t.id === 't1')!.profileName).toBe('wasmbox');
     });
 
     it('v23 → v24 re-mints nanoid session ids as UUIDs', () => {

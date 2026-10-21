@@ -123,9 +123,9 @@ describe('code tab sandbox profile resolution', () => {
   it('preserves an explicit one-off override when selecting a project', async () => {
     resetStore({
       defaultProfileName: 'host',
-      availableSandboxProfiles: ['host', 'devbox', 'platform'],
+      availableSandboxProfiles: ['host', 'devbox', 'wasmbox'],
       projects: [project('project-1', 'devbox')],
-      codeTabs: [tab({ profileName: 'platform', profileNameExplicit: true })],
+      codeTabs: [tab({ profileName: 'wasmbox', profileNameExplicit: true })],
     });
     const { codeApi } = await import('./state');
 
@@ -133,14 +133,14 @@ describe('code tab sandbox profile resolution', () => {
 
     expect(store.codeTabs[0]).toMatchObject({
       projectId: 'project-1',
-      profileName: 'platform',
+      profileName: 'wasmbox',
       profileNameExplicit: true,
     });
   });
 
   it('falls back to a safe available profile when inherited choice is unavailable', async () => {
     resetStore({
-      defaultProfileName: 'platform',
+      defaultProfileName: 'wasmbox',
       availableSandboxProfiles: ['remote'],
       projects: [project('project-1', 'devbox')],
       codeTabs: [tab()],
@@ -157,7 +157,7 @@ describe('code tab sandbox profile resolution', () => {
       defaultProfileName: 'host',
       availableSandboxProfiles: ['remote'],
       projects: [project('project-1', 'devbox')],
-      codeTabs: [tab({ profileName: 'platform', profileNameExplicit: true })],
+      codeTabs: [tab({ profileName: 'wasmbox', profileNameExplicit: true })],
     });
     const { codeApi } = await import('./state');
 
@@ -173,9 +173,9 @@ describe('code tab sandbox profile resolution', () => {
   it('sets created projects on the setup tab without replacing a one-off sandbox', async () => {
     resetStore({
       defaultProfileName: 'host',
-      availableSandboxProfiles: ['host', 'devbox', 'platform'],
+      availableSandboxProfiles: ['host', 'devbox', 'wasmbox'],
       projects: [project('created-project', 'devbox')],
-      codeTabs: [tab({ profileName: 'platform', profileNameExplicit: true })],
+      codeTabs: [tab({ profileName: 'wasmbox', profileNameExplicit: true })],
     });
     const { codeApi } = await import('./state');
 
@@ -183,7 +183,7 @@ describe('code tab sandbox profile resolution', () => {
 
     expect(store.codeTabs[0]).toMatchObject({
       projectId: 'created-project',
-      profileName: 'platform',
+      profileName: 'wasmbox',
       profileNameExplicit: true,
     });
   });

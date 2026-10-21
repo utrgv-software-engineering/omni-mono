@@ -42,10 +42,9 @@ export class SupervisorBridge {
 
   /**
    * Register the bridge IPC handlers. `resolve(event)` picks the bridge
-   * instance to act on — defaults to `this` (single-manager Electron app); the
-   * per-tenant server passes a resolver that selects the caller's tenant
-   * bridge from the HandlerContext. Accessing another instance's private
-   * fields is fine here — TS scopes `private` to the class, not the instance.
+   * instance to act on — defaults to `this`. Accessing another instance's
+   * private fields is fine here — TS scopes `private` to the class, not the
+   * instance.
    */
   registerIpc(ipc: IIpcListener, resolve: (event: unknown) => SupervisorBridge = () => this): string[] {
     ipc.handle(

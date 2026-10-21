@@ -337,21 +337,6 @@ async def test_ink_provider_switch_requires_confirmation_and_rejects_stale_choic
 
 
 @pytest.mark.asyncio
-async def test_ink_provider_switch_does_not_override_organization_policy(
-    tmp_path, monkeypatch
-):
-    from omniagents.builtin.server_functions import model_picker
-
-    store = make_store(tmp_path)
-    store._governed_config = lambda: {"default": "company/a"}
-    monkeypatch.setattr(model_picker, "model_store", lambda: store)
-    result = await model_picker.switch_provider("personal/c", "company", True)
-    assert not result["ok"]
-    assert "organization" in result["error"]
-    assert store.load_config()["default"] == "company/a"
-
-
-@pytest.mark.asyncio
 async def test_provider_picker_ignores_voice_default_from_previous_provider(
     tmp_path, monkeypatch
 ):

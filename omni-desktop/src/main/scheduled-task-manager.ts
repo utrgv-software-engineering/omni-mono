@@ -633,7 +633,7 @@ export class ScheduledTaskManager {
     // Broadcast the COMPOSED snapshot when a provider is wired — the raw
     // electron-store payload lacks the SQLite projection and the resident
     // mirrors, and would clobber them in the renderer's atom. (Server mode's
-    // wrapper intercepts the channel and substitutes the tenant snapshot.)
+    // wrapper intercepts the channel and substitutes the full snapshot.)
     this.sendToWindow?.(
       'store:changed',
       this.getSnapshot ? this.getSnapshot() : ((this.store as Store<StoreData>).store as StoreData | undefined)

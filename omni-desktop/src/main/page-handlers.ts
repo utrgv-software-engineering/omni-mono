@@ -1,10 +1,9 @@
 /**
  * IPC handler registration for the pages surface (markdown + marimo notebooks).
  *
- * Takes `resolve(event)` callbacks (see registerMilestoneHandlers) so the same
- * registration serves the single-manager Electron app and the per-tenant
- * server. The notebook handlers also need the project's working directory, so
- * the caller injects a tenant-aware `getProjectDir(event, projectId)`.
+ * Takes `resolve(event)` callbacks (see registerMilestoneHandlers). The
+ * notebook handlers also need the project's working directory, so the caller
+ * injects `getProjectDir(event, projectId)`.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { writeMarimoAiConfig } from '@/main/extensions/marimo-config';

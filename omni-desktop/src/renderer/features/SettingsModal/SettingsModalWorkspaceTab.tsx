@@ -29,11 +29,6 @@ export const SettingsModalWorkspaceTab = memo(() => {
   const runtimeInfo = useStore($omniRuntimeInfo);
   const installStatus = useStore($omniInstallProcessStatus);
   const launcherVersion = useStore($launcherVersion);
-  const [isEnterprise, setIsEnterprise] = useState(false);
-
-  useEffect(() => {
-    emitter.invoke('platform:is-enterprise').then(setIsEnterprise);
-  }, []);
 
   const isInstalling = installStatus.type === 'starting' || installStatus.type === 'installing';
 
@@ -69,8 +64,8 @@ export const SettingsModalWorkspaceTab = memo(() => {
   const discovered = useStore($sandboxProfiles);
   const substrate = useStore($substrateStatus);
   const availableProfiles = useMemo<string[]>(
-    () => getAvailableProfileNames({ isEnterprise, available: store.availableSandboxProfiles, discovered, substrate }),
-    [isEnterprise, store.availableSandboxProfiles, discovered, substrate]
+    () => getAvailableProfileNames({ available: store.availableSandboxProfiles, discovered, substrate }),
+    [store.availableSandboxProfiles, discovered, substrate]
   );
 
   const onChangeProfile = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
@@ -82,7 +77,7 @@ export const SettingsModalWorkspaceTab = memo(() => {
   }, []);
 
   const currentProfile = store.defaultProfileName ?? 'host';
-  const showSandboxSection = isEnterprise || store.previewFeatures || import.meta.env.MODE === 'development';
+  const showSandboxSection = store.previewFeatures || import.meta.env.MODE === 'development';
 
   return (
     <SettingsPane>
@@ -92,7 +87,7 @@ export const SettingsModalWorkspaceTab = memo(() => {
         </SettingsSection>
       )}
 
-      {/* Host-filesystem concept; hosted mode mounts a workspace via Azure Files. */}
+      {/* Host-filesystem concept. */}
       {isElectron && (
         <SettingsSection title="Workspace">
           <Card>
@@ -135,7 +130,7 @@ export const SettingsModalWorkspaceTab = memo(() => {
       )}
 
       {/* Runtime install + CLI-in-PATH are host operations; in cloud the runtime is image-baked. */}
-      {!isEnterprise && isElectron && (
+      {isElectron && (
         <SettingsSection title="Runtime">
           <Card>
             <CardContent className={settingsCardContentClassName}>
@@ -194,7 +189,7 @@ export const SettingsModalWorkspaceTab = memo(() => {
                 <FieldLabel>Compute</FieldLabel>
               </div>
               <span className="text-sm text-muted-foreground sm:text-xs">
-                {currentProfile === 'platform' ? 'Managed' : currentProfile === 'host' ? 'None' : 'Local'}
+                {currentProfile === 'host' ? 'None' : 'Local'}
               </span>
             </Field>
           </CardContent>

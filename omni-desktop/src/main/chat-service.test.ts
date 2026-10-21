@@ -12,7 +12,7 @@ import { openDatabase, ProjectsRepo, SqliteProjectsRepo } from 'omni-projects-db
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { dmChannelId } from '@/lib/resident-agent';
-import { ChatService, posterFromEvent } from '@/main/chat-service';
+import { ChatService } from '@/main/chat-service';
 import type { ProcessManager } from '@/main/process-manager';
 import { ResidentAgentManager } from '@/main/resident-agent-manager';
 import { OMNI_AGENT_ID } from '@/shared/omni-agent';
@@ -65,34 +65,11 @@ const persisted = (n: number) =>
     return messages;
   });
 
-describe('posterFromEvent', () => {
-  it('is the collective user for Electron events and single-user server contexts', () => {
-    expect(posterFromEvent(null)).toEqual({ id: 'user', name: null });
-    expect(posterFromEvent({ sender: {} })).toEqual({ id: 'user', name: null });
-    expect(posterFromEvent({ tenantId: 'local', principalId: 'local' })).toEqual({ id: 'user', name: null });
-  });
-
-  it('is a named human when the principal differs from the tenant (teams cloud)', () => {
-    expect(posterFromEvent({ tenantId: 'team-1', principalId: 'alice' })).toEqual({ id: 'human:alice', name: null });
-  });
-
-  it('carries the connection-time display name for named humans', () => {
-    expect(posterFromEvent({ tenantId: 'team-1', principalId: 'alice', displayName: 'Alice Vimes' })).toEqual({
-      id: 'human:alice',
-      name: 'Alice Vimes',
-    });
-    expect(posterFromEvent({ tenantId: 'team-1', principalId: 'alice', displayName: '  ' })).toEqual({
-      id: 'human:alice',
-      name: null,
-    });
-  });
-});
-
 describe('hello', () => {
   it('reflects the stamped identity', () => {
-    expect(service.hello({ id: 'human:alice', name: 'Alice' })).toEqual({
+    expect(service.hello({ id: 'ext:slack:alice', name: 'Alice' })).toEqual({
       protocol: 'chat-v1',
-      self: { id: 'human:alice', name: 'Alice' },
+      self: { id: 'ext:slack:alice', name: 'Alice' },
       capabilities: [],
     });
   });
@@ -156,14 +133,14 @@ describe('post_message', () => {
 
   it('personal threads are single-writer: the named participant posts, everyone else observes', () => {
     const agent = manager.create({ name: 'Scout', role: 'engineer', personaText: '' });
-    const alice = { id: 'human:alice', name: 'Alice' };
-    const personal = dmChannelId('human:alice', agent.id);
+    const alice = { id: 'ext:slack:alice', name: 'Alice' };
+    const personal = dmChannelId('ext:slack:alice', agent.id);
     // Alice posts into her own thread and the agent wakes.
     const { message } = service.postMessage(alice, { channel: personal, text: 'hi from alice' });
-    expect(message).toMatchObject({ channel: personal, from: 'human:alice', fromName: 'Alice' });
+    expect(message).toMatchObject({ channel: personal, from: 'ext:slack:alice', fromName: 'Alice' });
     expect(service.getPresence().presence[agent.id]?.queuedMessageIds).toContain(message.id);
     // Another human (or the collective user) may not post into it.
-    expect(() => service.postMessage({ id: 'human:bob', name: 'Bob' }, { channel: personal, text: 'x' })).toThrow(
+    expect(() => service.postMessage({ id: 'ext:slack:bob', name: 'Bob' }, { channel: personal, text: 'x' })).toThrow(
       /personal thread/
     );
     expect(() => service.postMessage({ id: 'user', name: null }, { channel: personal, text: 'x' })).toThrow(
@@ -171,7 +148,7 @@ describe('post_message', () => {
     );
     // The collective thread stays open to named humans.
     const collective = dmChannelId('user', agent.id);
-    expect(service.postMessage(alice, { channel: collective, text: 'also here' }).message.from).toBe('human:alice');
+    expect(service.postMessage(alice, { channel: collective, text: 'also here' }).message.from).toBe('ext:slack:alice');
     // And bridged users get personal threads through the same rule.
     const bridged = service.postMessage(
       { id: 'bridge', name: null, bridge: true },

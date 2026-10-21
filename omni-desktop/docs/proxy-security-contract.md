@@ -24,7 +24,7 @@ This contract covers the browser/server-mode iframe proxy served from `/proxy`. 
 ## Security Invariants
 
 - `/proxy/_register` must be denied for callers outside the trusted network unless the operator explicitly sets `OMNI_ALLOW_EXTERNAL_REGISTER=1`.
-- Dynamic proxy registration is server-minted, expiring, owner-checked when EasyAuth identity is present, and restricted to `http:` and `https:` upstreams.
+- Dynamic proxy registration is server-minted, expiring, and restricted to `http:` and `https:` upstreams.
 - Proxied pages must not be able to call launcher APIs such as `/api/*`, `/ws`, `/proxy/_register`, or unrelated `/proxy` names as launcher-origin capabilities.
 - Proxied pages must not access parent DOM, launcher localStorage/sessionStorage, IPC bridges, or app state.
 - Static root-relative links and forms in proxied HTML should stay under that page's proxy prefix instead of targeting launcher-origin routes directly.
@@ -43,8 +43,7 @@ The Phase 0 Vitest coverage in `src/server/proxy-rewriter.test.ts` establishes t
 ## Phase 2 Baseline
 
 - `/proxy/_register` ignores renderer-supplied names and returns the actual opaque `proxyName` and `proxyPath` minted by the server.
-- Dynamic registrations carry owner metadata. In EasyAuth mode, proxy access requires the same authenticated principal header that created the registration.
-- In non-EasyAuth server mode, every request belongs to the local single tenant. Dynamic proxy names are unguessable expiring capabilities, but there is no stronger per-browser-session HTTP identity available yet.
+- Dynamic proxy names are unguessable expiring capabilities; there is no stronger per-browser-session HTTP identity available yet.
 - Internal status rewrites from `rewriteStatusUrls` / `registerAndRewrite` remain trusted, process-local registrations with stable names so existing chat/code-server/noVNC surfaces keep working.
 - Expired dynamic registrations are removed deterministically by the proxy cleanup path during registration/access and by the exported cleanup helper used in tests.
 
@@ -58,7 +57,7 @@ The Phase 0 Vitest coverage in `src/server/proxy-rewriter.test.ts` establishes t
 
 ## Current Known Gaps
 
-- Dynamic registrations are not yet scoped to a specific browser tab/tabset; EasyAuth scopes to principal, while single-tenant mode relies on unguessable expiring names.
+- Dynamic registrations are not yet scoped to a specific browser tab/tabset; they rely on unguessable expiring names.
 - The proxy still relies on trusted-network gating plus minted capabilities rather than a dedicated CSRF token for `/proxy/_register`.
 - Static links or forms that already point at `/proxy/...`, including `/proxy/_register`, are not double-proxied by the static rewriter; Phase 5 runtime shims cover user/runtime flows when expanded rewriting is enabled.
 - Proxied HTML can still run scripts in the launcher origin iframe sandbox configuration, so Phase 5 relies on the injected runtime guard for supported fetch/XHR/EventSource/WebSocket/Worker/service-worker APIs rather than full origin isolation.

@@ -1,19 +1,17 @@
 /**
  * Substrate-aware artifact storage. In a container the agent writes a ticket's
  * artifacts inside the workspace (`<workspace>/.omni-artifacts/<ticketId>`) so
- * they ride the workspace's own persistence (snapshot tar / Files share); the
+ * they ride the workspace's own persistence; the
  * `host` profile uses a host config dir. How the launcher / control-plane
  * *reads* them back depends on the substrate — never a host bind mount:
  *
- *   - `HostFsArtifactStore`  — host profile (+ local single-tenant server): the
+ *   - `HostFsArtifactStore`  — host profile (and the server build): the
  *     agent wrote straight to the host dir, read it directly.
  *   - `DockerArtifactStore`  — devbox: read out of the live container via
  *     `docker exec`/`docker cp`.
  *
  * Both return the identical `ArtifactFileEntry` / `ArtifactFileContent` shapes
- * so the renderer is substrate-agnostic. The ACI/cloud substrate (the workspace
- * Azure Files share read out-of-band via the storage SDK, control-plane-side)
- * implements the same interface and is wired separately for the server build.
+ * so the renderer is substrate-agnostic.
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';

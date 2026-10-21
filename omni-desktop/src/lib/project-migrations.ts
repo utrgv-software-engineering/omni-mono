@@ -517,15 +517,12 @@ export function runMigrations(store: IMigrationStore, deps: MigrationDeps): void
   //
   // Backend mapping:
   //   docker          → "devbox"   (the launcher-published image with code-server + VNC)
-  //   platform        → "platform" (deferred to step 6; old PlatformClient path still wired)
-  //   podman/vm/local/none → "host" (no isolation, unix_local)
+  //   anything else   → "host" (no isolation, unix_local)
   if (version === 21 || (store.get('schemaVersion', 0) as number) === 21) {
     const legacyBackend = store.get('sandboxBackend') as string | undefined;
     let profileName = 'host';
     if (legacyBackend === 'docker') {
       profileName = 'devbox';
-    } else if (legacyBackend === 'platform') {
-      profileName = 'platform';
     }
     store.set('defaultProfileName', profileName);
 

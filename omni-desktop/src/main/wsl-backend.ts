@@ -4,8 +4,8 @@
  * Electron main owns the daemon: the server build (`out/server/index.mjs`)
  * runs as a child of `wsl.exe` inside the linked distro, started before the
  * BrowserWindow is created and killed on app quit. Auth is a per-boot shared
- * secret passed as `OMNI_RUNTIME_TOKEN_SECRET` — main mints WS tokens locally
- * with `signRuntimeToken`, no HTTP token fetch and no reliance on the WSL2
+ * secret passed as `OMNI_WS_TOKEN_SECRET` — main mints WS tokens locally
+ * with `signWsToken`, no HTTP token fetch and no reliance on the WSL2
  * NAT loopback allowlist.
  *
  * Persistent mode (`WslBackend.persistent`): the daemon is spawned detached
@@ -26,8 +26,7 @@ import { join } from 'node:path';
 import { app } from 'electron';
 
 import { uuidv4 } from '@/lib/uuid';
-import { signRuntimeToken } from '@/server/runtime-token';
-import { DEFAULT_TENANT } from '@/server/ws-handler';
+import { signWsToken } from '@/server/ws-token';
 import type { IpcRendererEvents, RemoteBackend, WslBackend, WslBackendStatus, WslDetectResult } from '@/shared/types';
 
 const HEALTH_POLL_INTERVAL_MS = 500;
@@ -129,7 +128,7 @@ const DAEMON_LOG = `${REMOTE_ROOT}/daemon.log`;
 const detachedDaemonScript = (secret: string, port: number, launcherVersion: string): string =>
   `mkdir -p ${REMOTE_ROOT}; ` +
   `[ -f ${DAEMON_LOG} ] && [ "$(wc -c < ${DAEMON_LOG})" -gt ${MAX_DAEMON_LOG_BYTES} ] && : > ${DAEMON_LOG}; ` +
-  `nohup env OMNI_RUNTIME_TOKEN_SECRET=${secret} PORT=${port} HOST=127.0.0.1 OMNI_LAUNCHER_VERSION=${launcherVersion} ` +
+  `nohup env OMNI_WS_TOKEN_SECRET=${secret} PORT=${port} HOST=127.0.0.1 OMNI_LAUNCHER_VERSION=${launcherVersion} ` +
   `${REMOTE_ROOT}/node/bin/node ${REMOTE_ROOT}/server/index.mjs >> ${DAEMON_LOG} 2>&1 & ` +
   `echo $! > ${REMOTE_ROOT}/daemon.pid`;
 
@@ -661,7 +660,7 @@ export class WslBackendManager {
     if (!this.secret) {
       throw new Error('WSL daemon is not running');
     }
-    return signRuntimeToken(this.secret, { purpose: 'launcher', tenantId: DEFAULT_TENANT, sessionId: uuidv4() });
+    return signWsToken(this.secret, { sessionId: uuidv4() });
   }
 
   dispose(): void {
@@ -701,7 +700,7 @@ export class WslBackendManager {
       distro,
       '--exec',
       'env',
-      `OMNI_RUNTIME_TOKEN_SECRET=${secret}`,
+      `OMNI_WS_TOKEN_SECRET=${secret}`,
       `PORT=${port}`,
       'HOST=127.0.0.1',
       `OMNI_LAUNCHER_VERSION=${this.launcherVersion}`,

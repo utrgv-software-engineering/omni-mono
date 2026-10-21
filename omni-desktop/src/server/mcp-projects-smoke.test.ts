@@ -2,9 +2,7 @@
  * End-to-end smoke test for the refactored omni-projects MCP tools.
  *
  * Drives the real `createServer(repo)` through a real MCP `Client` over an
- * in-memory transport, backed by a temp SQLite `SqliteProjectsRepo`. This is
- * the local (no-Azure) verification that the async-IProjectsRepo rewrite works:
- * the same tool code runs unchanged behind the HTTP/Postgres path.
+ * in-memory transport, backed by a temp SQLite `SqliteProjectsRepo`.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,9 +38,6 @@ beforeAll(async () => {
       { name: 'host', label: 'This computer (no sandbox)', available: true, source: 'builtin' },
       { name: 'devbox', label: 'Devbox (Docker)', available: true, source: 'builtin' },
     ],
-    listTeamMembers: async () => [
-      { user_id: 'principal-1', display_name: 'Ada Lovelace', email: 'ada@example.com', role: 'member' },
-    ],
     getCurrentPrincipal: async () => 'principal-1',
   });
 
@@ -66,9 +61,7 @@ describe('omni-projects MCP tools (async IProjectsRepo, SQLite)', () => {
     expect(profiles.profiles.map((profile: any) => profile.name)).toContain('devbox');
 
     const members = await call('list_team_members');
-    expect(members.members).toEqual([
-      expect.objectContaining({ user_id: 'principal-1', display_name: 'Ada Lovelace' }),
-    ]);
+    expect(members.members).toEqual([]);
 
     const principal = await call('get_current_principal');
     expect(principal.principal).toBe('principal-1');
@@ -311,7 +304,7 @@ describe('omni-projects MCP tools (async IProjectsRepo, SQLite)', () => {
 
   // Resident principals (docs/residents-in-projects-db-plan.md)
 
-  it('merges enabled residents into list_team_members', async () => {
+  it('lists enabled residents in list_team_members', async () => {
     const base = {
       role: 'engineer',
       persona_text: 'p',
@@ -325,8 +318,7 @@ describe('omni-projects MCP tools (async IProjectsRepo, SQLite)', () => {
     await repo.upsertResident({ ...base, id: 'quill', name: 'Quill', enabled: 0 });
 
     const members = await call('list_team_members');
-    // Humans from the context, residents from the repo; disabled excluded.
-    expect(members.members).toContainEqual(expect.objectContaining({ user_id: 'principal-1' }));
+    // Residents from the repo; disabled excluded.
     expect(members.members).toContainEqual({ user_id: 'agent:sable', display_name: 'Sable', role: 'agent' });
     expect(members.members.map((m: any) => m.user_id)).not.toContain('agent:quill');
   });

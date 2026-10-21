@@ -83,19 +83,3 @@ it('retains the claim while a stop is still in progress', async () => {
   await expect(f.journal.retire('tab-a')).rejects.toThrow('not yet confirmed');
   expect(readdirSync(f.dir)).toHaveLength(1);
 });
-
-it('recovers a delegated session identity and retains it when its provider rejects shutdown', async () => {
-  const f = fixture();
-  const stopSession = vi.fn(async () => {}).mockRejectedValueOnce(new Error('provider unavailable'));
-  const journal = new ChatRuntimeJournal(
-    f.dir,
-    () => ({ stopSession }) as unknown as import('./platform-client').IComputeClient
-  );
-  journal.recordCompute('remote-tab', 'platform', 'remote-session');
-  await expect(journal.retire('remote-tab')).rejects.toThrow('provider unavailable');
-  expect(readdirSync(f.dir).some((file) => file.endsWith('.compute'))).toBe(true);
-  await journal.retire('remote-tab');
-  expect(stopSession).toHaveBeenNthCalledWith(1, 'remote-session');
-  expect(stopSession).toHaveBeenNthCalledWith(2, 'remote-session');
-  expect(readdirSync(f.dir).some((file) => file.endsWith('.compute'))).toBe(false);
-});

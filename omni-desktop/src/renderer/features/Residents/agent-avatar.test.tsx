@@ -35,7 +35,6 @@ vi.mock('@/renderer/services/ipc', () => ({
   },
   wsEmitter: { on: vi.fn(() => () => {}), onConnect: vi.fn(() => () => {}) },
   isElectron: false,
-  isCloudLinked: false,
   isWslLinked: false,
   isServerLinked: false,
   bootstrapPlatform: 'linux',

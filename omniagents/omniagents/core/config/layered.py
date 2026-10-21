@@ -269,8 +269,8 @@ CONFIG_FIELDS: Tuple[ConfigField, ...] = (
         description=(
             "When a session's execution environment is a genuine containment "
             "boundary (it carries the 'contained' capability — docker, the "
-            "process sandbox, cloud micro-VMs; never the host, unix_local, "
-            "or host_bridge), auto-approve tool calls without prompting: "
+            "process sandbox, cloud micro-VMs; never the host or unix_local), "
+            "auto-approve tool calls without prompting: "
             "'no_network' only when the environment also lacks the network "
             "capability; 'always' for every contained environment; 'never' "
             "disables the tier. Uncontained environments always prompt or "

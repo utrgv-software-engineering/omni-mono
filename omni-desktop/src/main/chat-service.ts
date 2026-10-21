@@ -16,38 +16,12 @@ import type { IIpcListener } from '@/shared/ipc-listener';
 import type { ChatHello, ChatMethodMap, ChatPostMessageParams } from '@/shared/types';
 
 /**
- * The caller's stamped identity: `user` (the collective local human),
- * `human:<principalId>` (a named cloud team member), with `bridge` marking
- * a /ws/chat bridge-scope connection (the only scope allowed to post as an
- * `ext:*` external user). Identity comes from authentication, never from
- * the request payload.
+ * The caller's stamped identity: `user` (the collective local human), with
+ * `bridge` marking a /ws/chat bridge-scope connection (the only scope
+ * allowed to post as an `ext:*` external user). Identity comes from
+ * authentication, never from the request payload.
  */
 export type ChatPoster = { id: string; name: string | null; bridge?: boolean };
-
-/**
- * Poster identity from the handler `event` slot. Electron main passes an
- * IpcMainInvokeEvent (no tenant fields) → the collective `user`. Server
- * mode passes the per-invoke HandlerContext: in single-user mode the
- * principal IS the tenant → still `user`; in teams/cloud the EasyAuth
- * principal is a distinct identity → `human:<principalId>`. (Read
- * structurally so main/ never imports server/ types.)
- */
-export const posterFromEvent = (event: unknown): ChatPoster => {
-  const ctx = event as { tenantId?: unknown; principalId?: unknown; displayName?: unknown } | null | undefined;
-  if (
-    ctx &&
-    typeof ctx === 'object' &&
-    typeof ctx.tenantId === 'string' &&
-    typeof ctx.principalId === 'string' &&
-    ctx.principalId !== ctx.tenantId
-  ) {
-    return {
-      id: `human:${ctx.principalId}`,
-      name: typeof ctx.displayName === 'string' && ctx.displayName.trim() ? ctx.displayName : null,
-    };
-  }
-  return { id: 'user', name: null };
-};
 
 export class ChatService {
   constructor(private readonly manager: ResidentAgentManager) {}
@@ -147,10 +121,13 @@ export class ChatService {
   }
 }
 
+/** The internal binding's poster: the launcher's own user. */
+const USER_POSTER: ChatPoster = { id: 'user', name: null };
+
 /**
  * chat-v1's internal binding: every wire method registered as an IPC channel
- * under its wire name, params object passed through verbatim. Poster
- * identity resolves from the (Electron event | server HandlerContext) slot.
+ * under its wire name, params object passed through verbatim. The poster is
+ * always the collective {@link USER_POSTER}.
  */
 export function registerChatHandlers(ipc: IIpcListener, resolve: (event: unknown) => ResidentAgentManager): string[] {
   const channels: string[] = [];
@@ -166,7 +143,7 @@ export function registerChatHandlers(ipc: IIpcListener, resolve: (event: unknown
       const manager = resolve(event);
       // Handlers read/write the durable cache — never act before hydration.
       await manager.whenReady;
-      return fn(new ChatService(manager), posterFromEvent(event), (params ?? {}) as ChatMethodMap[K]['params']);
+      return fn(new ChatService(manager), USER_POSTER, (params ?? {}) as ChatMethodMap[K]['params']);
     });
     channels.push(method);
   };

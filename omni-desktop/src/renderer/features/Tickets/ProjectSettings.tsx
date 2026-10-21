@@ -6,7 +6,6 @@ import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
 import { Switch } from '@/renderer/ds/ui/switch';
 import { $sandboxProfiles, $substrateStatus } from '@/renderer/features/Sandboxes/state';
 import { getAvailableProfileNames, getProfileMenuLabel } from '@/renderer/features/SandboxProfile/profile-list';
-import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ProjectId } from '@/shared/types';
 
@@ -37,16 +36,12 @@ export const ProjectSettings = memo(({ projectId }: { projectId: ProjectId }) =>
     }
   }, [projectLabel]);
 
-  const [isEnterprise, setIsEnterprise] = useState(false);
-  useEffect(() => {
-    emitter.invoke('platform:is-enterprise').then(setIsEnterprise);
-  }, []);
   // Subscribing keeps the options current as discovery lands.
   const discovered = useStore($sandboxProfiles);
   const substrate = useStore($substrateStatus);
   const availableProfiles = useMemo(
-    () => getAvailableProfileNames({ isEnterprise, available: store.availableSandboxProfiles, discovered, substrate }),
-    [isEnterprise, store.availableSandboxProfiles, discovered, substrate]
+    () => getAvailableProfileNames({ available: store.availableSandboxProfiles, discovered, substrate }),
+    [store.availableSandboxProfiles, discovered, substrate]
   );
 
   const handleNameChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value), []);

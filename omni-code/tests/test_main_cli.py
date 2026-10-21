@@ -17,7 +17,6 @@ from types import SimpleNamespace
 
 import omniagents.cli as fw_cli
 import omniagents.core.models.cli as fw_models_cli
-import omniagents.core.models.governed as fw_governed
 import omniagents.core.updater as fw_updater
 import pytest
 from omniagents.core.models import install_model_catalog
@@ -27,16 +26,13 @@ from omniagents.product_cli import main as cli_main
 
 @pytest.fixture
 def cli_env(monkeypatch):
-    """Patch the seams around the host: the model store, platform model
-    governance, update notice, and the fallthrough run."""
+    """Patch the seams around the host: the model store, update notice,
+    and the fallthrough run."""
     calls = []
     store = install_model_catalog(product_info().manifest_path)
     monkeypatch.setattr(store, "load_config", lambda: calls.append("models_load"))
     monkeypatch.setattr(store, "resolve_model_for_runtime", lambda model_name=None: {})
     monkeypatch.setattr(store, "has_models_configured", lambda: True)
-    monkeypatch.setattr(
-        fw_governed, "apply_platform_model_governance", lambda config_dir=None: None
-    )
     monkeypatch.setattr(fw_updater, "maybe_print_update_notice", lambda config: None)
 
     run = {}
@@ -94,12 +90,12 @@ def test_reserved_commands_skip_models_bootstrap(cli_env):
     captured = {}
     cli_env.monkeypatch.setattr(
         fw_cli,
-        "run_platform_auth_command",
-        lambda argv, **kw: captured.update({"argv": list(argv)}) or 0,
+        "run_codex_auth_command",
+        lambda command, **kw: captured.update({"command": command}) or 0,
     )
 
-    assert cli_main(["auth", "status"]) == 0
-    assert captured["argv"] == ["status"]
+    assert cli_main(["auth", "codex", "status"]) == 0
+    assert captured["command"] == "status"
     assert cli_env.calls == []
 
 

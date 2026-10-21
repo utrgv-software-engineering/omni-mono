@@ -27,7 +27,6 @@ function setup() {
         },
       }) as never,
     after,
-    {},
     { writeModels: stopAndWrite }
   );
   return { read: () => config, set: handlers.get('settings:set-models-config')!, after, stopAndWrite };
@@ -84,7 +83,6 @@ it('uses canonical local models for reads and stale-provider validation without 
     { handle: (name: string, fn: any) => handlers.set(name, fn) } as IIpcListener,
     () => ({ get: () => seed, set: storeWrite }) as never,
     () => {},
-    {},
     {
       readModels: () => file,
       saveModels: (_event, next) => {

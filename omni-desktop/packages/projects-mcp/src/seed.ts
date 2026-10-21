@@ -1,10 +1,8 @@
 /**
  * Project seeding shared by `create_project` and `inbox_to_project`.
  *
- * Backend-agnostic: everything goes through {@link IProjectsRepo}, so the
- * same code seeds a local SQLite project (stdio mode) or a tenant-scoped
- * Postgres project (HTTP mode). Mirrors the default-column + root-page setup
- * the launcher's ProjectManager performs.
+ * Everything goes through {@link IProjectsRepo}. Mirrors the default-column +
+ * root-page setup the launcher's ProjectManager performs.
  */
 import {
   DEFAULT_COLUMNS,

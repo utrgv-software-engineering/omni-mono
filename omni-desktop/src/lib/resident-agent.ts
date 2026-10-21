@@ -50,16 +50,15 @@ export type ParticipantKind = 'human' | 'agent' | 'system' | 'external';
 
 /**
  * Classify a message's `from` id. The grammar is backwards compatible with
- * every stored row: `system` and `user` are the legacy fixed ids, new
- * namespaced forms (`human:<principalId>` for cloud team members,
- * `ext:<network>:<id>` for bridged users) parse by prefix, and anything
+ * every stored row: `system` and `user` are the legacy fixed ids,
+ * `ext:<network>:<id>` (bridged users) parses by prefix, and anything
  * else is a bare roster id — exactly what agent rows have always stored.
  */
 export const participantKind = (fromId: string): ParticipantKind => {
   if (fromId === 'system') {
     return 'system';
   }
-  if (fromId === USER_PARTICIPANT || fromId.startsWith('human:')) {
+  if (fromId === USER_PARTICIPANT) {
     return 'human';
   }
   if (fromId.startsWith('ext:')) {
@@ -68,8 +67,7 @@ export const participantKind = (fromId: string): ParticipantKind => {
   return 'agent';
 };
 
-/** Whether a participant id names a human — the collective `user` or a
- *  specific `human:<principalId>`. The wake machinery treats bridged
+/** Whether a participant id names the collective `user`. The wake machinery treats bridged
  *  external users as human-grade too (a person deliberately talking), so
  *  callers deciding wake semantics want {@link isHumanGradeParticipant}. */
 export const isHumanParticipant = (fromId: string): boolean => participantKind(fromId) === 'human';
@@ -90,9 +88,6 @@ export const humanHandle = (id: string, name?: string | null): string => {
   if (name?.trim()) {
     return residentHandle(name);
   }
-  if (id.startsWith('human:')) {
-    return residentHandle(id.slice('human:'.length));
-  }
   if (id.startsWith('ext:')) {
     return residentHandle(id.slice(id.lastIndexOf(':') + 1));
   }
@@ -100,7 +95,7 @@ export const humanHandle = (id: string, name?: string | null): string => {
 };
 
 /**
- * The named people visible in a log window (`human:*`/`ext:*` authors with
+ * The named people visible in a log window (`ext:*` authors with
  * their latest known display name). This IS the human directory: the
  * launcher keeps no separate roster of people, so "who can an agent DM" =
  * "who has spoken where the agent could see" — which also bounds it to the
@@ -112,7 +107,7 @@ export const knownHumansFromLog = (
   const out = new Map<string, string | null>();
   for (const m of log) {
     const kind = participantKind(m.from);
-    if ((kind === 'human' && m.from !== USER_PARTICIPANT) || kind === 'external') {
+    if (kind === 'external') {
       out.set(m.from, m.fromName ?? out.get(m.from) ?? null);
     }
   }
@@ -176,7 +171,7 @@ export const chatChannelFromDef = (def: ResidentChannelDef): ChatChannel => ({
  * Two encodings, one per participant vocabulary: the legacy `dm:<a>:<b>`
  * form survives verbatim for colon-free participants (`user`, roster ids —
  * every pre-chat-v1 channel), while pairs whose ids carry the participant
- * grammar's namespaces (`human:<pid>`, `ext:<net>:<id>`) use `~` as the
+ * grammar's namespace (`ext:<net>:<id>`) use `~` as the
  * pair separator, which no participant id may contain. Same pair → same id
  * always; nothing re-encodes existing channels.
  */
@@ -253,11 +248,7 @@ export const channelAudienceIds = (
 export const isDirectedAtUser = (
   msg: Pick<ResidentChannelMessage, 'channel' | 'from' | 'replyTo'>,
   /** Author of a thread root by id — see {@link rootAuthors}. */
-  rootAuthorOf: (rootId: number) => string | undefined,
-  /** The viewer's own participant id — personal DM threads are directed at
-   *  their named participant only. The collective `user` threads count for
-   *  every viewer. */
-  viewerId: string = USER_PARTICIPANT
+  rootAuthorOf: (rootId: number) => string | undefined
 ): boolean => {
   if (isHumanParticipant(msg.from)) {
     return false;
@@ -266,7 +257,7 @@ export const isDirectedAtUser = (
     return true;
   }
   const dm = dmParticipants(msg.channel);
-  if (dm && (dm.includes(USER_PARTICIPANT) || dm.includes(viewerId))) {
+  if (dm?.includes(USER_PARTICIPANT)) {
     return true;
   }
   if (msg.replyTo === undefined) {

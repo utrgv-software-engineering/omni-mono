@@ -38,9 +38,9 @@ export const $chatLog = atom<ResidentChannelMessage[]>([]);
 /** Named channel defs (`kind: 'named'` rows of `chat.list_channels`). */
 export const $chatChannels = atom<ChatChannel[]>([]);
 
-/** The caller's stamped participant identity (`chat.hello`): `user` locally,
- *  `human:<principalId>` in teams cloud. Message views compare against it to
- *  render "You" — display is viewer-relative, not stored. */
+/** The caller's stamped participant identity (`chat.hello`): `user`.
+ *  Message views compare against it to render "You" — display is
+ *  viewer-relative, not stored. */
 export const $chatSelf = atom<{ id: string; name: string | null }>({ id: 'user', name: null });
 
 /** Whether a log row was authored by THIS viewer. */
@@ -156,21 +156,18 @@ export const $activityUnread = computed($residentUnreadByChannel, (counts) =>
  * something is directed (this one wants you). Collapsing them into a single
  * number made every ambient agent↔agent exchange read as an item of work.
  */
-export const $residentDirectedUnreadByChannel = computed(
-  [$chatLog, persistedStoreApi.$atom, $chatSelf],
-  (log, store, self) => {
-    const seen = store.residentChannelSeen ?? {};
-    const authors = rootAuthors(log);
-    const rootAuthorOf = (rootId: number): string | undefined => authors.get(rootId);
-    const counts: Record<string, number> = {};
-    for (const m of log) {
-      if (m.id > (seen[m.channel] ?? 0) && isDirectedAtUser(m, rootAuthorOf, self.id)) {
-        counts[m.channel] = (counts[m.channel] ?? 0) + 1;
-      }
+export const $residentDirectedUnreadByChannel = computed([$chatLog, persistedStoreApi.$atom], (log, store) => {
+  const seen = store.residentChannelSeen ?? {};
+  const authors = rootAuthors(log);
+  const rootAuthorOf = (rootId: number): string | undefined => authors.get(rootId);
+  const counts: Record<string, number> = {};
+  for (const m of log) {
+    if (m.id > (seen[m.channel] ?? 0) && isDirectedAtUser(m, rootAuthorOf)) {
+      counts[m.channel] = (counts[m.channel] ?? 0) + 1;
     }
-    return counts;
   }
-);
+  return counts;
+});
 
 export const $activityDirectedUnread = computed($residentDirectedUnreadByChannel, (counts) =>
   Object.values(counts).reduce((sum, n) => sum + n, 0)

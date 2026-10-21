@@ -25,9 +25,7 @@ profile; other providers use "<provider_name>/<model_name>".
 Merge order for the effective provider map:
 
 1. Product defaults (the ``default_providers`` hook)
-2. Governed providers (the ``governed_config`` hook — e.g. a management
-   plane policy; may also veto user models via ``_allow_user_models``)
-3. User config (models.json)
+2. User config (models.json)
 
 The store is generic; products supply identity and integrations through
 constructor hooks (see :class:`ModelConfigStore`). All hooks are
@@ -121,7 +119,6 @@ PROVIDER_CONNECTION_KEYS = frozenset(
         "api_key",
         "base_url",
         "api_version",
-        "credential_ref",
         "routing_prefix",
         "realtime_url",
         "realtime_base_url",
@@ -170,20 +167,12 @@ class ModelConfigStore:
         config_dir: Callable returning the product config directory
             (``models.json`` lives directly inside it).
         default_providers: Product's built-in provider/model catalog.
-        default_model_fallback: Model ref to fall back to when neither
-            governance nor the user configured a default.
-        governed_config: Returns the governed model config (dict with
-            optional ``providers``, ``default``, ``_allow_user_models``)
-            or None when governance doesn't apply. The hook owns any
-            auth checks and cache refreshing.
+        default_model_fallback: Model ref to fall back to when the user
+            configured no default.
         oauth_models: Live model discovery for ``type: openai-oauth``
             providers (slug → model entry), or None when signed out.
         oauth_authenticated: Whether the OAuth provider is signed in
             (used by :meth:`has_models_configured`).
-        credential_resolver: Resolves a ``credential_ref`` on a model
-            config to a credential dict (``credential_type`` of
-            ``api_key``/``entra_token`` plus optional base_url and
-            api_version), or None.
         default_provider_name: Provider profile implied by unprefixed
             model refs.
     """
@@ -194,22 +183,18 @@ class ModelConfigStore:
         config_dir: Callable[[], Path],
         default_providers: Optional[Callable[[], Dict[str, Dict[str, Any]]]] = None,
         default_model_fallback: Optional[Callable[[], Optional[str]]] = None,
-        governed_config: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
         oauth_models: Optional[
             Callable[[], Optional[Dict[str, Dict[str, Any]]]]
         ] = None,
         oauth_authenticated: Optional[Callable[[], bool]] = None,
-        credential_resolver: Optional[Callable[[str], Optional[Dict[str, Any]]]] = None,
         default_provider_name: str = "openai",
         single_provider: bool = False,
     ) -> None:
         self._config_dir = config_dir
         self._default_providers = default_providers or (lambda: {})
         self._default_model_fallback = default_model_fallback or (lambda: None)
-        self._governed_config = governed_config
         self._oauth_models = oauth_models
         self._oauth_authenticated = oauth_authenticated
-        self._credential_resolver = credential_resolver
         self.default_provider_name = default_provider_name
         self.single_provider = single_provider
         self._run_model_ref: Optional[str] = None
@@ -221,10 +206,8 @@ class ModelConfigStore:
         snapshot = copy(self)
         config = deepcopy(self.load_config())
         providers = deepcopy(self._default_providers())
-        governed = deepcopy(self._governed())
         snapshot.load_config = lambda: deepcopy(config)  # type: ignore[method-assign]
         snapshot._default_providers = lambda: deepcopy(providers)
-        snapshot._governed_config = lambda: deepcopy(governed)
         snapshot.reconcile_session_model(session)
         snapshot._run_model_ref = self._run_model_ref or session.active_model
         return snapshot
@@ -383,14 +366,6 @@ class ModelConfigStore:
         merged["models"] = merged_models
         return merged
 
-    def _governed(self) -> Optional[Dict[str, Any]]:
-        if self._governed_config is None:
-            return None
-        try:
-            return self._governed_config()
-        except Exception:
-            return None
-
     def _apply_oauth_discovery(
         self, merged: Dict[str, Dict[str, Any]]
     ) -> Dict[str, Dict[str, Any]]:
@@ -432,24 +407,8 @@ class ModelConfigStore:
         return merged
 
     def _merge_providers_config(self) -> Dict[str, Dict[str, Any]]:
-        """Static provider merge (defaults → governance → user config)."""
+        """Static provider merge (defaults → user config)."""
         merged = self._default_providers()
-
-        governed = self._governed()
-        if governed:
-            platform_providers = governed.get("providers")
-            if isinstance(platform_providers, dict):
-                for provider_name, provider_config in platform_providers.items():
-                    if not isinstance(provider_config, dict):
-                        continue
-                    existing = merged.get(provider_name) or {}
-                    merged[provider_name] = self._merge_provider_config(
-                        existing, provider_config
-                    )
-
-            # Governance may veto user-defined models entirely.
-            if not governed.get("_allow_user_models", True):
-                return merged
 
         user_config = self.load_config()
         user_providers = user_config.get("providers")
@@ -467,7 +426,7 @@ class ModelConfigStore:
         return merged
 
     def merged_providers(self) -> Dict[str, Dict[str, Any]]:
-        """All providers merged from defaults, governance, and user config."""
+        """All providers merged from defaults and user config."""
         return self._apply_oauth_discovery(self._merge_providers_config())
 
     # -- refs -----------------------------------------------------------
@@ -505,7 +464,6 @@ class ModelConfigStore:
         "api_key",
         "base_url",
         "api_version",
-        "credential_ref",
         "routing_prefix",
         "realtime_url",
         "realtime_base_url",
@@ -570,17 +528,7 @@ class ModelConfigStore:
         return merged
 
     def get_default_model_name(self) -> Optional[str]:
-        """The default model ref: governance, then user config, then the
-        product fallback."""
-        governed = self._governed()
-        if governed and governed.get("default"):
-            gov_default = governed["default"]
-            merged = self.get_model_config(gov_default)
-            if merged and not merged.get("realtime"):
-                normalized = self.normalize_model_ref(gov_default)
-                if normalized:
-                    return normalized
-
+        """The default model ref: user config, then the product fallback."""
         config = self.load_config()
         user_default = config.get("default")
 
@@ -981,9 +929,8 @@ class ModelConfigStore:
 
         Returns a dict with provider/model/api_key/base_url/api_version/
         reasoning/token limits/model_settings/label, with ``${VAR}``
-        expansion applied. Credential resolution order: platform
-        ``credential_ref`` (via the hook), then configured api_key, then
-        the provider-appropriate environment variable.
+        expansion applied. Credential resolution order: configured api_key,
+        then the provider-appropriate environment variable.
         """
         name = (
             self.normalize_model_ref(model_name)
@@ -1048,24 +995,6 @@ class ModelConfigStore:
         if merged.get("api_version"):
             result["api_version"] = merged["api_version"]
 
-        # Priority 1: platform credential via credential_ref
-        credential_ref = merged.get("credential_ref")
-        if credential_ref and self._credential_resolver is not None:
-            try:
-                cred = self._credential_resolver(credential_ref)
-                if cred:
-                    cred_type = cred.get("credential_type")
-                    if cred_type == "entra_token":
-                        result["api_key"] = cred["access_token"]
-                    elif cred_type == "api_key":
-                        result["api_key"] = cred["api_key"]
-                    if not result.get("base_url") and cred.get("base_url"):
-                        result["base_url"] = cred["base_url"]
-                    if not result.get("api_version") and cred.get("api_version"):
-                        result["api_version"] = cred["api_version"]
-            except Exception:
-                pass
-
         if (
             self.single_provider
             and provider in {"azure", "openai-compatible"}
@@ -1075,7 +1004,7 @@ class ModelConfigStore:
                 "The selected provider requires an endpoint. Configure it in Settings; no default endpoint will be used."
             )
 
-        # Priority 2: configured api_key
+        # Configured api_key, then the environment variable.
         if not result.get("api_key"):
             api_key_value = merged.get("api_key")
             if api_key_value:
@@ -1083,7 +1012,7 @@ class ModelConfigStore:
             else:
                 result["api_key"] = None
 
-        # Priority 3: environment variable fallback. Never for openai-oauth:
+        # Environment variable fallback. Never for openai-oauth:
         # its credential is the ChatGPT token, and an ambient OPENAI_API_KEY
         # (e.g. from a workspace .env) would shadow it downstream.
         if not result.get("api_key") and provider != "openai-oauth":

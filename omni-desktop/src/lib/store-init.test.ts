@@ -62,8 +62,8 @@ describe('migrateLayoutMode', () => {
     expect(migrateLayoutMode('agents')).toBeNull();
   });
 
-  it('returns null for valid "dashboards" mode', () => {
-    expect(migrateLayoutMode('dashboards')).toBeNull();
+  it('migrates the retired "dashboards" mode to chat', () => {
+    expect(migrateLayoutMode('dashboards')).toBe('chat');
   });
 
   it('returns null for valid "settings" mode', () => {

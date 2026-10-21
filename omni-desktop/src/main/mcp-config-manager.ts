@@ -3,7 +3,7 @@
  * `omni-projects` stdio entry for local/desktop `mcp.json`.
  *
  * The entry itself is no longer written here — `config-materializer.ts` merges
- * it into the (per-tenant, in cloud) `mcp.json` it materializes from the store,
+ * it into the `mcp.json` it materializes from the store,
  * so a single writer owns the file and the user's own MCP servers and the
  * managed entry can't fight over it.
  */

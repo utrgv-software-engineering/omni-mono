@@ -70,7 +70,7 @@ HETEROGENEOUS_PROVIDERS = {
     },
     "azure-prod": {
         "type": "azure",
-        "credential_ref": "azure-prod-cred",
+        "api_key": "azure-key",
         "models": {
             "gpt-5.2": {
                 "model": "deployment-52",
@@ -169,9 +169,9 @@ def test_catalog_covers_heterogeneous_credentials_and_deprecation(
     catalog = build_model_catalog(store, include_hidden=True)
     models = by_id(catalog)
 
-    # Azure model resolves via a platform credential_ref.
+    # Azure model resolves via its configured api_key.
     azure = models["azure-prod/gpt-5.2"]
-    assert azure["entitlement"]["credential"] == "platform"
+    assert azure["entitlement"]["credential"] == "api_key"
     assert azure["modalities"] == ["text"]
 
     # OAuth provider signed out → typed, actionable reason.

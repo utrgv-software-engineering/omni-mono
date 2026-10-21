@@ -42,41 +42,10 @@ const createProxyTestServer = async (isTrusted: (remoteAddress: string) => boole
 
 afterEach(() => {
   delete process.env['OMNI_ALLOW_EXTERNAL_REGISTER'];
-  delete process.env['OMNI_AUTH_MODE'];
   delete process.env['OMNI_PROXY_DYNAMIC_RUNTIME_SHIMS'];
   delete process.env['OMNI_PROXY_RUNTIME_SHIMS'];
   vi.unstubAllGlobals();
   resetProxyRegistrationsForTests();
-});
-
-it('gives identical process names distinct owner-bound opaque routes and rejects revoked owners', async () => {
-  const app = Fastify();
-  await app.register(fastifyWebsocket);
-  const authorize = vi.fn(async () => true);
-  setupProxyRewriter(
-    app,
-    { addEventInterceptor: vi.fn(), addResultWrapper: vi.fn() } as unknown as WsHandler,
-    () => true,
-    authorize
-  );
-  const a = { uiUrl: 'http://127.0.0.1:8001/ui' };
-  const b = { uiUrl: 'http://127.0.0.1:8002/ui' };
-  rewriteStatusUrls(a, 'management', undefined, { tenantId: 'team-a', principalId: 'alice' });
-  rewriteStatusUrls(b, 'management', undefined, { tenantId: 'team-b', principalId: 'bob' });
-  expect(a.uiUrl).not.toBe(b.uiUrl);
-  expect(a.uiUrl).toMatch(/^\/proxy\/internal-[a-f0-9]{64}\//);
-  const fetch = vi.fn(async (_input: unknown) => new Response('owner a'));
-  vi.stubGlobal('fetch', fetch);
-  try {
-    expect((await app.inject(a.uiUrl)).statusCode).toBe(200);
-    expect(fetch.mock.calls[0]?.[0]).toBe('http://127.0.0.1:8001/ui');
-    expect(authorize).toHaveBeenCalledWith({ tenantId: 'team-a', principalId: 'alice' });
-    authorize.mockResolvedValue(false);
-    expect((await app.inject(a.uiUrl)).statusCode).toBe(403);
-    expect(fetch).toHaveBeenCalledTimes(1);
-  } finally {
-    await app.close();
-  }
 });
 
 // ---------------------------------------------------------------------------
@@ -817,33 +786,6 @@ describe('/proxy/_register dynamic capabilities', () => {
     }
   });
 
-  it('checks EasyAuth owner metadata before serving dynamic proxy capabilities', async () => {
-    process.env['OMNI_AUTH_MODE'] = 'easyauth';
-    const app = await createProxyTestServer(() => true);
-
-    try {
-      const register = await app.inject({
-        method: 'POST',
-        url: '/proxy/_register',
-        headers: { 'x-ms-client-principal-id': 'alice' },
-        payload: { upstream: 'https://docs.example.test/' },
-      });
-      const body = register.json() as { proxyPath: string };
-
-      const missingPrincipal = await app.inject({ method: 'GET', url: body.proxyPath });
-      const wrongPrincipal = await app.inject({
-        method: 'GET',
-        url: body.proxyPath,
-        headers: { 'x-ms-client-principal-id': 'bob' },
-      });
-
-      expect(missingPrincipal.statusCode).toBe(401);
-      expect(wrongPrincipal.statusCode).toBe(403);
-    } finally {
-      await app.close();
-    }
-  });
-
   it('cleans up expired dynamic registrations deterministically', async () => {
     const app = await createProxyTestServer(() => true);
 
@@ -871,8 +813,7 @@ describe('/proxy/_register dynamic capabilities', () => {
 // ---------------------------------------------------------------------------
 
 describe('rewriteStatusUrls', () => {
-  it('keeps trusted internal status registrations named and owner-independent', async () => {
-    process.env['OMNI_AUTH_MODE'] = 'easyauth';
+  it('keeps trusted internal status registrations named', async () => {
     const app = await createProxyTestServer(() => true);
     vi.stubGlobal(
       'fetch',

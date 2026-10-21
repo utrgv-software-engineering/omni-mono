@@ -20,69 +20,6 @@ let onConnectImpl: OnConnect | undefined;
 // Track all client sockets created so we can close them in afterEach
 const openClients: WebSocket[] = [];
 
-it('denies an already-connected revoked member before dispatch', async () => {
-  let allowed = true;
-  handler.setAuthorizer(async () => allowed);
-  const dispatch = vi.fn(() => 'private');
-  handler.handle('audit:read', dispatch);
-  const ws = await connectClient('revoked', 'team');
-  expect((await invoke(ws, 1, 'audit:read')).result).toBe('private');
-  allowed = false;
-  const closed = new Promise<number>((resolve) => ws.once('close', resolve));
-  ws.send(JSON.stringify({ type: 'invoke', id: 2, channel: 'audit:read', args: [] }));
-  expect(await closed).toBe(4403);
-  expect(dispatch).toHaveBeenCalledTimes(1);
-});
-
-it('does not send team updates or an in-flight result after revocation', async () => {
-  let allowed = true;
-  handler.setAuthorizer(async () => allowed);
-  let finish!: (value: string) => void;
-  let started = false;
-  handler.handle('audit:slow', () => {
-    started = true;
-    return new Promise<string>((resolve) => {
-      finish = resolve;
-    });
-  });
-  const ws = await connectClient('inflight', 'team');
-  const frames: string[] = [];
-  ws.on('message', (raw) => frames.push(String(raw)));
-  ws.send(JSON.stringify({ type: 'invoke', id: 1, channel: 'audit:slow', args: [] }));
-  await vi.waitFor(() => expect(started).toBe(true));
-  allowed = false;
-  const closed = new Promise<number>((resolve) => ws.once('close', resolve));
-  handler.sendToTenant('team', 'store:changed', undefined);
-  finish('private-after-revocation');
-  expect(await closed).toBe(4403);
-  expect(frames).toEqual([]);
-});
-
-it('fails closed when membership verification is unavailable', async () => {
-  handler.setAuthorizer(async () => {
-    throw new Error('database unavailable');
-  });
-  const ws = await connectClient('unavailable');
-  const dispatch = vi.fn();
-  handler.handle('audit:read', dispatch);
-  const closed = new Promise<number>((resolve) => ws.once('close', resolve));
-  ws.send(JSON.stringify({ type: 'invoke', id: 1, channel: 'audit:read', args: [] }));
-  expect(await closed).toBe(1011);
-  expect(dispatch).not.toHaveBeenCalled();
-});
-
-it('does not send reverse operations to a revoked socket', async () => {
-  handler.setAuthorizer(async () => false);
-  const ws = await connectClient('reverse-revoked');
-  const serverSocket = [...wss.clients][0]!;
-  const frames: string[] = [];
-  ws.on('message', (raw) => frames.push(String(raw)));
-  const closed = new Promise<number>((resolve) => ws.once('close', resolve));
-  await expect(handler.invokeOnWs(serverSocket, 'compute:start-session', [])).rejects.toThrow('authorization denied');
-  expect(await closed).toBe(4403);
-  expect(frames).toEqual([]);
-});
-
 it('expires disconnected documents, but preserves reattached and active sessions', async () => {
   handler = new WsHandler(80);
   const cleanup = vi.fn(async () => {});
@@ -106,21 +43,18 @@ beforeEach(async () => {
   await new Promise<void>((resolve) => wss.once('listening', () => resolve()));
   port = (wss.address() as AddressInfo).port;
   wss.on('connection', (ws, req) => {
-    // Parse sid=... and tenant=... from the request URL
+    // Parse sid=... from the request URL
     let sessionId: string | undefined;
-    let tenantId: string | undefined;
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
       sessionId = url.searchParams.get('sid') ?? undefined;
-      tenantId = url.searchParams.get('tenant') ?? undefined;
     } catch {
       sessionId = undefined;
     }
     handler.addClient(
       ws as unknown as Parameters<WsHandler['addClient']>[0],
       onConnectImpl as Parameters<WsHandler['addClient']>[1],
-      sessionId,
-      tenantId
+      sessionId
     );
   });
 });
@@ -148,13 +82,10 @@ afterEach(async () => {
   await new Promise<void>((resolve) => wss.close(() => resolve()));
 });
 
-const connectClient = async (sessionId?: string, tenantId?: string): Promise<WebSocket> => {
+const connectClient = async (sessionId?: string): Promise<WebSocket> => {
   const params = new URLSearchParams();
   if (sessionId) {
     params.set('sid', sessionId);
-  }
-  if (tenantId) {
-    params.set('tenant', tenantId);
   }
   const qs = params.toString();
   const url = `ws://127.0.0.1:${port}${qs ? `?${qs}` : ''}`;
@@ -267,37 +198,15 @@ describe('WsHandler - handler routing', () => {
 });
 
 describe('WsHandler - session persistence', () => {
-  it('does not dispatch a gated message after its socket has detached', async () => {
-    let release!: () => void;
-    const ready = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    wss.removeAllListeners('connection');
-    wss.on('connection', (ws) => handler.addClient(ws, undefined, 'gated', 'tenant-a', ready));
-    const dispatch = vi.fn();
-    handler.handle('test:gated', dispatch);
-    const ws = await connectClient();
-    const serverSocket = [...wss.clients][0]!;
-    const received = new Promise<void>((resolve) => serverSocket.once('message', () => resolve()));
-    ws.send(JSON.stringify({ type: 'invoke', id: 1, channel: 'test:gated', args: [] }));
-    await received;
-    const detached = new Promise<void>((resolve) => serverSocket.once('close', () => resolve()));
-    await closeClient(ws);
-    await detached;
-    release();
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(dispatch).not.toHaveBeenCalled();
-  });
-
   it('closes a replaced socket while keeping the session on the replacement', async () => {
     const created = vi.fn();
     onConnectImpl = (session) => {
       created();
       session.handle('test:who', () => 'owned-session');
     };
-    const old = await connectClient('replaced', 'tenant-a');
+    const old = await connectClient('replaced');
     const closed = new Promise<void>((resolve) => old.once('close', () => resolve()));
-    const replacement = await connectClient('replaced', 'tenant-a');
+    const replacement = await connectClient('replaced');
     await closed;
     expect((await invoke(replacement, 1, 'test:who')).result).toBe('owned-session');
     expect(created).toHaveBeenCalledTimes(1);
@@ -354,68 +263,18 @@ describe('WsHandler - session persistence', () => {
   });
 });
 
-describe('WsHandler - tenant isolation', () => {
-  it('sendToTenant reaches only same-tenant connections', async () => {
-    const wsA = await connectClient('a-sess', 'tenant-A');
-    const wsB = await connectClient('b-sess', 'tenant-B');
-
-    const aGot = waitForEvent(wsA, 'scoped:event');
-    // wsB must NOT receive it — assert by racing against a short timeout.
-    let bReceived = false;
-    const bListener = (raw: Buffer): void => {
-      try {
-        const msg = JSON.parse(String(raw)) as { type?: string; channel?: string };
-        if (msg.type === 'event' && msg.channel === 'scoped:event') {
-          bReceived = true;
-        }
-      } catch {
-        // ignore
-      }
-    };
-    wsB.on('message', bListener);
-
-    (handler.sendToTenant as unknown as (t: string, channel: string, ...args: unknown[]) => void)(
-      'tenant-A',
-      'scoped:event',
-      { secret: 1 }
-    );
-
-    const args = await aGot;
-    expect(args).toEqual([{ secret: 1 }]);
-    await new Promise((r) => setTimeout(r, 30));
-    wsB.off('message', bListener);
-    expect(bReceived).toBe(false);
-  });
-
-  it('same sessionId under a different tenant does not hijack the session', async () => {
-    let onConnectCalls = 0;
-    onConnectImpl = (session) => {
-      const mine = `handler-${onConnectCalls++}`;
-      session.handle('whoami', () => mine);
-    };
-    // Same client sessionId "shared", two different tenants.
-    const wsA = await connectClient('shared', 'tenant-A');
-    const resA = await invoke(wsA, 1, 'whoami');
-    const wsB = await connectClient('shared', 'tenant-B');
-    const resB = await invoke(wsB, 2, 'whoami');
-
-    // Each tenant got its OWN onConnect/session — no reattach across tenants.
-    expect(onConnectCalls).toBe(2);
-    expect(resA.result).toBe('handler-0');
-    expect(resB.result).toBe('handler-1');
-  });
-
+describe('WsHandler - reattach', () => {
   it('a live socket displaced by a reattach is closed with 4409, and the newcomer keeps the session', async () => {
     let onConnectCalls = 0;
     onConnectImpl = (session) => {
       onConnectCalls++;
       session.handle('whoami', () => 'shared-handler');
     };
-    const ws1 = await connectClient('dup', 'tenant-A');
+    const ws1 = await connectClient('dup');
     const displaced = new Promise<{ code: number; reason: string }>((resolve) =>
       ws1.once('close', (code, reason) => resolve({ code, reason: reason.toString() }))
     );
-    const ws2 = await connectClient('dup', 'tenant-A');
+    const ws2 = await connectClient('dup');
     // Terminal for the displaced side — 1000 made it reconnect and displace
     // ws2 straight back, and the two looped for as long as both were open.
     expect(await displaced).toEqual({ code: 4409, reason: 'Session reattached by another client' });
@@ -424,16 +283,16 @@ describe('WsHandler - tenant isolation', () => {
     expect(onConnectCalls).toBe(1);
   });
 
-  it('same tenant + sessionId still reattaches (cross-device sync preserved)', async () => {
+  it('same sessionId reattaches (cross-device sync preserved)', async () => {
     let onConnectCalls = 0;
     onConnectImpl = (session) => {
       onConnectCalls++;
       session.handle('whoami', () => 'shared-handler');
     };
-    const ws1 = await connectClient('dev', 'tenant-A');
+    const ws1 = await connectClient('dev');
     await invoke(ws1, 1, 'whoami');
     await closeClient(ws1);
-    const ws2 = await connectClient('dev', 'tenant-A');
+    const ws2 = await connectClient('dev');
     const res = await invoke(ws2, 2, 'whoami');
     expect(onConnectCalls).toBe(1);
     expect(res.result).toBe('shared-handler');
@@ -448,7 +307,7 @@ describe('WsHandler - event interceptors', () => {
     const eventPromise = waitForEvent(ws, 'some:event');
     (handler.sendToAll as unknown as (channel: string, ...args: unknown[]) => void)('some:event', { data: 1 });
     await eventPromise;
-    expect(interceptor).toHaveBeenCalledWith('some:event', [{ data: 1 }], undefined);
+    expect(interceptor).toHaveBeenCalledWith('some:event', [{ data: 1 }]);
   });
 
   it("interceptor cannot mutate caller's original args", async () => {

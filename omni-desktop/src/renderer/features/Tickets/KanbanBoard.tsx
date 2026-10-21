@@ -11,7 +11,6 @@ import {
 import { useStore } from '@nanostores/react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
-import { $currentPrincipal } from '@/renderer/features/Teams/state';
 import type { Column, ColumnId, ProjectId, Ticket, TicketId } from '@/shared/types';
 
 import { KanbanCard } from './KanbanCard';
@@ -35,7 +34,6 @@ export const KanbanBoard = memo(
     const tickets = useStore($tickets);
     const activeMilestoneId = useStore($activeMilestoneId);
     const assigneeFilter = useStore($assigneeFilter);
-    const currentPrincipal = useStore($currentPrincipal);
 
     const [activeTicket, setActiveTicket] = useState<{ ticket: Ticket; column: Column } | null>(null);
     const [newTaskColumnId, setNewTaskColumnId] = useState<ColumnId | null>(null);
@@ -56,13 +54,9 @@ export const KanbanBoard = memo(
         if (activeMilestoneId !== 'all' && t.milestoneId !== activeMilestoneId) {
           return false;
         }
-        // Assignee filter (teams): 'all' = everyone, 'me' = current principal,
-        // 'unassigned' = no assignee, else a specific member's principal id.
-        if (assigneeFilter === 'me') {
-          if (t.assignee !== currentPrincipal) {
-            return false;
-          }
-        } else if (assigneeFilter === 'unassigned') {
+        // Assignee filter: 'all' = everyone, 'unassigned' = no assignee, else
+        // a specific assignee's principal id.
+        if (assigneeFilter === 'unassigned') {
           if (t.assignee) {
             return false;
           }
@@ -87,7 +81,7 @@ export const KanbanBoard = memo(
           t.description.toLowerCase().includes(normalizedQuery)
         );
       });
-    }, [tickets, projectId, activeMilestoneId, assigneeFilter, currentPrincipal, visibilityFilter, query]);
+    }, [tickets, projectId, activeMilestoneId, assigneeFilter, visibilityFilter, query]);
 
     const ticketsByColumn = useMemo(() => {
       const map: Record<string, Ticket[]> = {};

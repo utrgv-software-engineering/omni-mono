@@ -359,33 +359,6 @@ def test_updater_config_from_product_requires_update_block():
         run_update_command([])
 
 
-def test_platform_client_defaults_from_identity(tmp_path, monkeypatch):
-    from omniagents.core.providers.platform import client
-
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    monkeypatch.setenv("APPDATA", str(tmp_path))  # Windows config root
-    prior_dir = client._credential_store_dir
-    prior_slug = client._product_slug
-    try:
-        client.set_credential_store_dir(None)
-        client.set_product_slug(None)
-        assert client.get_product_slug() == "omniagents"
-        assert client.credential_path() == tmp_path / "omniagents" / "platform.json"
-
-        set_product_info(ACME_INFO)
-        assert client.get_product_slug() == "acme_code"
-        assert client.credential_path() == tmp_path / "acme_code" / "platform.json"
-
-        # Explicit bindings still win over product identity.
-        client.set_product_slug("explicit_slug")
-        client.set_credential_store_dir(tmp_path / "explicit")
-        assert client.get_product_slug() == "explicit_slug"
-        assert client.credential_path() == tmp_path / "explicit" / "platform.json"
-    finally:
-        client.set_credential_store_dir(prior_dir)
-        client.set_product_slug(prior_slug)
-
-
 def test_codex_token_store_defaults_from_identity(tmp_path, monkeypatch):
     from omniagents.core.providers import codex
 
@@ -442,14 +415,6 @@ def test_model_and_provider_cli_prog_defaults_from_identity(capsys):
     with pytest.raises(SystemExit):
         run_model_command([], store=_StoreStub(), prog="explicitprog")
     assert "usage: explicitprog model" in capsys.readouterr().out
-
-
-def test_platform_auth_help_prog_defaults_from_identity(capsys):
-    from omniagents.cli import run_platform_auth_command
-
-    set_product_info(ACME_INFO)
-    assert run_platform_auth_command(["--help"]) == 0
-    assert "usage: acme auth" in capsys.readouterr().out
 
 
 def test_resolve_profile_config_dir_defaults_from_identity(tmp_path, monkeypatch):

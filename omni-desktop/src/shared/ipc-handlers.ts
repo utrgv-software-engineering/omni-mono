@@ -128,7 +128,7 @@ export function registerConfigHandlers(
 
 /**
  * Minimal store surface the settings-config handlers need. Satisfied by
- * electron-store, the server `ServerStore`, and the per-tenant `PgSettingsStore`.
+ * electron-store and the server `ServerStore`.
  */
 export interface SettingsConfigStore {
   get<K extends keyof StoreData>(key: K): StoreData[K] | undefined;
@@ -139,22 +139,9 @@ export interface SettingsConfigStore {
  * Register the typed `settings:*` agent-config channels. These replace the
  * path-based `config:*` file I/O for the four configs whose source of truth is
  * the store: model providers, MCP servers, network policy, and `.env`. The
- * store backend (electron-store / ServerStore / per-tenant PgSettingsStore) is
- * resolved per-invoke; `afterWrite` is the transport's hook to broadcast
+ * store backend (electron-store / ServerStore) is resolved per-invoke; `afterWrite` is the transport's hook to broadcast
  * `store:changed` and re-materialize the agent's on-disk config.
  */
-/**
- * Optional secret-masking hooks (cloud/teams). `maskModels`/`maskMcp` blank out
- * shared secret values before a config reaches the renderer; `restoreModels`
- * re-applies the stored value on save so a sentinel round-trip never clobbers
- * the real secret. Omitted in Electron/local (a user's own keys, no masking).
- */
-export interface SettingsSecretMask {
-  maskModels?: (c: ModelsConfig) => ModelsConfig;
-  maskMcp?: (c: McpConfig) => McpConfig;
-  restoreModels?: (incoming: ModelsConfig, stored: ModelsConfig) => ModelsConfig;
-}
-
 export interface SettingsConfigHooks {
   readModels?: (event: unknown) => ModelsConfig;
   saveModels?: (event: unknown, config: ModelsConfig) => void;
@@ -171,19 +158,17 @@ export function registerSettingsConfigHandlers(
   ipc: IIpcListener,
   resolveStore: (event: unknown) => SettingsConfigStore,
   afterWrite: (event: unknown) => void,
-  mask: SettingsSecretMask = {},
   hooks: SettingsConfigHooks = {}
 ): void {
   ipc.handle('settings:get-models-config', (e: unknown) => {
-    const c = hooks.readModels?.(e) ?? resolveStore(e).get('modelsConfig') ?? emptyModelsConfig();
-    return mask.maskModels ? mask.maskModels(c) : c;
+    return hooks.readModels?.(e) ?? resolveStore(e).get('modelsConfig') ?? emptyModelsConfig();
   });
   let pendingModelWrite: Promise<unknown> = Promise.resolve();
   ipc.handle(
     'settings:set-models-config',
     (
       e: unknown,
-      config: ModelsConfig,
+      next: ModelsConfig,
       options?: { expectedProvider: string | null; confirmProviderChange?: boolean }
     ) => {
       const operation = pendingModelWrite
@@ -195,7 +180,6 @@ export function registerSettingsConfigHandlers(
           if (options && options.expectedProvider !== previousProvider) {
             throw new Error('The workspace provider changed in another window. Reload Settings before saving.');
           }
-          const next = mask.restoreModels ? mask.restoreModels(config, previous) : config;
           validateModelsConfig(next);
           if (previousProvider && previousProvider !== modelProvider(next.default) && !options?.confirmProviderChange) {
             throw new Error(
@@ -229,8 +213,7 @@ export function registerSettingsConfigHandlers(
   );
   ipc.handle('settings:get-mcp-config', (e: unknown) => {
     return Promise.resolve(hooks.beforeGetMcp?.(e)).then(() => {
-      const c = resolveStore(e).get('mcpConfig') ?? emptyMcpConfig();
-      return mask.maskMcp ? mask.maskMcp(c) : c;
+      return resolveStore(e).get('mcpConfig') ?? emptyMcpConfig();
     });
   });
   ipc.handle('settings:set-mcp-config', async (e: unknown, config: McpConfig) => {
@@ -511,9 +494,8 @@ export function registerUtilHandlers(ipc: IIpcListener, opts: UtilHandlerOptions
 /**
  * Register `skills:*` handlers. Skills live under a config dir (the
  * `<dir>/skills` + `<dir>/skills-disabled` folders) with source/bundle metadata
- * in the store. Both are resolved per-invoke from the event: `() => x` for the
- * single-tenant Electron app, or per-tenant on the server (each tenant gets its
- * own skills directory + settings store).
+ * in the store. Both are resolved per-invoke from the event (`() => x` in
+ * both shells).
  */
 export function registerSkillsHandlers(
   ipc: IIpcListener,

@@ -100,10 +100,8 @@ import { respondToApproval } from '@/renderer/omniagents-ui/lib/approval-respons
 import { RPCClientProvider, useRPCClient } from '@/renderer/omniagents-ui/rpc-context';
 import { MarkdownMessage } from '@/renderer/omniagents-ui/shared/MarkdownMessage';
 import { UiConfigProvider } from '@/renderer/omniagents-ui/ui-config';
-import { emitter, serverOrigin } from '@/renderer/services/ipc';
-import { $machines } from '@/renderer/services/machines';
+import { serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { isLocalVoiceCapable } from '@/renderer/services/voice-client';
 import { VoiceScopeContext } from '@/renderer/services/voice-recording';
 import type { ApprovalItem } from '@/shared/chat-types';
 import { voiceActive } from '@/shared/machines/voice-session.machine';
@@ -435,7 +433,7 @@ function ActivityFeed({
   // the DM message, so the surface reads it aloud; no session plumbing.
   const isUserDm = channel !== undefined && dmPair !== null && isOwnDmChannel(channel);
   const voiceMode = configuredVoiceMode(storeData);
-  const voiceReady = isUserDm && voiceMode === 'local' && isLocalVoiceCapable();
+  const voiceReady = isUserDm && voiceMode === 'local';
   // Hosted mode: the realtime VoiceDock against the DM peer's own serve.
   const hostedVoiceReady = isUserDm && voiceMode === 'hosted' && !!dmPeerId;
   const [hostedVoiceOpen, setHostedVoiceOpen] = useState(false);
@@ -2759,19 +2757,7 @@ export function ResidentsTab(): React.JSX.Element {
   const selected = roster.find((a) => a.id === view.selectedAgentId) ?? null;
   const projects = useMemo(() => storeData.projects ?? [], [storeData.projects]);
 
-  const machines = useStore($machines);
-  const [isEnterprise, setIsEnterprise] = useState(false);
-  useEffect(() => {
-    emitter
-      .invoke('platform:is-enterprise')
-      .then(setIsEnterprise)
-      .catch(() => setIsEnterprise(false));
-  }, []);
-  const sandboxContext: SandboxContext = {
-    isEnterprise,
-    available: storeData.availableSandboxProfiles,
-    machines,
-  };
+  const sandboxContext: SandboxContext = { available: storeData.availableSandboxProfiles };
 
   useEffect(() => {
     void syncResidentStatus();

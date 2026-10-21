@@ -1,13 +1,11 @@
 /**
  * Async adapter over the synchronous {@link ProjectsRepo}, satisfying the
- * backend-agnostic {@link IProjectsRepo} contract.
+ * {@link IProjectsRepo} contract.
  *
- * `node:sqlite` is synchronous, but the shared contract is async so that the
- * Postgres backend can implement it too. This adapter is the SQLite side of
- * that seam: each method delegates straight to the sync repo and resolves with
- * the result — no extra I/O, no thread hop, behaviour identical to calling the
- * sync repo directly. Used by the Electron desktop app and the single-tenant
- * local server.
+ * `node:sqlite` is synchronous; each method delegates straight to the sync
+ * repo and resolves with the result — no extra I/O, no thread hop, behaviour
+ * identical to calling the sync repo directly. Used by the Electron desktop
+ * app and the server build.
  *
  * The underlying sync repo remains accessible via {@link sync} for the few
  * SQLite-only paths (change-seq polling in db-change-watcher, the one-time

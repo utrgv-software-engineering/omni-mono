@@ -27,8 +27,7 @@ export type ProfileCatalogDeps = {
   /**
    * Deployment restriction (`StoreData.availableSandboxProfiles`), read at
    * invoke time. When set (non-empty), the listing is filtered to exactly
-   * these names — host included only if listed. The Electron event / server
-   * HandlerContext is passed through so server mode can resolve per-tenant.
+   * these names — host included only if listed.
    */
   getAvailableProfileNames?: (event: unknown) => string[] | undefined;
 };

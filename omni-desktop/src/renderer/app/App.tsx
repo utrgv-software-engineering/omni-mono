@@ -5,7 +5,6 @@ import '@fontsource-variable/space-grotesk';
 import '@xterm/xterm/css/xterm.css';
 import '@/renderer/features/Toast/ipc-toast-listener';
 import '@/renderer/features/Toast/status-toast-listener';
-import '@/renderer/features/WorkspaceSync/state'; // side-effect: registers IPC listener
 import '@/renderer/features/Residents/workspace-tool-bridge'; // side-effect: superuser residents' workspace tools
 
 import { useStore } from '@nanostores/react';
@@ -21,14 +20,12 @@ import { ViewportDebug } from '@/renderer/common/ViewportDebug';
 import { syncTheme } from '@/renderer/constants';
 import { SystemInfoLoadingGate, SystemInfoProvider } from '@/renderer/contexts/SystemInfoContext';
 import { TooltipProvider } from '@/renderer/ds/ui/tooltip';
-import { AuthGate } from '@/renderer/features/Auth/AuthGate';
 import { ConnectionStatusBanner } from '@/renderer/features/Banner/ConnectionStatusBanner';
 import { CommandPalette } from '@/renderer/features/CommandPalette/CommandPalette';
 import { QuickCapture } from '@/renderer/features/Inbox/QuickCapture';
 import { MigrationNotice } from '@/renderer/features/MigrationNotice/MigrationNotice';
 import { ToastContainer } from '@/renderer/features/Toast/ToastContainer';
 import { VoiceHotkeys } from '@/renderer/features/Voice/VoiceHotkeys';
-import { SyncBar } from '@/renderer/features/WorkspaceSync/SyncBar';
 import { ProductManagementProvider } from '@/renderer/omniagents-ui/product-management-context';
 import { initAgentAttention } from '@/renderer/services/agent-attention';
 import { initAppHistory } from '@/renderer/services/app-history';
@@ -76,21 +73,18 @@ export const App = () => {
           <div className="app-shell relative flex w-dvw flex-col overflow-hidden bg-background font-sans text-foreground antialiased">
             <ErrorBoundary FallbackComponent={ErrorBoundaryFallback}>
               <SystemInfoLoadingGate>
-                <AuthGate>
-                  <ProductManagementProvider>
-                    <ConnectionStatusBanner />
-                    <MigrationNotice />
-                    <div className="flex min-h-0 w-full flex-1">
-                      <MainContent />
-                    </div>
-                    <QuickCapture />
-                    <VoiceHotkeys />
-                    <CommandPalette />
-                    <ViewportDebug />
-                    <SyncBar />
-                    <StatusAnnouncer />
-                  </ProductManagementProvider>
-                </AuthGate>
+                <ProductManagementProvider>
+                  <ConnectionStatusBanner />
+                  <MigrationNotice />
+                  <div className="flex min-h-0 w-full flex-1">
+                    <MainContent />
+                  </div>
+                  <QuickCapture />
+                  <VoiceHotkeys />
+                  <CommandPalette />
+                  <ViewportDebug />
+                  <StatusAnnouncer />
+                </ProductManagementProvider>
               </SystemInfoLoadingGate>
               <ToastContainer />
             </ErrorBoundary>

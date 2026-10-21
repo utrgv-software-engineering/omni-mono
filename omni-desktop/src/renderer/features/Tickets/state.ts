@@ -68,11 +68,10 @@ export const $pipeline = atom<Pipeline | null>(null);
 export const $activeMilestoneId = atom<MilestoneId | 'all'>('all');
 
 /**
- * Board assignee filter (teams). `'all'` = everyone, `'me'` = assigned to the
- * current principal, `'unassigned'` = no assignee, or a specific member's
- * principal id. Always `'all'` effectively in single-user mode.
+ * Board assignee filter. `'all'` = everyone, `'unassigned'` = no assignee, or
+ * a specific assignee's principal id (a resident `agent:<id>`).
  */
-export const $assigneeFilter = atom<'all' | 'me' | 'unassigned' | string>('all');
+export const $assigneeFilter = atom<'all' | 'unassigned' | string>('all');
 
 /**
  * Tabs of the project shell. Every project-scoped surface hangs off one of

@@ -17,7 +17,7 @@ import { Button } from '@/renderer/ds/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/renderer/ds/ui/card';
 import { Textarea } from '@/renderer/ds/ui/textarea';
 import { $sandboxesError, $sandboxProfiles, refreshSandboxProfiles } from '@/renderer/features/Sandboxes/state';
-import { emitter, isCloudLinked, isElectron, isServerLinked, isWslLinked } from '@/renderer/services/ipc';
+import { emitter, isElectron, isServerLinked, isWslLinked } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ProfileSummary } from '@/shared/types';
 
@@ -30,9 +30,9 @@ const ORIGIN_LABELS: Record<ProfileSummary['origin'], string> = {
 /**
  * "Reveal in file manager" opens the path with the LOCAL shell — only
  * meaningful when the profile file lives on this machine, i.e. standalone
- * Electron. Remote-linked clients (wsl/cloud/server) see backend paths.
+ * Electron. Remote-linked clients (wsl/server) see backend paths.
  */
-const canReveal = isElectron && !isCloudLinked && !isWslLinked && !isServerLinked;
+const canReveal = isElectron && !isWslLinked && !isServerLinked;
 
 /** Directory part of a profile path, tolerant of Windows separators. */
 const dirnameOf = (p: string): string => {

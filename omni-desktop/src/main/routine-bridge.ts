@@ -49,8 +49,7 @@ export class RoutineBridge {
 
   /**
    * Register the bridge IPC handlers. `resolve(event)` picks the bridge
-   * instance to act on — defaults to `this` (single-manager Electron app); the
-   * per-tenant server passes a resolver that selects the caller's tenant bridge.
+   * instance to act on — defaults to `this`.
    */
   registerIpc(ipc: IIpcListener, resolve: (event: unknown) => RoutineBridge = () => this): string[] {
     ipc.handle(

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildHttpMcpEntry, buildStdioMcpEntry, MCP_ENTRY_NAME, mergeManagedMcpEntry } from '@/shared/mcp-entry';
+import { buildStdioMcpEntry, MCP_ENTRY_NAME, mergeManagedMcpEntry } from '@/shared/mcp-entry';
 
 describe('mergeManagedMcpEntry', () => {
-  const managed = buildHttpMcpEntry('http://127.0.0.1:3001/mcp/projects');
+  const managed = buildStdioMcpEntry('/new/cli.js');
 
   it('adds the managed entry, preserving the user’s own servers', () => {
     const merged = mergeManagedMcpEntry({ other: { type: 'stdio', command: 'x' } }, managed);

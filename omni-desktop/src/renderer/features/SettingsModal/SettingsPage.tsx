@@ -42,7 +42,6 @@ import { SettingsModalNetworkTab } from '@/renderer/features/SettingsModal/Setti
 import { SettingsModalProjectsTab } from '@/renderer/features/SettingsModal/SettingsModalProjectsTab';
 import { SettingsModalResetButton } from '@/renderer/features/SettingsModal/SettingsModalResetButton';
 import { SettingsModalRuntimePolicyTab } from '@/renderer/features/SettingsModal/SettingsModalRuntimePolicyTab';
-import { SettingsModalTeamsTab } from '@/renderer/features/SettingsModal/SettingsModalTeamsTab';
 import { SettingsModalWorkspaceTab } from '@/renderer/features/SettingsModal/SettingsModalWorkspaceTab';
 
 type SettingsTab =
@@ -53,7 +52,6 @@ type SettingsTab =
   | 'Audio'
   | 'Hotkeys'
   | 'Account'
-  | 'Teams'
   | 'Workspace'
   | 'Environment'
   | 'Git'
@@ -78,7 +76,6 @@ const TAB_GROUPS: ReadonlyArray<{ label: string | null; tabs: ReadonlyArray<TabD
       { value: 'Audio', label: 'Voice & Audio', icon: <SlidersHorizontal /> },
       { value: 'Hotkeys', label: 'Hotkeys', icon: <Keyboard /> },
       { value: 'Account', label: 'Account', icon: <User /> },
-      { value: 'Teams', label: 'Teams', icon: <User /> },
     ],
   },
   {
@@ -210,7 +207,6 @@ export const SettingsPage = memo(() => {
           {shownTab === 'Audio' && <SettingsModalAudioTab />}
           {shownTab === 'Hotkeys' && <SettingsModalHotkeysTab />}
           {shownTab === 'Account' && <SettingsModalAccountTab />}
-          {shownTab === 'Teams' && <SettingsModalTeamsTab />}
           {shownTab === 'Workspace' && <SettingsModalWorkspaceTab />}
           {shownTab === 'Environment' && <SettingsModalEnvironmentTab />}
           {shownTab === 'Git' && <SettingsModalGitTab />}
