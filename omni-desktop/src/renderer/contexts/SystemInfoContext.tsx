@@ -1,7 +1,6 @@
 import { useStore } from '@nanostores/react';
 import type { PropsWithChildren } from 'react';
 import { createContext, memo, useContext, useMemo } from 'react';
-import { assert } from 'tsafe';
 
 import { LoaderFullScreen } from '@/renderer/common/LoaderFullScreen';
 import { StartupError } from '@/renderer/common/StartupError';
@@ -45,9 +44,3 @@ export const SystemInfoLoadingGate = memo((props: PropsWithChildren) => {
   return props.children;
 });
 SystemInfoLoadingGate.displayName = 'SystemInfoGate';
-
-export const useSystemInfo = () => {
-  const ctx = useContext(SystemInfoContext);
-  assert(isCtxReady(ctx), 'SystemInfo not ready. Did you forget to wrap your component with SystemInfoGate?');
-  return ctx;
-};

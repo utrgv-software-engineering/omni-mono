@@ -5,7 +5,6 @@ import {
   fullEntry,
   getSessionController,
   lastEntrySignal,
-  listSessionRunStates,
   registerSessionController,
   type SessionController,
   transcriptPage,
@@ -49,38 +48,6 @@ describe('session-control registry', () => {
     unregisterFirst(); // stale — must not evict `second`
     expect(getSessionController('tab-B')).toBe(second);
     registerSessionController('tab-B', stub())(); // cleanup
-  });
-
-  it('listSessionRunStates snapshots every registered column', () => {
-    registerSessionController(
-      'tab-run',
-      stub({
-        getState: () => ({
-          running: true,
-          runId: 'r1',
-          awaitingApproval: [],
-          transcript: { total: 3, latestCursor: 3 },
-        }),
-      })
-    );
-    const states = listSessionRunStates();
-    expect(states['tab-run']?.transcript).toEqual({ total: 3, latestCursor: 3 });
-  });
-
-  it('a throwing getState degrades to a safe empty state', () => {
-    registerSessionController(
-      'tab-bad',
-      stub({
-        getState: () => {
-          throw new Error('boom');
-        },
-      })
-    );
-    expect(listSessionRunStates()['tab-bad']).toEqual({
-      running: false,
-      awaitingApproval: [],
-      transcript: { total: 0, latestCursor: null },
-    });
   });
 });
 

@@ -84,21 +84,6 @@ export function unregisterApp(handleId: AppHandleId): void {
 }
 
 /**
- * Filter apps based on scope + tab context. Matches the rules used by the
- * client-tool handler: column-scoped callers see their own tab's apps, and
- * optionally the global dock.
- */
-export function listLiveApps(filter: AppScopeFilter): LiveAppSnapshot[] {
-  const entries = Object.values($liveApps.get());
-  return entries.filter((entry) => {
-    if (entry.scope === 'global') {
-      return filter.allowGlobal;
-    }
-    return entry.tabId === filter.tabId;
-  });
-}
-
-/**
  * Resolve a user-facing `app_id` to the best-matching live `handleId` given the
  * caller's scope. Returns null when no match exists (bad id, or the app isn't
  * mounted right now — call `launch_app` first).

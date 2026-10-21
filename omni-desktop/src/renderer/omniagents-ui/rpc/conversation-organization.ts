@@ -150,12 +150,6 @@ export type ThreadUpdated = Record<string, unknown> & {
   cascaded_thread_ids: string[];
 };
 
-/** Wire/documentation mismatches callers must not work around with invented payloads. */
-export const CONVERSATION_ORGANIZATION_SCHEMA_LIMITATIONS = [
-  'update_thread documents title:null for clearing a title, but generated UpdateThreadParams only accepts string',
-  'thread_updated and Thread carry no revision; cache convergence uses updated_at and refetches after reconnect',
-] as const;
-
 export class ConversationOrganizationProtocolError extends Error {
   constructor(message: string) {
     super(message);

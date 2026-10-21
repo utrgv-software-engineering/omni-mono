@@ -7,7 +7,7 @@
  * Pure definition — no React, no IPC, no DOM imports.
  * Session filtering reuses the pure guards from `@/lib/session-filter`.
  */
-import { type ActorRefFrom, assign, setup, type SnapshotFrom } from 'xstate';
+import { assign, setup } from 'xstate';
 
 import { acceptLooseEvent, acceptStrictEvent } from '@/lib/session-filter';
 import type {
@@ -851,9 +851,6 @@ export const chatSessionMachine = setup({
 // ---------------------------------------------------------------------------
 // Exported actor/snapshot types
 // ---------------------------------------------------------------------------
-
-export type ChatSessionActor = ActorRefFrom<typeof chatSessionMachine>;
-export type ChatSessionSnapshot = SnapshotFrom<typeof chatSessionMachine>;
 
 // ---------------------------------------------------------------------------
 // Derived-state helpers

@@ -276,10 +276,6 @@ export function registerActivityActions(sessionId: string, actions: ActivityActi
   $activityActionsBySession.setKey(sessionId, actions ?? undefined);
 }
 
-export function getActivityActions(sessionId: string): ActivityActions | undefined {
-  return $activityActionsBySession.get()[sessionId];
-}
-
 // ---------------------------------------------------------------------------
 // Deep links. A pill popover row targets one item's detail page in the
 // Agents sidecar app: the caller opens the app, then requests focus; the

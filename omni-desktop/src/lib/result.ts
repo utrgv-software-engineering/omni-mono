@@ -60,40 +60,6 @@ export class Err<E> {
 export type Result<T, E = Error> = Ok<T> | Err<E>;
 
 /**
- * Creates a successful result.
- * @template T The type of the value.
- * @param {T} value The value to wrap in an `Ok` result.
- * @returns {Ok<T>} The `Ok` result containing the value.
- */
-export function OkResult<T>(value: T): Ok<T> {
-  return new Ok(value);
-}
-
-/**
- * Creates a failed result.
- * @template E The type of the error.
- * @param {E} error The error to wrap in an `Err` result.
- * @returns {Err<E>} The `Err` result containing the error.
- */
-export function ErrResult<E>(error: E): Err<E> {
-  return new Err(error);
-}
-
-/**
- * Wraps a synchronous function in a try-catch block, returning a `Result`.
- * @template T The type of the value returned by the function.
- * @param {() => T} fn The function to execute.
- * @returns {Result<T>} An `Ok` result if the function succeeds, or an `Err` result if it throws an error.
- */
-export function withResult<T>(fn: () => T): Result<T> {
-  try {
-    return new Ok(fn());
-  } catch (error) {
-    return new Err(error instanceof Error ? error : new Error(String(error)));
-  }
-}
-
-/**
  * Wraps an asynchronous function in a try-catch block, returning a `Promise` of a `Result`.
  * @template T The type of the value returned by the function.
  * @param {() => Promise<T>} fn The asynchronous function to execute.

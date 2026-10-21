@@ -69,22 +69,6 @@ export function registerVoiceMic(scope: string, controls: VoiceMicControls): () 
   };
 }
 
-/**
- * Start recording on `scope`'s mic now if present, else arm it to start (as a
- * toggle-on) the moment the mic registers. Returns true if started immediately.
- */
-export function startOrArmVoiceMic(scope: string): boolean {
-  const mic = voiceMics.get(scope);
-  if (mic) {
-    if (!mic.isRecording()) {
-      mic.start();
-    }
-    return true;
-  }
-  pendingArms.add(scope);
-  return false;
-}
-
 /** Controls for the mic mounted at `scope`, or undefined if none. */
 export function getVoiceMic(scope: string): VoiceMicControls | undefined {
   return voiceMics.get(scope);

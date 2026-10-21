@@ -181,7 +181,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   // Main process status (simplified for server)
   const mainStatus = { type: 'idle' as const, timestamp: Date.now() };
   ipc.handle('main-process:get-status', () => mainStatus);
-  ipc.handle('main-process:exit', () => {});
 
   // Read version from package.json at startup
   let launcherVersion = '0.0.0';

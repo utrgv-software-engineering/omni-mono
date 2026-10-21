@@ -234,16 +234,14 @@ function makeMgr() {
   hoisted.fsFiles.clear();
 
   const statusChanges: Array<{ type: string }> = [];
-  const logEntries: Array<{ level: string; message: string }> = [];
   const rawOutput: string[] = [];
 
   const mgr = new OmniInstallManager({
-    ipcLogger: (entry) => logEntries.push(entry),
     ipcRawOutput: (data) => rawOutput.push(data),
     onStatusChange: (status) => statusChanges.push(status),
   });
 
-  return { mgr, statusChanges, logEntries, rawOutput };
+  return { mgr, statusChanges, rawOutput };
 }
 
 // ---------------------------------------------------------------------------

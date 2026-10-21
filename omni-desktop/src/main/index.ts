@@ -243,7 +243,6 @@ const [, cleanupPermissions] = createPermissionsManager({
 const WSL_BACKEND_SECRET_ID = 'wsl-backend-secret';
 const [wslBackend, cleanupWslBackend] = createWslBackendManager({
   store,
-  sendToWindow: main.sendToWindow,
   launcherVersion: app.getVersion(),
   secrets: {
     getSecret: async () => (await secretStore.getGitToken(WSL_BACKEND_SECRET_ID)) ?? null,

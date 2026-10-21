@@ -215,9 +215,3 @@ function shouldDetectDrops(): boolean {
     return false;
   }
 }
-
-/**
- * Create a logger for use in Node/main process (uses process.env instead of localStorage).
- * Same API as createMachineLogger but always checks process.env.DEBUG_MACHINES.
- */
-export { createMachineLogger as createMainProcessMachineLogger };

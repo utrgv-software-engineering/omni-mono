@@ -27,7 +27,7 @@ import { app } from 'electron';
 
 import { uuidv4 } from '@/lib/uuid';
 import { signWsToken } from '@/server/ws-token';
-import type { IpcRendererEvents, RemoteBackend, WslBackend, WslBackendStatus, WslDetectResult } from '@/shared/types';
+import type { RemoteBackend, WslBackend, WslBackendStatus, WslDetectResult } from '@/shared/types';
 
 const HEALTH_POLL_INTERVAL_MS = 500;
 const HEALTH_PROBE_TIMEOUT_MS = 1_000;
@@ -259,7 +259,6 @@ const errorMessage = (err: unknown): string => (err instanceof Error ? err.messa
 type WslBackendManagerArgs = {
   /** Only the `remoteBackend` write is needed — reads happen in index.ts. */
   store: { set(key: 'remoteBackend', value: RemoteBackend): void };
-  sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
   launcherVersion: string;
   /** Durable token-signing secret for persistent daemon mode. */
   secrets: WslSecretStore;
@@ -276,7 +275,6 @@ type WslBackendManagerArgs = {
 
 export class WslBackendManager {
   private readonly store: WslBackendManagerArgs['store'];
-  private readonly sendToWindow: WslBackendManagerArgs['sendToWindow'];
   private readonly launcherVersion: string;
   private readonly secrets: WslSecretStore;
   private readonly runWsl: RunWsl;
@@ -309,7 +307,6 @@ export class WslBackendManager {
 
   constructor(arg: WslBackendManagerArgs) {
     this.store = arg.store;
-    this.sendToWindow = arg.sendToWindow;
     this.launcherVersion = arg.launcherVersion;
     this.secrets = arg.secrets;
     this.runWsl = arg.runWsl ?? defaultRunWsl;
@@ -810,7 +807,6 @@ export class WslBackendManager {
       delete next.error;
     }
     this.status = next;
-    this.sendToWindow('wsl:status-changed', this.status);
   }
 }
 

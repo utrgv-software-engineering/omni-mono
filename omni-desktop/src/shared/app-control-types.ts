@@ -1,7 +1,6 @@
 /**
- * Types for the app-control system: a registry of drivable webviews (built-in
- * browser, code-server, VNC desktop, and custom webview apps) that AI agents
- * can list and interact with via client tools.
+ * Types for the app-control system: a registry of drivable webviews (the
+ * built-in browser) that AI agents can list and interact with via client tools.
  *
  * Each live webview in the renderer registers itself with a stable `handleId`
  * so the main process can look up its `WebContents` and drive it via Electron

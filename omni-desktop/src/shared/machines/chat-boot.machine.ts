@@ -17,7 +17,7 @@
  * invokers via `machine.provide({ actors: ... })`. This file is pure —
  * no React, no RPC client, no IPC. Stubs for tests.
  */
-import { type ActorRefFrom, assign, fromCallback, setup, type SnapshotFrom } from 'xstate';
+import { assign, fromCallback, setup } from 'xstate';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -212,9 +212,6 @@ export const chatBootMachine = setup({
     },
   },
 });
-
-export type ChatBootActor = ActorRefFrom<typeof chatBootMachine>;
-export type ChatBootSnapshot = SnapshotFrom<typeof chatBootMachine>;
 
 /** Whether the chat input can be safely enabled. */
 export function isBootReady(phase: ChatBootPhase): boolean {

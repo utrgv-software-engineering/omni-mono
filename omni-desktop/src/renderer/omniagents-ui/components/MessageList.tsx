@@ -56,7 +56,6 @@ export type {
   ChatMessage,
   MessageItem,
   PlanItem,
-  ReasoningItem,
   RunDiffItem,
   StructuredItem,
   ToolItem,

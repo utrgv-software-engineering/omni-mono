@@ -5,10 +5,6 @@ import type { RPCConnectionState } from './client';
 import { McpManagementClient } from './mcp-management';
 import { ModelCatalogClient } from './model-catalog';
 
-export const MANAGEMENT_EXPERIMENTAL_OPERATIONS = {
-  mcp: ['mcp_read_resource', 'mcp_call_tool', 'mcp_get_prompt'],
-} as const;
-
 export interface ManagementTransport {
   readonly connectionState: RPCConnectionState;
   request<Method extends keyof RpcMethodMap>(

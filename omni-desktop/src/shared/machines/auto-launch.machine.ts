@@ -7,7 +7,7 @@
  *
  * Pure definition — no React, no IPC imports.
  */
-import { type ActorRefFrom, assign, fromCallback, setup } from 'xstate';
+import { assign, fromCallback, setup } from 'xstate';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -203,5 +203,3 @@ export const autoLaunchMachine = setup({
     },
   },
 });
-
-export type AutoLaunchActor = ActorRefFrom<typeof autoLaunchMachine>;

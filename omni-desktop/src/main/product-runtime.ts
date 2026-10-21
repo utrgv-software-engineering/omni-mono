@@ -16,7 +16,6 @@ import { promisify } from 'util';
 import {
   assertProductServeProtocol,
   getActiveProduct,
-  getCachedProductRuntimeInfo,
   parseProductDescribePayload,
   type ProductRuntimeInfo,
   setCachedProductRuntimeInfo,
@@ -78,15 +77,6 @@ export const refreshProductRuntimeInfo = async (): Promise<ProductRuntimeInfo | 
     inflight = null;
   });
   return inflight;
-};
-
-/** Cached runtime info, introspecting the installed CLI on first use. */
-export const getProductRuntimeInfo = async (): Promise<ProductRuntimeInfo | null> => {
-  const cached = getCachedProductRuntimeInfo();
-  if (cached) {
-    return cached;
-  }
-  return refreshProductRuntimeInfo();
 };
 
 /**

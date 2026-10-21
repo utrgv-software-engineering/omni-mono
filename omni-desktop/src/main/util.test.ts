@@ -11,13 +11,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { parseProductDescribePayload, setCachedProductRuntimeInfo } from '@/lib/product';
 import {
-  getActivateVenvCommand,
   getCliInstalledPath,
   getOmniCliPath,
   getOmniConfigDir,
   getOperatingSystem,
-  getShell,
-  getTorchPlatform,
   MAX_USER_PATH_DEPTH,
   slugify,
   validateConfigPath,
@@ -149,88 +146,6 @@ describe('getOperatingSystem', () => {
     } else {
       expect(os).toBe('Linux');
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getTorchPlatform
-// ---------------------------------------------------------------------------
-
-describe('getTorchPlatform', () => {
-  // On macOS, all GPU types map to 'cpu' (MPS handled transparently)
-  if (process.platform === 'darwin') {
-    it.each(['nvidia>=30xx', 'nvidia<30xx', 'amd', 'nogpu'] as const)(
-      'returns cpu on macOS regardless of gpuType=%s',
-      (gpuType) => {
-        expect(getTorchPlatform(gpuType)).toBe('cpu');
-      }
-    );
-  } else {
-    it('maps nvidia>=30xx to cuda', () => {
-      expect(getTorchPlatform('nvidia>=30xx')).toBe('cuda');
-    });
-
-    it('maps nvidia<30xx to cuda', () => {
-      expect(getTorchPlatform('nvidia<30xx')).toBe('cuda');
-    });
-
-    it('maps amd to rocm', () => {
-      expect(getTorchPlatform('amd')).toBe('rocm');
-    });
-
-    it('maps nogpu to cpu', () => {
-      expect(getTorchPlatform('nogpu')).toBe('cpu');
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// getShell
-// ---------------------------------------------------------------------------
-
-describe('getShell', () => {
-  it('returns a non-empty string', () => {
-    expect(getShell().length).toBeGreaterThan(0);
-  });
-
-  it('matches platform expectations', () => {
-    const shell = getShell();
-    if (process.platform === 'win32') {
-      expect(shell).toBe('Powershell.exe');
-    } else if (process.platform === 'darwin') {
-      expect(shell).toBe('/bin/zsh');
-    } else {
-      expect(shell).toBe('/bin/bash');
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getActivateVenvCommand
-// ---------------------------------------------------------------------------
-
-describe('getActivateVenvCommand', () => {
-  it('uses source on unix', () => {
-    if (process.platform === 'win32') {
-      return;
-    }
-    const cmd = getActivateVenvCommand('/opt/omni');
-    expect(cmd).toContain('source');
-    expect(cmd).toContain(path.join('/opt/omni', '.venv', 'bin', 'activate'));
-  });
-
-  it('uses & (call operator) on windows', () => {
-    if (process.platform !== 'win32') {
-      return;
-    }
-    const cmd = getActivateVenvCommand('C:\\omni');
-    expect(cmd.startsWith('& ')).toBe(true);
-    expect(cmd).toContain('Activate.ps1');
-  });
-
-  it('wraps the path in double quotes', () => {
-    const cmd = getActivateVenvCommand('/path/with spaces/omni');
-    expect(cmd).toContain('"');
   });
 });
 

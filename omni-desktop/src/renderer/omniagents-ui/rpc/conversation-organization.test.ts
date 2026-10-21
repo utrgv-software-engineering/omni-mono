@@ -2,7 +2,6 @@ import type { RpcMethodMap, ThreadUpdatedParams } from '@omniagents/protocol/gui
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  CONVERSATION_ORGANIZATION_SCHEMA_LIMITATIONS,
   ConversationOrganizationClient,
   ConversationOrganizationProtocolError,
   type ConversationOrganizationTransport,
@@ -292,10 +291,7 @@ describe('ConversationOrganizationClient reads and mutations', () => {
     client.dispose();
   });
 
-  it('documents generated-schema gaps and rejects malformed cursor/order payloads', async () => {
-    expect(CONVERSATION_ORGANIZATION_SCHEMA_LIMITATIONS.join(' ')).toContain('title:null');
-    expect(CONVERSATION_ORGANIZATION_SCHEMA_LIMITATIONS.join(' ')).toContain('no revision');
-
+  it('rejects malformed cursor/order payloads', async () => {
     const rpc = new FakeTransport();
     rpc.result = {
       threads: [thread('thread-a', 1), thread('thread-b', 2)],

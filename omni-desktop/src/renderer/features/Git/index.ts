@@ -1,1 +1,1 @@
-export { GitSurface, type GitSurfaceProps, WorkspaceGitPortal } from './GitSurface';
+export { GitSurface, WorkspaceGitPortal } from './GitSurface';

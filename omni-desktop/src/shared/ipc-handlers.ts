@@ -9,7 +9,6 @@ import { randomUUID } from 'node:crypto';
 
 import { mkdir, readdir, readFile, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
-import { WebSocket as WsWebSocket } from 'ws';
 
 import { modelProvider, stripModelConnectionFields, validateModelsConfig } from '@/lib/agent-config';
 import { normalizeCompatibleBaseUrl } from '@/lib/provider-config';
@@ -22,20 +21,16 @@ import {
   updateMarketplacePlugin,
 } from '@/main/skills-marketplace';
 import {
-  checkModelsConfigured,
   ensureDirectory,
   getCliSymlinkPath,
   getDefaultWorkspaceDir,
   getHomeDirectory,
-  getOmniCliPath,
   getOmniRuntimeInfo,
   getOperatingSystem,
   installCliToPath,
   isCliInstalledInPath,
   isDirectory,
-  isFile,
   listRuntimeModels,
-  pathExists,
   testModelConnection,
   validateConfigPath,
   validateUserPath,
@@ -210,8 +205,6 @@ export function registerGitCredentialHandlers(
 ): void {
   const list = (e: unknown): GitCredential[] => resolveStore(e).get('gitCredentials') ?? [];
 
-  ipc.handle('git-cred:list', (e: unknown) => list(e));
-
   ipc.handle('git-cred:set', async (e: unknown, input: GitCredentialInput) => {
     const host = input.host.trim().toLowerCase();
     const username = input.username.trim();
@@ -332,7 +325,6 @@ export async function validateProvider(
 export function registerUtilHandlers(ipc: IIpcListener, opts: UtilHandlerOptions): void {
   const { fetchFn, launcherVersion } = opts;
 
-  ipc.handle('util:get-default-install-dir', () => join(getHomeDirectory(), 'omni'));
   ipc.handle('util:get-default-workspace-dir', () => getDefaultWorkspaceDir());
   ipc.handle('util:ensure-directory', async (_: unknown, dirPath: string) => {
     // Cap depth on writes so a misbehaving (or hostile) client can't ask
@@ -370,14 +362,6 @@ export function registerUtilHandlers(ipc: IIpcListener, opts: UtilHandlerOptions
     validateUserPath(path);
     return isDirectory(path);
   });
-  ipc.handle('util:get-is-file', async (_: unknown, path: string) => {
-    validateUserPath(path);
-    return isFile(path);
-  });
-  ipc.handle('util:get-path-exists', async (_: unknown, path: string) => {
-    validateUserPath(path);
-    return pathExists(path);
-  });
   ipc.handle('util:get-os', () => getOperatingSystem());
   ipc.handle('util:get-launcher-version', () => launcherVersion);
   ipc.handle('util:get-omni-runtime-info', () => getOmniRuntimeInfo());
@@ -386,68 +370,9 @@ export function registerUtilHandlers(ipc: IIpcListener, opts: UtilHandlerOptions
     const installed = await isCliInstalledInPath();
     return { installed, symlinkPath: getCliSymlinkPath() };
   });
-  ipc.handle('util:check-models-configured', () => checkModelsConfigured());
   ipc.handle('util:test-model-connection', (_: unknown, modelRef?: string) => testModelConnection(modelRef));
   ipc.handle('util:list-models', () => listRuntimeModels());
   ipc.handle('util:validate-provider', (_: unknown, probe: ProviderProbe) => validateProvider(fetchFn, probe));
-
-  ipc.handle('util:rebuild-sandbox-image', async () => {
-    // Sandbox Dockerfiles now live in omni-code. Trigger rebuild via the CLI.
-    const omniPath = getOmniCliPath();
-    try {
-      const { execFile: execFileAsync } = await import('child_process');
-      const { promisify } = await import('util');
-      const execFilePromise = promisify(execFileAsync);
-      await execFilePromise(omniPath, ['sandbox', '--rebuild', '--output', 'json'], { timeout: 600_000 });
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: (e as Error).message };
-    }
-  });
-
-  ipc.handle('util:check-url', async (_: unknown, url: string) => {
-    try {
-      const response = await fetchFn(url, { method: 'GET' });
-      return response.status < 500;
-    } catch {
-      return false;
-    }
-  });
-
-  ipc.handle('util:check-ws', async (_: unknown, url: string) => {
-    try {
-      return await new Promise<boolean>((resolvePromise) => {
-        let settled = false;
-
-        const settle = (result: boolean, socket?: WsWebSocket, timer?: ReturnType<typeof setTimeout>) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          if (timer) {
-            clearTimeout(timer);
-          }
-          if (socket) {
-            try {
-              socket.close();
-            } catch {
-              /* ignore */
-            }
-          }
-          resolvePromise(result);
-        };
-
-        const socket = new WsWebSocket(url);
-        const timer = setTimeout(() => settle(false, socket), 2000);
-
-        socket.on('open', () => settle(true, socket, timer));
-        socket.on('error', () => settle(false, socket, timer));
-        socket.on('close', () => settle(false, socket, timer));
-      });
-    } catch {
-      return false;
-    }
-  });
 }
 
 /**

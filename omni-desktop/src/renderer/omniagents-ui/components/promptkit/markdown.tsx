@@ -50,5 +50,3 @@ export function Markdown({ className, children, highlight = true, inheritTextCol
     </div>
   );
 }
-
-export default Markdown;
