@@ -1,10 +1,14 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { newDeckChat } from 'tests/e2e/support/app';
+import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
-test('large persisted histories stay isolated while scrolling, streaming and switching tiles', async ({
+// FIXME: seeding below relied on `enqueue_message` with `trigger_run: false`
+// (history without a model turn). omniagents 2b0949a7 dropped that option, so
+// each seeded message now starts a turn and the 752-item snapshot never forms.
+// Needs a non-running history seed path before this can run again.
+test.fixme('large persisted histories stay isolated while scrolling, streaming and switching sessions', async ({
   app,
 }, info) => {
   test.setTimeout(360_000);
@@ -57,18 +61,20 @@ test('large persisted histories stay isolated while scrolling, streaming and swi
     };
   });
   await page.reload();
-  const inputs = page.getByRole('textbox', { name: 'How can I help you today?' });
-  await expect(inputs).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
+  const composer = visibleComposer(page);
+  await expect(composer).toBeVisible({ timeout: 90_000 });
+  const ids: string[] = [];
   for (let i = 0; i < 2; i++) {
     if (i) {
       await newDeckChat(page);
-      await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
+      await expect.poll(() => activeSessionId(page)).not.toBe(ids[0]);
     }
-    const column = page.locator('[data-deck-column]').nth(i);
-    await inputs.nth(i).fill(`LARGE_HISTORY_${i}`);
-    await inputs.nth(i).press('Enter');
-    await expect(column.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
+    ids.push(await activeSessionId(page));
+    await composer.fill(`LARGE_HISTORY_${i}`);
+    await composer.press('Enter');
+    await expect(sessionPane(page, ids[i]!).getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({
+      timeout: 90_000,
+    });
   }
   const sessions = await page.evaluate(() => (window as any).historyAudit.sessions() as string[]);
   expect(sessions).toHaveLength(2);
@@ -99,54 +105,53 @@ test('large persisted histories stay isolated while scrolling, streaming and swi
       )
       .toBeGreaterThanOrEqual(752);
     // These must arrive live too, not only after snapshot hydration.
+    await openSession(page, `LARGE_HISTORY_${owner}`);
     await expect(
-      page.locator('[data-deck-column]').nth(owner).getByRole('log').getByText(`HISTORY_${owner}_0749`, { exact: true })
+      sessionPane(page, ids[owner]!).getByRole('log').getByText(`HISTORY_${owner}_0749`, { exact: true })
     ).toHaveCount(1);
   }
   const hydrateStart = Date.now();
   await page.reload();
-  await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-  const columns = [0, 1].map((i) => page.locator('[data-deck-column]').nth(i));
+  const columns = ids.map((id) => sessionPane(page, id));
   for (let i = 0; i < 2; i++) {
+    await openSession(page, `LARGE_HISTORY_${i}`);
     await expect(columns[i]!.getByRole('log').getByText(`HISTORY_${i}_0749`, { exact: true })).toHaveCount(1, {
       timeout: 90_000,
     });
     await expect(columns[i]!.getByRole('log')).not.toContainText(`HISTORY_${1 - i}_`);
     await expect(columns[i]!.getByRole('log').getByText(new RegExp(`^HISTORY_${i}_\\d{4}$`))).toHaveCount(750);
-    await expect(columns[i]!.getByRole('textbox')).toBeEditable();
+    await expect(composer).toBeEditable();
   }
   const hydrateMs = Date.now() - hydrateStart;
-  await columns[0]!.getByRole('textbox').fill('SOAK_LARGE_HISTORY WAIT_FOR_SESSION_A');
+  await openSession(page, 'LARGE_HISTORY_0');
+  await composer.fill('SOAK_LARGE_HISTORY WAIT_FOR_SESSION_A');
   await columns[0]!.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(columns[0]!.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   const logA = columns[0]!.getByRole('log');
   await logA.hover();
   await page.mouse.wheel(0, -200000);
   await expect(logA.getByText('HISTORY_0_0000', { exact: true })).toBeInViewport();
-  await columns[1]!.getByRole('textbox').fill('second tile draft during long-history stream');
+  await openSession(page, 'LARGE_HISTORY_1');
+  await composer.fill('second session draft during long-history stream');
   for (let i = 0; i < 3; i++) {
-    await columns[1]!.getByRole('textbox').click();
-    await page.getByRole('radio', { name: 'Focus', exact: true }).click();
-    await expect(inputs).toHaveValue('second tile draft during long-history stream');
-    await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
+    await openSession(page, 'LARGE_HISTORY_0');
+    await openSession(page, 'LARGE_HISTORY_1');
+    await expect(composer).toHaveValue('second session draft during long-history stream');
   }
   await expect(columns[0]!.getByText('SESSION_A_REPLY', { exact: true })).toHaveCount(1, { timeout: 90_000 });
-  // Selecting tile B may pan the horizontal deck and clip A's left-aligned
-  // reply behind the sidebar. Reveal A's outer column without scrolling its
-  // inner transcript (which must still be at the user's reading position).
-  await columns[0]!.scrollIntoViewIfNeeded();
+  await expect(columns[1]!.getByRole('log')).not.toContainText('SESSION_A_REPLY');
+  await openSession(page, 'LARGE_HISTORY_0');
+  // Switching away and back keeps A's reading position.
   await expect(logA.getByText('HISTORY_0_0000', { exact: true })).toBeInViewport();
   await columns[0]!.getByRole('button', { name: 'Jump to latest message', exact: true }).click();
   await expect(logA.getByText('SESSION_A_REPLY', { exact: true })).toBeInViewport();
-  await expect(columns[1]!.getByRole('log')).not.toContainText('SESSION_A_REPLY');
-  await expect(columns[1]!.getByRole('textbox')).toHaveValue('second tile draft during long-history stream');
   await info.attach('history hydration timing', {
     body: JSON.stringify({ items: 1500, hydrateMs }),
     contentType: 'application/json',
   });
   await attachProofPng(
     info,
-    'large histories retain tile ownership through streaming and scroll',
+    'large histories retain session ownership through streaming and scroll',
     await page.screenshot()
   );
 });

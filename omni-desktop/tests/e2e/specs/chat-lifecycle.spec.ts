@@ -94,9 +94,12 @@ test('delivers an attachment when replying to an agent question', async ({ app }
   await expect(composer).toHaveValue('Here is the image');
   // The "Message not sent" toast sits over the composer's Send button at
   // this viewport; dismiss it the way a user would before retrying.
-  const notSent = page.getByRole('region', { name: /Notifications/ }).getByRole('listitem').filter({
-    hasText: 'Message not sent',
-  });
+  const notSent = page
+    .getByRole('region', { name: /Notifications/ })
+    .getByRole('listitem')
+    .filter({
+      hasText: 'Message not sent',
+    });
   await expect(notSent).toBeVisible();
   await notSent.getByRole('button', { name: 'Dismiss' }).click();
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled({ timeout: 90_000 });
@@ -146,7 +149,6 @@ test('restores unsent text and attachment bytes after a renderer restart', async
     .getByRole('button', { name: /^Respond with exactly HOST_FIRST_MESSAGE_READY/ })
     .first()
     .click({ timeout: 90_000 });
-  await page.getByRole('radio', { name: 'Focus', exact: true }).click();
   await expect(composer).toHaveValue('This draft survives restart');
   await expect(page.getByText('restart.txt', { exact: true })).toBeVisible();
   await attachProofPng(testInfo, 'draft and file restored after restart', await app.captureScreenshot());
@@ -162,11 +164,6 @@ test('keeps an in-flight reply and draft with their conversation while switching
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible({ timeout: 240_000 });
   await composer.fill('Unsent draft belongs to A');
   await newDeckChat(page);
-  const focusLayout = page.getByRole('radio', { name: 'Focus', exact: true });
-  if ((await focusLayout.getAttribute('aria-checked')) !== 'true') {
-    await page.getByRole('button', { name: 'Focus New chat', exact: true }).click();
-  }
-  await expect(focusLayout).toHaveAttribute('aria-checked', 'true');
   await expect(composer).toHaveValue('');
   await composer.fill('PROMPT_FOR_SESSION_B');
   await composer.press('Enter');

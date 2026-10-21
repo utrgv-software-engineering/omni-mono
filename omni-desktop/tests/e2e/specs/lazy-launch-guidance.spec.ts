@@ -22,9 +22,7 @@ test.describe('lazy session launch guidance', () => {
     test('explains the prerequisite inline and links to workspace settings', async ({ app }, testInfo) => {
       await waitForChat(app.page);
       await invokeApp(app.page, 'store:set-key', 'workspaceDir', '');
-      await expect(
-        app.page.getByRole('heading', { name: 'Choose a workspace folder to start chatting' })
-      ).toBeVisible();
+      await expect(app.page.getByText('Choose a workspace folder to start chatting', { exact: true })).toBeVisible();
       await expect(app.page.getByPlaceholder('How can I help you today?')).toBeDisabled();
       await captureState(app.page, testInfo, '01-workspace-required');
 
@@ -39,7 +37,7 @@ test.describe('lazy session launch guidance', () => {
 
     test('shows first-message guidance and starts from a suggested prompt', async ({ app }, testInfo) => {
       await waitForChat(app.page);
-      await expect(app.page.getByText(/Your first message starts a session in/)).toBeVisible();
+      await expect(app.page.getByText('Your first message starts a session.', { exact: true })).toBeVisible();
       await expect(app.page.getByRole('button', { name: 'Plan my week' })).toBeVisible();
       await captureState(app.page, testInfo, '03-ready-to-start');
 

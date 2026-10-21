@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { openSpaces } from 'tests/e2e/support/app';
+import { openChat } from 'tests/e2e/support/app';
 import { WebSocketServer } from 'ws';
 
 type TestUpstream = {
@@ -99,12 +99,9 @@ async function startTestUpstream(): Promise<TestUpstream> {
   };
 }
 
-async function openStandaloneBrowser(page: import('@playwright/test').Page): Promise<void> {
-  await openSpaces(page);
-  await page.getByRole('button', { name: 'New' }).first().click();
-  await page.getByRole('menuitem', { name: 'Apps' }).click();
-  await page.getByRole('button', { name: 'Browser' }).click();
-  await expect(page.getByText('Browser').first()).toBeVisible();
+async function openSessionBrowser(page: import('@playwright/test').Page): Promise<void> {
+  await openChat(page);
+  await page.getByRole('radio', { name: 'Browser', exact: true }).click();
   await expect(page.getByPlaceholder('Search or enter URL').first()).toBeVisible();
 }
 
@@ -115,7 +112,7 @@ test.describe('browser/server proxy browser', () => {
     const upstream = await startTestUpstream();
     const upstreamHome = `${upstream.origin}/`;
     try {
-      await openStandaloneBrowser(appPage);
+      await openSessionBrowser(appPage);
       const omnibox = appPage.getByPlaceholder('Search or enter URL').first();
       await omnibox.fill(upstream.origin);
       await omnibox.press('Enter');

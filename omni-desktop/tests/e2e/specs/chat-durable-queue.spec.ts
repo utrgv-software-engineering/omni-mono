@@ -1,5 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { newDeckChat } from 'tests/e2e/support/app';
+import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -12,10 +12,9 @@ for (const dispatched of [false, true]) {
     test.skip(mode !== 'server-local', 'Requires restarting the isolated server and agent together');
     test.setTimeout(240_000);
     let page = app.page;
-    const input = page.getByRole('textbox', { name: 'How can I help you today?' });
+    const input = visibleComposer(page);
     await expect(input).toBeVisible({ timeout: 90_000 });
-    await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-    const columnId = await page.locator('[data-deck-column]').first().getAttribute('data-deck-column');
+    const columnId = await activeSessionId(page);
     await input.fill('TILE_APPROVAL_A');
     await input.press('Enter');
     await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
@@ -28,12 +27,14 @@ for (const dispatched of [false, true]) {
       await expect(page.getByText('Up next', { exact: true })).toHaveCount(0, { timeout: 90_000 });
       await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
     }
-    // A second column, so the checks below can prove the queue never leaks into it.
+    // A second chat, so the checks below can prove the queue never leaks into it.
     await newDeckChat(page);
     await expect(page.locator('[data-deck-column]')).toHaveCount(2);
+    await openSession(page, 'TILE_APPROVAL_A');
     await attachProofPng(info, 'queue before process death', await app.captureScreenshot());
     page = await app.restart({ crash: true });
-    const restored = page.locator(`[data-deck-column="${columnId}"]`);
+    const restored = sessionPane(page, columnId);
+    await openSession(page, 'TILE_APPROVAL_A');
     await expect(restored.getByRole('textbox', { name: 'How can I help you today?' })).toBeEditable({
       timeout: 90_000,
     });
@@ -55,6 +56,7 @@ for (const dispatched of [false, true]) {
     await expect(other.getByText('Up next', { exact: true })).toHaveCount(0);
     await attachProofPng(info, 'durable queue after process death', await app.captureScreenshot());
     await page.reload();
+    await openSession(page, 'TILE_APPROVAL_A');
     await expect(restored.getByText('Up next', { exact: true })).toBeVisible({ timeout: 90_000 });
     await expect(restored.getByRole('alert')).toHaveCount(0);
     if (dispatched) {

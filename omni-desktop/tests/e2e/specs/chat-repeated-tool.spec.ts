@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { activeSessionId, sessionPane } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -7,9 +8,7 @@ test('preserves separate tool calls when the provider reuses an ID in later runs
   test.setTimeout(240_000);
   const page = app.page;
   await expect(page.getByRole('textbox')).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-  const id = await page.locator('[data-deck-column]').first().getAttribute('data-deck-column');
-  const tile = page.locator(`[data-deck-column="${id}"]`);
+  const tile = sessionPane(page, await activeSessionId(page));
   for (const run of [1, 2]) {
     await tile.getByRole('textbox').fill(`REPEAT_TOOL_${run}`);
     await tile.getByRole('textbox').press('Enter');

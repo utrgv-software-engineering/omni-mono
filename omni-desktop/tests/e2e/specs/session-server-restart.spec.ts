@@ -1,5 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { newDeckChat } from 'tests/e2e/support/app';
+import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -12,37 +12,38 @@ for (const crash of [false, true]) {
     test.skip(mode !== 'server-local', 'This audit restarts the launcher server and its child agent runtime');
     test.setTimeout(240_000);
     let page = app.page;
-    const input = page.getByRole('textbox', { name: 'How can I help you today?' });
-    await expect(input).toBeVisible({ timeout: 90_000 });
-    await input.fill('TILE_APPROVAL_A');
-    await input.press('Enter');
+    const composer = visibleComposer(page);
+    await expect(composer).toBeVisible({ timeout: 90_000 });
+    const aId = await activeSessionId(page);
+    await composer.fill('TILE_APPROVAL_A');
+    await composer.press('Enter');
     await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
     await newDeckChat(page);
-    await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-    const columns = page.locator('[data-deck-column]');
-    await expect(columns).toHaveCount(2);
-    const ids = await columns.evaluateAll((els) => els.map((el) => el.getAttribute('data-deck-column')));
-    const b = columns.nth(1);
-    await b.getByRole('textbox', { name: 'How can I help you today?' }).fill('TILE_QUESTION_B');
-    await b.getByRole('textbox', { name: 'How can I help you today?' }).press('Enter');
-    await expect(b.getByText('Question for tile B', { exact: true })).toBeVisible({ timeout: 90_000 });
+    await expect.poll(() => activeSessionId(page)).not.toBe(aId);
+    const bId = await activeSessionId(page);
+    await composer.fill('TILE_QUESTION_B');
+    await composer.press('Enter');
+    await expect(sessionPane(page, bId).getByText('Question for tile B', { exact: true })).toBeVisible({
+      timeout: 90_000,
+    });
     await attachProofPng(testInfo, 'pending before full server restart', await app.captureScreenshot());
 
     // Stops the isolated launcher process group (including its child agent),
     // then starts fresh processes using the same isolated on-disk profile.
     page = await app.restart({ crash });
-    const restoredA = page.locator(`[data-deck-column="${ids[0]}"]`);
-    const restoredB = page.locator(`[data-deck-column="${ids[1]}"]`);
-    for (const column of [restoredA, restoredB]) {
-      await expect(column.getByRole('textbox', { name: 'How can I help you today?' })).toBeEditable({
-        timeout: 90_000,
-      });
-    }
-    await expect(restoredA.getByRole('log')).toContainText('TILE_APPROVAL_A');
+    const restoredA = sessionPane(page, aId);
+    const restoredB = sessionPane(page, bId);
+    const restoredComposer = visibleComposer(page);
+    await openSession(page, 'TILE_QUESTION_B');
+    await expect(restoredComposer).toBeEditable({ timeout: 90_000 });
     await expect(restoredB.getByRole('log')).toContainText('TILE_QUESTION_B');
+    // A dead server-side waiter leaves nothing running.
+    await expect(restoredB.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+    await openSession(page, 'TILE_APPROVAL_A');
+    await expect(restoredComposer).toBeEditable({ timeout: 90_000 });
+    await expect(restoredA.getByRole('log')).toContainText('TILE_APPROVAL_A');
     await attachProofPng(testInfo, 'recovered after full server restart', await app.captureScreenshot());
     // A dead server-side waiter cannot support an actionable approval card.
-    await expect(restoredB.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
     const approve = restoredA.getByRole('button', { name: 'Approve Once', exact: true });
     await expect.soft(approve).toHaveCount(0);
     if (await approve.isVisible()) {

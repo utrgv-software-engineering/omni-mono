@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { activeSessionId, openChat, openSession, sessionPane } from 'tests/e2e/support/app';
+import { invokeApp } from 'tests/e2e/support/invoke';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({
@@ -85,6 +87,10 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
   await page.reload();
 
   const archive = async (column: Locator) => {
+    const id = await column.getAttribute('data-deck-column');
+    if (id !== (await activeSessionId(page))) {
+      await invokeApp(page, 'store:chat-command', { method: 'setActiveTab', args: [id] });
+    }
     await column.getByRole('button', { name: 'Session menu', exact: true }).click();
     await page.getByRole('menuitem', { name: 'Archive session', exact: true }).click();
     await expect(column).toHaveCount(0, { timeout: 90_000 });
@@ -94,42 +100,45 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
     do {
       cycle++;
       const prefix = `SOAK_${String(cycle).padStart(4, '0')}`;
-      console.log('CHAT_SOAK_PHASE', cycle, 'create mixed tiles');
+      console.log('CHAT_SOAK_PHASE', cycle, 'create mixed sessions');
       const prompts = [
         `${prefix}_A TILE_UI_A WAIT_FOR_SESSION_A`,
         `${prefix}_B TILE_QUESTION_B`,
         `${prefix}_C TILE_APPROVAL_C`,
       ];
       const ids: string[] = [];
-      await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
+      const show = (owner: number) => openSession(page, prompts[owner]!);
       for (let owner = 0; owner < 3; owner++) {
-        if (owner > 0 || (await textbox(page).count()) !== 1 || (await textbox(page).inputValue())) {
-          await page
-            .getByRole('list', { name: 'Surfaces' })
-            .getByRole('button', { name: 'New chat', exact: true })
-            .click();
-        }
-        const column = page.locator('[data-deck-column]').last();
+        // Sidebar "New chat" reuses a pristine chat, so no empty chats pile up.
+        await openChat(page);
+        const column = sessionPane(page, await activeSessionId(page));
         await expect(textbox(column)).toBeEditable({ timeout: 90_000 });
         ids.push((await column.getAttribute('data-deck-column'))!);
         await textbox(column).fill(prompts[owner]!);
         await textbox(column).press('Enter');
       }
-      const [a, b, c] = ids.map((id) => page.locator(`[data-deck-column="${id}"]`)) as [Locator, Locator, Locator];
+      const [a, b, c] = ids.map((id) => sessionPane(page, id)) as [Locator, Locator, Locator];
+      await show(0);
       await expect(a.getByText('A_ARTIFACT_initial', { exact: true })).toBeVisible({ timeout: 120_000 });
+      await show(1);
       await expect(b.getByText('Question for tile B', { exact: true })).toBeVisible({ timeout: 90_000 });
+      await show(2);
       await expect(c.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
+      await show(1);
       await textbox(b).fill(`${prefix}_B_DRAFT`);
       await b
         .locator('input[type="file"]')
         .setInputFiles({ name: `${prefix}_B.txt`, mimeType: 'text/plain', buffer: Buffer.from(prefix) });
       await page.evaluate(() => (window as any).soakDisconnect());
+      await show(0);
       await expect(textbox(a)).toBeEditable({ timeout: 90_000 });
       await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
       await a.getByRole('button', { name: /GPT 5\.2 E2E/ }).click();
       await page.getByRole('menuitemradio', { name: /GPT 5\.2 Mini E2E/ }).click();
       await expect(a.getByRole('button', { name: /GPT 5\.2 Mini E2E/ })).toBeVisible();
+      await show(1);
       await expect(b.getByRole('button', { name: /GPT 5\.2 E2E/ })).toBeVisible();
+      await show(0);
       const accepted = `${prefix}_ACCEPTED`;
       await textbox(a).fill(accepted);
       await textbox(a).press('Enter');
@@ -140,20 +149,19 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
       expect(app.inspectModelRequests().filter((request) => request.marker === accepted)).toEqual([
         { marker: accepted, model: 'gpt-5.2-mini' },
       ]);
-      await a.getByRole('button', { name: /^Reorder / }).focus();
-      await page.keyboard.press('Space');
-      await page.keyboard.press('ArrowRight');
-      await page.keyboard.press('Space');
       if (cycle % Number(process.env.OMNI_CHAT_SOAK_RELOAD_EVERY ?? 7) === 0) {
         await page.reload();
       }
+      await show(1);
       await expect(textbox(b)).toHaveValue(`${prefix}_B_DRAFT`, { timeout: 90_000 });
       await expect(b.getByText(`${prefix}_B.txt`, { exact: true }).first()).toBeVisible();
+      await show(0);
       await expect(a.getByRole('log').getByText(accepted, { exact: true })).toHaveCount(1);
       await expect(a.getByText('A_ARTIFACT_initial', { exact: true })).toHaveCount(1);
       await expect(a.getByText('A_PLAN_initial', { exact: true }).first()).toBeVisible();
       for (let owner = 0; owner < 3; owner++) {
         const column = [a, b, c][owner]!;
+        await show(owner);
         for (let other = 0; other < 3; other++) {
           if (other !== owner) {
             await expect(column.getByRole('log')).not.toContainText(prompts[other]!);
@@ -173,24 +181,29 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
         .last();
       await row.getByRole('button', { name: 'Restore', exact: true }).click();
       await page.keyboard.press('Escape');
-      await page.getByRole('list', { name: 'Recents' }).getByRole('button', { name: prompts[2]!, exact: true }).click();
+      await show(2);
       await expect
         .poll(() => app.storedTabs().find((tab) => tab.sessionId === original.sessionId)?.id)
         .not.toBeUndefined();
       const restored = app.storedTabs().find((tab) => tab.sessionId === original.sessionId)!;
-      const restoredC = page.locator(`[data-deck-column="${restored.id}"]`);
+      const restoredC = sessionPane(page, restored.id);
       await expect(restoredC.getByRole('log')).toContainText(prompts[2]!);
       await expect(restoredC.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
-      await expect(b.getByText('Question for tile B', { exact: true })).toBeVisible();
       await textbox(restoredC).fill(`${prefix}_RESTORED`);
       await textbox(restoredC).press('Enter');
       await expect(restoredC.getByRole('log')).toContainText('HOST_FIRST_MESSAGE_READY', { timeout: 90_000 });
       await expect(restoredC.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+      await show(1);
       await expect(b.getByText('Question for tile B', { exact: true })).toBeVisible();
       const { workerPids, ...resources } = app.inspectRuntimeResources();
       if (cycle === 1 || cycle % 5 === 0) {
-        for (const [owner, column] of [a, b, restoredC].entries()) {
-          await attachProofPng(testInfo, `${prefix} owner ${owner} isolated conversation`, await column.screenshot());
+        for (let owner = 0; owner < 3; owner++) {
+          await show(owner);
+          await attachProofPng(
+            testInfo,
+            `${prefix} owner ${owner} isolated conversation`,
+            await app.captureScreenshot()
+          );
         }
       }
       const hosts = [...app.runtimePids(), ...workerPids];
@@ -201,13 +214,13 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
         page = await app.restart({ crash: true, backendOnly: true });
         expect(page).toBe(previousPage);
         await expect.poll(() => hosts.every(dead), { timeout: 90_000 }).toBe(true);
-        await expect(textbox(page.locator(`[data-deck-column="${ids[1]}"]`))).toHaveValue(`${prefix}_B_DRAFT`, {
+        await show(1);
+        await expect(textbox(sessionPane(page, ids[1]!))).toHaveValue(`${prefix}_B_DRAFT`, {
           timeout: 90_000,
         });
-        await expect(
-          page.locator(`[data-deck-column="${ids[1]}"]`).getByText(`${prefix}_B.txt`, { exact: true }).first()
-        ).toBeVisible();
-        const resumedC = page.locator(`[data-deck-column="${cId}"]`);
+        await expect(sessionPane(page, ids[1]!).getByText(`${prefix}_B.txt`, { exact: true }).first()).toBeVisible();
+        await show(2);
+        const resumedC = sessionPane(page, cId);
         await expect(textbox(resumedC)).toBeEditable({ timeout: 90_000 });
         await textbox(resumedC).fill(`${prefix}_AFTER_CRASH`);
         await textbox(resumedC).press('Enter');
@@ -217,18 +230,18 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
       }
       console.log('CHAT_SOAK_PHASE', cycle, 'retire all owners');
       for (const id of [ids[0]!, ids[1]!, cId]) {
-        await archive(page.locator(`[data-deck-column="${id}"]`));
+        await archive(sessionPane(page, id));
       }
-      // Backend restart/reload can introduce an extra empty draft column.
+      // Backend restart/reload can introduce an extra empty draft chat.
       // Retire those through the same user action so the harness itself does
       // not accumulate deliberately open, unused chats between cycles.
       const extras = app.storedTabs().slice(1);
       for (const tab of extras) {
-        await archive(page.locator(`[data-deck-column="${tab.id}"]`));
+        await archive(sessionPane(page, tab.id));
       }
       console.log('CHAT_SOAK_PHASE', cycle, 'verify retirement');
       // The targetless product-management consumer intentionally shares a
-      // host with chat tiles, so a host may stay alive, but retired chats
+      // host with chats, so a host may stay alive, but retired chats
       // must not leave per-session workers behind.
       await expect.poll(() => app.inspectRuntimeResources().childProcesses, { timeout: 30_000 }).toBe(0);
       const idle = app.inspectRuntimeResources();

@@ -1,10 +1,12 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { newDeckChat } from 'tests/e2e/support/app';
+import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
-test('keeps generated plans and artifacts in their tile through updates and reconnect', async ({ app }, testInfo) => {
+test('keeps generated plans and artifacts in their session through updates and reconnect', async ({
+  app,
+}, testInfo) => {
   test.setTimeout(360_000);
   const page = app.page;
   // Track real sockets so reconnect exercises the normal event replay path.
@@ -47,42 +49,43 @@ test('keeps generated plans and artifacts in their tile through updates and reco
       return count;
     };
   });
-  const inputs = page.getByRole('textbox', { name: 'How can I help you today?' });
-  await expect(inputs).toBeVisible({ timeout: 90_000 });
-  await inputs.fill('TILE_UI_A');
-  await inputs.press('Enter');
+  const composer = visibleComposer(page);
+  await expect(composer).toBeVisible({ timeout: 90_000 });
+  const aId = await activeSessionId(page);
+  await composer.fill('TILE_UI_A');
+  await composer.press('Enter');
   await newDeckChat(page);
-  await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-  await expect(inputs).toHaveCount(2);
-  const columns = page.locator('[data-deck-column]');
-  const a = columns.nth(0);
-  const b = columns.nth(1);
-  await inputs.nth(1).fill('TILE_UI_B');
-  await inputs.nth(1).press('Enter');
-  for (const [column, id] of [
-    [a, 'A'],
-    [b, 'B'],
-  ] as const) {
+  await expect.poll(() => activeSessionId(page)).not.toBe(aId);
+  const bId = await activeSessionId(page);
+  const a = sessionPane(page, aId);
+  const b = sessionPane(page, bId);
+  await composer.fill('TILE_UI_B');
+  await composer.press('Enter');
+  const sessions = [
+    [a, 'A', 'TILE_UI_A'],
+    [b, 'B', 'TILE_UI_B'],
+  ] as const;
+  for (const [column, id, title] of sessions) {
+    await openSession(page, title);
     await expect(column.getByText(`${id}_ARTIFACT_initial`, { exact: true })).toBeVisible({ timeout: 240_000 });
     await expect(column.getByText(`${id}_PLAN_initial`, { exact: true }).first()).toBeVisible({ timeout: 90_000 });
     await expect(column).not.toContainText(`${id === 'A' ? 'B' : 'A'}_ARTIFACT_initial`);
     await expect(column).not.toContainText(`${id === 'A' ? 'B' : 'A'}_PLAN_initial`);
+    await attachProofPng(testInfo, `${id} initial plan and artifact`, await app.captureScreenshot());
   }
-  await attachProofPng(testInfo, 'separate initial plans and artifacts', await app.captureScreenshot());
-  for (const input of [inputs.nth(0), inputs.nth(1)]) {
-    await input.fill('UPDATE_TILE_UI');
-    await input.press('Enter');
+  for (const [, , title] of sessions) {
+    await openSession(page, title);
+    await composer.fill('UPDATE_TILE_UI');
+    await composer.press('Enter');
   }
-  for (const [column, id] of [
-    [a, 'A'],
-    [b, 'B'],
-  ] as const) {
+  for (const [column, id, title] of sessions) {
+    await openSession(page, title);
     await expect(column.getByText(`${id}_ARTIFACT_updated`, { exact: true })).toBeVisible({ timeout: 90_000 });
     await expect(column.getByText(`${id}_PLAN_updated`, { exact: true }).first()).toBeVisible({ timeout: 90_000 });
     await expect(column.getByText(`${id}_ARTIFACT_initial`, { exact: true })).toHaveCount(0);
     await column.getByRole('button', { name: 'Maximize', exact: true }).click();
     await expect(column.getByText(`${id}_ARTIFACT_updated`, { exact: true })).toBeVisible();
-    await attachProofPng(testInfo, `${id} artifact expanded within its tile`, await app.captureScreenshot());
+    await attachProofPng(testInfo, `${id} artifact expanded within its session`, await app.captureScreenshot());
     await column.getByRole('button', { name: 'Restore', exact: true }).click();
   }
   const connectionCount = await page.evaluate(() => (window as any).disconnectTileSockets());
@@ -90,12 +93,9 @@ test('keeps generated plans and artifacts in their tile through updates and reco
   await expect
     .poll(() => page.evaluate(() => (window as any).openTileSockets()), { timeout: 90_000 })
     .toBe(connectionCount);
-  await expect(inputs.nth(0)).toBeEditable({ timeout: 90_000 });
-  await expect(inputs.nth(1)).toBeEditable({ timeout: 90_000 });
-  for (const [column, id] of [
-    [a, 'A'],
-    [b, 'B'],
-  ] as const) {
+  for (const [column, id, title] of sessions) {
+    await openSession(page, title);
+    await expect(composer).toBeEditable({ timeout: 90_000 });
     await expect(column.getByText(`${id}_ARTIFACT_updated`, { exact: true })).toHaveCount(1);
     await expect(column.getByText(`${id}_PLAN_updated`, { exact: true }).first()).toBeVisible();
     await expect(column).not.toContainText(`${id === 'A' ? 'B' : 'A'}_ARTIFACT_updated`);
@@ -104,7 +104,7 @@ test('keeps generated plans and artifacts in their tile through updates and reco
   await attachProofPng(testInfo, 'updated plans and artifacts after reconnect', await app.captureScreenshot());
   await expect.poll(() => page.evaluate(() => (window as any).interruptedTiles())).toBe(2);
 
-  // A same-ID artifact in the other tile must never become the scroll target.
+  // A same-ID artifact in the other session must never become the scroll target.
   await page.evaluate(() => {
     const original = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = function (options) {
@@ -114,45 +114,18 @@ test('keeps generated plans and artifacts in their tile through updates and reco
       original.call(this, options);
     };
   });
-  const aId = await a.getAttribute('data-deck-column');
-  const bId = await b.getAttribute('data-deck-column');
+  await openSession(page, 'TILE_UI_B');
   await b.getByRole('button', { name: 'Toggle artifacts', exact: true }).click();
   await b.getByRole('button', { name: 'B artifact', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).artifactScrollOwner)).toBe(bId);
-  await inputs.nth(0).fill('Focused draft A');
-  await a.getByRole('button', { name: 'Reorder TILE_UI_A', exact: true }).focus();
-  await page.keyboard.press('Control+e');
-  await expect(a.getByRole('button', { name: 'Collapse column', exact: true })).toBeVisible();
-  await expect(b.getByRole('button', { name: 'Expand column', exact: true })).toBeVisible();
-  await page.keyboard.press('Control+e');
-  await expect(a.getByRole('button', { name: 'Expand column', exact: true })).toBeVisible();
-  await page.getByRole('radio', { name: 'Focus', exact: true }).click();
-  await expect(inputs).toHaveValue('Focused draft A');
-  await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-  await expect(a.getByRole('button', { name: 'Toggle artifacts', exact: true })).toBeVisible();
-  await expect(b.getByRole('button', { name: 'Toggle artifacts', exact: true })).toBeVisible();
-  await a.getByRole('button', { name: 'Reorder TILE_UI_A', exact: true }).focus();
-  await page.keyboard.press('Space');
-  await page.keyboard.press('ArrowRight');
-  await page.keyboard.press('Space');
-  await expect(columns.nth(1)).toHaveAttribute('data-deck-column', aId!);
-  await expect(
-    page.locator(`[data-deck-column="${aId}"]`).getByRole('button', { name: 'Toggle artifacts', exact: true })
-  ).toBeVisible();
-  await expect(
-    page.locator(`[data-deck-column="${bId}"]`).getByRole('button', { name: 'Toggle artifacts', exact: true })
-  ).toBeVisible();
-  await attachProofPng(
-    testInfo,
-    'scoped navigation focus and reordered header controls',
-    await app.captureScreenshot()
-  );
+  await openSession(page, 'TILE_UI_A');
+  await composer.fill('Focused draft A');
+  await openSession(page, 'TILE_UI_B');
+  await openSession(page, 'TILE_UI_A');
+  await expect(composer).toHaveValue('Focused draft A');
   await page.reload();
-  for (const [columnId, id] of [
-    [aId, 'A'],
-    [bId, 'B'],
-  ] as const) {
-    const column = page.locator(`[data-deck-column="${columnId}"]`);
+  for (const [column, id, title] of sessions) {
+    await openSession(page, title);
     await expect(column.getByText(`${id}_ARTIFACT_updated`, { exact: true })).toBeVisible({ timeout: 90_000 });
     await expect(column.getByText(`${id}_ARTIFACT_updated`, { exact: true })).toHaveCount(1);
     await expect(column.getByText(`${id}_PLAN_updated`, { exact: true }).first()).toBeVisible();

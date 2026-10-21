@@ -1,11 +1,14 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { newDeckChat } from 'tests/e2e/support/app';
+import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
 for (const scenario of ['stream', 'approval', 'artifact'] as const) {
-  test(`background tile owns ${scenario} through focus, resize and native minimize`, async ({ app, mode }, info) => {
+  test(`background session owns ${scenario} through switching, resize and native minimize`, async ({
+    app,
+    mode,
+  }, info) => {
     test.setTimeout(240_000);
     const page = app.page;
     await page.addInitScript(() => {
@@ -38,22 +41,23 @@ for (const scenario of ['stream', 'approval', 'artifact'] as const) {
       };
     });
     await page.reload();
-    const inputs = page.getByRole('textbox', { name: 'How can I help you today?' });
-    await expect(inputs).toBeVisible({ timeout: 90_000 });
-    await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
+    const composer = visibleComposer(page);
+    await expect(composer).toBeVisible({ timeout: 90_000 });
+    const ids: string[] = [];
     for (let index = 0; index < 2; index++) {
       if (index) {
         await newDeckChat(page);
-        await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
+        await expect.poll(() => activeSessionId(page)).not.toBe(ids[0]);
       }
-      const column = page.locator('[data-deck-column]').nth(index);
-      await column.getByRole('textbox').fill(`BACKGROUND_${index}`);
-      await column.getByRole('textbox').press('Enter');
-      await expect(column.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
+      ids.push(await activeSessionId(page));
+      await composer.fill(`BACKGROUND_${index}`);
+      await composer.press('Enter');
+      await expect(sessionPane(page, ids[index]!).getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({
+        timeout: 90_000,
+      });
     }
-    const a = page.locator('[data-deck-column]').nth(0);
-    const b = page.locator('[data-deck-column]').nth(1);
-    await b.getByRole('textbox').fill('independent background-check draft');
+    const a = sessionPane(page, ids[0]!);
+    const b = sessionPane(page, ids[1]!);
     const prompt =
       scenario === 'stream'
         ? 'SOAK_BACKGROUND WAIT_FOR_SESSION_A'
@@ -62,11 +66,12 @@ for (const scenario of ['stream', 'approval', 'artifact'] as const) {
           : 'TILE_UI_A';
     const marker =
       scenario === 'stream' ? 'SESSION_A_REPLY' : scenario === 'approval' ? 'TILE_APPROVAL_A' : 'A_ARTIFACT_initial';
-    await a.getByRole('textbox').fill(`${prompt} BACKGROUND_LIFECYCLE_GATE`);
-    await a.getByRole('textbox').press('Enter');
-    await b.getByRole('textbox').click();
-    await page.getByRole('radio', { name: 'Focus', exact: true }).click();
-    await expect(inputs).toHaveValue('independent background-check draft');
+    await openSession(page, 'BACKGROUND_0');
+    await composer.fill(`${prompt} BACKGROUND_LIFECYCLE_GATE`);
+    await composer.press('Enter');
+    // A now works in the background while B is shown with its own draft.
+    await openSession(page, 'BACKGROUND_1');
+    await composer.fill('independent background-check draft');
     await app.resizeWindow(1100, 800);
     if (mode === 'electron-local') {
       await app.setMinimized(true);
@@ -90,21 +95,19 @@ for (const scenario of ['stream', 'approval', 'artifact'] as const) {
       }
     }
     await app.resizeWindow(1920, 1080);
-    await expect(inputs).toHaveValue('independent background-check draft');
+    await expect(composer).toHaveValue('independent background-check draft');
     await expect(page.getByText(marker, { exact: true })).not.toBeVisible();
+    await expect(b).not.toContainText(marker);
     if (scenario === 'approval') {
       await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
     }
-    await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-    await a.scrollIntoViewIfNeeded();
+    await openSession(page, 'BACKGROUND_0');
     if (scenario === 'approval') {
       await expect(a.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible();
-      await expect(b.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
       await a.getByRole('button', { name: 'Approve Once', exact: true }).click();
       await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
     } else {
       await expect(a.getByText(marker, { exact: true })).toBeVisible({ timeout: 90_000 });
-      await expect(b).not.toContainText(marker);
     }
     if (scenario === 'artifact') {
       await expect(a.getByText('A_PLAN_initial', { exact: true }).first()).toBeVisible();
@@ -112,7 +115,8 @@ for (const scenario of ['stream', 'approval', 'artifact'] as const) {
       await a.getByRole('button', { name: 'A artifact', exact: true }).click();
       await expect(a.getByText(marker, { exact: true })).toBeVisible();
     }
-    await expect(b.getByRole('textbox')).toHaveValue('independent background-check draft');
-    await attachProofPng(info, `background ${scenario} retains its tile`, await app.captureScreenshot());
+    await attachProofPng(info, `background ${scenario} retains its session`, await app.captureScreenshot());
+    await openSession(page, 'BACKGROUND_1');
+    await expect(composer).toHaveValue('independent background-check draft');
   });
 }

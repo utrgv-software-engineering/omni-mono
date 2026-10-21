@@ -535,6 +535,7 @@ const CodeSessionPane = memo(
         )}
         inert={!isVisible}
         aria-hidden={!isVisible}
+        data-deck-column={tab.id}
       >
         <ColumnAura tabId={tab.id} />
         <CodeSessionHeader

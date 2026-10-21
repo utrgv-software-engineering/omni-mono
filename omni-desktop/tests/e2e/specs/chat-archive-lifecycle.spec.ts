@@ -1,31 +1,28 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { newDeckChat } from 'tests/e2e/support/app';
+import { activeSessionId, newDeckChat, openSession, sessionPane, visibleComposer } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
-test('archives one active tile without stopping its neighbor, including a lost archive reply', async ({
+test('archives one active session without stopping its neighbor, including a lost archive reply', async ({
   app,
   mode,
 }, testInfo) => {
   test.setTimeout(360_000);
   const page = app.page;
-  const inputs = page.getByRole('textbox', { name: 'How can I help you today?' });
-  await expect(inputs).toBeVisible({ timeout: 90_000 });
-  await inputs.fill('TILE_APPROVAL_A');
-  await inputs.press('Enter');
+  const composer = visibleComposer(page);
+  await expect(composer).toBeVisible({ timeout: 90_000 });
+  const ownerId = await activeSessionId(page);
+  await composer.fill('TILE_APPROVAL_A');
+  await composer.press('Enter');
   await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 240_000 });
-  await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-  const ownerId = await page.locator('[data-deck-column]').first().getAttribute('data-deck-column');
   const original = app.storedTabs().find((tab) => tab.id === ownerId)!;
-  const a = page.locator(`[data-deck-column="${ownerId}"]`);
+  const a = sessionPane(page, ownerId);
   await newDeckChat(page);
-  await expect(inputs).toHaveCount(2);
-  const b = page
-    .locator('[data-deck-column]')
-    .filter({ hasNot: page.getByRole('log').filter({ hasText: 'TILE_APPROVAL_A' }) });
-  await b.getByRole('textbox', { name: 'How can I help you today?' }).fill('TILE_APPROVAL_B');
-  await b.getByRole('textbox', { name: 'How can I help you today?' }).press('Enter');
+  await expect.poll(() => activeSessionId(page)).not.toBe(ownerId);
+  const b = sessionPane(page, await activeSessionId(page));
+  await composer.fill('TILE_APPROVAL_B');
+  await composer.press('Enter');
   await expect(b.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
   if (mode === 'server-local') {
     await page.evaluate(() => {
@@ -57,23 +54,24 @@ test('archives one active tile without stopping its neighbor, including a lost a
       };
     });
   }
+  await openSession(page, 'TILE_APPROVAL_A');
   await a.getByRole('button', { name: 'Session menu', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Archive session', exact: true }).click();
   await expect(a).toHaveCount(0, { timeout: 90_000 });
+  await openSession(page, 'TILE_APPROVAL_B');
   await expect(b.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Archived sessions', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Restore', exact: true }).click();
   await expect(page.getByRole('dialog')).toContainText('No archived sessions');
   await page.keyboard.press('Escape');
-  await page.getByRole('button', { name: 'TILE_APPROVAL_A', exact: true }).click();
+  await openSession(page, 'TILE_APPROVAL_A');
   await expect.poll(() => app.storedTabs().find((tab) => tab.sessionId === original.sessionId)?.id).not.toBeUndefined();
   const reopened = app.storedTabs().find((tab) => tab.sessionId === original.sessionId)!;
   expect(reopened.id).not.toBe(original.id);
-  await expect(page.locator(`[data-deck-column="${reopened.id}"]`).getByRole('log')).toContainText('TILE_APPROVAL_A');
-  const restored = page.locator(`[data-deck-column="${reopened.id}"]`);
+  const restored = sessionPane(page, reopened.id);
+  await expect(restored.getByRole('log')).toContainText('TILE_APPROVAL_A');
   await expect(restored.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
   await expect(restored.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
-  await expect(b.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible();
   if (mode === 'server-local') {
     await expect.poll(() => page.evaluate(() => (window as any).archiveReplyDropped), { timeout: 90_000 }).toBe(true);
     await expect
@@ -108,15 +106,13 @@ test('archives one active tile without stopping its neighbor, including a lost a
       )
       .toBe('uninitialized');
   }
-  await attachProofPng(
-    testInfo,
-    'restored tile has no stale approval while neighbor awaits approval',
-    await app.captureScreenshot()
-  );
+  await attachProofPng(testInfo, 'restored session has no stale approval', await app.captureScreenshot());
+  await openSession(page, 'TILE_APPROVAL_B');
   await b.getByRole('button', { name: 'Approve Once', exact: true }).click();
   await expect(b.getByRole('log')).toContainText('HOST_FIRST_MESSAGE_READY', { timeout: 90_000 });
-  await restored.getByRole('textbox', { name: 'How can I help you today?' }).fill('Continue the restored conversation');
-  await restored.getByRole('textbox', { name: 'How can I help you today?' }).press('Enter');
+  await openSession(page, 'TILE_APPROVAL_A');
+  await composer.fill('Continue the restored conversation');
+  await composer.press('Enter');
   await expect(restored.getByRole('log')).toContainText('HOST_FIRST_MESSAGE_READY', { timeout: 90_000 });
   await expect(restored.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
   await attachProofPng(testInfo, 'restored conversation runs again', await app.captureScreenshot());

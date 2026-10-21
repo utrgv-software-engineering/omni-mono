@@ -1,7 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect } from '@playwright/test';
 
-/** The sidebar's fixed rows: New chat and Spaces. */
+/** The sidebar's fixed rows (New chat). */
 export function sidebarSurfaces(page: Page): Locator {
   return page.getByRole('list', { name: 'Surfaces' });
 }
@@ -19,21 +19,32 @@ export function sessionRow(page: Page, name: string | RegExp): Locator {
     .first();
 }
 
-/** Sidebar "New chat": focus the chat surface on a fresh (or reused pristine) chat. */
+/** Sidebar "New chat": show the chat surface on a fresh (or reused pristine) chat. */
 export async function openChat(page: Page): Promise<void> {
   await sidebarSurfaces(page).getByRole('button', { name: 'New chat', exact: true }).click();
-  await expect(page.getByRole('radiogroup', { name: 'Layout' })).toBeVisible();
+  await expect(visibleComposer(page)).toBeVisible({ timeout: 90_000 });
+}
+
+/** A chat session's pane, visible or parked (Focus keeps inactive sessions mounted). */
+export function sessionPane(page: Page, tabId: string): Locator {
+  return page.locator(`[data-deck-column="${tabId}"]`);
+}
+
+/** The id of the chat session currently shown. */
+export async function activeSessionId(page: Page): Promise<string> {
+  const pane = page.locator('[data-deck-column]:not([aria-hidden="true"])');
+  await expect(pane).toHaveCount(1);
+  return (await pane.getAttribute('data-deck-column'))!;
+}
+
+/** Switch the chat surface to a session from the sidebar, by its title. */
+export async function openSession(page: Page, title: string | RegExp): Promise<void> {
+  await sessionRow(page, title).click();
 }
 
 /** Deck header "New chat": always opens another chat column. */
 export async function newDeckChat(page: Page): Promise<void> {
   await page.getByRole('main').getByRole('button', { name: 'New chat', exact: true }).first().click();
-}
-
-export async function openSpaces(page: Page): Promise<void> {
-  const spaces = sidebarSurfaces(page).getByRole('button', { name: 'Spaces', exact: true });
-  await spaces.click();
-  await expect(spaces).toHaveAttribute('data-active', 'true');
 }
 
 export async function openSettings(page: Page): Promise<void> {

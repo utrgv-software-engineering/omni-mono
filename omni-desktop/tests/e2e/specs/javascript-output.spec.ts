@@ -2,6 +2,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { activeSessionId, sessionPane } from 'tests/e2e/support/app';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
@@ -29,11 +30,7 @@ test('JavaScript filters and retrieves an automatically retained nested result',
     .first()
     .click();
   await expect(restored.getByText('JAVASCRIPT_FILTER_READY', { exact: true }).last()).toBeVisible({ timeout: 90_000 });
-  await restored.getByRole('radio', { name: 'Spaces', exact: true }).click();
-  const conversation = restored
-    .locator('[data-deck-column]')
-    .filter({ has: restored.getByText('JAVASCRIPT_FILTER_READY', { exact: true }) })
-    .last();
+  const conversation = sessionPane(restored, await activeSessionId(restored));
   const nextPrompt = conversation.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(nextPrompt).toBeEditable({ timeout: 90_000 });
   await nextPrompt.fill('JAVASCRIPT_RELOAD_PROOF');
@@ -51,11 +48,7 @@ test('JavaScript filters and retrieves an automatically retained nested result',
   await expect(afterSubagent.getByText('JAVASCRIPT_FILTER_READY', { exact: true }).last()).toBeVisible({
     timeout: 90_000,
   });
-  await afterSubagent.getByRole('radio', { name: 'Spaces', exact: true }).click();
-  const restoredConversation = afterSubagent
-    .locator('[data-deck-column]')
-    .filter({ has: afterSubagent.getByText('JAVASCRIPT_FILTER_READY', { exact: true }) })
-    .last();
+  const restoredConversation = sessionPane(afterSubagent, await activeSessionId(afterSubagent));
   const lastPrompt = restoredConversation.getByRole('textbox', { name: 'How can I help you today?' });
   await lastPrompt.fill('JAVASCRIPT_SUBAGENT_RELOAD');
   await lastPrompt.press('Enter');

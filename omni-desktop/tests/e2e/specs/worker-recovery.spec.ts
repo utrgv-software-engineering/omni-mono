@@ -46,7 +46,6 @@ test('recovers an interrupted worker after abrupt runtime death and resumes its 
     .first()
     .click();
   await expect(restored.getByText('WORKER_PARENT_READY', { exact: true }).last()).toBeVisible({ timeout: 90_000 });
-  await restored.getByRole('radio', { name: 'Spaces', exact: true }).click();
   await restored.getByRole('radio', { name: 'Agents', exact: true }).first().click();
   await restored
     .getByText('WORKER_CHILD_HOLD Read worker-input.txt and retain the result.', { exact: true })

@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { activeSessionId, sessionPane } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -14,14 +15,7 @@ for (const reload of [false, true]) {
     await input.fill('TILE_APPROVAL_A');
     await input.press('Enter');
     await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 240_000 });
-    await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
-    const ownerId = await page
-      .locator('[data-deck-column]')
-      .filter({
-        has: page.getByRole('button', { name: 'Approve Once', exact: true }),
-      })
-      .getAttribute('data-deck-column');
-    const owner = page.locator(`[data-deck-column="${ownerId}"]`);
+    const owner = sessionPane(page, await activeSessionId(page));
     if (reload) {
       await page.reload();
       await page

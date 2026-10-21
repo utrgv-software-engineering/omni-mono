@@ -35,7 +35,6 @@ test('retains an aborted attachment across reload and sends its bytes once on re
     .getByRole('button', { name: /^Respond with exactly HOST_FIRST_MESSAGE_READY/ })
     .first()
     .click({ timeout: 90_000 });
-  await page.getByRole('radio', { name: 'Focus', exact: true }).click();
   await expect(input).toHaveValue('ATTACHMENT_RETRY');
   await expect(page.getByText('retained.txt', { exact: true })).toBeVisible();
   await page.evaluate(() => {
