@@ -115,9 +115,6 @@ test('keeps generated plans and artifacts in their session through updates and r
     };
   });
   await openSession(page, 'TILE_UI_B');
-  // KNOWN BUG: the desktop renders chat with uiMinimal, which hides the chat
-  // Header, and the tile-header portal that used to host "Toggle artifacts"
-  // is gone (1c1327c3), so Focus has no way to open the artifacts panel.
   await b.getByRole('button', { name: 'Toggle artifacts', exact: true }).click();
   await b.getByRole('button', { name: 'B artifact', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).artifactScrollOwner)).toBe(bId);
