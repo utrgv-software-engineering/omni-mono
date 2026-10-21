@@ -233,12 +233,12 @@ async def execute_bash(
     try:
         valid_directory = await _ws.current_workspace().is_exec_dir(resolved_cwd)
     except Exception as exc:
-        directory_error = f"Could not check working directory {resolved_cwd!r}: {exc}"
+        directory_error = f"Could not check working directory '{resolved_cwd}': {exc}"
     else:
         directory_error = (
             None
             if valid_directory
-            else f"Working directory does not exist, is not a directory, or is inaccessible: {resolved_cwd!r}."
+            else f"Working directory does not exist, is not a directory, or is inaccessible: '{resolved_cwd}'."
         )
     if directory_error is not None:
         hint = " Omit cwd or pass JSON null to use the workspace directory; otherwise supply an existing directory."

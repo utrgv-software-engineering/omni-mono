@@ -391,7 +391,20 @@ async def test_invalid_cwd_is_actionable_without_launch(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cwd", [None, "null", "with spaces", '"quoted"'])
+@pytest.mark.parametrize(
+    "cwd",
+    [
+        None,
+        "null",
+        "with spaces",
+        pytest.param(
+            '"quoted"',
+            marks=pytest.mark.skipif(
+                sys.platform == "win32", reason='Windows file names cannot contain "'
+            ),
+        ),
+    ],
+)
 async def test_valid_cwd_is_preserved(tmp_path, monkeypatch, cwd):
     if cwd is not None:
         (tmp_path / cwd).mkdir()
