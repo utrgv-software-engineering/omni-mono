@@ -124,8 +124,3 @@ session:
     # prompt: a single big tool output can leap a turn from under-threshold
     # to over the ceiling before the post-turn compaction runs.
     threshold_fraction: 0.8
-
-# Launcher residents select this session profile; regular chats keep workers.
-capability_profiles:
-  resident:
-    workers: swarms

@@ -6,10 +6,27 @@ reviews, completion reviews, recaps, and context compaction inherit that choice.
 Hosted voice uses a compatible realtime model from the same provider; local
 speech remains available independently.
 
-Change the workspace provider in the desktop AI Settings. The confirmation
-explains that continuing conversations sends their history to the new provider.
-Active runs stop before settings change. Existing conversations then use the
-new provider's default model. A missing model or failed provider connection
+In Ink, open `/model`, press `p` for providers, select a provider with the arrow
+keys and Enter, then press `y` to confirm (`n` or Escape cancels). Ink returns
+to the refreshed model picker, where you can select another model from that
+provider. This changes the workspace provider for all projects and agents.
+
+You can also change the workspace provider in desktop AI Settings or with
+`omni model default <provider/model>`. Both require confirmation that continuing
+conversations sends their history to the new provider. For scripts, pass
+`--confirm-provider-change` explicitly. Every CLI provider change requires its
+own confirmation, including `model add --default` and setup.
+
+Local desktop, local browser server, and CLI share the product's `models.json`
+(normally `~/.config/omni_code/models.json`). Desktop settings seed a missing file
+for migration but never overwrite an existing file at startup or on unrelated
+settings saves. Both desktop and CLI replace the file atomically when saving.
+Cloud retains its tenant-scoped settings storage and switching lifecycle.
+
+Local active runs keep a snapshot of their starting model/provider configuration,
+including helper calls and newly spawned child work. Subsequent runs resolve the
+current configuration; existing conversations then use the new provider's default
+model. A missing model or failed provider connection
 never selects a different provider automatically.
 
 Credentials, credential references, endpoints, API versions, and transport

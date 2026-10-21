@@ -13,7 +13,7 @@ def names(spec):
     return {tool.name for cap in spec.resolved_capabilities for tool in cap.tools()}
 
 
-def test_swarm_pack_is_an_alternative_to_workers(tmp_path):
+def test_legacy_swarm_pack_resolves_to_workers(tmp_path):
     target = tmp_path / "omni_code"
     shutil.copytree(ROOT, target, ignore=shutil.ignore_patterns("__pycache__"))
     baseline = build_spec_from_project(
@@ -34,10 +34,10 @@ def test_swarm_pack_is_an_alternative_to_workers(tmp_path):
     alternative = build_spec_from_project(
         load_project(str(target / "project.yml")), agent_key="omni"
     )
-    assert {"create_swarm", "dispatch_swarm_member", "close_swarm"} <= names(
+    assert "spawn_worker" in names(alternative)
+    assert not {"create_swarm", "dispatch_swarm_member", "close_swarm"} & names(
         alternative
     )
-    assert "spawn_worker" not in names(alternative)
     instructions = (
         alternative.get_agent_instructions()
         + "\n"
@@ -45,15 +45,14 @@ def test_swarm_pack_is_an_alternative_to_workers(tmp_path):
             (c.instructions_text or "") for c in alternative.resolved_capabilities
         )
     )
-    assert "## Worker Agents" not in instructions
-    assert "Coding swarms:" in instructions
+    assert "peer_communication" in instructions
     worker = build_spec_from_project(
         load_project(str(target / "project.yml")), agent_key="worker"
     )
     assert not {"spawn_worker", "create_swarm"} & names(worker)
 
 
-def test_resident_profile_selects_swarms_for_text_and_voice_only():
+def test_resident_and_regular_sessions_use_same_workers():
     from types import SimpleNamespace
 
     from omniagents.core.capabilities.profiles import spec_for_capability_profile
@@ -64,8 +63,8 @@ def test_resident_profile_selects_swarms_for_text_and_voice_only():
         resident = spec_for_capability_profile(
             spec, SimpleNamespace(variables={"capability_profile": "resident"})
         )
-        assert "create_swarm" in names(resident)
-        assert "spawn_worker" not in names(resident)
+        assert names(resident) == names(spec)
+        assert "spawn_worker" in names(resident)
         assert "spawn_worker" in names(spec)
         assert "create_swarm" not in names(spec)
     worker = build_spec_from_project(project, agent_key="worker")

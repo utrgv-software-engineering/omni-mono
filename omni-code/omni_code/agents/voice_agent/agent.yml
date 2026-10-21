@@ -69,8 +69,3 @@ context: build_voice_context
 model_config_resolver: resolve_default_model
 realtime_settings_resolver: resolve_voice_realtime_settings
 variables: {}
-
-# Launcher residents select this session profile; regular chats keep workers.
-capability_profiles:
-  resident:
-    workers: swarms
