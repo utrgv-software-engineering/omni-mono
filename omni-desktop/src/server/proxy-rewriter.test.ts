@@ -856,12 +856,10 @@ describe('rewriteStatusUrls', () => {
     const data: Record<string, string | undefined> = {
       uiUrl: 'http://localhost:8082/',
       wsUrl: 'ws://localhost:9000/ws',
-      sandboxUrl: 'http://localhost:3000/sandbox',
     };
     rewriteStatusUrls(data, 'test');
     expect(data.uiUrl).toBe('/proxy/test-uiUrl/');
     expect(data.wsUrl).toBe('/proxy/test-wsUrl/ws');
-    expect(data.sandboxUrl).toBe('/proxy/test-sandboxUrl/sandbox');
   });
 
   it('skips undefined URL fields', () => {
@@ -905,16 +903,10 @@ describe('rewriteStatusUrls', () => {
     const data: Record<string, string | undefined> = {
       uiUrl: 'http://localhost:1001/',
       wsUrl: 'ws://localhost:1002/',
-      sandboxUrl: 'http://localhost:1003/',
-      codeServerUrl: 'http://localhost:1004/',
-      noVncUrl: 'http://localhost:1005/',
     };
     rewriteStatusUrls(data, 'x');
     expect(data.uiUrl).toBe('/proxy/x-uiUrl/');
     expect(data.wsUrl).toBe('/proxy/x-wsUrl/');
-    expect(data.sandboxUrl).toBe('/proxy/x-sandboxUrl/');
-    expect(data.codeServerUrl).toBe('/proxy/x-codeServerUrl/');
-    expect(data.noVncUrl).toBe('/proxy/x-noVncUrl/');
   });
 
   it('ignores non-URL fields in the data object', () => {
@@ -924,28 +916,5 @@ describe('rewriteStatusUrls', () => {
     };
     rewriteStatusUrls(data, 'test');
     expect(data.someOtherField).toBe('http://localhost:9999/should-not-change');
-  });
-
-  it('rewrites entries in the nested services map', () => {
-    const data: Record<string, string | Record<string, string> | undefined> = {
-      uiUrl: 'http://localhost:8082/',
-      services: {
-        code_server: 'http://10.40.1.4:8080/',
-        vnc: 'http://10.40.1.4:6080/vnc.html',
-      },
-    };
-    rewriteStatusUrls(data, 'chat');
-    const services = data.services as Record<string, string>;
-    expect(services.code_server).toBe('/proxy/chat-svc-code_server/');
-    expect(services.vnc).toBe('/proxy/chat-svc-vnc/vnc.html');
-  });
-
-  it('leaves already-proxied service URLs untouched', () => {
-    const data: Record<string, string | Record<string, string> | undefined> = {
-      services: { code_server: '/proxy/chat-svc-code_server/' },
-    };
-    rewriteStatusUrls(data, 'chat');
-    const services = data.services as Record<string, string>;
-    expect(services.code_server).toBe('/proxy/chat-svc-code_server/');
   });
 });

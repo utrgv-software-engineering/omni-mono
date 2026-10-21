@@ -132,38 +132,6 @@ export class ProcessManager {
     this.durableLocalMcpMutations = arg.durableLocalMcpMutations === true;
   }
 
-  /** Try to resolve the git remote URL and current branch from a workspace directory. */
-  private resolveGitRemote(workspaceDir: string): { url: string; branch?: string } | undefined {
-    try {
-      const url = execFileSync('git', ['remote', 'get-url', 'origin'], {
-        cwd: workspaceDir,
-        timeout: 3000,
-        encoding: 'utf-8',
-      }).trim();
-      if (!url) {
-        return undefined;
-      }
-
-      let branch: string | undefined;
-      try {
-        branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-          cwd: workspaceDir,
-          timeout: 3000,
-          encoding: 'utf-8',
-        }).trim();
-        if (branch === 'HEAD') {
-          branch = undefined;
-        } // detached HEAD
-      } catch {
-        /* ignore */
-      }
-
-      return branch ? { url, branch } : { url };
-    } catch {
-      return undefined;
-    }
-  }
-
   private getOrCreate(processId: string, compatibilityKey: string): { proc: AgentProcess; created: boolean } {
     let proc!: AgentProcess;
     const attachment = this.agentHosts.attach(processId, compatibilityKey, () => {
@@ -200,8 +168,7 @@ export class ProcessManager {
   }
 
   private agentHostCompatibilityKey(processId: string, arg: AgentProcessStartArg): string {
-    const credentialScope =
-      (arg.credentials?.length ?? 0) > 0 || Object.keys(arg.gitTokenEnv ?? {}).length > 0 ? processId : 'shared';
+    const credentialScope = Object.keys(arg.gitTokenEnv ?? {}).length > 0 ? processId : 'shared';
     return JSON.stringify({ credentialScope });
   }
 
@@ -227,7 +194,6 @@ export class ProcessManager {
         ...(runtime.defaultCwd ? { defaultCwd: runtime.defaultCwd } : {}),
         ...(runtime.mounts ? { mounts: runtime.mounts } : {}),
         ...(runtime.environmentCapabilities ? { environmentCapabilities: runtime.environmentCapabilities } : {}),
-        services: runtime.services,
       },
     };
   }
@@ -235,7 +201,7 @@ export class ProcessManager {
   private async buildStartArg(opts: AgentProcessStartOptions): Promise<AgentProcessStartArg> {
     // The project path additionally synthesizes a source from the bare
     // workspaceDir (chat scratch dirs, managed project dirs).
-    const sources = this.resolveProjectSources(opts.workspaceDir, opts.projectId, opts.sourceOverrideDir);
+    const sources = this.resolveProjectSources(opts.workspaceDir, opts.projectId);
     const startArg: AgentProcessStartArg = {
       sources,
       workspaceDir: opts.workspaceDir,
@@ -251,39 +217,20 @@ export class ProcessManager {
     }
     // Resolve a stored credential for each private git-remote source, attach the
     // auth hint to the descriptor, and collect the token env (value off-disk).
-    const gitAuth = await this.resolveGitAuth(sources);
-    if (gitAuth) {
-      startArg.gitTokenEnv = gitAuth.env;
-      if (gitAuth.credentials.length > 0) {
-        startArg.credentials = gitAuth.credentials;
-      }
+    const gitTokenEnv = await this.resolveGitAuth(sources);
+    if (gitTokenEnv) {
+      startArg.gitTokenEnv = gitTokenEnv;
     }
     return startArg;
   }
 
   /**
-   * Resolve git credentials for the sandbox, scoped to the hosts the project's
-   * sources actually reference. For each source we determine its remote URL —
-   * a ``git-remote`` carries it directly; a ``local-git`` checkout's is read from
-   * its own ``origin`` — match a stored credential by host, and read the token.
-   *
-   * Returns the `{ tokenEnvName: token }` env map (tokens never touch disk/argv;
-   * only the env-var *name* travels) plus a deduped ``credentials`` bundle
-   * (`{ url, username, tokenEnv }`) the launcher forwards as ``--credential`` so
-   * ``omni serve`` configures git + the host's CLI (`gh` / `az devops`) at boot
-   * for every linked host — covering local-git checkouts, not just clones.
-   *
-   * ``git-remote`` sources additionally get the in-place ``auth`` hint they need
-   * for clone-time auth (the boot pass runs after ``create()``, too late to help
-   * the clone itself).
+   * Match a stored credential to each private ``git-remote`` source by host,
+   * attach the clone-time ``auth`` hint to the descriptor, and return the
+   * `{ tokenEnvName: token }` env map (tokens never touch disk/argv; only the
+   * env-var *name* travels). Local checkouts use the host's own git config.
    */
-  private async resolveGitAuth(sources: AgentProcessSource[]): Promise<
-    | {
-        env: Record<string, string>;
-        credentials: Array<{ url: string; username: string; tokenEnv: string }>;
-      }
-    | undefined
-  > {
+  private async resolveGitAuth(sources: AgentProcessSource[]): Promise<Record<string, string> | undefined> {
     const resolve = this.resolveGitToken;
     if (!resolve) {
       return undefined;
@@ -293,19 +240,11 @@ export class ProcessManager {
       return undefined;
     }
     const env: Record<string, string> = {};
-    const credentials: Array<{ url: string; username: string; tokenEnv: string }> = [];
-    const seen = new Set<string>();
     for (const source of sources) {
-      let url: string | undefined;
-      if (source.kind === 'git-remote') {
-        url = source.repoUrl;
-      } else if (source.kind === 'local-git') {
-        url = this.resolveGitRemote(source.workspaceDir)?.url;
-      }
-      if (!url) {
+      if (source.kind !== 'git-remote') {
         continue;
       }
-      const cred = resolveCredentialForUrl(gitCredentials, url);
+      const cred = resolveCredentialForUrl(gitCredentials, source.repoUrl);
       if (!cred) {
         continue;
       }
@@ -322,16 +261,9 @@ export class ProcessManager {
       }
       const tokenEnv = gitTokenEnvName(cred.id);
       env[tokenEnv] = token;
-      if (source.kind === 'git-remote') {
-        source.auth = { tokenEnv, username: cred.username };
-      }
-      const key = `${tokenEnv}|${url}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        credentials.push({ url, username: cred.username, tokenEnv });
-      }
+      source.auth = { tokenEnv, username: cred.username };
     }
-    return Object.keys(env).length > 0 ? { env, credentials } : undefined;
+    return Object.keys(env).length > 0 ? env : undefined;
   }
 
   /**
@@ -341,11 +273,7 @@ export class ProcessManager {
    * ``.git`` entry, since the launcher's stored ``gitDetected`` flag
    * isn't guaranteed to be fresh for every code path that lands here.
    */
-  private resolveProjectSources(
-    workspaceDir: string,
-    projectId: string | undefined,
-    sourceOverrideDir?: string
-  ): AgentProcessSource[] {
+  private resolveProjectSources(workspaceDir: string, projectId: string | undefined): AgentProcessSource[] {
     // Translate each Project.source (which carries id + mountName) into
     // the AgentProcessSource shape ``omni serve`` understands. Per-source
     // git-detection happens here so the wire format already commits to
@@ -357,14 +285,7 @@ export class ProcessManager {
       // project) falls through to the synthesized-source path below so its
       // managed directory still seeds the workspace and mirrors back.
       if (project && project.sources.length > 0) {
-        let overrideApplied = false;
-        return project.sources.map((source) => {
-          if (!overrideApplied && source.kind === 'local' && sourceOverrideDir) {
-            overrideApplied = true;
-            return this.mapDeclaredSource(source, sourceOverrideDir);
-          }
-          return this.mapDeclaredSource(source);
-        });
+        return project.sources.map((source) => this.mapDeclaredSource(source));
       }
     }
     // No attached sources (chat scratch dir / managed project dir / Personal
@@ -391,7 +312,7 @@ export class ProcessManager {
   }
 
   /** Translate one declared ``ProjectSource`` into the wire shape. */
-  private mapDeclaredSource(source: Project['sources'][number], localOverride?: string): AgentProcessSource {
+  private mapDeclaredSource(source: Project['sources'][number]): AgentProcessSource {
     if (source.kind === 'git-remote') {
       const result: AgentProcessSource = {
         id: source.id,
@@ -405,10 +326,8 @@ export class ProcessManager {
       }
       return result;
     }
-    const workspaceDir = localOverride ?? source.workspaceDir;
+    const workspaceDir = source.workspaceDir;
     this.ensureWorkspaceDir(workspaceDir);
-    // User-attached folders are never launcherOwned — applying
-    // container changes to them stays an explicit user action.
     const kind = this.directoryHasGit(workspaceDir) ? 'local-git' : 'local';
     const result: AgentProcessSource = {
       id: source.id,
@@ -487,7 +406,6 @@ export class ProcessManager {
   private static launchIdentity(opts: AgentProcessStartOptions): string {
     return JSON.stringify([
       opts.workspaceDir,
-      opts.sourceOverrideDir ?? null,
       opts.projectId ?? null,
       opts.sessionId ?? null,
       opts.snapshotRef ?? null,
@@ -1022,20 +940,6 @@ export class ProcessManager {
     return tailored ?? { type: 'starting' as const, timestamp: Date.now() };
   };
 
-  resizePty = (processId: string, cols: number, rows: number): void => {
-    this.processes.get(processId)?.resizePty(cols, rows);
-  };
-
-  /**
-   * The host workspace dir the given process was last started against (e.g.
-   * the chat session's per-conversation scratch dir). Authoritative for
-   * mount-name derivation — the store's `workspaceDir` is the workspace
-   * *root*, not the live session's mount source.
-   */
-  getProcessWorkspaceDir(processId: string): string | null {
-    return this.lastStartArgs.get(processId)?.workspaceDir || null;
-  }
-
   cleanup = async (): Promise<void> => {
     await this.runtimeRecovery.catch(() => undefined);
     // Invalidate every materialization before awaiting it. Late results see a
@@ -1077,7 +981,6 @@ export function registerProcessHandlers(ipc: IIpcListener, resolve: (event: unkn
   h('agent-process:start', (pm, processId, startArg) => pm.start(processId, startArg));
   h('agent-process:stop', (pm, processId) => pm.stop(processId));
   h('agent-process:rebuild', (pm, processId, rebuildArg) => pm.rebuild(processId, rebuildArg));
-  h('agent-process:resize', (pm, processId, cols, rows) => pm.resizePty(processId, cols, rows));
   h('agent-process:get-status', (pm, processId) => pm.getStatus(processId));
   h('management-runtime:ensure', (pm) => pm.ensureManagementConnection());
   h('management-runtime:mutate', (pm, request) => pm.mutateManagement(request));

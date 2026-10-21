@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { $omniRuntimeReadiness } from '@/renderer/features/Omni/state';
-import { $agentStatuses, agentProcessApi } from '@/renderer/services/agent-process';
+import { $agentStatuses } from '@/renderer/services/agent-process';
 import { $initialized, persistedStoreApi } from '@/renderer/services/store';
 import type { AgentProcessStatus, StoreData, WithTimestamp } from '@/shared/types';
 
@@ -242,30 +242,5 @@ describe('useAutoLaunch sandbox profile override switching', () => {
     });
     expect(start).toHaveBeenCalledTimes(2);
     expect(value.phase).toBe('starting');
-  });
-
-  it('relaunches when the registered source override changes', async () => {
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: '/workspace/project',
-      sourceOverrideDir: '/workspace/worktree-a',
-    });
-    await flushEffects();
-    await act(async () => {
-      $agentStatuses.set({ 'code-tab-1': runningStatus() });
-      await flushEffects();
-    });
-    stop.mockClear();
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: '/workspace/project',
-      sourceOverrideDir: '/workspace/worktree-b',
-    });
-    await act(async () => {
-      await flushEffects();
-    });
-
-    expect(agentProcessApi.stop).toHaveBeenCalledWith('code-tab-1');
   });
 });

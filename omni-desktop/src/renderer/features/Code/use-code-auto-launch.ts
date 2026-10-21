@@ -17,7 +17,6 @@ export const useCodeAutoLaunch = (
   workspaceDir: string | null,
   opts?: {
     projectId?: string;
-    sourceOverrideDir?: string;
     sessionId?: string;
     snapshotRef?: string;
   }
@@ -26,7 +25,6 @@ export const useCodeAutoLaunch = (
     processId: tabId,
     workspaceDir,
     ...(opts?.projectId ? { projectId: opts.projectId } : {}),
-    ...(opts?.sourceOverrideDir ? { sourceOverrideDir: opts.sourceOverrideDir } : {}),
     ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),
     ...(opts?.snapshotRef ? { snapshotRef: opts.snapshotRef } : {}),
     logLabel: 'autoLaunch:code',

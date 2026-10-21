@@ -100,8 +100,6 @@ vi.mock('@/main/agent-host-control-client', () => ({
           generation: 3,
           workspace_root: '/workspace',
           default_cwd: '/workspace',
-          services: { code_server: 'http://service' },
-          container_id: 'container-materialized',
         };
       }
       return {};
@@ -274,8 +272,9 @@ describe('AgentProcess (serve mode)', () => {
     expect(args).toContain('serve');
     expect(args).toContain('--output');
     expect(args).toContain('json');
-    expect(args).toContain('--snapshot-dir');
     for (const placementFlag of [
+      '--snapshot-dir',
+      '--credential',
       '--source',
       '--profile',
       '--project',
@@ -324,8 +323,6 @@ describe('AgentProcess (serve mode)', () => {
       environmentGeneration: 3,
       workspaceRoot: '/workspace',
       defaultCwd: '/workspace',
-      services: { code_server: 'http://service' },
-      containerId: 'container-materialized',
     });
     expect(hoisted.controlCalls.map((call) => call.method)).toEqual([
       'agent_host_list_resources',
@@ -640,15 +637,12 @@ describe('AgentProcess (serve mode)', () => {
     const [, args] = spawnCall(0);
     expect(args).not.toContain('--project');
     expect(args).not.toContain('proj_abc');
-    expect(args).toContain('--snapshot-dir');
-    expect(args).toContain(path.join('/fake/config', 'snapshots'));
   });
 
-  it('always passes --snapshot-dir but keeps session identity off AgentHost argv', async () => {
+  it('keeps session identity off AgentHost argv', async () => {
     const h = makeHarness();
     await h.proc.start({ sources: [localSource('/ws')] });
     const [, args1] = spawnCall(0);
-    expect(args1).toContain('--snapshot-dir');
     expect(args1).not.toContain('--session-id');
 
     await h.proc.stop();
@@ -675,7 +669,6 @@ describe('AgentProcess (serve mode)', () => {
       expect(connecting.data.agentHostId).toBe('agent-host-test');
       expect(connecting.data.workspaceId).toBeUndefined();
       expect(connecting.data.environmentId).toBeUndefined();
-      expect(connecting.data.services).toEqual({});
       expect(connecting.data.port).toBe(9000);
     }
   });

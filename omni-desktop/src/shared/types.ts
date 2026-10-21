@@ -868,14 +868,6 @@ export type AgentProcessData = {
    * Unset when the server runs unauthenticated (local `omni serve`).
    */
   authToken?: string;
-  /** Same shape as uiUrl today — kept for status/debug surfaces. */
-  sandboxUrl?: string;
-  /**
-   * Named services running inside the sandbox session, keyed by profile
-   * service name (`code_server`, `vnc`, ...). Each value is a host URL the
-   * renderer can iframe directly. Empty when the profile defines no services.
-   */
-  services?: Record<string, string>;
   /** Host port the agent's WS/HTTP server is bound to. */
   port?: number;
 };
@@ -890,12 +882,6 @@ export type AgentProcessStatus =
  */
 export type AgentProcessStartOptions = {
   workspaceDir: string;
-  /**
-   * Explicit replacement for the project's primary local source (for example
-   * a ticket worktree). Unlike ``workspaceDir`` this changes the registered
-   * Workspace source set; it is never just a renderer cwd hint.
-   */
-  sourceOverrideDir?: string;
   /**
    * Project id, when this consumer belongs to a project. AgentHost uses it
    * while registering the consumer's default profile definition.
@@ -958,7 +944,6 @@ export type CodeTab = {
   routineId?: string;
   routineName?: string;
   routineSchedule?: string;
-  workspaceDir?: string;
   /** Whether this session's right sidecar is visible. Open tabs remain mounted while hidden. */
   sidecarOpen?: boolean;
   /** Column-scoped apps currently open as tabs in this session's right sidecar. */

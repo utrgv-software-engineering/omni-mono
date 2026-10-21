@@ -216,9 +216,7 @@ export const CodeTabContent = memo(
     // lazily so the sandbox can start even when the user hasn't picked a
     // workspace.
     const projectSource = firstSource(project);
-    const primaryLocalSource = project?.sources.find((source) => source.kind === 'local');
-    const linkedWorkspaceDir =
-      tab.workspaceDir ?? (projectSource?.kind === 'local' ? projectSource.workspaceDir : null) ?? null;
+    const linkedWorkspaceDir = projectSource?.kind === 'local' ? projectSource.workspaceDir : null;
     const [resolvedProjectDir, setResolvedProjectDir] = useState<string | null>(null);
     useEffect(() => {
       if (linkedWorkspaceDir || !tab.projectId) {
@@ -266,10 +264,6 @@ export const CodeTabContent = memo(
     );
 
     const workspaceDir = chatMode ? chatScratchDir : (linkedWorkspaceDir ?? resolvedProjectDir);
-    const sourceOverrideDir =
-      tab.workspaceDir && primaryLocalSource?.kind === 'local' && tab.workspaceDir !== primaryLocalSource.workspaceDir
-        ? tab.workspaceDir
-        : undefined;
 
     const localVoice = store.localVoiceEnabled;
     // Attach-project chip for projectless chats, rendered in the composer chip
@@ -331,7 +325,6 @@ export const CodeTabContent = memo(
 
     const { phase, retry } = useCodeAutoLaunch(tab.id, tab.snapshotRef ? workspaceDir : null, {
       ...(tab.projectId ? { projectId: tab.projectId } : {}),
-      ...(sourceOverrideDir ? { sourceOverrideDir } : {}),
       ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
       ...(tab.snapshotRef ? { snapshotRef: tab.snapshotRef } : {}),
     });
@@ -424,10 +417,9 @@ export const CodeTabContent = memo(
         surface: 'code' as const,
         context: {
           ...(project ? { projectId: project.id, projectLabel: project.label, sources: project.sources } : {}),
-          ...(tab.workspaceDir ? { workspaceDir: tab.workspaceDir } : {}),
         },
       };
-    }, [chatMode, workspaceDir, tab.workspaceDir, project]);
+    }, [chatMode, workspaceDir, project]);
 
     // Base runs are speak-free; the mic button arms the voice variant per-run.
     const clientToolVariables = useMemo(() => buildSessionVariables(baseSessionArgs), [baseSessionArgs]);

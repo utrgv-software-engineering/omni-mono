@@ -48,12 +48,6 @@ export const initializeTerminal = (processId: string): Terminal => {
     })
   );
 
-  subs.add(
-    xterm.onResize(({ cols, rows }) => {
-      emitter.invoke('agent-process:resize', processId, cols, rows);
-    }).dispose
-  );
-
   xtermSubscriptions.set(processId, subs);
   $agentXTerms.setKey(processId, xterm);
   return xterm;

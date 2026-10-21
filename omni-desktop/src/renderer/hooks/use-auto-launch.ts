@@ -22,8 +22,6 @@ type UseAutoLaunchOptions = {
   processId: string;
   /** Workspace directory. When null the machine won't launch. */
   workspaceDir: string | null;
-  /** Explicit replacement for the project's primary local source. */
-  sourceOverrideDir?: string;
   /** Project id, forwarded to ProcessManager to resolve the project's sources. */
   projectId?: string;
   /** Conversation identity used by delegated-compute backends. */
@@ -49,10 +47,7 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
   processIdRef.current = processId;
   const workspaceDirRef = useRef(opts.workspaceDir);
   workspaceDirRef.current = opts.workspaceDir;
-  const sourceOverrideDirRef = useRef(opts.sourceOverrideDir);
-  sourceOverrideDirRef.current = opts.sourceOverrideDir;
   const previousWorkspaceDirRef = useRef(opts.workspaceDir);
-  const previousSourceOverrideDirRef = useRef(opts.sourceOverrideDir);
   const projectIdRef = useRef(opts.projectId);
   projectIdRef.current = opts.projectId;
   const sessionIdRef = useRef(opts.sessionId);
@@ -168,7 +163,6 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
         void agentProcessApi
           .start(processIdRef.current, {
             workspaceDir: wd,
-            ...(sourceOverrideDirRef.current ? { sourceOverrideDir: sourceOverrideDirRef.current } : {}),
             ...(projectIdRef.current ? { projectId: projectIdRef.current } : {}),
             ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}),
             ...(snapshotRefRef.current ? { snapshotRef: snapshotRefRef.current } : {}),
@@ -263,17 +257,13 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
     }
   }, [initialized, opts.workspaceDir, actor]);
 
-  // Reset when the registered Workspace definition changes
-  // (supervisor-aware processes guard against stopping supervisor sandboxes).
+  // Reset when the registered Workspace definition changes.
   useEffect(() => {
     const previousWorkspaceDir = previousWorkspaceDirRef.current;
-    const previousSourceOverrideDir = previousSourceOverrideDirRef.current;
     previousWorkspaceDirRef.current = opts.workspaceDir;
-    previousSourceOverrideDirRef.current = opts.sourceOverrideDir;
 
     const workspaceChanged = Boolean(previousWorkspaceDir && previousWorkspaceDir !== opts.workspaceDir);
-    const sourceOverrideChanged = previousSourceOverrideDir !== opts.sourceOverrideDir;
-    if (!initialized || !opts.workspaceDir || (!workspaceChanged && !sourceOverrideChanged)) {
+    if (!initialized || !opts.workspaceDir || !workspaceChanged) {
       return;
     }
 
@@ -296,7 +286,7 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
     return () => {
       cancelled = true;
     };
-  }, [initialized, opts.sourceOverrideDir, opts.workspaceDir, actor]);
+  }, [initialized, opts.workspaceDir, actor]);
 
   const retry = useCallback(() => {
     actor.send({ type: 'RETRY' });

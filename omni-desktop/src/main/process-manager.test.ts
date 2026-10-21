@@ -17,13 +17,11 @@ const hoisted = vi.hoisted(() => ({
     start: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
     exit: ReturnType<typeof vi.fn>;
-    rebuild: ReturnType<typeof vi.fn>;
     getStatus: ReturnType<typeof vi.fn>;
     getRuntimeConnection: ReturnType<typeof vi.fn>;
     getManagementAccountStatus: ReturnType<typeof vi.fn>;
     getManagementMcpStatus: ReturnType<typeof vi.fn>;
     callManagementAdmin: ReturnType<typeof vi.fn>;
-    resizePty: ReturnType<typeof vi.fn>;
     configureConsumer: ReturnType<typeof vi.fn>;
     bindSession: ReturnType<typeof vi.fn>;
     stopConsumerEnvironment: ReturnType<typeof vi.fn>;
@@ -45,7 +43,6 @@ vi.mock('@/main/agent-process', () => ({
       pendingSnapshotRefs: [],
     }));
     exit = vi.fn(async () => {});
-    rebuild = vi.fn(async () => {});
     getStatus = vi.fn(() => ({ type: 'uninitialized', timestamp: Date.now() }));
     getRuntimeConnection = vi.fn(async () => ({
       baseUrl: 'http://127.0.0.1:9000',
@@ -67,7 +64,6 @@ vi.mock('@/main/agent-process', () => ({
       },
     }));
     callManagementAdmin = vi.fn(async (method: string) => ({ ok: true, method }));
-    resizePty = vi.fn();
     bindSession = vi.fn(async () => {});
     configureConsumer = vi.fn(async (_threadId: string, workspaceId: string, _arg: unknown) => {
       await hoisted.configureConsumerGate;
@@ -79,7 +75,6 @@ vi.mock('@/main/agent-process', () => ({
         environmentId: `environment-${workspaceId}`,
         environmentGeneration: 3,
         workspaceRoot: `/runtime/${workspaceId}`,
-        services: {},
         containerId: `container-${workspaceId}`,
       };
     });
@@ -451,42 +446,6 @@ describe('ProcessManager', () => {
       ]);
     });
 
-    it('keeps project source identity while applying an isolated local workspace override', async () => {
-      const declaredDir = mkdtempSync(path.join(tmpdir(), 'omni-declared-'));
-      const isolatedDir = mkdtempSync(path.join(tmpdir(), 'omni-isolated-'));
-      const project: Project = {
-        id: 'proj_isolated',
-        label: 'Isolated',
-        slug: 'isolated',
-        createdAt: 0,
-        sources: [
-          { id: 'source-primary', mountName: 'app', kind: 'local', workspaceDir: declaredDir },
-          {
-            id: 'source-docs',
-            mountName: 'docs',
-            kind: 'local',
-            workspaceDir: mkdtempSync(path.join(tmpdir(), 'omni-docs-')),
-          },
-        ],
-      };
-      const { pm } = makePm({ storeData: { projects: [project] } });
-
-      await pm.start('tab-isolated', {
-        workspaceDir: isolatedDir,
-        sourceOverrideDir: isolatedDir,
-        projectId: project.id,
-      });
-
-      const arg = hoisted.agentProcessInstances[0]!.start.mock.calls[0]![0] as {
-        sources: Array<{ id?: string; mountName: string; workspaceDir?: string }>;
-      };
-      expect(arg.sources).toEqual([
-        expect.objectContaining({ id: 'source-primary', mountName: 'app', workspaceDir: isolatedDir }),
-        expect.objectContaining({ id: 'source-docs', mountName: 'docs' }),
-      ]);
-      expect(arg.sources[0]!.workspaceDir).not.toBe(declaredDir);
-    });
-
     it('mounts a synthesized solo folder at the workspace root', async () => {
       // No project sources → the bare workspaceDir (chat scratch dir,
       // managed project dir) IS the workspace: mountName '.' seeds the
@@ -675,7 +634,6 @@ describe('ProcessManager', () => {
         data: { wsUrl: 'ws://localhost/ws', uiUrl: 'http://localhost' },
         timestamp: Date.now(),
       } satisfies WithTimestamp<AgentProcessStatus>);
-      expect(pm.getProcessWorkspaceDir('proc-newer-intent')).toBe('/tmp/second');
       expect(pm.getStatus('proc-newer-intent')).toMatchObject({
         type: 'running',
         data: { workspaceId: currentHost.configureConsumer.mock.calls[0]![1] },
@@ -737,7 +695,6 @@ describe('ProcessManager', () => {
           environmentGeneration: 3,
         })
       );
-      expect(pm.getProcessWorkspaceDir('proc-1')).toBe('/tmp/ws2');
     });
 
     it('preserves the prior Workspace binding when a same-host rebind fails', async () => {
@@ -758,7 +715,6 @@ describe('ProcessManager', () => {
         type: 'running',
         data: { workspaceId: firstWorkspaceId, environmentId: `environment-${firstWorkspaceId}` },
       });
-      expect(pm.getProcessWorkspaceDir('proc-1')).toBe('/tmp/ws');
       expect(host.stopConsumerEnvironment).not.toHaveBeenCalled();
       expect(host.stop).not.toHaveBeenCalled();
     });
@@ -809,11 +765,7 @@ describe('ProcessManager', () => {
         timestamp: Date.now(),
       } satisfies WithTimestamp<AgentProcessStatus>);
 
-      let finishMaterializing!: (runtime: {
-        workspaceId: string;
-        environmentId: string;
-        services: Record<string, string>;
-      }) => void;
+      let finishMaterializing!: (runtime: { workspaceId: string; environmentId: string }) => void;
       host.configureConsumer.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -826,7 +778,7 @@ describe('ProcessManager', () => {
       expect(pm.getStatus('tab-b')).toMatchObject({ type: 'starting' });
       expect(pm.getStatus('tab-b')).not.toHaveProperty('data');
 
-      finishMaterializing({ workspaceId: 'workspace-b', environmentId: 'environment-b', services: {} });
+      finishMaterializing({ workspaceId: 'workspace-b', environmentId: 'environment-b' });
       await starting;
       expect(pm.getStatus('tab-b')).toMatchObject({
         type: 'running',
@@ -906,12 +858,7 @@ describe('ProcessManager', () => {
       } satisfies WithTimestamp<AgentProcessStatus>);
       await pm.start('tab-b', { workspaceDir: '/tmp/b' });
 
-      let finishRebuild!: (runtime: {
-        workspaceId: string;
-        environmentId: string;
-        services: Record<string, string>;
-        containerId: string;
-      }) => void;
+      let finishRebuild!: (runtime: { workspaceId: string; environmentId: string; containerId: string }) => void;
       host.configureConsumer.mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -937,12 +884,10 @@ describe('ProcessManager', () => {
       finishRebuild({
         workspaceId: 'workspace-a',
         environmentId: 'environment-rebuilt',
-        services: {},
         containerId: 'container-rebuilt',
       });
       await rebuilding;
 
-      expect(host.rebuild).not.toHaveBeenCalled();
       expect(host.stopConsumerEnvironment).toHaveBeenCalledWith(
         expect.objectContaining({
           workspaceId: tabAWorkspaceId,
@@ -1174,52 +1119,10 @@ describe('ProcessManager', () => {
       const startArg = hoisted.agentProcessInstances[0]!.start.mock.calls[0]![0] as {
         sources: Array<{ kind: string; auth?: { tokenEnv: string; username: string } }>;
         gitTokenEnv?: Record<string, string>;
-        credentials?: Array<{ url: string; username: string; tokenEnv: string }>;
       };
       const envName = gitTokenEnvName('cred-123');
       expect(startArg.sources[0]!.auth).toEqual({ tokenEnv: envName, username: 'x-access-token' });
       expect(startArg.gitTokenEnv).toEqual({ [envName]: 'ghp_thetoken' });
-      // Boot-time bundle: one descriptor for the git-remote host (no token value).
-      expect(startArg.credentials).toEqual([
-        { url: 'https://github.com/acme/private.git', username: 'x-access-token', tokenEnv: envName },
-      ]);
-    });
-
-    it('builds a credential for a local-git checkout from its own remote (no clone auth hint)', async () => {
-      // Real temp git repo with a real origin remote so directoryHasGit() and
-      // resolveGitRemote() (both real, via uninstrumented fs/git) resolve without
-      // relying on module-mock propagation into the source under test.
-      const checkout = mkdtempSync(path.join(tmpdir(), 'omni-localgit-'));
-      const cp = (await vi.importActual('node:child_process')) as typeof import('node:child_process');
-      cp.execFileSync('git', ['init', '-q'], { cwd: checkout });
-      cp.execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/acme/private.git'], { cwd: checkout });
-      const localProject: Project = {
-        id: 'proj_local',
-        label: 'Local',
-        slug: 'local',
-        createdAt: 0,
-        sources: [{ id: 'src1', mountName: 'svc', kind: 'local', workspaceDir: checkout }],
-      };
-      const { pm } = makePm({
-        storeData: { projects: [localProject], gitCredentials: [cred] },
-        resolveGitToken: async (id) => (id === 'cred-123' ? 'ghp_thetoken' : undefined),
-      });
-      await pm.start('proc-1', { workspaceDir: checkout, projectId: 'proj_local' });
-
-      const startArg = hoisted.agentProcessInstances[0]!.start.mock.calls[0]![0] as {
-        sources: Array<{ kind: string; auth?: unknown }>;
-        gitTokenEnv?: Record<string, string>;
-        credentials?: Array<{ url: string; username: string; tokenEnv: string }>;
-      };
-      const envName = gitTokenEnvName('cred-123');
-      expect(startArg.sources[0]!.kind).toBe('local-git');
-      // local-git is seeded by archive, not cloned → no clone-time auth hint…
-      expect(startArg.sources[0]!.auth).toBeUndefined();
-      // …but the token + boot-time credential are still injected for git/gh/az.
-      expect(startArg.gitTokenEnv).toEqual({ [envName]: 'ghp_thetoken' });
-      expect(startArg.credentials).toEqual([
-        { url: 'https://github.com/acme/private.git', username: 'x-access-token', tokenEnv: envName },
-      ]);
     });
 
     it('leaves the source unauthenticated when no credential matches the host', async () => {

@@ -24,7 +24,6 @@ import type {
   AgentProcessStopResult,
   AgentRuntimeConnection,
   ExecutionTarget,
-  LogEntry,
   WithTimestamp,
   WorkspaceMountDescriptor,
 } from '@/shared/types';
@@ -103,15 +102,6 @@ export type AgentProcessStartArg = {
    * model/MCP secrets are injected.
    */
   gitTokenEnv?: Record<string, string>;
-  /**
-   * Boot-time credential descriptors for the sandbox: one per linked host the
-   * project's sources reference (git-remote URL *and* each local-git checkout's
-   * own remote). Forwarded as `--credential <json>` to `omni serve`, which
-   * configures git + the host's CLI (`gh` / `az devops`) inside the container so
-   * the agent authenticates for *every* source kind, not just cloned remotes.
-   * Token values ride in `gitTokenEnv` (process env), referenced here by name.
-   */
-  credentials?: Array<{ url: string; username: string; tokenEnv: string }>;
 };
 
 export type AgentHostConsumerRuntime = ExecutionTarget & {
@@ -121,9 +111,6 @@ export type AgentHostConsumerRuntime = ExecutionTarget & {
   mounts?: WorkspaceMountDescriptor[];
   /** Capability names from the environment descriptor (see AgentProcessData). */
   environmentCapabilities?: string[];
-  services: Record<string, string>;
-  containerId?: string;
-  paused?: boolean;
 };
 
 /** Defensive parse of the materialization payload's ``mounts`` array. */
@@ -194,7 +181,6 @@ type HostTermination = 'graceful' | 'forced' | 'not-applicable';
  * keep aligned with omniagents ``docs/serve-protocol.md``.
  */
 type ServeReadyPayload = {
-  sandbox_url: string;
   ws_url: string;
   ui_url: string;
   /** Stable identity of the agent host that owns runtime registries. */
@@ -209,11 +195,7 @@ type ServeReadyPayload = {
    * is token-free — never parse credentials out of it.
    */
   auth_token?: string | null;
-  services?: Record<string, string>;
   ports: { ui: number };
-  container_id?: string | null;
-  container_name?: string | null;
-  _debug?: Record<string, unknown>;
 };
 
 const servePayloadToData = (payload: ServeReadyPayload): AgentProcessData => {
@@ -234,8 +216,6 @@ const servePayloadToData = (payload: ServeReadyPayload): AgentProcessData => {
       ? { environmentId: payload.environment_id }
       : {}),
     ...(payload.auth_token ? { authToken: payload.auth_token } : {}),
-    sandboxUrl: payload.sandbox_url,
-    services: payload.services ?? {},
     port: payload.ports.ui,
   };
 };
@@ -381,7 +361,6 @@ export class AgentProcess {
   private stdoutBuffer = '';
   private stderrBuffer = '';
   private jsonEmitted = false;
-  private lastStartArg: AgentProcessStartArg | null = null;
   private fetchFn: FetchFn;
   private getExtraEnv?: () => Record<string, string> | Promise<Record<string, string>>;
   private readonly processStopTimeoutMs: number;
@@ -405,7 +384,6 @@ export class AgentProcess {
   private intentionallyKilled: WeakSet<ChildProcess> = new WeakSet();
 
   constructor(opts: {
-    ipcLogger?: (entry: WithTimestamp<LogEntry>) => void;
     ipcRawOutput: (data: string) => void;
     onStatusChange: (status: WithTimestamp<AgentProcessStatus>) => void;
     fetchFn?: FetchFn;
@@ -641,13 +619,6 @@ export class AgentProcess {
         : {}),
       ...(parsedMounts ? { mounts: parsedMounts } : {}),
       ...(environmentCapabilities ? { environmentCapabilities } : {}),
-      services:
-        materialized['services'] && typeof materialized['services'] === 'object'
-          ? (materialized['services'] as Record<string, string>)
-          : {},
-      ...(typeof materialized['container_id'] === 'string' && materialized['container_id']
-        ? { containerId: materialized['container_id'] }
-        : {}),
     };
 
     try {
@@ -790,22 +761,18 @@ export class AgentProcess {
       return;
     }
 
-    this.lastStartArg = arg;
     this.updateStatus({ type: 'starting' });
 
     await this.startServeSession(arg);
   };
 
   stop = async (): Promise<AgentProcessStopResult> => {
-    // omni serve detaches from durable container sessions on
-    // SIGTERM (docker containers keep running for reattach), so we just kill
-    // the child and let it run its own teardown in its finally block.
+    // omni serve runs its own teardown on SIGTERM.
     if (!this.childProcess) {
       this.closeAgentHostControl();
       this.consumerRegistrations.clear();
       return this.stopResult('host', 'not-applicable');
     }
-    // Capture the WS URL + auth before flipping status — `stopping` carries no data.
     this.updateStatus({ type: 'stopping' });
     this.closeAgentHostControl();
     const shutdown = await this.killProcess(this.processStopTimeoutMs);
@@ -814,18 +781,10 @@ export class AgentProcess {
     return this.stopResult('host', shutdown);
   };
 
-  rebuild = async (fallbackArg: AgentProcessStartArg): Promise<void> => {
-    const arg = this.lastStartArg ?? fallbackArg;
-    await this.stop();
-    await this.start(arg);
-  };
-
   exit = async (): Promise<AgentProcessStopResult> => {
     this.updateStatus({ type: 'exiting' });
     return this.stop();
   };
-
-  resizePty = (_cols: number, _rows: number): void => {};
 
   // --- Serve mode ---
 
@@ -902,16 +861,6 @@ export class AgentProcess {
       '--agent-host-control-token',
       this.agentHostControlToken,
     ];
-    // One ``--credential <json>`` per linked host the project uses. Token values
-    // are not here — they ride in ``gitTokenEnv`` (merged into env above) and are
-    // referenced by ``tokenEnv`` name.
-    for (const cred of arg.credentials ?? []) {
-      args.push('--credential', JSON.stringify(cred));
-    }
-    // The provisioner stores each Workspace snapshot beneath this shared root;
-    // the consumer's snapshot_ref is registered later through the control plane.
-    const snapshotDir = path.join(getOmniConfigDir(), 'snapshots');
-    args.push('--snapshot-dir', snapshotDir);
     // AgentHost startup is targetless. Workspace, source, profile, session,
     // and container placement data enters only through consumer materialization.
     const spawnCwd = getOmniConfigDir();
@@ -969,8 +918,7 @@ export class AgentProcess {
         }
         this.closeAgentHostControl();
         this.childProcess = null;
-        // An unexpected host exit orphans this process's registrations; the
-        // durable container sessions stay reattachable on the next start.
+        // An unexpected host exit drops every consumer registration.
         this.consumerRegistrations.clear();
         if (this.status.type === 'exiting' || this.status.type === 'stopping') {
           this.updateStatus({ type: 'exited' });
@@ -1044,23 +992,6 @@ export class AgentProcess {
     shutdown,
   });
 
-  /** Patch fields on the embedded ``AgentProcessData`` without changing the
-   *  status state. No-op unless we're in a state that carries data
-   *  (``running`` or ``connecting``). Used by pause/unpause to flip the
-   *  ``paused`` indicator without redoing the readiness payload. */
-  private updateAgentProcessData = (patch: Partial<AgentProcessData>): void => {
-    if (this.status.type !== 'running' && this.status.type !== 'connecting') {
-      return;
-    }
-    const current = this.status as Extract<WithTimestamp<AgentProcessStatus>, { type: 'running' | 'connecting' }>;
-    this.status = {
-      ...current,
-      data: { ...current.data, ...patch },
-      timestamp: Date.now(),
-    };
-    this.onStatusChange(this.status);
-  };
-
   // -- Stdout/stderr handling --
 
   private handleStdout = (data: Buffer): void => {
@@ -1100,7 +1031,7 @@ export class AgentProcess {
     } catch {
       return;
     }
-    if (!('sandbox_url' in parsed) || !('ui_url' in parsed)) {
+    if (!('ui_url' in parsed)) {
       return;
     }
     const data = servePayloadToData(parsed as unknown as ServeReadyPayload);
@@ -1163,7 +1094,7 @@ export class AgentProcess {
           return;
         }
         this.updateStatus({ type: 'running', data });
-        this.log.info(c.green.bold('Sandbox started\r\n'));
+        this.log.info(c.green.bold('Agent host started\r\n'));
         return;
       }
       await new Promise<void>((r) => {

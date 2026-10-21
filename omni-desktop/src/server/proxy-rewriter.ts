@@ -901,12 +901,8 @@ function consoleCapture(): string {
  * Rewrite localhost URLs in a status data object to relative `/proxy/<name>/...`
  * paths and register their upstream origins.
  */
-export const rewriteStatusUrls = (
-  data: Record<string, string | Record<string, string> | undefined>,
-  proxyName: string,
-  _processId?: string
-): void => {
-  const urlFields = ['uiUrl', 'wsUrl', 'sandboxUrl', 'codeServerUrl', 'noVncUrl'];
+export const rewriteStatusUrls = (data: Record<string, unknown>, proxyName: string, _processId?: string): void => {
+  const urlFields = ['uiUrl', 'wsUrl'];
 
   for (const field of urlFields) {
     const url = data[field];
@@ -916,22 +912,6 @@ export const rewriteStatusUrls = (
     const proxyPath = registerAndRewrite(url, `${proxyName}-${field}`);
     if (proxyPath) {
       data[field] = proxyPath;
-    }
-  }
-
-  // Sandbox service URLs (code_server, vnc, …) live in a nested map, not flat
-  // fields. Rewrite each so they too route through the launcher's proxy — the
-  // raw upstream (e.g. a container IP) never reaches the browser.
-  const services = data['services'];
-  if (services && typeof services === 'object') {
-    for (const [name, url] of Object.entries(services)) {
-      if (typeof url !== 'string' || !url) {
-        continue;
-      }
-      const proxyPath = registerAndRewrite(url, `${proxyName}-svc-${name}`);
-      if (proxyPath) {
-        services[name] = proxyPath;
-      }
     }
   }
 };
