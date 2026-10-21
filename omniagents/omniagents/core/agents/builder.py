@@ -580,17 +580,19 @@ async def _default_build_agent(
     # SDK 0.7+ supports per-tool input/output guardrails; we propagate the
     # agent-level lists onto each tool that doesn't already carry them.
     if spec.tool_input_guardrails or spec.tool_output_guardrails:
+        # (tools are shared between builds, and an agent is built for every
+        # run: each guardrail is added once, not once a run)
         for _tool in tools:
             if hasattr(_tool, "tool_input_guardrails") and spec.tool_input_guardrails:
                 existing = list(_tool.tool_input_guardrails or [])
-                _tool.tool_input_guardrails = existing + list(
-                    spec.tool_input_guardrails
-                )
+                _tool.tool_input_guardrails = existing + [
+                    g for g in spec.tool_input_guardrails if g not in existing
+                ]
             if hasattr(_tool, "tool_output_guardrails") and spec.tool_output_guardrails:
                 existing = list(_tool.tool_output_guardrails or [])
-                _tool.tool_output_guardrails = existing + list(
-                    spec.tool_output_guardrails
-                )
+                _tool.tool_output_guardrails = existing + [
+                    g for g in spec.tool_output_guardrails if g not in existing
+                ]
     provided_mcp_servers: List[Any] = []
     # Check if mcp_servers was explicitly provided (including empty list)
     # None means "use spec.mcp_servers", empty list means "no servers"
@@ -727,6 +729,16 @@ async def _default_build_agent(
             cap_tools.extend(this_caps_tools)
 
         if cap_tools:
+            # The agent's tool guardrails reach its capabilities' tools too (a
+            # shell command needs them more than most): applied above only to
+            # the agent's own tools, which come before these are merged. (A
+            # capability's tools can be shared between builds: each guardrail
+            # is added once)
+            for _tool in cap_tools:
+                for attr, wanted in (("tool_input_guardrails", spec.tool_input_guardrails), ("tool_output_guardrails", spec.tool_output_guardrails)):
+                    if wanted and hasattr(_tool, attr):
+                        have = list(getattr(_tool, attr) or [])
+                        setattr(_tool, attr, have + [g for g in wanted if g not in have])
             tools = list(tools) + cap_tools
 
     # Configure API key for the default client if provided.

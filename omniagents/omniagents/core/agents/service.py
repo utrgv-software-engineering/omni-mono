@@ -14,7 +14,7 @@ import copy
 import hashlib
 import json
 import logging
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from types import SimpleNamespace
 from typing import Awaitable, Optional, Dict, Any, Callable
 from pathlib import Path
@@ -967,8 +967,18 @@ class AgentService(RpcMethodsBase):
                     )
 
     async def _ensure_session_mcp_servers(
-        self, session: Session, environment_lease: EnvironmentLease | None = None
+        self,
+        session: Session,
+        environment_lease: EnvironmentLease | None = None,
+        *,
+        hold: list | None = None,
     ) -> list[Any]:
+        """The session's live MCP servers, started if need be.
+
+        With ``hold`` (a list), a use of the returned set is taken and its
+        token appended: the set is never closed while held. Release each
+        token with :meth:`_mcp_release` (a run does so as it ends).
+        """
         if environment_lease is None:
             context = current_request_context()
             environment_lease = context.environment_lease if context else None
@@ -983,13 +993,83 @@ class AgentService(RpcMethodsBase):
         async with lock:
             task = getattr(session, "_mcp_lifecycle_task", None)
             if task is not None and not task.done():
-                if getattr(session, "_mcp_owner", None) == owner:
+                # A caller with no environment lease (out of band: an MCP App
+                # reading its page or calling a tool through mcp_read_resource
+                # / mcp_call_tool) has no environment of its own to ask for:
+                # it uses the session's live servers as they are.
+                if getattr(session, "_mcp_owner", None) == owner or environment_lease is None:
                     await self._wait_session_mcp_ready(session, task)
+                    if hold is not None:
+                        hold.append(self._mcp_hold(session, task))
                     return session._mcp_servers_active
                 # A Thread moving to another lease must not reuse workers
-                # configured against its previous workspace/environment.
-                await self._close_session_mcp_task(session._mcp_shutdown, task)
-            return await self._start_session_mcp_servers(session, environment_lease)
+                # configured against its previous workspace/environment; the
+                # old set stays open for whoever still holds it.
+                await self._retire_session_mcp(session)
+            servers = await self._start_session_mcp_servers(session, environment_lease)
+            if hold is not None:
+                hold.append(self._mcp_hold(session, getattr(session, "_mcp_lifecycle_task", None)))
+            return servers
+
+    # ------------------------------------------------------------------
+    #  MCP server sets in use: a set is closed only when nothing holds it.
+    #  A run holds the set its agent was built with until it ends; an
+    #  out-of-band call holds it for the call. Replacing a held set (a new
+    #  lease, a reload, a server removed) retires it instead: the session
+    #  moves on to a new set, and the old one closes when its last holder
+    #  lets go. Closing it at once left a run holding closed servers, and
+    #  the run failed on them.
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _mcp_hold(session: Session, task: Any) -> Any:
+        if task is None:
+            return None
+        users = getattr(session, "_mcp_users", None)
+        if users is None:
+            users = session._mcp_users = {}
+        users[task] = users.get(task, 0) + 1
+        return task
+
+    @staticmethod
+    def _mcp_release(session: Session, task: Any) -> None:
+        if task is None:
+            return
+        users = getattr(session, "_mcp_users", None) or {}
+        left = users.get(task, 0) - 1
+        if left > 0:
+            users[task] = left
+            return
+        users.pop(task, None)
+        retired = getattr(session, "_mcp_retired", None) or {}
+        shutdown = retired.pop(task, None)
+        if shutdown is not None:
+            # (its lifecycle task closes its servers itself once told)
+            shutdown.set()
+
+    async def _retire_session_mcp(self, session: Session) -> None:
+        """Move the session off its current MCP server set: closed now when
+        nothing holds it, else when its last holder lets go."""
+        task = getattr(session, "_mcp_lifecycle_task", None)
+        shutdown = getattr(session, "_mcp_shutdown", None)
+        if task is not None and not task.done() and shutdown is not None:
+            if (getattr(session, "_mcp_users", None) or {}).get(task):
+                retired = getattr(session, "_mcp_retired", None)
+                if retired is None:
+                    retired = session._mcp_retired = {}
+                retired[task] = shutdown
+            else:
+                await self._close_session_mcp_task(shutdown, task)
+        setattr(session, "_mcp_shutdown", None)
+        setattr(session, "_mcp_lifecycle_task", None)
+        setattr(session, "_mcp_servers_active", [])
+
+    @staticmethod
+    def _close_retired_session_mcp(session: Session) -> None:
+        """The session is going: every retired set closes, held or not."""
+        retired = getattr(session, "_mcp_retired", None) or {}
+        for shutdown in retired.values():
+            shutdown.set()
+        retired.clear()
 
     @staticmethod
     async def _close_session_mcp_task(shutdown_event, task) -> None:
@@ -1417,7 +1497,11 @@ class AgentService(RpcMethodsBase):
         *,
         spec: AgentSpec | None = None,
         environment_lease: EnvironmentLease | None = None,
+        mcp_holds: list | None = None,
     ) -> Any:
+        """The session's agent for a run. With ``mcp_holds`` (a list), the
+        MCP servers it's built with are held (their tokens appended) until
+        the caller releases them: a run holds them to its end."""
         build_spec = spec or self.spec
         stub_app = SimpleNamespace(
             spec=build_spec,
@@ -1431,8 +1515,9 @@ class AgentService(RpcMethodsBase):
         settings = dict(self._default_settings)
 
         # Use session-scoped MCP servers (managed by dedicated task)
+        holds: list = []
         active_servers = await self._ensure_session_mcp_servers(
-            session, environment_lease
+            session, environment_lease, hold=holds
         )
 
         setattr(stub_app, "mcp_servers", active_servers)
@@ -1484,11 +1569,26 @@ class AgentService(RpcMethodsBase):
                     skip_approvals=_skip_approvals,
                 )
 
+            # (the last agent built: what an out-of-band tool call's guardrails
+            # are given as the agent acting, _sf_mcp_call_tool)
+            session._mcp_guardrail_agent = agent
+            if mcp_holds is not None:
+                mcp_holds.extend(holds)
+            else:
+                for token in holds:
+                    self._mcp_release(session, token)
             return agent
         except Exception:
+            for token in holds:
+                self._mcp_release(session, token)
             # If agent building fails, cleanup MCP lifecycle if it was just created
+            # (unless something else holds it: an app's call in flight)
             lifecycle_task = getattr(session, "_mcp_lifecycle_task", None)
-            if lifecycle_task and not lifecycle_task.done():
+            if (
+                lifecycle_task
+                and not lifecycle_task.done()
+                and not (getattr(session, "_mcp_users", None) or {}).get(lifecycle_task)
+            ):
                 # Cancel the lifecycle task
                 shutdown_event = getattr(session, "_mcp_shutdown", None)
                 if shutdown_event:
@@ -2092,6 +2192,119 @@ class AgentService(RpcMethodsBase):
                 return server
         return None
 
+    @asynccontextmanager
+    async def _held_mcp_server(self, session: Session | None, server_name: str):
+        """A session's live MCP server by name, held for the block (an
+        out-of-band call: the set can't close under it). None if absent."""
+        holds: list = []
+        server = None
+        if session is not None:
+            try:
+                servers = await self._ensure_session_mcp_servers(session, hold=holds)
+            except Exception:
+                servers = list(getattr(session, "_mcp_servers_active", []) or [])
+            for candidate in servers or []:
+                if getattr(candidate, "name", None) == server_name:
+                    server = candidate
+                    break
+        try:
+            yield server
+        finally:
+            for token in holds:
+                self._mcp_release(session, token)
+
+    def _mcp_public_name(self, session: Session, server_name: str, tool_name: str) -> str:
+        """The tool's name as the agent knows it (``mcp_<server>__<tool>``):
+        approvals and guardrails see an app's call as they'd see the agent's."""
+        from omniagents.core.agents.mcp_identity import get_session_identities
+
+        for public, identity in get_session_identities(session).items():
+            if tuple(identity) == (server_name, tool_name):
+                return public
+        return f"mcp_{server_name}__{tool_name}"
+
+    def _app_tool_needs_approval(
+        self, session: Session, server_name: str, tool_name: str, public_name: str
+    ) -> bool:
+        """The rule a run's MCP tool call is held to (approval._make_mcp_predicate,
+        wired in _build_agent_for_session), for an app's out-of-band call."""
+        import re as _re
+
+        from omniagents.core.agents.approval import session_allows_mcp_tool
+
+        spec = self.spec
+        opts = spec.safe_agent_options
+        use_safe = spec.use_safe_agent
+        skip = bool(getattr(opts, "skip_approvals", False))
+        if spec.security_config and spec.security_config.get("safety_mode") == "enforced":
+            use_safe = True
+            skip = False
+        if not use_safe or skip:
+            return False
+        if session_allows_mcp_tool(session, server_name, tool_name):
+            return False
+        names = set(getattr(opts, "safe_tool_names", None) or []) if opts else set()
+        if public_name in names:
+            return False
+        for pattern in (getattr(opts, "safe_tool_patterns", None) or []) if opts else []:
+            if _re.compile(pattern).match(public_name):
+                return False
+        return True
+
+    async def _gate_app_tool_call(
+        self, session: Session, server_name: str, tool_name: str, arguments: dict
+    ) -> str | None:
+        """An app's call to its server's tool, through the agent's tool-input
+        guardrails and its approvals: None to go ahead, else why not (given
+        back to the app as the call's error)."""
+        from agents.tool_context import ToolContext
+        from agents.tool_guardrails import ToolInputGuardrailData
+
+        from omniagents.core.agents.mcp_identity import get_session_identities
+
+        public = self._mcp_public_name(session, server_name, tool_name)
+        args_json = json.dumps(arguments or {})
+        call_id = f"app_{uuid.uuid4().hex}"
+
+        guardrails = list(getattr(self.spec, "tool_input_guardrails", None) or [])
+        if guardrails:
+            data = ToolInputGuardrailData(
+                context=ToolContext(
+                    context=None,
+                    tool_name=public,
+                    tool_call_id=call_id,
+                    tool_arguments=args_json,
+                ),
+                agent=getattr(session, "_mcp_guardrail_agent", None),
+            )
+            for guardrail in guardrails:
+                try:
+                    output = await guardrail.run(data)
+                except Exception as e:
+                    # (a guardrail that can't decide doesn't let the call through)
+                    return f"Not run: a guardrail couldn't check it ({e})"
+                behavior = output.behavior
+                kind = behavior.get("type") if isinstance(behavior, dict) else getattr(behavior, "type", None)
+                if kind == "reject_content":
+                    message = behavior.get("message") if isinstance(behavior, dict) else getattr(behavior, "message", None)
+                    return str(message or "Not run: a guardrail refused it")
+                if kind == "raise_exception":
+                    return "Not run: a guardrail stopped it"
+
+        if self._app_tool_needs_approval(session, server_name, tool_name, public):
+            # (its identity known to the approval, so an "always" answer is
+            # the same (server, tool) grant a run's call would make)
+            get_session_identities(session).setdefault(public, (server_name, tool_name))
+            response = await self.request_tool_approval(
+                session=session,
+                call_id=call_id,
+                tool_name=public,
+                arguments=args_json,
+            )
+            if response.get("decision") != "approve":
+                return str(response.get("rejection_message") or "Not run: it wasn't allowed")
+        return None
+
     async def _sf_mcp_list_resources(
         self, session: Session | None, args: dict | None = None
     ) -> dict:
@@ -2101,20 +2314,19 @@ class AgentService(RpcMethodsBase):
         if not server_name:
             raise ValueError("server_name is required")
 
-        server = await self._resolve_mcp_server_by_name(session, server_name)
-        if server is None:
-            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
-        if not hasattr(server, "list_resources"):
-            raise ValueError(
-                f"MCP server '{server_name}' does not support list_resources "
-                "(SDK 0.16+ required)"
+        async with self._held_mcp_server(session, server_name) as server:
+            if server is None:
+                raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+            if not hasattr(server, "list_resources"):
+                raise ValueError(
+                    f"MCP server '{server_name}' does not support list_resources "
+                    "(SDK 0.16+ required)"
+                )
+            result = (
+                await server.list_resources(cursor=cursor)
+                if cursor
+                else await server.list_resources()
             )
-
-        result = (
-            await server.list_resources(cursor=cursor)
-            if cursor
-            else await server.list_resources()
-        )
         # ``ListResourcesResult`` from the mcp package is a pydantic model.
         resources_attr = getattr(result, "resources", []) or []
         next_cursor = getattr(result, "next_cursor", None) or getattr(
@@ -2154,16 +2366,15 @@ class AgentService(RpcMethodsBase):
         if not uri:
             raise ValueError("uri is required")
 
-        server = await self._resolve_mcp_server_by_name(session, server_name)
-        if server is None:
-            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
-        if not hasattr(server, "read_resource"):
-            raise ValueError(
-                f"MCP server '{server_name}' does not support read_resource "
-                "(SDK 0.16+ required)"
-            )
-
-        result = await server.read_resource(uri)
+        async with self._held_mcp_server(session, server_name) as server:
+            if server is None:
+                raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+            if not hasattr(server, "read_resource"):
+                raise ValueError(
+                    f"MCP server '{server_name}' does not support read_resource "
+                    "(SDK 0.16+ required)"
+                )
+            result = await server.read_resource(uri)
         contents_attr = getattr(result, "contents", []) or []
         out: list[dict] = []
         for content in contents_attr:
@@ -2263,13 +2474,43 @@ class AgentService(RpcMethodsBase):
         if not isinstance(arguments, dict):
             raise ValueError("arguments must be an object")
 
-        server = await self._resolve_mcp_server_by_name(session, server_name)
-        if server is None:
-            raise ValueError(f"Unknown or inactive MCP server: {server_name}")
-        if not hasattr(server, "call_tool"):
-            raise ValueError(f"MCP server '{server_name}' does not support call_tool")
+        async with self._held_mcp_server(session, server_name) as server:
+            if server is None:
+                raise ValueError(f"Unknown or inactive MCP server: {server_name}")
+            if not hasattr(server, "call_tool"):
+                raise ValueError(f"MCP server '{server_name}' does not support call_tool")
+            # An app calls its server's tools out of band, outside any run: the
+            # checks a run's tool call passes are made here instead. First, the
+            # tool must be one its app may call (MCP Apps' visibility)
+            from omniagents.core.agents.mcp import tool_visibility
 
-        result = await server.call_tool(tool_name, arguments)
+            visible = tool_visibility(server_name, tool_name)
+            if visible is None:
+                try:
+                    await server.list_tools()  # (the wrapper records visibility)
+                except Exception:
+                    logger.debug("list_tools for visibility failed", exc_info=True)
+                visible = tool_visibility(server_name, tool_name)
+            if visible is None:
+                raise ValueError(f"MCP server '{server_name}' has no tool '{tool_name}'")
+            if "app" not in visible:
+                raise PermissionError(
+                    f"'{tool_name}' on '{server_name}' isn't one its app may call"
+                )
+            # Then the agent's guardrails and its approvals, as for its own calls
+            refusal = await self._gate_app_tool_call(
+                session, server_name, tool_name, arguments
+            )
+            if refusal is not None:
+                return {
+                    "server_name": server_name,
+                    "tool_name": tool_name,
+                    "result": {
+                        "content": [{"type": "text", "text": refusal}],
+                        "isError": True,
+                    },
+                }
+            result = await server.call_tool(tool_name, arguments)
         result_dict: dict[str, Any]
         if hasattr(result, "model_dump"):
             try:
@@ -4074,9 +4315,16 @@ class AgentService(RpcMethodsBase):
             sess.pending_events = still_pending
 
         run_spec = self._spec_for_environment(environment_lease)
+        mcp_holds: list = []
         agent = await self._build_agent_for_session(
-            sess, None, spec=run_spec, environment_lease=environment_lease
+            sess, None, spec=run_spec, environment_lease=environment_lease, mcp_holds=mcp_holds
         )
+        # The run holds the MCP servers its agent was built with until its
+        # reservation is released (however it ends, started or not)
+        for token in mcp_holds:
+            ownership.add_release_callback(
+                lambda token=token: self._mcp_release(sess, token)
+            )
 
         # When the caller supplies a non-user prompt role, write the
         # message to history with that role and tell the worker to
@@ -7117,6 +7365,8 @@ class AgentService(RpcMethodsBase):
                         # Log but don't fail the archive operation
                         pass
 
+                # (the session is going: the sets it retired go too)
+                self._close_retired_session_mcp(sess)
                 # Clean up session attributes
                 setattr(sess, "_mcp_shutdown", None)
                 setattr(sess, "_mcp_lifecycle_task", None)
@@ -7827,24 +8077,25 @@ class AgentService(RpcMethodsBase):
                 getattr(server, "name", None) == server_name for server in active
             ):
                 continue
-            shutdown_event = getattr(sess, "_mcp_shutdown", None)
-            if shutdown_event:
-                shutdown_event.set()
-            lifecycle_task = getattr(sess, "_mcp_lifecycle_task", None)
-            if lifecycle_task and not lifecycle_task.done():
+            # (a set a run is using is retired, not closed under it: the run
+            # finishes on it, and the next build connects afresh)
+            lock = getattr(sess, "_mcp_start_lock", None)
+            if lock is None:
+                lock = sess._mcp_start_lock = asyncio.Lock()
+            async with lock:
+                lifecycle_task = getattr(sess, "_mcp_lifecycle_task", None)
                 try:
-                    await asyncio.wait_for(lifecycle_task, timeout=5.0)
-                except asyncio.TimeoutError:
-                    lifecycle_task.cancel()
-                    try:
-                        await lifecycle_task
-                    except asyncio.CancelledError:
-                        pass
+                    await self._retire_session_mcp(sess)
                 except Exception:
-                    pass
-            setattr(sess, "_mcp_shutdown", None)
-            setattr(sess, "_mcp_lifecycle_task", None)
-            setattr(sess, "_mcp_servers_active", [])
+                    if lifecycle_task and not lifecycle_task.done():
+                        lifecycle_task.cancel()
+                        try:
+                            await lifecycle_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
+                    setattr(sess, "_mcp_shutdown", None)
+                    setattr(sess, "_mcp_lifecycle_task", None)
+                    setattr(sess, "_mcp_servers_active", [])
             count += 1
         return count
 
