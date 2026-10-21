@@ -42,15 +42,15 @@ code/configuration needed to interpret it. It does not restore a suspended stack
 recover every uncommitted streamed token, or guarantee an external action happens
 exactly once.
 
-| Capability | Regular Pi core | Pi Durable | Omniagents conventional workers |
-| --- | --- | --- | --- |
-| Saved conversation | JSONL session tree | Immutable entries in storage | Persisted sessions/history |
-| Resume mechanism | Load transcript and continue agent interaction | Reopen task checkpoints and schedule pending phases | Warm resume reconstructs agent from a live worker handle |
-| Pending input | Agent steering/follow-up queues are in memory | Persisted submissions/inbox with request identities | Existing durable notification infrastructure; worker lifecycle needs separate recovery |
-| Child identity and relationships | Application/extension responsibility | Persisted task/conversation ownership; subagent examples build on it | Worker registry and workspace sidecars are in memory |
-| Interrupted tool | No equivalent durable task policy in the ordinary loop inspected | Stored intent plus explicit safe/unsafe replay policy | Existing interrupted-run/history repair preserves uncertainty |
-| Child result delivery | Application/extension responsibility | Example uses a persistent reporter task and idempotent submission | Completion callback can fail before durable enqueue without a retry obligation |
-| Multiple runtime owners | Not established by this assessment | Storage explicitly assumes one process; no cross-process locking | Existing durable run leases help prevent concurrent ownership |
+| Capability                       | Regular Pi core                                                  | Pi Durable                                                           | Omniagents conventional workers                                                        |
+| -------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Saved conversation               | JSONL session tree                                               | Immutable entries in storage                                         | Persisted sessions/history                                                             |
+| Resume mechanism                 | Load transcript and continue agent interaction                   | Reopen task checkpoints and schedule pending phases                  | Warm resume reconstructs agent from a live worker handle                               |
+| Pending input                    | Agent steering/follow-up queues are in memory                    | Persisted submissions/inbox with request identities                  | Existing durable notification infrastructure; worker lifecycle needs separate recovery |
+| Child identity and relationships | Application/extension responsibility                             | Persisted task/conversation ownership; subagent examples build on it | Worker registry and workspace sidecars are in memory                                   |
+| Interrupted tool                 | No equivalent durable task policy in the ordinary loop inspected | Stored intent plus explicit safe/unsafe replay policy                | Existing interrupted-run/history repair preserves uncertainty                          |
+| Child result delivery            | Application/extension responsibility                             | Example uses a persistent reporter task and idempotent submission    | Completion callback can fail before durable enqueue without a retry obligation         |
+| Multiple runtime owners          | Not established by this assessment                               | Storage explicitly assumes one process; no cross-process locking     | Existing durable run leases help prevent concurrent ownership                          |
 
 The Pi column describes its standard runtime, not every third-party extension.
 The Omni column describes `WorkerManager` and the worker tools, not all resident
@@ -246,7 +246,6 @@ worker configuration and product recovery policy. Launcher should display the
 restored lifecycle and verify the restart flow from the user's perspective.
 Adopt these patterns incrementally; replacing the entire agent loop with a
 general durable workflow engine is not a prerequisite for fixing lost workers.
-
 
 ## Implementation follow-through
 

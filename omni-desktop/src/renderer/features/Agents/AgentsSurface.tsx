@@ -2,9 +2,9 @@ import { useStore } from '@nanostores/react';
 import { BotIcon } from 'lucide-react';
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { v4 as uuidv4 } from 'uuid';
 
 import { formatTimestamp } from '@/lib/format-time';
+import { uuidv4 } from '@/lib/uuid';
 import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
 import { Button } from '@/renderer/ds/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/renderer/ds/ui/empty';
