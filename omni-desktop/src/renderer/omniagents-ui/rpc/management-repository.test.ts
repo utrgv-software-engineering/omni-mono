@@ -1,6 +1,5 @@
+import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/protocol/gui-v2';
 import { describe, expect, it, vi } from 'vitest';
-
-import type { RpcMethodMap, RpcNotificationMap } from '@/generated/omniagents-gui-v2/gui-v2';
 
 import type { RPCConnectionState } from './client';
 import { ManagementRepository, type ManagementTransport } from './management-repository';

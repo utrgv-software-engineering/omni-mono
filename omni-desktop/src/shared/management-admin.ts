@@ -1,4 +1,4 @@
-import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
+import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
 
 /**
  * Process-wide Omniagents mutations permitted through the main/server admin

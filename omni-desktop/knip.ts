@@ -56,8 +56,6 @@ const config = {
     'forge.*.ts',
     // Spawned by path from chat-cleanup-crash.test.ts.
     'src/main/__fixtures__/cleanup-crash-worker.ts',
-    // Checked-in protocol artifact; scripts/sync-omniagents-gui-v1 verifies it.
-    'src/generated/omniagents-gui-v1/gui-v1.ts',
     'electron-builder.config.ts',
     'src/main/constants.ts',
     'src/main/repo-provider-handlers.ts',

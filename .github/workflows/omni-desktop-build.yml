@@ -6,11 +6,13 @@ on:
     tags: ['omni-desktop-v*']
     paths:
       - 'omni-desktop/**'
+      - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
       - '.github/workflows/omni-desktop-build.yml'
   pull_request:
     types: [ready_for_review, opened, synchronize]
     paths:
       - 'omni-desktop/**'
+      - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
       - '.github/workflows/omni-desktop-build.yml'
   merge_group:
   workflow_dispatch:

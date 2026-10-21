@@ -19,9 +19,6 @@ export default [
   js.configs.recommended,
   includeIgnoreFile(gitignorePath, 'Imported .gitignore patterns'),
   {
-    ignores: ['src/generated/**'],
-  },
-  {
     languageOptions: {
       parser: typescriptParser,
       parserOptions: {

@@ -1,8 +1,7 @@
+import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/protocol/gui-v2';
 import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { RpcMethodMap, RpcNotificationMap } from '@/generated/omniagents-gui-v2/gui-v2';
 
 import type { RPCClient, RPCConnectionState } from './rpc/client';
 import type { ManagementRepository } from './rpc/management-repository';

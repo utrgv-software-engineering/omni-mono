@@ -5,11 +5,13 @@ on:
     branches: [main, dev]
     paths:
       - 'omni-desktop/**'
+      - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
       - '.github/workflows/omni-desktop-test.yml'
   pull_request:
     types: [ready_for_review, opened, synchronize]
     paths:
       - 'omni-desktop/**'
+      - 'omniagents/omniagents/backends/web/ui/src/protocol/generated/**'
       - '.github/workflows/omni-desktop-test.yml'
   workflow_dispatch:
   merge_group:

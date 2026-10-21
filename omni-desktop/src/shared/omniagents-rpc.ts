@@ -1,4 +1,4 @@
-import type { JsonRpcError } from '@/generated/omniagents-gui-v2/gui-v2';
+import type { JsonRpcError } from '@omniagents/protocol/gui-v2';
 
 export class OmniagentsRpcError extends Error {
   readonly code: number;

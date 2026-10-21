@@ -1,5 +1,6 @@
-import type { InitializeResult, RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
-import { GUI_PROTOCOL_VERSION } from '@/generated/omniagents-gui-v2/gui-v2';
+import type { InitializeResult, RpcMethodMap } from '@omniagents/protocol/gui-v2';
+import { GUI_PROTOCOL_VERSION } from '@omniagents/protocol/gui-v2';
+
 import { guiInitializationError, validateGuiInitialization } from '@/shared/omniagents-protocol';
 
 type InitializeParams = RpcMethodMap['initialize']['params'];

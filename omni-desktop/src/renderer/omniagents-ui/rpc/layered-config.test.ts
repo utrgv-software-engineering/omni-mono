@@ -1,6 +1,5 @@
+import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
 import { describe, expect, it, vi } from 'vitest';
-
-import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
 
 import { LayeredConfigClient, LayeredConfigProtocolError, type LayeredConfigTransport } from './layered-config';
 type Method = 'get_config' | 'validate_config' | 'write_config';

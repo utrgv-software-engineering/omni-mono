@@ -1,6 +1,5 @@
+import type { RpcMethodMap, ThreadUpdatedParams } from '@omniagents/protocol/gui-v2';
 import { describe, expect, it, vi } from 'vitest';
-
-import type { RpcMethodMap, ThreadUpdatedParams } from '@/generated/omniagents-gui-v2/gui-v2';
 
 import {
   CONVERSATION_ORGANIZATION_SCHEMA_LIMITATIONS,

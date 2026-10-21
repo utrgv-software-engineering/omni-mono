@@ -1,4 +1,4 @@
-import type { ItemUpdatedParams, RpcMethodMap, RpcNotificationMap } from '@/generated/omniagents-gui-v2/gui-v2';
+import type { ItemUpdatedParams, RpcMethodMap, RpcNotificationMap } from '@omniagents/protocol/gui-v2';
 
 type PlansAndDiffsMethod = 'get_plan' | 'get_run_diff';
 

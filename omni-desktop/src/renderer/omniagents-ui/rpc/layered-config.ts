@@ -1,4 +1,4 @@
-import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
+import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
 
 type ConfigMethod = Extract<keyof RpcMethodMap, 'get_config' | 'validate_config' | 'write_config'>;
 export interface LayeredConfigTransport {

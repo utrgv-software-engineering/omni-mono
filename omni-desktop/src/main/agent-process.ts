@@ -4,12 +4,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
 import c from 'ansi-colors';
 import { shellEnvSync } from 'shell-env';
 import { assert } from 'tsafe';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
 import { getProductSlug } from '@/lib/product';
 import { DEFAULT_ENV } from '@/lib/pty-utils';
 import { SimpleLogger } from '@/lib/simple-logger';

@@ -5,9 +5,7 @@
  *
  * Ported from the reference implementation in
  * omniagents/backends/web/ui/src/rpc/replay.ts (identical to the Ink TUI
- * copy) at the same commit the generated protocol contract is pinned to —
- * see src/generated/omniagents-gui-v1/provenance.json. Two additions over
- * the reference:
+ * copy). Two additions over the reference:
  *
  * - `SessionReplayCoordinator.resumeAll()` — the reconnect hook Omni
  *   Desktop uses to proactively backfill cursors after the RPC client

@@ -3,7 +3,7 @@ import {
   type InitializeResult,
   isGuiInitializeResult,
   supportsGuiProtocolVersion,
-} from '@/generated/omniagents-gui-v2/gui-v2';
+} from '@omniagents/protocol/gui-v2';
 
 import { OmniagentsRpcError } from './omniagents-rpc';
 

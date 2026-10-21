@@ -1,6 +1,5 @@
+import type { ItemUpdatedParams, RpcMethodMap } from '@omniagents/protocol/gui-v2';
 import { describe, expect, it, vi } from 'vitest';
-
-import type { ItemUpdatedParams, RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
 
 import { PlansAndDiffsClient, PlansAndDiffsProtocolError, type PlansAndDiffsTransport } from './plans-and-diffs';
 

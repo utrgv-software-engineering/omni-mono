@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import path from 'node:path';
 
+import type { JsonRpcError, RpcMethodMap } from '@omniagents/protocol/gui-v2';
 import type Store from 'electron-store';
 import { fromIso, type IProjectsRepo, residentId, type ResidentProtocolRow, toIso } from 'omni-projects-db';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import type { JsonRpcError, RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
 import { RESIDENT_SUPERUSER_TOOLS } from '@/lib/client-tools';
 import {
   advanceThread,

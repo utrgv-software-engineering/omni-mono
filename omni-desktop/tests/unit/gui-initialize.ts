@@ -1,4 +1,4 @@
-import { GUI_PROTOCOL_VERSION, type InitializeResult } from '@/generated/omniagents-gui-v2/gui-v2';
+import { GUI_PROTOCOL_VERSION, type InitializeResult } from '@omniagents/protocol/gui-v2';
 
 export function guiInitializeResult(overrides: Partial<InitializeResult> = {}): InitializeResult {
   return {

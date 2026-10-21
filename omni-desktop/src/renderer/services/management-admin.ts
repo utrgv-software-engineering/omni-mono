@@ -1,4 +1,5 @@
-import type { RpcMethodMap } from '@/generated/omniagents-gui-v2/gui-v2';
+import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
+
 import { AccountManagementClient } from '@/renderer/omniagents-ui/rpc/account-management';
 import { LayeredConfigClient } from '@/renderer/omniagents-ui/rpc/layered-config';
 import { McpManagementClient } from '@/renderer/omniagents-ui/rpc/mcp-management';

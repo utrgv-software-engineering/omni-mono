@@ -1,5 +1,3 @@
-import { createActor } from 'xstate';
-
 import type {
   Capabilities,
   EnvironmentSelection,
@@ -9,8 +7,10 @@ import type {
   RpcClientNotificationMap,
   RpcMethodMap,
   RpcNotificationMap,
-} from '@/generated/omniagents-gui-v2/gui-v2';
-import { GUI_PROTOCOL_VERSION } from '@/generated/omniagents-gui-v2/gui-v2';
+} from '@omniagents/protocol/gui-v2';
+import { GUI_PROTOCOL_VERSION } from '@omniagents/protocol/gui-v2';
+import { createActor } from 'xstate';
+
 import { withConnectTicket, WsTicketError } from '@/renderer/omniagents-ui/rpc/ws-ticket';
 import {
   classifyCloseCode,

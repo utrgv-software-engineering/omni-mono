@@ -1,7 +1,7 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
 import { resolve } from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import { createHtmlPlugin } from 'vite-plugin-html';
 import tsconfigPaths from 'vite-tsconfig-paths';
 
@@ -28,6 +28,13 @@ export default defineConfig(({ mode }) => {
 
   return {
     server: {
+      // The GUI protocol module is imported from omniagents (tsconfig paths).
+      fs: {
+        allow: [
+          searchForWorkspaceRoot(process.cwd()),
+          resolve('../omniagents/omniagents/backends/web/ui/src/protocol/generated'),
+        ],
+      },
       port: 5173,
       strictPort: true,
       allowedHosts: true,

@@ -1,8 +1,7 @@
+import type { RpcMethodMap, RpcNotificationMap } from '@omniagents/protocol/gui-v2';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-
-import type { RpcMethodMap, RpcNotificationMap } from '@/generated/omniagents-gui-v2/gui-v2';
 
 const launcherConnect = vi.hoisted(() => ({ callback: null as (() => void) | null }));
 vi.mock('@/renderer/services/ipc', () => ({
