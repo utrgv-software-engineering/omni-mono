@@ -117,7 +117,7 @@ async def test_terminal_create_attaches_manager_and_returns_ws_path(monkeypatch)
     assert result["terminal_token"] == "tok-1"
     assert result["path"] == "/ws/terminal"
     assert result["session_id"] == "sess-1"
-    assert result["cwd"] == "/"
+    assert result["cwd"] == created["cwd"]
     assert result["environment_id"] == "test-host-environment"
     assert result["environment_generation"] == 1
 
