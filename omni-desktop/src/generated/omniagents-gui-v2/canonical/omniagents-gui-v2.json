@@ -2190,13 +2190,6 @@
           }
         },
         {
-          "name": "trigger_run",
-          "required": false,
-          "schema": {
-            "$ref": "./schemas/gui-v2.schema.json#/$defs/enqueue_message/properties/trigger_run"
-          }
-        },
-        {
           "name": "variables",
           "required": false,
           "schema": {

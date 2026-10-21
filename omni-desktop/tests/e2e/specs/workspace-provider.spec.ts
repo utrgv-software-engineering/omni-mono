@@ -42,4 +42,13 @@ test('changes the workspace provider only after confirmation and persists it', a
   await openSettings(app.page);
   await app.page.getByRole('button', { name: 'AI', exact: true }).click();
   await expect(app.page.getByLabel('Provider', { exact: true })).toHaveValue('second');
+  // A terminal change must survive desktop/server startup, even though their
+  // legacy settings seed still selects the original provider.
+  app.setProviderFromCli('sandbox/gpt-5.2');
+  await app.restart();
+  await expect(app.page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
+  await openSettings(app.page);
+  await app.page.getByRole('button', { name: 'AI', exact: true }).click();
+  await expect(app.page.getByLabel('Provider', { exact: true })).toHaveValue('sandbox');
+  await attachProofPng(info, 'CLI provider survives app restart', await app.captureScreenshot());
 });

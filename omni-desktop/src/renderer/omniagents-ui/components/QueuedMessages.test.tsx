@@ -12,7 +12,6 @@ const base: QueuedMessage = {
   id: 'mine',
   content: 'Follow-up question',
   role: 'user',
-  trigger_run: true,
   variables: null,
   safe_tool_overrides: null,
   source: 'ui',

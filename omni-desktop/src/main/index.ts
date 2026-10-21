@@ -47,6 +47,7 @@ import {
 } from '@/main/github-auth';
 import { durableLocalCodexAgentHostEnv, LocalCodexAccountOwner } from '@/main/local-codex-account-owner';
 import { durableLocalMcpAgentHostEnv, LocalMcpConfigOwner } from '@/main/local-mcp-config-owner';
+import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { getOrCreateMachineIdentity, renameMachine } from '@/main/machine-identity';
 import { MainProcessManager } from '@/main/main-process-manager';
 import { getMcpBinPath } from '@/main/mcp-config-manager';
@@ -270,7 +271,8 @@ function materializeDesktopConfig(): void {
   try {
     materializeAgentConfig({
       configDir: OMNI_CONFIG_DIR,
-      models: store.get('modelsConfig') ?? emptyModelsConfig(),
+      models: readLocalModels(OMNI_CONFIG_DIR, store.get('modelsConfig') ?? emptyModelsConfig()),
+      writeModels: false,
       mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
       network: store.get('networkConfig') ?? emptyNetworkConfig(),
       mode: 'plaintext',
@@ -283,8 +285,8 @@ function materializeDesktopConfig(): void {
   }
 }
 
-// Import any pre-v23 on-disk config files into the store once, then make the
-// store the source of truth that materialize writes back out.
+// Import legacy settings once. Existing local models.json remains authoritative;
+// its stored copy is used only to seed a missing file during migration.
 migrateAgentConfigFromFiles(store, OMNI_CONFIG_DIR);
 materializeDesktopConfig();
 
@@ -1034,7 +1036,8 @@ registerSettingsConfigHandlers(
   },
   {},
   {
-    writeModels: (_event, write) => processManager.changeModels(write),
+    readModels: () => readLocalModels(OMNI_CONFIG_DIR, store.get('modelsConfig') ?? emptyModelsConfig()),
+    saveModels: (_event, config) => writeLocalModels(OMNI_CONFIG_DIR, config),
     // Reading the legacy document must remain responsive while a cold
     // management host starts. Ownership is transferred by the readiness hook
     // above; this guard only blocks writes after the marker is durable.

@@ -28,15 +28,15 @@ Scope: the conventional WorkerManager and worker tools. Do not assume these
 findings establish the behavior of every resident/swarm execution path; inspect
 those separately when designing shared recovery.
 
-| State | Current behavior found in source |
-| --- | --- |
-| Worker conversation and recorded tool results | Persisted in the parent's conversation namespace |
-| Written files/worktrees | May survive if underlying workspace/storage survives; not a guarantee for discarded or ephemeral environments |
-| Live worker run and monitor task | Lost when the hosting process dies |
-| Worker ID to session/handle mapping | In-memory dictionary, empty in a new manager |
-| Isolation/workspace/environment associations | In-memory registries; no reconstruction path found in worker code |
-| Resume by worker ID after process restart | Lookup fails without the previous in-memory handle |
-| Completion notification | Durable after enqueue, but completion-to-enqueue delivery is best-effort |
+| State                                         | Current behavior found in source                                                                              |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Worker conversation and recorded tool results | Persisted in the parent's conversation namespace                                                              |
+| Written files/worktrees                       | May survive if underlying workspace/storage survives; not a guarantee for discarded or ephemeral environments |
+| Live worker run and monitor task              | Lost when the hosting process dies                                                                            |
+| Worker ID to session/handle mapping           | In-memory dictionary, empty in a new manager                                                                  |
+| Isolation/workspace/environment associations  | In-memory registries; no reconstruction path found in worker code                                             |
+| Resume by worker ID after process restart     | Lookup fails without the previous in-memory handle                                                            |
+| Completion notification                       | Durable after enqueue, but completion-to-enqueue delivery is best-effort                                      |
 
 ## Evidence and failure modes
 
@@ -156,7 +156,6 @@ product wiring/instructions where needed; launcher changes should expose recover
 state and exercise the user-visible restart flow. Follow the repositories' release
 order and keep this fix separate from unrelated in-flight changes.
 
-
 ## Implementation update — 2026-10-16
 
 The worker recovery path now uses the existing transactional conversation store
@@ -228,7 +227,6 @@ Build both bundles first with `npm run build` and `npm run build:server`.
 Report: `artifacts/playwright-proof-report/index.html`.
 Screenshots, traces and videos: `artifacts/playwright-proof-results/`.
 
-
 Final validation: the recovery/regression suite passed **167 tests**, with targeted
 follow-up worker tests also passing. Launcher passed **17 UI/session tests**, and
 Omni Code passed its **2 capability integration tests**. Both visual-proof projects
@@ -236,3 +234,104 @@ passed after genuine process-tree kills, including a visible delivered completio
 report. Python typing, TypeScript, targeted ESLint, whitespace checks, and both
 production builds passed. Desktop/browser execution was verified on Linux; these
 runs do not constitute Windows/macOS runtime validation.
+
+## Unified worker communication update — 2026-10-17
+
+New delegation now uses one worker lifecycle across regular chats and residents.
+The optional `name`, `role` and `peer_communication` spawn arguments replace the
+separate swarm setup. Opted-in children get host-bound discovery and messaging
+for opted-in siblings in the same parent conversation. Messages persist before
+delivery, deduplicate on retry, and do not start idle recipients.
+
+The `swarms` capability name is retained as an alias. Existing swarm recipes
+still reconstruct their original member tools and membership boundary; their
+historical mail is available through `get_worker_status`. Legacy records are
+not silently widened to the new parent-scoped communication boundary.
+See `../omniagents/docs/SWARMS.md` for the current contract.
+
+Regression coverage includes persisted mail after reopening SQLite, scoped peer
+visibility, sender identity, concurrent name admission, message deduplication,
+real recipient-queue delivery without an implicit run, limits, recipe recovery,
+and legacy mailbox inspection. The framework recovery suites and product pack
+resolution tests pass; PostgreSQL variants were skipped in this run because no
+test database URL was configured. Launcher resident tests (77), targeted lint,
+type checks, and both production builds pass.
+
+The permanent crash proof now spawns an opted-in named worker and, after a real
+process-tree kill, calls its reconstructed `worker_context` and
+`worker_message` tools before completing the original assignment.
+
+Proof command:
+
+```bash
+OMNI_CLI_PATH=/home/emm/Omni/Workspace/omni-code/.venv/bin/omni VISUAL_PROOF=1 E2E_CHROMIUM_EXECUTABLE=/usr/bin/chromium E2E_ELECTRON_X11=1 DISPLAY=:0 npx playwright test tests/e2e/specs/worker-recovery.spec.ts --project=server-local --project=electron-local
+```
+
+Artifacts: `artifacts/playwright-proof-report/index.html` and
+`artifacts/playwright-proof-results/`.
+
+Both proof projects passed (server-local and electron-local, 2 tests).
+
+### Explicit worker-to-parent messaging
+
+New project workers now receive `worker_message` and `worker_context` even
+without peer communication. `worker_message(recipient="owner", message=...)`
+atomically saves the mailbox entry and enqueues a parent notification. Retried
+tool calls do not enqueue duplicate notifications. Normal worker turn endings
+retain their transcript/result but do not send an automatic completion message.
+Errors still generate automatic failure reports.
+
+The parent keeps `send_worker_message(worker_id, message)`. Messages addressed
+to workers now enqueue a turn and start idle workers automatically. Busy
+workers process messages in arrival order after the current run. Closing a
+worker cancels active and queued work and rejects future messages. Explicit
+resume remains available for interrupted-run recovery.
+
+Recipes from before this change retain their automatic end-of-run reporting,
+so a recovered worker that lacks the new reporting instructions does not
+silently stop communicating. New recipes persist the explicit-message policy.
+
+Additional tests cover silent normal turn endings, automatic failure reports,
+parent messaging without peer opt-in, and transaction rollback across mailbox
+admission and parent notification. The permanent crash proof now checks that
+the worker's explicit message reaches a parent model request after recovery,
+rather than checking delivery of an automatic completion report.
+
+The explicit-message proof also exposed a forwarded-approval lifetime bug:
+a parent turn finishing could mark the worker's still-pending approval failed
+in the canonical transcript. Worker identity is now preserved on those approval
+items, and the parent run-end sweep leaves them for the worker's resolution
+event. Existing runtime reconciliation still disables controls whose waiter
+was lost. Tool and MCP approval regression tests cover this boundary.
+
+Validation for explicit messaging: 53 worker/recovery tests and 103
+recorder/runtime-control/worker-approval tests passed; 10 PostgreSQL variants
+were skipped without a configured database. Product capability tests and type
+checks passed. The updated browser and Electron visual proofs both passed
+(2 tests), using the command and artifact paths above.
+
+## Automatic message dispatch
+
+The public enqueue API no longer accepts `trigger_run` / `triggerRun`.
+Legacy queued records are decoded without that flag; already recorded effects
+are not replayed. Worker monitoring remains attached across successive runs,
+including runs started by ordinary queued messages. Reattachment preserves the
+child conversation and workspace. Explicit worker messages notify the parent;
+ordinary assistant responses remain local to the worker transcript.
+
+Validation: 84 framework tests passed, with 10 PostgreSQL variants skipped.
+The permanent crash recovery proof also covers a parent-to-idle-worker message
+and the worker's explicit reply, without a resume operation for that follow-up.
+Both server-local and electron-local passed using:
+
+```bash
+OMNI_CLI_PATH=/home/emm/Omni/Workspace/omni-code/.venv/bin/omni VISUAL_PROOF=1 E2E_CHROMIUM_EXECUTABLE=/usr/bin/chromium E2E_ELECTRON_X11=1 DISPLAY=:0 npx playwright test tests/e2e/specs/worker-recovery.spec.ts --project=server-local --project=electron-local
+```
+
+Proof report: `artifacts/playwright-proof-report/index.html`.
+Screenshots, videos and traces: `artifacts/playwright-proof-results/`.
+
+Protocol artifacts are synced from the committed framework (omniagents
+`556c87ed`) and pass release source verification. The sync script's
+`--working-tree` flag is for development snapshots only; release verification
+rejects them.

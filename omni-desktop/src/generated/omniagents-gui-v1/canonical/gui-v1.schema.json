@@ -759,9 +759,6 @@
         "submission_id": {
           "type": "string"
         },
-        "trigger_run": {
-          "type": "boolean"
-        },
         "variables": {
           "type": "object"
         }

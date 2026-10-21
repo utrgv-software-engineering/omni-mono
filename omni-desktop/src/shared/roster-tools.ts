@@ -23,7 +23,7 @@ export const ROSTER_TOOLS: readonly ClientToolDef[] = [
         protocol: {
           type: 'string',
           description:
-            'Its first protocol, markdown: what it is for, how it splits work, how it briefs workers and swarms, what it verifies before reporting done, what to avoid. Short; the bot revises it.',
+            'Its first protocol, markdown: what it is for, how it splits work, how it briefs workers, what it verifies before reporting done, what to avoid. Short; the bot revises it.',
         },
         projectIds: { type: 'array', items: { type: 'string' }, description: 'Projects to scope it to.' },
         morningHour: {

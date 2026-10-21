@@ -787,7 +787,7 @@ export const renderReflectPrompt = (r: ReflectionInput): string => {
     `preferences the user expressed, exact names and numbers. ` +
     `\`remember(key, text)\` saves one (re-using a key refines it); \`forget(key)\` retracts one.\n` +
     `- **Protocol** is procedure: a way of working that succeeded today and should be the default, ` +
-    `a failure and the check that would have caught it, a brief that produced good work from a worker or swarm. ` +
+    `a failure and the check that would have caught it, a brief that produced good work from a worker. ` +
     `\`update_protocol(body, note)\` replaces the whole manual — revise it, do not append a diary.\n\n` +
     `Most days need one to three saves and at most one protocol revision; a quiet day may need none. ` +
     `Your final reply is private notes-to-self — only the tool calls change anything.`

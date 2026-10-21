@@ -1795,7 +1795,6 @@ export class ResidentAgentManager {
         session_id: sessionId,
         content: ping,
         role: 'assistant',
-        trigger_run: true,
         source: 'resident:wakeup',
         // Additive: speech tools never hit the approval path on this run.
         safe_tool_overrides: { safe_tool_names: [...SPEECH_TOOL_NAMES] },
@@ -2173,7 +2172,6 @@ export class ResidentAgentManager {
         session_id: sessionId,
         content: prompt,
         role: 'user',
-        trigger_run: true,
         source: 'resident:reflect',
       });
       await runEnd;

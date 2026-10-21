@@ -73,3 +73,31 @@ describe('workspace provider changes', () => {
     expect(h.read().provider_scope_version).toBe(1);
   });
 });
+
+it('uses canonical local models for reads and stale-provider validation without stopping runs', async () => {
+  const h = setup();
+  const seed = h.read();
+  let file = { ...seed, default: 'personal/b', provider_scope_version: 1 as const };
+  const storeWrite = vi.fn();
+  const handlers = new Map<string, (...args: any[]) => any>();
+  registerSettingsConfigHandlers(
+    { handle: (name: string, fn: any) => handlers.set(name, fn) } as IIpcListener,
+    () => ({ get: () => seed, set: storeWrite }) as never,
+    () => {},
+    {},
+    {
+      readModels: () => file,
+      saveModels: (_event, next) => {
+        file = next as typeof file;
+      },
+    }
+  );
+  expect(handlers.get('settings:get-models-config')!(null).default).toBe('personal/b');
+  const save = handlers.get('settings:set-models-config')!;
+  await expect(save(null, seed, { expectedProvider: 'company', confirmProviderChange: true })).rejects.toThrow(
+    'another window'
+  );
+  await save(null, seed, { expectedProvider: 'personal', confirmProviderChange: true });
+  expect(file.default).toBe('company/a');
+  expect(storeWrite).not.toHaveBeenCalled();
+});

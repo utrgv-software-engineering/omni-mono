@@ -43,6 +43,7 @@ import {
   searchRepos as githubSearchRepos,
 } from '@/main/github-auth';
 import { registerInboxHandlers } from '@/main/inbox-handlers';
+import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { getMcpBinPath } from '@/main/mcp-config-manager';
 import { registerMigrationHandlers } from '@/main/migration-handlers';
 import { registerMilestoneHandlers } from '@/main/milestone-handlers';
@@ -788,7 +789,10 @@ export const wireGlobalHandlers = async (arg: {
       const cfgDir = dbUrl ? join(t.configDir, '.config', getProductSlug()) : getOmniConfigDir();
       materializeAgentConfig({
         configDir: cfgDir,
-        models: t.settings.get('modelsConfig') ?? emptyModelsConfig(),
+        models: dbUrl
+          ? (t.settings.get('modelsConfig') ?? emptyModelsConfig())
+          : readLocalModels(cfgDir, t.settings.get('modelsConfig') ?? emptyModelsConfig()),
+        writeModels: !!dbUrl,
         mcp: t.settings.get('mcpConfig') ?? emptyMcpConfig(),
         network: t.settings.get('networkConfig') ?? emptyNetworkConfig(),
         mode: dbUrl ? 'refs' : 'plaintext',
@@ -1358,7 +1362,13 @@ export const wireGlobalHandlers = async (arg: {
     // Cloud/teams: never echo shared secret values back to the renderer; a
     // save that didn't change a masked field preserves the stored value.
     pgPool ? { maskModels: maskModelsConfig, maskMcp: maskMcpConfig, restoreModels: restoreMaskedModels } : {},
-    { writeModels: (event, write) => ctxTenant(event).processManager.changeModels(write) }
+    pgPool
+      ? { writeModels: (event, write) => ctxTenant(event).processManager.changeModels(write) }
+      : {
+          readModels: (event) =>
+            readLocalModels(getOmniConfigDir(), ctxTenant(event).settings.get('modelsConfig') ?? emptyModelsConfig()),
+          saveModels: (_event, config) => writeLocalModels(getOmniConfigDir(), config),
+        }
   );
   registerGitCredentialHandlers(
     ipc,

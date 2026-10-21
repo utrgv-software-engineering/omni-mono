@@ -80,7 +80,24 @@ test('recovers an interrupted worker after abrupt runtime death and resumes its 
       });
       throw error;
     });
-  await expect(restored.getByText('Delivered', { exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() => app.inspectModelRequests().some((request) => request.marker === 'WORKER_PARENT_MESSAGE'), {
+      timeout: 30_000,
+    })
+    .toBe(true);
+  await expect
+    .poll(
+      async () => {
+        const approval = restored.getByRole('button', { name: 'Approve Once', exact: true });
+        if (await approval.isVisible()) {
+          await approval.click();
+        }
+        return app.inspectModelRequests().some((request) => request.marker === 'WORKER_FOLLOWUP_DELIVERED');
+      },
+      { timeout: 90_000 }
+    )
+    .toBe(true);
+  await expect(restored.getByText('WORKER_FOLLOWUP_READY', { exact: true }).last()).toBeVisible();
   await testInfo.attach('recovered-worker', {
     body: await restored.screenshot({ fullPage: true }),
     contentType: 'image/png',

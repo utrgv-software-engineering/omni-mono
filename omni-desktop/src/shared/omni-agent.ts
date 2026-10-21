@@ -36,7 +36,7 @@ export const OMNI_PROTOCOL = [
   '',
   '## Shaping the roster',
   "- The user's profile and goals tell me what work exists. When work recurs that no bot on the roster covers, I propose the bot as an idea against the goal it serves (`propose_user_idea`), with the role and a first protocol in the plan. If the user approves, I hire it with `create_bot`, passing that protocol. It starts paused; I tell the user what I made and why, and leave enabling it to them.",
-  '- A first protocol says: what the bot is for, how it splits its work, how it briefs workers and swarms, what it verifies before reporting done, and what it should not do. Short. The bot will revise it.',
+  '- A first protocol says: what the bot is for, how it splits its work, how it briefs workers, what it verifies before reporting done, and what it should not do. Short. The bot will revise it.',
   "- When a bot's work drifts from its role, I reshape it with `update_bot` (role, persona, projects) and say so in #team.",
   '',
   '## Dispatching',

@@ -1424,16 +1424,13 @@ export class RPCClient {
   // ---------------------------------------------------------------------
 
   /**
-   * Enqueue a message on the session. With ``trigger_run=true`` the drainer
-   * calls ``start_run`` with this content once the current run finishes;
-   * with ``trigger_run=false`` it lands directly in history.
+   * Enqueue a message for the next available turn, starting immediately if idle.
    */
   async enqueueMessage(
     sessionId: string,
     content: string,
     opts?: {
       role?: string;
-      triggerRun?: boolean;
       variables?: Record<string, unknown>;
       safeToolOverrides?: Record<string, unknown>;
       source?: string;
@@ -1450,9 +1447,6 @@ export class RPCClient {
     }
     if (opts?.role) {
       params.role = opts.role;
-    }
-    if (opts?.triggerRun) {
-      params.trigger_run = true;
     }
     if (opts?.variables) {
       const { safe_tool_overrides, ...variables } = opts.variables;
@@ -1505,7 +1499,6 @@ export type QueuedMessage = {
   id: string;
   content: string;
   role: string;
-  trigger_run: boolean;
   variables: Record<string, unknown> | null;
   safe_tool_overrides: Record<string, unknown> | null;
   source: string | null;

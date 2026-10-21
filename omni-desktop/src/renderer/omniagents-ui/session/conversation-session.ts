@@ -576,7 +576,6 @@ export class ConversationSession {
     if (queued) {
       const result = await this.submitOnce(submissionId, () =>
         this.client.enqueueMessage(this.id, agentPrompt, {
-          triggerRun: true,
           role: 'user',
           variables,
           source: 'ui',

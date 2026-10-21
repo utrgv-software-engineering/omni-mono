@@ -175,6 +175,34 @@ export async function startDeterministicModelServer(responseText: string): Promi
           javascriptSucceeded = false;
         }
       }
+      if (
+        JSON.stringify(latestUser?.content ?? '').includes('WORKER_RECOVERY_PROOF') &&
+        raw.includes('[worker message]') &&
+        raw.includes('RECOVERED_WORKER_MAIL')
+      ) {
+        observations.push({ marker: 'WORKER_PARENT_MESSAGE', model: body.model ?? '' });
+      }
+      const workerFollowup = JSON.stringify(latestUser?.content ?? '').includes('WORKER_FOLLOWUP_MESSAGE');
+      const parentWorkerMessage = JSON.stringify(latestUser?.content ?? '').includes('WORKER_RECOVERY_PROOF')
+        ? raw.match(/\[worker message\] ([a-z0-9-]+): RECOVERED_WORKER_MAIL/)?.[1]
+        : undefined;
+      if (parentWorkerMessage && raw.includes('WORKER_FOLLOWUP_ACK')) {
+        observations.push({ marker: 'WORKER_FOLLOWUP_DELIVERED', model: body.model ?? '' });
+      }
+      const conversationTool =
+        workerFollowup && !JSON.stringify(turnInput).includes('e2e_worker_followup_ack')
+          ? {
+              callId: 'e2e_worker_followup_ack',
+              name: 'worker_message',
+              args: { recipient: 'owner', message: 'WORKER_FOLLOWUP_ACK' },
+            }
+          : parentWorkerMessage && !JSON.stringify(turnInput).includes('e2e_parent_worker_message')
+            ? {
+                callId: 'e2e_parent_worker_message',
+                name: 'send_worker_message',
+                args: { worker_id: parentWorkerMessage, message: 'WORKER_FOLLOWUP_MESSAGE' },
+              }
+            : null;
       const workerChild = JSON.stringify(latestUser?.content ?? '').includes('WORKER_CHILD_HOLD');
       const workerResume =
         raw.includes('WORKER_CHILD_HOLD') &&
@@ -192,6 +220,17 @@ export async function startDeterministicModelServer(responseText: string): Promi
           model: body.model ?? '',
         });
       }
+      const workerPeerTool = workerResume
+        ? !JSON.stringify(turnInput).includes('e2e_worker_context')
+          ? { callId: 'e2e_worker_context', name: 'worker_context', args: {} }
+          : !JSON.stringify(turnInput).includes('e2e_worker_message')
+            ? {
+                callId: 'e2e_worker_message',
+                name: 'worker_message',
+                args: { recipient: 'owner', message: 'RECOVERED_WORKER_MAIL' },
+              }
+            : null
+        : null;
       const workerTool =
         workerChild && !JSON.stringify(turnInput).includes('e2e_worker_read')
           ? { callId: 'e2e_worker_read', name: 'read_file', args: { file_path: 'worker-input.txt' } }
@@ -206,10 +245,15 @@ export async function startDeterministicModelServer(responseText: string): Promi
                     task: 'WORKER_CHILD_HOLD Read worker-input.txt and retain the result.',
                     isolation: 'none',
                     allow_dirty: false,
+                    name: 'reader',
+                    role: 'Inspect the input',
+                    peer_communication: true,
                   },
                 }
               : null;
       const tileTool =
+        conversationTool ??
+        workerPeerTool ??
         workerTool ??
         (JSON.stringify(latestUser?.content ?? '').includes('SUBAGENT_CHILD_PROOF') &&
         !JSON.stringify(turnInput).includes('e2e_subagent_read')
@@ -365,27 +409,41 @@ export async function startDeterministicModelServer(responseText: string): Promi
       const invalidRetainedPreview =
         raw.includes('e2e_retained_output') &&
         (raw.includes('RETAINED_MIDDLE_NEEDLE') || !raw.includes('Full text saved as'));
-      const text = workerResume
-        ? raw.includes('WORKER_PERSISTED_INPUT')
-          ? 'WORKER_RESUMED_READY'
-          : 'WORKER_HISTORY_MISSING'
-        : JSON.stringify(latestUser?.content ?? '').includes('WORKER_RECOVERY_PROOF')
-          ? 'WORKER_PARENT_READY'
-          : javascriptOutput
-            ? javascriptSucceeded
-              ? 'JAVASCRIPT_FILTER_READY'
-              : 'JAVASCRIPT_FILTER_FAILURE'
-            : invalidRetainedPreview
-              ? 'OUTPUT_BUDGET_FAILURE'
-              : queuedImage
-                ? asksForImage
-                  ? 'ESCALATION_IMAGE_RECEIVED'
-                  : 'QUEUED_IMAGE_RECEIVED'
-                : sessionA
-                  ? 'SESSION_A_REPLY'
-                  : raw.includes('PROMPT_FOR_SESSION_B')
-                    ? 'SESSION_B_REPLY'
-                    : responseText;
+      const text = workerFollowup
+        ? 'WORKER_FOLLOWUP_READY'
+        : workerResume
+          ? raw.includes('WORKER_PERSISTED_INPUT') &&
+            turnInput.some(
+              (item) =>
+                item.type === 'function_call_output' &&
+                item.call_id === 'e2e_worker_context' &&
+                (item.output ?? '').includes('"peers"')
+            ) &&
+            turnInput.some(
+              (item) =>
+                item.type === 'function_call_output' &&
+                item.call_id === 'e2e_worker_message' &&
+                (item.output ?? '').includes('RECOVERED_WORKER_MAIL')
+            )
+            ? 'WORKER_RESUMED_READY'
+            : 'WORKER_HISTORY_MISSING'
+          : JSON.stringify(latestUser?.content ?? '').includes('WORKER_RECOVERY_PROOF')
+            ? 'WORKER_PARENT_READY'
+            : javascriptOutput
+              ? javascriptSucceeded
+                ? 'JAVASCRIPT_FILTER_READY'
+                : 'JAVASCRIPT_FILTER_FAILURE'
+              : invalidRetainedPreview
+                ? 'OUTPUT_BUDGET_FAILURE'
+                : queuedImage
+                  ? asksForImage
+                    ? 'ESCALATION_IMAGE_RECEIVED'
+                    : 'QUEUED_IMAGE_RECEIVED'
+                  : sessionA
+                    ? 'SESSION_A_REPLY'
+                    : raw.includes('PROMPT_FOR_SESSION_B')
+                      ? 'SESSION_B_REPLY'
+                      : responseText;
       if (body.stream !== true) {
         response.writeHead(200, { 'content-type': 'application/json' });
         const finish = () => response.end(JSON.stringify(responsePayload('completed', text, responseId)));

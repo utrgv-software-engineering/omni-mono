@@ -15,6 +15,7 @@ const { values } = parseArgs({
   options: {
     major: { type: 'string', default: '1' },
     sync: { type: 'boolean' },
+    'working-tree': { type: 'boolean' },
     check: { type: 'boolean' },
     'verify-source': { type: 'boolean' },
     'verify-source-root': { type: 'string' },
@@ -229,14 +230,19 @@ if (values.sync) {
   if (major === '2') {
     const sourceRoot = git(dirname(resolve(values['source-ts'])), ['rev-parse', '--show-toplevel']).trim();
     if (!sourceRepositoryMatches(sourceRoot)) throw new Error('Unexpected protocol source repository');
-    if (git(sourceRoot, ['status', '--porcelain']).trim()) throw new Error('V2 sync requires a clean source checkout');
+    if (!values['working-tree'] && git(sourceRoot, ['status', '--porcelain']).trim()) {
+      throw new Error('V2 sync requires a clean source checkout');
+    }
     for (const [path, bytes] of [
       [sourceArtifactPath, sourceArtifact],
       [sourceManifestPath, sourceManifestBytes],
       [openRpcPath, sourceOpenRpc],
       [schemaPath, sourceSchema],
     ]) {
-      if (!Buffer.from(gitShow(sourceRoot, values['source-commit'], path, null)).equals(bytes)) {
+      const expected = values['working-tree']
+        ? await readFile(resolve(sourceRoot, path))
+        : Buffer.from(gitShow(sourceRoot, values['source-commit'], path, null));
+      if (!expected.equals(bytes)) {
         throw new Error(`Protocol source does not match the pinned commit: ${path}`);
       }
     }
@@ -251,6 +257,7 @@ if (values.sync) {
     generated_typescript_sha256: sha256(sourceArtifact),
     source_repository: expectedRepository,
     source_commit: values['source-commit'],
+    ...(values['working-tree'] ? { source_working_tree: true } : {}),
     source_artifact: sourceArtifactPath,
     source_manifest: sourceManifestPath,
     source_openrpc: openRpcPath,
@@ -278,6 +285,11 @@ if (values.sync) {
 } else {
   const sourceRoot = values['verify-source-root'] ? resolve(values['verify-source-root']) : discoverSourceRoot();
   const { artifact, provenance, transportedManifest, transportedOpenRpc, transportedSchema } = await readLocal();
+  if (provenance.source_working_tree) {
+    throw new Error(
+      'Working-tree protocol snapshot is not pinned; commit the source and sync before release verification'
+    );
+  }
   if (normalizeRepository(provenance.source_repository) !== expectedRepository) {
     throw new Error(`Unexpected provenance source repository: ${provenance.source_repository}`);
   }

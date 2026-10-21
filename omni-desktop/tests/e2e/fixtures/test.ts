@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -57,6 +58,7 @@ type LaunchedApp = {
 };
 
 type E2eApp = {
+  setProviderFromCli: (model: string) => void;
   readonly page: Page;
   releaseBackground: () => void;
   resizeWindow: (width: number, height: number) => Promise<void>;
@@ -346,6 +348,13 @@ export const test = base.extend<E2eFixtures>({
     let launched = await launch();
     const observedHosts = new Map<string, ObservedHost>();
     const app: E2eApp = {
+      setProviderFromCli: (model) => {
+        execFileSync(process.env.OMNI_CLI_PATH ?? 'omni', ['model', 'default', model, '--confirm-provider-change'], {
+          env: { ...process.env, HOME: state.homeDir, XDG_CONFIG_HOME: state.xdgConfigHome },
+          stdio: 'pipe',
+          timeout: 30_000,
+        });
+      },
       releaseBackground: () => launched.releaseBackground?.(),
       get page() {
         return launched.page;

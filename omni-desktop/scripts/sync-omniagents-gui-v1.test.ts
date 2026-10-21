@@ -139,6 +139,13 @@ describe('GUI v2 source pinning', () => {
     git(directory, 'commit', '-m', 'changed source');
     expect(run(...args).status).not.toBe(0);
     expect(await readFile(join(output, 'gui-v2.ts'))).toEqual(original);
+    const development = run(...args, '--working-tree');
+    expect(development.status, development.stderr).toBe(0);
+    expect(JSON.parse(await readFile(join(output, 'provenance.json'), 'utf8')).source_working_tree).toBe(true);
+    expect(run('--major', '2', '--check', '--output-dir', output).status).toBe(0);
+    const release = run('--major', '2', '--verify-source-root', directory, '--output-dir', output);
+    expect(release.status).not.toBe(0);
+    expect(release.stderr).toContain('Working-tree protocol snapshot is not pinned');
   });
 });
 

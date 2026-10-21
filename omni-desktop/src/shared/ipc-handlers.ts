@@ -156,6 +156,8 @@ export interface SettingsSecretMask {
 }
 
 export interface SettingsConfigHooks {
+  readModels?: (event: unknown) => ModelsConfig;
+  saveModels?: (event: unknown, config: ModelsConfig) => void;
   writeModels?: (event: unknown, write: () => void) => Promise<void>;
   /** Run before returning the local MCP document so ownership transfer can
    * complete before a renderer selects its canonical CRUD path. */
@@ -173,7 +175,7 @@ export function registerSettingsConfigHandlers(
   hooks: SettingsConfigHooks = {}
 ): void {
   ipc.handle('settings:get-models-config', (e: unknown) => {
-    const c = resolveStore(e).get('modelsConfig') ?? emptyModelsConfig();
+    const c = hooks.readModels?.(e) ?? resolveStore(e).get('modelsConfig') ?? emptyModelsConfig();
     return mask.maskModels ? mask.maskModels(c) : c;
   });
   let pendingModelWrite: Promise<unknown> = Promise.resolve();
@@ -188,7 +190,7 @@ export function registerSettingsConfigHandlers(
         .catch(() => undefined)
         .then(async () => {
           const store = resolveStore(e);
-          const previous = store.get('modelsConfig') ?? emptyModelsConfig();
+          const previous = hooks.readModels?.(e) ?? store.get('modelsConfig') ?? emptyModelsConfig();
           const previousProvider = modelProvider(previous.default);
           if (options && options.expectedProvider !== previousProvider) {
             throw new Error('The workspace provider changed in another window. Reload Settings before saving.');
@@ -201,13 +203,18 @@ export function registerSettingsConfigHandlers(
             );
           }
           const write = () => {
-            store.set('modelsConfig', {
+            const saved: ModelsConfig = {
               ...next,
               provider_scope_version:
                 previous.provider_scope_version === 1 || options?.confirmProviderChange || !previousProvider
                   ? 1
                   : undefined,
-            });
+            };
+            if (hooks.saveModels) {
+              hooks.saveModels(e, saved);
+            } else {
+              store.set('modelsConfig', saved);
+            }
             afterWrite(e);
           };
           if (hooks.writeModels) {

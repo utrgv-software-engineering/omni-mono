@@ -1,13 +1,13 @@
 /**
  * Materialize the agent's on-disk config from the (per-tenant, in cloud) store.
  *
- * The store is the source of truth for `models.json` / `mcp.json` /
- * `network.json`; `omni serve` still reads them as files from its config dir
+ * Cloud settings own `models.json`; local callers preserve the shared model
+ * file with `writeModels: false`. Other settings remain store-backed; `omni serve` still reads them as files from its config dir
  * (resolved via `XDG_CONFIG_HOME`). This module bridges the two.
  *
  * Two modes:
- *   - `'plaintext'` (desktop): write the configs verbatim. Single user, the
- *     file is just a derived copy of the store — same bytes as before.
+ *   - `'plaintext'` (local): write owned configs verbatim. Local models are
+ *     read and written directly by local-model-config.ts, not rematerialized.
  *   - `'refs'` (cloud): rewrite every secret field to a stable `${OMNI_SECRET_*}`
  *     reference and return the real values as an env map. The launcher injects
  *     that map into the agent process env (`getExtraEnv`), and the agent's
@@ -150,6 +150,7 @@ export function materializeAgentConfig(opts: {
   /** Local Electron relinquishes mcp.json after canonical ownership transfer.
    * Other configs remain Desktop-owned and continue to materialize. */
   writeMcp?: boolean;
+  writeModels?: boolean;
 }): { secretEnv: SecretEnv } {
   const { configDir, models, mcp, network, mode, managedMcpEntry, writeMcp = true } = opts;
   mkdirSync(configDir, { recursive: true });
@@ -157,7 +158,9 @@ export function materializeAgentConfig(opts: {
   const mergedMcp: McpConfig = { ...mcp, mcpServers: mergeManagedMcpEntry(mcp.mcpServers, managedMcpEntry) };
 
   if (mode === 'plaintext') {
-    writeJson(join(configDir, 'models.json'), models);
+    if (opts.writeModels !== false) {
+      writeJson(join(configDir, 'models.json'), models);
+    }
     if (writeMcp) {
       writeJson(join(configDir, 'mcp.json'), mergedMcp);
     }

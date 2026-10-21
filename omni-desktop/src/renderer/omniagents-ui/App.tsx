@@ -1388,7 +1388,6 @@ function SessionView({
         // runtime (no custom server function required).
         client.enqueueMessage(actor.getSnapshot().context.sessionId ?? '', content, {
           role: 'assistant',
-          triggerRun: true,
           source,
         }),
     };
