@@ -9,13 +9,6 @@ import type { OperatingSystem, StoreData } from '@/shared/types';
 
 const getDefaults = (): StoreData => ({
   defaultProfileName: 'host',
-  residentAgents: [],
-  residentMemories: {},
-  residentChannels: [],
-  residentChannelDefs: [],
-  residentAlarms: {},
-  residentMorningBeats: {},
-  residentChannelSeen: {},
   optInToLauncherPrereleases: false,
   previewFeatures: false,
   notifyOnAgentAttention: false,
@@ -23,7 +16,6 @@ const getDefaults = (): StoreData => ({
   voicePersonas: [],
   activeVoicePersonaId: 'default',
   voiceToggleHotkey: null,
-  globalVoiceToggleHotkey: null,
   localVoiceEnabled: false,
   audioSettings: {
     inputDeviceId: null,
@@ -52,7 +44,6 @@ const getDefaults = (): StoreData => ({
   activeTicketId: null,
   wipLimit: 3,
   scheduledTasks: [],
-  automations: [],
   activityLog: [],
   dismissedHomeHints: [],
   skillSources: {},

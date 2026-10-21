@@ -34,7 +34,6 @@ import {
 import { Input } from '@/renderer/ds/ui/input';
 import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
 import { $milestones } from '@/renderer/features/Initiatives/state';
-import { AssigneeFilter } from '@/renderer/features/Tickets/AssigneeFilter';
 import { isActivePhase } from '@/shared/ticket-phase';
 import type { ColumnCategory, Milestone, MilestoneId, Pipeline, ProjectId, Ticket, TicketId } from '@/shared/types';
 
@@ -507,7 +506,6 @@ export const WorkItemsList = memo(
           <div className="flex-1" />
           {viewControl}
           {filterControl}
-          {viewMode === 'board' && <AssigneeFilter />}
           {hideChrome && rightActions}
           <Button type="button" size="sm" onClick={handleNewTicket}>
             <Plus />

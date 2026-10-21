@@ -7,7 +7,7 @@
 
 import type { LayoutMode } from '@/shared/types';
 
-const VALID_LAYOUT_MODES: LayoutMode[] = ['work', 'chat', 'agents', 'plugins', 'sandboxes', 'settings'];
+const VALID_LAYOUT_MODES: LayoutMode[] = ['work', 'chat', 'routines', 'plugins', 'sandboxes', 'settings'];
 
 /**
  * Migrate legacy layout modes to current valid modes.
@@ -29,9 +29,10 @@ export function migrateLayoutMode(mode: string): LayoutMode | null {
   if (mode === 'inbox') {
     return 'work';
   }
-  // The Routines rail tab folded into Agents (a "Routines" nav-row surface).
-  if (mode === 'routines') {
-    return 'agents';
+  // The Agents tab (resident agents) was removed; its Routines surface is
+  // its own mode again.
+  if (mode === 'agents') {
+    return 'routines';
   }
   // Home retired with the unified sidebar — the sidebar's badges are the
   // attention surface; the Deck is the landing.

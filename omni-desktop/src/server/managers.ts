@@ -3,14 +3,10 @@ import { migrateFromJson } from 'omni-projects-db';
 import { join } from 'path';
 
 import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig } from '@/lib/agent-config';
-import { pullRequestEventDetail, pullRequestSystemLine } from '@/lib/pull-request-watch';
-import { parseResidentPrincipal } from '@/lib/resident-agent';
-import { AutomationManager, registerAutomationHandlers } from '@/main/automation-manager';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { buildBrowserContext, registerBrowserHandlers } from '@/main/browser-manager';
 import { ChatCleanupRunner, cleanupRemovedChat, completeChatRemoval } from '@/main/chat-removal';
 import { assertCleanupOwner, runtimeOwner } from '@/main/chat-runtime-journal';
-import { registerChatHandlers } from '@/main/chat-service';
 import {
   getStatus as codexStatus,
   loginWithDeviceFlow as codexDeviceLogin,
@@ -40,8 +36,6 @@ import { backfillProjectConfigs } from '@/main/project-config-backfill';
 import { closeProjectDb, getDb, openProjectDb } from '@/main/project-db';
 import { registerProjectHandlers } from '@/main/project-handlers';
 import { ProjectManager } from '@/main/project-manager';
-import { PullRequestWatcher } from '@/main/pull-request-watcher';
-import { registerResidentHandlers, ResidentAgentManager } from '@/main/resident-agent-manager';
 import { RoutineBridge } from '@/main/routine-bridge';
 import {
   defaultSandboxInventoryDeps,
@@ -209,67 +203,14 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     sendToWindow: snapshotSend,
   });
   scheduledTaskManager.start();
-  const residentAgentManager = new ResidentAgentManager({
-    store: store as any,
-    repo: asyncRepo,
-    processManager,
-    getSnapshot: getStoreSnapshot,
-    sendToWindow: snapshotSend,
-  });
-  residentAgentManager.start();
   const projectManager: ProjectManager = new ProjectManager({
     store: store as any,
     sendToWindow: sendToAll,
     processManager,
     repo: asyncRepo,
     changeSeqRepo: syncRepo,
-    // Resident durable keys ride every snapshot/broadcast this manager makes.
-    snapshotExtras: () => residentAgentManager.getDurableSnapshot(),
     skillsDir: join(configDir, 'skills'),
-    // Assignment fan-out: residents get an assignment wakeup.
-    onAssign: (assignee: string, ticket: import('@/shared/types').Ticket) => {
-      const residentId = parseResidentPrincipal(assignee);
-      if (!residentId) {
-        return;
-      }
-      const project = projectManager.getStoreSnapshot().projects.find((p) => p.id === ticket.projectId);
-      residentAgentManager.deliverAssignment(residentId, {
-        id: ticket.id,
-        title: ticket.title,
-        ...(project ? { projectLabel: project.label } : {}),
-      });
-    },
   });
-  // Automations: user-defined event rules (PR event / channel message /
-  // schedule) that wake a resident with a standing instruction.
-  const automationManager = new AutomationManager({
-    store: store as any,
-    deliver: (agentId, detail) => residentAgentManager.deliverAutomation(agentId, detail),
-    subscribeChatEvents: residentAgentManager.subscribeChatEvents,
-    sendToWindow: snapshotSend,
-  });
-  automationManager.start();
-  // Watched-PR poller: state flips persist through the links' owners; review
-  // verdicts / merges on ticket-linked PRs wake the assigned resident.
-  const pullRequestWatcher = new PullRequestWatcher({
-    getSnapshot: getStoreSnapshot,
-    resolveGitToken: (id) => secretStore.getGitToken(id),
-    fetchFn: globalThis.fetch,
-    updateTicket: (ticketId, patch) => projectManager.updateTicket(ticketId, patch),
-    setGlobalLinks: (links) => store.set('pullRequestLinks', links),
-    onEvent: (ev) => {
-      // Every PR event lands in #system regardless of whether anyone wakes —
-      // the Activity feed is the complete record.
-      residentAgentManager.postSystemNotice(pullRequestSystemLine(ev));
-      const residentId = ev.assignee ? parseResidentPrincipal(ev.assignee) : null;
-      if (residentId) {
-        residentAgentManager.deliverPullRequestEvent(residentId, pullRequestEventDetail(ev));
-      }
-      // User-defined rules see every PR event, ticket-linked or not.
-      automationManager.onPullRequestEvent(ev);
-    },
-  });
-  pullRequestWatcher.start();
   const browser = buildBrowserContext(store as any, sendToAll);
   const chatCleanup = new ChatCleanupRunner({
     read: async () => {
@@ -320,9 +261,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   registerInboxHandlers(ipc, () => projectManager.inbox);
   registerProcessHandlers(ipc, () => processManager);
   registerScheduledTaskHandlers(ipc, () => scheduledTaskManager);
-  registerAutomationHandlers(ipc, () => automationManager);
-  registerResidentHandlers(ipc, () => residentAgentManager);
-  registerChatHandlers(ipc, () => residentAgentManager);
   registerBrowserHandlers(ipc, () => browser);
   projectManager.bridge.registerIpc(ipc, () => projectManager.bridge);
   routineBridge.registerIpc(ipc, () => routineBridge);
@@ -465,11 +403,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   registerSandboxInventoryHandlers(ipc, {
     ...defaultSandboxInventoryDeps(),
     getProcessOwners: () => [
-      ...processOwnersFromState(
-        processManager.getContainerOwners(),
-        store.get('codeTabs') ?? [],
-        residentAgentManager.getDurableSnapshot().residentAgents
-      ),
+      ...processOwnersFromState(processManager.getContainerOwners(), store.get('codeTabs') ?? []),
       // Durable container sessions with no live serve process.
       ...suspendedSessionOwners(store.get('codeTabs') ?? []),
     ],
@@ -584,9 +518,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     const results = await Promise.allSettled([
       chatCleanup.dispose(),
       Promise.resolve(scheduledTaskManager.stop()),
-      Promise.resolve(automationManager.stop()),
-      Promise.resolve(pullRequestWatcher.stop()),
-      residentAgentManager.cleanup(),
       Promise.resolve(routineBridge.disposeAll()),
       projectManager.exit(),
       processManager.cleanup(),
@@ -599,7 +530,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     }
   };
 
-  return { cleanupGlobalManagers, processManager, residentAgentManager };
+  return { cleanupGlobalManagers, processManager };
 };
 
 /**

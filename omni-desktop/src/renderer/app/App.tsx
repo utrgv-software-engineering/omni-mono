@@ -5,7 +5,6 @@ import '@fontsource-variable/space-grotesk';
 import '@xterm/xterm/css/xterm.css';
 import '@/renderer/features/Toast/ipc-toast-listener';
 import '@/renderer/features/Toast/status-toast-listener';
-import '@/renderer/features/Residents/workspace-tool-bridge'; // side-effect: superuser residents' workspace tools
 
 import { useStore } from '@nanostores/react';
 import { MotionConfig } from 'framer-motion';

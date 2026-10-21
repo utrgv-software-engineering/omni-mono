@@ -23,7 +23,6 @@ import { DEFAULT_PIPELINE } from '@/shared/pipeline-defaults';
 import { isActivePhase } from '@/shared/ticket-phase';
 import type { Pipeline, ProjectId, Ticket } from '@/shared/types';
 
-import { AssigneeFilter } from './AssigneeFilter';
 import { ProjectTaskComposer } from './ProjectTaskComposer';
 import { $assigneeFilter, ticketApi } from './state';
 import { PHASE_LABELS, PRIORITY_DOT_CLASSES, TICKET_PRIORITY_LABELS } from './ticket-constants';
@@ -197,7 +196,6 @@ export const WorkAllView = memo(() => {
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <AssigneeFilter />
         <div className="flex-1" />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

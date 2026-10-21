@@ -300,19 +300,16 @@ describe('ownership label helpers', () => {
     expect(codeTabLabel(tab({}))).toBe('Chat');
   });
 
-  it('processOwnersFromState labels tab processes, residents, and unknowns', () => {
+  it('processOwnersFromState labels tab processes and unknowns', () => {
     const owners = processOwnersFromState(
       [
         { processId: 'tab-1', containerId: 'c1' },
-        { processId: 'agent:scout', containerId: 'c2' },
         { processId: 'mystery', containerId: 'c3' },
       ],
-      [tab({ id: 'tab-1', ticketTitle: 'Fix bug' })],
-      [{ id: 'scout', name: 'Scout' }]
+      [tab({ id: 'tab-1', ticketTitle: 'Fix bug' })]
     );
     expect(owners).toEqual([
       { containerId: 'c1', label: 'Fix bug' },
-      { containerId: 'c2', label: 'Scout' },
       { containerId: 'c3', label: 'mystery' },
     ]);
   });

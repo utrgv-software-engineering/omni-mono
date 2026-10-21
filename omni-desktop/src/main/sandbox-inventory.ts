@@ -9,7 +9,6 @@
  * joined against live AgentHost consumer environments supplied by each shell.
  */
 
-import { parseResidentPrincipal } from '@/lib/resident-agent';
 import {
   cleanupOrphanedContainers,
   defaultDockerExecDeps,
@@ -18,13 +17,7 @@ import {
 } from '@/main/docker-orphan-cleanup';
 import { listSandboxStates } from '@/main/sandbox-state';
 import type { IIpcListener } from '@/shared/ipc-listener';
-import type {
-  CodeTab,
-  ResidentAgent,
-  SandboxContainerSummary,
-  SandboxImageStatus,
-  SandboxSubstrateStatus,
-} from '@/shared/types';
+import type { CodeTab, SandboxContainerSummary, SandboxImageStatus, SandboxSubstrateStatus } from '@/shared/types';
 
 export type ContainerOwner = { containerId: string; label: string };
 
@@ -55,22 +48,15 @@ export const codeTabLabel = (tab: Pick<CodeTab, 'ticketTitle' | 'routineName'>):
 
 /**
  * Join live process containers to labels. Code-tab processes are keyed by the
- * tab id; resident processes by `agent:<id>` (label = resident name). Falls
- * back to the process id when nothing friendlier is known.
+ * tab id. Falls back to the process id when nothing friendlier is known.
  */
 export const processOwnersFromState = (
   containerOwners: Array<{ processId: string; containerId: string }>,
-  codeTabs: CodeTab[],
-  residents: Array<Pick<ResidentAgent, 'id' | 'name'>>
+  codeTabs: CodeTab[]
 ): ContainerOwner[] =>
   containerOwners.map(({ processId, containerId }) => {
     const tab = codeTabs.find((t) => t.id === processId);
-    if (tab) {
-      return { containerId, label: codeTabLabel(tab) };
-    }
-    const residentId = parseResidentPrincipal(processId);
-    const resident = residentId ? residents.find((r) => r.id === residentId) : undefined;
-    return { containerId, label: resident?.name ?? processId };
+    return { containerId, label: tab ? codeTabLabel(tab) : processId };
   });
 
 /**

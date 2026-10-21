@@ -300,43 +300,6 @@ describe('AgentProcess (serve mode)', () => {
     expect(controlToken).not.toBe(clientToken);
   });
 
-  it('binds resident day threads to the same environment and rejects stale generations', async () => {
-    const h = makeHarness();
-    const arg: AgentProcessStartArg = { profileName: 'devbox', sources: [] };
-    await h.proc.start(arg);
-    (h.proc as any).status = {
-      type: 'running',
-      timestamp: Date.now(),
-      data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
-    };
-    const runtime = await h.proc.configureConsumer('agent:a', 'workspace-a', arg);
-    const materializations = hoisted.controlCalls.filter(
-      (c) => c.method === 'agent_host_materialize_environment'
-    ).length;
-    for (const day of ['2026-09-12', '2026-09-13']) {
-      await h.proc.bindSession('agent:a', `resident-a-${day}`, runtime);
-      expect(hoisted.controlCalls.at(-1)?.params).toEqual({
-        thread_id: `resident-a-${day}`,
-        binding: {
-          workspace_id: runtime.workspaceId,
-          environment_selection: {
-            mode: 'existing',
-            environment_id: runtime.environmentId,
-            environment_generation: runtime.environmentGeneration,
-          },
-        },
-      });
-    }
-    expect(hoisted.controlCalls.filter((c) => c.method === 'agent_host_materialize_environment')).toHaveLength(
-      materializations
-    );
-    await expect(
-      h.proc.bindSession('agent:a', 'resident-a-next', { ...runtime, environmentGeneration: 999 })
-    ).rejects.toThrow('changed');
-    hoisted.controlFailureMethod = 'agent_host_bind_thread';
-    await expect(h.proc.bindSession('agent:a', 'resident-a-next', runtime)).rejects.toThrow('failed');
-  });
-
   it('registers, materializes, and binds a second consumer through the control plane', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {

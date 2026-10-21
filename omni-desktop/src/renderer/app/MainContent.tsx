@@ -8,8 +8,8 @@ import { Code } from '@/renderer/features/Code/Code';
 import { Gallery } from '@/renderer/features/Gallery/Gallery';
 import { OnboardingWizard } from '@/renderer/features/Onboarding/OnboardingWizard';
 import { PluginsView } from '@/renderer/features/Plugins/PluginsView';
-import { ResidentsTab } from '@/renderer/features/Residents/ResidentsTab';
 import { SandboxesTabContent } from '@/renderer/features/Sandboxes/SandboxesTabContent';
+import { ScheduledTasks } from '@/renderer/features/ScheduledTasks/ScheduledTasks';
 import { SettingsPage } from '@/renderer/features/SettingsModal/SettingsPage';
 import { Tickets } from '@/renderer/features/Tickets/Tickets';
 import { persistedStoreApi } from '@/renderer/services/store';
@@ -75,8 +75,7 @@ export const MainContent = memo(() => {
     // Chat IS the deck since the tab merge: chat columns and work sessions
     // share one surface (Spaces/Focus), so there's a single panel for both.
     { key: 'chat', Component: Code },
-    // Agents hosts the resident roster, channels/DMs, and the Routines surface.
-    { key: 'agents', Component: ResidentsTab },
+    { key: 'routines', Component: ScheduledTasks },
     { key: 'plugins', Component: PluginsView },
     { key: 'sandboxes', Component: SandboxesTabContent },
     { key: 'settings', Component: SettingsPage },

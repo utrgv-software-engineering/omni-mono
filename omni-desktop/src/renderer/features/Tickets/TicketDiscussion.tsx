@@ -1,26 +1,17 @@
-import { useStore } from '@nanostores/react';
 import { Bot, Send, User } from 'lucide-react';
 import { nanoid } from 'nanoid';
 import { memo, useCallback, useState } from 'react';
 
 import { formatTimestamp } from '@/lib/format-time';
-import { parseResidentPrincipal } from '@/lib/resident-agent';
 import { Avatar, AvatarFallback } from '@/renderer/ds/ui/avatar';
 import { Button } from '@/renderer/ds/ui/button';
 import { Textarea } from '@/renderer/ds/ui/textarea';
-import { persistedStoreApi } from '@/renderer/services/store';
 import type { Ticket, TicketComment } from '@/shared/types';
 
 import { ticketApi } from './state';
 
 const CommentRow = memo(({ comment }: { comment: TicketComment }) => {
-  // Resident-authored comments carry the agent's principal (`agent:<id>`);
-  // resolve it to the roster display name. Plain 'agent' stays the generic
-  // task-scoped agent; anything else is the human.
-  const residentId = parseResidentPrincipal(comment.author);
-  const residents = useStore(persistedStoreApi.$atom).residentAgents;
-  const residentName = residentId ? (residents.find((a) => a.id === residentId)?.name ?? residentId) : null;
-  const isAgent = comment.author === 'agent' || residentId !== null;
+  const isAgent = comment.author === 'agent';
 
   return (
     <div className="flex gap-2">
@@ -31,7 +22,7 @@ const CommentRow = memo(({ comment }: { comment: TicketComment }) => {
       </Avatar>
       <div className="flex flex-col gap-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-xs text-foreground">{residentName ?? (isAgent ? 'Agent' : 'You')}</span>
+          <span className="font-semibold text-xs text-foreground">{isAgent ? 'Agent' : 'You'}</span>
           <span className="text-xs text-muted-foreground">{formatTimestamp(comment.createdAt)}</span>
         </div>
         <div className="max-w-full wrap-anywhere text-sm text-muted-foreground whitespace-pre-wrap leading-5">

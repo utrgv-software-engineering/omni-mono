@@ -1,7 +1,6 @@
 import { useStore } from '@nanostores/react';
 import {
   Beaker,
-  Bot,
   Box,
   CalendarClock,
   Columns3,
@@ -23,7 +22,7 @@ import { Button } from '@/renderer/ds/ui/button';
  * and the per-tab sidebars. Three zones — fixed surface rows (New chat,
  * Inbox, Tasks, Activity) whose badges make the sidebar the attention surface;
  * container sections (Projects, Channels, DMs); and a pinned management
- * cluster (Agents, Routines, Plugins, Settings).
+ * cluster (Routines, Plugins, Settings).
  *
  * On mobile the same nav is an overlay DRAWER (the ChatGPT/Gmail model):
  * the app lands on the working surface, and each surface's header carries a
@@ -54,8 +53,6 @@ import { codeApi } from '@/renderer/features/Code/state';
 import { useRecentConversations } from '@/renderer/features/Code/use-recent-conversations';
 import { $commandPaletteOpen } from '@/renderer/features/CommandPalette/CommandPalette';
 import { $activeInboxCount } from '@/renderer/features/Inbox/state';
-import { ChannelsSection, DmsSection } from '@/renderer/features/Residents/sidebar-sections';
-import { $residentsView, goToRoster } from '@/renderer/features/Residents/state';
 import { goToRoutine } from '@/renderer/features/ScheduledTasks/state';
 import { ProjectsSection } from '@/renderer/features/Tickets/ProjectsSection';
 import { $needsYouCount, $tickets, $ticketsView, ticketApi, viewToNavValue } from '@/renderer/features/Tickets/state';
@@ -66,7 +63,6 @@ export const AppSidebar = memo(() => {
   const store = useStore(persistedStoreApi.$atom);
   const ticketsView = useStore($ticketsView);
   const tickets = useStore($tickets);
-  const residentsView = useStore($residentsView);
   const inboxCount = useStore($activeInboxCount);
   const needsYouCount = useStore($needsYouCount);
   const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
@@ -116,10 +112,6 @@ export const AppSidebar = memo(() => {
     ticketApi.goToAllWork();
     closeDrawer();
   }, [closeDrawer]);
-  const handleRoster = useCallback(() => {
-    goToRoster();
-    closeDrawer();
-  }, [closeDrawer]);
   const handleRoutines = useCallback(() => {
     goToRoutine();
     closeDrawer();
@@ -134,20 +126,10 @@ export const AppSidebar = memo(() => {
   // derivation the per-tab sidebars used, widened to the app.
   const mode = store.layoutMode;
   const workNav = mode === 'work' ? viewToNavValue(ticketsView, tickets) : undefined;
-  const agentsMode = mode === 'agents';
-  // The Agents row covers the whole roster surface: directory, agent detail,
-  // create form, and the handbook (which lives inside the directory).
-  const rosterSelected =
-    agentsMode &&
-    (residentsView.showRoster === true ||
-      residentsView.selectedAgentId !== null ||
-      residentsView.showNewAgent === true ||
-      residentsView.showHandbook === true);
-  const routinesSelected = agentsMode && residentsView.showRoutines === true;
+  const routinesSelected = mode === 'routines';
   // The More row owns every management surface — it paints selected when
   // any of them is frontmost, so "where am I" survives the collapse.
-  const moreSelected =
-    rosterSelected || routinesSelected || mode === 'plugins' || mode === 'sandboxes' || mode === 'gallery';
+  const moreSelected = routinesSelected || mode === 'plugins' || mode === 'sandboxes' || mode === 'gallery';
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -210,8 +192,6 @@ export const AppSidebar = memo(() => {
         {/* ── Container sections ── */}
         <ProjectsSection sessionTitles={sessionTitles} onNavigate={closeDrawer} />
         <RecentsSection recent={recentConversations} sessionTitles={sessionTitles} onNavigate={closeDrawer} />
-        <ChannelsSection onNavigate={closeDrawer} />
-        <DmsSection onNavigate={closeDrawer} />
       </SidebarContent>
 
       {/* ── Management footer — the occasional surfaces live behind "More"
@@ -229,10 +209,6 @@ export const AppSidebar = memo(() => {
               </DropdownMenuTrigger>
               <>
                 <DropdownMenuContent>
-                  <DropdownMenuItem onClick={handleRoster}>
-                    <Bot />
-                    Agents
-                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleRoutines}>
                     <CalendarClock />
                     Routines

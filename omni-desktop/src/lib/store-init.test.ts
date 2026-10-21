@@ -46,8 +46,8 @@ describe('migrateLayoutMode', () => {
     expect(migrateLayoutMode('inbox')).toBe('work');
   });
 
-  it('migrates the folded "routines" tab to "agents"', () => {
-    expect(migrateLayoutMode('routines')).toBe('agents');
+  it('migrates the removed "agents" tab to "routines"', () => {
+    expect(migrateLayoutMode('agents')).toBe('routines');
   });
 
   it('migrates the retired "home" tab to "chat"', () => {
@@ -58,8 +58,8 @@ describe('migrateLayoutMode', () => {
     expect(migrateLayoutMode('work')).toBeNull();
   });
 
-  it('returns null for valid "agents" mode', () => {
-    expect(migrateLayoutMode('agents')).toBeNull();
+  it('returns null for valid "routines" mode', () => {
+    expect(migrateLayoutMode('routines')).toBeNull();
   });
 
   it('migrates the retired "dashboards" mode to chat', () => {

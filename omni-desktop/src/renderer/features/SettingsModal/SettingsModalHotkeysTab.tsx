@@ -122,13 +122,9 @@ function HotkeyRecorder({
 export function SettingsModalHotkeysTab(): React.ReactElement {
   const store = useStore(persistedStoreApi.$atom);
   const hotkey = store.voiceToggleHotkey;
-  const globalHotkey = store.globalVoiceToggleHotkey;
 
   const setVoiceHotkey = useCallback((combo: string | null) => {
     void persistedStoreApi.setKey('voiceToggleHotkey', combo);
-  }, []);
-  const setGlobalVoiceHotkey = useCallback((combo: string | null) => {
-    void persistedStoreApi.setKey('globalVoiceToggleHotkey', combo);
   }, []);
 
   return (
@@ -144,13 +140,6 @@ export function SettingsModalHotkeysTab(): React.ReactElement {
                 </FieldDescription>
               </FieldContent>
               <HotkeyRecorder value={hotkey} onChange={setVoiceHotkey} />
-            </Field>
-            <Field orientation="horizontal" className="justify-between gap-5">
-              <FieldContent>
-                <FieldLabel>Workspace agent shortcut</FieldLabel>
-                <FieldDescription>Open your workspace agent and immediately start recording.</FieldDescription>
-              </FieldContent>
-              <HotkeyRecorder value={globalHotkey} onChange={setGlobalVoiceHotkey} />
             </Field>
           </CardContent>
         </Card>

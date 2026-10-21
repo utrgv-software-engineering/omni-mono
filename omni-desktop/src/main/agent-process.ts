@@ -843,24 +843,6 @@ export class AgentProcess {
     return runtime;
   };
 
-  /** Bind an additional conversation to this consumer's current environment.
-   * Daily resident threads share the workspace; they do not provision new sandboxes. */
-  bindSession = async (consumerId: string, sessionId: string, runtime?: AgentHostConsumerRuntime): Promise<void> => {
-    const registration = this.consumerRegistrations.get(consumerId);
-    const control = this.agentHostControlClient;
-    if (!control || !registration || !runtime) {
-      throw new Error('AgentHost consumer binding is unavailable');
-    }
-    if (
-      registration.runtime.environmentId !== runtime.environmentId ||
-      registration.runtime.environmentGeneration !== runtime.environmentGeneration ||
-      registration.workspaceId !== runtime.workspaceId
-    ) {
-      throw new Error('AgentHost consumer environment changed before session binding');
-    }
-    await this.bindConsumer(control, sessionId, runtime, { consumerId });
-  };
-
   private bindConsumer = async (
     control: AgentHostControlClient,
     threadId: string,

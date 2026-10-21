@@ -227,35 +227,6 @@ describe('ProcessManager', () => {
     expect(write).toHaveBeenCalledOnce();
   });
 
-  it('binds daily sessions to the current runtime without materializing again', async () => {
-    const { pm } = makePm();
-    await pm.start('agent:a', { workspaceDir: '/tmp/resident', snapshotRef: 'resident-a' });
-    const host = hoisted.agentProcessInstances[0]!;
-    host.getStatus.mockReturnValue({ type: 'running', timestamp: 0, data: {} } as any);
-    await pm.bindSession('agent:a', 'resident-a-2026-09-12');
-    await pm.bindSession('agent:a', 'resident-a-2026-09-13');
-    expect(host.configureConsumer).toHaveBeenCalledTimes(1);
-    expect(host.bindSession).toHaveBeenLastCalledWith(
-      'agent:a',
-      'resident-a-2026-09-13',
-      expect.objectContaining({ environmentGeneration: 3 })
-    );
-    await pm.stop('agent:a');
-    await expect(pm.bindSession('agent:a', 'resident-a-2026-09-13')).rejects.toThrow('not ready');
-    await pm.start('agent:a', { workspaceDir: '/tmp/resident', snapshotRef: 'resident-a' });
-    const restarted = hoisted.agentProcessInstances.at(-1)!;
-    restarted.getStatus.mockReturnValue({ type: 'running', timestamp: 0, data: {} } as any);
-    await pm.bindSession('agent:a', 'resident-a-2026-09-13');
-    expect(restarted.bindSession).toHaveBeenCalledWith(
-      'agent:a',
-      'resident-a-2026-09-13',
-      expect.objectContaining({ environmentGeneration: 3 })
-    );
-    expect(restarted.bindSession.mock.calls[0]![2].workspaceId).not.toBe(
-      host.bindSession.mock.calls[0]![2].workspaceId
-    );
-  });
-
   describe('start arg', () => {
     it('forwards profileName + projectId in the start arg', async () => {
       const { pm } = makePm({ storeData: { defaultProfileName: 'devbox' } });
@@ -462,12 +433,30 @@ describe('ProcessManager', () => {
     });
 
     it('stops and evicts a distinct live host when post-commit reload fails', async () => {
+      // A host-scoped credential gives the peer its own AgentHost.
       const { pm } = makePm({
-        storeData: { defaultProfileName: 'devbox', projects: [] },
+        storeData: {
+          defaultProfileName: 'devbox',
+          projects: [
+            {
+              id: 'proj_git',
+              label: 'Git',
+              slug: 'git',
+              createdAt: 0,
+              sources: [
+                { id: 'src1', mountName: 'svc', kind: 'git-remote', repoUrl: 'https://github.com/acme/private.git' },
+              ],
+            },
+          ],
+          gitCredentials: [
+            { id: 'cred-123', host: 'github.com', username: 'x-access-token', last4: 'beef', createdAt: 0 },
+          ],
+        },
+        resolveGitToken: async () => 'ghp_thetoken',
         durableLocalMcpMutations: true,
         prepareLocalMcpOwnership: vi.fn(),
       });
-      await pm.start('agent:mcp-peer', { workspaceDir: '/tmp/mcp-peer' });
+      await pm.start('mcp-peer', { workspaceDir: '/tmp/mcp-peer', projectId: 'proj_git' });
       await pm.ensureManagementConnection();
       expect(hoisted.agentProcessInstances).toHaveLength(2);
       const [peer, management] = hoisted.agentProcessInstances;
@@ -489,60 +478,8 @@ describe('ProcessManager', () => {
 
       expect(peer!.stop).toHaveBeenCalledOnce();
       expect(management!.stop).not.toHaveBeenCalled();
-      expect(pm.getStatus('agent:mcp-peer').type).toBe('uninitialized');
+      expect(pm.getStatus('mcp-peer').type).toBe('uninitialized');
       expect(management!.callManagementAdmin).toHaveBeenCalledWith('mcp_reload_server', {});
-    });
-  });
-
-  describe('multi-project scope (projectIds)', () => {
-    const project = (id: string, sources: Project['sources']): Project => ({
-      id,
-      label: id,
-      slug: id,
-      sources,
-      createdAt: 0,
-    });
-
-    it('mounts the union of scoped projects with collision-suffixed mount names', async () => {
-      const projects = [
-        project('p1', [{ id: 's1', mountName: 'api', kind: 'git-remote', repoUrl: 'https://github.com/acme/api.git' }]),
-        project('p2', [
-          { id: 's2', mountName: 'api', kind: 'git-remote', repoUrl: 'https://github.com/acme/api2.git' },
-          { id: 's3', mountName: 'web', kind: 'git-remote', repoUrl: 'https://github.com/acme/web.git' },
-        ]),
-        // Source-less (context-only) project contributes no mounts.
-        project('p3', []),
-      ];
-      const { pm } = makePm({ storeData: { defaultProfileName: 'devbox', projects } });
-      await pm.start('agent:bob', {
-        workspaceDir: '/tmp/agents/bob',
-        projectIds: ['p1', 'p2', 'p3', 'missing'],
-        extraSources: [{ mountName: 'home', workspaceDir: '/tmp/agents/bob' }],
-      });
-
-      const arg = hoisted.agentProcessInstances[0]!.start.mock.calls[0]![0] as {
-        sources: Array<{ mountName: string }>;
-        projectId?: string;
-      };
-      expect(arg.sources.map((s) => s.mountName)).toEqual(['api', 'api-2', 'web', 'home']);
-      // projectIds starts never set the single projectId (per-project profile
-      // layer and PR container matching are single-project concepts).
-      expect(arg.projectId).toBeUndefined();
-    });
-
-    it('excludes projectIds processes from getProjectContainerId', async () => {
-      const projects = [
-        project('p1', [{ id: 's1', mountName: 'api', kind: 'git-remote', repoUrl: 'https://github.com/acme/api.git' }]),
-      ];
-      const { pm } = makePm({ storeData: { defaultProfileName: 'devbox', projects } });
-      await pm.start('agent:bob', { workspaceDir: '/tmp/agents/bob', projectIds: ['p1'] });
-      hoisted.agentProcessInstances[0]!.getStatus.mockReturnValue({
-        type: 'running',
-        timestamp: 1,
-        data: { uiUrl: 'http://x', containerId: 'c1' },
-      });
-
-      expect(pm.getProjectContainerId('p1')).toBeNull();
     });
   });
 

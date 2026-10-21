@@ -8,16 +8,7 @@ import type { StoreData } from '@/shared/types';
 const STORE_PATH = join(homedir(), '.config', 'Omni Code', 'config.json');
 
 export const DEFAULTS: StoreData = {
-  userGoals: [],
-  userIdeas: [],
   defaultProfileName: 'host',
-  residentAgents: [],
-  residentMemories: {},
-  residentChannels: [],
-  residentChannelDefs: [],
-  residentAlarms: {},
-  residentMorningBeats: {},
-  residentChannelSeen: {},
   optInToLauncherPrereleases: false,
   previewFeatures: false,
   notifyOnAgentAttention: false,
@@ -25,7 +16,6 @@ export const DEFAULTS: StoreData = {
   voicePersonas: [],
   activeVoicePersonaId: 'default',
   voiceToggleHotkey: null,
-  globalVoiceToggleHotkey: null,
   localVoiceEnabled: false,
   audioSettings: {
     inputDeviceId: null,
@@ -54,7 +44,6 @@ export const DEFAULTS: StoreData = {
   activeTicketId: null,
   wipLimit: 3,
   scheduledTasks: [],
-  automations: [],
   activityLog: [],
   dismissedHomeHints: [],
   skillSources: {},

@@ -12,7 +12,6 @@ import { join, resolve } from 'path';
 process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 
 import { uuidv4 } from '@/lib/uuid';
-import { registerChatWsRoute } from '@/server/chat-ws';
 import { wireClientManagers, wireGlobalHandlers } from '@/server/managers';
 import { redactProxyUrlForLog, setupProxyRewriter } from '@/server/proxy-rewriter';
 import { ServerStore } from '@/server/store';
@@ -142,7 +141,7 @@ const main = async () => {
   const store = new ServerStore();
 
   // Wire global (shared) IPC handlers — store, util, config, project, code, chat, sandbox, install
-  const { cleanupGlobalManagers, processManager, residentAgentManager } = await wireGlobalHandlers({
+  const { cleanupGlobalManagers, processManager } = await wireGlobalHandlers({
     wsHandler,
     store,
   });
@@ -181,18 +180,6 @@ const main = async () => {
         },
         sessionId
       );
-    });
-
-    // chat-v1's public binding (docs/chat-v1-plan.md): JSON-RPC over WS for
-    // external clients (mobile apps, network bridges). Same token auth as
-    // /ws, plus raw bridge keys from OMNI_CHAT_BRIDGE_KEYS.
-    registerChatWsRoute(f, {
-      wsTokenSecret,
-      residentManager: residentAgentManager,
-      bridgeKeys: (process.env['OMNI_CHAT_BRIDGE_KEYS'] ?? '')
-        .split(',')
-        .map((k) => k.trim())
-        .filter((k) => k.length > 0),
     });
   });
 

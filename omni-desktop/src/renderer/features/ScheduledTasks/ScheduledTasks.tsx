@@ -48,7 +48,6 @@ import type {
   ScheduledTaskSchedule,
 } from '@/shared/types';
 
-import { AutomationsSection } from './AutomationsSection';
 import { ensureRoutineSessionTab, formatDayOfWeek } from './routine-session';
 import { $routinesView } from './state';
 
@@ -363,7 +362,6 @@ export const ScheduledTasks = memo(() => {
             />
           ))
         )}
-        <AutomationsSection />
       </div>
     </>
   );
