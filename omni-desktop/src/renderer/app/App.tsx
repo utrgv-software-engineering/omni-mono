@@ -12,7 +12,6 @@ import { MotionConfig } from 'framer-motion';
 import { useEffect, useLayoutEffect } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
 
-import { initBootLanding } from '@/renderer/app/boot-landing';
 import { ErrorBoundaryFallback } from '@/renderer/app/ErrorBoundaryFallback';
 import { MainContent } from '@/renderer/app/MainContent';
 import { StatusAnnouncer } from '@/renderer/app/StatusAnnouncer';
@@ -47,7 +46,6 @@ export const App = () => {
     initAppHistory();
     initAgentAttention();
     initPwaInstall();
-    initBootLanding();
   }, []);
 
   const themeName = store.theme ?? 'omni';

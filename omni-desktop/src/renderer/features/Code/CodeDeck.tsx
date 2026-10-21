@@ -1843,8 +1843,7 @@ export const CodeDeck = memo(() => {
     });
   }, []);
 
-  // Activation gestures (sidebar session clicks, "New chat", boot landing,
-  // deep links) preserve the layout mode, so in Spaces the deck itself must
+  // Activation gestures (sidebar session clicks, "New chat", deep links) preserve the layout mode, so in Spaces the deck itself must
   // answer them: scroll the newly active column into view instead of leaving
   // it minted off-screen. Scrolling and swiping don't change activeTabId, so
   // this never fights the user.
@@ -2342,8 +2341,7 @@ export const CodeDeck = memo(() => {
         />
 
         {/* Archiving the last session leaves the deck genuinely empty — nothing
-               re-mints a column behind the user's back. (The boot landing still
-               opens a fresh chat on app launch; that's a launch gesture.) */}
+               re-mints a column behind the user's back. */}
         {tabs.length === 0 && (
           <div className="flex-1 min-h-0 flex items-center justify-center">
             <Empty>

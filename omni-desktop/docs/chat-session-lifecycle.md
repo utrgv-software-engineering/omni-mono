@@ -199,7 +199,7 @@ Protocol artifacts were regenerated from the local dirty OmniAgents checkout bas
 Client/state/transport/voice/machine tests: **548 passed, 56 files**:
 
 ```bash
-npx vitest run src/shared/chat-commands.test.ts src/renderer/features/Code/state.test.ts src/renderer/omniagents-ui src/renderer/services/supervisor-bridge.test.ts src/renderer/transport/ws-transport.test.ts src/renderer/app/boot-landing.test.ts src/server/ws-handler.test.ts src/renderer/services/use-voice-capture.test.tsx src/renderer/services/voice-recording.test.ts src/shared/machines/chat-session.machine.test.ts src/shared/machines/chat-boot.machine.test.ts
+npx vitest run src/shared/chat-commands.test.ts src/renderer/features/Code/state.test.ts src/renderer/omniagents-ui src/renderer/services/supervisor-bridge.test.ts src/renderer/transport/ws-transport.test.ts src/server/ws-handler.test.ts src/renderer/services/use-voice-capture.test.tsx src/renderer/services/voice-recording.test.ts src/shared/machines/chat-session.machine.test.ts src/shared/machines/chat-boot.machine.test.ts
 ```
 
 Focused server approval, ownership, conversation-recording and replay tests: **79 passed** (run in the OmniAgents checkout):

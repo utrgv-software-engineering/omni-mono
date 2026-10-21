@@ -172,8 +172,7 @@ export const AppSidebar = memo(() => {
         <SidebarGroup className="py-0">
           <SidebarGroupContent>
             <SidebarMenu aria-label="Surfaces">
-              {/* Action row, never selected: landing in a fresh chat is the
-                   app's default gesture (also the boot landing). */}
+              {/* Action row, never selected. */}
               <SidebarMenuItem>
                 <SidebarMenuButton onClick={handleNewChat} tooltip="New chat">
                   <SquarePen />
