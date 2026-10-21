@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def reconstruct(recipe, service, parent_id):
+def reconstruct(recipe, service, parent_id, *, worker_id=None):
     from .config import worker_defaults
 
     if (
@@ -15,6 +15,12 @@ def reconstruct(recipe, service, parent_id):
         )
     kind = recipe.get("kind")
     if kind == "project":
+        if recipe.get("communication") or recipe.get("messaging") == "explicit":
+            if worker_id is None:
+                raise ValueError("Worker identity required for communication recovery")
+            from .communication import configure_worker
+
+            return configure_worker(service, parent_id, worker_id)
         return None
     from omniagents.builtin.tools import swarm_tools
 

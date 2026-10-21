@@ -276,3 +276,179 @@ it("keeps the selected elicitation value when refreshed options reorder", async 
     value: { selected: ["beta"] },
   });
 });
+
+it("Agents recovers once during key bursts and shows recovery failures", async () => {
+  const entry = {
+    subagent_id: "w",
+    worker_id: "w",
+    kind: "worker",
+    status: "interrupted",
+    task: "recover task",
+    recovered: true,
+    recovery_reason: "runtime stopped",
+    report_status: "queued",
+  } as SubagentSummary;
+  useAppStore.getState().actions.setSubagents([entry]);
+  const pending = deferred<void>();
+  const action = vi.fn().mockReturnValue(pending.promise);
+  const ui = mount(
+    <AgentsScreen
+      active
+      height={30}
+      onExit={() => {}}
+      onWorkerAction={action}
+    />,
+  );
+  await settle();
+  expect(ui.screen()).toContain("runtime stopped");
+  expect(ui.screen()).toContain("Parent notification: queued");
+  expect(ui.screen()).toContain("r recover");
+  ui.stdin.press("\x1b[200~r\x1b[201~");
+  await settle();
+  expect(action).not.toHaveBeenCalled();
+  ui.stdin.press("r");
+  ui.stdin.press("r");
+  await settle();
+  expect(action).toHaveBeenCalledTimes(1);
+  expect(action).toHaveBeenCalledWith("w", "resume");
+  pending.resolve();
+  await settle();
+  action.mockRejectedValueOnce(new Error("workspace unavailable"));
+  ui.stdin.press("r");
+  await settle();
+  expect(ui.screen()).toContain("workspace unavailable");
+});
+
+it("Agents closes idle workers and offers no actions on closed workers", async () => {
+  const entry = {
+    subagent_id: "w",
+    worker_id: "w",
+    kind: "worker",
+    status: "completed",
+    task: "idle task",
+  } as SubagentSummary;
+  useAppStore.getState().actions.setSubagents([entry]);
+  const action = vi.fn().mockResolvedValue(undefined);
+  const ui = mount(
+    <AgentsScreen
+      active
+      height={30}
+      onExit={() => {}}
+      onWorkerAction={action}
+    />,
+  );
+  await settle();
+  expect(ui.screen()).not.toContain("r recover");
+  ui.stdin.press("x");
+  await settle();
+  expect(action).toHaveBeenCalledTimes(1);
+  expect(action).toHaveBeenCalledWith("w", "close");
+  useAppStore.getState().actions.setSubagents([{ ...entry, status: "closed" }]);
+  await settle();
+  expect(ui.screen()).toContain("closed");
+  expect(ui.screen()).not.toContain("x close");
+  ui.stdin.press("r");
+  ui.stdin.press("x");
+  await settle();
+  expect(action).toHaveBeenCalledTimes(1);
+});
+
+it("Ink opens providers from /model, cancels safely, and confirms one workspace change", async () => {
+  const { ModelPickerPanel } = await import("../ModelPickerPanel.js");
+  const pending = deferred<Record<string, unknown>>();
+  const api = {
+    listModels: vi.fn().mockResolvedValue({ models: [], errors: [] }),
+    serverCall: vi.fn((name: string) =>
+      name === "model_providers"
+        ? Promise.resolve({
+            current: "company",
+            providers: [
+              { name: "company", model: "company/a", label: "Company model" },
+              {
+                name: "personal",
+                model: "personal/c",
+                label: "Personal model",
+              },
+            ],
+          })
+        : pending.promise,
+    ),
+  };
+  const ui = mount(
+    <ModelPickerPanel
+      open
+      client={api as unknown as RPCClient}
+      sessionId="parent"
+      onClose={() => {}}
+    />,
+  );
+  await settle();
+  expect(ui.screen()).toContain("p provider");
+  ui.stdin.press("p");
+  await settle();
+  expect(api.serverCall).toHaveBeenCalledWith("model_providers", {}, "parent");
+  expect(ui.screen()).toContain("Workspace provider");
+  ui.stdin.press("\x1b[B");
+  ui.stdin.press("\r");
+  await settle();
+  expect(ui.screen()).toContain(
+    "Continuing conversations will send their history to personal",
+  );
+  ui.stdin.press("n");
+  await settle();
+  expect(api.serverCall).toHaveBeenCalledTimes(1);
+  ui.stdin.press("\r");
+  await settle();
+  ui.stdin.press("\x1b[200~y\x1b[201~");
+  await settle();
+  expect(api.serverCall).toHaveBeenCalledTimes(1);
+  ui.stdin.press("y");
+  ui.stdin.press("y");
+  await settle();
+  expect(api.serverCall).toHaveBeenCalledTimes(2);
+  expect(api.serverCall).toHaveBeenLastCalledWith(
+    "switch_provider",
+    { model: "personal/c", expected_provider: "company", confirm: true },
+    "parent",
+  );
+  pending.resolve({ ok: true, provider: "personal", model: "personal/c" });
+  await settle();
+  expect(ui.screen()).toContain("Models");
+  expect(api.listModels).toHaveBeenCalledTimes(2);
+});
+
+it("Ink displays provider switch rejection without treating it as success", async () => {
+  const { ProviderPickerPanel } = await import("../ProviderPickerPanel.js");
+  const close = vi.fn();
+  const api = {
+    serverCall: vi.fn((name: string) =>
+      Promise.resolve(
+        name === "model_providers"
+          ? {
+              current: "company",
+              providers: [
+                { name: "personal", model: "personal/c", label: "Personal" },
+              ],
+            }
+          : {
+              ok: false,
+              error:
+                "The workspace provider changed. Refresh the list and confirm again.",
+            },
+      ),
+    ),
+  };
+  const ui = mount(
+    <ProviderPickerPanel
+      client={api as unknown as RPCClient}
+      onClose={close}
+    />,
+  );
+  await settle();
+  ui.stdin.press("\r");
+  await settle();
+  ui.stdin.press("y");
+  await settle();
+  expect(ui.screen()).toContain("Refresh the list and confirm again");
+  expect(close).not.toHaveBeenCalled();
+});

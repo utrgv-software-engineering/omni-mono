@@ -221,3 +221,161 @@ def test_litellm_connection_is_owned_by_provider(tmp_path, monkeypatch):
     store.save_config(config)
     with pytest.raises(ValueError, match="routing_prefix"):
         store.resolve_model_for_runtime()
+
+
+def test_cli_provider_switch_requires_each_confirmation(tmp_path, monkeypatch):
+    from omniagents.core.models.cli import run_model_command
+
+    store = make_store(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    with pytest.raises(ValueError, match="cancelled"):
+        run_model_command(["default", "personal/c"], store=store, prog="omni")
+    assert store.selected_provider() == "company"
+    run_model_command(
+        ["default", "personal/c", "--confirm-provider-change"], store=store, prog="omni"
+    )
+    assert store.selected_provider() == "personal"
+    with pytest.raises(ValueError, match="cancelled"):
+        run_model_command(["default", "company/a"], store=store, prog="omni")
+    assert store.selected_provider() == "personal"
+
+
+def test_cli_add_default_cannot_bypass_confirmation(tmp_path, monkeypatch):
+    from omniagents.core.models.cli import run_model_command
+
+    store = make_store(tmp_path)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    with pytest.raises(ValueError, match="cancelled"):
+        run_model_command(
+            ["add", "--name", "personal/new", "--model", "new", "--default"],
+            store=store,
+            prog="omni",
+        )
+    assert store.get_model_config("personal/new") is None
+    assert store.selected_provider() == "company"
+
+
+@pytest.mark.asyncio
+async def test_run_snapshot_keeps_helpers_and_inherited_tasks_on_starting_provider(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    from omniagents.core import models
+    from omniagents.core.models.runtime import resolve_service_model_runtime
+
+    store = make_store(tmp_path)
+    monkeypatch.setattr(models, "_ACTIVE_STORE", store)
+    session = SimpleNamespace(
+        active_model="company/b", model_config=None, reasoning_effort=None
+    )
+    scope, token = models.bind_run_models(store.snapshot_for_run(session))
+    release = asyncio.Event()
+
+    async def inherited():
+        await release.wait()
+        return models.model_store().selected_provider()
+
+    try:
+        child = asyncio.create_task(inherited())
+        config = store.load_config()
+        config["default"] = "personal/c"
+        config["providers"]["company"]["base_url"] = "https://changed.invalid"
+        store.save_config(config)
+        # Even a concurrent picker mutation must not reroute a helper call.
+        session.active_model = "personal/c"
+        ref, runtime = resolve_service_model_runtime(None, session)
+        assert ref == "company/b"
+        assert runtime["base_url"] == "https://company.invalid/v1"
+        assert models.model_store().selected_provider() == "company"
+        # A drainer created in the old context sees current config once it ends.
+        scope.active = False
+        release.set()
+        assert await child == "personal"
+    finally:
+        release.set()
+        models.reset_run_models(token)
+    next_run = store.snapshot_for_run(session)
+    assert next_run._run_model_ref == "personal/c"
+
+
+@pytest.mark.asyncio
+async def test_catalog_without_session_is_scoped(tmp_path):
+    from omniagents.core.agents.service import AgentService
+
+    store = make_store(tmp_path)
+    service = SimpleNamespace(_model_catalog_store=lambda: store)
+    catalog = await AgentService.list_models(service)
+    assert {m["provider"]["name"] for m in catalog["models"]} == {"company"}
+
+
+@pytest.mark.asyncio
+async def test_ink_provider_switch_requires_confirmation_and_rejects_stale_choices(
+    tmp_path, monkeypatch
+):
+    from omniagents.builtin.server_functions import model_picker
+
+    store = make_store(tmp_path)
+    monkeypatch.setattr(model_picker, "model_store", lambda: store)
+    choices = await model_picker.list_model_providers()
+    assert choices["current"] == "company"
+    assert {entry["name"] for entry in choices["providers"]} == {"company", "personal"}
+    assert "company-key" not in json.dumps(choices)
+    assert "base_url" not in json.dumps(choices)
+    result = await model_picker.switch_provider("personal/c", "company", False)
+    assert not result["ok"]
+    assert store.selected_provider() == "company"
+    result = await model_picker.switch_provider("personal/missing", "company", True)
+    assert not result["ok"]
+    result = await model_picker.switch_provider("personal/c", "company", True)
+    assert result == {"ok": True, "provider": "personal", "model": "personal/c"}
+    assert store.selected_provider() == "personal"
+    assert store.load_config()["provider_scope_version"] == 1
+    result = await model_picker.switch_provider("company/a", "company", True)
+    assert not result["ok"]
+    assert "changed" in result["error"]
+    assert store.selected_provider() == "personal"
+
+
+@pytest.mark.asyncio
+async def test_ink_provider_switch_does_not_override_organization_policy(
+    tmp_path, monkeypatch
+):
+    from omniagents.builtin.server_functions import model_picker
+
+    store = make_store(tmp_path)
+    store._governed_config = lambda: {"default": "company/a"}
+    monkeypatch.setattr(model_picker, "model_store", lambda: store)
+    result = await model_picker.switch_provider("personal/c", "company", True)
+    assert not result["ok"]
+    assert "organization" in result["error"]
+    assert store.load_config()["default"] == "company/a"
+
+
+@pytest.mark.asyncio
+async def test_provider_picker_ignores_voice_default_from_previous_provider(
+    tmp_path, monkeypatch
+):
+    from omniagents.builtin.server_functions import model_picker
+
+    store = make_store(tmp_path)
+    config = store.load_config()
+    config["providers"]["personal"]["models"]["voice"] = {
+        "model": "voice",
+        "realtime": True,
+    }
+    config["voice_default"] = "personal/voice"
+    store.save_config(config)
+    monkeypatch.setattr(model_picker, "model_store", lambda: store)
+    choices = await model_picker.list_model_providers()
+    assert choices["current"] == "company"
+    assert {row["name"] for row in choices["providers"]} == {"company", "personal"}
+    assert store.get_voice_default_model_name() is None
+    assert store.get_voice_default_model_config() is None
+    assert store.resolve_voice_settings_for_realtime() == {}
+    with pytest.raises(ValueError, match="outside"):
+        store.resolve_model_for_runtime("personal/voice")
+    result = await model_picker.switch_provider("personal/c", "company", True)
+    assert result["ok"]
+    assert store.get_voice_default_model_name() == "personal/voice"
+    # A saved voice preference is retained for when its provider is selected.
+    assert store.load_config()["voice_default"] == "personal/voice"

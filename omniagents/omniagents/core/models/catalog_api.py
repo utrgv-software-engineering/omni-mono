@@ -534,7 +534,7 @@ def apply_session_model(
                 _reason(
                     "provider_mismatch",
                     str(exc),
-                    "Change the workspace provider in Settings.",
+                    "Change the workspace provider in AI Settings or with the model default CLI command.",
                 )
             ],
         }
@@ -618,7 +618,7 @@ def set_voice_default_model(store: ModelConfigStore, ref: str) -> Dict[str, Any]
                 _reason(
                     "provider_mismatch",
                     str(exc),
-                    "Change the workspace provider in Settings.",
+                    "Change the workspace provider in AI Settings or with the model default CLI command.",
                 )
             ],
         }

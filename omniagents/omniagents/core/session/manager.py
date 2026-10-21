@@ -40,10 +40,7 @@ __all__ = [
 class QueuedItem:
     """A message queued for serialized processing on a session.
 
-    Two flavours:
-    - ``trigger_run=False``: append to history, no run.
-    - ``trigger_run=True``:  ``start_run`` with this content (which itself
-      appends the prompt and drives a turn).
+    Every accepted message starts a turn when the session is available.
 
     Each item carries a stable ``id`` so clients can target it for
     cancellation/edit while it's still in the queue.
@@ -52,7 +49,6 @@ class QueuedItem:
     content: str
     input_content: Any | None = None
     role: str = "user"
-    trigger_run: bool = False
     variables: Optional[Dict[str, Any]] = None
     safe_tool_overrides: Optional[Dict[str, Any]] = None
     source: Optional[str] = None
@@ -69,7 +65,6 @@ class QueuedItem:
             "content": self.content,
             "input_content": self.input_content,
             "role": self.role,
-            "trigger_run": self.trigger_run,
             "variables": self.variables,
             "safe_tool_overrides": self.safe_tool_overrides,
             "source": self.source,
@@ -856,8 +851,7 @@ class Session:  # noqa: D101
         # automated notifications (bash jobs exiting, workers
         # completing, webhooks) call AgentService.enqueue_notification
         # instead of enqueue_message. This projects the durable notification
-        # buffer, coalesced into ONE combined QueuedItem (trigger_run=
-        # True, role="assistant") by _notification_flusher at the next
+        # buffer, coalesced into ONE combined QueuedItem (role="assistant") by _notification_flusher at the next
         # safe boundary: active run ends, short debounce when idle, or
         # immediately when a real user message is enqueued.
         self.pending_notifications: list[dict] = []

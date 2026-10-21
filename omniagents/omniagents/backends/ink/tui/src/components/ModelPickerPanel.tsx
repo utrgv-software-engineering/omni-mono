@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import Spinner from "ink-spinner";
+import { ProviderPickerPanel } from "./ProviderPickerPanel.js";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import type { RPCClient } from "../rpc/client.js";
@@ -32,6 +33,7 @@ type Props = {
 export const ModelPickerPanel = themedMemo(
   ({ open, onClose, client, sessionId }: Props) => {
     const actions = useActions();
+    const [providersOpen, setProvidersOpen] = useState(false);
     const [rows, setRows] = useState<ModelRow[]>([]);
     const [index, setIndex] = useState(0);
     const [loading, setLoading] = useState(false);
@@ -70,6 +72,7 @@ export const ModelPickerPanel = themedMemo(
       if (!open) {
         setStatusLine(null);
         setError(null);
+        setProvidersOpen(false);
         return;
       }
       void load();
@@ -111,6 +114,11 @@ export const ModelPickerPanel = themedMemo(
 
     useKeypress(
       (input, key) => {
+        if (key.paste) return true;
+        if (input === "p" && !key.ctrl && !key.meta && !switching) {
+          setProvidersOpen(true);
+          return true;
+        }
         // Modified keys are chords for the global layer (quit, panel
         // switching) — never mistake Ctrl+X for the letter x.
         if (key.ctrl || (key.meta && !key.escape)) return false;
@@ -139,10 +147,21 @@ export const ModelPickerPanel = themedMemo(
         }
         return true; // modal — swallow the rest
       },
-      { isActive: open, priority: KeypressPriority.High },
+      { isActive: open && !providersOpen, priority: KeypressPriority.High },
     );
 
     if (!open) return null;
+    if (providersOpen)
+      return (
+        <ProviderPickerPanel
+          client={client}
+          sessionId={sessionId}
+          onClose={() => {
+            setProvidersOpen(false);
+            void load();
+          }}
+        />
+      );
 
     const start = windowStart(index, rows.length, WINDOW);
     const visible = rows.slice(start, start + WINDOW);
@@ -219,7 +238,7 @@ export const ModelPickerPanel = themedMemo(
         )}
 
         <Text color={Theme.textChrome}>
-          ↑↓ select · enter switch · r refresh · esc close
+          ↑↓ select · enter switch · p provider · r refresh · esc close
         </Text>
       </Box>
     );

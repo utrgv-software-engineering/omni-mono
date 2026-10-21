@@ -91,7 +91,6 @@ export interface EnqueueMessageParams {
   submission_id?: string;
   role?: string;
   input_content?: unknown[];
-  trigger_run?: boolean;
   variables?: Record<string, unknown>;
   safe_tool_overrides?: Record<string, unknown>;
   source?: string;

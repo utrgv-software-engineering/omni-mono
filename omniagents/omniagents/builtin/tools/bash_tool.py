@@ -228,15 +228,53 @@ async def execute_bash(
         )
         return RichToolOutput(llm_output, ui_metadata)
 
+    resolved_cwd = _resolve_cwd(ctx, cwd, where="execute_bash")
+    try:
+        valid_directory = await _ws.current_workspace().is_exec_dir(resolved_cwd)
+    except Exception as exc:
+        directory_error = f"Could not check working directory {resolved_cwd!r}: {exc}"
+    else:
+        directory_error = (
+            None
+            if valid_directory
+            else f"Working directory does not exist, is not a directory, or is inaccessible: {resolved_cwd!r}."
+        )
+    if directory_error is not None:
+        hint = " Omit cwd or pass JSON null to use the workspace directory; otherwise supply an existing directory."
+        if (
+            isinstance(cwd, str)
+            and len(cwd) >= 2
+            and cwd[0] == cwd[-1]
+            and cwd[0] in ("'", '"')
+        ):
+            hint += " cwd is a plain path, not shell syntax: remove the surrounding quote characters."
+        message = directory_error + hint
+        return RichToolOutput(
+            message,
+            {
+                "value": message,
+                "display_type": "error",
+                "summary": "Invalid working directory",
+                "preview": message,
+                "truncated": False,
+                "metadata": {
+                    "error_type": "invalid_working_directory",
+                    "cwd": resolved_cwd,
+                    "command": command,
+                    "error": message,
+                },
+            },
+        )
+
     if background:
-        return await _execute_bash_background(ctx, command=command, cwd=cwd)
+        return await _execute_bash_background(ctx, command=command, cwd=resolved_cwd)
 
     if timeout is None:
         timeout = _BASH_DEFAULT_TIMEOUT
     if max_output_chars is None:
         max_output_chars = _BASH_DEFAULT_MAX_OUTPUT_CHARS
 
-    cwd = _resolve_cwd(ctx, cwd, where="execute_bash")
+    cwd = resolved_cwd
     start_time = time.monotonic()
 
     try:

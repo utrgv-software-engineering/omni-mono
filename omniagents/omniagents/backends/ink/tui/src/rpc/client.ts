@@ -1211,7 +1211,6 @@ export class RPCClient extends EventEmitter {
     content: string,
     opts?: {
       role?: string;
-      triggerRun?: boolean;
       variables?: Record<string, unknown>;
       safeToolOverrides?: Record<string, unknown>;
       source?: string;
@@ -1226,7 +1225,6 @@ export class RPCClient extends EventEmitter {
   }> {
     const params: Record<string, unknown> = { session_id: sessionId, content };
     if (opts?.role) params.role = opts.role;
-    if (opts?.triggerRun) params.trigger_run = true;
     if (opts?.variables) params.variables = opts.variables;
     if (opts?.safeToolOverrides)
       params.safe_tool_overrides = opts.safeToolOverrides;
@@ -1248,7 +1246,6 @@ export class RPCClient extends EventEmitter {
       id: string;
       content: string;
       role: string;
-      trigger_run: boolean;
       variables: Record<string, unknown> | null;
       safe_tool_overrides: Record<string, unknown> | null;
       source: string | null;
@@ -1262,7 +1259,6 @@ export class RPCClient extends EventEmitter {
         id: string;
         content: string;
         role: string;
-        trigger_run: boolean;
         variables: Record<string, unknown> | null;
         safe_tool_overrides: Record<string, unknown> | null;
         source: string | null;

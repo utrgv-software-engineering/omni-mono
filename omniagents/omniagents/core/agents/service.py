@@ -3832,7 +3832,13 @@ class AgentService(RpcMethodsBase):
         self._recover_local_run_ownership(sess)
         ownership = reserve_run(self._queue_store(sess), sess.id)
         sess.runtime_ownership = ownership
+        from omniagents.core.models import bind_run_models, reset_run_models
+
+        model_scope = model_token = None
         try:
+            store = self._model_catalog_store()
+            if store is not None and store.single_provider:
+                model_scope, model_token = bind_run_models(store.snapshot_for_run(sess))
             ownership.start_heartbeat()
             if ownership.took_over_from is not None:
                 self._close_interrupted_run(sess, ownership.took_over_from)
@@ -3853,6 +3859,17 @@ class AgentService(RpcMethodsBase):
                 session_id=session_id,
             )
         finally:
+            if model_token is not None:
+                reset_run_models(model_token)
+            if model_scope is not None:
+                if ownership.transferred and sess.current_task is not None:
+                    # Queue drainers may inherit this context: once the run ends,
+                    # they must see current configuration for the next turn.
+                    sess.current_task.add_done_callback(
+                        lambda _: setattr(model_scope, "active", False)
+                    )
+                else:
+                    model_scope.active = False
             # Preparation failure/cancellation never dispatched a worker.
             if not ownership.transferred:
                 ownership.release()
@@ -4153,7 +4170,11 @@ class AgentService(RpcMethodsBase):
                 from omniagents.core.agents.run_options import build_model_provider
 
                 model_provider = None
-                session_model_config = getattr(sess, "model_config", None)
+                session_model_config = (
+                    catalog_store.get_model_config(catalog_store._run_model_ref)
+                    if catalog_store is not None and catalog_store._run_model_ref
+                    else getattr(sess, "model_config", None)
+                )
 
                 # Map session_model_config (legacy "provider" key) onto the
                 # build_model_provider shape (keys: type, base_url, api_key).
@@ -4180,7 +4201,9 @@ class AgentService(RpcMethodsBase):
                 if catalog_store is not None and catalog_store.single_provider:
                     from omniagents.core.models import provider_from_runtime
 
-                    runtime = catalog_store.resolve_model_for_runtime(sess.active_model)
+                    runtime = catalog_store.resolve_model_for_runtime(
+                        catalog_store._run_model_ref or sess.active_model
+                    )
                     model_provider, _ = provider_from_runtime(runtime)
                 elif provider_cfg:
                     try:
@@ -4397,7 +4420,11 @@ class AgentService(RpcMethodsBase):
                     # Catalog identity of the serving model, so run-level
                     # usage joins the model catalog (see protocol.md).
                     if getattr(sess, "active_model", None):
-                        payload["model_ref"] = sess.active_model
+                        payload["model_ref"] = (
+                            catalog_store._run_model_ref
+                            if catalog_store is not None
+                            else None
+                        ) or sess.active_model
                     if final_details.get("max_input_tokens") is not None:
                         payload["max_input_tokens"] = final_details.get(
                             "max_input_tokens"
@@ -6229,17 +6256,18 @@ class AgentService(RpcMethodsBase):
             store, include_hidden=include_hidden, modality=modality
         )
         result["reasons"] = []
+        if store.single_provider:
+            result["models"] = [
+                m
+                for m in result["models"]
+                if m["provider"]["name"] == store.selected_provider()
+            ]
         if session_id:
             sess = self._session_manager.get_or_create(
                 session_id, user_id=self._current_user_id()
             )
-            store.reconcile_session_model(sess)
-            if store.single_provider:
-                result["models"] = [
-                    m
-                    for m in result["models"]
-                    if m["provider"]["name"] == store.selected_provider()
-                ]
+            if sess.current_task is None or sess.current_task.done():
+                store.reconcile_session_model(sess)
             active = getattr(sess, "active_model", None)
             result["session"] = {
                 "session_id": sess.id,
@@ -6394,7 +6422,6 @@ class AgentService(RpcMethodsBase):
         session_id: str,
         content: str,
         role: str = "user",
-        trigger_run: bool = False,
         variables: dict | None = None,
         safe_tool_overrides: dict | None = None,
         source: str | None = None,
@@ -6403,9 +6430,8 @@ class AgentService(RpcMethodsBase):
     ) -> dict:  # noqa: D401
         """Queue a message for serialized processing on a session.
 
-        - ``trigger_run=False``: append to history, no run.
-        - ``trigger_run=True``:  call ``start_run`` with ``content`` as the
-          prompt — ``start_run`` writes the user turn and drives the agent.
+        Every accepted message starts a turn when the recipient is available.
+        Transcript recording is a separate operation, not a delivery option.
 
         Items are processed in FIFO order. The drainer waits for any
         in-flight run (queued or user-initiated) before starting a new one,
@@ -6416,7 +6442,6 @@ class AgentService(RpcMethodsBase):
             {
                 "session_id": session_id,
                 "role": role,
-                "trigger_run": trigger_run,
                 "source": source,
             },
         )
@@ -6435,7 +6460,6 @@ class AgentService(RpcMethodsBase):
             content=content,
             input_content=input_content,
             role=role,
-            trigger_run=trigger_run,
             variables=variables,
             safe_tool_overrides=safe_tool_overrides,
             source=source,
@@ -6452,7 +6476,6 @@ class AgentService(RpcMethodsBase):
                 "session_id": session_id,
                 "content": content,
                 "role": role,
-                "trigger_run": trigger_run,
                 "variables": variables,
                 "safe_tool_overrides": safe_tool_overrides,
                 "source": source,
@@ -6550,7 +6573,7 @@ class AgentService(RpcMethodsBase):
         for entry in queue_inbox.entries(store, sess.id):
             item = dict(entry["item"])
             owner = entry["owner"]
-            if owner is not None and item["trigger_run"]:
+            if owner is not None:
                 receipt = store.submission_receipt(
                     sess.id, f"queue-dispatch:{item['id']}"
                 )
@@ -6559,6 +6582,15 @@ class AgentService(RpcMethodsBase):
                     if run is not None and run.status.value != "running":
                         queue_inbox.finish(store, sess.id, item["id"], owner)
                         continue
+                    if run is not None and run.status.value == "running":
+                        from omniagents.core.runtime.ownership import lease_expired
+
+                        if lease_expired(queue_inbox.runtime_owner(store, sess.id)):
+                            self._close_interrupted_run(sess, {"run_id": run.turn_id})
+                            reason = "Queued run was interrupted; inspect recorded effects before sending follow-up work"
+                            queue_inbox.fail(store, sess.id, item["id"], owner, reason)
+                            item.update(state="failed", error=reason)
+                            owner = None
                 elif receipt and receipt.get("status") == "failed":
                     queue_inbox.fail(
                         store,
@@ -6569,7 +6601,7 @@ class AgentService(RpcMethodsBase):
                     )
                     item.update(state="failed", error=receipt.get("error"))
                     owner = None
-            if owner is not None and not item["trigger_run"]:
+            if owner is not None:
                 # A canonical queued item proves the append committed. The
                 # thread ensure above has already drained history intents.
                 recorded = store.get_item(
@@ -6590,6 +6622,7 @@ class AgentService(RpcMethodsBase):
                 # item is simply pending again. A live foreign claim is a run
                 # about to start; it is shown as pending too.
                 queue_inbox.release_claim_if_stale(store, sess.id, item["id"])
+            item.pop("trigger_run", None)  # Decode old persisted queue entries.
             visible.append(QueuedItem(**item))
         sess.message_queue = visible
 
@@ -6779,64 +6812,25 @@ class AgentService(RpcMethodsBase):
             sess.message_queue.remove(item)
             try:
                 await self._broadcast_queue_changed(sess)
-                if item.trigger_run:
-                    # start_run appends the prompt to history AND drives a
-                    # turn. Don't pre-append — that would duplicate.
-                    # prompt_role lets non-user notifications (assistant-
-                    # role batches from _notification_flusher) land in
-                    # history with their real role while still triggering
-                    # a run via the resume-from-history path.
-                    dispatch_token = queue_inbox.current_dispatch.set(
-                        (sess.id, item.id, sess.queue_owner)
+                dispatch_token = queue_inbox.current_dispatch.set(
+                    (sess.id, item.id, sess.queue_owner)
+                )
+                try:
+                    # Worker lifecycle admission wraps the same serialized queue.
+                    dispatch = getattr(self, "_worker_queue_dispatch", self.start_run)
+                    await dispatch(
+                        prompt=item.content,
+                        content=item.input_content,
+                        environment_selection={"mode": "inherit"},
+                        session_id=sess.id,
+                        variables=item.variables,
+                        safe_tool_overrides=item.safe_tool_overrides,
+                        prompt_role=item.role,
+                        submission_id=f"queue-dispatch:{item.id}",
                     )
-                    try:
-                        await self.start_run(
-                            prompt=item.content,
-                            content=item.input_content,
-                            environment_selection={"mode": "inherit"},
-                            session_id=sess.id,
-                            variables=item.variables,
-                            safe_tool_overrides=item.safe_tool_overrides,
-                            prompt_role=item.role,
-                            submission_id=f"queue-dispatch:{item.id}",
-                        )
-                    finally:
-                        queue_inbox.current_dispatch.reset(dispatch_token)
-                    # Shepherd the run we just scheduled to completion
-                    # before exiting the drainer. The loop's outer wait
-                    # at the top would catch this on the next iteration
-                    # too, but if this was the last queued item we'd
-                    # otherwise exit while the run was still in flight.
-                    await _wait_for_current_task()
-                else:
-                    # Materialize BEFORE the history append so legacy
-                    # projection cannot duplicate this new canonical item.
-                    from omniagents.core.conversation.recorder import (
-                        ensure_conversation_thread,
-                    )
-
-                    recorder = ensure_conversation_thread(sess)
-                    sess.append_message(
-                        {
-                            "role": item.role,
-                            "content": item.content,
-                            "type": "message",
-                        },
-                        projection={
-                            "version": 1,
-                            "kind": "queued_message",
-                            "queue_id": item.id,
-                        },
-                    )
-                    if recorder is not None:
-                        recorded = recorder.record_queued_message(
-                            sess.id,
-                            queue_id=item.id,
-                            role=item.role,
-                            content=item.content,
-                        )
-                        if recorded is not None:
-                            await self.notify_item_updated(sess, recorded)
+                finally:
+                    queue_inbox.current_dispatch.reset(dispatch_token)
+                await _wait_for_current_task()
                 queue_inbox.finish(store, sess.id, item.id, sess.queue_owner)
                 self._refresh_queue(sess)
             except asyncio.CancelledError:
@@ -6872,7 +6866,7 @@ class AgentService(RpcMethodsBase):
     #  Background notifications (batched, role="assistant").
     #
     #  enqueue_notification buffers per-session; _notification_flusher
-    #  coalesces a burst into ONE QueuedItem with trigger_run=True at:
+    #  coalesces a burst into ONE QueuedItem that starts a run at:
     #    - the moment ``current_task`` ends (run-active case)
     #    - after a debounce window (idle case)
     #    - immediately when a real user message arrives (chronological
@@ -6933,7 +6927,7 @@ class AgentService(RpcMethodsBase):
     async def _flush_notifications(self, sess: Session) -> None:
         """Drain ``pending_notifications`` into ONE combined QueuedItem.
 
-        Always role="assistant", always trigger_run=True. Safe to call
+        Always role="assistant", always starts a run. Safe to call
         with an empty buffer (no-op). The drainer routes the role
         through ``start_run(prompt_role=...)`` which appends to history
         with the real role and resumes the run without injecting a
@@ -6946,7 +6940,6 @@ class AgentService(RpcMethodsBase):
             return QueuedItem(
                 content=self._format_notification_batch(items),
                 role="assistant",
-                trigger_run=True,
                 source="notifications:batch",
                 safe_tool_overrides=self._merge_notification_safe_tool_overrides(items),
             ).to_dict()

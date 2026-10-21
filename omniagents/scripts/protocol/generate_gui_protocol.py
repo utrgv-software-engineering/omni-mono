@@ -237,7 +237,6 @@ OPTIONAL_FIELDS = {
         "submission_id",
         "role",
         "input_content",
-        "trigger_run",
         "variables",
         "safe_tool_overrides",
         "source",
@@ -469,7 +468,6 @@ BOOLEAN_FIELDS = {
     "recursive",
     "redact",
     "refresh",
-    "trigger_run",
 }
 INTEGER_FIELDS = {
     "after_seq",

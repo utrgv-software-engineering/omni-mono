@@ -185,9 +185,20 @@ def reconcile_session(service, session, store):
     import_legacy(service, session, journal)
     rows = reconcile(journal)
 
+    from omniagents.core.session import queue_inbox
+
+    def queued(row):
+        if row.get("closed") or row.get("cleaned") or row["status"] == "blocked":
+            return False
+        return any(
+            entry["item"].get("state", "pending") == "pending"
+            for entry in queue_inbox.entries(store, row["session_id"])
+        )
+
     def unsettled(rows):
         return any(
             row["status"] in ACTIVE
+            or queued(row)
             or (
                 row.get("report_status") == "queued"
                 and time.time() - row["updated_at"] < 300
@@ -217,6 +228,29 @@ def reconcile_session(service, session, store):
             while True:
                 await asyncio.sleep(5)
                 rows = reconcile(journal)
+                from omniagents.builtin.tools.worker_tools import manager
+
+                candidates = [
+                    row for row in rows if row["status"] not in ACTIVE and queued(row)
+                ]
+                if candidates:
+                    mgr = manager()
+                    namespace = service._session_manager
+                    mgr.restore(
+                        journal, service, namespace._project_slug, namespace._agent_slug
+                    )
+                    for row in candidates:
+                        try:
+                            await mgr.drain_queued(row["worker_id"])
+                        except Exception as exc:
+                            # Retain queued messages, and expose unavailable environments.
+                            journal.change(
+                                row["worker_id"],
+                                row["generation"],
+                                row["owner"],
+                                status="blocked",
+                                error=str(exc),
+                            )
                 service._refresh_queue(session)
                 from omniagents.builtin.tools.worker_tools import (
                     broadcast_workers_snapshot,

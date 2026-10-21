@@ -772,7 +772,6 @@ export class RPCClient {
     content: string,
     opts?: {
       role?: string
-      triggerRun?: boolean
       variables?: Record<string, unknown>
       safeToolOverrides?: Record<string, unknown>
       source?: string
@@ -780,7 +779,6 @@ export class RPCClient {
   ): Promise<{ ok: boolean; id?: string; depth?: number; reason?: string; session_id?: string; enqueued_at?: number }> {
     const params: Record<string, unknown> = { session_id: sessionId, content }
     if (opts?.role) params.role = opts.role
-    if (opts?.triggerRun) params.trigger_run = true
     if (opts?.variables) params.variables = opts.variables
     if (opts?.safeToolOverrides) params.safe_tool_overrides = opts.safeToolOverrides
     if (opts?.source) params.source = opts.source
@@ -1566,7 +1564,6 @@ export type QueuedMessage = {
   id: string
   content: string
   role: string
-  trigger_run: boolean
   variables: Record<string, unknown> | null
   safe_tool_overrides: Record<string, unknown> | null
   source: string | null

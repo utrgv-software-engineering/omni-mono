@@ -84,8 +84,10 @@ def resolve_service_model_runtime(
     """
     target = _active_store(store)
     if target is not None and target.single_provider:
-        target.reconcile_session_model(session)
-        ref = session.active_model
+        ref = getattr(target, "_run_model_ref", None)
+        if ref is None:
+            target.reconcile_session_model(session)
+            ref = session.active_model
         return ref, target.resolve_model_for_runtime(ref)
     candidates: list[str] = []
     active_model = getattr(session, "active_model", None)

@@ -85,6 +85,10 @@ class _RecordingWorkspace(Workspace):
         self._record("is_dir", path)
         return False
 
+    async def is_exec_dir(self, path: str) -> bool:
+        self._record("is_exec_dir", path)
+        return True
+
     async def mkdir(self, path: str, **kwargs: Any) -> None:
         self._record("mkdir", path, **kwargs)
 
@@ -200,7 +204,7 @@ async def test_execute_bash_routes_through_workspace(fake_ws, tmp_path):
     result = await unwrap(execute_bash)(ctx, "echo routed")
 
     names = [c[0] for c in fake_ws.calls]
-    assert "exec" in names
+    assert names == ["is_exec_dir", "exec"]
     exec_call = next(c for c in fake_ws.calls if c[0] == "exec")
     assert exec_call[1][0] == "echo routed"
     assert exec_call[2]["cwd"] == str(tmp_path)

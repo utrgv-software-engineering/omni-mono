@@ -68,7 +68,7 @@ async def test_pending_acceptance_survives_session_reload_and_lost_reply(monkeyp
         await service.enqueue_message("restart-queue", "survive", submission_id="send")
         == accepted
     )
-    assert len(session.history) == 1
+    assert session.drainer_task.done()
     assert (await service.list_queue(session.id))["items"] == []
 
 
@@ -79,9 +79,7 @@ async def test_foreign_claim_survives_reload_without_dispatch(monkeypatch):
     service = make_service(monkeypatch)
     with monkeypatch.context() as patcher:
         patcher.setattr(service, "_ensure_drainer", lambda session: None)
-        accepted = await service.enqueue_message(
-            "foreign-queue", "do not replay", trigger_run=True
-        )
+        accepted = await service.enqueue_message("foreign-queue", "do not replay")
     session = service._session_manager.get("foreign-queue")
     assert queue_inbox.claim(
         service._queue_store(session), session.id, accepted["id"], "dead-owner"
@@ -158,8 +156,8 @@ async def test_durable_rejection_is_visible_without_blocking_later_work(monkeypa
         )
 
     service.start_run = fake_start_run
-    await service.enqueue_message("reject-queue", "reject", trigger_run=True)
-    await service.enqueue_message("reject-queue", "after", trigger_run=True)
+    await service.enqueue_message("reject-queue", "reject")
+    await service.enqueue_message("reject-queue", "after")
     session = service._session_manager.get("reject-queue")
     await asyncio.wait_for(session.drainer_task, timeout=2)
     assert calls == ["reject", "after"]
@@ -270,39 +268,22 @@ def make_service(monkeypatch, stream_result=None, stream_side_effect=None):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("role", ["user", "assistant", "system"])
-async def test_append_only_queue_records_and_pushes_each_message(monkeypatch, role):
+async def test_queued_messages_dispatch_once_with_their_role(monkeypatch, role):
     service = make_service(monkeypatch)
-    events = attach_capture(service)
-    session = service._session_manager.get_or_create("canonical-queue")
-    ids = []
-    for _ in range(2):
-        result = await service.enqueue_message(session.id, "same text", role=role)
-        ids.append(result["id"])
-        await asyncio.wait_for(session.drainer_task, timeout=2)
-    snapshot = (await service.queue_status(session.id, include_snapshot=True))[
-        "snapshot"
-    ]
-    items = snapshot["items"]
-    assert len(items) == 2
-    assert len({item["item_id"] for item in items}) == 2
-    assert [item["role"] for item in items] == [role, role]
-    assert [item["content"]["text"] for item in items] == ["same text"] * 2
-    assert [item["source_ref"]["queue_id"] for item in items] == ids
-    assert all(item["turn_id"] is None for item in items)
-    pushes = [event["payload"] for event in events if event["method"] == "item_updated"]
-    assert [item["item_id"] for item in pushes] == [item["item_id"] for item in items]
-    assert all(item["session_id"] == session.id for item in pushes)
-    from omniagents.core.conversation.recorder import ensure_conversation_thread
+    calls = []
 
-    recorder = ensure_conversation_thread(session)
-    replayed = recorder.record_queued_message(
-        session.id, queue_id=ids[0], role=role, content="same text"
-    )
-    assert replayed.item_id == items[0]["item_id"]
-    replay_snapshot = await service.queue_status(session.id, include_snapshot=True)
-    assert len(replay_snapshot["snapshot"]["items"]) == 2
-    other = await service.queue_status("other-session", include_snapshot=True)
-    assert other["snapshot"]["items"] == []
+    async def start(**kwargs):
+        calls.append(kwargs)
+        return {"run_id": str(len(calls))}
+
+    service.start_run = start
+    for _ in range(2):
+        await service.enqueue_message("canonical-queue", "same text", role=role)
+        await service._session_manager.get("canonical-queue").drainer_task
+    assert [call["prompt_role"] for call in calls] == [role, role]
+    assert [call["prompt"] for call in calls] == ["same text", "same text"]
+    assert calls[0]["submission_id"] != calls[1]["submission_id"]
+    assert not (await service.list_queue("canonical-queue"))["items"]
 
 
 @pytest.mark.asyncio
@@ -317,7 +298,7 @@ async def test_queued_attachments_reach_run(monkeypatch):
     service.start_run = start
     content = [{"type": "input_image", "image_url": "data:image/png;base64,AA=="}]
     result = await service.enqueue_message(
-        "attachments", "Describe this", trigger_run=True, input_content=content
+        "attachments", "Describe this", input_content=content
     )
     assert result["ok"]
     session = service._session_manager.get_or_create("attachments")
@@ -330,7 +311,7 @@ async def test_queued_attachments_reach_run(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_enqueue_append_only_writes_history_without_running(monkeypatch):
+async def test_enqueue_always_starts_a_turn(monkeypatch):
     service = make_service(monkeypatch)
     sess_id = "sess-append"
 
@@ -349,12 +330,9 @@ async def test_enqueue_append_only_writes_history_without_running(monkeypatch):
     sess = service._session_manager.get_or_create(sess_id)
     await asyncio.wait_for(sess.drainer_task, timeout=1)
 
-    assert started == []  # never called start_run
-    assert sess.history[-1] == {
-        "role": "system",
-        "content": "ping",
-        "type": "message",
-    }
+    assert len(started) == 1
+    assert started[0]["prompt"] == "ping"
+    assert started[0]["prompt_role"] == "system"
     assert not sess.message_queue
 
 
@@ -398,7 +376,6 @@ async def test_enqueue_trigger_run_calls_start_run_with_prompt(monkeypatch):
     res = await service.enqueue_message(
         sess_id,
         "go",
-        trigger_run=True,
         variables={"k": "v"},
         safe_tool_overrides={"safe_tool_names": ["read"]},
     )
@@ -492,8 +469,8 @@ async def test_two_queued_runs_serialize(monkeypatch):
 
     service.start_run = fake_start_run  # type: ignore[assignment]
 
-    await service.enqueue_message(sess_id, "first", trigger_run=True)
-    await service.enqueue_message(sess_id, "second", trigger_run=True)
+    await service.enqueue_message(sess_id, "first")
+    await service.enqueue_message(sess_id, "second")
 
     sess = service._session_manager.get_or_create(sess_id)
     await asyncio.wait_for(sess.drainer_task, timeout=2)
@@ -549,7 +526,7 @@ async def test_drainer_waits_for_active_user_run(monkeypatch):
     sess.current_task = None
     await asyncio.wait_for(sess.drainer_task, timeout=1)
 
-    assert sess.history[-1]["content"] == "after-active"
+    assert appended_at == ["never"]
 
 
 # ---------------------------------------------------------------------------
@@ -640,8 +617,8 @@ async def test_drainer_marks_a_failed_dispatch_and_continues_with_later_work(
 
     service.start_run = fake_start_run  # type: ignore[assignment]
 
-    await service.enqueue_message(sess_id, "boom", trigger_run=True)
-    await service.enqueue_message(sess_id, "ok", trigger_run=True)
+    await service.enqueue_message(sess_id, "boom")
+    await service.enqueue_message(sess_id, "ok")
 
     sess = service._session_manager.get_or_create(sess_id)
     await asyncio.wait_for(sess.drainer_task, timeout=1)
@@ -685,7 +662,7 @@ async def test_list_queue_returns_items_in_order(monkeypatch):
     sess.current_task = asyncio.create_task(asyncio.sleep(5))
 
     r1 = await service.enqueue_message(sess_id, "one", role="user", source="cron")
-    r2 = await service.enqueue_message(sess_id, "two", trigger_run=True)
+    r2 = await service.enqueue_message(sess_id, "two")
     r3 = await service.enqueue_message(sess_id, "three")
 
     snapshot = await service.list_queue(sess_id)
@@ -696,7 +673,7 @@ async def test_list_queue_returns_items_in_order(monkeypatch):
 
     item_two = snapshot["items"][1]
     assert item_two["content"] == "two"
-    assert item_two["trigger_run"] is True
+    assert "trigger_run" not in item_two
     assert item_two["role"] == "user"
     # Optional fields round-trip
     assert snapshot["items"][0]["source"] == "cron"
@@ -759,7 +736,7 @@ async def test_cancel_after_drain_returns_not_found(monkeypatch):
 
     service.start_run = fake_start_run  # type: ignore[assignment]
 
-    res = await service.enqueue_message(sess_id, "go", trigger_run=True)
+    res = await service.enqueue_message(sess_id, "go")
     sess = service._session_manager.get_or_create(sess_id)
     await asyncio.wait_for(sess.drainer_task, timeout=1)
 
@@ -807,7 +784,7 @@ async def test_queued_item_stays_visible_during_in_flight_run(monkeypatch):
     sess.current_task = asyncio.create_task(user_run())
 
     # Enqueue while the user run is in flight.
-    res = await service.enqueue_message(sess_id, "queued-msg", trigger_run=True)
+    res = await service.enqueue_message(sess_id, "queued-msg")
     assert res["ok"] is True
 
     # Yield to let the drainer task get scheduled and run up to its first
@@ -877,3 +854,56 @@ async def test_queue_changed_broadcasts_on_enqueue_pop_and_cancel(monkeypatch):
     # final state rather than exact count.
     assert qc_events[-1]["payload"]["depth"] == 0
     assert qc_events[-1]["payload"]["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_active_run_and_helpers_keep_provider_while_next_queued_run_switches(
+    monkeypatch, tmp_path
+):
+    from omniagents.core import models
+    from omniagents.core.models.runtime import resolve_service_model_runtime
+
+    store = models.ModelConfigStore(config_dir=lambda: tmp_path, single_provider=True)
+    store.save_config(
+        {
+            "default": "first/a",
+            "provider_scope_version": 1,
+            "providers": {
+                name: {
+                    "type": "openai-compatible",
+                    "base_url": f"https://{name}.invalid/v1",
+                    "api_key": "test-only",
+                    "models": {"a": {"model": "a"}},
+                }
+                for name in ("first", "second")
+            },
+        }
+    )
+    monkeypatch.setattr(models, "_ACTIVE_STORE", store)
+    service = make_service(monkeypatch)
+    entered, release = asyncio.Event(), asyncio.Event()
+    observed = []
+
+    async def stream(agent, prompt, session, *args, **kwargs):
+        observed.append(resolve_service_model_runtime(service, session)[0])
+        if prompt == "initial":
+            entered.set()
+            await release.wait()
+            observed.append(resolve_service_model_runtime(service, session)[0])
+        return {"usage": {}, "model": "stub"}
+
+    monkeypatch.setattr(service_module, "stream_agent", stream)
+    await service.start_run(
+        "initial", environment_selection={"mode": "none"}, session_id="pin-provider"
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 3)
+        config = store.load_config()
+        config["default"] = "second/a"
+        store.save_config(config)
+        await service.enqueue_message("pin-provider", "followup")
+        release.set()
+        await asyncio.wait_for(service.get_session("pin-provider").drainer_task, 5)
+        assert observed == ["first/a", "first/a", "second/a"]
+    finally:
+        release.set()

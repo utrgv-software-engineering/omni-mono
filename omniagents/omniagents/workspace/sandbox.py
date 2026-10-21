@@ -411,6 +411,19 @@ class SandboxWorkspace(Workspace):
     async def is_dir(self, path: str) -> bool:
         return await self._test("d", path)
 
+    async def is_exec_dir(self, path: str) -> bool:
+        # Shell cwd may be outside the file-tool root (for example /tmp).
+        # Probe through the same session/user as exec, without file-policy fencing.
+        absolute = posixpath.normpath(posixpath.join(self.root, path))
+        result = await self._session.exec(
+            "sh",
+            "-lc",
+            f"test -d {shlex.quote(absolute)}",
+            shell=False,
+            user=self._default_user,
+        )
+        return result.exit_code == 0
+
     async def mkdir(
         self,
         path: str,

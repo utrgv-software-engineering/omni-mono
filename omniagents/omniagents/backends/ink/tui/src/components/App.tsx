@@ -1163,7 +1163,6 @@ export const App: React.FC<AppProps> = ({
       if ((thinking || queuedMessages.length > 0) && sessionId) {
         try {
           const queued = await client.enqueueMessage(sessionId, message, {
-            triggerRun: true,
             role: "user",
             source: "ink",
           });
@@ -1542,6 +1541,44 @@ export const App: React.FC<AppProps> = ({
               <AgentsScreen
                 active={screen === "agents"}
                 height={availableTerminalHeight}
+                onWorkerAction={
+                  client && rpcReady && sessionId
+                    ? async (worker_id, action) => {
+                        const response = (await client.serverCall(
+                          action === "resume"
+                            ? "workers.resume"
+                            : "workers.kill",
+                          action === "resume"
+                            ? { worker_id, operation_id: crypto.randomUUID() }
+                            : { worker_id },
+                          sessionId,
+                        )) as {
+                          ok?: boolean;
+                          error?: string;
+                          message?: string;
+                          snapshot?: import("../store/appStore.js").SubagentSummary[];
+                        };
+                        if (useAppStore.getState().sessionId !== sessionId)
+                          return;
+                        if (Array.isArray(response.snapshot)) {
+                          actions.setSubagents([
+                            ...useAppStore
+                              .getState()
+                              .subagents.filter(
+                                (entry) => entry.kind !== "worker",
+                              ),
+                            ...response.snapshot,
+                          ]);
+                        }
+                        if (!response.ok)
+                          throw new Error(
+                            response.message ??
+                              response.error ??
+                              "Worker action failed",
+                          );
+                      }
+                    : undefined
+                }
                 onExit={() => setScreen("chat")}
               />
             ) : screen === "files" ? (

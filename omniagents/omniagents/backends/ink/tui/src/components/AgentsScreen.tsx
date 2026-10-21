@@ -1,5 +1,5 @@
 import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text, useStdout } from "ink";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -26,6 +26,10 @@ type Props = {
   active: boolean;
   height: number;
   onExit: () => void;
+  onWorkerAction?: (
+    workerId: string,
+    action: "resume" | "close",
+  ) => Promise<void>;
 };
 
 const EMPTY_EVENTS: never[] = [];
@@ -33,7 +37,11 @@ const EMPTY_EVENTS: never[] = [];
 function statusColor(worker: SubagentSummary): string {
   if (worker.status === "running") return Theme.stateActive;
   if (worker.status === "completed") return Theme.stateDone;
-  if (worker.status === "cancelled") return Theme.stateBlocked;
+  if (worker.status === "closed") return Theme.textChrome;
+  if (["cancelled", "blocked", "interrupted"].includes(worker.status))
+    return Theme.stateBlocked;
+  if (["accepted", "provisioning", "ready", "resuming"].includes(worker.status))
+    return Theme.stateActive;
   return Theme.stateFailed;
 }
 
@@ -58,7 +66,12 @@ function shortTask(task: string, max = 28): string {
 // focus model as Review: ←/→ (h/l) switch panes, ↑↓ is contextual
 // (worker cursor on the list, scrolling on the detail), enter opens,
 // esc pops. Push-driven from the workers snapshots; no polling.
-export const AgentsScreen = ({ active, height, onExit }: Props) => {
+export const AgentsScreen = ({
+  active,
+  height,
+  onExit,
+  onWorkerAction,
+}: Props) => {
   const { stdout } = useStdout();
   const width = stdout?.columns ?? 80;
   const wide = width >= WIDE_BREAKPOINT;
@@ -66,6 +79,9 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
   const subagentEvents = useSubagentEvents();
   const actions = useActions();
 
+  const pendingAction = useRef(false);
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [detailScroll, setDetailScroll] = useState(0);
   // Which pane owns ↑↓. Only meaningful in the wide split — narrow
   // mode stacks both panes and keeps the combined keys.
@@ -88,6 +104,29 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
   }, [active]);
 
   const selected = ordered[index] ?? null;
+  const canResume =
+    selected?.kind === "worker" &&
+    !!selected.worker_id &&
+    ["interrupted", "blocked"].includes(selected.status);
+  const canClose =
+    selected?.kind === "worker" &&
+    !!selected.worker_id &&
+    selected.status !== "closed";
+  const performAction = (action: "resume" | "close") => {
+    if (!onWorkerAction || !selected?.worker_id || pendingAction.current)
+      return;
+    pendingAction.current = true;
+    setActionBusy(true);
+    setActionError(null);
+    void onWorkerAction(selected.worker_id, action)
+      .catch((error) => {
+        setActionError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        pendingAction.current = false;
+        setActionBusy(false);
+      });
+  };
 
   // 1Hz tick for live elapsed while anything runs and the screen shows.
   const [, setNowTick] = useState(0);
@@ -162,6 +201,14 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
     (input, key) => {
       if (key.paste) return true;
       if (key.ctrl || (key.meta && !key.escape)) return false;
+      if (onWorkerAction && input === "r" && canResume) {
+        performAction("resume");
+        return true;
+      }
+      if (onWorkerAction && input === "x" && canClose) {
+        performAction("close");
+        return true;
+      }
       if (key.tab) return false; // tab always cycles screens
       if (key.escape || input === "q") {
         // Esc pops one level: detail pane → list → chat.
@@ -247,7 +294,15 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
           </RowText>
         ) : (
           <RowText color={statusColor(worker)}>
-            {worker.status === "completed" ? "✔ " : "✗ "}
+            {worker.status === "completed"
+              ? "✔ "
+              : worker.status === "closed"
+                ? "○ "
+                : ["accepted", "provisioning", "ready", "resuming"].includes(
+                      worker.status,
+                    )
+                  ? "· "
+                  : "✗ "}
           </RowText>
         )}
         {/* minWidth 0 — see ReviewScreen sidebar: overflowing rows
@@ -355,7 +410,10 @@ export const AgentsScreen = ({ active, height, onExit }: Props) => {
         </Box>
       )}
 
-      <Text color={Theme.textChrome}>
+      <Text color={actionError ? Theme.stateFailed : Theme.textChrome}>
+        {actionError ?? (actionBusy ? "worker action pending · " : "")}
+        {onWorkerAction && !actionBusy && canResume ? "r recover · " : ""}
+        {onWorkerAction && !actionBusy && canClose ? "x close · " : ""}
         {detailFocused
           ? "↑↓ scroll · ←/esc list"
           : wide

@@ -305,7 +305,6 @@ export interface QueueChangedEvent {
       id: string;
       content: string;
       role: string;
-      trigger_run: boolean;
       variables: Record<string, unknown> | null;
       safe_tool_overrides: Record<string, unknown> | null;
       source: string | null;

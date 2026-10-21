@@ -196,7 +196,25 @@ export interface SubagentSummary {
   kind: "worker" | "agent_tool";
   /** Agent name, for agent_tool runs. */
   agent?: string;
-  status: "running" | "completed" | "cancelled" | "error";
+  worker_id?: string;
+  name?: string | null;
+  role?: string;
+  recovered?: boolean;
+  resumable?: boolean;
+  recovery_reason?: string | null;
+  report_status?: "queued" | "delivered" | "dismissed" | null;
+  status:
+    | "accepted"
+    | "provisioning"
+    | "ready"
+    | "resuming"
+    | "running"
+    | "interrupted"
+    | "blocked"
+    | "completed"
+    | "cancelled"
+    | "closed"
+    | "error";
   task: string;
   parent_session_id: string | null;
   session_id: string;
@@ -216,7 +234,6 @@ export interface QueuedMessage {
   id: string;
   content: string;
   role: string;
-  trigger_run: boolean;
   variables: Record<string, unknown> | null;
   safe_tool_overrides: Record<string, unknown> | null;
   source: string | null;

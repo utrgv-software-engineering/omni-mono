@@ -289,6 +289,11 @@ def worker_state_dict(worker_id: str) -> Optional[dict]:
         wall_ms = int((end - started) * 1000)
     return {
         "worker_id": worker_id,
+        "name": (handle.record or {}).get("recipe", {}).get("name"),
+        "role": (handle.record or {}).get("recipe", {}).get("role", ""),
+        "peer_communication": bool(
+            (handle.record or {}).get("recipe", {}).get("communication")
+        ),
         "subagent_id": worker_id,
         "kind": "worker",
         "status": handle.status,
@@ -402,12 +407,13 @@ async def _relay_worker_event(handle, method: str, params: dict) -> None:
 
 
 async def _on_worker_complete(handle) -> None:
-    """Push the worker's completion summary to the parent (orchestrator)
-    session via the batched notification path. The summary is the worker's
-    full final result — the orchestrator reads it to decide what to do
-    next, so no truncation. Drops silently when the worker wasn't spawned
-    with a parent session (tests, direct invocation) or when the service
-    capture hasn't fired yet."""
+    """Refresh observability after a worker run ends.
+
+    Durable report policy is enforced by WorkerJournal: new explicit-message
+    recipes report failures automatically, but normal responses stay in the
+    worker transcript. Non-durable legacy workers still enqueue an end-of-run
+    summary here.
+    """
     parent_sid = getattr(handle, "parent_session_id", None)
     if not parent_sid:
         return
@@ -573,6 +579,9 @@ async def spawn_worker(
     task: str,
     isolation: Optional[str] = None,
     allow_dirty: bool = False,
+    name: str | None = None,
+    role: str = "",
+    peer_communication: bool = False,
 ) -> RichToolOutput:
     """Spawn an autonomous worker agent to execute a subtask in the background.
 
@@ -583,11 +592,10 @@ async def spawn_worker(
     independent transformations, or verification running alongside
     production work.
 
-    When the worker completes, an automatic notification with its status and
-    result is delivered to this session — the next turn starts with that
-    available in context. You can end the current turn after spawning; you
-    don't need to call wait_for_workers. Spawn multiple workers in the same
-    turn and their completions will be batched into one wakeup.
+    Workers explicitly message you with worker_message(recipient="owner", ...).
+    Those messages enqueue parent turns; ordinary responses stay in the worker
+    transcript. Failures are reported automatically. You can end your turn
+    after briefing the worker to report findings or ask questions with that tool.
 
     Returns a short worker ID. Use it with send_worker_message (steer mid-run),
     get_worker_status (peek without blocking), close_worker (cancel), or
@@ -602,15 +610,33 @@ async def spawn_worker(
               isolated workspace instead of sharing yours. What strategies
               exist depends on the deployment (e.g. "worktree" in git-based
               setups, "copy" for a plain directory copy). After the
-              completion notification arrives, integrate the worker's
+              worker reports back, review and integrate the worker's
               changes and call cleanup_worker_worktree to remove the
               isolated workspace.
+        name: Optional short name for this worker, unique within the parent.
+        role: Optional specialized instructions. Does not change tool permissions.
+        peer_communication: Grant peer discovery and messaging with other opted-in
+              workers under this parent. Defaults off; no shared goal is required.
         allow_dirty: Only relevant with isolation. If the parent workspace
               has un-captured changes the worker would not see, isolation
               fails by default. Set to True to proceed anyway when you know
               those changes are not relevant.
     """
-    return await spawn_worker_run(ctx, task, isolation, allow_dirty)
+    import re
+
+    if name is not None and (
+        not re.fullmatch(r"[a-z][a-z0-9_-]{0,39}", name) or name == "owner"
+    ):
+        raise ValueError("Use a short lowercase worker name; owner is reserved")
+    return await spawn_worker_run(
+        ctx,
+        task,
+        isolation,
+        allow_dirty,
+        name=name,
+        role=role,
+        peer_communication=peer_communication,
+    )
 
 
 async def spawn_worker_run(
@@ -622,6 +648,9 @@ async def spawn_worker_run(
     worker_id: Optional[str] = None,
     configure_spec: Optional[Callable[[Any], None]] = None,
     recipe: dict | None = None,
+    name: str | None = None,
+    role: str = "",
+    peer_communication: bool = False,
 ) -> RichToolOutput:
     """Internal execution adapter shared by worker and swarm capabilities.
 
@@ -641,6 +670,8 @@ async def spawn_worker_run(
         if parent is not None and callable(getattr(service, "_queue_store", None))
         else None
     )
+    if peer_communication and journal is None:
+        raise ValueError("Worker communication requires durable parent storage")
     record = None
     if journal is not None and supplied_worker_id is None:
         worker_id = f"{worker_id}-{uuid.uuid4().hex[:12]}"
@@ -665,7 +696,14 @@ async def spawn_worker_run(
             raise ValueError(
                 "Durable workers require a registered reconstruction recipe"
             )
-        recipe = recipe or {"kind": "project", "version": 1}
+        recipe = recipe or {
+            "kind": "project",
+            "version": 1,
+            "name": name,
+            "role": role,
+            "communication": peer_communication,
+            "messaging": "explicit",
+        }
         recipe = {**recipe, "definition": worker_defaults().recipe_id}
         environment = await capture_environment(
             _host_resources(),
@@ -700,6 +738,18 @@ async def spawn_worker_run(
         record = journal.change(
             worker_id, record["generation"], record["owner"], status="provisioning"
         )
+
+    if journal is not None and (recipe or {}).get("messaging") == "explicit":
+        from omniagents.core.workers.communication import configure_worker
+
+        assert journal is not None
+        configure_spec = configure_worker(service, journal.parent_id, worker_id)
+    if role:
+        task = f"Role: {role}\n\n{task}"
+    if name:
+        task = f"Your name: {name}\n{task}"
+    if journal is not None and (recipe or {}).get("messaging") == "explicit":
+        task += "\nUse worker_message(recipient='owner', message=...) to report findings, ask questions, or hand work back. Ordinary text responses stay in your transcript and do not notify the parent. Use worker_context for your mailbox and any opted-in peers. Do not recruit workers."
 
     def preparation_failed(reason):
         if journal is not None and record is not None:
@@ -804,7 +854,12 @@ async def spawn_worker_run(
     parent_model = None
     if _svc is not None:
         _parent_session = _svc.get_session(parent_sid) if parent_sid else None
-        _active = getattr(_parent_session, "active_model", None)
+        from omniagents.core.models import model_store
+
+        _store = model_store()
+        _active = getattr(_store, "_run_model_ref", None) or getattr(
+            _parent_session, "active_model", None
+        )
         if isinstance(_active, str) and _active.strip():
             parent_model = _active.strip()
         parent_principal = getattr(getattr(_svc, "channel", None), "principal", None)
@@ -923,19 +978,17 @@ async def spawn_worker_run(
         "worker_id": worker_id,
         "status": "spawned",
         "hint": (
-            "Worker is running asynchronously. A completion notification with "
-            "its status and result will arrive automatically — you can end "
-            "this turn after spawning. Use wait_for_workers only if you need "
-            "to block synchronously within the current turn."
+            "Worker is running asynchronously. Explicit worker messages wake you; "
+            "ordinary text responses do not. Inspect its transcript as needed. "
+            "Use wait_for_workers only to wait for the current run to end."
         ),
     }
     if worker_workspace_obj is not None:
         response.update(_workspace_payload(worker_id))
         response["hint"] = (
             f"Worker is running asynchronously in an isolated workspace at "
-            f"{worker_workspace_obj.root}. A completion notification "
-            f"will arrive automatically — end this turn after spawning, then "
-            f"in the turn that wakes you, integrate its changes and call "
+            f"{worker_workspace_obj.root}. Explicit worker messages wake you. "
+            f"After reviewing its report and changes, integrate them and call "
             f"cleanup_worker_worktree({worker_id})."
         )
 
@@ -1043,10 +1096,10 @@ async def wait_for_workers(
 
 @rich_function_tool(running_summary="Checking worker status...")
 async def get_worker_status(
-    worker_id: str,
+    worker_id: str | None = None,
     tail: int = 5,
 ) -> RichToolOutput:
-    """Check a worker's current status and optionally retrieve recent history.
+    """Inspect workers and their messages; omit worker_id to list all owned workers.
 
     Non-blocking — returns immediately with whatever state the worker is in.
 
@@ -1060,6 +1113,16 @@ async def get_worker_status(
         tail: Number of recent history items to include (default: 5).
               Each item is a message dict (role, content, tool calls, etc.).
     """
+    if worker_id is None:
+        from omniagents.core.agents.service import current_service
+        from omniagents.core.session.helpers import current_session_id
+        from omniagents.core.workers.communication import journal_for, inspect_worker
+
+        service, sid = current_service(), current_session_id()
+        result = {"workers": workers_snapshot(sid)}
+        if service is not None and sid:
+            result.update(inspect_worker(journal_for(service, sid)))
+        return RichToolOutput(json.dumps(result))
     entry = _workers().get(worker_id)
     if entry is None:
         llm_output = json.dumps({"worker_id": worker_id, "status": "not_found"})
@@ -1077,6 +1140,16 @@ async def get_worker_status(
     result_data = await manager().get_status(
         worker_id, tail=tail, history_loader=_history_loader()
     )
+    if entry.journal is not None:
+        from omniagents.core.workers.communication import inspect_worker
+
+        result_data.update(inspect_worker(entry.journal, worker_id))
+        result_data.update(
+            {
+                k: (entry.record or {}).get("recipe", {}).get(k)
+                for k in ("name", "role", "communication")
+            }
+        )
     history_items = result_data.get("history", [])
 
     if history_items:
@@ -1143,7 +1216,7 @@ async def send_worker_message(
             },
         )
 
-    if entry.status != "running" and entry.journal is None:
+    if entry.status != "running" and entry.journal is None and not entry.managed_queue:
         llm_output = json.dumps(
             {
                 "worker_id": worker_id,
@@ -1211,7 +1284,9 @@ async def send_worker_message(
 
 @rich_function_tool(running_summary="Closing worker...")
 async def close_worker(worker_id: str) -> RichToolOutput:
-    """Cancel a running worker and clean up its resources.
+    """Close a worker conversation, cancelling any active or queued work.
+
+    Further messages are rejected. The transcript and workspace are preserved.
 
     If the worker was spawned with isolation, its isolated workspace is
     preserved so you can inspect or integrate partial work. Call
@@ -1231,23 +1306,6 @@ async def close_worker(worker_id: str) -> RichToolOutput:
                 "preview": llm_output,
                 "truncated": False,
                 "metadata": {"success": False, "worker_id": worker_id},
-            },
-        )
-
-    if entry.status != "running":
-        llm_output = json.dumps({"worker_id": worker_id, "status": entry.status})
-        return RichToolOutput(
-            llm_output,
-            {
-                "display_type": "command",
-                "summary": f"Worker {worker_id} already {entry.status}",
-                "preview": llm_output,
-                "truncated": False,
-                "metadata": {
-                    "success": True,
-                    "worker_id": worker_id,
-                    "status": entry.status,
-                },
             },
         )
 
@@ -1344,7 +1402,10 @@ async def resume_worker(
         try:
             environment_id = await restore_environment(_host_resources(), entry.record)
             entry.configure_spec = reconstruct(
-                entry.record["recipe"], entry.parent_service, entry.parent_session_id
+                entry.record["recipe"],
+                entry.parent_service,
+                entry.parent_session_id,
+                worker_id=worker_id,
             )
         except Exception as exc:
             entry.record = entry.journal.change(

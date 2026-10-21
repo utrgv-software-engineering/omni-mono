@@ -14,7 +14,7 @@ import uuid
 from typing import Any
 
 LEASE_SECONDS = 30.0
-TERMINAL = {"completed", "error", "cancelled"}
+TERMINAL = {"completed", "error", "cancelled", "closed"}
 ACTIVE = {"accepted", "provisioning", "ready", "running", "resuming"}
 
 
@@ -56,6 +56,14 @@ class WorkerJournal:
                             "Worker operation identity reused with different inputs"
                         )
                     return row
+            name = recipe.get("name")
+            if name and any(
+                row.get("recipe", {}).get("name") == name
+                for row in data["workers"].values()
+            ):
+                raise ValueError(
+                    "Worker name already exists; resume the existing worker by its ID"
+                )
             if state.get("archived"):
                 raise ValueError("Parent conversation is archived")
             if worker_id in data["workers"]:
@@ -106,6 +114,13 @@ class WorkerJournal:
 
     @staticmethod
     def _report(row, state):
+        # A normal end of a turn is not a message or a success verdict.
+        # Preserve automatic reports for old recipes that lacked a messaging tool.
+        if (
+            row["status"] == "completed"
+            and row.get("recipe", {}).get("messaging") == "explicit"
+        ):
+            return
         if row.get("report_status"):
             return
         report_id = f"worker:{row['worker_id']}:{row['generation']}"
@@ -134,6 +149,11 @@ class WorkerJournal:
             row = data["workers"][worker_id]
             if row["generation"] != generation or row["owner"] != owner:
                 raise RuntimeError("Worker ownership is no longer current")
+            if row.get("closed"):
+                row.update(
+                    status="closed", finished_at=time.time(), updated_at=time.time()
+                )
+                return row
             if row["status"] not in TERMINAL:
                 row.update(
                     status=status,
@@ -180,6 +200,8 @@ class WorkerJournal:
                 return row
             if row["status"] in ACTIVE:
                 raise ValueError("Worker still has an active execution")
+            if row.get("closed"):
+                raise ValueError("Worker is closed")
             if row.get("cleaned") or row["status"] == "blocked":
                 raise ValueError(
                     row.get("error") or "Worker environment is unavailable"
@@ -198,6 +220,19 @@ class WorkerJournal:
                 finished_at=None,
                 report_status=None,
                 cancel_requested=False,
+                updated_at=time.time(),
+            )
+            return row
+
+        return self.mutate(update)
+
+    def close(self, worker_id):
+        def update(data, state):
+            row = data["workers"][worker_id]
+            row.update(
+                closed=True,
+                cancel_requested=True,
+                status="closed",
                 updated_at=time.time(),
             )
             return row

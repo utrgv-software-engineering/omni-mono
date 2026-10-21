@@ -195,7 +195,6 @@ async function ambiguousOutcome(): Promise<void> {
   } else if (scenario === "lost_queue") {
     await lose("enqueue_message");
     const queued = await client.enqueueMessage(run.session_id, "next", {
-      triggerRun: true,
     });
     assert.equal(queued.ok, true);
     const queue = await client.listQueue(run.session_id);
@@ -258,7 +257,7 @@ async function soak(): Promise<void> {
     const queued = await client.enqueueMessage(
       run.session_id,
       `message-${cycle}`,
-      { triggerRun: true },
+      {},
     );
     assert.equal(queued.ok, true);
     assert.equal(

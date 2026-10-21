@@ -112,10 +112,24 @@ export function buildWorkerDetail(
     lines.push({ text: row, color: Theme.textPrimary, bold: true });
   }
   const meta: string[] = [worker.status];
+  if (worker.name) meta.push(worker.name);
+  if (worker.role) meta.push(worker.role);
+  if (worker.recovered) meta.push("recovered");
   if (worker.kind === "agent_tool" && worker.agent) meta.push(worker.agent);
   if (worker.isolation) meta.push(worker.isolation);
   meta.push(worker.subagent_id);
   lines.push({ text: meta.join(" · "), color: Theme.textChrome });
+  if (worker.recovery_reason && worker.recovery_reason !== worker.error) {
+    for (const row of wrapPlain(worker.recovery_reason, width)) {
+      lines.push({ text: row, color: Theme.stateBlocked });
+    }
+  }
+  if (worker.report_status) {
+    lines.push({
+      text: `Parent notification: ${worker.report_status}`,
+      color: Theme.textChrome,
+    });
+  }
   // Once a result/error exists, the sub-agent's prose lives there — the
   // feed keeps only the actions, so nothing reads twice.
   const activity = buildLiveActivity(

@@ -1717,3 +1717,27 @@ def test_completed_conversation_reconstructs_from_the_store_alone(store, recorde
     turn_one_items = store.list_items(THREAD, limit=100, turn_id="r1")
     assert [i.seq for i in turn_one_items] == [1, 2, 3, 4, 5]
     assert turns[0].first_seq == 1 and turns[0].last_seq == 5
+
+
+@pytest.mark.parametrize("kind,key", [("tool", "call_id"), ("mcp", "request_id")])
+def test_parent_turn_end_does_not_finalize_worker_approval(store, recorder, kind, key):
+    feed(
+        recorder,
+        ("run_started", {"run_id": RUN, "prompt": "worker message"}),
+        (
+            f"{kind}_approval_requested",
+            {
+                key: "worker-approval",
+                "tool_name": "read_file",
+                "worker_id": "worker",
+                "worker_session_id": "child",
+                "worker_run_id": "child-run",
+            },
+        ),
+        ("run_end", {"run_id": RUN, "end_reason": "completed"}),
+    )
+    approval = next(item for item in items(store) if item.kind == ItemKind.APPROVAL)
+    assert approval.status == ItemStatus.STARTED
+    assert approval.content["worker_session_id"] == "child"
+    feed(recorder, (f"{kind}_approval_resolved", {key: "worker-approval"}))
+    assert store.get_item(THREAD, approval.item_id).status == ItemStatus.COMPLETED

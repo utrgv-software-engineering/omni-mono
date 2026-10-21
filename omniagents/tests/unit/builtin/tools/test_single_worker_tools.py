@@ -159,5 +159,6 @@ def test_capability_exposes_tools_and_registry_resolves():
         "close_single_worker",
         "cleanup_single_worker",
     ):
-        assert name in config["tools"]
+        assert config["extends"] == "workers"
+        assert "tools" not in config
         assert getattr(registry, name).name == name

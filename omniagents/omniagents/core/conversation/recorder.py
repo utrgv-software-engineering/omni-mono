@@ -569,6 +569,12 @@ class ConversationRecorder:
         for item in self._store.open_items(thread_id):
             if item.turn_id is not None and item.turn_id != turn_id:
                 continue
+            if item.kind == ItemKind.APPROVAL and item.content.get("worker_session_id"):
+                # Forwarded worker approvals belong to the child task, not
+                # whichever parent turn happens to be running when they arrive.
+                # Its resolution event lands the item; runtime reconciliation
+                # makes orphaned controls unavailable after process loss.
+                continue
             if item.long_lived:
                 # Deliberately outlives its turn; the owning subsystem
                 # lands it terminally (see Item.long_lived).
@@ -1003,6 +1009,11 @@ class ConversationRecorder:
                 "arguments": payload.get("arguments"),
                 "call_id": call_id,
                 "source_call_id": payload.get("source_call_id"),
+                **{
+                    key: payload[key]
+                    for key in ("worker_id", "worker_session_id", "worker_run_id")
+                    if key in payload
+                },
             },
             source_ref={"event": "tool_approval_requested", "call_id": call_id},
         )
@@ -1121,6 +1132,11 @@ class ConversationRecorder:
                 "arguments": payload.get("arguments"),
                 "request_id": request_id,
                 "source_request_id": payload.get("source_request_id"),
+                **{
+                    key: payload[key]
+                    for key in ("worker_id", "worker_session_id", "worker_run_id")
+                    if key in payload
+                },
             },
             source_ref={"event": "mcp_approval_requested", "request_id": request_id},
         )

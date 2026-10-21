@@ -277,7 +277,6 @@ export interface EnqueueMessage {
   session_id: string;
   source?: string;
   submission_id?: string;
-  trigger_run?: boolean;
   variables?: {
     [k: string]: unknown;
   };

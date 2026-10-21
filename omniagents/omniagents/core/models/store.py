@@ -212,6 +212,22 @@ class ModelConfigStore:
         self._credential_resolver = credential_resolver
         self.default_provider_name = default_provider_name
         self.single_provider = single_provider
+        self._run_model_ref: Optional[str] = None
+
+    def snapshot_for_run(self, session: Any) -> "ModelConfigStore":
+        """Freeze model configuration for this run and its helper calls."""
+        from copy import copy, deepcopy
+
+        snapshot = copy(self)
+        config = deepcopy(self.load_config())
+        providers = deepcopy(self._default_providers())
+        governed = deepcopy(self._governed())
+        snapshot.load_config = lambda: deepcopy(config)  # type: ignore[method-assign]
+        snapshot._default_providers = lambda: deepcopy(providers)
+        snapshot._governed_config = lambda: deepcopy(governed)
+        snapshot.reconcile_session_model(session)
+        snapshot._run_model_ref = self._run_model_ref or session.active_model
+        return snapshot
 
     def selected_provider(self) -> Optional[str]:
         if not self.single_provider:
@@ -228,7 +244,7 @@ class ModelConfigStore:
         if not selected or not parsed or parsed[0] != selected:
             raise ValueError(
                 "This model is outside the workspace's selected provider. "
-                "Change the workspace provider in Settings first."
+                "Change the workspace provider in AI Settings or with the model default CLI command first."
             )
 
     def reconcile_session_model(self, session: Any) -> None:
@@ -242,13 +258,15 @@ class ModelConfigStore:
             and self.load_config().get("provider_scope_version") != 1
         ):
             raise ValueError(
-                "This conversation used a different provider. Confirm the workspace provider in Settings before continuing."
+                "This conversation used a different provider. Confirm the workspace provider in AI Settings or with model default --confirm-provider-change before continuing."
             )
         if not parsed or parsed[0] != self.selected_provider():
             ref = self.get_default_model_name()
             session.reasoning_effort = None
         if not ref:
-            raise ValueError("Choose a workspace provider and model in Settings.")
+            raise ValueError(
+                "Choose a workspace provider and model in AI Settings or with the model setup CLI command."
+            )
         self.require_selected_provider(ref)
         config = self.get_model_config(ref)
         if not config:
@@ -327,13 +345,16 @@ class ModelConfigStore:
 
         content = json.dumps(to_write, indent=2)
 
-        if os.name == "nt":
-            path.write_text(content, encoding="utf-8")
-            return
+        import tempfile
 
-        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
+        fd, temporary = tempfile.mkstemp(prefix=".models-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(content)
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     # -- merge ----------------------------------------------------------
 
@@ -586,8 +607,13 @@ class ModelConfigStore:
         """The default voice (realtime) model ref, or None."""
         config = self.load_config()
         user_default = config.get("voice_default")
+        if user_default and self.single_provider:
+            parsed = self.parse_model_ref(user_default)
+            if not parsed or parsed[0] != self.selected_provider():
+                # Preserve the saved preference for switching back, but never
+                # activate another provider's voice model or let it break browsing.
+                return None
         if user_default and self.get_model_config(user_default):
-            self.require_selected_provider(user_default)
             normalized = self.normalize_model_ref(user_default)
             if normalized:
                 merged = self.get_model_config(normalized) or {}

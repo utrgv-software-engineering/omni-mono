@@ -958,7 +958,6 @@ export function App() {
       if ((thinking || queuedMessages.length > 0) && sessionId) {
         startingRunRef.current = false
         await client.enqueueMessage(sessionId, text, {
-          triggerRun: true,
           role: 'user',
           variables,
           source: 'ui',

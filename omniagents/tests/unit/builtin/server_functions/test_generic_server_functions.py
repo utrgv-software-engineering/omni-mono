@@ -10,6 +10,7 @@ class _FakeStore:
 
     def __init__(self):
         self.voice_default = None
+        self.single_provider = False
 
     def list_text_models(self):
         return [

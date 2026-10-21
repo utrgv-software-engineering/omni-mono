@@ -67,6 +67,8 @@ class WorkerHandle:
     journal: Any = None
     record: dict | None = None
     heartbeat_task: asyncio.Task | None = None
+    managed_queue: bool = False
+    closed: bool = False
 
 
 # Worker transcript events forwarded to the observer: the narrative
@@ -124,6 +126,7 @@ class WorkerManager:
         self._host_resources_provider = host_resources_provider
         self._workers: dict[str, WorkerHandle] = {}
         self.owner = uuid.uuid4().hex
+        self._activation_locks: dict[tuple, asyncio.Lock] = {}
         self._scoped_workers: dict[tuple, WorkerHandle] = {}
 
     async def _finalize(self, handle: WorkerHandle) -> None:
@@ -143,6 +146,7 @@ class WorkerManager:
                 handle.result,
                 handle.error,
             )
+            handle.status = handle.record["status"]
             if handle.parent_service is not None:
                 getter = getattr(handle.parent_service, "get_session", None)
                 parent = getter(handle.parent_session_id) if callable(getter) else None
@@ -257,6 +261,8 @@ class WorkerManager:
                 # UI). Without a parent UI the request remains pending.
                 continue
 
+            if method == "run_started" and handle.managed_queue:
+                handle.run_id = params.get("run_id", handle.run_id)
             if method == "message_output":
                 handle.result = params.get("content", "")
                 continue
@@ -289,7 +295,8 @@ class WorkerManager:
                     handle.result = "Worker completed but produced no output."
 
             await self._finalize(handle)
-            return
+            if not handle.managed_queue or handle.closed:
+                return
 
     async def _create_worker(
         self,
@@ -307,8 +314,9 @@ class WorkerManager:
         configure_spec: Callable[[Any], None] | None = None,
         journal: Any = None,
         record: dict | None = None,
+        queued_only: bool = False,
     ) -> WorkerHandle:
-        if journal is not None:
+        if journal is not None and not queued_only:
             assert record is not None
             journal.change(
                 worker_id, record["generation"], record["owner"], status="ready"
@@ -424,17 +432,11 @@ class WorkerManager:
                         )
             if session_id and (record is None or record["generation"] > 1):
                 await client.other.update_thread(thread_id=session_id, status="active")
-            if (
-                record is not None
-                and record["generation"] > 1
-                and worker_service is not None
-            ):
-                child_session = worker_service.get_or_create_session(session_id)
-                worker_service._refresh_queue(child_session)
-                worker_service._ensure_drainer(child_session)
-                if child_session.drainer_task is not None:
-                    await child_session.drainer_task
-            resp = await client.other.start_run(**start_kwargs)
+            if queued_only:
+                await client.other.resume_session(session_id=session_id)
+                resp = {"run_id": "", "session_id": session_id}
+            else:
+                resp = await client.other.start_run(**start_kwargs)
         except BaseException:
             await agent.cleanup()
             raise
@@ -477,8 +479,12 @@ class WorkerManager:
             model=model,
             journal=journal,
             record=record,
+            managed_queue=worker_service is not None,
         )
-        if journal is not None:
+        if queued_only:
+            handle.status = record["status"] if record else "completed"
+            handle.done_event.set()
+        if journal is not None and not queued_only:
             assert record is not None
             handle.record = journal.change(
                 worker_id,
@@ -488,6 +494,50 @@ class WorkerManager:
                 run_id=run_id,
             )
             handle.heartbeat_task = asyncio.create_task(self._heartbeat(handle))
+        if worker_service is not None:
+
+            async def dispatch(**kwargs):
+                await handle.done_event.wait()
+                if handle.closed or (handle.record or {}).get("closed"):
+                    raise ValueError("Worker is closed")
+                if handle.journal is not None:
+                    from omniagents.core.workers.recovery import restore_environment
+
+                    env_id = await restore_environment(
+                        resources, handle.journal.get(worker_id)
+                    )
+                    kwargs["environment_selection"] = (
+                        {"mode": "explicit", "environment_id": env_id}
+                        if env_id
+                        else {"mode": "none"}
+                    )
+                    handle.record = handle.journal.resume(
+                        worker_id, kwargs["submission_id"], kwargs["prompt"], self.owner
+                    )
+                handle.done_event.clear()
+                handle.status, handle.result, handle.error = "running", None, None
+                if handle.journal is not None:
+                    handle.heartbeat_task = asyncio.create_task(self._heartbeat(handle))
+                try:
+                    result = await worker_service.start_run(**kwargs)
+                    handle.run_id = result["run_id"]
+                    if handle.journal is not None and not handle.done_event.is_set():
+                        row = handle.record
+                        assert row is not None
+                        handle.record = handle.journal.change(
+                            worker_id,
+                            row["generation"],
+                            row["owner"],
+                            run_id=handle.run_id,
+                            status="running",
+                        )
+                    return result
+                except Exception as exc:
+                    handle.status, handle.error = "error", str(exc)
+                    await self._finalize(handle)
+                    raise
+
+            worker_service._worker_queue_dispatch = dispatch
         handle.monitor_task = asyncio.create_task(
             self._monitor_worker(handle), name=f"worker-monitor-{run_id or worker_id}"
         )
@@ -572,7 +622,7 @@ class WorkerManager:
                     if row.get("result") is not None:
                         old.result = row["result"]
                     old.error = row.get("error")
-                    if old.status not in {
+                    if not old.managed_queue and old.status not in {
                         "running",
                         "ready",
                         "resuming",
@@ -607,6 +657,7 @@ class WorkerManager:
                 agent_slug=agent_slug,
                 journal=journal,
                 record=row,
+                closed=bool(row.get("closed")),
             )
             self._remember(restored)
 
@@ -699,40 +750,100 @@ class WorkerManager:
             result["history"] = history_items
         return result
 
+    async def _activate(self, handle):
+        """Attach an idle/recovered worker without inventing a prompt or run."""
+        key = (
+            handle.project_slug,
+            handle.agent_slug,
+            handle.parent_session_id,
+            handle.worker_id,
+        )
+        async with self._activation_locks.setdefault(key, asyncio.Lock()):
+            handle = self._scoped_workers.get(key, handle)
+            row = (
+                handle.journal.get(handle.worker_id)
+                if handle.journal
+                else handle.record or {}
+            )
+            if handle.closed or row.get("closed") or row.get("cleaned"):
+                raise ValueError("Worker is closed")
+            if handle.agent is not None and getattr(handle.agent, "_initialized", True):
+                return handle
+            if handle.journal is None:
+                raise ValueError("Worker conversation is unavailable")
+            from omniagents.core.workers.recovery import restore_environment
+            from omniagents.core.workers.recipes import reconstruct
+            from omniagents.core.workers.durable import ACTIVE
+
+            if row["status"] in ACTIVE:
+                raise ValueError("Worker execution is still owned by another runtime")
+            resources = (
+                self._host_resources_provider()
+                if self._host_resources_provider
+                else None
+            )
+            env_id = await restore_environment(resources, row)
+            configure = reconstruct(
+                row["recipe"],
+                handle.parent_service,
+                handle.parent_session_id,
+                worker_id=handle.worker_id,
+            )
+            restored = await self._create_worker(
+                worker_id=handle.worker_id,
+                task_description="",
+                model=handle.model,
+                session_id=handle.session_id,
+                context={
+                    "environment_id": env_id,
+                    "workspace_root": row["environment"].get("root"),
+                },
+                parent_session_id=handle.parent_session_id,
+                principal=handle.principal,
+                parent_service=handle.parent_service,
+                project_slug=handle.project_slug,
+                agent_slug=handle.agent_slug,
+                configure_spec=configure,
+                journal=handle.journal,
+                record=row,
+                queued_only=True,
+            )
+            self._remember(restored)
+            return restored
+
+    async def drain_queued(self, worker_id):
+        handle = self._lookup(worker_id)
+        if handle is None:
+            return
+        handle = await self._activate(handle)
+        service = handle.agent._agent_service
+        session = service.get_session(handle.session_id)
+        service._refresh_queue(session)
+        service._ensure_drainer(session)
+
     async def send_message(
         self, worker_id: str, message: str, operation_id: str | None = None
     ) -> str:
         handle = self._lookup(worker_id)
         if handle is None:
             return "not_found"
-        if handle.journal is not None:
-            from omniagents.core.session.manager import QueuedItem
-            from omniagents.core.session import queue_inbox
-
-            store = handle.journal.store
-            child = store.get_thread(handle.session_id)
-            if child is None or child.user_id != handle.journal.user_id:
-                raise ValueError("Worker conversation unavailable")
-            result = queue_inbox.accept(
-                store,
+        if handle.journal is not None or handle.managed_queue:
+            handle = await self._activate(handle)
+            service = handle.agent._agent_service
+            result = await service.enqueue_message(
                 handle.session_id,
-                QueuedItem(content=message, source="worker.message").to_dict(),
+                message,
+                source="worker.message",
                 submission_id=operation_id or uuid.uuid4().hex,
-                payload={"worker_id": worker_id, "message": message},
             )
             if not result.get("ok"):
                 raise ValueError(result.get("reason", "Message admission failed"))
-            if handle.agent is not None:
-                service = handle.agent._agent_service
-                session = service.get_session(handle.session_id)
-                service._refresh_queue(session)
-                service._ensure_drainer(session)
             return "message_queued"
+        # Compatibility for custom transports without an AgentService.
         if handle.status != "running":
             return handle.status
-        agent = handle.agent
-        await agent._ensure_client()
-        await agent._client.other.send_user_message(
+        await handle.agent._ensure_client()
+        await handle.agent._client.other.send_user_message(
             run_id=handle.run_id, content=message
         )
         return "message_sent"
@@ -741,8 +852,38 @@ class WorkerManager:
         handle = self._lookup(worker_id)
         if handle is None:
             return "not_found"
-        if handle.journal is not None:
-            handle.record = handle.journal.cancel(worker_id)
+        if handle.journal is not None or handle.managed_queue:
+            handle.closed = True
+            if handle.journal is not None:
+                handle.record = handle.journal.close(worker_id)
+
+                def reject_pending(state, receipt):
+                    for entry in state.get("items", []):
+                        entry["owner"] = None
+                        entry["item"].update(
+                            state="failed", error="Worker closed by parent"
+                        )
+                    return None, None
+
+                handle.journal.store.mutate_queue(handle.session_id, reject_pending)
+            if handle.agent is not None:
+                service = handle.agent._agent_service
+                session = service.get_session(handle.session_id)
+                if session.drainer_task:
+                    session.drainer_task.cancel()
+                await handle.agent._ensure_client()
+                if session.current_task and not session.current_task.done():
+                    await handle.agent._client.other.stop_run(run_id=handle.run_id)
+                    try:
+                        await asyncio.wait_for(handle.done_event.wait(), 5)
+                    except asyncio.TimeoutError:
+                        pass
+                if handle.monitor_task:
+                    handle.monitor_task.cancel()
+                await handle.agent.cleanup()
+            handle.status = "closed"
+            handle.done_event.set()
+            return "closed"
         if handle.status != "running" or handle.agent is None:
             if handle.record:
                 handle.status = handle.record["status"]
@@ -773,6 +914,10 @@ class WorkerManager:
         handle = self._lookup(worker_id)
         if handle is None or handle.status == "running":
             return None
+        if handle.closed or (handle.record or {}).get("closed"):
+            raise ValueError("Worker is closed")
+        if handle.monitor_task is not None:
+            handle.monitor_task.cancel()
         if handle.parent_service is not None and handle.parent_session_id:
             getter = getattr(handle.parent_service, "get_session", None)
             parent = getter(handle.parent_session_id) if callable(getter) else None
@@ -781,7 +926,7 @@ class WorkerManager:
             store = model_store()
             if store is not None and store.single_provider and parent is not None:
                 store.reconcile_session_model(parent)
-                handle.model = parent.active_model
+                handle.model = store._run_model_ref or parent.active_model
         old_session_id = handle.session_id
         if handle.agent is not None:
             await handle.agent.cleanup()

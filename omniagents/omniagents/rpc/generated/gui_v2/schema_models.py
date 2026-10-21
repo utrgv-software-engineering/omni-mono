@@ -348,7 +348,6 @@ class EnqueueMessage(BaseModel):
     session_id: str
     source: str | None = None
     submission_id: str | None = None
-    trigger_run: bool | None = None
     variables: dict[str, Any] | None = None
 
 
