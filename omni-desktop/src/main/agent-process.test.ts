@@ -28,6 +28,8 @@ vi.mock('@/main/util', () => ({
   getBundledBinPath: vi.fn(() => '/fake/bundled/bin'),
   getOmniCliPath: vi.fn(() => '/fake/bin/omni'),
   getOmniConfigDir: vi.fn(() => '/fake/config'),
+  // Windows spawns read the provisioned Git Bash under the runtime dir.
+  getOmniRuntimeDir: vi.fn(() => '/fake/runtime'),
   isDevelopment: vi.fn(() => false),
   isDirectory: vi.fn(async () => true),
   isFile: vi.fn(async () => false),

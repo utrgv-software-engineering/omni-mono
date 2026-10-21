@@ -26,6 +26,8 @@ vi.mock('node:child_process', async () => {
 vi.mock('@/main/util', () => ({
   getOmniCliPath: vi.fn(() => '/fake/bin/omni'),
   getOmniConfigDir: vi.fn(() => '/fake/config'),
+  // Windows spawns read the provisioned Git Bash under the runtime dir.
+  getOmniRuntimeDir: vi.fn(() => '/fake/runtime'),
   isDirectory: vi.fn(async () => true),
   pathExists: vi.fn(async () => true),
 }));
