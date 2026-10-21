@@ -1213,17 +1213,9 @@ export class RPCClient {
     if (!opts) {
       return this.call('list_sessions') as ReturnType<RPCClient['listSessions']>;
     }
-    try {
-      return (await this.call('list_sessions', { limit: opts.limit, offset: opts.offset ?? 0 })) as Awaited<
-        ReturnType<RPCClient['listSessions']>
-      >;
-    } catch {
-      // Released runtimes predating pagination reject unknown params
-      // (JSON-RPC -32602). Fall back to the full listing and cap locally.
-      const all = (await this.call('list_sessions')) as Awaited<ReturnType<RPCClient['listSessions']>>;
-      const start = opts.offset ?? 0;
-      return all.slice(start, start + opts.limit);
-    }
+    return this.call('list_sessions', { limit: opts.limit, offset: opts.offset ?? 0 }) as ReturnType<
+      RPCClient['listSessions']
+    >;
   }
 
   async clientResponse(
