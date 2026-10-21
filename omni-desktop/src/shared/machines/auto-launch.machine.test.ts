@@ -52,19 +52,19 @@ function startingSnap() {
 }
 
 function runningSnap() {
-  return next(startingSnap(), { type: 'SANDBOX_RUNNING' });
+  return next(startingSnap(), { type: 'AGENT_RUNNING' });
 }
 
 describe('autoLaunchMachine', () => {
   it('relaunches a lost runtime without reviving an intentionally stopped or unused surface', () => {
     for (const snap of [startingSnap(), runningSnap()]) {
-      const recovered = next(snap, { type: 'SANDBOX_LOST' });
+      const recovered = next(snap, { type: 'AGENT_LOST' });
       expect(recovered.value).toBe('checking');
       expect(recovered.context.hasLaunched).toBe(false);
       expect(next(next(recovered, { type: 'RUNTIME_READY' }), { type: 'CONFIG_OK' }).value).toBe('starting');
     }
-    expect(next(idleSnap(), { type: 'SANDBOX_LOST' }).value).toBe('idle');
-    expect(next(next(runningSnap(), { type: 'SANDBOX_EXITED' }), { type: 'SANDBOX_LOST' }).value).toBe('idle');
+    expect(next(idleSnap(), { type: 'AGENT_LOST' }).value).toBe('idle');
+    expect(next(next(runningSnap(), { type: 'AGENT_EXITED' }), { type: 'AGENT_LOST' }).value).toBe('idle');
   });
   // -----------------------------------------------------------------------
   // Initial state
@@ -101,7 +101,7 @@ describe('autoLaunchMachine', () => {
     for (const evt of [
       { type: 'RUNTIME_READY' },
       { type: 'INSTALL_COMPLETED' },
-      { type: 'SANDBOX_RUNNING' },
+      { type: 'AGENT_RUNNING' },
     ] as AutoLaunchEvent[]) {
       expect(next(snap, evt).value).toBe('idle');
     }
@@ -174,8 +174,8 @@ describe('autoLaunchMachine', () => {
     const running = runningSnap();
     expect(running.context.hasLaunched).toBe(true);
 
-    // Sandbox exits → idle
-    const idleAfterExit = next(running, { type: 'SANDBOX_EXITED' });
+    // Agent exits → idle
+    const idleAfterExit = next(running, { type: 'AGENT_EXITED' });
     expect(idleAfterExit.value).toBe('idle');
 
     // LAUNCH again → checking → RUNTIME_READY → ready → always: idle (hasLaunched=true)
@@ -189,19 +189,19 @@ describe('autoLaunchMachine', () => {
   // starting
   // -----------------------------------------------------------------------
 
-  it('transitions starting → running on SANDBOX_RUNNING', () => {
+  it('transitions starting → running on AGENT_RUNNING', () => {
     const snap = runningSnap();
     expect(snap.value).toBe('running');
   });
 
-  it('transitions starting → error on SANDBOX_ERROR', () => {
-    const snap = next(startingSnap(), { type: 'SANDBOX_ERROR', error: 'start failed' });
+  it('transitions starting → error on AGENT_ERROR', () => {
+    const snap = next(startingSnap(), { type: 'AGENT_ERROR', error: 'start failed' });
     expect(snap.value).toBe('error');
     expect(snap.context.error).toBe('start failed');
   });
 
-  it('transitions starting → idle on SANDBOX_EXITED', () => {
-    const snap = next(startingSnap(), { type: 'SANDBOX_EXITED' });
+  it('transitions starting → idle on AGENT_EXITED', () => {
+    const snap = next(startingSnap(), { type: 'AGENT_EXITED' });
     expect(snap.value).toBe('idle');
   });
 
@@ -209,13 +209,13 @@ describe('autoLaunchMachine', () => {
   // running
   // -----------------------------------------------------------------------
 
-  it('transitions running → idle on SANDBOX_EXITED', () => {
-    const snap = next(runningSnap(), { type: 'SANDBOX_EXITED' });
+  it('transitions running → idle on AGENT_EXITED', () => {
+    const snap = next(runningSnap(), { type: 'AGENT_EXITED' });
     expect(snap.value).toBe('idle');
   });
 
-  it('transitions running → idle on SANDBOX_ERROR', () => {
-    const snap = next(runningSnap(), { type: 'SANDBOX_ERROR', error: 'crash' });
+  it('transitions running → idle on AGENT_ERROR', () => {
+    const snap = next(runningSnap(), { type: 'AGENT_ERROR', error: 'crash' });
     expect(snap.value).toBe('idle');
   });
 
@@ -236,7 +236,7 @@ describe('autoLaunchMachine', () => {
     actor.send({ type: 'RUNTIME_READY' });
     actor.send({ type: 'CONFIG_OK' });
     expect(actor.getSnapshot().context.hasLaunched).toBe(true);
-    actor.send({ type: 'SANDBOX_ERROR', error: 'provisioning failed' });
+    actor.send({ type: 'AGENT_ERROR', error: 'provisioning failed' });
     expect(actor.getSnapshot().value).toBe('error');
 
     actor.send({ type: 'RETRY' });
@@ -250,7 +250,7 @@ describe('autoLaunchMachine', () => {
   });
 
   it('transitions error → ready on RELAUNCH (clears hasLaunched)', () => {
-    const errorSnap = next(startingSnap(), { type: 'SANDBOX_ERROR', error: 'fail' });
+    const errorSnap = next(startingSnap(), { type: 'AGENT_ERROR', error: 'fail' });
     expect(errorSnap.context.hasLaunched).toBe(true);
 
     const snap = next(errorSnap, { type: 'RELAUNCH' });
@@ -295,10 +295,10 @@ describe('autoLaunchMachine', () => {
     expect(actor.getSnapshot().value).toBe('starting');
     expect(actor.getSnapshot().context.hasLaunched).toBe(true);
 
-    actor.send({ type: 'SANDBOX_RUNNING' });
+    actor.send({ type: 'AGENT_RUNNING' });
     expect(actor.getSnapshot().value).toBe('running');
 
-    actor.send({ type: 'SANDBOX_EXITED' });
+    actor.send({ type: 'AGENT_EXITED' });
     expect(actor.getSnapshot().value).toBe('idle');
 
     actor.stop();
@@ -334,7 +334,7 @@ describe('autoLaunchMachine', () => {
 
     actor.send({ type: 'RUNTIME_READY' });
     actor.send({ type: 'CONFIG_OK' });
-    actor.send({ type: 'SANDBOX_RUNNING' });
+    actor.send({ type: 'AGENT_RUNNING' });
     expect(actor.getSnapshot().value).toBe('running');
 
     actor.stop();
@@ -453,7 +453,7 @@ describe('autoLaunchMachine', () => {
         actors: {
           ...silentActors,
           watchProcessStatus: fromCallback<AutoLaunchEvent>(({ sendBack }) => {
-            setTimeout(() => sendBack({ type: 'SANDBOX_RUNNING' }), 0);
+            setTimeout(() => sendBack({ type: 'AGENT_RUNNING' }), 0);
             return () => {};
           }),
         },
@@ -517,7 +517,7 @@ describe('autoLaunchMachine', () => {
           }),
           watchProcessStatus: fromCallback<AutoLaunchEvent>(({ sendBack }) => {
             step++;
-            setTimeout(() => sendBack({ type: 'SANDBOX_RUNNING' }), 0);
+            setTimeout(() => sendBack({ type: 'AGENT_RUNNING' }), 0);
             return () => {};
           }),
         },

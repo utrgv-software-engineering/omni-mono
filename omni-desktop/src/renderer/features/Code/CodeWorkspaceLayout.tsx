@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 
 import { dispatchOpenFileIntent, WorkspaceFilesPortal } from '@/renderer/features/Files';
 import { WorkspaceGitPortal } from '@/renderer/features/Git';
@@ -30,13 +30,6 @@ type CodeWorkspaceLayoutProps = {
   onReady?: () => void;
   headerActionsTargetId?: string;
   headerActionsCompact?: boolean;
-  /**
-   * Capability names of the attached execution environment. Gates
-   * capability-dependent dock apps: Terminal hides when `pty` is absent
-   * (wasm sandboxes run commands to completion — nothing to attach a
-   * shell to). Undefined = unknown environment; everything stays visible.
-   */
-  environmentCapabilities?: string[];
   composerExtras?: ReactNode;
   onClientToolCall?: ClientToolCallHandler;
   pendingPlan?: import('@/shared/chat-types').PlanItem | null;
@@ -55,17 +48,12 @@ type CodeWorkspaceLayoutProps = {
    */
   tabId?: string;
   /**
-   * What the in-sandbox agent should treat as its workspace root.
-   * For host profiles this is the host path; for containerized
-   * profiles it's the in-container path (``/workspace/<mountName>``).
-   * Plumbed to ``OmniAgentsApp.workspaceDir`` so
-   * ``session.variables.workspace_root`` is valid inside whatever
-   * environment the agent's tools execute in.
+   * What the agent should treat as its workspace root, as reported by
+   * materialization. Plumbed to ``OmniAgentsApp.workspaceDir`` so
+   * ``session.variables.workspace_root`` is set.
    *
    * Terminals do NOT use this — they route through `omni serve`'s
-   * `SessionPtyBackend` and land at the sandbox profile's
-   * `terminal.cwd`. The renderer has no business choosing a terminal
-   * cwd.
+   * `SessionPtyBackend`, which picks the cwd.
    */
   agentWorkspaceDir?: string;
   /**
@@ -89,6 +77,9 @@ type CodeWorkspaceLayoutProps = {
   routineId?: string;
 };
 
+/** The column dock surfaces every column-scoped app except chat itself. */
+const DOCK_APPS = APP_REGISTRY.filter((app) => app.columnScoped && app.id !== 'chat');
+
 export const CodeWorkspaceLayout = memo(
   ({
     connection,
@@ -101,7 +92,6 @@ export const CodeWorkspaceLayout = memo(
     onReady,
     headerActionsTargetId,
     headerActionsCompact,
-    environmentCapabilities,
     composerExtras,
     onClientToolCall,
     pendingPlan,
@@ -120,34 +110,6 @@ export const CodeWorkspaceLayout = memo(
     executionTarget,
     routineId,
   }: CodeWorkspaceLayoutProps) => {
-    const registry = APP_REGISTRY;
-    // The dock only surfaces apps marked column-scoped. Capability-dependent apps additionally require the attached
-    // environment to affirmatively support them: Terminal appears only
-    // once the environment reports the `pty` capability — no environment
-    // yet means no shell to offer, and wasm sandboxes never grow one
-    // (terminal.create would only return a typed refusal).
-    const dockApps = useMemo(
-      () =>
-        registry.filter((app) => {
-          if (!app.columnScoped || app.id === 'chat') {
-            return false;
-          }
-          if (app.id === 'terminal' && !environmentCapabilities?.includes('pty')) {
-            return false;
-          }
-          return true;
-        }),
-      [registry, environmentCapabilities]
-    );
-    // If Terminal was already open when its capability disappeared (column
-    // relaunched, profile switched to a wasm sandbox), bounce back to chat
-    // instead of stranding the user on a panel whose dock icon vanished.
-    useEffect(() => {
-      if (activeApp === 'terminal' && !environmentCapabilities?.includes('pty')) {
-        onActiveAppChange?.('chat');
-      }
-    }, [activeApp, environmentCapabilities, onActiveAppChange]);
-
     // Register this column's agent controller (by tabId) so the global
     // orchestrator can drive it via the `column_*` tools. The App hands the
     // controller up through `onController`; we (re)register on each change and
@@ -307,7 +269,7 @@ export const CodeWorkspaceLayout = memo(
             />
           </div>
         </div>
-        <EnvironmentDock apps={dockApps} activeAppId={activeApp} onSelect={handleDockSelect} />
+        <EnvironmentDock apps={DOCK_APPS} activeAppId={activeApp} onSelect={handleDockSelect} />
       </div>
     );
   }

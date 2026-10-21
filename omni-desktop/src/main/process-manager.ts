@@ -158,7 +158,6 @@ export class ProcessManager {
         workspaceRoot: runtime.workspaceRoot,
         ...(runtime.defaultCwd ? { defaultCwd: runtime.defaultCwd } : {}),
         ...(runtime.mounts ? { mounts: runtime.mounts } : {}),
-        ...(runtime.environmentCapabilities ? { environmentCapabilities: runtime.environmentCapabilities } : {}),
       },
     };
   }
@@ -363,7 +362,7 @@ export class ProcessManager {
   }
 
   /**
-   * The fields that decide whether two `start` calls mean "the same sandbox".
+   * The fields that decide whether two `start` calls mean "the same launch".
    */
   private static launchIdentity(opts: AgentProcessStartOptions): string {
     return JSON.stringify([opts.workspaceDir, opts.projectId ?? null, opts.sessionId ?? null]);
@@ -572,7 +571,7 @@ export class ProcessManager {
     // WS reconnect re-issues `start` for a processId that is already serving.
     // Without this check `AgentProcess.start` SIGTERMs the live `omni serve`
     // and the conversation dies mid-flight. Deliberate restarts go through
-    // `stop()` (drops the process) or `rebuild()`, so they never land here.
+    // `stop()` (drops the process), so they never land here.
     const live = this.processes.get(processId);
     if (live) {
       const type = live.getStatus().type;
@@ -753,100 +752,6 @@ export class ProcessManager {
     return result;
   };
 
-  /** All materializing operations share the same per-consumer lane as start.
-   * Stop waits for this lane before retiring its final environment. */
-  private mutateConsumer = <R>(processId: string, mutate: () => Promise<R>): Promise<R> => {
-    if (this.retiredConsumers.has(processId)) {
-      return Promise.reject(new Error('This chat tab has been closed'));
-    }
-    if (this.pendingStops.has(processId) || this.detachedStops.has(processId)) {
-      return Promise.reject(new Error('This chat runtime is still stopping'));
-    }
-    const previous = this.pendingStarts.get(processId)?.promise;
-    const epoch = this.advanceConsumerEpoch(processId);
-    const task = Promise.resolve(previous)
-      .catch(() => undefined)
-      .then(async () => {
-        if (!this.isCurrentConsumerEpoch(processId, epoch)) {
-          throw new Error('Runtime operation was superseded');
-        }
-        return mutate();
-      });
-    const promise = task.then(() => undefined);
-    this.pendingStarts.set(processId, { identity: `mutation:${epoch}`, promise });
-    const clear = () => {
-      if (this.pendingStarts.get(processId)?.promise === promise) {
-        this.pendingStarts.delete(processId);
-      }
-    };
-    void promise.then(clear, clear);
-    return task;
-  };
-
-  rebuild = (processId: string, opts: AgentProcessStartOptions): Promise<void> =>
-    this.mutateConsumer(processId, () => this.rebuildConsumer(processId, opts));
-
-  private rebuildConsumer = async (processId: string, opts: AgentProcessStartOptions): Promise<void> => {
-    const epoch = this.consumerEpochs.get(processId)!;
-    if (this.retiredConsumers.has(processId)) {
-      throw new Error('This chat tab has been closed');
-    }
-    if (this.pendingStops.has(processId) || this.detachedStops.has(processId)) {
-      throw new Error('This chat runtime is still stopping; retry stopping it before rebuilding');
-    }
-    const lastOpts = this.lastStartArgs.get(processId);
-    const merged: AgentProcessStartOptions = {
-      workspaceDir: opts.workspaceDir || lastOpts?.workspaceDir || '',
-      ...((opts.projectId ?? lastOpts?.projectId)
-        ? { projectId: (opts.projectId ?? lastOpts?.projectId) as string }
-        : {}),
-      ...((opts.sessionId ?? lastOpts?.sessionId)
-        ? { sessionId: (opts.sessionId ?? lastOpts?.sessionId) as string }
-        : {}),
-    };
-    const startArg = await this.buildStartArg(merged);
-    await this.waitForRuntimeInstall?.();
-    const previous = this.processes.get(processId);
-    const compatibilityKey = this.agentHostCompatibilityKey(processId, startArg);
-    if (previous && lastOpts) {
-      const previousStartArg = await this.buildStartArg(lastOpts);
-      const previousKey = this.agentHostCompatibilityKey(processId, previousStartArg);
-      const currentWorkspaceId = this.consumerWorkspaceIds.get(processId);
-      if (compatibilityKey === previousKey && currentWorkspaceId) {
-        const workspaceIdentity = ProcessManager.workspaceIdentity(startArg);
-        const workspaceId =
-          this.consumerWorkspaceIdentities.get(processId) === workspaceIdentity
-            ? currentWorkspaceId
-            : `workspace_${randomUUID().replaceAll('-', '')}`;
-        const currentRuntime = this.consumerRuntimes.get(processId);
-        // Automatic environments are intentionally reused for the same
-        // Workspace/Profile pair while they remain ready. Rebuild must first
-        // retire the current environment or materialization is a no-op.
-        // Withdrawing it from the consumer map also prevents stale runtime
-        // metadata from being reported during the replacement window.
-        if (currentRuntime) {
-          await previous.stopConsumerEnvironment(currentRuntime);
-        }
-        this.consumerRuntimes.delete(processId);
-        this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-        const runtime = await previous.configureConsumer(processId, workspaceId, startArg);
-        this.consumerRuntimes.set(processId, runtime);
-        this.consumerWorkspaceIds.set(processId, workspaceId);
-        this.consumerWorkspaceIdentities.set(processId, workspaceIdentity);
-        this.lastStartArgs.set(processId, merged);
-        this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-        return;
-      }
-    }
-    // A replacement host is targetless until the consumer is configured. Use
-    // the full awaited start transaction, not a fire-and-forget host spawn.
-    await this.stopConsumer(processId);
-    if (!this.isCurrentConsumerEpoch(processId, epoch)) {
-      return;
-    }
-    await this.startConsumer(processId, merged, epoch);
-  };
-
   getStatus = (processId: string): WithTimestamp<AgentProcessStatus> => {
     const proc = this.processes.get(processId);
     const baseStatus = proc ? proc.getStatus() : { type: 'uninitialized' as const, timestamp: Date.now() };
@@ -896,7 +801,6 @@ export function registerProcessHandlers(ipc: IIpcListener, resolve: (event: unkn
 
   h('agent-process:start', (pm, processId, startArg) => pm.start(processId, startArg));
   h('agent-process:stop', (pm, processId) => pm.stop(processId));
-  h('agent-process:rebuild', (pm, processId, rebuildArg) => pm.rebuild(processId, rebuildArg));
   h('agent-process:get-status', (pm, processId) => pm.getStatus(processId));
   h('management-runtime:ensure', (pm) => pm.ensureManagementConnection());
   h('management-runtime:mutate', (pm, request) => pm.mutateManagement(request));

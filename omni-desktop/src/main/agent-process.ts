@@ -33,7 +33,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * How one source for the sandbox workspace should be seeded. Mirrors
+ * How one source for the agent workspace should be seeded. Mirrors
  * the three project source kinds the launcher exposes:
  *
  *   - ``local-git`` — host directory under git control. The seed entry
@@ -41,12 +41,12 @@ import type {
  *   - ``local`` — host directory without git. The seed entry is the
  *     SDK's ``LocalDir`` (rejects symlinks; correct default for
  *     non-developer workspaces).
- *   - ``git-remote`` — repo URL the container clones at boot (SDK's
+ *   - ``git-remote`` — repo URL cloned during materialization (SDK's
  *     ``GitRepo`` entry). No host directory is read.
  *
- * ``mountName`` is the subdirectory under ``/workspace/`` inside the
- * container. A multi-source project gets N entries that materialize at
- * ``/workspace/<mountName>/`` each.
+ * ``mountName`` is the subdirectory under the workspace root. A
+ * multi-source project gets N entries that materialize at
+ * ``<root>/<mountName>/`` each.
  */
 export type AgentProcessSource = { id?: string; mountName: string; writable?: boolean } & (
   | {
@@ -107,8 +107,6 @@ export type AgentHostConsumerRuntime = ExecutionTarget & {
   defaultCwd?: string;
   /** Authoritative mount table from materialization (see AgentProcessData). */
   mounts?: WorkspaceMountDescriptor[];
-  /** Capability names from the environment descriptor (see AgentProcessData). */
-  environmentCapabilities?: string[];
 };
 
 /** Defensive parse of the materialization payload's ``mounts`` array. */
@@ -548,9 +546,6 @@ export class AgentProcess {
       throw new Error('AgentHost materialization returned no workspace_root');
     }
     const parsedMounts = parseWorkspaceMounts(materialized['mounts']);
-    const environmentCapabilities = Array.isArray(materialized['capabilities'])
-      ? (materialized['capabilities'] as unknown[]).filter((c): c is string => typeof c === 'string' && c.length > 0)
-      : undefined;
     const runtime: AgentHostConsumerRuntime = {
       workspaceId,
       environmentId,
@@ -560,7 +555,6 @@ export class AgentProcess {
         ? { defaultCwd: materialized['default_cwd'].trim() }
         : {}),
       ...(parsedMounts ? { mounts: parsedMounts } : {}),
-      ...(environmentCapabilities ? { environmentCapabilities } : {}),
     };
 
     try {

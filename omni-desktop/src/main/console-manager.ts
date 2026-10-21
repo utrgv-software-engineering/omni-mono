@@ -7,9 +7,9 @@ import type { IpcRendererEvents } from '@/shared/types';
 
 /**
  * Routes the renderer's `terminal:*` IPC into `omni serve`'s WebSocket
- * protocol via :class:`TerminalProxy`. The shell runs inside the
- * sandbox session (same user/cwd/network as the agent's bash tool); the
- * launcher no longer owns a host node-pty path.
+ * protocol via :class:`TerminalProxy`. The shell is owned by the agent's
+ * session (same user/cwd/network as its bash tool); the launcher has no
+ * node-pty path of its own.
  *
  * When a tab has no running omni serve process, `terminal:create` throws
  * a :class:`ConsoleError` with `kind='process_not_ready'`; the renderer

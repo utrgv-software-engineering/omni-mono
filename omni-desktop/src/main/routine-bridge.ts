@@ -11,7 +11,7 @@ export type RoutineBridgeEventHandler = (event: RoutineBridgeEvent) => void;
  * Thin main→renderer bridge for Routines (scheduled tasks).
  *
  * The Code column owns the session
- * id, the sandbox WebSocket, and all tool / approval handling. Main only issues
+ * id, the omni serve WebSocket, and all tool / approval handling. Main only issues
  * commands ("ensure a column exists", "start this run", "stop") and observes a
  * narrow set of forwarded events (run-started, run-end, approval-requested,
  * approval-resolved, disconnected) to drive routine history / status / toasts.

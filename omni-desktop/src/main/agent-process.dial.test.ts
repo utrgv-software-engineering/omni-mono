@@ -36,10 +36,6 @@ vi.mock('@/main/product-runtime', () => ({
   assertServeProtocolSupported: vi.fn(async () => {}),
 }));
 
-vi.mock('@/main/profile-resolver', () => ({
-  resolveProfile: vi.fn(() => ({ kind: 'builtin-default' })),
-}));
-
 vi.mock('shell-env', () => ({ shellEnvSync: () => ({}) }));
 vi.mock('@/lib/pty-utils', () => ({ DEFAULT_ENV: {} }));
 vi.mock('@/lib/simple-logger', () => ({

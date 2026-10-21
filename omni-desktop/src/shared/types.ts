@@ -822,14 +822,6 @@ export type AgentProcessData = {
   environmentId?: string;
   /** Generation paired with ``environmentId`` by AgentHost materialization. */
   environmentGeneration?: number;
-  /**
-   * Capability names from the materialized environment descriptor
-   * (`pty`, `network`, `contained`, ...). The renderer gates
-   * capability-dependent surfaces on these affirmatively — the Terminal
-   * app renders only when `pty` is present, so no attached environment
-   * (or a wasm sandbox, which has no PTY) shows no Terminal at all.
-   */
-  environmentCapabilities?: string[];
   /** Authoritative root returned by the materialized execution environment. */
   workspaceRoot?: string;
   /** Environment-selected initial cwd for terminals and agent commands. */
@@ -935,7 +927,7 @@ export type CodeTab = {
   /**
    * When the user first expressed intent in this column (first message sent
    * or project attached). Chat-mode columns (projectless, no routine, no
-   * custom app) don't launch their sandbox until this is set — creating a
+   * custom app) don't launch their agent until this is set — creating a
    * column is free; the boot happens on intent. Project/routine columns
    * ignore it (they launch eagerly, as before).
    */
@@ -1060,18 +1052,18 @@ export type GithubDeviceCode = { userCode: string; verificationUri: string; expi
 
 /**
  * One repo/directory attached to a project. Projects can have any number
- * of sources (zero, one, or many) — a cross-cutting ticket like "ship a
- * change across launcher + omni-code + omniagents" attaches three sources
- * to one project so the agent sees all three at once in /workspace.
+ * of sources (zero, one, or many) — a change spanning launcher + omni-code +
+ * omniagents attaches three sources to one project so the agent sees all
+ * three at once under its workspace root.
  *
  * - `id`: stable identifier (nanoid). Session sync and optional PR links key
  *   off this so renaming the user-facing ``mountName`` doesn't orphan
  *   per-source state.
- * - `mountName`: subdirectory under ``/workspace/`` inside the container
+ * - `mountName`: subdirectory under the agent's workspace root
  *   (e.g. ``launcher``). Defaults to a slug derived from path or repo
  *   name; must be unique within a project.
- * - `kind`: `local` (host directory) or `git-remote` (URL the container
- *   clones; private repos authenticate with the host-matched
+ * - `kind`: `local` (host directory) or `git-remote` (URL cloned during
+ *   materialization; private repos authenticate with the host-matched
  *   [[GitCredential]], resolved at clone time — never stored on the source).
  */
 export type ProjectSource = (
@@ -1090,8 +1082,7 @@ export type ProjectSource = (
  * project's repo" — the launcher's legacy code paths and the MCP API
  * (which doesn't model multi-source).
  *
- * Multi-source-aware callers (PR UI, container seeding, per-source merge)
- * iterate ``project.sources`` directly.
+ * Multi-source-aware callers iterate ``project.sources`` directly.
  */
 export const firstSource = (project: { sources?: ProjectSource[] } | undefined | null): ProjectSource | undefined =>
   project?.sources?.[0];
@@ -1121,7 +1112,7 @@ export type Project = {
   isPersonal?: boolean;
   /**
    * Repos/directories attached to this project. Empty array = no source.
-   * The container exposes each source under ``/workspace/<mountName>``.
+   * The agent sees each source under ``<workspace root>/<mountName>``.
    */
   sources: ProjectSource[];
   createdAt: number;
@@ -1227,7 +1218,6 @@ type AgentProcessIpcEvents = Namespaced<
   {
     start: (processId: string, arg: AgentProcessStartOptions) => void;
     stop: (processId: string) => AgentProcessStopResult;
-    rebuild: (processId: string, arg: AgentProcessStartOptions) => void;
     'get-status': (processId: string) => WithTimestamp<AgentProcessStatus>;
   }
 >;
@@ -1286,7 +1276,6 @@ type UtilIpcEvents = Namespaced<
     /** Live merged model list from `omni model list --json` (includes discovered models). */
     'list-models': () => RuntimeModelList;
     'list-directory': (path: string) => { name: string; path: string; isDirectory: boolean }[];
-    'rebuild-sandbox-image': () => { success: boolean; error?: string };
   }
 >;
 
@@ -1675,7 +1664,7 @@ export type RunOverrides = {
  * column's live session, so the conversation streams into the visible UI
  * exactly like a user-driven session. Main only orchestrates (history, status,
  * toasts) by observing the forwarded run/approval events — it never opens its
- * own socket into the sandbox.
+ * own socket into omni serve.
  */
 export type RoutineBridgeRequest =
   | {

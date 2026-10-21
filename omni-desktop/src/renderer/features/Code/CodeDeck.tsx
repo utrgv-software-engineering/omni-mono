@@ -166,12 +166,12 @@ const CodeDeckHeader = memo(
 );
 CodeDeckHeader.displayName = 'CodeDeckHeader';
 
-/** Boot-phase wording for the status line (pre-chat sandbox lifecycle). */
+/** Boot-phase wording for the status line (pre-chat agent lifecycle). */
 const BOOT_PHASE_LABELS: Partial<Record<AutoLaunchPhase, string>> = {
   checking: 'Checking runtime…',
   installing: 'Installing runtime…',
   configChecking: 'Checking configuration…',
-  starting: 'Starting sandbox…',
+  starting: 'Starting agent…',
 };
 
 /** Re-render once a minute so relative "Started …" labels stay fresh. */
@@ -210,7 +210,7 @@ const startedLabel = (tab: CodeTab): string | null => {
 const shortRoutineSchedule = (schedule: string): string => schedule.replace(/ · next .+$/, '');
 
 /**
- * Glanceable "now doing X" under a column header: sandbox boot phase while
+ * Glanceable "now doing X" under a column header: agent boot phase while
  * launching, then the live run state (tool line / waiting-for-approval)
  * published by the embedded chat. Renders nothing when the column is idle.
  */
@@ -567,7 +567,7 @@ type SidecarBodyProps = {
   filesHost: HTMLDivElement;
   gitHost: HTMLDivElement;
   reviewHost: HTMLDivElement;
-  sandboxUrls:
+  runtime:
     | {
         uiUrl?: string;
         authToken?: string;
@@ -595,7 +595,7 @@ const SidecarBody = memo(
     filesHost,
     gitHost,
     reviewHost,
-    sandboxUrls,
+    runtime,
     previewUrl,
     onPreviewUrlChange,
   }: SidecarBodyProps) => {
@@ -611,7 +611,7 @@ const SidecarBody = memo(
         />
       );
     } else if (app.kind === 'builtin-terminal') {
-      body = sandboxUrls ? (
+      body = runtime ? (
         <ConsoleStarted tabId={originTabId} />
       ) : (
         <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -619,7 +619,7 @@ const SidecarBody = memo(
         </div>
       );
     } else if (app.kind === 'builtin-files') {
-      body = sandboxUrls?.environmentId ? (
+      body = runtime?.environmentId ? (
         <TabContentSlot host={filesHost} />
       ) : (
         <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -627,7 +627,7 @@ const SidecarBody = memo(
         </div>
       );
     } else if (app.kind === 'builtin-git') {
-      body = sandboxUrls?.environmentId ? (
+      body = runtime?.environmentId ? (
         <TabContentSlot host={gitHost} />
       ) : (
         <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -635,7 +635,7 @@ const SidecarBody = memo(
         </div>
       );
     } else if (app.kind === 'builtin-review') {
-      body = sandboxUrls?.environmentId ? (
+      body = runtime?.environmentId ? (
         <TabContentSlot host={reviewHost} />
       ) : (
         <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -644,8 +644,8 @@ const SidecarBody = memo(
       );
     } else if (app.kind === 'builtin-agents') {
       body =
-        sessionId && sandboxUrls ? (
-          <AgentsSurface sessionId={sessionId} runtime={sandboxUrls} />
+        sessionId && runtime ? (
+          <AgentsSurface sessionId={sessionId} runtime={runtime} />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             Agents are available after the session starts.
@@ -653,7 +653,7 @@ const SidecarBody = memo(
         );
     } else if (app.kind === 'builtin-jobs') {
       body =
-        sessionId && sandboxUrls ? (
+        sessionId && runtime ? (
           <JobsSurface sessionId={sessionId} />
         ) : (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
@@ -1537,8 +1537,8 @@ export const CodeDeck = memo(() => {
     const apps = (tab.sidecarAppIds ?? [])
       .map((appId) => appRegistry.find((app) => app.id === appId && app.columnScoped && app.id !== 'chat'))
       .filter((app): app is AppDescriptor => Boolean(app));
-    const sandboxStatus = statuses[tab.id];
-    const sandboxUrls = sandboxStatus?.type === 'running' ? sandboxStatus.data : undefined;
+    const agentStatus = statuses[tab.id];
+    const runtime = agentStatus?.type === 'running' ? agentStatus.data : undefined;
     const availableApps = appRegistry.filter((app) => {
       if (!app.columnScoped || app.id === 'chat') {
         return false;
@@ -1551,7 +1551,7 @@ export const CodeDeck = memo(() => {
         app.kind === 'builtin-agents' ||
         app.kind === 'builtin-jobs'
       ) {
-        return Boolean(sandboxUrls);
+        return Boolean(runtime);
       }
       return true;
     });
@@ -1816,8 +1816,8 @@ export const CodeDeck = memo(() => {
           if (!sidecar) {
             return [];
           }
-          const sandboxStatus = statuses[tab.id];
-          const sandboxUrls = sandboxStatus?.type === 'running' ? sandboxStatus.data : undefined;
+          const agentStatus = statuses[tab.id];
+          const runtime = agentStatus?.type === 'running' ? agentStatus.data : undefined;
           return sidecar.apps.map((app) =>
             createPortal(
               <SidecarBody
@@ -1827,7 +1827,7 @@ export const CodeDeck = memo(() => {
                 filesHost={getFilesHost(tab.id)}
                 gitHost={getGitHost(tab.id)}
                 reviewHost={getReviewHost(tab.id)}
-                sandboxUrls={sandboxUrls}
+                runtime={runtime}
                 previewUrl={previewUrls[tab.id]}
                 onPreviewUrlChange={(url) => handlePreviewUrlChange(tab.id, url)}
               />,

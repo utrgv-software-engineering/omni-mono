@@ -8,8 +8,8 @@ import type { IpcRendererEvents } from '@/shared/types';
 
 /**
  * Bridges `terminal:*` IPC to `omni serve`'s WebSocket protocol so the
- * shell runs inside the sandbox (via `omniagents.rpc.terminal.TerminalManager`
- * backed by `SessionPtyBackend`), not as a host child of the launcher.
+ * shell is owned by the agent (via `omniagents.rpc.terminal.TerminalManager`
+ * backed by `SessionPtyBackend`), not as a child of the launcher.
  *
  * Two WebSockets per terminal:
  *   - One JSON-RPC connection (`/ws`) shared across all terminals on a
@@ -116,11 +116,8 @@ export class TerminalProxy {
     const rpc = await this.ensureTabRpc(tabId, wsUrl, authToken);
     const sessionId = await this.ensureSession(rpc);
 
-    // We deliberately do not send `cwd` here. The terminal cwd is the
-    // backend's call: profile `terminal.cwd` for sandbox-backed shells,
-    // the SDK's manifest root for host-backed. The launcher renderer
-    // has no way to express in-container paths today, so any value it
-    // sent would be a host path that doesn't exist inside the sandbox.
+    // We deliberately do not send `cwd` here: the materialized
+    // environment's terminal defaults own it.
     const created = await this.rpcCall(rpc, 'server_call', {
       function: 'terminal.create',
       args: { cols: 80, rows: 24 },
