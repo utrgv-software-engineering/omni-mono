@@ -29,7 +29,6 @@ export const DEFAULTS: StoreData = {
   codeTabs: [],
   chatConversations: [],
   activeCodeTabId: null,
-  codeLayoutMode: 'focus',
   scheduledTasks: [],
   skillSources: {},
   installedBundles: {},

@@ -3,7 +3,7 @@
  *
  * - mod+K opens the palette: type to filter, ↑/↓ to move, Enter to run,
  *   Esc to close.
- * - mod+1…9 jump straight to the Nth deck column (and switch to Spaces),
+ * - mod+1…9 jump straight to the Nth open chat,
  *   palette closed or open.
  *
  * Mounted once at the app root, renders nothing until opened.
@@ -103,7 +103,6 @@ export const CommandPalette = memo(() => {
     () =>
       buildCommands({
         codeTabs: store.codeTabs ?? [],
-        codeLayoutMode: store.codeLayoutMode,
         resolveTabLabel,
         navigate,
         activateColumn,
@@ -113,15 +112,11 @@ export const CommandPalette = memo(() => {
           void codeApi.addTab();
           persistedStoreApi.setKey('layoutMode', 'chat');
         },
-        setDeckLayout: (mode) => {
-          codeApi.setLayoutMode(mode);
-          persistedStoreApi.setKey('layoutMode', 'chat');
-        },
         toggleViewportDebug: () => {
           $viewportDebug.set(!$viewportDebug.get());
         },
       }),
-    [store.codeTabs, store.codeLayoutMode, resolveTabLabel, navigate, activateColumn, handleGoToRoutines, createProject]
+    [store.codeTabs, resolveTabLabel, navigate, activateColumn, handleGoToRoutines, createProject]
   );
 
   const filtered = useMemo(() => filterCommands(commands, query), [commands, query]);

@@ -120,7 +120,6 @@ export type StoreData = {
    */
   chatConversations: ChatConversation[];
   activeCodeTabId: CodeTabId | null;
-  codeLayoutMode: CodeLayoutMode;
 
   /**
    * How each skill was installed. Missing means discovered locally (user
@@ -495,10 +494,6 @@ export const schema: Schema<StoreData> = {
         sidecarOpen: { type: 'boolean' },
         sidecarAppIds: { type: 'array', items: { type: 'string' } },
         activeSidecarAppId: { type: 'string' },
-        spacesWidth: { type: 'number' },
-        spacesExpanded: { type: 'boolean' },
-        spacesSidecarWidth: { type: 'number' },
-        spacesSidecarExpanded: { type: 'boolean' },
         createdAt: { type: 'number' },
         activatedAt: { type: 'number' },
       },
@@ -523,10 +518,6 @@ export const schema: Schema<StoreData> = {
   activeCodeTabId: {
     type: ['string', 'null'],
     default: null,
-  },
-  codeLayoutMode: {
-    type: 'string',
-    default: 'focus',
   },
   projects: {
     type: 'array',
@@ -851,8 +842,6 @@ export type OmniRuntimeInfo =
 
 export type CodeTabId = string;
 
-export type CodeLayoutMode = 'tile' | 'focus';
-
 export type CodeTab = {
   id: CodeTabId;
   projectId: ProjectId | null;
@@ -866,14 +855,6 @@ export type CodeTab = {
   sidecarAppIds?: string[];
   /** Selected app in the right sidecar. Must also be present in `sidecarAppIds`. */
   activeSidecarAppId?: string;
-  /** User-selected width for this column in Spaces. */
-  spacesWidth?: number;
-  /** Whether this column uses the expanded Spaces width preset. */
-  spacesExpanded?: boolean;
-  /** User-selected width for this session's sidecar column in Spaces. */
-  spacesSidecarWidth?: number;
-  /** Whether this session's sidecar uses the expanded Spaces width preset. */
-  spacesSidecarExpanded?: boolean;
   createdAt: number;
   /**
    * When the user first expressed intent in this column (first message sent

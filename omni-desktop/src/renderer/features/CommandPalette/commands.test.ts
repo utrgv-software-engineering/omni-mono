@@ -13,43 +13,28 @@ const tab = (patch: Partial<CodeTab>): CodeTab => ({
 
 const ctx = (codeTabs: CodeTab[] = []) => ({
   codeTabs,
-  codeLayoutMode: 'tile' as const,
   resolveTabLabel: (t: CodeTab) => `label:${t.id}`,
   navigate: vi.fn(),
   activateColumn: vi.fn(),
   goToRoutines: vi.fn(),
   createProject: vi.fn(),
   newSession: vi.fn(),
-  setDeckLayout: vi.fn(),
   toggleViewportDebug: vi.fn(),
 });
 
 describe('buildCommands', () => {
-  it('includes navigation, session, layout, and per-column commands', () => {
+  it('includes navigation, session, and per-column commands', () => {
     const c = ctx([tab({ id: 'a', projectId: 'p1' })]);
     const commands = buildCommands(c);
     const ids = commands.map((cmd) => cmd.id);
     expect(ids).toEqual(
-      expect.arrayContaining([
-        'nav-work',
-        'nav-chat',
-        'nav-settings',
-        'create-project',
-        'new-session',
-        'toggle-layout',
-        'column-a',
-      ])
+      expect.arrayContaining(['nav-work', 'nav-chat', 'nav-settings', 'create-project', 'new-session', 'column-a'])
     );
-    expect(ids).not.toContain('nav-spaces');
+    expect(ids).not.toContain('toggle-layout');
   });
 
-  it('labels the layout toggle by the current mode and numbers column hints', () => {
-    const c = {
-      ...ctx([tab({ id: 'a', projectId: 'p1' }), tab({ id: 'b', projectId: 'p2' })]),
-      codeLayoutMode: 'focus' as const,
-    };
-    const commands = buildCommands(c);
-    expect(commands.find((cmd) => cmd.id === 'toggle-layout')!.label).toContain('Tile');
+  it('numbers column hints', () => {
+    const commands = buildCommands(ctx([tab({ id: 'a', projectId: 'p1' }), tab({ id: 'b', projectId: 'p2' })]));
     expect(commands.find((cmd) => cmd.id === 'column-b')!.hint).toBe('⌘2');
   });
 

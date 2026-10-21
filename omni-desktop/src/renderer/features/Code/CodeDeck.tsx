@@ -1,38 +1,10 @@
-import './CodeDeck.css';
-
-import {
-  DndContext,
-  type DragEndEvent,
-  KeyboardSensor,
-  MouseSensor,
-  PointerSensor,
-  TouchSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  horizontalListSortingStrategy,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-} from '@dnd-kit/sortable';
+import { DndContext, type DragEndEvent, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, horizontalListSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useStore } from '@nanostores/react';
-import { LayoutGroup, motion } from 'framer-motion';
-import {
-  Archive,
-  Columns3,
-  Ellipsis,
-  GripVertical,
-  Maximize2,
-  Minimize2,
-  PanelRight,
-  Plus,
-  RefreshCw,
-  Scan,
-} from 'lucide-react';
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
+import { Archive, Ellipsis, PanelRight, Plus, RefreshCw } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { ClosableTab, ClosableTabsList } from '@/renderer/ds/ClosableTabs';
@@ -49,23 +21,21 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer
 import { SidebarTrigger, useSidebar } from '@/renderer/ds/ui/sidebar';
 import { Tabs } from '@/renderer/ds/ui/tabs';
 import { Toggle } from '@/renderer/ds/ui/toggle';
-import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
 import { AgentsSurface } from '@/renderer/features/Agents';
 import { $appLaunchRequest, clearAppLaunchRequest } from '@/renderer/features/AppControl/app-launch-bridge';
 import { BrowserView } from '@/renderer/features/Browser/BrowserView';
 import { $previewRequest, clearPreviewRequest } from '@/renderer/features/Code/preview-bridge';
 import { ConsoleStarted } from '@/renderer/features/Console/ConsoleRunning';
 import { JobsSurface } from '@/renderer/features/Jobs';
-import { OmniAgentsHeaderActionsSlot } from '@/renderer/omniagents-ui/header-actions';
 import { $agentStatuses } from '@/renderer/services/agent-process';
 import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { ENTER_ANIMATE, ENTER_INITIAL, FADE_DURATION_S, SPRING_GENTLE, SPRING_STANDARD } from '@/renderer/theme/motion';
+import { FADE_DURATION_S } from '@/renderer/theme/motion';
 import type { AppDescriptor, AppId } from '@/shared/app-registry';
 import { APP_REGISTRY } from '@/shared/app-registry';
 import type { AutoLaunchPhase } from '@/shared/machines/auto-launch.machine';
-import type { CodeLayoutMode, CodeTab, CodeTabId } from '@/shared/types';
-import { firstSource, isChatColumn } from '@/shared/types';
+import type { CodeTab, CodeTabId } from '@/shared/types';
+import { firstSource } from '@/shared/types';
 
 import { AppIcon } from './AppIcon';
 import { CodeTabContent } from './CodeTabContent';
@@ -73,98 +43,24 @@ import { ColumnAura } from './ColumnAura';
 import { $codeTabPhases, codeApi, finishRemoval } from './state';
 import { useRecentConversations } from './use-recent-conversations';
 
-const COLUMN_WIDTH = 480;
-const COLUMN_WIDTH_SMALL = 360;
-const LAUNCH_COLUMN_MAX_WIDTH = 640;
-const EXPANDED_COLUMN_WIDTH = 860;
-/** Resize bounds for a deck column (desktop). */
-const MIN_COLUMN_WIDTH = 320;
-const MAX_COLUMN_WIDTH = 960;
-/** Below this width, deck columns use COLUMN_WIDTH_SMALL. */
-const NARROW_DECK_WIDTH = 800;
-/** Below this width, deck columns snap-scroll at ~92% viewport width. */
-const SNAP_SCROLL_WIDTH = 540;
+/** At or below this width the apps sidecar stacks under the chat. */
+const PHONE_WIDTH = 540;
 
-const spacesWidthsFromTabs = (tabs: CodeTab[]): Record<CodeTabId, number> => {
-  const widths: Record<CodeTabId, number> = {};
-  for (const tab of tabs) {
-    if (tab.spacesWidth !== undefined) {
-      widths[tab.id] = tab.spacesWidth;
-    }
-    if (tab.spacesSidecarWidth !== undefined) {
-      widths[`sidecar:${tab.id}`] = tab.spacesSidecarWidth;
-    }
-  }
-  return widths;
-};
-
-const spacesExpandedFromTabs = (tabs: CodeTab[]): ReadonlySet<CodeTabId> => {
-  const expanded = new Set<CodeTabId>();
-  for (const tab of tabs) {
-    if (tab.spacesExpanded) {
-      expanded.add(tab.id);
-    }
-    if (tab.spacesSidecarExpanded) {
-      expanded.add(`sidecar:${tab.id}`);
-    }
-  }
-  return expanded;
-};
-
-const CodeDeckHeader = memo(
-  ({
-    layoutMode,
-    onLayoutModeChange,
-    onNewSession,
-  }: {
-    layoutMode: CodeLayoutMode;
-    onLayoutModeChange: (mode: CodeLayoutMode) => void;
-    onNewSession: () => void;
-  }) => {
-    const { isMobile, state: sidebarState } = useSidebar();
-    const navigationHidden = isMobile || sidebarState === 'collapsed';
-    // Radix emits '' when the active item is clicked again; the mode is
-    // controlled, so ignoring it keeps the current segment selected.
-    const handleLayoutValueChange = useCallback(
-      (value: string) => {
-        if (value === 'tile' || value === 'focus') {
-          onLayoutModeChange(value);
-        }
-      },
-      [onLayoutModeChange]
-    );
-
-    return (
-      <div className={cn('flex h-10 items-center justify-between pl-4 pr-4 border-b border-border bg-card')}>
-        {navigationHidden && <SidebarTrigger className="-ml-1.5" size="icon-sm" aria-label="Open navigation" />}
-        <ToggleGroup
-          type="single"
-          variant="outline"
-          size="sm"
-          spacing={0}
-          value={layoutMode}
-          onValueChange={handleLayoutValueChange}
-          aria-label="Layout"
-        >
-          <ToggleGroupItem value="tile" title="Spaces — every session as a column">
-            <Columns3 className="size-4" />
-            Spaces
-          </ToggleGroupItem>
-          <ToggleGroupItem value="focus" title="Focus — one session at a time">
-            <Scan className="size-4" />
-            Focus
-          </ToggleGroupItem>
-        </ToggleGroup>
-        <div className="flex items-center gap-2 ml-auto">
-          <Button size="sm" variant="ghost" onClick={onNewSession}>
-            <Plus className="size-4" />
-            New chat
-          </Button>
-        </div>
+const CodeDeckHeader = memo(({ onNewSession }: { onNewSession: () => void }) => {
+  const { isMobile, state: sidebarState } = useSidebar();
+  const navigationHidden = isMobile || sidebarState === 'collapsed';
+  return (
+    <div className={cn('flex h-10 items-center justify-between pl-4 pr-4 border-b border-border bg-card')}>
+      {navigationHidden && <SidebarTrigger className="-ml-1.5" size="icon-sm" aria-label="Open navigation" />}
+      <div className="flex items-center gap-2 ml-auto">
+        <Button size="sm" variant="ghost" onClick={onNewSession}>
+          <Plus className="size-4" />
+          New chat
+        </Button>
       </div>
-    );
-  }
-);
+    </div>
+  );
+});
 CodeDeckHeader.displayName = 'CodeDeckHeader';
 
 /** Boot-phase wording for the status line (pre-chat agent lifecycle). */
@@ -255,90 +151,6 @@ const ColumnStatusLine = memo(({ tabId }: { tabId: CodeTabId }) => {
 });
 ColumnStatusLine.displayName = 'ColumnStatusLine';
 
-/**
- * One dot per column in the phone pager — the deck map. Each dot carries its
- * column's live state (the aura, distilled to 8px): brand + pulse while the
- * agent boots/works, amber while an approval waits, neutral when idle. The
- * current page is the elongated pill. Subscribes per-key like ColumnAura so
- * the strip doesn't re-render the deck.
- */
-const DeckMapDot = memo(
-  ({
-    tab,
-    label,
-    isActive,
-    onSelect,
-  }: {
-    tab: CodeTab;
-    label: string;
-    isActive: boolean;
-    onSelect: (id: CodeTabId) => void;
-  }) => {
-    const activity = useStore($columnActivity, { keys: [tab.id] })[tab.id];
-    const bootPhase = useStore($codeTabPhases, { keys: [tab.id] })[tab.id];
-    const waiting = !!activity?.pendingApproval;
-    const live = !waiting && (!!activity?.thinking || !!(bootPhase && BOOT_PHASE_LABELS[bootPhase]));
-    const handleClick = useCallback(() => onSelect(tab.id), [onSelect, tab.id]);
-    return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        className="flex items-center justify-center pt-2 pb-2 pl-2 pr-2 border-0 bg-transparent cursor-pointer focus-visible:outline-2 outline-ring focus-visible:-outline-offset-2 focus-visible:rounded-lg"
-        onClick={handleClick}
-        aria-label={waiting ? `Go to ${label} (waiting for approval)` : `Go to ${label}`}
-        aria-current={isActive ? 'true' : undefined}
-      >
-        <span
-          className={cn(
-            'w-2 h-2 rounded bg-muted-foreground opacity-45 transition-all duration-200 ease-in-out motion-reduce:transition-colors',
-            isActive && 'w-4.5 opacity-100',
-            live && 'animate-pulse bg-primary opacity-90 motion-reduce:animate-none',
-            waiting && 'bg-warning opacity-100 animate-none'
-          )}
-        />
-      </Button>
-    );
-  }
-);
-DeckMapDot.displayName = 'DeckMapDot';
-
-const DeckMap = memo(
-  ({
-    tabs,
-    currentTabId,
-    resolveLabel,
-    onSelect,
-  }: {
-    tabs: CodeTab[];
-    currentTabId: CodeTabId | null;
-    resolveLabel: (tab: CodeTab) => string;
-    onSelect: (id: CodeTabId) => void;
-  }) => {
-    if (tabs.length < 2) {
-      return null;
-    }
-    return (
-      <div
-        className="hidden [@media(max-width:540px)]:flex [@media(max-width:540px)]:items-center [@media(max-width:540px)]:justify-center [@media(max-width:540px)]:shrink-0 [@media(max-width:540px)]:pt-0.5 [@media(max-width:540px)]:pb-1"
-        role="group"
-        aria-label="Columns"
-      >
-        {tabs.map((tab) => (
-          <DeckMapDot
-            key={tab.id}
-            tab={tab}
-            label={resolveLabel(tab)}
-            isActive={tab.id === currentTabId}
-            onSelect={onSelect}
-          />
-        ))}
-      </div>
-    );
-  }
-);
-DeckMap.displayName = 'DeckMap';
-
 const CodeSessionHeader = memo(
   ({
     label,
@@ -348,8 +160,6 @@ const CodeSessionHeader = memo(
     routineSchedule,
     actions,
     onArchive,
-    dragHandle,
-    dragSurfaceProps,
   }: {
     label: string;
     /** Identity context when there is no routine banner (e.g. "Started 2h ago"). */ subLabel?: string | null;
@@ -358,20 +168,11 @@ const CodeSessionHeader = memo(
     routineSchedule?: string | null;
     actions?: React.ReactNode;
     onArchive?: () => void;
-    dragHandle?: React.ReactNode;
-    dragSurfaceProps?: React.HTMLAttributes<HTMLDivElement>;
   }) => {
     return (
       <>
-        <div
-          className={cn(
-            'relative flex items-center justify-between pl-4 pr-2 pt-1 pb-1 min-h-8 bg-transparent',
-            'cursor-grab select-none select-none touch-manipulation active:cursor-grabbing'
-          )}
-          {...dragSurfaceProps}
-        >
+        <div className="relative flex items-center justify-between pl-4 pr-2 pt-1 pb-1 min-h-8 bg-transparent">
           <div className={cn('flex items-center', 'gap-2', 'min-w-0')}>
-            {dragHandle}
             <span
               className="text-xs font-medium text-muted-foreground tracking-normal overflow-hidden text-ellipsis whitespace-nowrap"
               title={label}
@@ -440,124 +241,6 @@ const CodeSessionHeader = memo(
   }
 );
 CodeSessionHeader.displayName = 'CodeSessionHeader';
-
-const DeckColumn = memo(
-  ({
-    tab,
-    label,
-    routineName,
-    routineSchedule,
-    actions,
-    onArchive,
-    onFocus,
-    isExpanded,
-    onToggleExpand,
-    children,
-    headerActionsSlot,
-    hasSidecar,
-  }: {
-    tab: CodeTab;
-    label: string;
-    routineName?: string | null;
-    routineSchedule?: string | null;
-    actions?: React.ReactNode;
-    onArchive: (id: CodeTabId) => void;
-    onFocus: (id: CodeTabId) => void;
-    isExpanded: boolean;
-    onToggleExpand: (id: CodeTabId) => void;
-    children: React.ReactNode;
-    headerActionsSlot?: React.ReactNode;
-    hasSidecar?: boolean;
-  }) => {
-    // dnd-kit moves only the actively dragged column (transition: null) — the
-    // displaced columns settle via the card's framer layout animation below,
-    // so there's exactly one animator per element.
-    const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-      id: tab.id,
-      transition: null,
-    });
-    const style = {
-      transform: CSS.Transform.toString(transform),
-    };
-    useNowMinute();
-
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className={cn(
-          'flex flex-col w-full h-full min-w-0 min-h-0 overflow-hidden bg-transparent',
-          isDragging && 'opacity-85'
-        )}
-      >
-        <motion.div
-          layoutId={`colcard-${tab.id}`}
-          layout
-          transition={SPRING_STANDARD}
-          initial={ENTER_INITIAL}
-          animate={ENTER_ANIMATE}
-          className={cn(
-            'flex flex-1 flex-col min-w-0 min-h-0 relative border border-border rounded-2xl overflow-hidden m-2 bg-card transition-colors duration-100 ease-in-out [&:hover_.revealOnHover]:opacity-100 [&:focus-within_.revealOnHover]:opacity-100 hover:border-primary',
-            hasSidecar && 'mr-0 rounded-tr-none rounded-br-none border-r-0',
-            isDragging && 'shadow-xl'
-          )}
-        >
-          <ColumnAura tabId={tab.id} />
-          <CodeSessionHeader
-            label={label}
-            subLabel={routineName ? null : startedLabel(tab)}
-            statusTabId={tab.id}
-            routineName={routineName}
-            routineSchedule={routineSchedule}
-            actions={
-              <div className={cn('flex items-center', 'gap-1')}>
-                {headerActionsSlot}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Focus ${label}`}
-                  title="Focus session"
-                  onClick={() => onFocus(tab.id)}
-                >
-                  <Scan className="size-4" />
-                </Button>
-                <Toggle
-                  size="sm"
-                  pressed={isExpanded}
-                  aria-label={isExpanded ? 'Collapse column' : 'Expand column'}
-                  title={isExpanded ? 'Collapse column' : 'Expand column'}
-                  onPressedChange={() => onToggleExpand(tab.id)}
-                >
-                  {isExpanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-                </Toggle>
-                {actions}
-              </div>
-            }
-            onArchive={() => onArchive(tab.id)}
-            dragSurfaceProps={listeners}
-            dragHandle={
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="sr-only cursor-grab text-muted-foreground focus-visible:not-sr-only focus-visible:relative focus-visible:size-5 focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-1"
-                {...attributes}
-                {...listeners}
-                aria-label={`Reorder ${label}`}
-              >
-                <GripVertical className="size-4" />
-              </Button>
-            }
-          />
-
-          <div className="flex-1 min-h-0 relative">{children}</div>
-        </motion.div>
-      </div>
-    );
-  }
-);
-DeckColumn.displayName = 'DeckColumn';
 
 type SidecarBodyProps = {
   app: AppDescriptor;
@@ -702,10 +385,6 @@ const SidecarColumn = memo(
     onCloseApp,
     onOpenApp,
     onReorderApps,
-    isExpanded,
-    onToggleExpand,
-    canExpand = true,
-    presentation = 'tile',
   }: {
     apps: AppDescriptor[];
     activeAppId?: AppId;
@@ -715,10 +394,6 @@ const SidecarColumn = memo(
     onCloseApp: (appId: AppId) => void;
     onOpenApp: (appId: AppId) => void;
     onReorderApps: (appIds: AppId[]) => void;
-    isExpanded: boolean;
-    onToggleExpand: () => void;
-    canExpand?: boolean;
-    presentation?: 'tile' | 'focus';
   }) => {
     const addableApps = availableApps.filter((app) => !apps.some((openApp) => openApp.id === app.id));
 
@@ -742,14 +417,7 @@ const SidecarColumn = memo(
 
     return (
       <div className="flex flex-col w-full h-full min-w-0 min-h-0 overflow-hidden bg-transparent">
-        <div
-          className={cn(
-            presentation === 'focus'
-              ? 'flex flex-1 flex-col min-w-0 min-h-0 relative overflow-hidden bg-card'
-              : 'flex flex-1 flex-col min-w-0 min-h-0 relative border border-border rounded-2xl overflow-hidden m-2 bg-card transition-colors duration-100 ease-in-out [&:hover_.revealOnHover]:opacity-100 [&:focus-within_.revealOnHover]:opacity-100 hover:border-primary',
-            presentation === 'tile' && 'ml-0 rounded-tl-none rounded-bl-none'
-          )}
-        >
+        <div className="flex flex-1 flex-col min-w-0 min-h-0 relative overflow-hidden bg-card">
           <Tabs value={activeAppId ?? ''} onValueChange={onActivate} className="h-full min-h-0 gap-0">
             {/* Same 36px row rhythm as the Review toolbar and the browser's
                 own tab strip below — mismatched row heights read as double
@@ -796,18 +464,6 @@ const SidecarColumn = memo(
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
-              {canExpand && (
-                <Toggle
-                  size="sm"
-                  className="h-7 min-w-7 px-1"
-                  pressed={isExpanded}
-                  aria-label={isExpanded ? 'Collapse column' : 'Expand column'}
-                  title={isExpanded ? 'Collapse column' : 'Expand column'}
-                  onPressedChange={onToggleExpand}
-                >
-                  {isExpanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-                </Toggle>
-              )}
             </div>
             <div className="flex-1 min-h-0 relative">
               {apps.length === 0 ? (
@@ -870,15 +526,9 @@ const CodeSessionPane = memo(
     useNowMinute();
 
     return (
-      // Shared-element target for Focus-as-zoom: only the visible pane claims
-      // the card's layoutId. Park inactive panes with real geometry: collapsing
-      // them to zero makes transcript scrollers forget their reading position.
-      // Switching Tile <-> Focus morphs the active column
-      // between its tile card and this full pane.
-      <motion.div
-        layoutId={isVisible ? `colcard-${tab.id}` : undefined}
-        layout={isVisible}
-        transition={SPRING_GENTLE}
+      // Park inactive panes with real geometry: collapsing them to zero makes
+      // transcript scrollers forget their reading position.
+      <div
         className={cn(
           'w-full h-full flex flex-col bg-card',
           isVisible ? 'relative' : 'absolute inset-0 invisible pointer-events-none'
@@ -898,7 +548,7 @@ const CodeSessionPane = memo(
         />
 
         <div className="flex-1 min-h-0 relative">{content}</div>
-      </motion.div>
+      </div>
     );
   }
 );
@@ -907,10 +557,10 @@ CodeSessionPane.displayName = 'CodeSessionPane';
 /**
  * Layout-transparent adopter for a column's persistent content. CodeDeck
  * portals each session tab's SINGLE long-lived CodeTabContent into a STABLE
- * detached <div> (the host); Tile and Focus each render one TabContentSlot
- * that imperatively appends that host into its own DOM. Switching layout
- * modes therefore MOVES the rendered session instead of remounting it — no
- * agent reconnect, no transcript reload, composer drafts survive. The portal
+ * detached <div> (the host); the session's pane renders one TabContentSlot
+ * that imperatively appends that host into its own DOM, so re-renders of the
+ * pane MOVE the rendered session instead of remounting it — no agent
+ * reconnect, no transcript reload, composer drafts survive. The portal
  * container must stay identity-stable: React reconciles createPortal by
  * container, so portaling into per-mode slot elements would remount.
  */
@@ -1033,37 +683,8 @@ export const CodeDeck = memo(() => {
     }
   }, [sessionTabs]);
   const activeTabId = store.activeCodeTabId ?? tabs[0]?.id ?? null;
-  const interactionActivation = useRef<CodeTabId | null>(null);
-  const activateInteractedTile = useCallback(
-    (event: { target: EventTarget | null }) => {
-      const element = event.target instanceof Element ? event.target : null;
-      const id = element?.closest<HTMLElement>('[data-deck-column]')?.dataset.deckColumn as CodeTabId | undefined;
-      if (id && tabs.some((tab) => tab.id === id) && persistedStoreApi.getKey('activeCodeTabId') !== id) {
-        // A pointer/focus gesture already places the user in this column. Do
-        // not scroll the deck as though this were an external navigation.
-        interactionActivation.current = id;
-        void codeApi.setActiveTab(id);
-      }
-    },
-    [tabs]
-  );
   const [previewUrls, setPreviewUrls] = useState<Record<CodeTabId, string>>({});
-  const [expandedTabIds, setExpandedTabIds] = useState<ReadonlySet<CodeTabId>>(() => spacesExpandedFromTabs(tabs));
-  // Pixel sizes reported by the shadcn resizable group. A custom width
-  // replaces the expand preset and vice versa.
-  const [columnWidths, setColumnWidths] = useState<Record<CodeTabId, number>>(() => spacesWidthsFromTabs(tabs));
-  const isUserResizingTileRef = useRef(false);
-  const pendingColumnWidthsRef = useRef<Record<CodeTabId, number>>({});
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
-  // Phones used to be forced into the pager, because Focus needed its own
-  // session-list sidebar and had nowhere to put it. The unified nav drawer is
-  // that list now, so Focus works at phone width — one full-bleed
-  // conversation, the shape the mobile landing wants — and the stored choice
-  // applies at every size. The toggle ships on phones too, so a `tile` picked
-  // on desktop (the store is shared) is never a trap.
-  const layoutMode = store.codeLayoutMode;
-  const [deckViewportWidth, setDeckViewportWidth] = useState(() => window.innerWidth);
-
   useEffect(() => {
     const handler = () => setViewportWidth(window.innerWidth);
     window.addEventListener('resize', handler);
@@ -1071,147 +692,11 @@ export const CodeDeck = memo(() => {
   }, []);
 
   useEffect(() => {
-    const stopResizing = () => {
-      isUserResizingTileRef.current = false;
-    };
-    window.addEventListener('pointerup', stopResizing);
-    window.addEventListener('pointercancel', stopResizing);
-    window.addEventListener('blur', stopResizing);
-    return () => {
-      window.removeEventListener('pointerup', stopResizing);
-      window.removeEventListener('pointercancel', stopResizing);
-      window.removeEventListener('blur', stopResizing);
-    };
-  }, []);
-
-  // Mouse wheel → horizontal scroll on the deck (columns are laid out on a
-  // single row). Leaves trackpad horizontal gestures alone and ignores wheel
-  // events that originated inside a column (chat scrollbacks, etc.).
-  const deckScrollRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = deckScrollRef.current;
-    if (!el) {
-      return;
-    }
-    const update = () => setDeckViewportWidth(el.clientWidth || window.innerWidth);
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [layoutMode, tabs.length]);
-
-  useEffect(() => {
-    const el = deckScrollRef.current;
-    if (!el) {
-      return;
-    }
-    const handler = (e: WheelEvent) => {
-      if (e.deltaY === 0 || e.deltaX !== 0) {
-        return;
-      }
-      // Respect nested vertical scroll areas (chat, file panes): walk from the
-      // target up to the deck and bail if any ancestor can still scroll in
-      // the direction of this wheel event.
-      let node = e.target as HTMLElement | null;
-      while (node && node !== el) {
-        const cs = getComputedStyle(node);
-        const scrollable = cs.overflowY === 'auto' || cs.overflowY === 'scroll';
-        if (scrollable && node.scrollHeight > node.clientHeight) {
-          const canScrollDown = e.deltaY > 0 && node.scrollTop + node.clientHeight < node.scrollHeight - 1;
-          const canScrollUp = e.deltaY < 0 && node.scrollTop > 0;
-          if (canScrollDown || canScrollUp) {
-            return;
-          }
-        }
-        node = node.parentElement;
-      }
-      el.scrollLeft += e.deltaY;
-      e.preventDefault();
-    };
-    el.addEventListener('wheel', handler, { passive: false });
-    return () => el.removeEventListener('wheel', handler);
-  }, [layoutMode, tabs.length]);
-
-  // ── Deck map: which column the phone pager is resting on ──
-  const isPager = layoutMode === 'tile' && viewportWidth <= SNAP_SCROLL_WIDTH;
-  const [pagerTabId, setPagerTabId] = useState<CodeTabId | null>(null);
-  useEffect(() => {
-    if (!isPager) {
-      return;
-    }
-    const el = deckScrollRef.current;
-    if (!el) {
-      return;
-    }
-    let raf = 0;
-    const update = () => {
-      raf = 0;
-      let best: CodeTabId | null = null;
-      let bestDist = Infinity;
-      for (const node of el.querySelectorAll<HTMLElement>('[data-deck-column]')) {
-        const dist = Math.abs(node.offsetLeft - el.scrollLeft);
-        if (dist < bestDist) {
-          bestDist = dist;
-          best = (node.dataset.deckColumn ?? null) as CodeTabId | null;
-        }
-      }
-      setPagerTabId(best);
-    };
-    const onScroll = () => {
-      if (!raf) {
-        raf = requestAnimationFrame(update);
-      }
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    update();
-    return () => {
-      el.removeEventListener('scroll', onScroll);
-      if (raf) {
-        cancelAnimationFrame(raf);
-      }
-    };
-  }, [isPager, tabs.length]);
-
-  const scrollToColumn = useCallback((tabId: CodeTabId) => {
-    const target = deckScrollRef.current?.querySelector<HTMLElement>(
-      `[data-deck-column="${window.CSS.escape(tabId)}"]`
-    );
-    target?.scrollIntoView({
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-      inline: 'start',
-      block: 'nearest',
-    });
-  }, []);
-
-  // Activation gestures (sidebar session clicks, "New chat", deep links) preserve the layout mode, so in Spaces the deck itself must
-  // answer them: scroll the newly active column into view instead of leaving
-  // it minted off-screen. Scrolling and swiping don't change activeTabId, so
-  // this never fights the user.
-  useEffect(() => {
-    if (layoutMode !== 'tile' || !activeTabId) {
-      return;
-    }
-    if (interactionActivation.current === activeTabId) {
-      interactionActivation.current = null;
-      return;
-    }
-    scrollToColumn(activeTabId);
-  }, [layoutMode, activeTabId, scrollToColumn]);
-
-  useEffect(() => {
     const firstTab = tabs[0];
     if (!activeTabId && firstTab) {
       codeApi.setActiveTab(firstTab.id);
     }
   }, [activeTabId, tabs]);
-
-  useEffect(() => {
-    if (isUserResizingTileRef.current) {
-      return;
-    }
-    setColumnWidths(spacesWidthsFromTabs(tabs));
-    setExpandedTabIds(spacesExpandedFromTabs(tabs));
-  }, [tabs]);
 
   // React to agent-triggered preview requests. We subscribe via `listen` rather
   // than `useStore` so every atom update fires — a rapid burst of requests all
@@ -1254,16 +739,6 @@ export const CodeDeck = memo(() => {
     return unsubscribe;
   }, []);
 
-  // Mouse drags on small movement; touch drags on long-press so swiping a
-  // column header still scrolls the deck instead of starting a reorder.
-  // Keyboard picks up via Space/Enter on the column's reorder handle and
-  // moves with the arrow keys.
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
-
   const projectMap = useMemo(() => {
     const map = new Map<string, { label: string; workspaceDir: string | undefined }>();
     for (const p of store.projects) {
@@ -1297,143 +772,15 @@ export const CodeDeck = memo(() => {
   const resolveRoutineName = useCallback((tab: CodeTab) => tab.routineName ?? null, []);
   const resolveRoutineSchedule = useCallback((tab: CodeTab) => tab.routineSchedule ?? null, []);
 
-  const handleLayoutModeChange = useCallback((mode: CodeLayoutMode) => {
-    codeApi.setLayoutMode(mode);
-  }, []);
-
-  const handleFocusColumn = useCallback((tabId: CodeTabId) => {
-    codeApi.setActiveTab(tabId);
-    codeApi.setLayoutMode('focus');
-  }, []);
-
   const handleNewSession = useCallback(() => {
     codeApi.addTab();
   }, []);
 
-  const getColumnWidth = useCallback(
-    (tabId: CodeTabId) => {
-      const custom = columnWidths[tabId];
-      if (custom !== undefined && viewportWidth > SNAP_SCROLL_WIDTH) {
-        return custom;
-      }
-      if (expandedTabIds.has(tabId)) {
-        if (viewportWidth <= SNAP_SCROLL_WIDTH) {
-          return viewportWidth;
-        }
-        return Math.min(EXPANDED_COLUMN_WIDTH, Math.round(viewportWidth * 0.92));
-      }
-      if (viewportWidth <= SNAP_SCROLL_WIDTH) {
-        return Math.round(viewportWidth * 0.92);
-      }
-      if (viewportWidth <= NARROW_DECK_WIDTH) {
-        return COLUMN_WIDTH_SMALL;
-      }
-      return COLUMN_WIDTH;
-    },
-    [columnWidths, expandedTabIds, viewportWidth]
-  );
-
-  const getTabColumnWidth = useCallback(
-    (tab: CodeTab) => {
-      // A chat column without a manual width gets a roomier default — prose
-      // reads better wide — but resize/expand behave like any other column.
-      if (isChatColumn(tab) && columnWidths[tab.id] === undefined && !expandedTabIds.has(tab.id)) {
-        const availableWidth = deckViewportWidth || viewportWidth;
-        if (availableWidth <= SNAP_SCROLL_WIDTH) {
-          return Math.round(availableWidth * 0.92);
-        }
-        if (availableWidth <= NARROW_DECK_WIDTH) {
-          return COLUMN_WIDTH_SMALL;
-        }
-        return Math.min(LAUNCH_COLUMN_MAX_WIDTH, Math.round(availableWidth * 0.62));
-      }
-      return getColumnWidth(tab.id);
-    },
-    [deckViewportWidth, getColumnWidth, viewportWidth, columnWidths, expandedTabIds]
-  );
-
-  const handleResizeCommit = useCallback((tabId: CodeTabId, width: number) => {
-    // The panel group also emits onResize while it fills or tracks its
-    // container. Only a separator gesture represents a user-selected width.
-    if (!isUserResizingTileRef.current) {
-      return;
-    }
-    const nextWidth = Math.round(width);
-    pendingColumnWidthsRef.current[tabId] = nextWidth;
-    setColumnWidths((prev) => (prev[tabId] === nextWidth ? prev : { ...prev, [tabId]: nextWidth }));
-  }, []);
-
-  const handleResizeStart = useCallback(() => {
-    isUserResizingTileRef.current = true;
-  }, []);
-
-  const handleResizeEnd = useCallback(() => {
-    isUserResizingTileRef.current = false;
-    const pending = pendingColumnWidthsRef.current;
-    pendingColumnWidthsRef.current = {};
-    const ids = Object.keys(pending);
-    if (ids.length === 0) {
-      return;
-    }
-    setExpandedTabIds((current) => {
-      const next = new Set(current);
-      for (const id of ids) {
-        next.delete(id);
-      }
-      return next;
-    });
-    void codeApi.setSpacesColumnLayouts(
-      Object.fromEntries(ids.map((id) => [id, { width: pending[id], expanded: false }]))
-    );
-  }, []);
-
-  const handleToggleExpand = useCallback(
-    (id: CodeTabId) => {
-      // The expand preset replaces any manual drag width (and vice versa).
-      const expanded = !expandedTabIds.has(id);
-      setColumnWidths((prev) => {
-        if (!(id in prev)) {
-          return prev;
-        }
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      setExpandedTabIds((current) => {
-        const next = new Set(current);
-        if (expanded) {
-          next.add(id);
-        } else {
-          next.delete(id);
-        }
-        return next;
-      });
-      void codeApi.setSpacesColumnLayouts({ [id]: { width: null, expanded } });
-    },
-    [expandedTabIds]
-  );
-
   const handleArchive = useCallback(
     async (id: CodeTabId) => {
-      setColumnWidths((current) => {
-        if (!(id in current)) {
-          return current;
-        }
-        const next = { ...current };
-        delete next[id];
-        return next;
-      });
       setPreviewUrls((current) => {
         const next = { ...current };
         delete next[id];
-        return next;
-      });
-      setExpandedTabIds((current) => {
-        if (!current.has(id)) {
-          return current;
-        }
-        const next = new Set(current);
-        next.delete(id);
         return next;
       });
       const tab = tabs.find((candidate) => candidate.id === id);
@@ -1471,45 +818,7 @@ export const CodeDeck = memo(() => {
     setPreviewUrls((prev) => (prev[tabId] === url ? prev : { ...prev, [tabId]: url }));
   }, []);
 
-  const handleDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      const { active, over } = event;
-      if (!over || active.id === over.id) {
-        return;
-      }
-      const oldIndex = tabs.findIndex((t) => t.id === active.id);
-      const newIndex = tabs.findIndex((t) => t.id === over.id);
-      if (oldIndex === -1 || newIndex === -1) {
-        return;
-      }
-      const nextTabs = arrayMove(tabs, oldIndex, newIndex);
-      codeApi.reorderTabs(nextTabs);
-    },
-    [tabs]
-  );
-
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0] ?? null;
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const tagName = target?.tagName?.toLowerCase();
-      const isEditable =
-        target?.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select';
-      if (isEditable) {
-        return;
-      }
-      if (!activeTabId) {
-        return;
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'e') {
-        event.preventDefault();
-        handleToggleExpand(interactionActivation.current ?? activeTabId);
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [activeTabId, handleToggleExpand]);
 
   const renderSessionActions = useCallback(
     (tab: CodeTab) => (
@@ -1574,271 +883,127 @@ export const CodeDeck = memo(() => {
     }
   }
   const activeSidecar = activeTab ? visibleSidecarsByTab.get(activeTab.id) : undefined;
-  const tilePreferredWidths = new Map<CodeTabId, number>();
-  for (const tab of tabs) {
-    tilePreferredWidths.set(tab.id, getTabColumnWidth(tab));
-    if (visibleSidecarsByTab.has(tab.id)) {
-      tilePreferredWidths.set(`sidecar:${tab.id}`, getColumnWidth(`sidecar:${tab.id}`));
-    }
-  }
-  const tilePreferredTotal = [...tilePreferredWidths.values()].reduce((total, width) => total + width, 0);
-  const tilePanelGroupWidth = Math.max(deckViewportWidth, tilePreferredTotal);
-  const tileFillScale = tilePreferredTotal > 0 ? tilePanelGroupWidth / tilePreferredTotal : 1;
-  const tilePanelWidths = new Map<CodeTabId, number>();
-  let assignedTileWidth = 0;
-  const tileWidthEntries = [...tilePreferredWidths.entries()];
-  tileWidthEntries.forEach(([id, preferredWidth], index) => {
-    const width =
-      index === tileWidthEntries.length - 1
-        ? tilePanelGroupWidth - assignedTileWidth
-        : Math.round(preferredWidth * tileFillScale);
-    tilePanelWidths.set(id, width);
-    assignedTileWidth += width;
-  });
-  const getTilePanelWidth = (id: CodeTabId) => tilePanelWidths.get(id) ?? MIN_COLUMN_WIDTH;
-  const getTilePanelMaxWidth = (id: CodeTabId) => Math.max(MAX_COLUMN_WIDTH, getTilePanelWidth(id));
-  const tileLayoutKey = `${tabs.map((tab) => tab.id).join(':')}|${[...expandedTabIds].sort().join(':')}|${[
-    ...visibleSidecarsByTab.keys(),
-  ].join(':')}`;
-
   return (
-    <LayoutGroup>
-      <div
-        className="flex flex-col w-full h-full min-h-0 overflow-hidden bg-background"
-        onPointerDownCapture={activateInteractedTile}
-        onFocusCapture={activateInteractedTile}
-      >
-        <CodeDeckHeader
-          layoutMode={layoutMode}
-          onLayoutModeChange={handleLayoutModeChange}
-          onNewSession={handleNewSession}
-        />
+    <div className="flex flex-col w-full h-full min-h-0 overflow-hidden bg-background">
+      <CodeDeckHeader onNewSession={handleNewSession} />
 
-        {/* Archiving the last session leaves the deck genuinely empty — nothing
+      {/* Archiving the last session leaves the deck genuinely empty — nothing
                re-mints a column behind the user's back. */}
-        {tabs.length === 0 && (
-          <div className="flex-1 min-h-0 flex items-center justify-center">
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle className="text-base">No active sessions</EmptyTitle>
-                <EmptyDescription>
-                  Start a chat, or launch an app from the header. Archived sessions can be restored from the sidebar.
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                <Button variant="default" onClick={handleNewSession}>
-                  <Plus />
-                  New chat
-                </Button>
-              </EmptyContent>
-            </Empty>
-          </div>
-        )}
-        {layoutMode === 'tile' && tabs.length > 0 && (
-          <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-            <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
-              <div
-                ref={deckScrollRef}
-                className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden scrollbar-none [&::-webkit-scrollbar]:hidden [@media(max-width:540px)]:snap-x snap-mandatory [@media(max-width:540px)]:touch-pan-x"
-              >
-                <ResizablePanelGroup
-                  key={tileLayoutKey}
-                  orientation="horizontal"
-                  className="flex h-full flex-none overflow-y-hidden"
-                  style={{ width: tilePanelGroupWidth }}
-                >
-                  {tabs.map((tab, tabIndex) => {
-                    const sidecar = visibleSidecarsByTab.get(tab.id);
-                    return (
-                      <Fragment key={tab.id}>
-                        <ResizablePanel
-                          id={tab.id}
-                          defaultSize={getTilePanelWidth(tab.id)}
-                          minSize={MIN_COLUMN_WIDTH}
-                          maxSize={getTilePanelMaxWidth(tab.id)}
-                          groupResizeBehavior="preserve-relative-size"
-                          onResize={(size) => handleResizeCommit(tab.id, size.inPixels)}
-                          className="flex flex-col w-full h-full min-w-0 min-h-0 overflow-hidden relative [@media(max-width:540px)]:snap-start"
-                          data-deck-column={tab.id}
-                        >
-                          <DeckColumn
-                            tab={tab}
-                            label={resolveLabel(tab)}
-                            routineName={resolveRoutineName(tab)}
-                            routineSchedule={resolveRoutineSchedule(tab)}
-                            actions={renderSessionActions(tab)}
-                            onArchive={handleArchive}
-                            onFocus={handleFocusColumn}
-                            isExpanded={expandedTabIds.has(tab.id)}
-                            onToggleExpand={handleToggleExpand}
-                            headerActionsSlot={
-                              <OmniAgentsHeaderActionsSlot id={`code-deck-header-actions-${tab.id}`} />
-                            }
-                            hasSidecar={Boolean(sidecar)}
-                          >
-                            <TabContentSlot host={getContentHost(tab.id)} />
-                          </DeckColumn>
-                        </ResizablePanel>
-                        {sidecar && (
-                          <>
-                            <ResizableHandle
-                              className="omni-code-deck-resize-handle bg-transparent"
-                              onPointerDown={handleResizeStart}
-                              onPointerUp={handleResizeEnd}
-                              onKeyDown={handleResizeStart}
-                              onKeyUp={handleResizeEnd}
-                              onBlur={handleResizeEnd}
-                            />
-                            <ResizablePanel
-                              id={`sidecar:${tab.id}`}
-                              defaultSize={getTilePanelWidth(`sidecar:${tab.id}`)}
-                              minSize={MIN_COLUMN_WIDTH}
-                              maxSize={getTilePanelMaxWidth(`sidecar:${tab.id}`)}
-                              groupResizeBehavior="preserve-relative-size"
-                              onResize={(size) => handleResizeCommit(`sidecar:${tab.id}`, size.inPixels)}
-                              className="flex flex-col w-full h-full min-w-0 min-h-0 overflow-hidden relative [@media(max-width:540px)]:snap-start"
-                            >
-                              <SidecarColumn
-                                apps={sidecar.apps}
-                                activeAppId={sidecar.activeAppId}
-                                availableApps={sidecar.availableApps}
-                                getAppHost={(appId) => getSidecarHost(tab.id, appId)}
-                                onActivate={(appId) => handleActivateSidecarApp(tab.id, appId)}
-                                onCloseApp={(appId) => handleCloseSidecarApp(tab.id, appId)}
-                                onOpenApp={(appId) => handleOpenSidecarApp(tab.id, appId)}
-                                onReorderApps={(appIds) => handleReorderSidecarApps(tab.id, appIds)}
-                                isExpanded={expandedTabIds.has(`sidecar:${tab.id}`)}
-                                onToggleExpand={() => handleToggleExpand(`sidecar:${tab.id}`)}
-                              />
-                            </ResizablePanel>
-                          </>
-                        )}
-                        {tabIndex < tabs.length - 1 && (
-                          <ResizableHandle
-                            className="omni-code-deck-resize-handle bg-transparent"
-                            onPointerDown={handleResizeStart}
-                            onPointerUp={handleResizeEnd}
-                            onKeyDown={handleResizeStart}
-                            onKeyUp={handleResizeEnd}
-                            onBlur={handleResizeEnd}
-                          />
-                        )}
-                      </Fragment>
-                    );
-                  })}
-                </ResizablePanelGroup>
-              </div>
-            </SortableContext>
-          </DndContext>
-        )}
-        {layoutMode === 'tile' && (
-          <DeckMap tabs={tabs} currentTabId={pagerTabId} resolveLabel={resolveLabel} onSelect={scrollToColumn} />
-        )}
-        {layoutMode === 'focus' && tabs.length > 0 && (
-          <div className="flex-1 min-h-0 flex flex-col [@media(min-width:541px)]:flex-row">
-            <ResizablePanelGroup
-              key={`focus:${activeTab?.id ?? 'none'}:${activeSidecar ? 'split' : 'chat'}`}
-              orientation={viewportWidth <= SNAP_SCROLL_WIDTH ? 'vertical' : 'horizontal'}
-              className="flex-1 min-w-0 min-h-0"
+      {tabs.length === 0 && (
+        <div className="flex-1 min-h-0 flex items-center justify-center">
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle className="text-base">No active sessions</EmptyTitle>
+              <EmptyDescription>
+                Start a chat, or launch an app from the header. Archived sessions can be restored from the sidebar.
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              <Button variant="default" onClick={handleNewSession}>
+                <Plus />
+                New chat
+              </Button>
+            </EmptyContent>
+          </Empty>
+        </div>
+      )}
+      {tabs.length > 0 && (
+        <div className="flex-1 min-h-0 flex flex-col [@media(min-width:541px)]:flex-row">
+          <ResizablePanelGroup
+            key={`focus:${activeTab?.id ?? 'none'}:${activeSidecar ? 'split' : 'chat'}`}
+            orientation={viewportWidth <= PHONE_WIDTH ? 'vertical' : 'horizontal'}
+            className="flex-1 min-w-0 min-h-0"
+          >
+            <ResizablePanel
+              id={`focus:${activeTab?.id ?? 'none'}`}
+              defaultSize={activeSidecar ? '50%' : '100%'}
+              minSize={activeSidecar ? '30%' : undefined}
+              className="relative flex-1 min-w-0 min-h-0"
             >
-              <ResizablePanel
-                id={`focus:${activeTab?.id ?? 'none'}`}
-                defaultSize={activeSidecar ? '50%' : '100%'}
-                minSize={activeSidecar ? '30%' : undefined}
-                className="relative flex-1 min-w-0 min-h-0"
-              >
-                {tabs.map((tab) => {
-                  return (
-                    <CodeSessionPane
-                      key={tab.id}
-                      tab={tab}
-                      label={resolveLabel(tab)}
-                      routineName={resolveRoutineName(tab)}
-                      routineSchedule={resolveRoutineSchedule(tab)}
-                      actions={renderSessionActions(tab)}
-                      onArchive={handleArchive}
-                      isVisible={tab.id === activeTab?.id}
-                      content={<TabContentSlot host={getContentHost(tab.id)} />}
-                    />
-                  );
-                })}
-              </ResizablePanel>
-              {activeTab && activeSidecar && (
-                <>
-                  <ResizableHandle withHandle />
-                  <ResizablePanel
-                    id={`focus-sidecar:${activeTab.id}`}
-                    defaultSize="50%"
-                    minSize="30%"
-                    className="flex-1 min-w-0 min-h-0"
-                  >
-                    <SidecarColumn
-                      apps={activeSidecar.apps}
-                      activeAppId={activeSidecar.activeAppId}
-                      availableApps={activeSidecar.availableApps}
-                      getAppHost={(appId) => getSidecarHost(activeTab.id, appId)}
-                      onActivate={(appId) => handleActivateSidecarApp(activeTab.id, appId)}
-                      onCloseApp={(appId) => handleCloseSidecarApp(activeTab.id, appId)}
-                      onOpenApp={(appId) => handleOpenSidecarApp(activeTab.id, appId)}
-                      onReorderApps={(appIds) => handleReorderSidecarApps(activeTab.id, appIds)}
-                      isExpanded={expandedTabIds.has(`sidecar:${activeTab.id}`)}
-                      onToggleExpand={() => handleToggleExpand(`sidecar:${activeTab.id}`)}
-                      canExpand={false}
-                      presentation="focus"
-                    />
-                  </ResizablePanel>
-                </>
-              )}
-            </ResizablePanelGroup>
-          </div>
-        )}
-        {sessionTabs.map((tab) => {
-          const tile = layoutMode === 'tile';
-          return createPortal(
-            <CodeTabContent
-              tab={tab}
-              isVisible={tile || tab.id === activeTab?.id}
-              activeApp={sidecarStateByTab.get(tab.id)?.activeAppId ?? 'chat'}
-              onActiveAppChange={(app) => handleOpenSidecarApp(tab.id, app)}
-              uiMinimal
-              headerActionsTargetId={tile ? `code-deck-header-actions-${tab.id}` : undefined}
-              headerActionsCompact
+              {tabs.map((tab) => {
+                return (
+                  <CodeSessionPane
+                    key={tab.id}
+                    tab={tab}
+                    label={resolveLabel(tab)}
+                    routineName={resolveRoutineName(tab)}
+                    routineSchedule={resolveRoutineSchedule(tab)}
+                    actions={renderSessionActions(tab)}
+                    onArchive={handleArchive}
+                    isVisible={tab.id === activeTab?.id}
+                    content={<TabContentSlot host={getContentHost(tab.id)} />}
+                  />
+                );
+              })}
+            </ResizablePanel>
+            {activeTab && activeSidecar && (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel
+                  id={`focus-sidecar:${activeTab.id}`}
+                  defaultSize="50%"
+                  minSize="30%"
+                  className="flex-1 min-w-0 min-h-0"
+                >
+                  <SidecarColumn
+                    apps={activeSidecar.apps}
+                    activeAppId={activeSidecar.activeAppId}
+                    availableApps={activeSidecar.availableApps}
+                    getAppHost={(appId) => getSidecarHost(activeTab.id, appId)}
+                    onActivate={(appId) => handleActivateSidecarApp(activeTab.id, appId)}
+                    onCloseApp={(appId) => handleCloseSidecarApp(activeTab.id, appId)}
+                    onOpenApp={(appId) => handleOpenSidecarApp(activeTab.id, appId)}
+                    onReorderApps={(appIds) => handleReorderSidecarApps(activeTab.id, appIds)}
+                  />
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
+        </div>
+      )}
+      {sessionTabs.map((tab) =>
+        createPortal(
+          <CodeTabContent
+            tab={tab}
+            isVisible={tab.id === activeTab?.id}
+            activeApp={sidecarStateByTab.get(tab.id)?.activeAppId ?? 'chat'}
+            onActiveAppChange={(app) => handleOpenSidecarApp(tab.id, app)}
+            uiMinimal
+            filesHost={getFilesHost(tab.id)}
+            gitHost={getGitHost(tab.id)}
+            reviewHost={getReviewHost(tab.id)}
+          />,
+
+          getContentHost(tab.id),
+          `tab-content-${tab.id}`
+        )
+      )}
+      {sessionTabs.flatMap((tab) => {
+        const sidecar = sidecarStateByTab.get(tab.id);
+        if (!sidecar) {
+          return [];
+        }
+        const agentStatus = statuses[tab.id];
+        const runtime = agentStatus?.type === 'running' ? agentStatus.data : undefined;
+        return sidecar.apps.map((app) =>
+          createPortal(
+            <SidecarBody
+              app={app}
+              originTabId={tab.id}
+              sessionId={tab.sessionId}
               filesHost={getFilesHost(tab.id)}
               gitHost={getGitHost(tab.id)}
               reviewHost={getReviewHost(tab.id)}
+              runtime={runtime}
+              previewUrl={previewUrls[tab.id]}
+              onPreviewUrlChange={(url) => handlePreviewUrlChange(tab.id, url)}
             />,
-
-            getContentHost(tab.id),
-            `tab-content-${tab.id}`
-          );
-        })}
-        {sessionTabs.flatMap((tab) => {
-          const sidecar = sidecarStateByTab.get(tab.id);
-          if (!sidecar) {
-            return [];
-          }
-          const agentStatus = statuses[tab.id];
-          const runtime = agentStatus?.type === 'running' ? agentStatus.data : undefined;
-          return sidecar.apps.map((app) =>
-            createPortal(
-              <SidecarBody
-                app={app}
-                originTabId={tab.id}
-                sessionId={tab.sessionId}
-                filesHost={getFilesHost(tab.id)}
-                gitHost={getGitHost(tab.id)}
-                reviewHost={getReviewHost(tab.id)}
-                runtime={runtime}
-                previewUrl={previewUrls[tab.id]}
-                onPreviewUrlChange={(url) => handlePreviewUrlChange(tab.id, url)}
-              />,
-              getSidecarHost(tab.id, app.id),
-              `sidecar-content-${tab.id}-${app.id}`
-            )
-          );
-        })}
-      </div>
-    </LayoutGroup>
+            getSidecarHost(tab.id, app.id),
+            `sidecar-content-${tab.id}-${app.id}`
+          )
+        );
+      })}
+    </div>
   );
 });
 CodeDeck.displayName = 'CodeDeck';

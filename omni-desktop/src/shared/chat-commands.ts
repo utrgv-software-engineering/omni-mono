@@ -2,10 +2,10 @@ import { nanoid } from 'nanoid';
 
 import { pruneConversations, upsertConversation } from '@/lib/chat-conversations';
 import { uuidv4 } from '@/lib/uuid';
-import type { ChatConversation, CodeLayoutMode, CodeTab, CodeTabId, ProjectId, StoreData } from '@/shared/types';
+import type { ChatConversation, CodeTab, CodeTabId, ProjectId, StoreData } from '@/shared/types';
 import { isChatColumn } from '@/shared/types';
 
-type ChatState = Pick<StoreData, 'codeTabs' | 'chatConversations' | 'activeCodeTabId' | 'codeLayoutMode'>;
+type ChatState = Pick<StoreData, 'codeTabs' | 'chatConversations' | 'activeCodeTabId'>;
 
 /** Synchronous, side-effect-free command reducer. Only the authority commits its patch. */
 function operations(initial: StoreData) {
@@ -78,42 +78,6 @@ function operations(initial: StoreData) {
       if (tabId === '__launcher__' || (persistedStoreApi.getKey('codeTabs') ?? []).some((tab) => tab.id === tabId)) {
         persistedStoreApi.setKey('activeCodeTabId', tabId);
       }
-    },
-    setLayoutMode: (mode: CodeLayoutMode) => {
-      persistedStoreApi.setKey('codeLayoutMode', mode);
-    },
-    setSpacesColumnLayouts: (layouts: Record<string, { width?: number | null; expanded?: boolean }>): void => {
-      const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((tab) => {
-        const column = layouts[tab.id];
-        const sidecar = layouts[`sidecar:${tab.id}`];
-        if (!column && !sidecar) {
-          return tab;
-        }
-
-        const next = { ...tab };
-        if (column) {
-          if (column.width === null) {
-            delete next.spacesWidth;
-          } else if (column.width !== undefined) {
-            next.spacesWidth = column.width;
-          }
-          if (column.expanded !== undefined) {
-            next.spacesExpanded = column.expanded;
-          }
-        }
-        if (sidecar) {
-          if (sidecar.width === null) {
-            delete next.spacesSidecarWidth;
-          } else if (sidecar.width !== undefined) {
-            next.spacesSidecarWidth = sidecar.width;
-          }
-          if (sidecar.expanded !== undefined) {
-            next.spacesSidecarExpanded = sidecar.expanded;
-          }
-        }
-        return next;
-      });
-      persistedStoreApi.setKey('codeTabs', tabs);
     },
     reorderTabs: (nextTabs: CodeTabId[]) => {
       // Reorder identities only. Preserve new/filtered-out tabs, ignore closed

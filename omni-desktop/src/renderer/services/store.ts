@@ -30,7 +30,6 @@ const getDefaults = (): StoreData => ({
   codeTabs: [],
   chatConversations: [],
   activeCodeTabId: null,
-  codeLayoutMode: 'focus',
   scheduledTasks: [],
   skillSources: {},
   installedBundles: {},

@@ -42,9 +42,6 @@ export const codeApi = {
     finishRemoval(args[0]);
   },
   setActiveTab: (...args: Parameters<ChatOperations['setActiveTab']>) => run('setActiveTab', ...args),
-  setLayoutMode: (...args: Parameters<ChatOperations['setLayoutMode']>) => run('setLayoutMode', ...args),
-  setSpacesColumnLayouts: (...args: Parameters<ChatOperations['setSpacesColumnLayouts']>) =>
-    run('setSpacesColumnLayouts', ...args),
   reorderTabs: (tabs: CodeTab[]) =>
     run(
       'reorderTabs',
