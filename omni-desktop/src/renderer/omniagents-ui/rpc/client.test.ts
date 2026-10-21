@@ -706,12 +706,12 @@ describe('RPCClient generated protocol integration', () => {
 
   it('omits params for methods whose canonical params are all optional', async () => {
     const { client, socket } = await connectedClient();
-    const response = client.listSessions();
+    const response = client.getAgentInfo();
     const request = JSON.parse(socket.sent[0]!) as { id: number; params?: unknown };
 
     expect(request).not.toHaveProperty('params');
-    socket.receive({ jsonrpc: '2.0', id: request.id, result: [] });
-    await expect(response).resolves.toEqual([]);
+    socket.receive({ jsonrpc: '2.0', id: request.id, result: {} });
+    await expect(response).resolves.toEqual({});
     client.dispose();
   });
 

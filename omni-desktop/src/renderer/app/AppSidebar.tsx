@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { Beaker, CalendarClock, Columns3, Ellipsis, Puzzle, Search, Settings, SquarePen } from 'lucide-react';
+import { Beaker, CalendarClock, Ellipsis, Puzzle, Search, Settings, SquarePen } from 'lucide-react';
 import { memo, useCallback, useEffect } from 'react';
 
 import { OmniLogo } from '@/renderer/common/AsciiLogo';
@@ -7,8 +7,8 @@ import { cn } from '@/renderer/ds/cn';
 import { Button } from '@/renderer/ds/ui/button';
 /**
  * The unified app sidebar (desktop): one persistent nav replacing the rail
- * and the per-tab sidebars. Three zones — fixed surface rows (New chat,
- * Spaces); container sections (Projects, Recents); and a pinned management
+ * and the per-tab sidebars. Three zones — a fixed New chat row;
+ * container sections (Projects, Recents); and a pinned management
  * cluster (Routines, Plugins, Settings).
  *
  * On mobile the same nav is an overlay DRAWER (the ChatGPT/Gmail model):
@@ -80,10 +80,6 @@ export const AppSidebar = memo(() => {
     void codeApi.openFreshChat();
     setMode('chat');
   }, [setMode]);
-  const handleSpaces = useCallback(() => {
-    codeApi.setLayoutMode('tile');
-    setMode('chat');
-  }, [setMode]);
   const handleRoutines = useCallback(() => {
     goToRoutine();
     closeDrawer();
@@ -129,16 +125,6 @@ export const AppSidebar = memo(() => {
                 <SidebarMenuButton onClick={handleNewChat} tooltip="New chat">
                   <SquarePen />
                   <span>New chat</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={mode === 'chat' && store.codeLayoutMode === 'tile'}
-                  onClick={handleSpaces}
-                  tooltip="Spaces"
-                >
-                  <Columns3 />
-                  <span>Spaces</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

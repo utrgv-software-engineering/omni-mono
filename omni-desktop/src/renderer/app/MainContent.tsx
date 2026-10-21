@@ -72,7 +72,7 @@ export const MainContent = memo(() => {
     // The Projects surface (layout mode 'work').
     { key: 'work', Component: ProjectsSurface },
     // Chat IS the deck since the tab merge: chat columns and work sessions
-    // share one surface (Spaces/Focus), so there's a single panel for both.
+    // share one surface, so there's a single panel for both.
     { key: 'chat', Component: Code },
     { key: 'routines', Component: ScheduledTasks },
     { key: 'plugins', Component: PluginsView },

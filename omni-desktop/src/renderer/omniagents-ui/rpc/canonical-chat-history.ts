@@ -6,7 +6,6 @@ import type {
   PlanStep,
   RunDiffFile,
 } from '@/shared/chat-types';
-import { OmniagentsRpcError } from '@/shared/omniagents-rpc';
 
 import type { ConversationItem } from './conversation';
 import { mcpArtifact } from './mcp-artifact';
@@ -368,20 +367,6 @@ export function adaptCanonicalConversationItem(item: ConversationItem): MessageI
     default:
       return structured(item, `Conversation item: ${item.kind}`);
   }
-}
-
-export function isCanonicalConversationUnsupported(error: unknown): boolean {
-  if (!(error instanceof OmniagentsRpcError)) {
-    return false;
-  }
-  if (error.code === -32601) {
-    return true;
-  }
-  if (error.code !== -32013 || !error.data || typeof error.data !== 'object') {
-    return false;
-  }
-  const data = error.data as Record<string, unknown>;
-  return data.kind === 'capability_not_negotiated' || data.kind === 'operation_unsupported';
 }
 
 /** Tool-backed MCP surfaces are derived views of durable tool metadata. */

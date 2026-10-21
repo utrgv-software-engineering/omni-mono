@@ -166,7 +166,7 @@ export const ProjectSessionRows = memo(function ProjectSessionRows({
   const historyCount = projectEntries.filter((entry) => entry.kind === 'history').length;
   const historyHidden = Math.max(0, historyCount - historyVisible);
   const activeTabId = store.activeCodeTabId ?? null;
-  const selectedKey = store.layoutMode === 'chat' && store.codeLayoutMode === 'focus' ? activeTabId : null;
+  const selectedKey = store.layoutMode === 'chat' ? activeTabId : null;
 
   const handleActivate = useCallback(
     (entry: SessionEntry) => {
@@ -380,7 +380,7 @@ export function RecentsSection({
 
   const activeTabId = store.activeCodeTabId ?? tabs[0]?.id ?? null;
   // Selection mirrors what fills the plane (see module doc).
-  const selectedKey = store.layoutMode === 'chat' && store.codeLayoutMode === 'focus' ? activeTabId : null;
+  const selectedKey = store.layoutMode === 'chat' ? activeTabId : null;
 
   const raiseDeck = useCallback(() => {
     if (persistedStoreApi.$atom.get().layoutMode !== 'chat') {
@@ -389,8 +389,7 @@ export function RecentsSection({
   }, []);
 
   // "Take me to this conversation" — whether that means activating a column
-  // or materializing one from retained history is the app's business. Layout
-  // mode is preserved: in Spaces the deck scrolls the column into view.
+  // or materializing one from retained history is the app's business.
   const handleActivate = useCallback(
     (entry: SessionEntry) => {
       if (entry.kind === 'open') {

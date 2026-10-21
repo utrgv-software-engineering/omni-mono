@@ -28,8 +28,6 @@ type CodeWorkspaceLayoutProps = {
   activeApp?: AppId;
   onActiveAppChange?: (app: AppId) => void;
   onReady?: () => void;
-  headerActionsTargetId?: string;
-  headerActionsCompact?: boolean;
   composerExtras?: ReactNode;
   onClientToolCall?: ClientToolCallHandler;
   pendingPlan?: import('@/shared/chat-types').PlanItem | null;
@@ -90,8 +88,6 @@ export const CodeWorkspaceLayout = memo(
     activeApp = 'chat',
     onActiveAppChange,
     onReady,
-    headerActionsTargetId,
-    headerActionsCompact,
     composerExtras,
     onClientToolCall,
     pendingPlan,
@@ -216,8 +212,6 @@ export const CodeWorkspaceLayout = memo(
               variables={variables}
               voiceVariables={voiceVariables}
               onReady={handleUiReady}
-              headerActionsTargetId={headerActionsTargetId}
-              headerActionsCompact={headerActionsCompact}
               composerExtras={composerExtras}
               onClientToolCall={onClientToolCall}
               onController={handleController}

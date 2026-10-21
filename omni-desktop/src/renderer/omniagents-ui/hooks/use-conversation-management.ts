@@ -30,22 +30,21 @@ export function useConversationManagement(client: RPCClient, connected: boolean)
   const supported = connected && client.supportsExperimentalFeature('conversationOrganization');
 
   const refresh = useCallback(async () => {
+    if (!supported) {
+      return;
+    }
     try {
-      if (client.supportsExperimentalOperation('list_threads')) {
-        setSessions(
-          await loadCanonicalSessionList(client, MAX_CHAT_CONVERSATIONS, {
-            status: 'active',
-            organization,
-          })
-        );
-        return;
-      }
-      setSessions(await client.listSessions({ limit: MAX_CHAT_CONVERSATIONS }));
+      setSessions(
+        await loadCanonicalSessionList(client, MAX_CHAT_CONVERSATIONS, {
+          status: 'active',
+          organization,
+        })
+      );
     } catch {
       // Session refresh is background recovery. Keep the last good projection
       // instead of replacing the sidebar with an error or an empty list.
     }
-  }, [client, organization]);
+  }, [client, organization, supported]);
 
   useEffect(() => () => organization.dispose(), [organization]);
 

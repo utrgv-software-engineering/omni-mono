@@ -25,8 +25,6 @@ type OmniAgentsAppProps = {
   /** One-tap example tasks shown on the empty conversation. */
   suggestions?: ReadonlyArray<{ label: string; prompt: string }>;
   onReady?: () => void;
-  headerActionsTargetId?: string;
-  headerActionsCompact?: boolean;
   pendingMessages?: PendingMessage[];
   onPendingMessagesFlushed?: () => void;
   /** Extra composer chips (e.g. attach-project) rendered after the sandbox chip. */
@@ -66,8 +64,6 @@ export const OmniAgentsApp = ({
   greeting,
   suggestions,
   onReady,
-  headerActionsTargetId,
-  headerActionsCompact,
   pendingMessages,
   onPendingMessagesFlushed,
   composerExtras,
@@ -104,8 +100,6 @@ export const OmniAgentsApp = ({
           greeting={greeting}
           suggestions={suggestions}
           onReady={onReady}
-          headerActionsTargetId={headerActionsTargetId}
-          headerActionsCompact={headerActionsCompact}
           pendingMessages={pendingMessages}
           onPendingMessagesFlushed={onPendingMessagesFlushed}
           composerExtras={composerExtras}

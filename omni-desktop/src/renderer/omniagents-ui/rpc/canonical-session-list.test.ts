@@ -1,7 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { OmniagentsRpcError } from '@/shared/omniagents-rpc';
-
 import {
   type CanonicalSessionListTransport,
   loadCanonicalSessionList,
@@ -44,65 +42,15 @@ describe('canonical session list', () => {
     });
   });
 
-  it('does not rematerialize legacy identities already present canonically', async () => {
+  it('lists threads from the runtime index', async () => {
     const transport = {
-      request: vi.fn(async (method: string) =>
-        method === 'get_thread' ? thread() : { threads: [thread()], next_cursor: null, has_more: false, total: 1 }
-      ),
+      request: vi.fn().mockResolvedValue({ threads: [thread()], next_cursor: null, has_more: false, total: 1 }),
       on: vi.fn(() => () => {}),
-      listSessions: vi
-        .fn()
-        .mockResolvedValue([{ id: 'thread-1', created_at: 'now', archived: false, message_count: 3 }]),
-    } as unknown as CanonicalSessionListTransport;
-
-    await expect(loadCanonicalSessionList(transport, 50)).resolves.toHaveLength(1);
-    expect(transport.listSessions).toHaveBeenCalledWith({ limit: 50 });
-    expect(transport.request).not.toHaveBeenCalledWith('get_thread', { thread_id: 'thread-1' });
-    expect(transport.request).toHaveBeenCalledWith('list_threads', { limit: 50, order: 'desc' });
-  });
-
-  it('retains a legacy row when its bounded materialization fails', async () => {
-    const legacy = [
-      { id: 'thread-1', created_at: 'now', archived: false, message_count: 3 },
-      { id: 'legacy-only', created_at: 'then', archived: false, message_count: 1 },
-    ];
-    const transport = {
-      request: vi.fn(async (method: string, params: { thread_id?: string }) => {
-        if (method === 'get_thread') {
-          if (params.thread_id === 'legacy-only') {
-            throw new Error('temporary projection failure');
-          }
-          return thread();
-        }
-        return { threads: [thread()], next_cursor: null, has_more: false, total: 1 };
-      }),
-      on: vi.fn(() => () => {}),
-      listSessions: vi.fn().mockResolvedValue(legacy),
     } as unknown as CanonicalSessionListTransport;
 
     await expect(loadCanonicalSessionList(transport, 2, { status: 'active' })).resolves.toEqual([
       expect.objectContaining({ id: 'thread-1', title: 'Canonical title' }),
-      legacy[1],
     ]);
-    expect(transport.request).toHaveBeenCalledWith('list_threads', {
-      status: 'active',
-      limit: 2,
-      order: 'desc',
-    });
-  });
-
-  it('falls back only for an explicit unsupported operation', async () => {
-    const legacy = [{ id: 'legacy', created_at: 'now', archived: false, message_count: 1 }];
-    const transport = {
-      request: vi.fn().mockRejectedValue(new OmniagentsRpcError({ code: -32601, message: 'missing' })),
-      on: vi.fn(() => () => {}),
-      listSessions: vi.fn().mockResolvedValue(legacy),
-    } as unknown as CanonicalSessionListTransport;
-
-    await expect(loadCanonicalSessionList(transport, 10)).resolves.toEqual(legacy);
-    expect(transport.listSessions).toHaveBeenCalledWith({ limit: 10 });
-
-    (transport.request as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('network failed'));
-    await expect(loadCanonicalSessionList(transport, 10)).rejects.toThrow('network failed');
+    expect(transport.request).toHaveBeenCalledWith('list_threads', { status: 'active', limit: 2, order: 'desc' });
   });
 });
