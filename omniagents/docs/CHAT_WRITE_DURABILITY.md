@@ -179,8 +179,7 @@ Coverage includes real SDK function execution with injected claim/result write
 failures; the actual MCP adapter invocation and original metadata resolver;
 concurrent/out-of-order MCP UI results; SQLite/PostgreSQL competing claims and
 late completion; and subprocess death during claim, after claim and after result
-commit. Launcher proof reports are recorded in `docs/chat-adversarial-audit.md`
-in the sibling launcher repository.
+commit.
 
 These guards are deliberately conservative, not an exactly-once external-effect
 protocol. Death after claim but before invocation is indistinguishable from death

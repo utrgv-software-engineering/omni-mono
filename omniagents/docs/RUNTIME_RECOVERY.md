@@ -82,8 +82,7 @@ without repair, stale context refresh, deliberate context clearing, exact durabl
 result recovery and repeated call IDs in model input. Ownership store contracts
 run on both SQLite and PostgreSQL.
 
-Launcher proof commands, results and visual artifacts are recorded in the sibling
-launcher repository's `docs/chat-adversarial-audit.md`. Azure remains excluded.
+Azure remains excluded.
 All crash tests use disposable state; original historical databases are untouched.
 
 Final results: 1,261 broad backend tests passed (no skips); 97 final focused

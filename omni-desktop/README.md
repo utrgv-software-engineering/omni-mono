@@ -9,7 +9,6 @@ The launcher installs the Omni Code runtime, manages its Python environment, and
 - **One-click install** of the Omni Code runtime (Python + venv managed automatically via `uv`)
 - **Agent chats** — focus or tile layouts, with Files, Git, Review, Terminal, and Browser alongside each chat
 - **Projects** — group chats around local folders and git repositories
-- **Dev console** — built-in terminal with automatic venv activation
 - **Auto-updates** — the launcher checks for updates on startup
 
 ## Requirements
@@ -19,8 +18,6 @@ The launcher installs the Omni Code runtime, manages its Python environment, and
 ## Getting Started
 
 ### Download
-
-<!-- TODO: Update links when releases are published -->
 
 Download the latest release from [GitHub Releases](https://github.com/ericmichael/omni-desktop/releases).
 

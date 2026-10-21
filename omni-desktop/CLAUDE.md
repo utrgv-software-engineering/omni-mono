@@ -70,7 +70,7 @@ Lifecycle pattern: each manager is a factory returning `[instance, cleanup]`. Re
 - `ProcessManager` (`process-manager.ts`) — all agent processes (chat + code tabs) keyed by string ID, driven by `AgentProcess` (`agent-process.ts`)
 - `ProjectManager` (`project-manager.ts`) — projects (named sets of sources plus their chats), persisted as `StoreData.projects`; seeds the Personal project. `projects-import.ts` is the one-time import from the retired `projects.db`.
 - `OmniInstallManager` — Python + venv via bundled `uv` binary
-- `ConsoleManager` — proxies `terminal:*` IPC into `omni serve`'s WebSocket so terminals run in the agent's environment via `omniagents.rpc.terminal_backends.SessionPtyBackend`. The shell lives in the agent process (one PTY per `terminal_id`); main is a thin transport. See `src/main/terminal-proxy.ts` for the WS plumbing and `omni-code/server_functions/terminal.py` for the server-side entry points (`terminal.create`, `terminal.close`).
+- `ConsoleManager` — proxies `terminal:*` IPC into `omni serve`'s WebSocket so terminals run in the agent's environment via `omniagents.rpc.terminal_backends.SessionPtyBackend`. The shell lives in the agent process (one PTY per `terminal_id`); main is a thin transport. See `src/main/terminal-proxy.ts` for the WS plumbing and `omniagents/builtin/server_functions/terminal.py` (in the omniagents package) for the server-side entry points (`terminal.create`, `terminal.close`).
 - `AppControlManager`
 
 Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWindow` (Electron) / `sendToAll` (server). Store changes fan out on the `store:changed` channel.
@@ -83,7 +83,7 @@ Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWin
 
 - `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `Agents`, `AppControl`, `Banner`, `Browser`, `Code`, `CommandPalette`, `Console`, `Files`, `Gallery`, `Git`, `Jobs`, `Omni`, `Onboarding`, `Plugins`, `Projects`, `Review`, `ScheduledTasks`, `SettingsModal`, `Toast`, `Voice`, `XTermLogViewer`.
 - `src/renderer/ds/` — design system primitives (Fluent + Radix + custom)
-- `src/renderer/services/` — cross-cutting: `ipc`, `store` (mirrors main-process store into an atom), `status` (polls `main-process:get-status`), `navigation`, `agent-process`, `config`, `dev`
+- `src/renderer/services/` — cross-cutting: `ipc`, `store` (mirrors main-process store into an atom), `status` (polls `main-process:get-status`), `agent-process`, `session-control`, `config`, `dev`
 - `src/renderer/common/` — shared UI (webview, layouts)
 - `src/renderer/transport/` — Electron and WS transport adapters
 
@@ -120,4 +120,4 @@ See the repository root `CLAUDE.md`: work happens on `dev`, `main` holds release
 
 - Vitest with jsdom. Tests colocated as `*.test.ts(x)`. Coverage via `@vitest/coverage-v8`.
 - `vitest.config.ts` aliases `electron` → `src/server/electron-shim.ts` so main-process modules import cleanly without an Electron runtime.
-- There is no separate integration test suite — unit tests exercise managers directly through the shim.
+- Unit tests exercise managers directly through the shim. User-story coverage lives in the Playwright suite under `tests/e2e/` (see `tests/e2e/README.md` and `AGENTS.md`).
