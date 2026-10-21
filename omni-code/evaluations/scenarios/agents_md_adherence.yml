@@ -1,0 +1,76 @@
+scenarios:
+  # ── Naming conventions ──────────────────────────────────────────
+
+  - name: follows_snake_case_and_type_hints
+    prompt: |
+      we keep getting users signing up with burner emails (mailinator,
+      guerrillamail etc). can you add a validator in a new file
+      src/utils/validators.py that checks for @ symbol, valid domain,
+      and rejects disposable email providers?
+    fixture: python_fastapi
+    judges: [adherence]
+    expect:
+      conventions:
+        - "snake_case function names"
+        - "type hints on all parameters and return values"
+        - "Google-style docstrings"
+    measures:
+      - agents_md_in_instructions
+      - adherence_agent
+
+  # ── Import ordering ─────────────────────────────────────────────
+
+  - name: follows_import_ordering
+    prompt: |
+      need an email service for sending transactional emails (welcome
+      emails, password resets). create src/services/email_service.py
+      using smtplib and pydantic for the payload validation
+    fixture: python_fastapi
+    judges: [adherence]
+    expect:
+      conventions:
+        - "import ordering: stdlib then third-party then local"
+        - "blank lines between import groups"
+    measures:
+      - agents_md_in_instructions
+      - adherence_agent
+
+  # ── Testing conventions ─────────────────────────────────────────
+
+  - name: uses_pytest_not_unittest
+    prompt: |
+      the User model in src/models/user.py has zero test coverage
+      right now. can you write tests for it? especially the
+      display_name method and the optional bio field
+    fixture: python_fastapi
+    judges: [adherence]
+    expect:
+      conventions:
+        - "uses pytest (not unittest)"
+        - "test file in tests/ directory"
+        - "test function names match pattern test_<what>_<condition>"
+    measures:
+      - agents_md_in_instructions
+      - adherence_agent
+
+  # ── Multiple conventions at once ────────────────────────────────
+
+  - name: full_convention_adherence
+    prompt: |
+      we need a way to soft-delete users instead of hard-deleting them.
+      add a POST /users/{user_id}/deactivate endpoint that sets
+      is_active to false. needs the route handler, service function,
+      and tests. the deactivate_user function in user_service.py
+      already exists but theres no route or test for it
+    fixture: python_fastapi
+    judges: [adherence]
+    expect:
+      conventions:
+        - "snake_case"
+        - "type hints"
+        - "docstrings"
+        - "pytest for tests"
+        - "import ordering"
+    measures:
+      - agents_md_in_instructions
+      - adherence_agent

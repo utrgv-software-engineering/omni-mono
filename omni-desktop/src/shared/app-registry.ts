@@ -1,0 +1,178 @@
+export type AppId = string;
+
+export type AppKind =
+  | 'builtin-chat'
+  | 'builtin-code'
+  | 'builtin-desktop'
+  | 'builtin-browser'
+  | 'builtin-files'
+  | 'builtin-git'
+  | 'builtin-review'
+  | 'builtin-agents'
+  | 'builtin-jobs'
+  | 'builtin-terminal'
+  | 'webview';
+
+export type AppScope = 'always' | 'sandbox';
+export type SandboxUrlKey = 'codeServerUrl' | 'noVncUrl';
+
+export type AppDescriptor = {
+  id: AppId;
+  label: string;
+  icon: string;
+  kind: AppKind;
+  url?: string;
+  scope: AppScope;
+  sandboxUrlKey?: SandboxUrlKey;
+  builtin: boolean;
+  order: number;
+  /**
+   * When true, the app appears in a code session's `EnvironmentDock`.
+   * When false, the app is available only as a standalone global column (via
+   * the app launcher). Built-ins default to true.
+   */
+  columnScoped: boolean;
+};
+
+export type CustomAppEntry = {
+  id: AppId;
+  label: string;
+  icon: string;
+  url: string;
+  order: number;
+  /**
+   * When true, this custom app appears in every code session's dock and can
+   * be driven column-scoped by agents in that session. When false (default),
+   * the app is global-only — accessible as its own standalone deck column
+   * via the app launcher, but hidden from the dock.
+   */
+  columnScoped?: boolean;
+};
+
+export const BUILTIN_APPS: AppDescriptor[] = [
+  {
+    id: 'chat',
+    label: 'Chat',
+    icon: 'MessageCircle',
+    kind: 'builtin-chat',
+    scope: 'always',
+    builtin: true,
+    order: 0,
+    columnScoped: true,
+  },
+  {
+    id: 'code',
+    label: 'Code',
+    icon: 'Code',
+    kind: 'builtin-code',
+    scope: 'sandbox',
+    builtin: true,
+    order: 10,
+    sandboxUrlKey: 'codeServerUrl',
+    columnScoped: true,
+  },
+  {
+    id: 'desktop',
+    label: 'Desktop',
+    icon: 'Monitor',
+    kind: 'builtin-desktop',
+    scope: 'sandbox',
+    builtin: true,
+    order: 20,
+    sandboxUrlKey: 'noVncUrl',
+    columnScoped: true,
+  },
+  {
+    id: 'browser',
+    label: 'Browser',
+    icon: 'Globe',
+    kind: 'builtin-browser',
+    scope: 'always',
+    builtin: true,
+    order: 30,
+    columnScoped: true,
+  },
+  {
+    id: 'files',
+    label: 'Files',
+    icon: 'Folder',
+    kind: 'builtin-files',
+    scope: 'always',
+    builtin: true,
+    order: 35,
+    columnScoped: true,
+  },
+  {
+    id: 'git',
+    label: 'Git',
+    icon: 'GitBranch',
+    kind: 'builtin-git',
+    scope: 'always',
+    builtin: true,
+    order: 37,
+    columnScoped: true,
+  },
+  {
+    id: 'review',
+    label: 'Review',
+    icon: 'FileDiff',
+    kind: 'builtin-review',
+    // Read-only change review (turn record + working tree). Rides the
+    // session's RPC connection like Git — same `scope: 'always'` +
+    // empty-state approach.
+    scope: 'always',
+    builtin: true,
+    order: 38,
+    columnScoped: true,
+  },
+  {
+    id: 'agents',
+    label: 'Agents',
+    icon: 'Bot',
+    kind: 'builtin-agents',
+    // Subagent observability rides the session's RPC connection, so the
+    // surface has content only once the sandbox runs — same `scope:
+    // 'always'` + empty-state approach as Terminal below.
+    scope: 'always',
+    builtin: true,
+    order: 39,
+    columnScoped: true,
+  },
+  {
+    id: 'jobs',
+    label: 'Jobs',
+    icon: 'Activity',
+    kind: 'builtin-jobs',
+    // Background bash jobs. Same RPC-riding, empty-state-until-sandbox
+    // approach as Agents above.
+    scope: 'always',
+    builtin: true,
+    order: 40,
+    columnScoped: true,
+  },
+  {
+    id: 'terminal',
+    label: 'Terminal',
+    icon: 'SquareTerminal',
+    kind: 'builtin-terminal',
+    // Terminals route through `omni serve`'s PTY backends, so a shell
+    // exists only once an environment reporting the `pty` capability is
+    // attached. The column dock enforces that (CodeWorkspaceLayout):
+    // no environment → no icon; wasm sandboxes (no PTY) → no icon.
+    scope: 'always',
+    builtin: true,
+    order: 41,
+    columnScoped: true,
+  },
+];
+
+export function buildAppRegistry(customApps: CustomAppEntry[]): AppDescriptor[] {
+  const custom: AppDescriptor[] = customApps.map((c) => ({
+    ...c,
+    kind: 'webview' as const,
+    scope: 'always' as const,
+    builtin: false,
+    columnScoped: c.columnScoped ?? false,
+  }));
+  return [...BUILTIN_APPS, ...custom].sort((a, b) => a.order - b.order);
+}

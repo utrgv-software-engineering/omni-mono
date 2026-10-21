@@ -1,0 +1,250 @@
+<%# Booking Form %>
+<div class="min-h-screen bg-gray-50">
+  <%# Header %>
+  <div class="bg-gradient-to-r from-blue-600 to-blue-700 py-8">
+    <div class="container mx-auto px-4">
+      <h1 class="text-3xl font-bold text-white mb-2">Complete Your Booking</h1>
+      <p class="text-white/90">
+        <%= @hotel.name %> • <%= @room_type.name %>
+      </p>
+    </div>
+  </div>
+
+  <div class="container mx-auto px-4 py-8">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <%# Booking Form Column %>
+      <div class="lg:col-span-2">
+        <%= form_with model: @booking, url: public_bookings_path, local: true do |f| %>
+          <%= f.hidden_field :check_in_date %>
+          <%= f.hidden_field :check_out_date %>
+          <%= f.hidden_field :adults %>
+          <%= f.hidden_field :children, value: 0 %>
+          <%= f.hidden_field :infants, value: 0 %>
+          <%= hidden_field_tag :room_type_id, @room_type.id %>
+
+          <%# Guest Information %>
+          <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-900 mb-4">Guest Information</h2>
+            
+            <%= fields_for :guest, @guest do |guest_fields| %>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <%= guest_fields.label :first_name, class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.text_field :first_name, 
+                      required: true,
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                </div>
+                
+                <div>
+                  <%= guest_fields.label :last_name, class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.text_field :last_name, 
+                      required: true,
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                </div>
+                
+                <div>
+                  <%= guest_fields.label :email, class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.email_field :email, 
+                      required: true,
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                  <p class="text-xs text-gray-500 mt-1">We'll send your confirmation here</p>
+                </div>
+                
+                <div>
+                  <%= guest_fields.label :phone, class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.telephone_field :phone, 
+                      required: true,
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                </div>
+                
+                <div class="md:col-span-2">
+                  <%= guest_fields.label :address, "Street Address", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.text_field :address, 
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                </div>
+                
+                <div>
+                  <%= guest_fields.label :city, class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.text_field :city, 
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                </div>
+                
+                <div>
+                  <%= guest_fields.label :state, "State/Province", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.text_field :state, 
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                </div>
+                
+                <div>
+                  <%= guest_fields.label :country, class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.text_field :country, 
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                </div>
+                
+                <div>
+                  <%= guest_fields.label :postal_code, "ZIP/Postal Code", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= guest_fields.text_field :postal_code, 
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+                </div>
+              </div>
+            <% end %>
+          </div>
+
+          <%# Special Requests %>
+          <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-900 mb-4">Special Requests</h2>
+            <p class="text-sm text-gray-600 mb-2">Special requests cannot be guaranteed but we'll do our best to accommodate them.</p>
+            <%= f.text_area :special_requests, 
+                rows: 4,
+                placeholder: "E.g., late check-in, high floor, quiet room...",
+                class: "w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" %>
+          </div>
+
+          <%# Policies %>
+          <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+            <h2 class="text-xl font-bold text-gray-900 mb-4">Hotel Policies</h2>
+            <div class="space-y-3 text-sm text-gray-600">
+              <%# Check-in/out times %>
+              <div class="flex items-start">
+                <svg class="w-5 h-5 text-blue-600 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                <div>
+                  <strong>Check-in:</strong> <%= @hotel.check_in_time.strftime("%l:%M %p") %> | 
+                  <strong>Check-out:</strong> <%= @hotel.check_out_time.strftime("%l:%M %p") %>
+                </div>
+              </div>
+              
+              <%# Payment policy %>
+              <% if payment_policy = @hotel_policies&.find { |p| p.policy_type == 'payment' } %>
+                <div class="flex items-start">
+                  <svg class="w-5 h-5 text-blue-600 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path>
+                  </svg>
+                  <div><%= payment_policy.description %></div>
+                </div>
+              <% end %>
+              
+              <%# Cancellation policy %>
+              <% if @cancellation_policy %>
+                <div class="flex items-start">
+                  <svg class="w-5 h-5 text-blue-600 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                  <div>
+                    <%= @cancellation_policy.description || @cancellation_policy.cancellation_type.humanize %>
+                    <% if @cancellation_policy.free_cancellation_hours.present? %>
+                      - Free cancellation up to <%= @cancellation_policy.free_cancellation_hours %> hours before check-in.
+                    <% end %>
+                  </div>
+                </div>
+              <% elsif cancellation_hotel_policy = @hotel_policies&.find { |p| p.policy_type == 'cancellation' } %>
+                <div class="flex items-start">
+                  <svg class="w-5 h-5 text-blue-600 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                  <div><%= cancellation_hotel_policy.description %></div>
+                </div>
+              <% end %>
+              
+              <%# Other important policies %>
+              <% @hotel_policies&.select { |p| !['payment', 'cancellation', 'check_in', 'check_out'].include?(p.policy_type) }&.each do |policy| %>
+                <div class="flex items-start">
+                  <svg class="w-5 h-5 text-blue-600 mr-2 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                  </svg>
+                  <div>
+                    <strong><%= policy.title %>:</strong> <%= policy.description %>
+                  </div>
+                </div>
+              <% end %>
+              
+              <%# Fallback if no policies configured %>
+              <% if @hotel_policies.blank? && @cancellation_policy.blank? %>
+                <div>Contact hotel for detailed policy information.</div>
+              <% end %>
+            </div>
+          </div>
+
+          <%# Submit Button %>
+          <div class="flex items-center justify-between">
+            <%= link_to "← Back", 
+                public_availability_index_path(
+                  check_in_date: @booking.check_in_date,
+                  check_out_date: @booking.check_out_date,
+                  guests: @booking.adults
+                ),
+                class: "text-gray-600 hover:text-gray-900" %>
+            <%= f.submit "Complete Booking", 
+                class: "bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 transition-colors duration-200 cursor-pointer" %>
+          </div>
+        <% end %>
+      </div>
+
+      <%# Booking Summary Sidebar %>
+      <div class="lg:col-span-1">
+        <div class="bg-white rounded-lg shadow-md p-6 sticky top-4">
+          <h2 class="text-xl font-bold text-gray-900 mb-4">Booking Summary</h2>
+          
+          <%# Room Image %>
+          <div class="mb-4">
+            <%= image_tag "https://images.unsplash.com/photo-1611892440504-42a792e24d32?q=80&w=1000", 
+                class: "w-full h-40 object-cover rounded-lg",
+                alt: @room_type.name %>
+          </div>
+          
+          <%# Room Details %>
+          <div class="border-b pb-4 mb-4">
+            <h3 class="font-semibold text-gray-900"><%= @room_type.name %></h3>
+            <p class="text-sm text-gray-600">Up to <%= @room_type.max_occupancy %> guests</p>
+          </div>
+          
+          <%# Dates %>
+          <div class="space-y-2 text-sm mb-4">
+            <div class="flex justify-between">
+              <span class="text-gray-600">Check-in:</span>
+              <span class="font-medium"><%= @booking.check_in_date.strftime("%b %d, %Y") %></span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-600">Check-out:</span>
+              <span class="font-medium"><%= @booking.check_out_date.strftime("%b %d, %Y") %></span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-600">Nights:</span>
+              <span class="font-medium"><%= (@booking.check_out_date - @booking.check_in_date).to_i %></span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-600">Guests:</span>
+              <span class="font-medium"><%= pluralize(@booking.adults, 'Adult') %></span>
+            </div>
+          </div>
+          
+          <%# Pricing %>
+          <div class="border-t pt-4">
+            <% nights = (@booking.check_out_date - @booking.check_in_date).to_i %>
+            <% total = @room_type.calculate_price(nights: nights, guests: @booking.adults) %>
+            
+            <div class="space-y-2 text-sm mb-4">
+              <div class="flex justify-between">
+                <span class="text-gray-600">Room rate:</span>
+                <span>$<%= @room_type.base_price.to_i %> × <%= nights %> nights</span>
+              </div>
+              <% if @booking.adults > @room_type.standard_occupancy && @room_type.extra_person_charge > 0 %>
+                <div class="flex justify-between">
+                  <span class="text-gray-600">Extra person:</span>
+                  <span>$<%= (@room_type.extra_person_charge * (@booking.adults - @room_type.standard_occupancy) * nights).to_i %></span>
+                </div>
+              <% end %>
+            </div>
+            
+            <div class="flex justify-between items-center text-lg font-bold">
+              <span>Total:</span>
+              <span class="text-2xl text-blue-600">$<%= total.to_i %></span>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">*Taxes and fees may apply at check-in</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

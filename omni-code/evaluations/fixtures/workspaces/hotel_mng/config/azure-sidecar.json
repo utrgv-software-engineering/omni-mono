@@ -1,0 +1,94 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the Web App"
+      }
+    },
+    "registryServer": {
+      "type": "string",
+      "metadata": {
+        "description": "Container registry server (e.g., myregistry.azurecr.io)"
+      }
+    },
+    "appImage": {
+      "type": "string",
+      "defaultValue": "hotel-mng/app:latest",
+      "metadata": {
+        "description": "Main application image"
+      }
+    },
+    "postgresPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "PostgreSQL password"
+      }
+    }
+  },
+  "variables": {
+    "postgresImage": "postgres:16-alpine",
+    "postgresUser": "hotel",
+    "postgresDb": "hotel_production"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/sites/sitecontainers",
+      "apiVersion": "2024-04-01",
+      "name": "[concat(parameters('appName'), '/main')]",
+      "properties": {
+        "image": "[concat(parameters('registryServer'), '/', parameters('appImage'))]",
+        "isMain": true,
+        "targetPort": "80",
+        "environmentVariables": [
+          {
+            "name": "DATABASE_URL",
+            "value": "[concat('postgres://', variables('postgresUser'), ':', parameters('postgresPassword'), '@localhost:5432/', variables('postgresDb'))]"
+          },
+          {
+            "name": "CACHE_DATABASE_URL",
+            "value": "[concat('postgres://', variables('postgresUser'), ':', parameters('postgresPassword'), '@localhost:5432/hotel_cache')]"
+          },
+          {
+            "name": "QUEUE_DATABASE_URL",
+            "value": "[concat('postgres://', variables('postgresUser'), ':', parameters('postgresPassword'), '@localhost:5432/hotel_queue')]"
+          },
+          {
+            "name": "CABLE_DATABASE_URL",
+            "value": "[concat('postgres://', variables('postgresUser'), ':', parameters('postgresPassword'), '@localhost:5432/hotel_cable')]"
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites/sitecontainers",
+      "apiVersion": "2024-04-01",
+      "name": "[concat(parameters('appName'), '/postgres')]",
+      "properties": {
+        "image": "[variables('postgresImage')]",
+        "isMain": false,
+        "targetPort": "5432",
+        "environmentVariables": [
+          {
+            "name": "POSTGRES_USER",
+            "value": "[variables('postgresUser')]"
+          },
+          {
+            "name": "POSTGRES_PASSWORD",
+            "value": "[parameters('postgresPassword')]"
+          },
+          {
+            "name": "POSTGRES_DB",
+            "value": "[variables('postgresDb')]"
+          },
+          {
+            "name": "PGDATA",
+            "value": "/home/postgres/data"
+          }
+        ]
+      }
+    }
+  ]
+}

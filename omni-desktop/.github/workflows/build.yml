@@ -1,0 +1,619 @@
+name: Build Unsigned Artifacts
+
+on:
+  push:
+    branches:
+      - 'main'
+  release:
+    types: [released]
+  pull_request:
+    types:
+      - 'ready_for_review'
+      - 'opened'
+      - 'synchronize'
+  merge_group:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '22'
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # electron-builder downloads the Electron zip and its tooling (NSIS, etc.)
+  # into OS-specific cache dirs (~/.electron is a legacy path it no longer
+  # uses). Pin both caches inside the workspace so actions/cache captures
+  # them and a GitHub CDN blip can't fail the build.
+  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Generate lockfile hash without version
+        id: lockfile-hash
+        run: echo "hash=$(node .github/scripts/generate-lockfile-hash.js)" >> $GITHUB_OUTPUT
+
+      - name: Cache node modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.electron-gyp
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
+
+      - name: Install deps
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Get UV hash
+        id: uv-hash
+        run: |
+          echo "hash=$(node -e "console.log(require('./package.json').uv.linux.sha256)")" >> $GITHUB_OUTPUT
+
+      - name: Cache UV binaries
+        id: cache-uv
+        uses: actions/cache@v4
+        with:
+          path: assets/bin
+          key: ${{ runner.os }}-uv-${{ steps.uv-hash.outputs.hash }}
+
+      - name: Download uv
+        if: steps.cache-uv.outputs.cache-hit != 'true'
+        run: npm run download linux
+
+      - name: Install bubblewrap
+        run: sudo apt-get install -y bubblewrap
+
+      - name: Build
+        run: npm run package
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'linux-artifacts-unsigned'
+          path: |
+            dist/*.AppImage
+            dist/*.appimage
+            dist/*.blockmap
+            dist/*.yml
+            dist/*.yaml
+
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Generate lockfile hash without version
+        id: lockfile-hash
+        run: echo "hash=$(node .github/scripts/generate-lockfile-hash.js)" >> $GITHUB_OUTPUT
+
+      - name: Cache node modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.electron-gyp
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
+
+      - name: Install deps
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Get UV hash
+        id: uv-hash
+        run: |
+          echo "hash=$(node -e "console.log(require('./package.json').uv.mac.sha256)")" >> $GITHUB_OUTPUT
+
+      - name: Cache UV binaries
+        id: cache-uv
+        uses: actions/cache@v4
+        with:
+          path: assets/bin
+          key: ${{ runner.os }}-uv-${{ steps.uv-hash.outputs.hash }}
+
+      - name: Download uv
+        if: steps.cache-uv.outputs.cache-hit != 'true'
+        run: npm run download mac
+
+      - name: Build
+        run: npm run package
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'macos-artifacts-unsigned'
+          path: |
+            dist/*.dmg
+            dist/*.DMG
+            dist/*.zip
+            dist/*.ZIP
+            dist/*.blockmap
+            dist/*.yml
+            dist/*.yaml
+
+  build-macos-x64:
+    runs-on: macos-15-intel
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Generate lockfile hash without version
+        id: lockfile-hash
+        run: echo "hash=$(node .github/scripts/generate-lockfile-hash.js)" >> $GITHUB_OUTPUT
+
+      - name: Cache node modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.electron-gyp
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-x64-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
+
+      - name: Install deps
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Get UV hash
+        id: uv-hash
+        run: |
+          echo "hash=$(node -e "console.log(require('./package.json').uv['mac-x64'].sha256)")" >> $GITHUB_OUTPUT
+
+      - name: Cache UV binaries
+        id: cache-uv
+        uses: actions/cache@v4
+        with:
+          path: assets/bin
+          key: ${{ runner.os }}-x64-uv-${{ steps.uv-hash.outputs.hash }}
+
+      - name: Download uv
+        if: steps.cache-uv.outputs.cache-hit != 'true'
+        run: npm run download mac-x64
+
+      - name: Build
+        run: npm run package
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'macos-x64-artifacts-unsigned'
+          path: |
+            dist/*.dmg
+            dist/*.DMG
+            dist/*.zip
+            dist/*.ZIP
+            dist/*.blockmap
+            dist/*.yml
+            dist/*.yaml
+
+  build-wsl-payload:
+    # Linux-built payload shipped inside the Windows installer: out/server +
+    # out/browser + linux-x64 node_modules for the server externals + a pinned
+    # Node runtime. See docs/windows-wsl-backend-plan.md (Phase 5).
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Generate lockfile hash without version
+        id: lockfile-hash
+        run: echo "hash=$(node .github/scripts/generate-lockfile-hash.js)" >> $GITHUB_OUTPUT
+
+      - name: Cache node modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.electron-gyp
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
+
+      - name: Install deps
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Build server + browser
+        run: npm run build:server
+
+      - name: Build WSL payload
+        run: npm run build:wsl-payload
+
+      - name: Upload payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: wsl-payload
+          path: out/wsl-payload/omni-wsl-payload.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    needs: build-wsl-payload
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Generate lockfile hash without version
+        id: lockfile-hash
+        shell: bash
+        run: echo "hash=$(node .github/scripts/generate-lockfile-hash.js)" >> $GITHUB_OUTPUT
+
+      - name: Cache node modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            ~/.electron-gyp
+            .cache/electron
+            .cache/electron-builder
+          key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
+
+      - name: Install deps
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Get UV hash
+        id: uv-hash
+        shell: bash
+        run: |
+          echo "hash=$(node -e "console.log(require('./package.json').uv.win.sha256)")" >> $GITHUB_OUTPUT
+
+      - name: Cache UV binaries
+        id: cache-uv
+        uses: actions/cache@v4
+        with:
+          path: assets/bin
+          key: ${{ runner.os }}-uv-${{ steps.uv-hash.outputs.hash }}
+
+      - name: Download uv
+        if: steps.cache-uv.outputs.cache-hit != 'true'
+        run: npm run download win
+
+      - name: Download WSL payload
+        # Lands outside out/ because `npm run package` starts with `npm run
+        # clean` (rimraf out/); OMNI_WSL_PAYLOAD points electron-builder at it.
+        uses: actions/download-artifact@v4
+        with:
+          name: wsl-payload
+          path: wsl-payload
+
+      - name: Build
+        run: npm run package
+        env:
+          OMNI_WSL_PAYLOAD: wsl-payload/omni-wsl-payload.tar.gz
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'windows-artifacts-unsigned'
+          path: |
+            dist/*.exe
+            dist/*.EXE
+            dist/*.blockmap
+            dist/*.yml
+            dist/*.yaml
+
+  smoke-windows:
+    # End-to-end smoke test of the packaged, unsigned Windows build. Installs
+    # via NSIS silently, launches the app with OMNI_CI_AUTOINSTALL=1 (see
+    # src/main/index.ts), and asserts the managed Python venv is created.
+    # Catches asar-unpack regressions (pty.node, winpty-agent.exe, bundled
+    # uv.exe under resources/bin) and fuses/IPC issues that the lightweight
+    # uv-venv-smoke workflow can't see.
+    needs: build-windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-artifacts-unsigned
+          path: artifacts
+
+      - name: Locate installer
+        id: installer
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem artifacts -Filter '*.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'No .exe found in artifacts' }
+          "path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Silent install
+        # Runs the unsigned NSIS installer with one retry and event-log dump on
+        # failure. The unsigned NSIS uninstaller hit an access violation on
+        # Windows Server 2025 intermittently (0xC0000005); on retry it usually
+        # succeeds, and the event log tells us if it's a real crash vs. flake.
+        shell: pwsh
+        run: |
+          $installer = '${{ steps.installer.outputs.path }}'
+          $dumpDiagnostics = {
+            Write-Host "--- Application event log (last 20 errors) ---"
+            Get-WinEvent -LogName Application -MaxEvents 200 -ErrorAction SilentlyContinue |
+              Where-Object { $_.LevelDisplayName -in @('Error', 'Critical') } |
+              Select-Object -First 20 TimeCreated, ProviderName, Id, Message |
+              Format-List
+            Write-Host "--- C:\OmniTest contents (if any) ---"
+            if (Test-Path C:\OmniTest) {
+              Get-ChildItem C:\OmniTest -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+                Format-Table -AutoSize
+            } else {
+              Write-Host "(C:\OmniTest does not exist)"
+            }
+          }
+          $tryInstall = {
+            param($label)
+            Write-Host "[$label] Launching installer: $installer"
+            $p = Start-Process -FilePath $installer -ArgumentList '/S','/D=C:\OmniTest' -PassThru -Wait
+            Write-Host "[$label] Installer exit code: $($p.ExitCode)"
+            return $p.ExitCode
+          }
+          $code = & $tryInstall 'attempt-1'
+          if ($code -ne 0) {
+            Write-Host "Attempt 1 failed ($code). Dumping diagnostics, cleaning up, retrying..."
+            & $dumpDiagnostics
+            Remove-Item -Recurse -Force C:\OmniTest -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 5
+            $code = & $tryInstall 'attempt-2'
+          }
+          if ($code -ne 0) {
+            Write-Host "Both install attempts failed. Final diagnostics:"
+            & $dumpDiagnostics
+            throw "Silent install failed with exit code $code"
+          }
+
+      - name: Verify install layout
+        shell: pwsh
+        run: |
+          $app = 'C:\OmniTest\Omni Code.exe'
+          if (-not (Test-Path $app)) {
+            Get-ChildItem C:\OmniTest -Recurse -Depth 2 | Format-Table -AutoSize
+            throw "Omni Code.exe not found at $app"
+          }
+
+      - name: Run auto-install flow
+        shell: pwsh
+        env:
+          OMNI_CI_AUTOINSTALL: '1'
+          ELECTRON_ENABLE_LOGGING: '1'
+          # The runner has Git for Windows; students usually don't. Exercise
+          # the PortableGit provisioning path the way a student machine would.
+          OMNI_CI_FORCE_PORTABLE_GIT: '1'
+        run: |
+          $app = 'C:\OmniTest\Omni Code.exe'
+          $stdout = 'C:\OmniTest\ci-stdout.log'
+          $stderr = 'C:\OmniTest\ci-stderr.log'
+          $proc = Start-Process -FilePath $app -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if (-not $proc.WaitForExit(900000)) {
+            Stop-Process -Id $proc.Id -Force
+            Get-Content $stdout, $stderr -ErrorAction SilentlyContinue
+            throw 'App did not exit within 15 minutes'
+          }
+          Write-Host "--- stdout ---"
+          Get-Content $stdout -ErrorAction SilentlyContinue
+          Write-Host "--- stderr ---"
+          Get-Content $stderr -ErrorAction SilentlyContinue
+          if ($proc.ExitCode -ne 0) {
+            throw "App exited with code $($proc.ExitCode)"
+          }
+          if (Select-String -Path $stdout, $stderr -Pattern 'Content Security Policy' -Quiet -ErrorAction SilentlyContinue) {
+            throw 'Packaged renderer hit a Content Security Policy violation'
+          }
+
+      - name: Verify venv on disk
+        shell: pwsh
+        run: |
+          $venv = Join-Path $env:USERPROFILE '.omni\.venv'
+          foreach ($rel in @('Scripts\python.exe', 'Scripts\activate', 'Scripts\omni.exe')) {
+            $p = Join-Path $venv $rel
+            if (-not (Test-Path $p)) { throw "Missing: $p" }
+          }
+          Write-Host "venv OK at $venv"
+
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/ci
+            src/lib/product.ts
+          sparse-checkout-cone-mode: false
+          path: src-checkout
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Verify runtime version and serve boot
+        shell: pwsh
+        run: node src-checkout/scripts/ci/verify-runtime.mjs (Join-Path $env:USERPROFILE '.omni\.venv')
+
+      - name: Agent tools work in native host mode (provisioned Git Bash, no system Git on PATH)
+        shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+        run: |
+          $bash = Join-Path $env:USERPROFILE '.omni\git\bin\bash.exe'
+          if (-not (Test-Path $bash)) { throw "Provisioned Git Bash missing: $bash" }
+          $venv = Join-Path $env:USERPROFILE '.omni\.venv'
+          # A student-like PATH: no Git for Windows, no Unix tools.
+          $env:PATH = "$venv\Scripts;C:\Windows\System32;C:\Windows;C:\Windows\System32\WindowsPowerShell\v1.0"
+          $env:OMNIAGENTS_BASH = $bash
+          & "$venv\Scripts\python.exe" src-checkout\scripts\ci\probe-windows-host.py --strict
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-windows-diagnostics
+          path: |
+            C:\OmniTest\ci-stdout.log
+            C:\OmniTest\ci-stderr.log
+            C:\Users\runneradmin\AppData\Roaming\Omni Code\logs
+          if-no-files-found: ignore
+
+  smoke-macos:
+    # Packaged, unsigned macOS build end to end, on BOTH architectures: mount
+    # the DMG, run the app with OMNI_CI_AUTOINSTALL=1 (see src/main/index.ts)
+    # so it installs the pinned runtime and exits, then verify that runtime
+    # boots `omni serve`. Intel matters on its own: dependency wheels differ
+    # by arch (an Intel-only source build once broke student installs).
+    name: smoke-macos (${{ matrix.arch }})
+    needs: [build-macos, build-macos-x64]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+            artifact: macos-artifacts-unsigned
+          - arch: x64
+            runner: macos-15-intel
+            artifact: macos-x64-artifacts-unsigned
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts/ci
+            src/lib/product.ts
+          sparse-checkout-cone-mode: false
+
+      - name: setup nodejs
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts
+
+      - name: Mount DMG and copy app
+        run: |
+          dmg=$(ls artifacts/*.dmg | grep -v latest | head -1)
+          test -n "$dmg" || { ls -la artifacts; echo "No .dmg found"; exit 1; }
+          echo "Mounting $dmg"
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint /Volumes/omni-smoke
+          cp -R "/Volumes/omni-smoke/Omni Code.app" "$RUNNER_TEMP/"
+          hdiutil detach /Volumes/omni-smoke
+
+      - name: Run auto-install flow
+        timeout-minutes: 15
+        env:
+          OMNI_CI_AUTOINSTALL: '1'
+          ELECTRON_ENABLE_LOGGING: '1'
+        run: |
+          set -o pipefail
+          "$RUNNER_TEMP/Omni Code.app/Contents/MacOS/Omni Code" 2>&1 | tee "$RUNNER_TEMP/ci-app.log"
+          if grep -q "Content Security Policy" "$RUNNER_TEMP/ci-app.log"; then
+            echo "::error::Packaged renderer hit a Content Security Policy violation"
+            exit 1
+          fi
+
+      - name: Verify runtime version and serve boot
+        run: node scripts/ci/verify-runtime.mjs "$HOME/Library/Application Support/Omni Code/omni/.venv"
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-macos-${{ matrix.arch }}-diagnostics
+          path: |
+            ${{ runner.temp }}/ci-app.log
+            ~/Library/Application Support/Omni Code/logs
+          if-no-files-found: ignore
+
+  publish-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-linux, build-macos, build-macos-x64, build-windows, smoke-windows, smoke-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from package.json
+        id: version
+        run: echo "version=$(node -e "console.log(require('./package.json').version)")" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: ls -la artifacts/
+
+      - name: Create or update GitHub Release
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+
+          # Delete existing release if it exists (for re-runs)
+          gh release delete "$TAG" --yes 2>/dev/null || true
+
+          # Delete existing tag if it exists
+          git tag -d "$TAG" 2>/dev/null || true
+          git push origin ":refs/tags/$TAG" 2>/dev/null || true
+
+          # Create new release
+          gh release create "$TAG" \
+            --title "Omni Code $TAG (unsigned)" \
+            --notes "Automated unsigned build from \`main\` branch.
+
+          > **Note:** These builds are not code-signed. Your OS may show a warning when running them." \
+            --latest \
+            artifacts/*

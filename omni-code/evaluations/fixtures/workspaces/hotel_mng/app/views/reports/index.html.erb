@@ -1,0 +1,108 @@
+<% content_for :page_title, "Reports & Analytics" %>
+<% content_for :page_subtitle, "Business Intelligence Dashboard" %>
+
+<% content_for :header_actions do %>
+  <!-- Blazer navigation buttons in header -->
+  <div class="flex items-center space-x-2 mr-4">
+    <button onclick="document.getElementById('blazer-iframe').contentWindow.location.href='/blazer'" 
+            class="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg transition-colors inline-flex items-center">
+      <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+      </svg>
+      Home
+    </button>
+    <button onclick="document.getElementById('blazer-iframe').contentWindow.location.href='/blazer/queries/new'" 
+            class="px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors inline-flex items-center">
+      <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+      </svg>
+      New Query
+    </button>
+    <button onclick="document.getElementById('blazer-iframe').contentWindow.location.href='/blazer/dashboards/new'" 
+            class="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg transition-colors inline-flex items-center">
+      <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"></path>
+      </svg>
+      New Dashboard
+    </button>
+  </div>
+<% end %>
+
+<style>
+  /* Override the main layout padding for full-height iframe */
+  main.flex-1 > div.p-6 {
+    padding: 0 !important;
+    height: 100%;
+    position: relative;
+  }
+  
+  .blazer-iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: white;
+  }
+  
+  .loading-indicator {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    z-index: 10;
+  }
+  
+  .loading-spinner {
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #3b82f6;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 16px;
+  }
+  
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+</style>
+
+<!-- Loading indicator -->
+<div id="loading-indicator" class="loading-indicator">
+  <div class="loading-spinner"></div>
+  <p class="text-sm text-gray-600">Loading reports...</p>
+</div>
+
+<!-- Blazer iframe takes full space -->
+<iframe id="blazer-iframe" 
+        src="<%= @blazer_url %>" 
+        class="blazer-iframe blazer-wrapper"
+        title="Blazer Reports"
+        style="opacity: 0; transition: opacity 0.3s;">
+</iframe>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function() {
+    const iframe = document.getElementById('blazer-iframe');
+    const loadingIndicator = document.getElementById('loading-indicator');
+    
+    // Show iframe and hide loading indicator when loaded
+    iframe.addEventListener('load', function() {
+      loadingIndicator.style.display = 'none';
+      iframe.style.opacity = '1';
+    });
+    
+    // Show loading indicator when navigating within iframe
+    iframe.addEventListener('beforeunload', function() {
+      loadingIndicator.style.display = 'block';
+    });
+  });
+</script>
+
+<!-- Data Analytics Assistant Chat Widget -->
+<%= render 'shared/agent_chat_widget', 
+           deployment_type: 'platform',
+           deployment_key: 'data_analytics',
+           subtitle: 'Ask me about your data and analytics',
+           welcome_message: "Hello! I'm your Data Analytics Assistant. I can help you understand metrics, interpret reports, and provide insights about your hotel's performance. What would you like to analyze today?" %>

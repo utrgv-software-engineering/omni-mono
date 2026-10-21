@@ -1,0 +1,406 @@
+/**
+ * End-to-end smoke test for the refactored omni-projects MCP tools.
+ *
+ * Drives the real `createServer(repo)` through a real MCP `Client` over an
+ * in-memory transport, backed by a temp SQLite `SqliteProjectsRepo`. This is
+ * the local (no-Azure) verification that the async-IProjectsRepo rewrite works:
+ * the same tool code runs unchanged behind the HTTP/Postgres path.
+ */
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { closeDatabase, openDatabase, ProjectsRepo, SqliteProjectsRepo } from 'omni-projects-db';
+import { createServer } from 'omni-projects-mcp';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+let dir: string;
+let db: ReturnType<typeof openDatabase>;
+let repo: SqliteProjectsRepo;
+let client: Client;
+
+/** Call a tool and parse its single JSON text payload. */
+async function call(name: string, args: Record<string, unknown> = {}): Promise<any> {
+  const res = (await client.callTool({ name, arguments: args })) as {
+    content: Array<{ type: string; text: string }>;
+    isError?: boolean;
+  };
+  const text = res.content.find((c) => c.type === 'text')?.text ?? '{}';
+  return { ...JSON.parse(text), _isError: res.isError ?? false };
+}
+
+beforeAll(async () => {
+  dir = mkdtempSync(join(tmpdir(), 'omni-mcp-'));
+  db = openDatabase(join(dir, 'projects.db'));
+  repo = new SqliteProjectsRepo(new ProjectsRepo(db));
+  const server = createServer(repo, {
+    listSandboxProfiles: async () => [
+      { name: 'host', label: 'This computer (no sandbox)', available: true, source: 'builtin' },
+      { name: 'devbox', label: 'Devbox (Docker)', available: true, source: 'builtin' },
+    ],
+    listTeamMembers: async () => [
+      { user_id: 'principal-1', display_name: 'Ada Lovelace', email: 'ada@example.com', role: 'member' },
+    ],
+    getCurrentPrincipal: async () => 'principal-1',
+  });
+
+  const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+  client = new Client({ name: 'test', version: '0.0.0' });
+  await Promise.all([server.connect(serverT), client.connect(clientT)]);
+});
+
+afterAll(async () => {
+  await client.close();
+  closeDatabase(db);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+describe('omni-projects MCP tools (async IProjectsRepo, SQLite)', () => {
+  let projectId: string;
+  let ticketId: string;
+
+  it('lists valid option values for sandbox profiles and assignees', async () => {
+    const profiles = await call('list_sandbox_profiles');
+    expect(profiles.profiles.map((profile: any) => profile.name)).toContain('devbox');
+
+    const members = await call('list_team_members');
+    expect(members.members).toEqual([
+      expect.objectContaining({ user_id: 'principal-1', display_name: 'Ada Lovelace' }),
+    ]);
+
+    const principal = await call('get_current_principal');
+    expect(principal.principal).toBe('principal-1');
+  });
+
+  it('creates and lists a project with seeded pipeline + root page', async () => {
+    const sources = [
+      { kind: 'local', mountName: 'local-app', workspaceDir: '/tmp/local-app', gitDetected: true },
+      {
+        kind: 'git-remote',
+        mountName: 'remote-app',
+        repoUrl: 'https://github.com/acme/remote-app.git',
+        defaultBranch: 'main',
+      },
+    ];
+    const created = await call('create_project', {
+      label: 'Test Project',
+      sources,
+      auto_dispatch: true,
+      sandbox_profile: 'devbox',
+    });
+    expect(created._isError).toBe(false);
+    expect(created.id).toMatch(/^proj_/);
+    expect(created.sources).toEqual([expect.objectContaining(sources[0]), expect.objectContaining(sources[1])]);
+    expect(created.sources[0].id).toBeTruthy();
+    expect(created.auto_dispatch).toBe(true);
+    expect(created.sandbox_profile).toBe('devbox');
+    expect(created.pipeline.length).toBeGreaterThan(0);
+    expect(created.root_page_id).toMatch(/^pg_/);
+    projectId = created.id;
+
+    const seededColumns = await repo.listColumns(projectId);
+    expect(seededColumns.map((column) => column.category)).toEqual([
+      'todo',
+      'doing',
+      'doing',
+      'doing',
+      'doing',
+      'done',
+    ]);
+
+    const listed = await call('list_projects');
+    const listedProject = listed.projects.find((p: any) => p.id === projectId);
+    expect(listedProject?.label).toBe('Test Project');
+    expect(listedProject?.sources).toEqual(created.sources);
+    expect(listedProject?.auto_dispatch).toBe(true);
+    expect(listedProject?.sandbox_profile).toBe('devbox');
+
+    // Root page content was written to the DB (not the filesystem).
+    const page = await call('read_page', { page_id: created.root_page_id });
+    expect(page.content).toContain('# Test Project');
+  });
+
+  it('rejects a duplicate slug', async () => {
+    const dup = await call('create_project', { label: 'Test Project' });
+    expect(dup._isError).toBe(true);
+    expect(dup.error).toMatch(/already exists/);
+  });
+
+  it('updates project sources and rejects duplicates', async () => {
+    const duplicateSources = [
+      { kind: 'git-remote', mountName: 'repo', repoUrl: 'https://github.com/acme/repo.git' },
+      { kind: 'git-remote', mountName: 'repo-copy', repoUrl: 'git@github.com:acme/repo.git' },
+    ];
+    const duplicate = await call('update_project', { project_id: projectId, sources: duplicateSources });
+    expect(duplicate._isError).toBe(true);
+    expect(duplicate.error).toMatch(/repository/);
+
+    const sources = [{ kind: 'local', mountName: 'replacement', workspaceDir: '/tmp/replacement' }];
+    const updated = await call('update_project', {
+      project_id: projectId,
+      sources,
+      auto_dispatch: false,
+      sandbox_profile: '',
+    });
+    expect(updated.ok).toBe(true);
+
+    const listed = await call('list_projects');
+    expect(listed.projects.find((p: any) => p.id === projectId)?.sources).toEqual([
+      expect.objectContaining(sources[0]),
+    ]);
+    expect(listed.projects.find((p: any) => p.id === projectId)?.auto_dispatch).toBe(false);
+    expect(listed.projects.find((p: any) => p.id === projectId)?.sandbox_profile).toBeNull();
+  });
+
+  it('updates pipeline definitions', async () => {
+    const updated = await call('update_pipeline', {
+      project_id: projectId,
+      columns: [
+        { id: 'backlog', label: 'Backlog', workflow: { purpose: 'Collect work' } },
+        {
+          id: 'implementation',
+          label: 'Implementation',
+          maxConcurrent: 2,
+          workflow: { definitionOfDone: ['changed'] },
+        },
+        { id: 'review', label: 'Review', gate: true },
+        { id: 'completed', label: 'Completed' },
+      ],
+    });
+    expect(updated.ok).toBe(true);
+
+    const pipeline = await call('get_pipeline', { project_id: projectId });
+    const implementation = pipeline.columns.find((column: any) => column.label === 'Implementation');
+    expect(implementation.maxConcurrent).toBe(2);
+    expect(implementation.workflow.definitionOfDone).toEqual(['changed']);
+  });
+
+  it('creates, moves, and lists a ticket', async () => {
+    const pipeline = await call('get_pipeline', { project_id: projectId });
+    const implementation = pipeline.columns.find((column: any) => column.label === 'Implementation');
+    expect(implementation.workflow.definitionOfDone).toEqual(['changed']);
+    const lastCol = pipeline.columns[pipeline.columns.length - 1].label;
+
+    const created = await call('create_ticket', {
+      project_id: projectId,
+      title: 'Do the thing',
+      priority: 'high',
+      branch: 'main',
+      use_worktree: true,
+      assignee: 'principal-1',
+    });
+    expect(created._isError).toBe(false);
+    ticketId = created.id;
+
+    const moved = await call('move_ticket', { ticket_id: ticketId, column: lastCol });
+    expect(moved.column).toBe(lastCol);
+
+    const list = await call('list_tickets', { project_id: projectId, column: lastCol });
+    expect(list.tickets.map((t: any) => t.id)).toContain(ticketId);
+
+    const filteredOut = await call('list_tickets', { project_id: projectId, priority: 'low' });
+    expect(filteredOut.tickets.map((t: any) => t.id)).not.toContain(ticketId);
+  });
+
+  it('returns persisted column workflow edits from get_pipeline', async () => {
+    const editedDefinitionOfDone = 'Edited Implementation DoD is exposed through get_pipeline';
+    const columns = await repo.listColumns(projectId);
+    const implementation = columns.find((column) => column.label === 'Implementation');
+    expect(implementation).toBeTruthy();
+
+    const workflow = JSON.parse(implementation!.workflow ?? '{}') as { definitionOfDone?: string[] };
+    await repo.upsertColumn({
+      ...implementation!,
+      workflow: JSON.stringify({
+        ...workflow,
+        definitionOfDone: [editedDefinitionOfDone],
+      }),
+    });
+
+    const pipeline = await call('get_pipeline', { project_id: projectId });
+    const implementationFromTool = pipeline.columns.find((column: any) => column.label === 'Implementation');
+    expect(implementationFromTool.workflow.definitionOfDone).toEqual([editedDefinitionOfDone]);
+  });
+
+  it('updates a ticket and tracks blockers', async () => {
+    const upd = await call('update_ticket', {
+      ticket_id: ticketId,
+      description: 'now described',
+      use_worktree: false,
+      assignee: '',
+      add_blocked_by: ['tkt_other'],
+    });
+    expect(upd.ok).toBe(true);
+
+    const got = await call('get_ticket', { ticket_id: ticketId });
+    expect(got.description).toBe('now described');
+    expect(got.use_worktree).toBe(false);
+    expect(got.assignee).toBeNull();
+    expect(got.blocked_by).toEqual(['tkt_other']);
+  });
+
+  it('adds and reads comments', async () => {
+    await call('add_ticket_comment', { ticket_id: ticketId, content: 'a finding', author: 'agent' });
+    const comments = await call('get_ticket_comments', { ticket_id: ticketId });
+    expect(comments.comments).toHaveLength(1);
+    expect(comments.comments[0].content).toBe('a finding');
+  });
+
+  it('searches tickets by keyword', async () => {
+    const found = await call('search_tickets', { query: 'the thing' });
+    expect(found.tickets.map((t: any) => t.id)).toContain(ticketId);
+  });
+
+  it('archives and unarchives a ticket', async () => {
+    await call('archive_ticket', { ticket_id: ticketId });
+    let list = await call('list_tickets', { project_id: projectId });
+    expect(list.tickets.map((t: any) => t.id)).not.toContain(ticketId);
+
+    await call('unarchive_ticket', { ticket_id: ticketId });
+    list = await call('list_tickets', { project_id: projectId });
+    expect(list.tickets.map((t: any) => t.id)).toContain(ticketId);
+  });
+
+  it('manages pages with DB-backed content', async () => {
+    const page = await call('create_page', { project_id: projectId, title: 'Spec', content: '## Hello' });
+    expect(page.id).toMatch(/^pg_/);
+
+    await call('update_page', { page_id: page.id, content: '## Updated' });
+    const read = await call('read_page', { page_id: page.id });
+    expect(read.content).toBe('## Updated');
+
+    const pages = await call('list_pages', { project_id: projectId });
+    expect(pages.pages.map((p: any) => p.title)).toContain('Spec');
+  });
+
+  it('manages milestones', async () => {
+    const m = await call('create_milestone', { project_id: projectId, title: 'M1' });
+    const upd = await call('update_milestone', { milestone_id: m.id, status: 'completed' });
+    expect(upd.ok).toBe(true);
+    const list = await call('list_milestones', { project_id: projectId });
+    expect(list.milestones.find((x: any) => x.id === m.id)?.completed_at).toBeTruthy();
+  });
+
+  it('captures inbox items and promotes them to tickets and projects', async () => {
+    const item = await call('create_inbox_item', { title: 'an idea' });
+    let inbox = await call('list_inbox');
+    expect(inbox.items.map((i: any) => i.id)).toContain(item.id);
+
+    const promoted = await call('inbox_to_tickets', { item_id: item.id, project_id: projectId });
+    expect(promoted.ticket_ids).toHaveLength(1);
+    // Promoted items drop out of the default inbox listing.
+    inbox = await call('list_inbox');
+    expect(inbox.items.map((i: any) => i.id)).not.toContain(item.id);
+
+    const item2 = await call('create_inbox_item', { title: 'a bigger idea' });
+    const proj = await call('inbox_to_project', { item_id: item2.id, label: 'Spun Off' });
+    expect(proj.project_id).toMatch(/^proj_/);
+    const projects = await call('list_projects');
+    expect(projects.projects.map((p: any) => p.label)).toContain('Spun Off');
+  });
+
+  it('deletes a project', async () => {
+    const created = await call('create_project', { label: 'Throwaway' });
+    const del = await call('delete_project', { project_id: created.id });
+    expect(del.ok).toBe(true);
+    const projects = await call('list_projects');
+    expect(projects.projects.map((p: any) => p.id)).not.toContain(created.id);
+  });
+
+  // Resident principals (docs/residents-in-projects-db-plan.md)
+
+  it('merges enabled residents into list_team_members', async () => {
+    const base = {
+      role: 'engineer',
+      persona_text: 'p',
+      profile_name: null,
+      project_ids: '[]',
+      morning_hour: 8,
+      superuser: 0,
+      created_at: '2026-07-23 08:00:00.000',
+    };
+    await repo.upsertResident({ ...base, id: 'sable', name: 'Sable', enabled: 1 });
+    await repo.upsertResident({ ...base, id: 'quill', name: 'Quill', enabled: 0 });
+
+    const members = await call('list_team_members');
+    // Humans from the context, residents from the repo; disabled excluded.
+    expect(members.members).toContainEqual(expect.objectContaining({ user_id: 'principal-1' }));
+    expect(members.members).toContainEqual({ user_id: 'agent:sable', display_name: 'Sable', role: 'agent' });
+    expect(members.members.map((m: any) => m.user_id)).not.toContain('agent:quill');
+  });
+
+  it('stamps resident-authored comments with the session principal', async () => {
+    // Seed a project + ticket at the repo level so this test doesn't depend
+    // on the create_project tool path.
+    const ts = '2026-07-23 08:00:00.000';
+    await repo.upsertProject({
+      id: 'proj_stamp',
+      label: 'Stamp',
+      slug: 'stamp',
+      is_personal: 0,
+      auto_dispatch: 0,
+      sources: '[]',
+      sandbox_profile: null,
+      config: null,
+      due_date: null,
+      pinned_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+    await repo.syncColumnsForProject('proj_stamp', [{ logicalId: 'doing', label: 'Doing' }]);
+    const columns = await repo.listColumns('proj_stamp');
+    await repo.upsertTicket({
+      id: 'tkt_stamp',
+      project_id: 'proj_stamp',
+      milestone_id: null,
+      column_id: columns[0]!.id,
+      title: 'Stamped',
+      description: '',
+      priority: 'medium',
+      branch: null,
+      blocked_by: '[]',
+      completed_at: null,
+      archived_at: null,
+      column_changed_at: null,
+      use_worktree: 0,
+      worktree_path: null,
+      worktree_name: null,
+      supervisor_session_id: null,
+      phase: null,
+      phase_changed_at: null,
+      supervisor_task_id: null,
+      token_usage: null,
+      runs: '[]',
+      pr_review: null,
+      pr_merged_at: null,
+      assignee: null,
+      last_plan_snapshot: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    // A resident session: same repo, identity carried by the context (the
+    // token/env carriers resolve to this in production).
+    const agentServer = createServer(repo, { getCurrentPrincipal: async () => 'agent:sable' });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    const agentClient = new Client({ name: 'agent-test', version: '0.0.0' });
+    await Promise.all([agentServer.connect(serverT), agentClient.connect(clientT)]);
+
+    const stampRes = (await agentClient.callTool({
+      name: 'add_ticket_comment',
+      // The self-declared enum is overridden by the session principal.
+      arguments: { ticket_id: 'tkt_stamp', content: 'shipped it', author: 'agent' },
+    })) as { content: Array<{ type: string; text: string }>; isError?: boolean };
+    expect(stampRes.isError ?? false, stampRes.content[0]?.text).toBe(false);
+    await agentClient.close();
+
+    // The human-context session keeps the enum behavior.
+    await call('add_ticket_comment', { ticket_id: 'tkt_stamp', content: 'a human finding', author: 'agent' });
+
+    const comments = await call('get_ticket_comments', { ticket_id: 'tkt_stamp' });
+    expect(comments.comments.find((c: any) => c.content === 'shipped it')?.author).toBe('agent:sable');
+    expect(comments.comments.find((c: any) => c.content === 'a human finding')?.author).toBe('agent');
+  });
+});

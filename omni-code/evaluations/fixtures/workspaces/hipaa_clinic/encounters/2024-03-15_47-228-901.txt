@@ -1,0 +1,23 @@
+ENCOUNTER NOTE
+Date: 2024-03-15
+Patient: Terrence Ogunyemi (47-228-901)
+DOB: 1985-03-15
+Provider: Sarah Chen
+
+CHIEF COMPLAINT: Petechiae, fatigue, confusion x3 days
+
+ASSESSMENT:
+Suspected thrombotic thrombocytopenic purpura (TTP) based on classic
+pentad presentation. Platelet count critically low at 12,000.
+ADAMTS13 activity <5% confirms diagnosis.
+
+PLAN:
+- Start plasma exchange (PEX) immediately
+- Initiate Caplacizumab 11mg IV bolus, then 11mg SQ daily
+- Monitor PLT, LDH, haptoglobin, schistocytes q6h
+- Hematology consult placed
+- Consider rituximab if refractory
+
+BILLING:
+Primary: M31.19 (TTP, unspecified)
+Secondary: D69.6 (Thrombocytopenia, unspecified)

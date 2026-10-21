@@ -1,0 +1,330 @@
+<%= form_with model: reservation ? [reservation, service_booking] : service_booking, local: true do |form| %>
+  <% if service_booking.errors.any? %>
+    <div class="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
+      <div class="flex">
+        <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+          <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+        </svg>
+        <div class="ml-3">
+          <h3 class="text-sm font-medium text-red-800">
+            There were <%= pluralize(service_booking.errors.count, "error") %> with your submission
+          </h3>
+          <div class="mt-2 text-sm text-red-700">
+            <ul class="list-disc pl-5 space-y-1">
+              <% service_booking.errors.full_messages.each do |message| %>
+                <li><%= message %></li>
+              <% end %>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Main Form Fields -->
+    <div class="lg:col-span-2 space-y-6">
+      <!-- Service Selection -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Service Selection</h2>
+        </div>
+        <div class="px-6 py-4 space-y-4">
+          <div>
+            <%= form.label :service_id, "Select Service", class: "block text-sm font-medium text-gray-700 mb-1" %>
+            <%= form.select :service_id,
+                options_from_collection_for_select(@services, :id, :name, service_booking.service_id),
+                { prompt: "Choose a service..." },
+                class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500",
+                data: { action: "change->service-booking#updatePricing" } %>
+            <p class="mt-1 text-xs text-gray-500">Select the service to book</p>
+          </div>
+          
+          <!-- Service Details Display (shown when service selected) -->
+          <div id="service-details" class="hidden">
+            <div class="bg-gray-50 rounded-lg p-4">
+              <dl class="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <dt class="text-gray-500">Category</dt>
+                  <dd class="font-medium text-gray-900" id="service-category">-</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Price</dt>
+                  <dd class="font-medium text-gray-900" id="service-price">-</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Duration</dt>
+                  <dd class="font-medium text-gray-900" id="service-duration">-</dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Capacity</dt>
+                  <dd class="font-medium text-gray-900" id="service-capacity">-</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Guest Information -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Guest Information</h2>
+        </div>
+        <div class="px-6 py-4 space-y-4">
+          <% if reservation %>
+            <!-- Pre-filled guest from reservation -->
+            <%= form.hidden_field :guest_id, value: reservation.guest_id %>
+            <div class="bg-gray-50 rounded-lg p-4">
+              <dl class="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <dt class="text-gray-500">Guest Name</dt>
+                  <dd class="font-medium text-gray-900"><%= reservation.guest.full_name %></dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Email</dt>
+                  <dd class="font-medium text-gray-900"><%= reservation.guest.email %></dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Confirmation #</dt>
+                  <dd class="font-medium text-gray-900"><%= reservation.confirmation_number %></dd>
+                </div>
+                <div>
+                  <dt class="text-gray-500">Room</dt>
+                  <dd class="font-medium text-gray-900"><%= reservation.room&.room_number || "TBA" %></dd>
+                </div>
+              </dl>
+            </div>
+          <% else %>
+            <!-- Guest selection for walk-in -->
+            <div>
+              <%= form.label :guest_id, "Select Guest", class: "block text-sm font-medium text-gray-700 mb-1" %>
+              <%= form.select :guest_id,
+                  options_from_collection_for_select(@guests, :id, :full_name, service_booking.guest_id),
+                  { prompt: "Choose a guest..." },
+                  class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+              <p class="mt-1 text-xs text-gray-500">Select an existing guest or <%= link_to "create new", new_guest_path, class: "text-blue-600 hover:text-blue-800" %></p>
+            </div>
+            
+            <div>
+              <%= form.label :reservation_id, "Associated Reservation (Optional)", class: "block text-sm font-medium text-gray-700 mb-1" %>
+              <%= form.text_field :reservation_id,
+                  placeholder: "Enter confirmation number",
+                  class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+              <p class="mt-1 text-xs text-gray-500">Link to existing reservation (optional)</p>
+            </div>
+          <% end %>
+        </div>
+      </div>
+
+      <!-- Booking Details -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Booking Details</h2>
+        </div>
+        <div class="px-6 py-4 space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <%= form.label :booking_date, class: "block text-sm font-medium text-gray-700 mb-1" %>
+              <%= form.date_field :booking_date,
+                  value: service_booking.booking_date || Date.current,
+                  min: Date.current,
+                  class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+              <p class="mt-1 text-xs text-gray-500">Service date</p>
+            </div>
+            
+            <div>
+              <%= form.label :booking_time, class: "block text-sm font-medium text-gray-700 mb-1" %>
+              <%= form.time_field :booking_time,
+                  class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+              <p class="mt-1 text-xs text-gray-500">Service start time (optional)</p>
+            </div>
+          </div>
+          
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <%= form.label :quantity, class: "block text-sm font-medium text-gray-700 mb-1" %>
+              <%= form.number_field :quantity,
+                  min: 1,
+                  value: service_booking.quantity || 1,
+                  class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500",
+                  data: { action: "change->service-booking#updatePricing" } %>
+              <p class="mt-1 text-xs text-gray-500">Number of guests/items</p>
+            </div>
+            
+            <div>
+              <%= form.label :duration_minutes, "Duration (Minutes)", class: "block text-sm font-medium text-gray-700 mb-1" %>
+              <%= form.number_field :duration_minutes,
+                  min: 0,
+                  class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500",
+                  data: { action: "change->service-booking#updatePricing" } %>
+              <p class="mt-1 text-xs text-gray-500">Override default duration</p>
+            </div>
+          </div>
+          
+          <div>
+            <%= form.label :notes, "Special Requests / Notes", class: "block text-sm font-medium text-gray-700 mb-1" %>
+            <%= form.text_area :notes,
+                rows: 3,
+                placeholder: "Any special requests or notes for this booking...",
+                class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+            <p class="mt-1 text-xs text-gray-500">Additional information or special requirements</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pricing -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Pricing</h2>
+        </div>
+        <div class="px-6 py-4 space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <%= form.label :unit_price, class: "block text-sm font-medium text-gray-700 mb-1" %>
+              <div class="relative">
+                <span class="absolute left-3 top-2 text-gray-500">$</span>
+                <%= form.number_field :unit_price,
+                    step: 0.01,
+                    min: 0,
+                    class: "w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500",
+                    data: { action: "change->service-booking#updatePricing" } %>
+              </div>
+              <p class="mt-1 text-xs text-gray-500">Price per unit</p>
+            </div>
+            
+            <div>
+              <%= form.label :total_price, class: "block text-sm font-medium text-gray-700 mb-1" %>
+              <div class="relative">
+                <span class="absolute left-3 top-2 text-gray-500">$</span>
+                <%= form.number_field :total_price,
+                    step: 0.01,
+                    min: 0,
+                    readonly: true,
+                    class: "w-full pl-8 pr-3 py-2 border border-gray-300 rounded-lg text-sm bg-gray-50 focus:outline-none" %>
+              </div>
+              <p class="mt-1 text-xs text-gray-500">Calculated total</p>
+            </div>
+          </div>
+          
+          <div>
+            <%= form.label :status, class: "block text-sm font-medium text-gray-700 mb-1" %>
+            <%= form.select :status,
+                options_for_select(ServiceBooking::STATUSES.map { |s| [s.humanize, s] }, service_booking.status),
+                {},
+                class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+            <p class="mt-1 text-xs text-gray-500">Booking status</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="space-y-6">
+      <!-- Price Summary -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Price Summary</h2>
+        </div>
+        <div class="px-6 py-4">
+          <dl class="space-y-3 text-sm">
+            <div class="flex justify-between">
+              <dt class="text-gray-500">Base Price</dt>
+              <dd class="text-gray-900" id="summary-base-price">$0.00</dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-gray-500">Quantity</dt>
+              <dd class="text-gray-900" id="summary-quantity">× 1</dd>
+            </div>
+            <div id="summary-duration-row" class="flex justify-between hidden">
+              <dt class="text-gray-500">Duration</dt>
+              <dd class="text-gray-900" id="summary-duration">-</dd>
+            </div>
+            <div class="pt-3 border-t border-gray-200 flex justify-between">
+              <dt class="text-base font-medium text-gray-900">Total</dt>
+              <dd class="text-base font-medium text-gray-900" id="summary-total">$0.00</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <!-- Help Text -->
+      <div class="bg-blue-50 rounded-lg p-4">
+        <div class="flex">
+          <svg class="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+          </svg>
+          <div class="ml-3">
+            <h3 class="text-sm font-medium text-blue-800">Booking Tips</h3>
+            <div class="mt-2 text-sm text-blue-700">
+              <ul class="list-disc pl-5 space-y-1">
+                <li>Select a service to see its details and pricing</li>
+                <li>The total price is calculated automatically based on quantity and duration</li>
+                <li>Some services require advance booking</li>
+                <li>Check service availability for the selected date</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Form Actions -->
+  <div class="mt-6 flex items-center justify-between">
+    <div>
+      <% if reservation %>
+        <%= link_to "Cancel", reservation_service_bookings_path(reservation), class: "text-sm text-gray-600 hover:text-gray-900" %>
+      <% else %>
+        <%= link_to "Cancel", service_bookings_path, class: "text-sm text-gray-600 hover:text-gray-900" %>
+      <% end %>
+    </div>
+    <div class="flex space-x-3">
+      <%= form.submit service_booking.persisted? ? "Update Booking" : "Create Booking",
+          class: "px-6 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" %>
+    </div>
+  </div>
+<% end %>
+
+<script>
+// Simple JavaScript for price calculation (would normally use Stimulus)
+document.addEventListener('DOMContentLoaded', function() {
+  const form = document.querySelector('form');
+  if (!form) return;
+  
+  const serviceSelect = form.querySelector('#service_booking_service_id');
+  const quantityField = form.querySelector('#service_booking_quantity');
+  const durationField = form.querySelector('#service_booking_duration_minutes');
+  const unitPriceField = form.querySelector('#service_booking_unit_price');
+  const totalPriceField = form.querySelector('#service_booking_total_price');
+  
+  function updatePricing() {
+    const quantity = parseFloat(quantityField?.value || 1);
+    const unitPrice = parseFloat(unitPriceField?.value || 0);
+    const duration = parseFloat(durationField?.value || 60);
+    
+    // This is simplified - would need to check service pricing_unit
+    const total = unitPrice * quantity;
+    
+    if (totalPriceField) {
+      totalPriceField.value = total.toFixed(2);
+    }
+    
+    // Update summary
+    document.getElementById('summary-base-price').textContent = `$${unitPrice.toFixed(2)}`;
+    document.getElementById('summary-quantity').textContent = `× ${quantity}`;
+    document.getElementById('summary-total').textContent = `$${total.toFixed(2)}`;
+  }
+  
+  // Add event listeners
+  [quantityField, unitPriceField, durationField].forEach(field => {
+    if (field) {
+      field.addEventListener('change', updatePricing);
+      field.addEventListener('input', updatePricing);
+    }
+  });
+  
+  // Initial update
+  updatePricing();
+});
+</script>

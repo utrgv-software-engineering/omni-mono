@@ -1,0 +1,66 @@
+<div class="mb-6 flex items-center justify-between">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Students</h1>
+    <p class="text-gray-600 mt-1">Manage student accounts</p>
+  </div>
+  <div class="flex space-x-3">
+    <%= link_to bulk_new_admin_students_path, class: "inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors" do %>
+      Add Multiple
+    <% end %>
+    <%= link_to new_admin_student_path, class: "inline-flex items-center px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 transition-colors" do %>
+      Add Student
+    <% end %>
+  </div>
+</div>
+
+<% if @student_accounts.any? %>
+  <div class="bg-white shadow-sm rounded-lg overflow-hidden">
+    <table class="min-w-full divide-y divide-gray-200">
+      <thead class="bg-gray-50">
+        <tr>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Student</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hotel</th>
+          <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
+          <th scope="col" class="relative px-6 py-3">
+            <span class="sr-only">Actions</span>
+          </th>
+        </tr>
+      </thead>
+      <tbody class="bg-white divide-y divide-gray-200">
+        <% @student_accounts.each do |account| %>
+          <% hotel = account.hotels.first %>
+          <% student_user = account.users.where(is_ai_agent: false, is_platform_admin: false).first %>
+          <tr class="hover:bg-gray-50">
+            <td class="px-6 py-4 whitespace-nowrap">
+              <div class="text-sm font-medium text-gray-900"><%= student_user&.email || account.email %></div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <div class="text-sm text-gray-900"><%= hotel&.name || 'No hotel' %></div>
+              <div class="text-sm text-gray-500"><%= hotel&.rooms&.count || 0 %> rooms</div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <div class="text-sm text-gray-500"><%= account.created_at.strftime("%b %d, %Y") %></div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+              <%= link_to "View", admin_student_path(account), class: "text-indigo-600 hover:text-indigo-900 mr-4" %>
+              <%= button_to "Delete", admin_student_path(account), method: :delete, data: { turbo_confirm: "Delete this student account?" }, class: "text-red-600 hover:text-red-900" %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+<% else %>
+  <div class="text-center py-12 bg-white rounded-lg shadow-sm">
+    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path>
+    </svg>
+    <h3 class="mt-2 text-sm font-medium text-gray-900">No students yet</h3>
+    <p class="mt-1 text-sm text-gray-500">Add a student to get started.</p>
+    <div class="mt-6">
+      <%= link_to new_admin_student_path, class: "inline-flex items-center px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700" do %>
+        Add Student
+      <% end %>
+    </div>
+  </div>
+<% end %>

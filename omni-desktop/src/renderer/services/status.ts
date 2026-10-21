@@ -1,0 +1,36 @@
+import { objectEquals } from '@observ33r/object-equals';
+import { atom } from 'nanostores';
+
+import { STATUS_POLL_INTERVAL_MS } from '@/renderer/constants';
+import { emitter, ipc } from '@/renderer/services/ipc';
+import type { MainProcessStatus, WithTimestamp } from '@/shared/types';
+
+/**
+ * A nanostores atom that holds the status of the main process, wrapped in a timestamp.
+ */
+const $mainProcessStatus = atom<WithTimestamp<MainProcessStatus>>({
+  type: 'initializing',
+  timestamp: Date.now(),
+});
+
+/**
+ * Listen for main process status updates and poll for updates.
+ */
+const listen = () => {
+  ipc.on('main-process:status', (data) => {
+    $mainProcessStatus.set(data);
+  });
+
+  const poll = async () => {
+    const oldStatus = $mainProcessStatus.get();
+    const newStatus = await emitter.invoke('main-process:get-status');
+    if (objectEquals(oldStatus, newStatus)) {
+      return;
+    }
+    $mainProcessStatus.set(newStatus);
+  };
+
+  setInterval(poll, STATUS_POLL_INTERVAL_MS);
+};
+
+listen();

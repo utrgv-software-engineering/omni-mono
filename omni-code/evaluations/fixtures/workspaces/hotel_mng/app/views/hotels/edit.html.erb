@@ -1,0 +1,18 @@
+<% content_for :page_title, "Edit #{@hotel.name}" %>
+
+<div class="max-w-5xl mx-auto">
+  <!-- Header -->
+  <div class="mb-6">
+    <nav class="flex mb-2" aria-label="Breadcrumb">
+      <%= link_to "Hotels", hotels_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to @hotel.name, hotel_path(@hotel), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <span class="text-sm text-gray-900">Edit</span>
+    </nav>
+    <h1 class="text-2xl font-bold text-gray-900">Edit Hotel Settings</h1>
+    <p class="mt-1 text-sm text-gray-600">Update hotel information and configuration</p>
+  </div>
+
+  <%= render 'form', hotel: @hotel %>
+</div>

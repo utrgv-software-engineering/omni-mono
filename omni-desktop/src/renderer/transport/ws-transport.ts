@@ -1,0 +1,527 @@
+import {
+  classifyCloseCode,
+  ConnectionClosedError,
+  type ConnectionState,
+  DEFAULT_LIFECYCLE_POLICY,
+  type LifecyclePolicy,
+  ReconnectController,
+  WS_CLOSE_FORBIDDEN,
+  WS_CLOSE_UNAUTHENTICATED,
+} from '@/shared/lifecycle';
+import type { TransportEmitter, TransportListener } from '@/shared/transport';
+import type { IpcEvents, IpcRendererEvents } from '@/shared/types';
+
+type InvokeMessage = {
+  type: 'invoke';
+  id: number;
+  channel: string;
+  args: unknown[];
+};
+
+type ResponseMessage = {
+  type: 'response';
+  id: number;
+  result?: unknown;
+  error?: string;
+};
+
+type EventMessage = {
+  type: 'event';
+  channel: string;
+  args: unknown[];
+};
+
+/**
+ * Cloud→client reverse-invoke. The transport routes it to a handler registered
+ * via {@link WsTransportEmitter.addReverseHandler} and sends back the response
+ * (or error) as a `reverse-response`. Used for the cloud's
+ * `compute:start-session`, `compute:tunnel-*`, etc. callbacks.
+ */
+type ReverseInvokeMessage = {
+  type: 'reverse-invoke';
+  id: number;
+  channel: string;
+  args: unknown[];
+};
+
+type ServerMessage = ResponseMessage | EventMessage | ReverseInvokeMessage;
+
+export type ReverseHandler = (...args: unknown[]) => unknown | Promise<unknown>;
+
+type PendingRequest = {
+  resolve: (value: unknown) => void;
+  reject: (reason: Error) => void;
+};
+
+/**
+ * Local-server policy: the standard backoff schedule, but with an unlimited
+ * retry budget. Browser server-mode talks to the user's own launcher server
+ * (loopback / trusted LAN) where every outage is "the server is restarting" —
+ * the ws-token is short-TTL and re-fetched per dial, so even auth-flavored
+ * close codes are transient there. Remote backends (cloud / WSL / self-hosted
+ * server, i.e. `StoreData.remoteBackend` set) use the standard 10-attempt
+ * budget instead, where auth close codes are deterministic rejections.
+ */
+const LOCAL_LIFECYCLE_POLICY: LifecyclePolicy = {
+  ...DEFAULT_LIFECYCLE_POLICY,
+  reconnectMaxAttempts: Number.POSITIVE_INFINITY,
+};
+
+/** Active team id (teams/cloud mode); sent as ?team= so the server scopes the session. */
+const ACTIVE_TEAM_KEY = 'omni-active-team';
+
+import { uuidv4 } from '@/lib/uuid';
+
+/** Persisted active team, or null until the user picks one (defaults to their personal team). */
+export function getActiveTeamId(): string | null {
+  return localStorage.getItem(ACTIVE_TEAM_KEY);
+}
+
+/** Set the active team and reconnect the socket so the server re-scopes the session. */
+export function setActiveTeamId(teamId: string): void {
+  localStorage.setItem(ACTIVE_TEAM_KEY, teamId);
+  // A full reload is the simplest correct reconnect: it re-dials /ws with the
+  // new ?team= and re-hydrates every store from the new scope.
+  location.reload();
+}
+
+/**
+ * Optional cloud-link configuration. When set, ``WsTransportEmitter`` opens
+ * the WebSocket against the cloud at *baseUrl* and delegates ws-token
+ * acquisition to *getWsToken* (which runs in the Electron main process —
+ * it has the Entra access token and can call ``/api/ws-token`` without
+ * tripping CORS preflight that the renderer's cross-origin fetch would).
+ * Browser server-mode leaves the config unset and keeps the same-origin
+ * fetch behaviour.
+ */
+export type WsTransportConfig = {
+  /** Absolute origin of the cloud launcher, e.g. ``https://omni.example.com``. */
+  baseUrl: string;
+  /** Resolver for a fresh WS auth token. In Electron cloud mode this crosses
+   *  the preload bridge to main, which fetches /api/ws-token with a Bearer. */
+  getWsToken: () => Promise<string>;
+};
+
+/**
+ * WebSocket-based transport emitter. Two modes:
+ *   - Browser server-mode: same-origin /api/ws-token + ws://<host>/ws.
+ *   - Cloud-linked Electron: absolute baseUrl + Bearer header to the cloud,
+ *     WS upgrade against the same host.
+ */
+export class WsTransportEmitter implements TransportEmitter {
+  private ws: WebSocket | null = null;
+  private nextId = 1;
+  private pending = new Map<number, PendingRequest>();
+  private listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  /** Reverse-RPC handlers — server can invoke these via `reverse-invoke`. */
+  private reverseHandlers = new Map<string, ReverseHandler>();
+  private readonly reconnect: ReconnectController;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectionState: ConnectionState = { state: 'connecting' };
+  private stateListeners = new Set<(state: ConnectionState) => void>();
+  /**
+   * Frames waiting for a live socket. `id` is set for invoke frames so a
+   * transient close can reject in-flight requests without rejecting queued
+   * ones (queued frames survive the outage and flush on reconnect); a
+   * terminal close rejects both.
+   */
+  private messageQueue: { data: string; id?: number }[] = [];
+  // Transport ownership belongs to this window/emitter, not the origin's
+  // localStorage (shared by every tab, and sessionStorage can be cloned).
+  // Keep the ID across socket reconnects; a new document rehydrates durable
+  // chat state through a new transport instead of stealing another window.
+  private sessionId = uuidv4();
+  // Shared storage chooses the scope of a NEW document, never a reconnect.
+  private readonly teamId = getActiveTeamId();
+  private authToken: string | null = null;
+  private readonly cloud: WsTransportConfig | null;
+  private readonly wsHost: string;
+  /** Subscribers to (re)connection events. Used by main-ws-client to re-
+   *  register the machine identity after a reconnect (Phase 6). */
+  private connectListeners = new Set<() => void>();
+
+  constructor(cloud?: WsTransportConfig) {
+    this.cloud = cloud ?? null;
+    // Remote-linked (cloud / WSL / self-hosted server) → standard 10-attempt
+    // budget with terminal state; local server-mode → infinite retries.
+    this.reconnect = new ReconnectController(cloud ? DEFAULT_LIFECYCLE_POLICY : LOCAL_LIFECYCLE_POLICY);
+    // Pre-compute the WS host once. For browser mode use ``location.host``
+    // (the SPA's origin); for cloud-linked Electron the renderer is loaded
+    // from a file:// URL so ``location`` is useless and we derive the host
+    // from cloud.baseUrl.
+    if (cloud) {
+      try {
+        this.wsHost = new URL(cloud.baseUrl).host;
+      } catch {
+        throw new Error(`WsTransportEmitter: invalid cloud baseUrl: ${cloud.baseUrl}`);
+      }
+    } else {
+      this.wsHost = location.host;
+    }
+    void this.connect();
+  }
+
+  private isHttps(): boolean {
+    if (this.cloud) {
+      try {
+        return new URL(this.cloud.baseUrl).protocol === 'https:';
+      } catch {
+        return false;
+      }
+    }
+    return location.protocol === 'https:';
+  }
+
+  private async fetchAuthToken(): Promise<string> {
+    if (this.authToken) {
+      return this.authToken;
+    }
+    // Cloud-linked Electron: delegate to main (cross-origin fetch + Bearer
+    // would trip CORS preflight; EasyAuth's redirect on the OPTIONS request
+    // fails it). Browser server-mode: same-origin cookie auth.
+    if (this.cloud) {
+      this.authToken = await this.cloud.getWsToken();
+      return this.authToken;
+    }
+    const res = await fetch('/api/ws-token', { credentials: 'same-origin' });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new ConnectionClosedError('Sign in again to reconnect', {
+          permanent: true,
+          closeCode: res.status === 401 ? WS_CLOSE_UNAUTHENTICATED : WS_CLOSE_FORBIDDEN,
+        });
+      }
+      throw new Error(`Failed to fetch WS auth token: ${res.status} ${res.statusText}`);
+    }
+    const data = (await res.json()) as { token?: string };
+    if (!data.token) {
+      throw new Error('WS auth token response missing token');
+    }
+    this.authToken = data.token;
+    return data.token;
+  }
+
+  private getWsUrl(token: string): string {
+    const protocol = this.isHttps() ? 'wss:' : 'ws:';
+    const team = this.teamId;
+    const teamParam = team ? `&team=${encodeURIComponent(team)}` : '';
+    return `${protocol}//${this.wsHost}/ws?sessionId=${encodeURIComponent(this.sessionId)}&token=${encodeURIComponent(token)}${teamParam}`;
+  }
+
+  private async connect(): Promise<void> {
+    if (this.connectionState.state === 'closed') {
+      return;
+    }
+    let token: string;
+    try {
+      token = await this.fetchAuthToken();
+    } catch (err) {
+      console.error('[ws-transport]', err);
+      // Unlike an expired short-lived WS token, an explicit rejection of
+      // the credential used to obtain a fresh token needs reauthentication.
+      if (err instanceof ConnectionClosedError && err.permanent) {
+        this.enterTerminalState(err.closeCode, err.message);
+        return;
+      }
+      this.handleConnectionFailure(undefined, 'failed to fetch WS auth token');
+      return;
+    }
+    const ws = new WebSocket(this.getWsUrl(token));
+
+    ws.onopen = () => {
+      this.ws = ws;
+      this.reconnect.recordSuccess();
+      this.setConnectionState({ state: 'connected' });
+
+      // Flush queued messages
+      for (const msg of this.messageQueue) {
+        ws.send(msg.data);
+      }
+      this.messageQueue = [];
+
+      // Notify subscribers so they can replay setup work (e.g. re-register
+      // the machine identity with the cloud — see Phase 6).
+      for (const cb of this.connectListeners) {
+        try {
+          cb();
+        } catch (err) {
+          console.error('[ws-transport] connect listener threw:', err);
+        }
+      }
+    };
+
+    ws.onmessage = (event) => {
+      let msg: ServerMessage;
+      try {
+        msg = JSON.parse(event.data as string) as ServerMessage;
+      } catch {
+        return;
+      }
+
+      if (msg.type === 'response') {
+        const pending = this.pending.get(msg.id);
+        if (pending) {
+          this.pending.delete(msg.id);
+          if (msg.error) {
+            pending.reject(new Error(msg.error));
+          } else {
+            pending.resolve(msg.result);
+          }
+        }
+      } else if (msg.type === 'event') {
+        const channelListeners = this.listeners.get(msg.channel);
+        if (channelListeners) {
+          for (const listener of channelListeners) {
+            listener(...msg.args);
+          }
+        }
+      } else if (msg.type === 'reverse-invoke') {
+        void this.dispatchReverseInvoke(ws, msg);
+      }
+    };
+
+    ws.onclose = (event) => {
+      this.ws = null;
+      // Bust the cached ws-token. The server's signed tokens are short-TTL
+      // and a stale one (e.g. cached across a server redeploy that rotated
+      // the signing secret, or just past its 5-min TTL) would spin the
+      // reconnect loop indefinitely — every dial would fail with the same
+      // bad token and the cache would never refresh.
+      this.authToken = null;
+      this.handleConnectionFailure(event.code, event.reason);
+    };
+
+    ws.onerror = () => {
+      // onclose will fire after onerror
+    };
+  }
+
+  /**
+   * One failed connection (dial failure or lost socket). Applies the shared
+   * lifecycle policy: classify the close code, consume one attempt from the
+   * budget, and either back off + retry or enter the terminal state. Local
+   * server-mode never goes terminal (infinite budget, close codes treated as
+   * transient — see {@link LOCAL_LIFECYCLE_POLICY}).
+   */
+  private handleConnectionFailure(closeCode: number | undefined, reason: string | undefined): void {
+    if (this.connectionState.state === 'closed') {
+      return;
+    }
+    const permanent = this.cloud !== null && classifyCloseCode(closeCode) === 'permanent';
+    const decision = this.reconnect.recordFailure({ permanent });
+    if (!decision.retry) {
+      this.enterTerminalState(closeCode, reason);
+      return;
+    }
+    // Reject in-flight requests (their responses are lost with the socket).
+    // Queued not-yet-sent messages stay queued: they flush on reconnect.
+    this.rejectPending(new ConnectionClosedError('WebSocket connection closed', { closeCode, reason }), {
+      keepQueued: true,
+    });
+    this.setConnectionState({ state: 'reconnecting', attempt: decision.attempt, delayMs: decision.delayMs });
+    this.scheduleReconnect(decision.delayMs);
+  }
+
+  /**
+   * Permanent disconnect: a terminal close code (44xx/1002/1003/1008 from a
+   * remote backend) or an exhausted retry budget. Rejects every pending AND
+   * queued message with a structured {@link ConnectionClosedError} — nothing
+   * may remain unresolved — and stops reconnecting for good.
+   */
+  private enterTerminalState(closeCode: number | undefined, reason: string | undefined): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.setConnectionState({ state: 'closed', permanent: true, closeCode, reason });
+    this.rejectPending(
+      new ConnectionClosedError('WebSocket connection permanently closed', { permanent: true, closeCode, reason })
+    );
+    this.messageQueue = [];
+  }
+
+  private rejectPending(error: ConnectionClosedError, opts: { keepQueued?: boolean } = {}): void {
+    const queuedIds = opts.keepQueued
+      ? new Set(this.messageQueue.map((m) => m.id).filter((id): id is number => id !== undefined))
+      : null;
+    for (const [id, pending] of this.pending) {
+      if (queuedIds?.has(id)) {
+        continue;
+      }
+      pending.reject(error);
+      this.pending.delete(id);
+    }
+  }
+
+  private scheduleReconnect(delayMs: number): void {
+    if (this.reconnectTimer) {
+      return;
+    }
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect();
+    }, delayMs);
+  }
+
+  private send(data: string, id?: number): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(data);
+    } else {
+      this.messageQueue.push({ data, id });
+    }
+  }
+
+  invoke<E extends keyof IpcEvents>(channel: E, ...args: Parameters<IpcEvents[E]>): Promise<ReturnType<IpcEvents[E]>> {
+    // Permanently closed (terminal close code or exhausted retry budget):
+    // fail fast instead of queueing into a socket that will never dial again.
+    if (this.connectionState.state === 'closed') {
+      const closed = this.connectionState;
+      return Promise.reject(
+        new ConnectionClosedError('WebSocket connection permanently closed', {
+          permanent: true,
+          closeCode: closed.closeCode,
+          reason: closed.reason,
+        })
+      );
+    }
+    const id = this.nextId++;
+    const message: InvokeMessage = { type: 'invoke', id, channel: channel as string, args };
+
+    return new Promise<ReturnType<IpcEvents[E]>>((resolve, reject) => {
+      this.pending.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+      });
+      this.send(JSON.stringify(message), id);
+    });
+  }
+
+  /** Register an event listener (used by WsTransportListener). */
+  addListener(channel: string, listener: (...args: unknown[]) => void): () => void {
+    let set = this.listeners.get(channel);
+    if (!set) {
+      set = new Set();
+      this.listeners.set(channel, set);
+    }
+    set.add(listener);
+
+    return () => {
+      set!.delete(listener);
+      if (set!.size === 0) {
+        this.listeners.delete(channel);
+      }
+    };
+  }
+
+  /**
+   * Register a handler for a reverse-RPC channel — the cloud may dispatch
+   * `reverse-invoke` frames on it and the handler's return value is sent
+   * back as `reverse-response`. Only one handler per channel; re-registering
+   * replaces the previous one.
+   *
+   * Returns an unsubscriber that removes the handler.
+   */
+  addReverseHandler(channel: string, handler: ReverseHandler): () => void {
+    this.reverseHandlers.set(channel, handler);
+    return () => {
+      const current = this.reverseHandlers.get(channel);
+      if (current === handler) {
+        this.reverseHandlers.delete(channel);
+      }
+    };
+  }
+
+  /**
+   * Subscribe to (re)connect events. Fires immediately on each successful
+   * `ws.onopen`. Used by callers that need to replay setup work after a
+   * reconnect (Phase 6: re-register the machine identity with the cloud).
+   */
+  onConnect(cb: () => void): () => void {
+    this.connectListeners.add(cb);
+    // Fire immediately if we're already connected so callers that subscribe
+    // late don't miss the first open.
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        cb();
+      } catch (err) {
+        console.error('[ws-transport] connect listener threw:', err);
+      }
+    }
+    return () => {
+      this.connectListeners.delete(cb);
+    };
+  }
+
+  /**
+   * Subscribe to connection-state changes (`connecting` → `connected` →
+   * `reconnecting` → `closed`). Fires immediately with the current state so
+   * late subscribers don't miss the terminal transition. Used by the Banner
+   * feature to surface retryable-vs-terminal disconnects distinctly.
+   */
+  onStateChange(cb: (state: ConnectionState) => void): () => void {
+    this.stateListeners.add(cb);
+    try {
+      cb(this.connectionState);
+    } catch (err) {
+      console.error('[ws-transport] state listener threw:', err);
+    }
+    return () => {
+      this.stateListeners.delete(cb);
+    };
+  }
+
+  /** Current lifecycle state of the underlying socket. */
+  getConnectionState(): ConnectionState {
+    return this.connectionState;
+  }
+
+  private setConnectionState(state: ConnectionState): void {
+    this.connectionState = state;
+    for (const cb of this.stateListeners) {
+      try {
+        cb(state);
+      } catch (err) {
+        console.error('[ws-transport] state listener threw:', err);
+      }
+    }
+  }
+
+  private async dispatchReverseInvoke(origin: WebSocket, msg: ReverseInvokeMessage): Promise<void> {
+    const handler = this.reverseHandlers.get(msg.channel);
+    const respond = (payload: { result?: unknown; error?: string }): void => {
+      const out = JSON.stringify({ type: 'reverse-response', id: msg.id, ...payload });
+      // Send only when the WS is still open — closing mid-flight is the
+      // cloud's problem to recover from (it'll time out and surface
+      // host-offline).
+      if (this.ws === origin && origin.readyState === WebSocket.OPEN) {
+        origin.send(out);
+      }
+    };
+    if (!handler) {
+      respond({ error: `No reverse handler for channel: ${msg.channel}` });
+      return;
+    }
+    try {
+      const result = await handler(...(msg.args ?? []));
+      respond({ result });
+    } catch (err) {
+      respond({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+}
+
+/**
+ * WebSocket-based transport listener for browser mode.
+ * Receives push events from the server over the shared WebSocket connection.
+ */
+export class WsTransportListener implements TransportListener {
+  private wsEmitter: WsTransportEmitter;
+
+  constructor(wsEmitter: WsTransportEmitter) {
+    this.wsEmitter = wsEmitter;
+  }
+
+  on<E extends keyof IpcRendererEvents>(channel: E, listener: (...args: IpcRendererEvents[E]) => void): () => void {
+    return this.wsEmitter.addListener(channel as string, listener as (...args: unknown[]) => void);
+  }
+}

@@ -1,0 +1,6 @@
+student_id,name,email,dob,major,gpa,academic_standing,advisor,financial_aid_amount,disciplinary_notes
+U-10482913,Sarah Mensah,smensah3@gatech.edu,2002-04-12,Biology,3.82,Good Standing,Rajesh Venkataraman,12500,
+U-10529847,Marcus DeLeon-Whitfield,mdeleonw@gatech.edu,2001-09-30,Chemistry,2.14,Academic Probation,Rajesh Venkataraman,8200,Plagiarism finding - CHEM 2311 Fall 2024
+U-10613205,Yuki Tanaka-Morrison,ytmorrison@gatech.edu,2003-01-15,Computer Science,3.95,Good Standing,Angela Torres,0,
+U-10487362,James Okonkwo,jokonkwo7@gatech.edu,2002-07-08,Pre-Med,2.87,Good Standing,Rajesh Venkataraman,15000,
+U-10558194,Priya Chandrasekaran,pchandras@gatech.edu,2001-12-20,Data Science,3.41,Good Standing,Angela Torres,6800,

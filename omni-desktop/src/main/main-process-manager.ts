@@ -1,0 +1,291 @@
+import { IpcEmitter, IpcListener } from '@electron-toolkit/typed-ipc/main';
+import { app, BrowserWindow, shell } from 'electron';
+import contextMenu from 'electron-context-menu';
+import type Store from 'electron-store';
+import path from 'path';
+
+import { completeChatRemoval } from '@/main/chat-removal';
+import { PROJECT_KEYS } from '@/main/db-store-bridge';
+import { isDevelopment, manageWindowSize } from '@/main/util';
+import { applyChatCommand } from '@/shared/chat-commands';
+import type {
+  IpcEvents,
+  IpcRendererEvents,
+  MainProcessStatus,
+  RemoteBackendBootstrap,
+  StoreData,
+  WithTimestamp,
+} from '@/shared/types';
+
+import { checkForUpdates } from './updater';
+
+const NOT_INITIALIZED_MESSAGE = 'Main window is not initialized';
+
+export class MainProcessManager {
+  private window: BrowserWindow | null;
+  private status: WithTimestamp<MainProcessStatus>;
+  private store: Store<StoreData>;
+
+  /**
+   * Optional snapshot provider. When set, `store:get` and `store:get-key` for
+   * project keys read from SQLite instead of electron-store. Set by `index.ts`
+   * after the ProjectManager is created.
+   */
+  getStoreSnapshot: (() => StoreData) | null = null;
+  cleanupRemovedChat?: (tab: import('@/shared/types').CodeTab) => Promise<void>;
+
+  ipc: IpcListener<IpcEvents>;
+  emitter: IpcEmitter<IpcRendererEvents>;
+
+  constructor(arg: { store: Store<StoreData> }) {
+    const { store } = arg;
+    this.window = null;
+    this.ipc = new IpcListener<IpcEvents>();
+    this.emitter = new IpcEmitter<IpcRendererEvents>();
+    this.status = { type: 'initializing', timestamp: Date.now() };
+    this.store = store;
+    this.store.onDidAnyChange((data) => {
+      // Only broadcast for non-project key changes when repo is active.
+      // Project data changes are broadcast by ProjectManager/DbChangeWatcher.
+      if (!this.getStoreSnapshot) {
+        this.sendToWindow('store:changed', data);
+      }
+    });
+    this.ipc.handle('store:get-key', (_, key) => {
+      if (this.getStoreSnapshot && PROJECT_KEYS.has(key)) {
+        return this.getStoreSnapshot()[key];
+      }
+      return this.store.get(key);
+    });
+    this.ipc.handle('store:chat-command', async (_, command) => {
+      const { patch, result } = applyChatCommand(this.getStoreSnapshot?.() ?? this.store.store, command);
+      // One synchronous commit: no window can observe half of a tab/history mutation.
+      this.store.set(patch);
+      if (this.getStoreSnapshot) {
+        this.sendToWindow('store:changed', this.getStoreSnapshot());
+      }
+      await completeChatRemoval(command, result, (tab) => {
+        if (!this.cleanupRemovedChat) {
+          throw new Error('Chat cleanup is not initialized');
+        }
+        return this.cleanupRemovedChat(tab);
+      });
+      return result;
+    });
+    this.ipc.handle('store:set-key', (_, key, value) => {
+      if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId' || key === 'chatCleanupJobs') {
+        throw new Error('Use store:chat-command for chat state mutations');
+      }
+      if (this.getStoreSnapshot && PROJECT_KEYS.has(key)) {
+        throw new Error(
+          `store:set-key for project key "${String(key)}" is not allowed when SQLite is active. Use ProjectManager APIs.`
+        );
+      }
+      this.store.set(key, value);
+      // When repo is active, broadcast the merged snapshot so project data is included
+      if (this.getStoreSnapshot) {
+        this.sendToWindow('store:changed', this.getStoreSnapshot());
+      }
+    });
+    this.ipc.handle('store:get', (_) => {
+      if (this.getStoreSnapshot) {
+        return this.getStoreSnapshot();
+      }
+      return this.store.store;
+    });
+    this.ipc.handle('store:set', (_, data) => {
+      if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data || 'chatCleanupJobs' in data) {
+        throw new Error('Use store:chat-command for chat state mutations');
+      }
+      if (this.getStoreSnapshot) {
+        const conflicts = [...PROJECT_KEYS].filter((k) => k in data);
+        if (conflicts.length > 0) {
+          throw new Error(
+            `store:set with project keys [${conflicts.join(', ')}] is not allowed when SQLite is active.`
+          );
+        }
+      }
+      this.store.store = data;
+      if (this.getStoreSnapshot) {
+        this.sendToWindow('store:changed', this.getStoreSnapshot());
+      }
+    });
+    this.ipc.handle('store:reset', (_) => {
+      this.store.clear();
+      if (this.getStoreSnapshot) {
+        this.sendToWindow('store:changed', this.getStoreSnapshot());
+      }
+    });
+
+    contextMenu({
+      showSaveImageAs: true,
+      showSearchWithGoogle: false,
+      showInspectElement: false,
+      showLookUpSelection: false,
+    });
+  }
+
+  getStatus = (): WithTimestamp<MainProcessStatus> => {
+    return this.status;
+  };
+
+  updateStatus = (status: MainProcessStatus): void => {
+    this.status = { ...status, timestamp: Date.now() };
+    this.sendToWindow('main-process:status', this.status);
+  };
+
+  sendToWindow = <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => {
+    if (channel === 'store:changed') {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+          this.emitter.send(window.webContents, channel as Extract<T, string>, ...args);
+        }
+      }
+      return;
+    }
+    if (!this.window) {
+      console.warn(NOT_INITIALIZED_MESSAGE);
+      return;
+    }
+
+    if (this.window.isDestroyed()) {
+      return;
+    }
+
+    this.emitter.send(this.window.webContents, channel as Extract<T, string>, ...args);
+  };
+
+  createWindow = () => {
+    // Pass the persisted remoteBackend (if any) into the renderer via
+    // additionalArguments so the renderer transport can synchronously decide
+    // local-IPC vs. remote-WS at boot — without an async pre-init step. Re-
+    // reading this requires a window reload, which matches the link/unlink
+    // UX (the link handlers prompt for a reload after they fire). The wsl
+    // kind is resolved to its live URL here — WslBackendManager has already
+    // picked the port and spawned the daemon before window creation. The
+    // cloud and server kinds already persist their url and pass through.
+    const backend = this.store.get('remoteBackend') ?? null;
+    const remoteBackend: RemoteBackendBootstrap | null =
+      backend?.kind === 'wsl' ? { ...backend, url: `http://127.0.0.1:${backend.port}` } : backend;
+    const window = new BrowserWindow({
+      minWidth: 800,
+      minHeight: 600,
+      useContentSize: true,
+      webPreferences: {
+        preload: path.join(__dirname, '../preload/index.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        devTools: isDevelopment(),
+        webviewTag: true,
+        additionalArguments: [`--omni-remote-backend=${JSON.stringify(remoteBackend)}`],
+      },
+      autoHideMenuBar: true, // Hide the menu bar
+      frame: true, // Keep window frame/chrome
+      icon: path.join(__dirname, 'assets/icons/icon.png'),
+      backgroundColor: 'hsl(220, 12%, 10%)', // base.900
+      show: false,
+    });
+
+    const winProps = this.store.get('launcherWindowProps');
+    manageWindowSize(window, winProps, (windowProps) => {
+      this.store.set('launcherWindowProps', windowProps);
+    });
+
+    // Open external links in the default browser
+    window.webContents.setWindowOpenHandler((edata) => {
+      shell.openExternal(edata.url);
+      return { action: 'deny' };
+    });
+
+    // Harden webviews: enforce security settings on all embedded webviews
+    window.webContents.on('will-attach-webview', (_event, webPreferences) => {
+      webPreferences.nodeIntegration = false;
+      webPreferences.contextIsolation = true;
+    });
+
+    window.once('ready-to-show', () => {
+      this.updateStatus({ type: 'idle' });
+      window.show();
+      checkForUpdates(window);
+    });
+
+    // Same-window navigation (a plain <a href> in the renderer — e.g. a PR
+    // link in a channel message) must never replace the app UI. External
+    // http(s) URLs go to the default browser, matching the window-open
+    // handler above; everything else is dropped. Dev-server reloads are
+    // same-origin and stay allowed in development.
+    window.webContents.on('will-navigate', (event, url) => {
+      if (isDevelopment()) {
+        try {
+          if (new URL(url).origin === new URL(window.webContents.getURL()).origin) {
+            return;
+          }
+        } catch {
+          // Unparseable target — fall through to prevent.
+        }
+      }
+      event.preventDefault();
+      if (/^https?:/i.test(url)) {
+        void shell.openExternal(url);
+      }
+    });
+
+    // Disable a few things in production
+    if (!isDevelopment()) {
+      // Prevent Ctrl/Cmd+R and F5, which would reload the page
+      window.webContents.on('before-input-event', (event, input) => {
+        if (input.key === 'r' && (input.control || input.meta) && !input.alt) {
+          event.preventDefault();
+        }
+        if (input.key === 'F5') {
+          event.preventDefault();
+        }
+      });
+    }
+
+    this.window = window;
+
+    // Load the window based on whether we're in development or production
+    if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+      // Development: load from Vite dev server
+      window.loadURL(process.env['ELECTRON_RENDERER_URL']);
+    } else {
+      // Production: load from local file
+      window.loadFile(path.join(__dirname, '../renderer/index.html'));
+    }
+  };
+
+  loadURL = (url: string) => {
+    if (!this.window) {
+      console.warn(NOT_INITIALIZED_MESSAGE);
+      return;
+    }
+    return this.window.loadURL(url);
+  };
+
+  loadFile = (file: string) => {
+    if (!this.window) {
+      console.warn(NOT_INITIALIZED_MESSAGE);
+      return;
+    }
+    return this.window.loadFile(file);
+  };
+
+  getWindow = (): BrowserWindow | null => {
+    return this.window;
+  };
+
+  closeWindow = (): void => {
+    if (!this.window) {
+      return;
+    }
+    if (!this.window.isDestroyed()) {
+      this.window.close();
+    }
+    this.window = null;
+  };
+
+  cleanup = () => {
+    this.closeWindow();
+  };
+}

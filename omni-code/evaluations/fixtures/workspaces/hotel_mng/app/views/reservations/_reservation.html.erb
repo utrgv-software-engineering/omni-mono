@@ -1,0 +1,151 @@
+<tr class="hover:bg-gray-50 transition-colors">
+  <td class="px-6 py-4 whitespace-nowrap">
+    <div class="text-sm font-medium text-gray-900">
+      <%= reservation.confirmation_number %>
+    </div>
+    <div class="text-xs text-gray-500">
+      <%= reservation.created_at.strftime("%b %d, %Y") %>
+    </div>
+  </td>
+  
+  <td class="px-6 py-4 whitespace-nowrap">
+    <div class="flex items-center">
+      <div class="flex-shrink-0 h-10 w-10">
+        <div class="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
+          <span class="text-sm font-medium text-gray-600">
+            <%= reservation.guest&.display_initials %>
+          </span>
+        </div>
+      </div>
+      <div class="ml-3">
+        <div class="text-sm font-medium text-gray-900">
+          <%= link_to reservation.guest&.full_name, guest_path(reservation.guest), class: "hover:text-blue-600" if reservation.guest %>
+        </div>
+        <div class="text-xs text-gray-500">
+          <%= reservation.guest&.email %>
+        </div>
+      </div>
+    </div>
+  </td>
+  
+  <td class="px-6 py-4 whitespace-nowrap">
+    <div class="text-sm text-gray-900">
+      <%= reservation.room&.room_number || content_tag(:span, "TBA", class: "text-gray-500 italic") %>
+    </div>
+    <div class="text-xs text-gray-500">
+      <%= reservation.room_type&.name %>
+    </div>
+  </td>
+  
+  <td class="px-6 py-4 whitespace-nowrap">
+    <div class="text-sm text-gray-900">
+      <%= reservation.check_in_date.strftime("%b %d, %Y") %>
+    </div>
+    <div class="text-xs text-gray-500">
+      <%= reservation.check_in_date.strftime("%A") %>
+    </div>
+  </td>
+  
+  <td class="px-6 py-4 whitespace-nowrap">
+    <div class="text-sm text-gray-900">
+      <%= reservation.check_out_date.strftime("%b %d, %Y") %>
+    </div>
+    <div class="text-xs text-gray-500">
+      <%= pluralize(reservation.nights_count, 'night') %>
+    </div>
+  </td>
+  
+  <td class="px-6 py-4 whitespace-nowrap">
+    <%= render partial: "shared/status_badge", locals: { status: reservation.status, type: "reservation" } %>
+  </td>
+  
+  <td class="px-6 py-4 whitespace-nowrap">
+    <%= render partial: "shared/status_badge", locals: { status: reservation.payment_status, type: "payment" } %>
+  </td>
+  
+  <td class="px-6 py-4 whitespace-nowrap">
+    <div class="text-sm font-medium text-gray-900">
+      $<%= number_with_delimiter(reservation.total_amount.to_f.round(2)) %>
+    </div>
+    <% if reservation.balance_due > 0 %>
+      <div class="text-xs text-red-600">
+        Due: $<%= number_with_delimiter(reservation.balance_due.to_f.round(2)) %>
+      </div>
+    <% end %>
+  </td>
+  
+  <td class="px-6 py-4 whitespace-nowrap text-right">
+    <div class="flex items-center justify-end space-x-2">
+      <!-- Quick Actions -->
+      <% if reservation.can_check_in? %>
+        <%= link_to "Check In", 
+            new_reservation_check_in_path(reservation), 
+            class: "text-xs font-medium text-blue-600 hover:text-blue-900" %>
+      <% elsif reservation.can_check_out? %>
+        <%= link_to "Check Out", 
+            new_reservation_check_out_path(reservation), 
+            class: "text-xs font-medium text-orange-600 hover:text-orange-900" %>
+      <% end %>
+      
+      <!-- Actions Dropdown -->
+      <div class="relative" x-data="{ open: false }">
+        <button @click="open = !open" 
+                @click.away="open = false" 
+                class="text-gray-400 hover:text-gray-600 focus:outline-none focus:text-gray-600"
+                aria-label="More actions">
+          <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"></path>
+          </svg>
+        </button>
+        
+        <div x-show="open" 
+             x-transition:enter="transition ease-out duration-100"
+             x-transition:enter-start="transform opacity-0 scale-95"
+             x-transition:enter-end="transform opacity-100 scale-100"
+             x-transition:leave="transition ease-in duration-75"
+             x-transition:leave-start="transform opacity-100 scale-100"
+             x-transition:leave-end="transform opacity-0 scale-95"
+             class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10"
+             style="display: none;">
+          <%= link_to "View Details", 
+              reservation_path(reservation), 
+              class: "block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-t-lg" %>
+          
+          <% if policy(reservation).edit? %>
+            <%= link_to "Edit", 
+                edit_reservation_path(reservation), 
+                class: "block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" %>
+          <% end %>
+          
+          <% if reservation.room.nil? && reservation.status != 'cancelled' %>
+            <%= link_to "Assign Room", 
+                edit_reservation_path(reservation, focus: 'room'), 
+                class: "block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" %>
+          <% end %>
+          
+          <%= link_to "Send Confirmation", 
+              "#", 
+              class: "block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" %>
+          
+          <% if reservation.balance_due > 0 %>
+            <%= link_to "Process Payment", 
+                "#", 
+                class: "block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" %>
+          <% end %>
+          
+          <% if reservation.can_cancel? && policy(reservation).destroy? %>
+            <div class="border-t border-gray-200"></div>
+            <%= link_to "Cancel Reservation", 
+                reservation_path(reservation), 
+                method: :delete, 
+                data: { 
+                  confirm: "Are you sure you want to cancel this reservation? Confirmation number: #{reservation.confirmation_number}", 
+                  turbo_method: :delete 
+                },
+                class: "block px-4 py-2 text-sm text-red-600 hover:bg-red-50 rounded-b-lg" %>
+          <% end %>
+        </div>
+      </div>
+    </div>
+  </td>
+</tr>

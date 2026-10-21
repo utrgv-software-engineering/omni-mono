@@ -1,0 +1,235 @@
+<% content_for :page_title, "#{@room_type.name} Amenities - #{@hotel.name}" %>
+
+<div class="max-w-7xl mx-auto">
+  <!-- Header -->
+  <div class="mb-6">
+    <nav class="flex mb-2" aria-label="Breadcrumb">
+      <%= link_to @hotel.name, hotel_path(@hotel), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to "Room Types", hotel_room_types_path(@hotel), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to @room_type.name, hotel_room_type_path(@hotel, @room_type), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <span class="text-sm text-gray-900">Amenities</span>
+    </nav>
+    <h1 class="text-2xl font-bold text-gray-900"><%= @room_type.name %> Amenities</h1>
+    <p class="mt-1 text-sm text-gray-600">Manage amenities included in this room type</p>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Current Amenities List -->
+    <div class="lg:col-span-2">
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Current Amenities</h2>
+        </div>
+        
+        <% if @room_type_amenities.any? %>
+          <!-- Group amenities by category -->
+          <% @room_type_amenities.includes(:amenity).group_by { |rta| rta.amenity.category }.each do |category, amenities| %>
+            <div class="border-b border-gray-200 last:border-b-0">
+              <div class="px-6 py-3 bg-gray-50">
+                <h3 class="text-sm font-medium text-gray-700"><%= category.humanize %></h3>
+              </div>
+              <div class="divide-y divide-gray-100">
+                <% amenities.each do |room_type_amenity| %>
+                  <div class="px-6 py-3 flex items-center justify-between hover:bg-gray-50">
+                    <div class="flex items-center">
+                      <div class="w-8 h-8 bg-gray-100 rounded flex items-center justify-center mr-3">
+                        <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                      </div>
+                      <div>
+                        <p class="text-sm font-medium text-gray-900">
+                          <%= room_type_amenity.amenity.name %>
+                        </p>
+                        <% if room_type_amenity.amenity.is_countable? && room_type_amenity.quantity > 1 %>
+                          <p class="text-xs text-gray-500">Quantity: <%= room_type_amenity.quantity %></p>
+                        <% end %>
+                      </div>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                      <% if room_type_amenity.amenity.is_countable? %>
+                        <div class="flex items-center space-x-1">
+                          <button type="button" 
+                                  onclick="updateQuantity(<%= room_type_amenity.id %>, -1)"
+                                  class="w-6 h-6 rounded border border-gray-300 flex items-center justify-center hover:bg-gray-100">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path>
+                            </svg>
+                          </button>
+                          <span class="w-8 text-center text-sm font-medium" id="quantity-<%= room_type_amenity.id %>">
+                            <%= room_type_amenity.quantity %>
+                          </span>
+                          <button type="button" 
+                                  onclick="updateQuantity(<%= room_type_amenity.id %>, 1)"
+                                  class="w-6 h-6 rounded border border-gray-300 flex items-center justify-center hover:bg-gray-100">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                            </svg>
+                          </button>
+                        </div>
+                      <% end %>
+                      <% if policy(room_type_amenity).destroy? %>
+                        <%= link_to hotel_room_type_room_type_amenity_path(@hotel, @room_type, room_type_amenity), 
+                            method: :delete,
+                            data: { confirm: "Remove #{room_type_amenity.amenity.name} from this room type?" },
+                            class: "text-red-600 hover:text-red-800" do %>
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                          </svg>
+                        <% end %>
+                      <% end %>
+                    </div>
+                  </div>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
+        <% else %>
+          <div class="px-6 py-8 text-center">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">No amenities have been added to this room type yet.</p>
+          </div>
+        <% end %>
+      </div>
+    </div>
+
+    <!-- Add Amenity Form -->
+    <div class="lg:col-span-1">
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h2 class="text-lg font-semibold text-gray-900">Add Amenity</h2>
+        </div>
+        
+        <% if @available_amenities.any? %>
+          <%= form_with(model: [@hotel, @room_type, @room_type.room_type_amenities.build], 
+                        url: hotel_room_type_room_type_amenities_path(@hotel, @room_type),
+                        local: true) do |form| %>
+            <div class="px-6 py-4 space-y-4">
+              <div>
+                <%= form.label :amenity_id, "Select Amenity", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                <%= form.select :amenity_id,
+                    grouped_options_for_select(
+                      @available_amenities.group_by(&:category).map do |category, amenities|
+                        [category.humanize, amenities.map { |a| ["#{a.name}#{' (countable)' if a.is_countable?}", a.id] }]
+                      end
+                    ),
+                    { prompt: "Choose an amenity..." },
+                    class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500",
+                    onchange: "checkCountable(this)" %>
+              </div>
+              
+              <div id="quantity-field" class="hidden">
+                <%= form.label :quantity, class: "block text-sm font-medium text-gray-700 mb-1" %>
+                <%= form.number_field :quantity, 
+                    value: 1,
+                    min: 1,
+                    class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-indigo-500 focus:border-indigo-500" %>
+                <p class="mt-1 text-xs text-gray-500">Specify the quantity for countable amenities</p>
+              </div>
+              
+              <%= form.submit "Add Amenity",
+                  class: "w-full px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer" %>
+            </div>
+          <% end %>
+        <% else %>
+          <div class="px-6 py-8 text-center">
+            <p class="text-sm text-gray-500">All available amenities have been added to this room type.</p>
+            <%= link_to "Manage Amenities", amenities_path, class: "mt-2 text-sm text-indigo-600 hover:text-indigo-800" %>
+          </div>
+        <% end %>
+      </div>
+
+      <!-- Room Type Info -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 mt-6">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h3 class="text-sm font-semibold text-gray-900">Room Type Info</h3>
+        </div>
+        <div class="px-6 py-4">
+          <dl class="space-y-2 text-sm">
+            <div class="flex justify-between">
+              <dt class="text-gray-500">Room Type</dt>
+              <dd class="font-medium text-gray-900"><%= @room_type.name %></dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-gray-500">Code</dt>
+              <dd class="text-gray-900"><%= @room_type.code %></dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-gray-500">Total Rooms</dt>
+              <dd class="text-gray-900"><%= @room_type.rooms.count %></dd>
+            </div>
+            <div class="flex justify-between">
+              <dt class="text-gray-500">Amenities</dt>
+              <dd class="font-medium text-gray-900"><%= @room_type_amenities.count %></dd>
+            </div>
+          </dl>
+          <div class="mt-4 pt-4 border-t border-gray-200">
+            <%= link_to "View Room Type", hotel_room_type_path(@hotel, @room_type), 
+                class: "block w-full text-center px-3 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50" %>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Tips -->
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200 mt-6">
+        <div class="px-6 py-4 border-b border-gray-200">
+          <h3 class="text-sm font-semibold text-gray-900">Quick Tips</h3>
+        </div>
+        <div class="px-6 py-4">
+          <ul class="space-y-2 text-xs text-gray-600">
+            <li class="flex items-start">
+              <svg class="w-4 h-4 text-gray-400 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              Room amenities are included in every room of this type
+            </li>
+            <li class="flex items-start">
+              <svg class="w-4 h-4 text-gray-400 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14"></path>
+              </svg>
+              Use quantities for countable items like beds or towels
+            </li>
+            <li class="flex items-start">
+              <svg class="w-4 h-4 text-gray-400 mr-2 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+              </svg>
+              Add hotel-wide amenities separately in Hotel Amenities
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Store countable amenity IDs for form handling
+  const countableAmenities = <%= @available_amenities.select(&:is_countable?).pluck(:id).to_json %>;
+  
+  function checkCountable(select) {
+    const amenityId = parseInt(select.value);
+    const quantityField = document.getElementById('quantity-field');
+    
+    if (countableAmenities.includes(amenityId)) {
+      quantityField.classList.remove('hidden');
+    } else {
+      quantityField.classList.add('hidden');
+      document.getElementById('room_type_amenity_quantity').value = 1;
+    }
+  }
+  
+  function updateQuantity(amenityId, change) {
+    const quantitySpan = document.getElementById(`quantity-${amenityId}`);
+    let currentQuantity = parseInt(quantitySpan.textContent);
+    let newQuantity = Math.max(1, currentQuantity + change);
+    
+    // This would need proper AJAX implementation
+    quantitySpan.textContent = newQuantity;
+    console.log(`Update amenity ${amenityId} quantity to ${newQuantity}`);
+  }
+</script>

@@ -1,0 +1,172 @@
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+import type { Configuration, WindowsConfiguration } from 'electron-builder';
+
+// WSL backend payload (Windows installers only): a Linux-built tarball of the
+// server bundle + pinned Node runtime that Electron main streams into a WSL
+// distro (docs/windows-wsl-backend-plan.md, Phase 5). Built by
+// `npm run build:wsl-payload` on Linux into out/wsl-payload/; CI instead
+// downloads the artifact elsewhere and points OMNI_WSL_PAYLOAD at it, because
+// `npm run clean` wipes out/ before electron-builder runs. Optional so
+// mac/linux/dev packaging without the payload still works.
+const getWslPayloadResources = (): { from: string; to: string }[] => {
+  const payloadPath = resolve(process.env.OMNI_WSL_PAYLOAD || 'out/wsl-payload/omni-wsl-payload.tar.gz');
+  if (!existsSync(payloadPath)) {
+    console.warn(
+      `omni-wsl-payload.tar.gz not found at ${payloadPath} — Windows targets will not bundle the WSL backend.`
+    );
+    return [];
+  }
+  return [{ from: payloadPath, to: 'omni-wsl-payload.tar.gz' }];
+};
+
+const getWindowsSigningOptions = (): Partial<WindowsConfiguration> => {
+  if (process.env.ENABLE_SIGNING) {
+    return {
+      signtoolOptions: {
+        // Delegate signing to our own script. This script is called once for each executable. The script contains
+        // logic to skip signing for executables that are not meant to be signed, such as the bundled uv binary.
+        sign: './scripts/customSign.js',
+        // We use a custom signing script to handle the signing process, so the selected algorithms are essentially
+        // placeholders. We only want to sign the executable once, so we select a single algo.
+        signingHashAlgorithms: ['sha256'],
+      },
+    };
+  }
+  return {};
+};
+
+export default {
+  appId: 'com.omni.omni-code',
+  productName: 'Omni Code',
+  directories: {
+    output: 'dist',
+  },
+  files: [
+    'package.json',
+    'out/**/*',
+    'node_modules/node-pty/**/*',
+    'packages/projects-db/dist/**/*',
+    'packages/projects-db/package.json',
+    'packages/projects-mcp/dist/**/*',
+    'packages/projects-mcp/package.json',
+    'packages/projects-mcp/index.d.ts',
+  ],
+  // The omni-projects-mcp cli.js is spawned by `node` at runtime (both by
+  // launcher-managed agents and by omni-code standalone reading the same
+  // mcp.json). Files inside app.asar aren't readable by raw fs/node, so the
+  // mcp packages must be extracted to app.asar.unpacked/. omni-projects-db
+  // is a CommonJS dep of cli.js — unpack it too so require() resolves.
+  asarUnpack: ['packages/projects-mcp/**/*', 'packages/projects-db/**/*'],
+  extraResources: [
+    {
+      from: 'assets/bin',
+      to: './bin',
+      filter: 'uv*',
+    },
+    {
+      from: 'assets/bin',
+      to: './bin',
+      filter: 'omni-sandbox*',
+    },
+    {
+      from: 'assets/bin',
+      to: './bin',
+      filter: 'bwrap',
+    },
+    {
+      // Vendored MCP-UI sandbox proxy HTML. Served by the
+      // ``mcp-sandbox:`` custom protocol (see src/main/index.ts).
+      from: 'assets/mcp-sandbox',
+      to: './mcp-sandbox',
+      filter: '*.html',
+    },
+    {
+      // Launcher-bundled sandbox profiles. Resolved at runtime by
+      // profile-resolver's getBundledProfilesDir() as a sibling of the
+      // bundled bin dir (resources/profiles in packaged apps).
+      from: 'assets/profiles',
+      to: './profiles',
+      filter: '*.yml',
+    },
+    {
+      // Local voice sidecar (Option A). Python ONNX deps are provisioned at
+      // runtime into a dedicated uv venv by VoiceService; only the script
+      // (+ requirements) ships. Built-in persona embeddings (voices/*.emb.npy)
+      // ship too — embedding-only, no source audio. Resolved via
+      // process.resourcesPath in voice-service.ts.
+      from: 'voice-sidecar',
+      to: './voice-sidecar',
+      filter: ['*.py', '*.txt', 'voices/**'],
+    },
+  ],
+  mac: {
+    target: ['dmg'],
+  },
+  nsis: {
+    include: 'scripts/vcredist.nsh',
+  },
+  win: {
+    target: ['nsis'],
+    // Merged with the top-level extraResources for Windows targets; lands at
+    // process.resourcesPath/omni-wsl-payload.tar.gz.
+    extraResources: getWslPayloadResources(),
+    ...getWindowsSigningOptions(),
+  },
+  linux: {
+    target: ['AppImage'],
+  },
+  publish: {
+    provider: 'github',
+    owner: 'ericmichael',
+    repo: 'omni-desktop',
+  },
+  electronFuses: {
+    runAsNode: false,
+    enableCookieEncryption: true,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    enableEmbeddedAsarIntegrityValidation: true,
+    onlyLoadAppFromAsar: true,
+    resetAdHocDarwinSignature: true,
+  },
+  electronUpdaterCompatibility: '>= 2.16',
+  afterAllArtifactBuild: (buildResult) => {
+    const fs = require('fs');
+    const path = require('path');
+
+    const packageJson = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf8'));
+    const version = packageJson.version;
+    const outDir = buildResult.outDir;
+    const newArtifactPaths = [...buildResult.artifactPaths];
+
+    console.log('Creating "latest" versions of artifacts...');
+
+    for (const artifactPath of buildResult.artifactPaths) {
+      const fileName = path.basename(artifactPath);
+
+      // Skip files that don't contain the version number
+      if (!fileName.includes(version)) {
+        continue;
+      }
+
+      // Create the "latest" filename by replacing the version with "latest"
+      const latestFileName = fileName.replace(version, 'latest');
+      const latestPath = path.join(outDir, latestFileName);
+
+      try {
+        // Copy the file with the new name
+        fs.copyFileSync(artifactPath, latestPath);
+        console.log(`Created: ${latestFileName}`);
+
+        // Add the new file to the artifacts list so it gets uploaded
+        newArtifactPaths.push(latestPath);
+      } catch (error) {
+        console.error(`Failed to create ${latestFileName}:`, error);
+      }
+    }
+
+    return newArtifactPaths;
+  },
+} satisfies Configuration;

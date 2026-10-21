@@ -1,0 +1,19 @@
+{
+  "baseUrl": "http://127.0.0.1:3000/",
+  "browser": {
+    "session": "acceptance",
+    "headed": false,
+    "display": null,
+    "reuseSession": false,
+    "persistent": false,
+    "profile": null,
+    "pauseAfterOpen": false
+  },
+  "auth": {
+    "stateLoadPath": null,
+    "stateSavePath": null
+  },
+  "viewport": {"width": 1280, "height": 720},
+  "timeoutsMs": {"navigation": 15000, "element": 15000},
+  "video": {"record": true, "embedPolicy": "on-fail", "embedBytesLimit": 5000000}
+}

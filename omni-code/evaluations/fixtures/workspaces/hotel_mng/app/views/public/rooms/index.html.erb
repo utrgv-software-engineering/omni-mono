@@ -1,0 +1,177 @@
+<%# Page Header %>
+<section class="bg-gradient-to-r from-blue-600 to-blue-700 py-16">
+  <div class="container mx-auto px-4">
+    <h1 class="text-4xl md:text-5xl font-bold text-white mb-4">Our Rooms & Suites</h1>
+    <p class="text-xl text-white/90 mb-8">Discover your perfect accommodation at <%= @hotel.name %></p>
+    
+    <%# Date Selection Bar %>
+    <div class="bg-white/10 backdrop-blur-sm rounded-lg p-4">
+      <%= form_with url: public_rooms_path, method: :get, local: true, class: "flex flex-wrap gap-4 items-end" do |f| %>
+        <div class="flex-1 min-w-[200px]">
+          <label class="text-xs font-semibold text-white/80 mb-1 block">Check In</label>
+          <%= f.date_field :check_in_date, 
+              value: @check_in_date,
+              min: Date.current,
+              class: "w-full px-3 py-2 bg-white/90 border border-white/20 rounded-lg focus:ring-2 focus:ring-white focus:bg-white text-gray-900" %>
+        </div>
+        
+        <div class="flex-1 min-w-[200px]">
+          <label class="text-xs font-semibold text-white/80 mb-1 block">Check Out</label>
+          <%= f.date_field :check_out_date, 
+              value: @check_out_date,
+              min: Date.current + 1,
+              class: "w-full px-3 py-2 bg-white/90 border border-white/20 rounded-lg focus:ring-2 focus:ring-white focus:bg-white text-gray-900" %>
+        </div>
+        
+        <div class="flex-1 min-w-[150px]">
+          <label class="text-xs font-semibold text-white/80 mb-1 block">Guests</label>
+          <%= f.select :guests, 
+              options_for_select((1..8).map { |i| [i == 1 ? "1 Guest" : "#{i} Guests", i] }, @guests),
+              {},
+              class: "w-full px-3 py-2 bg-white/90 border border-white/20 rounded-lg focus:ring-2 focus:ring-white focus:bg-white text-gray-900" %>
+        </div>
+        
+        <%= f.submit "Update Dates", 
+            class: "bg-white text-blue-600 font-semibold py-2.5 px-6 rounded-lg hover:bg-gray-100 transition-colors duration-200 cursor-pointer" %>
+      <% end %>
+    </div>
+  </div>
+</section>
+
+<%# Room Types Grid %>
+<section class="py-16 bg-gray-50">
+  <div class="container mx-auto px-4">
+    <% if @room_types.any? %>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <% @room_types.each do |room_type| %>
+          <% available_count = room_type.available_rooms_count(@check_in_date, @check_out_date) %>
+          <% nights = (@check_out_date - @check_in_date).to_i %>
+          <% total_price = room_type.calculate_price(nights: nights, guests: @guests) %>
+          
+          <div class="bg-white rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-300">
+            <div class="grid grid-cols-1 md:grid-cols-2">
+              <%# Room Image %>
+              <div class="relative h-64 md:h-full">
+                <%= image_tag "https://images.unsplash.com/photo-1611892440504-42a792e24d32?q=80&w=1000", 
+                    class: "w-full h-full object-cover",
+                    alt: room_type.name %>
+                <% if available_count > 0 %>
+                  <div class="absolute top-4 left-4 bg-green-500 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                    <%= available_count %> Available
+                  </div>
+                <% else %>
+                  <div class="absolute top-4 left-4 bg-red-500 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                    Sold Out
+                  </div>
+                <% end %>
+              </div>
+              
+              <%# Room Details %>
+              <div class="p-6 flex flex-col">
+                <div class="flex-1">
+                  <h3 class="text-2xl font-bold text-gray-900 mb-2"><%= room_type.name %></h3>
+                  
+                  <p class="text-gray-600 mb-4">
+                    <%= room_type.description || "Experience comfort and elegance in our thoughtfully designed #{room_type.name.downcase}. Perfect for your stay in #{@hotel.city}." %>
+                  </p>
+                  
+                  <%# Room Features %>
+                  <div class="grid grid-cols-2 gap-3 mb-4">
+                    <div class="flex items-center text-sm text-gray-700">
+                      <svg class="w-5 h-5 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                      </svg>
+                      Up to <%= room_type.max_occupancy %> guests
+                    </div>
+                    
+                    <div class="flex items-center text-sm text-gray-700">
+                      <svg class="w-5 h-5 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path>
+                      </svg>
+                      <%= room_type.size_sqm.present? ? "#{room_type.size_sqm.to_i} m²" : "Standard size" %>
+                    </div>
+                    
+                    <div class="flex items-center text-sm text-gray-700">
+                      <svg class="w-5 h-5 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                      </svg>
+                      Modern amenities
+                    </div>
+                    
+                    <div class="flex items-center text-sm text-gray-700">
+                      <svg class="w-5 h-5 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                      </svg>
+                      City view
+                    </div>
+                  </div>
+                </div>
+                
+                <%# Pricing %>
+                <div class="border-t pt-4">
+                  <div class="flex items-baseline justify-between mb-2">
+                    <div>
+                      <span class="text-3xl font-bold text-gray-900">$<%= total_price.to_i %></span>
+                      <span class="text-gray-600 ml-2">for <%= nights %> <%= nights == 1 ? 'night' : 'nights' %></span>
+                    </div>
+                  </div>
+                  <p class="text-sm text-gray-500 mb-4">$<%= room_type.base_price.to_i %> per night</p>
+                  
+                  <%# Action Buttons %>
+                  <div class="flex gap-3">
+                    <%= link_to "View Details", 
+                        public_room_path(room_type, check_in_date: @check_in_date, check_out_date: @check_out_date, guests: @guests),
+                        class: "flex-1 text-center border border-gray-300 text-gray-700 font-semibold py-2 px-4 rounded-lg hover:bg-gray-50 transition-colors duration-200" %>
+                    
+                    <% if available_count > 0 %>
+                      <%= link_to "Book Now", 
+                          new_public_booking_path(room_type_id: room_type.id, check_in_date: @check_in_date, check_out_date: @check_out_date, guests: @guests),
+                          class: "flex-1 text-center bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-200" %>
+                    <% else %>
+                      <button disabled class="flex-1 text-center bg-gray-300 text-gray-500 font-semibold py-2 px-4 rounded-lg cursor-not-allowed">
+                        Sold Out
+                      </button>
+                    <% end %>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% end %>
+      </div>
+    <% else %>
+      <div class="text-center py-12">
+        <svg class="w-24 h-24 text-gray-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+        </svg>
+        <h3 class="text-xl font-semibold text-gray-900 mb-2">No Rooms Available</h3>
+        <p class="text-gray-600 mb-6">Sorry, we don't have any rooms available for your selected dates.</p>
+        <%= link_to "Try Different Dates", public_hotel_path, class: "inline-block bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-blue-700 transition-colors duration-200" %>
+      </div>
+    <% end %>
+  </div>
+</section>
+
+<%# Hotel Info Bar %>
+<section class="bg-white py-8 border-t">
+  <div class="container mx-auto px-4">
+    <div class="flex flex-wrap justify-center gap-8 text-center">
+      <div>
+        <p class="text-sm text-gray-600 mb-1">Check-in</p>
+        <p class="font-semibold text-gray-900"><%= @hotel.check_in_time.strftime("%l:%M %p") %></p>
+      </div>
+      <div>
+        <p class="text-sm text-gray-600 mb-1">Check-out</p>
+        <p class="font-semibold text-gray-900"><%= @hotel.check_out_time.strftime("%l:%M %p") %></p>
+      </div>
+      <div>
+        <p class="text-sm text-gray-600 mb-1">Contact</p>
+        <p class="font-semibold text-gray-900"><%= @hotel.phone %></p>
+      </div>
+      <div>
+        <p class="text-sm text-gray-600 mb-1">Email</p>
+        <p class="font-semibold text-gray-900"><%= @hotel.email %></p>
+      </div>
+    </div>
+  </div>
+</section>

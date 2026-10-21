@@ -1,0 +1,41 @@
+<nav class="main-navigation">
+  <div class="nav-brand">
+    <%= link_to authenticated_root_path do %>
+      <h2>Hotel Management</h2>
+      <% if current_tenant %>
+        <span class="account-name"><%= current_tenant.name %></span>
+      <% end %>
+    <% end %>
+  </div>
+  
+  <div class="nav-menu">
+    <% if user_signed_in? %>
+      <% if current_tenant %>
+        <%= link_to "Dashboard", dashboard_path, class: "nav-link" %>
+        <%= link_to "Hotels", hotels_path, class: "nav-link" %>
+        <%= link_to "Reservations", reservations_path, class: "nav-link" %>
+        <%= link_to "Guests", guests_path, class: "nav-link" %>
+      <% end %>
+    <% end %>
+  </div>
+  
+  <div class="nav-user">
+    <% if user_signed_in? %>
+      <div class="user-menu">
+        <span class="user-name"><%= current_user.display_name %></span>
+        <% if current_account_user %>
+          <span class="user-role"><%= current_account_user.role_display_name %></span>
+        <% end %>
+        
+        <% if user_has_multiple_accounts? %>
+          <%= link_to "Switch Account", accounts_path, class: "btn btn-sm" %>
+        <% end %>
+        
+        <%= link_to "Sign Out", destroy_user_session_path, method: :delete, class: "btn btn-sm" %>
+      </div>
+    <% else %>
+      <%= link_to "Sign In", new_user_session_path, class: "btn btn-primary" %>
+      <%= link_to "Sign Up", new_user_registration_path, class: "btn btn-secondary" %>
+    <% end %>
+  </div>
+</nav>

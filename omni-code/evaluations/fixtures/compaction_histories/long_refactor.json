@@ -1,0 +1,112 @@
+{
+  "description": "Simulates a long async refactoring session where the user gave explicit constraints. After compaction, the agent should remember the task, constraints, and progress.",
+  "pre_compaction_messages": [
+    {
+      "role": "user",
+      "content": "I need you to refactor all the database queries in src/db/ to use async/await. We have three files: src/db/users.py, src/db/orders.py, and src/db/products.py. IMPORTANT: Do NOT change any function signatures — we have external consumers. Also do NOT use raw SQL strings, always use parameterized queries."
+    },
+    {
+      "role": "assistant",
+      "content": "I'll refactor all three database files to use async/await while keeping all function signatures unchanged and using parameterized queries. Let me start by reading the current files."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "type": "function_call",
+          "name": "read_file",
+          "arguments": "{\"file_path\": \"/workspace/src/db/users.py\"}",
+          "call_id": "call_001"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "def get_user(user_id: int) -> dict:\n    conn = db.connect()\n    result = conn.execute(f\"SELECT * FROM users WHERE id = {user_id}\")\n    return result.fetchone()\n\ndef create_user(name: str, email: str) -> int:\n    conn = db.connect()\n    conn.execute(f\"INSERT INTO users (name, email) VALUES ('{name}', '{email}')\")\n    return conn.lastrowid",
+      "tool_call_id": "call_001"
+    },
+    {
+      "role": "assistant",
+      "content": "I can see users.py uses synchronous connections and raw SQL strings with f-string interpolation — both need fixing. Let me refactor it."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "type": "function_call",
+          "name": "apply_patch",
+          "arguments": "{\"file_path\": \"/workspace/src/db/users.py\", \"patch\": \"async def get_user(user_id: int) -> dict:\\n    async with db.connect() as conn:\\n        result = await conn.execute(\\\"SELECT * FROM users WHERE id = $1\\\", user_id)\\n        return await result.fetchone()\\n\\nasync def create_user(name: str, email: str) -> int:\\n    async with db.connect() as conn:\\n        result = await conn.execute(\\\"INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id\\\", name, email)\\n        row = await result.fetchone()\\n        return row['id']\"}",
+          "call_id": "call_002"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "Patch applied successfully.",
+      "tool_call_id": "call_002"
+    },
+    {
+      "role": "assistant",
+      "content": "Done with users.py. I kept the same function signatures (get_user and create_user with the same parameters and return types) but made them async and switched to parameterized queries. Moving on to orders.py next."
+    },
+    {
+      "role": "user",
+      "content": "Good progress. Now do orders.py."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "type": "function_call",
+          "name": "read_file",
+          "arguments": "{\"file_path\": \"/workspace/src/db/orders.py\"}",
+          "call_id": "call_003"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "def get_orders(user_id: int) -> list:\n    conn = db.connect()\n    result = conn.execute(f\"SELECT * FROM orders WHERE user_id = {user_id}\")\n    return result.fetchall()\n\ndef create_order(user_id: int, total: float) -> int:\n    conn = db.connect()\n    conn.execute(f\"INSERT INTO orders (user_id, total) VALUES ({user_id}, {total})\")\n    return conn.lastrowid",
+      "tool_call_id": "call_003"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "type": "function_call",
+          "name": "apply_patch",
+          "arguments": "{\"file_path\": \"/workspace/src/db/orders.py\", \"patch\": \"async def get_orders(user_id: int) -> list:\\n    async with db.connect() as conn:\\n        result = await conn.execute(\\\"SELECT * FROM orders WHERE user_id = $1\\\", user_id)\\n        return await result.fetchall()\\n\\nasync def create_order(user_id: int, total: float) -> int:\\n    async with db.connect() as conn:\\n        result = await conn.execute(\\\"INSERT INTO orders (user_id, total) VALUES ($1, $2) RETURNING id\\\", user_id, total)\\n        row = await result.fetchone()\\n        return row['id']\"}",
+          "call_id": "call_004"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "Patch applied successfully.",
+      "tool_call_id": "call_004"
+    },
+    {
+      "role": "assistant",
+      "content": "orders.py is done. Two files complete (users.py and orders.py), one remaining (products.py). Same pattern: async/await, parameterized queries, signatures preserved."
+    }
+  ],
+  "post_compaction_prompts": [
+    "Continue with the refactoring. What's left to do?",
+    "Remind me — what constraints did I give you at the start?"
+  ],
+  "expected_recall": {
+    "task": "refactor database queries to async/await",
+    "constraints": [
+      "do not change function signatures",
+      "use parameterized queries, not raw SQL"
+    ],
+    "progress": {
+      "completed": ["src/db/users.py", "src/db/orders.py"],
+      "remaining": ["src/db/products.py"]
+    }
+  }
+}

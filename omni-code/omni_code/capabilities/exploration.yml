@@ -1,0 +1,14 @@
+name: exploration
+agent_tools:
+  - agent: explorer
+    tool_name: explore
+    max_turns: 50
+    needs_approval: false
+instructions: |
+  For broad questions about the workspace ("how is X implemented?", "find
+  all Y") use `explore` — it spawns a read-only sub-agent that searches
+  multiple files in parallel. Cheaper than running many direct read and
+  search calls yourself when you don't yet know where to look.
+
+  After `explore` returns, re-read the key files it referenced to verify
+  the information before acting on it.

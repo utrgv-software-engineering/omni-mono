@@ -1,0 +1,98 @@
+import { memo, useCallback, useEffect, useState } from 'react';
+
+import { cn } from '@/renderer/ds/cn';
+import { emitter } from '@/renderer/services/ipc';
+import type { ContainerPullRequest } from '@/shared/types';
+
+import { PullRequestBadge } from './PullRequestBadge';
+
+const POLL_INTERVAL_MS = 8_000;
+
+/**
+ * Which surface's container to probe for pull requests — a deck column's tab
+ * (project-backed OR a projectless chat column; main resolves the sources
+ * either way).
+ */
+export type PullRequestBannerScope = { kind: 'code-tab'; tabId: string };
+
+const detect = (scope: PullRequestBannerScope): Promise<ContainerPullRequest[]> =>
+  emitter.invoke('project:detect-code-tab-pull-requests', scope.tabId);
+
+/**
+ * Merge a poll result into the displayed PR list. The main process already
+ * gates every result against the persisted `PullRequestLink`s (ticket links or
+ * the global `pullRequestLinks` store for chat / un-ticketed tabs), so a
+ * MERGED PR arriving here is by definition one this launcher watched while
+ * open — display it. This merge only adds presentation stickiness:
+ *
+ * - Everything in the poll displays.
+ * - A displayed MERGED badge that drops out of detection stays (sticky ✓
+ *   acknowledgement for the rest of the session).
+ * - A displayed OPEN badge that drops out without merging (closed unmerged)
+ *   is removed.
+ *
+ * Pure — exported for tests.
+ */
+export const mergePollResult = (prev: ContainerPullRequest[], next: ContainerPullRequest[]): ContainerPullRequest[] => {
+  const nextUrls = new Set(next.map((pr) => pr.url));
+  const stickyMerged = prev.filter((pr) => pr.state === 'MERGED' && !nextUrls.has(pr.url));
+  return [...next, ...stickyMerged];
+};
+
+/**
+ * Thin top-of-view banner that surfaces pull requests (GitHub or Azure DevOps)
+ * for the chat or deck surface as clickable badges (one per PR — a
+ * multi-source project can have a PR per repo). Each badge opens its PR in the
+ * built-in browser. Renders nothing until a PR is detected. Merged PRs render
+ * as ✓ badges and persist for the session.
+ *
+ * ``floating`` overlays the banner at the top edge (for the Chat view, whose
+ * content fills its container absolutely); the default takes a row in flow (for
+ * deck columns, which stack header → banner → content).
+ */
+export const PullRequestBanner = memo(({ scope, floating }: { scope: PullRequestBannerScope; floating?: boolean }) => {
+  const [prs, setPrs] = useState<ContainerPullRequest[]>([]);
+
+  const key = scope.tabId;
+  const poll = useCallback(() => {
+    detect(scope)
+      .then((next) => setPrs((prev) => mergePollResult(prev, next)))
+      .catch(() => {
+        // Transient detection failure (container restarting, CLI hiccup):
+        // keep the current badges rather than blanking the banner.
+      });
+    // scope is reconstructed each render; key captures its identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  useEffect(() => {
+    // Scope changed (different tab/conversation): drop the previous scope's
+    // badges — sticky merged state is per-surface, not global.
+    setPrs([]);
+    poll();
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [poll]);
+
+  if (prs.length === 0) {
+    return null;
+  }
+  const tabId = scope.tabId;
+  return (
+    <div
+      className={cn(
+        'flex flex-none flex-wrap items-center gap-2 border-b border-l-4 border-border border-l-chart-5 bg-card px-4 py-1',
+        floating &&
+          'absolute inset-x-0 top-0 z-90 m-2 rounded-lg border border-l-4 border-border border-l-chart-5 shadow-md'
+      )}
+    >
+      <span className="text-xs font-semibold text-muted-foreground mr-auto">
+        Pull request{prs.length > 1 ? 's' : ''}
+      </span>
+      {prs.map((pr) => (
+        <PullRequestBadge key={pr.url} pr={pr} tabId={tabId} />
+      ))}
+    </div>
+  );
+});
+PullRequestBanner.displayName = 'PullRequestBanner';

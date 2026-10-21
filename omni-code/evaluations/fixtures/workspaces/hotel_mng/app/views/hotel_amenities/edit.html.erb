@@ -1,0 +1,20 @@
+<% content_for :page_title, "Edit #{@hotel_amenity.amenity.name} - #{@hotel.name}" %>
+
+<div class="max-w-7xl mx-auto">
+  <!-- Header -->
+  <div class="mb-6">
+    <nav class="flex mb-2" aria-label="Breadcrumb">
+      <%= link_to @hotel.name, hotel_path(@hotel), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to "Amenities", hotel_hotel_amenities_path(@hotel), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to @hotel_amenity.amenity.name, hotel_hotel_amenity_path(@hotel, @hotel_amenity), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <span class="text-sm text-gray-900">Edit</span>
+    </nav>
+    <h1 class="text-2xl font-bold text-gray-900">Edit <%= @hotel_amenity.amenity.name %></h1>
+    <p class="mt-1 text-sm text-gray-600">Update amenity settings and availability</p>
+  </div>
+
+  <%= render 'form', hotel_amenity: @hotel_amenity, hotel: @hotel, available_amenities: nil %>
+</div>

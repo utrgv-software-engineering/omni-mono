@@ -1,0 +1,4 @@
+name,ssn,diagnosis,date_of_birth,mrn
+John Smith,123-45-6789,Diabetes Type 2,1985-03-15,MRN-00112233
+Jane Doe,987-65-4321,Hypertension,1990-07-22,MRN-00445566
+Robert Johnson,456-78-9012,Asthma,1978-11-30,MRN-00778899

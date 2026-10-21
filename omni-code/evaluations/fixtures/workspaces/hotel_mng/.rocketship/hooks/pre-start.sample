@@ -1,0 +1,15 @@
+#!/bin/sh
+# Rocketship pre-start hook
+#
+# This script runs inside the container before the main application starts.
+# Remove the .sample extension to activate.
+# Note: This runs as root before privileges are dropped.
+
+# Example: Run database migrations
+# ./bin/rails db:migrate
+
+# Example: Clear cache
+# ./bin/rails tmp:clear
+
+echo "Pre-start hook completed"
+exit 0

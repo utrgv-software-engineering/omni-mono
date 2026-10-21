@@ -1,0 +1,44 @@
+name: Omni-Code Evaluation Suite
+
+# Agent evals are manual-only: they spend model credits and are too slow and
+# nondeterministic to gate pushes or PRs. Run from the Actions tab when needed.
+on:
+  workflow_dispatch:
+
+jobs:
+  # ── Lightweight evals: run in-process, no Docker ──────────────────
+  eval-lightweight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      # Agent under test should match production model to catch real failures.
+      # Override via GitHub repo variable EVAL_MODEL_NAME if needed.
+      MODEL_NAME: ${{ vars.EVAL_MODEL_NAME || 'gpt-5.2' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Compile evaluation config
+        run: omniagents compile --project omni_code/project.yml
+
+      - name: Run evaluation suite
+        run: |
+          omniagents eval suite run \
+            --project omni_code/project.yml \
+            --output target/eval_results.json \
+            --verbose
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results-lightweight
+          path: target/eval_results.json

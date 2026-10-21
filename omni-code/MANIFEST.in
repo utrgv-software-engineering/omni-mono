@@ -1,0 +1,4 @@
+include omni_code/project.yml
+recursive-include omni_code/agents *.yml *.md
+recursive-include omni_code/capabilities *.yml
+include omni_code/sandbox_profile_default.yml

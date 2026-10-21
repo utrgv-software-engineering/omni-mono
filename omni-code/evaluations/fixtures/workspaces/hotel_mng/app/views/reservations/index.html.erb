@@ -1,0 +1,263 @@
+<% content_for :page_title, "Reservations #{@page_subtitle ? "- #{@page_subtitle}" : ""}" %>
+
+<!-- Page Header with Actions -->
+<div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Reservations</h1>
+    <% if @page_subtitle %>
+      <p class="text-sm text-gray-600 mt-1"><%= @page_subtitle %></p>
+    <% end %>
+  </div>
+  <div class="mt-4 sm:mt-0">
+    <%= link_to new_reservation_path, class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors" do %>
+      <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+      </svg>
+      New Reservation
+    <% end %>
+  </div>
+</div>
+
+<!-- Filters Section -->
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
+  <%= form_with url: reservations_path, method: :get, local: true, class: "space-y-4" do |f| %>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <!-- Search -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Search</label>
+        <%= text_field_tag :search, params[:search], 
+            placeholder: "Guest name or confirmation #", 
+            class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+      </div>
+      
+      <!-- Status Filter -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+        <%= select_tag :status, 
+            options_for_select([
+              ['All Statuses', ''],
+              ['Pending', 'pending'],
+              ['Confirmed', 'confirmed'],
+              ['Checked In', 'checked_in'],
+              ['Checked Out', 'checked_out'],
+              ['Cancelled', 'cancelled'],
+              ['No Show', 'no_show']
+            ], params[:status]),
+            class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+      </div>
+      
+      <!-- Date Range -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Check-in From</label>
+        <%= date_field_tag :start_date, params[:start_date], 
+            class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Check-in To</label>
+        <%= date_field_tag :end_date, params[:end_date], 
+            class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+      </div>
+    </div>
+    
+    <!-- Filter Actions -->
+    <div class="flex items-center justify-between pt-2">
+      <div class="flex space-x-2">
+        <%= submit_tag "Apply Filters", class: "px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors" %>
+        <%= link_to "Clear", reservations_path, class: "px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors" %>
+      </div>
+      
+      <!-- Quick Filters -->
+      <div class="flex space-x-2">
+        <%= link_to "Today's Arrivals", reservations_path(filter: 'arrivals'), 
+            class: "px-3 py-1 text-xs font-medium rounded-full #{params[:filter] == 'arrivals' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} transition-colors" %>
+        <%= link_to "Today's Departures", reservations_path(filter: 'departures'), 
+            class: "px-3 py-1 text-xs font-medium rounded-full #{params[:filter] == 'departures' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} transition-colors" %>
+        <%= link_to "In House", reservations_path(filter: 'in_house'), 
+            class: "px-3 py-1 text-xs font-medium rounded-full #{params[:filter] == 'in_house' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'} transition-colors" %>
+      </div>
+    </div>
+  <% end %>
+</div>
+
+<!-- Reservations Table -->
+<div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+  <% if @reservations.any? %>
+    <div class="overflow-x-auto">
+      <table class="w-full">
+        <thead class="bg-gray-50 border-b border-gray-200">
+          <tr>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Confirmation
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Guest
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Room
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Check In
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Check Out
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Status
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Payment
+            </th>
+            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Total
+            </th>
+            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+          <% @reservations.each do |reservation| %>
+            <tr class="hover:bg-gray-50 transition-colors">
+              <td class="px-6 py-4 whitespace-nowrap">
+                <div class="text-sm font-medium text-gray-900">
+                  <%= reservation.confirmation_number %>
+                </div>
+                <div class="text-xs text-gray-500">
+                  <%= reservation.created_at.strftime("%b %d, %Y") %>
+                </div>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap">
+                <div class="flex items-center">
+                  <div class="flex-shrink-0 h-10 w-10">
+                    <div class="h-10 w-10 rounded-full bg-gray-300 flex items-center justify-center">
+                      <span class="text-sm font-medium text-gray-600">
+                        <%= reservation.guest&.display_initials %>
+                      </span>
+                    </div>
+                  </div>
+                  <div class="ml-3">
+                    <div class="text-sm font-medium text-gray-900">
+                      <%= reservation.guest&.full_name %>
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      <%= reservation.guest&.email %>
+                    </div>
+                  </div>
+                </div>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap">
+                <div class="text-sm text-gray-900">
+                  <%= reservation.room&.room_number || "TBA" %>
+                </div>
+                <div class="text-xs text-gray-500">
+                  <%= reservation.room_type&.name %>
+                </div>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap">
+                <div class="text-sm text-gray-900">
+                  <%= reservation.check_in_date.strftime("%b %d, %Y") %>
+                </div>
+                <div class="text-xs text-gray-500">
+                  <%= reservation.check_in_date.strftime("%A") %>
+                </div>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap">
+                <div class="text-sm text-gray-900">
+                  <%= reservation.check_out_date.strftime("%b %d, %Y") %>
+                </div>
+                <div class="text-xs text-gray-500">
+                  <%= reservation.nights_count %> nights
+                </div>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap">
+                <%= render partial: "shared/status_badge", locals: { status: reservation.status, type: "reservation" } %>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap">
+                <%= render partial: "shared/status_badge", locals: { status: reservation.payment_status, type: "payment" } %>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap">
+                <div class="text-sm font-medium text-gray-900">
+                  $<%= number_with_delimiter(reservation.total_amount) %>
+                </div>
+                <% if reservation.balance_due > 0 %>
+                  <div class="text-xs text-red-600">
+                    Due: $<%= number_with_delimiter(reservation.balance_due) %>
+                  </div>
+                <% end %>
+              </td>
+              <td class="px-6 py-4 whitespace-nowrap text-right">
+                <!-- Actions Dropdown -->
+                <div class="relative" x-data="{ open: false }">
+                  <button @click="open = !open" @click.away="open = false" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"></path>
+                    </svg>
+                  </button>
+                  <div x-show="open" x-transition class="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 z-10">
+                    <%= link_to "View Details", reservation_path(reservation), 
+                        class: "block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" %>
+                    <% if reservation.can_check_in? %>
+                      <%= link_to "Check In", new_reservation_check_in_path(reservation), 
+                          class: "block px-4 py-2 text-sm text-green-600 hover:bg-gray-100" %>
+                    <% elsif reservation.can_check_out? %>
+                      <%= link_to "Check Out", new_reservation_check_out_path(reservation), 
+                          class: "block px-4 py-2 text-sm text-orange-600 hover:bg-gray-100" %>
+                    <% end %>
+                    <%= link_to "Edit", edit_reservation_path(reservation), 
+                        class: "block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100" %>
+                    <% if reservation.can_cancel? %>
+                      <hr class="my-1 border-gray-200">
+                      <%= link_to "Cancel Reservation", reservation_path(reservation), 
+                          method: :delete, 
+                          data: { confirm: "Are you sure you want to cancel this reservation?" },
+                          class: "block px-4 py-2 text-sm text-red-600 hover:bg-gray-100" %>
+                    <% end %>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+    
+    <!-- Pagination -->
+    <div class="px-6 py-4 border-t border-gray-200">
+      <div class="flex items-center justify-between">
+        <div class="text-sm text-gray-700">
+          <%== pagy_info(@pagy, item_name: 'reservation') %>
+        </div>
+        <div class="flex space-x-2">
+          <%== pagy_nav(@pagy, nav_aria_label: 'Pages', nav_i18n_key: 'pagy.nav') %>
+        </div>
+      </div>
+    </div>
+  <% else %>
+    <!-- Empty State -->
+    <div class="px-6 py-12 text-center">
+      <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+      </svg>
+      <h3 class="mt-2 text-sm font-medium text-gray-900">No reservations found</h3>
+      <p class="mt-1 text-sm text-gray-500">
+        <% if params[:search].present? || params[:status].present? || params[:start_date].present? %>
+          Try adjusting your filters or search criteria.
+        <% else %>
+          Get started by creating a new reservation.
+        <% end %>
+      </p>
+      <div class="mt-6">
+        <%= link_to new_reservation_path, class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" do %>
+          <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+          </svg>
+          New Reservation
+        <% end %>
+      </div>
+    </div>
+  <% end %>
+</div>
+
+<!-- Add Alpine.js for dropdown functionality -->
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>

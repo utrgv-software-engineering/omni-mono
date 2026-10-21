@@ -1,0 +1,292 @@
+<% content_for :page_title, "Check In - #{@reservation.confirmation_number}" %>
+
+<div class="max-w-5xl mx-auto">
+  <!-- Header with Breadcrumb -->
+  <div class="mb-6">
+    <nav class="flex mb-2" aria-label="Breadcrumb">
+      <%= link_to "Reservations", reservations_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to @reservation.confirmation_number, reservation_path(@reservation), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <span class="text-sm text-gray-900">Check In</span>
+    </nav>
+    <h1 class="text-2xl font-bold text-gray-900">Guest Check-In</h1>
+  </div>
+
+  <%= form_with url: reservation_check_in_path(@reservation), local: true do |form| %>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Main Content (2/3 width) -->
+      <div class="lg:col-span-2 space-y-6">
+        <!-- Guest Information -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Guest Information</h2>
+          </div>
+          <div class="px-6 py-4">
+            <dl class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Primary Guest</dt>
+                <dd class="mt-1 text-sm text-gray-900">
+                  <%= @reservation.guest.full_name %>
+                  <% if @reservation.guest.vip_status? %>
+                    <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">VIP</span>
+                  <% end %>
+                </dd>
+              </div>
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Email</dt>
+                <dd class="mt-1 text-sm text-gray-900"><%= @reservation.guest.email %></dd>
+              </div>
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Phone</dt>
+                <dd class="mt-1 text-sm text-gray-900"><%= @reservation.guest.phone || "Not provided" %></dd>
+              </div>
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Total Guests</dt>
+                <dd class="mt-1 text-sm text-gray-900">
+                  <%= @reservation.adults %> Adults
+                  <% if @reservation.children > 0 %>
+                    , <%= @reservation.children %> Children
+                  <% end %>
+                </dd>
+              </div>
+            </dl>
+            
+            <!-- ID Verification -->
+            <div class="mt-6 pt-6 border-t border-gray-200">
+              <h3 class="text-sm font-medium text-gray-900 mb-3">ID Verification</h3>
+              <div class="space-y-3">
+                <label class="flex items-center">
+                  <input type="checkbox" name="id_verified" value="1" class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" required>
+                  <span class="ml-2 text-sm text-gray-700">Government-issued ID verified</span>
+                </label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label for="id_type" class="block text-sm font-medium text-gray-700 mb-1">ID Type</label>
+                    <select name="id_type" id="id_type" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                      <option value="">Select ID type...</option>
+                      <option value="passport">Passport</option>
+                      <option value="drivers_license">Driver's License</option>
+                      <option value="national_id">National ID</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label for="id_number" class="block text-sm font-medium text-gray-700 mb-1">ID Number (Optional)</label>
+                    <input type="text" name="id_number" id="id_number" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Room Assignment -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Room Assignment</h2>
+          </div>
+          <div class="px-6 py-4">
+            <div class="mb-4">
+              <p class="text-sm text-gray-600">Room Type: <span class="font-medium text-gray-900"><%= @reservation.room_type.name %></span></p>
+            </div>
+            
+            <% if @reservation.room.present? %>
+              <!-- Room already assigned -->
+              <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div class="flex">
+                  <svg class="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                  </svg>
+                  <div class="ml-3">
+                    <p class="text-sm text-blue-700">
+                      Room <strong><%= @reservation.room.room_number %></strong> is already assigned to this reservation.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <%= hidden_field_tag :room_id, @reservation.room_id %>
+            <% elsif @available_rooms.any? %>
+              <!-- Select available room -->
+              <div>
+                <label for="room_id" class="block text-sm font-medium text-gray-700 mb-1">
+                  Select Room <span class="text-red-500">*</span>
+                </label>
+                <select name="room_id" id="room_id" required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                  <option value="">Choose a room...</option>
+                  <% @available_rooms.each do |room| %>
+                    <option value="<%= room.id %>">
+                      Room <%= room.room_number %>
+                      <% if room.floor.present? %>
+                        - Floor <%= room.floor %>
+                      <% end %>
+                      <% if room.notes.present? %>
+                        - <%= room.notes %>
+                      <% end %>
+                    </option>
+                  <% end %>
+                </select>
+                <p class="mt-1 text-xs text-gray-500"><%= @available_rooms.count %> rooms available</p>
+              </div>
+            <% else %>
+              <!-- No rooms available -->
+              <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div class="flex">
+                  <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
+                  </svg>
+                  <div class="ml-3">
+                    <p class="text-sm text-red-700">
+                      No rooms of type "<%= @reservation.room_type.name %>" are currently available.
+                    </p>
+                    <p class="text-xs text-red-600 mt-1">
+                      Please check room availability or consider upgrading the guest.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            <% end %>
+            
+            <% if @reservation.special_requests.present? %>
+              <div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p class="text-xs font-medium text-yellow-800 mb-1">Special Requests:</p>
+                <p class="text-sm text-yellow-700"><%= @reservation.special_requests %></p>
+              </div>
+            <% end %>
+          </div>
+        </div>
+
+        <!-- Check-in Notes -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Check-in Notes</h2>
+          </div>
+          <div class="px-6 py-4">
+            <label for="check_in_notes" class="block text-sm font-medium text-gray-700 mb-1">
+              Additional Notes (Optional)
+            </label>
+            <textarea name="check_in_notes" id="check_in_notes" rows="3" 
+                      placeholder="Any special circumstances, room preferences met, etc..."
+                      class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sidebar (1/3 width) -->
+      <div class="space-y-6">
+        <!-- Reservation Summary -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Reservation Summary</h2>
+          </div>
+          <div class="px-6 py-4">
+            <dl class="space-y-3 text-sm">
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Confirmation #</dt>
+                <dd class="font-mono text-gray-900"><%= @reservation.confirmation_number %></dd>
+              </div>
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Check-in Date</dt>
+                <dd class="text-gray-900"><%= @reservation.check_in_date.strftime("%b %d, %Y") %></dd>
+              </div>
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Check-out Date</dt>
+                <dd class="text-gray-900"><%= @reservation.check_out_date.strftime("%b %d, %Y") %></dd>
+              </div>
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Nights</dt>
+                <dd class="text-gray-900"><%= @reservation.nights_count %></dd>
+              </div>
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Room Type</dt>
+                <dd class="text-gray-900"><%= @reservation.room_type.name %></dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+
+        <!-- Payment Status -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Payment Status</h2>
+          </div>
+          <div class="px-6 py-4">
+            <dl class="space-y-3 text-sm">
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Total Amount</dt>
+                <dd class="font-medium text-gray-900">$<%= number_with_delimiter(@reservation.total_amount) %></dd>
+              </div>
+              <div class="flex justify-between">
+                <dt class="text-gray-500">Paid Amount</dt>
+                <dd class="font-medium text-green-600">$<%= number_with_delimiter(@reservation.paid_amount) %></dd>
+              </div>
+              <% if @reservation.balance_due > 0 %>
+                <div class="pt-3 border-t border-gray-200 flex justify-between">
+                  <dt class="font-medium text-gray-900">Balance Due</dt>
+                  <dd class="font-medium text-red-600">$<%= number_with_delimiter(@reservation.balance_due) %></dd>
+                </div>
+                <div class="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p class="text-xs text-yellow-800">
+                    Payment will be collected at check-out
+                  </p>
+                </div>
+              <% else %>
+                <div class="pt-3 border-t border-gray-200">
+                  <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                    Fully Paid
+                  </span>
+                </div>
+              <% end %>
+            </dl>
+          </div>
+        </div>
+
+        <!-- Hotel Policies -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Important Information</h2>
+          </div>
+          <div class="px-6 py-4 space-y-3">
+            <div>
+              <p class="text-xs font-medium text-gray-700 mb-1">Check-out Time</p>
+              <p class="text-sm text-gray-900"><%= @reservation.hotel.check_out_time.strftime("%l:%M %p") %></p>
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-700 mb-1">Breakfast Hours</p>
+              <p class="text-sm text-gray-900">6:30 AM - 10:30 AM</p>
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-700 mb-1">WiFi Password</p>
+              <p class="text-sm font-mono text-gray-900">Hotel<%= Date.current.year %></p>
+            </div>
+            <div>
+              <p class="text-xs font-medium text-gray-700 mb-1">Front Desk</p>
+              <p class="text-sm text-gray-900">24/7 - Dial 0</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Form Actions -->
+    <div class="mt-6 flex items-center justify-between">
+      <div>
+        <%= link_to "Cancel", reservation_path(@reservation), class: "text-sm text-gray-600 hover:text-gray-900" %>
+      </div>
+      <div class="flex space-x-3">
+        <% if @reservation.room.blank? && @available_rooms.empty? %>
+          <button type="submit" disabled class="px-6 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-gray-400 cursor-not-allowed">
+            Cannot Check In (No Rooms Available)
+          </button>
+        <% else %>
+          <button type="submit" class="px-6 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+            <svg class="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            Complete Check-In
+          </button>
+        <% end %>
+      </div>
+    </div>
+  <% end %>
+</div>

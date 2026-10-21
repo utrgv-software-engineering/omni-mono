@@ -1,0 +1,103 @@
+<div class="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
+  <div class="flex items-center min-w-0">
+    <!-- Avatar -->
+    <div class="flex-shrink-0">
+      <span class="inline-flex items-center justify-center h-10 w-10 rounded-full <%= account_user.user.is_ai_agent? ? 'bg-indigo-500' : 'bg-gray-500' %>">
+        <% if account_user.user.is_ai_agent? %>
+          <svg class="h-6 w-6 text-white" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M13 7H7v6h6V7z"/>
+            <path fill-rule="evenodd" d="M7 2a1 1 0 012 0v1h2V2a1 1 0 112 0v1h2a2 2 0 012 2v2h1a1 1 0 110 2h-1v2h1a1 1 0 110 2h-1v2a2 2 0 01-2 2h-2v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1H5a2 2 0 01-2-2v-2H2a1 1 0 110-2h1V9H2a1 1 0 010-2h1V5a2 2 0 012-2h2V2z" clip-rule="evenodd"/>
+          </svg>
+        <% else %>
+          <span class="text-sm font-medium leading-none text-white">
+            <%= account_user.user.initials %>
+          </span>
+        <% end %>
+      </span>
+    </div>
+    
+    <!-- User Info -->
+    <div class="ml-4 min-w-0 flex-1">
+      <div class="text-sm font-medium text-gray-900">
+        <%= account_user.user.full_name %>
+        <% if account_user.user == current_user %>
+          <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
+            You
+          </span>
+        <% end %>
+        <% if account_user.user.is_ai_agent? %>
+          <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-100 text-indigo-800">
+            AI Agent
+          </span>
+        <% elsif account_user.user.invitation_accepted_at.nil? && account_user.user.invitation_sent_at.present? %>
+          <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800">
+            Invitation Pending
+          </span>
+        <% end %>
+      </div>
+      <div class="text-sm text-gray-500">
+        <%= account_user.user.email %>
+      </div>
+      
+      <% if account_user.user.is_ai_agent? && account_user.api_key.present? %>
+        <div class="mt-2 flex items-center space-x-2" 
+             data-controller="api-key"
+             data-api-key-api-key-value="<%= account_user.api_key %>">
+          <div class="flex items-center bg-gray-100 rounded px-2 py-1">
+            <span class="text-xs font-mono text-gray-600">
+              <%= account_user.api_key[0..7] %>••••••••
+            </span>
+          </div>
+          <button type="button"
+                  data-action="click->api-key#copy"
+                  class="inline-flex items-center px-2 py-1 text-xs font-medium text-indigo-600 hover:text-indigo-900 focus:outline-none">
+            <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+            </svg>
+            <span data-api-key-target="buttonText">Copy API Key</span>
+          </button>
+        </div>
+        <div class="mt-1 text-xs text-gray-500">
+          <% if account_user.api_key_last_used_at %>
+            Last API call <%= time_ago_in_words(account_user.api_key_last_used_at) %> ago
+          <% else %>
+            API key never used
+          <% end %>
+        </div>
+      <% else %>
+        <div class="mt-1 text-xs text-gray-500">
+          <% if account_user.user.last_sign_in_at %>
+            Last active <%= time_ago_in_words(account_user.user.last_sign_in_at) %> ago
+          <% elsif account_user.user.invitation_accepted_at %>
+            Joined <%= time_ago_in_words(account_user.user.invitation_accepted_at) %> ago
+          <% elsif account_user.user.invitation_sent_at %>
+            Invited <%= time_ago_in_words(account_user.user.invitation_sent_at) %> ago
+          <% else %>
+            Never signed in
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+  </div>
+  
+  <!-- Actions -->
+  <div class="flex items-center space-x-3">
+    <% if policy(account_user).edit? %>
+      <%= link_to edit_account_user_path(account_user), 
+          class: "text-sm text-indigo-600 hover:text-indigo-900 font-medium" do %>
+        Change Role
+      <% end %>
+    <% end %>
+    
+    <% if policy(account_user).destroy? && account_user.user != current_user %>
+      <%= link_to account_user_path(account_user), 
+          method: :delete,
+          data: { 
+            confirm: "Are you sure you want to remove #{account_user.user.full_name} from this account? This action cannot be undone." 
+          },
+          class: "text-sm text-red-600 hover:text-red-900 font-medium" do %>
+        Remove
+      <% end %>
+    <% end %>
+  </div>
+</div>

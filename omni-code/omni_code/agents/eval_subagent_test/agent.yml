@@ -1,0 +1,62 @@
+# Minimal coding agent used ONLY by the workspace_root propagation
+# evals (`evaluations/scenarios/subagent_workspace.yml`). It exists so
+# we can verify subagent + tool workspace_root propagation without
+# having to flip the production `omni` agent's tool list.
+#
+# Differences from `omni`:
+#   * spawn_worker / wait_for_workers / write_file / execute_bash are
+#     all explicitly enabled.
+#   * No safe-agent wrapping, no MCP, no sessions decorations — keeps
+#     the eval narrowly focused on tool-context propagation.
+#
+# Invoke via:
+#   python -m omniagents.cli eval suite run -P omni_code/project.yml \
+#       --agent eval_subagent_test \
+#       --select 'name:workspace_root_visible_to_spawned_worker' \
+#       --reporter pretty
+
+name: eval_subagent_test
+label: Eval Subagent Test
+description: "Test-only agent used to verify subagent workspace_root propagation"
+instructions_file: instructions.md
+
+additional_tools_dirs:
+  - ../../tools
+
+tools:
+  - list_directory
+  - read_file
+  - write_file
+  - execute_bash
+  - spawn_worker
+  - wait_for_workers
+  - get_worker_status
+
+agent_tools:
+  # Resolves against the project agent registry — the product-owned
+  # `explorer` (omni_code/agents/explorer/).
+  - agent: explorer
+    tool_name: explore
+    max_turns: 50
+    # tool_description falls back to explorer's spec — keeps the LLM
+    # contract identical to production omni.
+
+model_settings:
+  reasoning:
+    effort: low
+  parallel_tool_calls: true
+
+max_turns: 200
+
+# Headless: the YAML header comment ("No safe-agent wrapping") states
+# the intent, and the eval pipeline forces use_safe_agent=False anyway
+# (omniagents/core/eval/pipeline.py:400). Set it explicitly so the
+# documented behavior holds even outside the eval runner.
+use_safe_agent: false
+
+# Reuse the production model resolver so this agent picks up the same
+# credentials the user configured for `omni`. Without this it falls
+# through to bare env vars and explodes on stale tokens.
+model_config_resolver: resolve_default_model
+
+variables: {}

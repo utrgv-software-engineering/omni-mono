@@ -1,0 +1,1811 @@
+import { ipcMain, shell } from 'electron';
+import type Store from 'electron-store';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import fs from 'fs/promises';
+import { nanoid } from 'nanoid';
+import type { ColumnRow, IProjectsRepo, ProjectsRepo, TicketRemap } from 'omni-projects-db';
+import { commentId, logicalColumnId } from 'omni-projects-db';
+import path from 'path';
+
+import { appendActivityEvent } from '@/lib/activity-log';
+import { getArtifactsDir, getContainerArtifactsDir } from '@/lib/artifacts';
+import { detectContainerPullRequests } from '@/lib/container-pull-request';
+import { mirrorContainerChangesToHost } from '@/lib/container-sync';
+import { INBOX_SWEEP_INTERVAL_MS } from '@/lib/inbox-expiry';
+import { isDoneColumn, normalizePipelineCategories, validatePipelineCategories } from '@/lib/pipeline-category';
+import type { ProjectManagerDeps } from '@/lib/project-manager-deps';
+import { runMigrations as runSchemaMigrations } from '@/lib/project-migrations';
+import type { ProjectConfigDefaults } from '@/lib/project-to-config';
+import { projectToConfig } from '@/lib/project-to-config';
+import { resolvePipelineDefs } from '@/lib/resolve-pipeline-defs';
+import { slugifyUnique } from '@/lib/slugify-unique';
+import { type ArtifactStore, DockerArtifactStore, HostFsArtifactStore } from '@/main/artifact-store';
+import { DbChangeWatcher } from '@/main/db-change-watcher';
+import {
+  columnToRow,
+  commentToRow,
+  inboxItemToRow,
+  milestoneToRow,
+  pageToRow,
+  projectToRow,
+  rowsToPipeline,
+  rowToInboxItem,
+  rowToMilestone,
+  rowToPage,
+  rowToProject,
+  rowToTask,
+  rowToTicket,
+  taskToRow,
+  ticketToRow,
+} from '@/main/db-store-bridge';
+import { registerInboxHandlers } from '@/main/inbox-handlers';
+import { InboxManager, type InboxManagerStore } from '@/main/inbox-manager';
+import { getMcpBinPath } from '@/main/mcp-config-manager';
+import { registerMilestoneHandlers } from '@/main/milestone-handlers';
+import { MilestoneManager, type MilestoneManagerStore } from '@/main/milestone-manager';
+import { registerPageHandlers } from '@/main/page-handlers';
+import { PageManager, type PageManagerStore } from '@/main/page-manager';
+import type { ProcessManager } from '@/main/process-manager';
+import { registerProjectHandlers } from '@/main/project-handlers';
+import { SupervisorBridge } from '@/main/supervisor-bridge';
+import { registerSupervisorHandlers } from '@/main/supervisor-handlers';
+import { SupervisorOrchestrator } from '@/main/supervisor-orchestrator';
+import { getDefaultWorkspaceDir, getOmniConfigDir, getProjectDir, getProjectPagesDir } from '@/main/util';
+import type { IIpcListener } from '@/shared/ipc-listener';
+import type { ProjectConfig } from '@/shared/manifest';
+import { DEFAULT_PIPELINE, SIMPLE_PIPELINE } from '@/shared/pipeline-defaults';
+import { validateProjectSources } from '@/shared/project-source';
+import type {
+  ArtifactFileContent,
+  ArtifactFileEntry,
+  CodeTabId,
+  ColumnId,
+  ContainerPullRequest,
+  InboxItem,
+  IpcRendererEvents,
+  Milestone,
+  MilestoneId,
+  Page,
+  Pipeline,
+  PrMergeResult,
+  Project,
+  ProjectId,
+  ProjectSource,
+  PullRequestLink,
+  StoreData,
+  Task,
+  Ticket,
+  TicketId,
+  TicketPriority,
+} from '@/shared/types';
+
+const DEFAULT_BRIEF_TEMPLATE = `## Problem
+
+
+## Appetite
+
+
+## Solution direction
+
+
+## Open questions
+- [ ]
+
+## Decisions
+
+
+## Out of scope
+
+`;
+
+// Worktree helpers (generateWorktreeName, createWorktree, removeWorktree,
+// ADJECTIVES/NOUNS) moved to `@/main/worktree-ops` in Sprint C2c.4.
+// `checkGitRepo` moved too — it is imported from the new module and re-exported
+// via the IPC handler.
+
+// Operational constants (MAX_CONCURRENT_SUPERVISORS, MAX_CONTINUATION_TURNS,
+// AUTO_DISPATCH_INTERVAL_MS) live in `@/main/supervisor-orchestrator`.
+// Continuation, retries, and stall detection are owned by omni-code's
+// ``/goal`` server function — there is no launcher-side retry queue or
+// stall timer to manage here.
+
+export class ProjectManager {
+  private store: Store<StoreData>;
+  private sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
+
+  /**
+   * When set, all project data is persisted via this async repo (SQLite
+   * locally, Postgres in cloud) and served from {@link cache}. The public
+   * accessors stay synchronous by reading the in-memory projection; async is
+   * confined to {@link init} (hydration) and {@link enqueuePersist}
+   * (write-through). Absent → legacy electron-store mode (some tests).
+   */
+  private repo: IProjectsRepo | undefined;
+
+  /**
+   * In-memory read-model projection of all project data. Hydrated once from
+   * {@link repo} in {@link init}, mutated synchronously on every write (so the
+   * next read sees it), and re-hydrated when {@link changeWatcher} detects an
+   * external (MCP-subprocess) write. Only populated when {@link repo} is set.
+   */
+  private cache: {
+    projects: Project[];
+    tickets: Ticket[];
+    milestones: Milestone[];
+    pages: Page[];
+    inboxItems: InboxItem[];
+    tasks: Task[];
+    columns: Map<ProjectId, ColumnRow[]>;
+    configs: Map<ProjectId, string | null>;
+  } = {
+    projects: [],
+    tickets: [],
+    milestones: [],
+    pages: [],
+    inboxItems: [],
+    tasks: [],
+    columns: new Map(),
+    configs: new Map(),
+  };
+
+  /**
+   * Synchronous SQLite handle used ONLY by {@link changeWatcher} for
+   * `_change_seq` polling (not part of the async data contract). Absent in
+   * Postgres mode, where external-write detection is LISTEN/NOTIFY instead.
+   */
+  private changeSeqRepo: ProjectsRepo | undefined;
+
+  /** Host skills dir for this manager's projects (per-tenant on the server; default global). */
+  private skillsDir: string | undefined;
+
+  /** Serialized write-through persistence chain — see {@link enqueuePersist}. */
+  private persistChain: Promise<void> = Promise.resolve();
+
+  /** Resolves once the initial cache hydration + boot wiring completes. */
+  readonly whenReady: Promise<void>;
+
+  /** When set, detects MCP server writes and refreshes the UI. */
+  private changeWatcher: DbChangeWatcher | undefined;
+
+  /** Interval handle for inbox expiry sweep. */
+  private inboxSweepTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Bridge to the renderer's column registry. Drives SUBMIT/stop/send. */
+  readonly bridge: SupervisorBridge;
+
+  /** Optional ProcessManager — used to stop Code tab sandboxes during cleanup. */
+  private processManager?: ProcessManager;
+
+  /** Optional AppControlManager — when set, autopilot agents get the `app_*` client tools. */
+  private appControlManager?: import('@/main/app-control-manager').AppControlManager;
+
+  /** Cloud override for per-ticket artifact storage (Azure Files on ACI). */
+  private artifactStoreFor?: (ticketId: TicketId) => ArtifactStore | null;
+
+  /** Teams/cloud: the principal this instance serves (per-user WIP/review). */
+  private currentPrincipal?: string;
+
+  /** Teams/cloud: notify a member when assigned a ticket (cross-principal). */
+  private onAssign?: (assignee: string, ticket: Ticket) => void;
+
+  /**
+   * Extra keys merged over every snapshot this manager builds or broadcasts —
+   * the resident manager's durable mirrors ride here so a project-data
+   * broadcast can never clobber them (docs/residents-in-projects-db-plan.md).
+   */
+  private snapshotExtras?: () => Partial<StoreData>;
+
+  /** Page lifecycle owner — CRUD, file I/O, root-page seeding, watcher. */
+  readonly pages: PageManager;
+
+  /** Inbox lifecycle owner — CRUD, shape, defer, promote, sweep, gc. */
+  readonly inbox: InboxManager;
+
+  /** Milestone lifecycle owner — CRUD, completedAt stamping, orphan-ticket clear, branch fallback. */
+  readonly milestones: MilestoneManager;
+
+  /**
+   * Supervisor lifecycle owner. Owns machines, retry queue, stall detection,
+   * infra provisioning, dispatch preflight + auto-dispatch loop, task
+   * persistence + boot recovery, tool dispatch, and supervisor prompt
+   * assembly. Sprint C2c moved every concern listed above out of
+   * ProjectManager into this class; only the IPC wiring still funnels
+   * through PM.
+   */
+  readonly supervisors: SupervisorOrchestrator;
+
+  constructor(
+    arg: {
+      store: Store<StoreData>;
+      sendToWindow: ProjectManager['sendToWindow'];
+      processManager?: ProcessManager;
+      appControlManager?: import('@/main/app-control-manager').AppControlManager;
+      /** Optional async repo. When provided, project data is persisted here and cached in memory. */
+      repo?: IProjectsRepo;
+      /** Optional sync SQLite handle for the change-watcher (omit in Postgres mode). */
+      changeSeqRepo?: ProjectsRepo;
+      /** Host skills directory for this manager's projects (per-tenant on the server). */
+      skillsDir?: string;
+      /** Cloud override: resolve a per-ticket artifact store (e.g. Azure Files
+       *  for ACI). When it returns a store, it wins over the host/docker default. */
+      artifactStoreFor?: (ticketId: TicketId) => ArtifactStore | null;
+      /** Teams/cloud: the principal this manager instance serves. Drives per-user
+       *  WIP + weekly review ("my work"). Undefined in single-user/local mode. */
+      currentPrincipal?: string;
+      /** Teams/cloud: notify a member they were assigned a ticket (cross-principal). */
+      onAssign?: (assignee: string, ticket: Ticket) => void;
+      /** Extra keys merged over every snapshot/broadcast (resident mirrors). */
+      snapshotExtras?: () => Partial<StoreData>;
+    },
+    deps?: Partial<ProjectManagerDeps>
+  ) {
+    this.store = arg.store;
+    this.sendToWindow = arg.sendToWindow;
+    this.skillsDir = arg.skillsDir;
+    this.artifactStoreFor = arg.artifactStoreFor;
+    this.currentPrincipal = arg.currentPrincipal;
+    this.onAssign = arg.onAssign;
+    this.snapshotExtras = arg.snapshotExtras;
+    this.processManager = arg.processManager;
+    this.appControlManager = arg.appControlManager;
+    this.repo = arg.repo;
+    this.changeSeqRepo = arg.changeSeqRepo;
+    this.bridge = deps?.bridge ?? new SupervisorBridge(arg.sendToWindow);
+    const pageStore: PageManagerStore = this.repo
+      ? {
+          getPages: () => this.cache.pages,
+          setPages: (items) => {
+            this.cache.pages = items;
+            const rows = items.map(pageToRow);
+            this.enqueuePersist(() => this.repo!.replaceAllPages(rows));
+            this.noteLocalWriteAndBroadcast();
+          },
+          // Markdown doc bodies live in the DB (source of truth); PageManager
+          // routes notebooks to disk regardless. Content reads/writes chain on
+          // the persist queue so a write lands AFTER the page row it
+          // references (the page_content→pages FK) and reads are
+          // read-after-write consistent.
+          getContent: (pageId) => {
+            const p = this.persistChain.then(() => this.repo!.getPageContent(pageId));
+            return p;
+          },
+          setContent: (pageId, body) => {
+            const p = this.persistChain
+              .then(() => this.repo!.setPageContent(pageId, body))
+              // Note our own write so the SQLite change-watcher doesn't treat it
+              // as external and re-emit it back to the writing editor.
+              .then(() => this.changeWatcher?.noteLocalWrite())
+              .catch((err) => {
+                console.error('[ProjectManager] setPageContent failed:', err);
+              });
+            this.persistChain = p;
+            return p;
+          },
+        }
+      : {
+          getPages: () => (this.store.get('pages') ?? []) as Page[],
+          setPages: (items) => {
+            this.store.set('pages', items);
+            this.broadcastStoreSnapshot();
+          },
+        };
+    this.pages = new PageManager({
+      store: pageStore,
+      sendToWindow: this.sendToWindow,
+    });
+    const inboxStore: InboxManagerStore = this.repo
+      ? {
+          getInboxItems: () => this.cache.inboxItems,
+          setInboxItems: (items) => {
+            this.cache.inboxItems = items;
+            const rows = items.map(inboxItemToRow);
+            this.enqueuePersist(() => this.repo!.replaceAllInboxItems(rows));
+            this.noteLocalWriteAndBroadcast();
+          },
+          getTickets: () => this.getTickets(),
+          setTickets: (tickets) => this.setTickets(tickets),
+          getProjects: () => this.getProjects(),
+          setProjects: (projects) => this.setProjects(projects),
+          getPipeline: (projectId) => this.getPipeline(projectId),
+        }
+      : {
+          getInboxItems: () => (this.store.get('inboxItems') ?? []) as InboxItem[],
+          setInboxItems: (items) => {
+            this.store.set('inboxItems', items);
+            this.broadcastStoreSnapshot();
+          },
+          getTickets: () => this.getTickets(),
+          setTickets: (tickets) => this.setTickets(tickets),
+          getProjects: () => this.getProjects(),
+          setProjects: (projects) => this.setProjects(projects),
+          getPipeline: (projectId) => this.getPipeline(projectId),
+        };
+    this.inbox = new InboxManager({
+      store: inboxStore,
+      newId: () => nanoid(),
+      now: () => Date.now(),
+      // Route inbox.promoteToProject through the full project-creation path
+      // so the new project gets slug disambiguation, pipeline seeding, root
+      // page, and project dir. Without this, the bare-insert fallback in
+      // InboxManager creates a project that breaks on the next addTicket call.
+      createProject: (input) => this.addProject(input),
+    });
+
+    const milestoneStore: MilestoneManagerStore = this.repo
+      ? {
+          getMilestones: () => this.cache.milestones,
+          setMilestones: (items) => {
+            this.cache.milestones = items;
+            const rows = items.map(milestoneToRow);
+            this.enqueuePersist(() => this.repo!.replaceAllMilestones(rows));
+            this.noteLocalWriteAndBroadcast();
+          },
+          getTickets: () => this.getTickets(),
+          setTickets: (tickets) => this.setTickets(tickets),
+        }
+      : {
+          getMilestones: () => (this.store.get('milestones') ?? []) as Milestone[],
+          setMilestones: (items) => {
+            this.store.set('milestones', items);
+            this.broadcastStoreSnapshot();
+          },
+          getTickets: () => this.getTickets(),
+          setTickets: (tickets) => this.setTickets(tickets),
+        };
+    this.milestones = new MilestoneManager({
+      store: milestoneStore,
+      newId: () => nanoid(),
+      now: () => Date.now(),
+    });
+
+    this.supervisors = new SupervisorOrchestrator({
+      store: {
+        getTickets: () => this.getTickets(),
+        setTickets: (tickets) => this.setTickets(tickets),
+        getProjects: () => this.getProjects(),
+        getWipLimit: () => this.store.get('wipLimit') ?? 3,
+        getCurrentPrincipal: () => this.currentPrincipal,
+        getPlatformCredentials: () => this.store.get('platform'),
+        getCodeTabs: () => (this.store.get('codeTabs', []) ?? []) as Array<{ id: string; ticketId?: string }>,
+        getPersistedTasks: () => (this.repo ? this.cache.tasks : (this.store.get('tasks', []) as Task[])),
+        setPersistedTasks: (tasks) => {
+          if (this.repo) {
+            this.cache.tasks = tasks;
+            const rows = tasks.map(taskToRow);
+            this.enqueuePersist(() => this.repo!.replaceAllTasks(rows));
+            this.noteLocalWriteAndBroadcast();
+          } else {
+            this.store.set('tasks', tasks);
+            this.broadcastStoreSnapshot();
+          }
+        },
+        // Per-row task writes — supervisor uses these for the high-frequency
+        // transition path. Falls back to setPersistedTasks (above) when the
+        // repo is absent (legacy electron-store mode in tests).
+        upsertPersistedTask: this.repo
+          ? (task: Task) => {
+              this.cache.tasks = [...this.cache.tasks.filter((t) => t.id !== task.id), task];
+              this.enqueuePersist(() => this.repo!.upsertTask(taskToRow(task)));
+              this.noteLocalWriteAndBroadcast();
+            }
+          : undefined,
+        deletePersistedTask: this.repo
+          ? (taskId) => {
+              this.cache.tasks = this.cache.tasks.filter((t) => t.id !== taskId);
+              this.enqueuePersist(() => this.repo!.deleteTask(taskId));
+              this.noteLocalWriteAndBroadcast();
+            }
+          : undefined,
+        getOmniConfigDir: () => getOmniConfigDir(),
+        // The activity feed is UI-awareness state, not project data — it
+        // stays in the electron store even when a projects repo is present.
+        appendActivity: (event) => {
+          this.store.set('activityLog', appendActivityEvent(this.store.get('activityLog'), event, event.at));
+          this.broadcastStoreSnapshot();
+        },
+      },
+      host: {
+        getTicketById: (ticketId) => this.getTicketById(ticketId),
+        getTicketsByProject: (projectId) => this.getTicketsByProject(projectId),
+        updateTicket: (ticketId, patch) => this.updateTicket(ticketId, patch),
+        isTerminalColumn: (projectId, columnId) => this.isTerminalColumn(projectId, columnId),
+        getColumn: (projectId, columnId) => this.getColumn(projectId, columnId),
+        getPipeline: (projectId) => this.getPipeline(projectId),
+        resolveTicketBranch: (ticket) => this.milestones.resolveTicketBranch(ticket),
+        getNextTicket: (projectId) => this.getNextTicket(projectId),
+        moveTicketToColumn: (ticketId, columnId) => this.moveTicketToColumn(ticketId, columnId),
+        updateProject: (projectId, patch) => this.updateProject(projectId, patch),
+        getPagesByProject: (projectId) => this.pages.getByProject(projectId),
+        getAgentArtifactsDir: (ticketId) => this.getAgentArtifactsDir(ticketId),
+      },
+      sendToWindow: this.sendToWindow,
+      bridge: this.bridge,
+      processManager: this.processManager,
+      appControlManager: this.appControlManager,
+      // Human-gate plan steps surface as "agent is waiting on you" inbox items.
+      inbox: this.inbox,
+    });
+
+    this.whenReady = this.init();
+  }
+
+  /**
+   * Hydrate the in-memory projection, wire external-change detection, restore
+   * supervisor tasks, and start the auto-dispatch + inbox-sweep loops. Async
+   * so the cache is populated from {@link repo} before anything reads it; the
+   * constructor kicks this off and exposes the promise as {@link whenReady}.
+   * For SqliteProjectsRepo the awaits resolve on microtasks (no real I/O), so
+   * the cache is ready before any IPC handler runs on a later macrotask.
+   */
+  private init = async (): Promise<void> => {
+    if (this.repo) {
+      try {
+        await this.hydrate();
+      } catch (err) {
+        console.error('[ProjectManager] initial hydrate failed:', err);
+      }
+      if (this.changeSeqRepo) {
+        // External (MCP-subprocess) writes bump _change_seq → re-hydrate the
+        // projection AND re-emit content for any DB-backed page an editor is
+        // watching (the watcher is page-agnostic; the renderer drops echoes).
+        this.changeWatcher = new DbChangeWatcher(this.changeSeqRepo, () => {
+          void this.refreshFromExternal();
+          void this.pages.reemitWatchedContent();
+        });
+        this.changeWatcher.start();
+      }
+    }
+    // restorePersistedTasks reads tasks through the supervisor store adapter,
+    // which now reads the cache — so it must run after hydration.
+    this.supervisors.restorePersistedTasks();
+    this.supervisors.startAutoDispatch();
+    this.startInboxSweep();
+    if (this.repo) {
+      this.broadcastStoreSnapshot();
+    }
+  };
+
+  /** Re-load the entire projection from the repo (after an external write). */
+  /** Re-load the projection (change-watcher in SQLite, LISTEN/NOTIFY in cloud). */
+  refreshFromExternal = async (): Promise<void> => {
+    try {
+      await this.hydrate();
+      this.broadcastStoreSnapshot();
+    } catch (err) {
+      console.error('[ProjectManager] refresh after external change failed:', err);
+    }
+  };
+
+  /** Load all project data from the repo into {@link cache}. */
+  private hydrate = async (): Promise<void> => {
+    const repo = this.repo;
+    if (!repo) {
+      return;
+    }
+    const [projRows, msRows, pageRows, inboxRows, taskRows] = await Promise.all([
+      repo.listProjects(),
+      repo.listAllMilestones(),
+      repo.listAllPages(),
+      repo.listAllInboxItems(),
+      repo.listAllTasks(),
+    ]);
+    this.cache.projects = projRows.map(rowToProject);
+    this.cache.milestones = msRows.map(rowToMilestone);
+    this.cache.pages = pageRows.map(rowToPage);
+    this.cache.inboxItems = inboxRows.map(rowToInboxItem);
+    this.cache.tasks = taskRows.map(rowToTask);
+
+    const tickRows = await repo.listAllTickets();
+    this.cache.tickets = await Promise.all(
+      tickRows.map(async (row) => rowToTicket(row, await repo.listCommentsByTicket(row.id)))
+    );
+
+    const columns = new Map<ProjectId, ColumnRow[]>();
+    const configs = new Map<ProjectId, string | null>();
+    for (const p of this.cache.projects) {
+      columns.set(p.id, await repo.listColumns(p.id));
+      configs.set(p.id, await repo.getProjectConfig(p.id));
+    }
+    this.cache.columns = columns;
+    this.cache.configs = configs;
+  };
+
+  /**
+   * Queue a write-through persistence task. The cache is already updated
+   * synchronously by the caller; this flushes the change to the repo in order.
+   * `noteLocalWrite` runs after the write so the change-watcher attributes the
+   * resulting `_change_seq` bump to us (not an external process).
+   */
+  private enqueuePersist = (task: () => Promise<void>): void => {
+    this.persistChain = this.persistChain.then(async () => {
+      try {
+        await task();
+        this.changeWatcher?.noteLocalWrite();
+      } catch (err) {
+        console.error('[ProjectManager] persist failed:', err);
+      }
+    });
+  };
+
+  /** Await all queued persistence — used by cleanup and any durability barrier. */
+  flushPersists = (): Promise<void> => this.persistChain;
+
+  /**
+   * Read the `ProjectConfig` for a project. Reads the persisted JSON column
+   * via `repo.getProjectConfig` when available; falls back to deriving via
+   * `projectToConfig` for resilience. Returns `null` for unknown projects
+   * or when running without a SQLite repo (legacy electron-store mode).
+   */
+  getProjectConfig = (projectId: ProjectId): ProjectConfig | null => {
+    const project = this.getProjects().find((p) => p.id === projectId);
+    if (!project) {
+      return null;
+    }
+    if (this.repo) {
+      const stored = this.cache.configs.get(projectId);
+      if (stored) {
+        try {
+          return JSON.parse(stored) as ProjectConfig;
+        } catch {
+          // Fall through to derive — corrupt JSON in the column shouldn't break reads.
+        }
+      }
+    }
+    return projectToConfig(project, this.getProjectConfigDefaults());
+  };
+
+  /** Resolve the defaults `projectToConfig` needs from the launcher's environment. */
+  private getProjectConfigDefaults = (): ProjectConfigDefaults => ({
+    skillsDir: this.skillsDir ?? path.join(getOmniConfigDir(), 'skills'),
+    projectsMcpCliPath: getMcpBinPath(),
+    defaultDockerImage: 'omni-sandbox:latest',
+  });
+
+  /**
+   * Public accessor used by IPC wiring to resolve a project's working
+   * directory. Derives the path from `ProjectConfig.manifest.entries['.']`
+   * when the project has a local-dir workspace entry; otherwise falls back
+   * to the legacy slug-based resolver (Personal / context-only / git-remote
+   * projects don't have a host-side workspace dir to return).
+   */
+  getProjectDir = (projectId: ProjectId): string | null => {
+    const project = this.getProjects().find((p) => p.id === projectId);
+    if (!project) {
+      return null;
+    }
+    const config = this.getProjectConfig(projectId);
+    const root = config?.manifest.entries?.['.'];
+    if (root && root.type === 'local_dir') {
+      return root.src;
+    }
+    return this.getProjectDirPath(project);
+  };
+
+  // #region Broadcast helpers
+
+  /**
+   * Assemble a full StoreData snapshot from the in-memory projection merged
+   * with the electron-store settings. Mirrors db-store-bridge's
+   * `buildStoreSnapshot`, but reads the cache instead of the (now async) repo
+   * so it stays synchronous. Each project gets its pipeline attached from the
+   * cached columns.
+   */
+  private buildSnapshotFromCache = (): StoreData => {
+    const projects = this.cache.projects.map((p) => {
+      const cols = this.cache.columns.get(p.id);
+      return cols && cols.length > 0 ? { ...p, pipeline: rowsToPipeline(cols) } : p;
+    });
+    return {
+      ...this.store.store,
+      projects,
+      tickets: this.cache.tickets,
+      milestones: this.cache.milestones,
+      pages: this.cache.pages,
+      inboxItems: this.cache.inboxItems,
+      tasks: this.cache.tasks,
+    };
+  };
+
+  /** Broadcast a full store snapshot to the renderer (projection + electron-store merged). */
+  private broadcastStoreSnapshot = (): void => {
+    this.sendToWindow('store:changed', this.getStoreSnapshot());
+  };
+
+  /**
+   * After a local write: broadcast the updated projection. The `_change_seq`
+   * self-notification suppression now happens in {@link enqueuePersist} (after
+   * the async write actually lands), so this just refreshes the UI.
+   */
+  private noteLocalWriteAndBroadcast = (): void => {
+    this.broadcastStoreSnapshot();
+  };
+
+  /**
+   * Build a full StoreData snapshot. Used by MainProcessManager to serve
+   * `store:get` and `store:get-key` requests, and by EVERY `store:changed`
+   * broadcast — a snapshot that skips {@link snapshotExtras} would clobber
+   * the extra keys (e.g. the resident mirrors) in the renderer's atom.
+   */
+  getStoreSnapshot = (): StoreData => {
+    const base = this.repo ? this.buildSnapshotFromCache() : this.store.store;
+    return this.snapshotExtras ? { ...base, ...this.snapshotExtras() } : base;
+  };
+
+  // #endregion
+
+  // #region Projects (persisted in SQLite when repo is set, else electron-store)
+
+  private getProjects = (): Project[] => {
+    if (this.repo) {
+      return this.cache.projects;
+    }
+    return this.store.get('projects', []);
+  };
+
+  private setProjects = (projects: Project[]): void => {
+    if (this.repo) {
+      const repo = this.repo;
+      this.cache.projects = projects;
+      // Recompute `config` for every project so the manifest stays in sync
+      // with the source fields. `replaceAllProjects` leaves the column
+      // untouched on upsert (it's not in the SET clause), so we rewrite it
+      // explicitly here.
+      const defaults = this.getProjectConfigDefaults();
+      const configs = projects.map((p) => [p.id, JSON.stringify(projectToConfig(p, defaults))] as const);
+      for (const [id, cfg] of configs) {
+        this.cache.configs.set(id, cfg);
+      }
+      // Snapshot rows synchronously so a later mutation of the array can't
+      // alter what gets persisted once the queued write runs.
+      const rows = projects.map(projectToRow);
+      this.enqueuePersist(async () => {
+        await repo.replaceAllProjects(rows);
+        for (const [id, cfg] of configs) {
+          await repo.setProjectConfig(id, cfg);
+        }
+      });
+      this.noteLocalWriteAndBroadcast();
+    } else {
+      this.store.set('projects', projects);
+      this.broadcastStoreSnapshot();
+    }
+  };
+
+  addProject = (input: Omit<Project, 'id' | 'createdAt'>): Project => {
+    // Disambiguate slug against existing rows to prevent SQLITE_CONSTRAINT
+    // crashes when two labels slugify to the same value. The caller-supplied
+    // slug is the candidate; the launcher appends `-2`, `-3`, … as needed.
+    const existing = this.getProjects();
+    const takenSlugs = new Set(existing.map((p) => p.slug));
+    const slug = slugifyUnique(input.slug, (s) => takenSlugs.has(s));
+    const project: Project = {
+      ...input,
+      slug,
+      id: nanoid(),
+      createdAt: Date.now(),
+    };
+    const projects = [...existing, project];
+    this.setProjects(projects);
+    // Ensure the host-side workspace dir exists so the first agent launch
+    // doesn't fail the `isDirectory(workspaceDir)` check in AgentProcess.
+    // Personal projects use the (already-ensured) workspace root; local-source
+    // projects use a user-supplied existing dir; git-remote projects clone
+    // inside the container — so only context-only named projects need this.
+    if (!project.isPersonal && project.sources.length === 0) {
+      mkdirSync(this.getProjectDirPath(project), { recursive: true });
+    }
+    // Seed the project's root page through PageManager. The root page's body
+    // is the project brief that used to live in `<projectDir>/context.md`;
+    // PageManager seeds it with the brief template under
+    // `<config>/pages/<projectId>/<rootId>.md`.
+    const rootPage = this.pages.seedRootPage(project);
+    void this.pages.writeContent(rootPage.id, DEFAULT_BRIEF_TEMPLATE).catch(() => {});
+    // Seed pipeline_columns immediately with the source-appropriate defaults
+    // so tickets always have a valid FK target.
+    void this.syncPipelineForProject(project.id);
+    return project;
+  };
+
+  updateProject = (id: ProjectId, patch: Partial<Omit<Project, 'id' | 'createdAt'>>): void => {
+    const projects = this.getProjects();
+    const index = projects.findIndex((p) => p.id === id);
+    if (index === -1) {
+      return;
+    }
+    if (patch.sources) {
+      validateProjectSources(patch.sources);
+    }
+    const { pipeline, ...projectPatch } = patch;
+    projects[index] = { ...projects[index]!, ...projectPatch };
+    this.setProjects(projects);
+    if (this.repo && pipeline) {
+      const repo = this.repo;
+      // Category chokepoint: fill missing categories positionally, then
+      // reject shapes the global views can't group (no todo, done not last…).
+      const columns = normalizePipelineCategories(pipeline.columns);
+      const validity = validatePipelineCategories(columns);
+      if (validity.isErr()) {
+        throw new Error(validity.error);
+      }
+      const rows = columns.map((col, sortOrder) => columnToRow(col, id, sortOrder));
+      this.cache.columns.set(id, rows);
+      this.enqueuePersist(async () => {
+        const result = await repo.syncColumnsForProject(
+          id,
+          columns.map((column) => ({
+            logicalId: logicalColumnId(id, column.id),
+            label: column.label,
+            description: column.description,
+            gate: column.gate,
+            maxConcurrent: column.maxConcurrent,
+            workflow: column.workflow,
+            category: column.category,
+          }))
+        );
+        for (const remap of result.remappedTickets) {
+          if (remap.gateLost) {
+            await this.appendGateLostComment(repo, id, remap);
+          }
+        }
+
+        this.cache.columns.set(id, await repo.listColumns(id));
+        const ticketRows = await repo.listTicketsByProject(id);
+        const refreshed = await Promise.all(
+          ticketRows.map(async (row) => rowToTicket(row, await repo.listCommentsByTicket(row.id)))
+        );
+        const refreshedById = new Map(refreshed.map((ticket) => [ticket.id, ticket]));
+        this.cache.tickets = this.cache.tickets.map((ticket) => refreshedById.get(ticket.id) ?? ticket);
+        this.broadcastStoreSnapshot();
+      });
+      this.noteLocalWriteAndBroadcast();
+    }
+  };
+
+  removeProject = async (id: ProjectId): Promise<void> => {
+    await this.supervisors.removeAllTasksForProject(id);
+    const projects = this.getProjects().filter((p) => p.id !== id);
+    this.setProjects(projects);
+    const remainingTickets = this.getTickets().filter((t) => t.projectId !== id);
+    this.setTickets(remainingTickets);
+    this.milestones.removeAllForProject(id);
+    this.pages.removeAllForProject(id);
+  };
+
+  // #endregion
+
+  // #region Project directories & context files
+
+  /**
+   * Get the project's working-directory path — i.e. where agents and the
+   * sandbox run, NOT where pages live. Personal projects use the workspace
+   * root; named projects use `Projects/<slug>/`. Pages are resolved
+   * separately via `PageManager`'s projectId-keyed layout.
+   */
+  private getProjectDirPath = (project: Project): string => {
+    if (project.isPersonal) {
+      return getDefaultWorkspaceDir();
+    }
+    return getProjectDir(project.slug);
+  };
+
+  /**
+   * Read the project's brief — i.e. the body of the root page. Returns ''
+   * when the project has no root page or the file is missing.
+   *
+   * Historically this read `<projectDir>/context.md` directly. The brief
+   * now lives at `<config>/pages/<projectId>/<rootId>.md` (the root page's
+   * regular file), so we route through PageManager.
+   */
+  readContext = (projectId: ProjectId): Promise<string> => {
+    const rootPage = this.pages.getByProject(projectId).find((p) => p.isRoot);
+    if (!rootPage) {
+      return Promise.resolve('');
+    }
+    return this.pages.readContent(rootPage.id);
+  };
+
+  /** Write the project's brief — the body of the root page. */
+  writeContext = async (projectId: ProjectId, content: string): Promise<void> => {
+    const rootPage = this.pages.getByProject(projectId).find((p) => p.isRoot);
+    if (!rootPage) {
+      return;
+    }
+    await this.pages.writeContent(rootPage.id, content);
+  };
+
+  /**
+   * List files in the project's working directory. Skips `context.md`
+   * since legacy projects may still have one left over from when the
+   * brief lived in the working dir; the brief now lives in
+   * `<config>/pages/<projectId>/<rootId>.md`.
+   */
+  listProjectFiles = async (projectId: ProjectId): Promise<ArtifactFileEntry[]> => {
+    const project = this.getProjects().find((p) => p.id === projectId);
+    if (!project) {
+      return [];
+    }
+    const dir = this.getProjectDirPath(project);
+
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      const results: ArtifactFileEntry[] = [];
+
+      for (const entry of entries) {
+        if (entry.name === 'context.md') {
+          // Legacy artifact — hide from the UI.
+          continue;
+        }
+        const fullPath = path.join(dir, entry.name);
+        try {
+          const stat = await fs.stat(fullPath);
+          results.push({
+            relativePath: entry.name,
+            name: entry.name,
+            isDirectory: entry.isDirectory(),
+            size: stat.size,
+            modifiedAt: stat.mtimeMs,
+          });
+        } catch {
+          // Skip entries we can't stat
+        }
+      }
+
+      results.sort((a, b) => {
+        if (a.isDirectory !== b.isDirectory) {
+          return a.isDirectory ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+      return results;
+    } catch {
+      return [];
+    }
+  };
+
+  /** Get first 200 chars of the project brief (root page body) for preview. */
+  getContextPreview = async (projectId: ProjectId): Promise<string> => {
+    const content = await this.readContext(projectId);
+    return content.slice(0, 200);
+  };
+
+  /** Open a file from the project folder in the OS default application. */
+  openProjectFile = async (projectId: ProjectId, relativePath: string): Promise<void> => {
+    const project = this.getProjects().find((p) => p.id === projectId);
+    if (!project) {
+      return;
+    }
+    const dir = this.getProjectDirPath(project);
+    const fullPath = path.resolve(dir, relativePath);
+    // Validate no directory traversal — must use separator-terminated prefix
+    // to prevent sibling directory bypass (e.g. dir="/tmp/proj" matching "/tmp/proj-evil/secret")
+    const normalizedDir = dir.endsWith(path.sep) ? dir : dir + path.sep;
+    if (!fullPath.startsWith(normalizedDir) && fullPath !== dir) {
+      throw new Error('Path traversal not allowed');
+    }
+    await shell.openPath(fullPath);
+  };
+
+  // #endregion
+
+  // #region Pipeline helpers
+
+  /**
+   * Resolve the pipeline column defs for a project and write them to SQLite via
+   * `repo.syncColumnsForProject` when a project has no columns yet. Adds
+   * a system-style ticket comment when a gate column is removed and a ticket
+   * is remapped to a non-gate column. No-op when running without a SQLite
+   * repo (legacy electron-store mode used only by some tests).
+   */
+  private syncPipelineForProject = async (projectId: ProjectId): Promise<void> => {
+    const repo = this.repo;
+    if (!repo) {
+      return;
+    }
+
+    const project = this.cache.projects.find((p) => p.id === projectId);
+    if (!project) {
+      return;
+    }
+
+    const hasExisting = (this.cache.columns.get(projectId)?.length ?? 0) > 0;
+    const defs = resolvePipelineDefs({
+      hasSource: project.sources.length > 0,
+      hasExisting,
+    });
+    if (!defs) {
+      return;
+    }
+
+    // The remap is a transaction in the repo (columns + ticket reassignment),
+    // so serialize it on the persist chain and re-hydrate the affected slice
+    // of the projection afterwards. `await` the chain so callers that await
+    // this method see the cache already updated.
+    await (this.persistChain = this.persistChain.then(async () => {
+      let changed = false;
+      try {
+        const result = await repo.syncColumnsForProject(projectId, defs);
+
+        // Gate-lost comments — written before re-hydrate so the refreshed
+        // tickets carry them.
+        for (const remap of result.remappedTickets) {
+          if (remap.gateLost) {
+            await this.appendGateLostComment(repo, projectId, remap);
+          }
+        }
+
+        // Columns and ticket column_ids changed in the DB — refresh both for
+        // this project in the cache.
+        this.cache.columns.set(projectId, await repo.listColumns(projectId));
+        const tickRows = await repo.listTicketsByProject(projectId);
+        const refreshed = await Promise.all(
+          tickRows.map(async (r) => rowToTicket(r, await repo.listCommentsByTicket(r.id)))
+        );
+        const byId = new Map(refreshed.map((t) => [t.id, t]));
+        this.cache.tickets = this.cache.tickets.map((t) => byId.get(t.id) ?? t);
+
+        this.changeWatcher?.noteLocalWrite();
+        changed = result.inserted.length > 0 || result.removed.length > 0 || result.remappedTickets.length > 0;
+      } catch (err) {
+        console.warn(`[ProjectManager] syncColumnsForProject failed for ${projectId}:`, err);
+        return;
+      }
+      if (changed) {
+        this.broadcastStoreSnapshot();
+      }
+    }));
+  };
+
+  /**
+   * Append a `[Pipeline change]` comment to a ticket whose gate column was
+   * removed. The comment is authored as `agent` because the ticket_comments
+   * CHECK constraint only permits `agent`/`human`; the prefix makes the
+   * provenance obvious in the discussion view and in `get_ticket_comments`
+   * output. Called from within the serialized persist block of
+   * {@link syncPipelineForProject}, so it awaits the repo write directly.
+   */
+  private appendGateLostComment = async (
+    repo: IProjectsRepo,
+    projectId: ProjectId,
+    remap: TicketRemap
+  ): Promise<void> => {
+    const content = `[Pipeline change] This ticket was in the gate column "${remap.fromLabel}", which was removed from the project pipeline. It has been remapped to "${remap.toLabel}". Please re-evaluate whether human review is still needed.`;
+    try {
+      await repo.upsertComment({
+        id: commentId(),
+        ticket_id: remap.ticketId,
+        author: 'agent',
+        content,
+        created_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn(`[ProjectManager] failed to append gate-lost comment to ${remap.ticketId} in ${projectId}:`, err);
+    }
+  };
+
+  getPipeline = (projectId: ProjectId): Pipeline => {
+    // The cached pipeline_columns are the source of truth.
+    if (this.repo) {
+      const rows = this.cache.columns.get(projectId) ?? [];
+      if (rows.length > 0) {
+        return rowsToPipeline(rows);
+      }
+    }
+
+    // Legacy electron-store path / fallback before SQLite sync runs.
+    const project = this.getProjects().find((p) => p.id === projectId);
+    if (project?.pipeline) {
+      return project.pipeline;
+    }
+    return project && project.sources.length > 0 ? DEFAULT_PIPELINE : SIMPLE_PIPELINE;
+  };
+
+  private getColumn = (projectId: ProjectId, columnId: ColumnId) => {
+    const pipeline = this.getPipeline(projectId);
+    return pipeline.columns.find((c) => c.id === columnId);
+  };
+
+  /** The first column in the pipeline (where new tickets land). */
+  private getFirstColumnId = (projectId: ProjectId): ColumnId => {
+    const pipeline = this.getPipeline(projectId);
+    return pipeline.columns[0]?.id ?? 'backlog';
+  };
+
+  /** Check if a column counts as shipped ('done' category) for a project. */
+  private isTerminalColumn = (projectId: ProjectId, columnId: ColumnId): boolean => {
+    return isDoneColumn(this.getPipeline(projectId), columnId);
+  };
+
+  /** Check if a column is the first (backlog) column for a project. */
+  private isFirstColumn = (projectId: ProjectId, columnId: ColumnId): boolean => {
+    return columnId === this.getFirstColumnId(projectId);
+  };
+
+  // #endregion
+
+  // #region Tickets (persisted in SQLite when repo is set, else electron-store)
+
+  private getTickets = (): Ticket[] => {
+    if (this.repo) {
+      return this.cache.tickets;
+    }
+    return this.store.get('tickets', []);
+  };
+
+  private setTickets = (tickets: Ticket[]): void => {
+    if (this.repo) {
+      const repo = this.repo;
+      this.cache.tickets = tickets;
+      // Snapshot rows synchronously (immune to later mutation of the array).
+      const rows = tickets.map(ticketToRow);
+      const commentSets = tickets
+        .filter((t) => t.comments && t.comments.length > 0)
+        .map((t) => [t.id, t.comments!.map((c) => commentToRow(c, t.id))] as const);
+      this.enqueuePersist(async () => {
+        await repo.replaceAllTickets(rows);
+        for (const [ticketId, commentRows] of commentSets) {
+          await repo.replaceCommentsForTicket(ticketId, commentRows);
+        }
+      });
+      this.noteLocalWriteAndBroadcast();
+    } else {
+      this.store.set('tickets', tickets);
+      this.broadcastStoreSnapshot();
+    }
+  };
+
+  private getTicketById = (ticketId: TicketId): Ticket | undefined => {
+    return this.getTickets().find((t) => t.id === ticketId);
+  };
+
+  addTicket = (
+    input: Omit<Ticket, 'id' | 'createdAt' | 'updatedAt' | 'columnId'> & { milestoneId?: MilestoneId }
+  ): Ticket => {
+    const now = Date.now();
+    const ticket: Ticket = {
+      ...input,
+      id: nanoid(),
+      columnId: this.getFirstColumnId(input.projectId),
+      createdAt: now,
+      updatedAt: now,
+    };
+    if (this.repo) {
+      const repo = this.repo;
+      // Per-row write: avoids the read-all → mutate → write-all pattern that
+      // races with MCP and re-churns every other ticket in the table on each
+      // edit. `upsertTicket` is a single INSERT ON CONFLICT touching exactly
+      // this row.
+      this.cache.tickets = [...this.cache.tickets, ticket];
+      this.enqueuePersist(async () => {
+        await repo.upsertTicket(ticketToRow(ticket));
+        if (ticket.comments && ticket.comments.length > 0) {
+          await repo.replaceCommentsForTicket(
+            ticket.id,
+            ticket.comments.map((c) => commentToRow(c, ticket.id))
+          );
+        }
+      });
+      this.noteLocalWriteAndBroadcast();
+    } else {
+      const tickets = this.getTickets();
+      tickets.push(ticket);
+      this.setTickets(tickets);
+    }
+    return ticket;
+  };
+
+  updateTicket = (id: TicketId, patch: Partial<Omit<Ticket, 'id' | 'projectId' | 'createdAt'>>): void => {
+    if (this.repo) {
+      const repo = this.repo;
+      const current = this.cache.tickets.find((t) => t.id === id);
+      if (!current) {
+        return;
+      }
+      const next: Ticket = { ...current, ...patch, updatedAt: Date.now() };
+      this.cache.tickets = this.cache.tickets.map((t) => (t.id === id ? next : t));
+      this.enqueuePersist(async () => {
+        await repo.upsertTicket(ticketToRow(next));
+        if (patch.comments) {
+          // Only re-sync comments when the patch actually includes them. The
+          // old `setTickets` path replayed every ticket's comments on every
+          // edit — that's where the write amplification came from.
+          await repo.replaceCommentsForTicket(
+            id,
+            patch.comments.map((c) => commentToRow(c, id))
+          );
+        }
+      });
+      this.noteLocalWriteAndBroadcast();
+      return;
+    }
+    const tickets = this.getTickets();
+    const index = tickets.findIndex((t) => t.id === id);
+    if (index === -1) {
+      return;
+    }
+    tickets[index] = { ...tickets[index]!, ...patch, updatedAt: Date.now() };
+    this.setTickets(tickets);
+  };
+
+  /**
+   * Assign (or unassign) a ticket to a team member. Ownership stays with the
+   * team — `assignee` is an additive, optional pointer that drives the "my work"
+   * filters (WIP, weekly review) and nothing else. `null`/empty clears it. Any
+   * team member may reassign; the ticket never leaves the team. A dedicated
+   * method (not `updateTicket` over IPC) so clearing survives JSON transport,
+   * where an `undefined` field would be dropped.
+   */
+  assignTicket = (id: TicketId, assignee: string | null): void => {
+    this.updateTicket(id, { assignee: assignee || undefined });
+    // Notify the assignee (teams/cloud) — skip self-assignment.
+    if (assignee && assignee !== this.currentPrincipal && this.onAssign) {
+      const ticket = (this.repo ? this.cache.tickets : this.getTickets()).find((t) => t.id === id);
+      if (ticket) {
+        this.onAssign(assignee, ticket);
+      }
+    }
+  };
+
+  getTicketsByProject = (projectId: ProjectId): Ticket[] => {
+    return this.getTickets().filter((t) => t.projectId === projectId);
+  };
+
+  getTasks = (): Task[] => this.supervisors.listTasks();
+
+  private static PRIORITY_ORDER: Record<TicketPriority, number> = {
+    critical: 0,
+    high: 1,
+    medium: 2,
+    low: 3,
+  };
+
+  getNextTicket = (projectId: ProjectId): Ticket | null => {
+    const tickets = this.getTicketsByProject(projectId);
+    const ticketMap = new Map(tickets.map((t) => [t.id, t]));
+
+    const isBlocked = (ticket: Ticket): boolean => {
+      return ticket.blockedBy.some((blockerId) => {
+        const blocker = ticketMap.get(blockerId);
+        // A ticket is blocked if the blocker is not in the terminal column
+        return blocker && !this.isTerminalColumn(projectId, blocker.columnId);
+      });
+    };
+
+    const firstColumnId = this.getFirstColumnId(projectId);
+    const candidates = tickets.filter((t) => t.columnId === firstColumnId && !isBlocked(t));
+    candidates.sort((a, b) => {
+      const priorityDiff = ProjectManager.PRIORITY_ORDER[a.priority] - ProjectManager.PRIORITY_ORDER[b.priority];
+      if (priorityDiff !== 0) {
+        return priorityDiff;
+      }
+      return a.createdAt - b.createdAt;
+    });
+
+    return candidates[0] ?? null;
+  };
+
+  // #endregion
+
+  // #region Inbox sweep (auto-expire stale inbox pages → later)
+
+  /**
+   * Sweep stale inbox items — delegates to `InboxManager.sweepExpired()`.
+   * Called on startup and on an hourly interval. Keeps the inbox from
+   * turning into a graveyard of forgotten captures.
+   */
+  sweepExpiredInboxItems = (): void => {
+    const changed = this.inbox.sweepExpired();
+    if (changed > 0) {
+      console.log(`[ProjectManager] Swept ${changed} expired inbox items → later`);
+    }
+  };
+
+  private startInboxSweep = (): void => {
+    this.sweepExpiredInboxItems();
+    this.inboxSweepTimer = setInterval(() => this.sweepExpiredInboxItems(), INBOX_SWEEP_INTERVAL_MS);
+  };
+
+  // #endregion
+
+  // Milestones — reach via `pm.milestones.*` directly. The PM-side delegators
+  // were dropped in Sprint C3.
+
+  // #region Artifacts
+
+  /**
+   * The artifacts dir *as the agent should write it*, resolved by the same
+   * substrate check the reader (`resolveArtifactStore`) uses, so the agent
+   * writes exactly where the launcher reads: a running container →
+   * `/workspace/.omni-artifacts/<id>`; otherwise the host dir. Surfaced to
+   * autopilot agents via the supervisor prompt.
+   */
+  getAgentArtifactsDir = (ticketId: TicketId): string => {
+    const ticket = this.getTicketById(ticketId);
+    const containerId = ticket ? (this.processManager?.getProjectContainerId(ticket.projectId) ?? null) : null;
+    return containerId ? getContainerArtifactsDir(ticketId) : getArtifactsDir(getOmniConfigDir(), ticketId);
+  };
+
+  /**
+   * Pick the artifact store for a ticket by its sandbox substrate: a running
+   * devbox container → read from the container (`/artifacts` volume) via
+   * `DockerArtifactStore`; otherwise the host dir. (Cloud/ACI injects an
+   * Azure Files store in the server build via `artifactStoreFor`.)
+   */
+  private resolveArtifactStore = (ticketId: TicketId): ArtifactStore => {
+    const injected = this.artifactStoreFor?.(ticketId);
+    if (injected) {
+      return injected;
+    }
+    const ticket = this.getTicketById(ticketId);
+    const containerId = ticket ? (this.processManager?.getProjectContainerId(ticket.projectId) ?? null) : null;
+    return containerId
+      ? new DockerArtifactStore(containerId, getOmniConfigDir())
+      : new HostFsArtifactStore(getOmniConfigDir());
+  };
+
+  listArtifacts = (ticketId: TicketId, dirPath?: string): Promise<ArtifactFileEntry[]> =>
+    this.resolveArtifactStore(ticketId).list(ticketId, dirPath);
+
+  readArtifact = (ticketId: TicketId, relativePath: string): Promise<ArtifactFileContent> =>
+    this.resolveArtifactStore(ticketId).read(ticketId, relativePath);
+
+  writeArtifact = (ticketId: TicketId, relativePath: string, data: Buffer): Promise<void> =>
+    this.resolveArtifactStore(ticketId).write(ticketId, relativePath, data);
+
+  /**
+   * Make an artifact exist as a real host file and return its path (null when
+   * unavailable). Substrate-dispatched: host store returns the file itself,
+   * the docker store `docker cp`s it out of the live container into the host
+   * artifacts layout. Used by `openArtifactExternal` and the `artifact://`
+   * protocol's container fallback.
+   */
+  materializeArtifact = (ticketId: TicketId, relativePath: string): Promise<string | null> =>
+    this.resolveArtifactStore(ticketId).materialize(ticketId, relativePath);
+
+  openArtifactExternal = async (ticketId: TicketId, relativePath: string): Promise<void> => {
+    const hostPath = await this.materializeArtifact(ticketId, relativePath);
+    if (hostPath) {
+      await shell.openPath(hostPath);
+    }
+  };
+
+  // #endregion
+
+  // #region Session source sync and pull-request discovery
+
+  applyCodeTabSourceChanges = async (tabId: CodeTabId, sourceId: string): Promise<PrMergeResult> => {
+    const tab = (
+      (this.store.get('codeTabs') ?? []) as Array<{
+        id: string;
+        projectId: ProjectId | null;
+      }>
+    ).find((t) => t.id === tabId);
+    if (!tab?.projectId) {
+      return { ok: false, error: 'Code tab is not attached to a project' };
+    }
+    const project = this.getProjects().find((p) => p.id === tab.projectId);
+    if (!project) {
+      return { ok: false, error: 'Project not found' };
+    }
+    const source = project.sources.find((s) => s.id === sourceId);
+    if (!source) {
+      return { ok: false, error: `Source not found: ${sourceId}` };
+    }
+    if (source.kind !== 'local') {
+      return { ok: false, error: 'Applying changes to host is only supported for local sources' };
+    }
+    const containerId = this.processManager?.getProcessContainerId(tabId) ?? null;
+    if (!containerId) {
+      return { ok: false, error: 'No running sandbox for this code tab' };
+    }
+    const result = await mirrorContainerChangesToHost(containerId, source.mountName, source.workspaceDir);
+    if (!result.ok) {
+      return { ok: false, error: result.error ?? 'Sync failed' };
+    }
+    if (result.copied === 0 && result.removed === 0) {
+      return { ok: false, error: 'No changes to apply' };
+    }
+    return { ok: true, mergeCommitSha: 'sync' };
+  };
+
+  /** Resolve a code tab's project + running container, or null if unavailable. */
+  private codeTabPrContext = (
+    tabId: CodeTabId
+  ): {
+    project: Project;
+    containerId: string;
+    tab: { id: string; projectId: ProjectId | null; ticketId?: TicketId; sessionId?: string; workspaceDir?: string };
+  } | null => {
+    const tab = (
+      (this.store.get('codeTabs') ?? []) as Array<{
+        id: string;
+        projectId: ProjectId | null;
+        ticketId?: TicketId;
+        sessionId?: string;
+        workspaceDir?: string;
+      }>
+    ).find((t) => t.id === tabId);
+    if (!tab?.projectId) {
+      return null;
+    }
+    const project = this.getProjects().find((p) => p.id === tab.projectId);
+    if (!project) {
+      return null;
+    }
+    const containerId = this.processManager?.getProcessContainerId(tabId) ?? null;
+    if (!containerId) {
+      return null;
+    }
+    return { project, containerId, tab };
+  };
+
+  private attachPrContext = (
+    pr: ContainerPullRequest,
+    project: Project,
+    source: ProjectSource,
+    context: { ticketId?: TicketId; codeTabId?: CodeTabId; sessionId?: string; workspaceDir?: string }
+  ): ContainerPullRequest => ({
+    ...pr,
+    projectId: project.id,
+    sourceId: source.id,
+    sourceMountName: source.mountName,
+    ...context,
+  });
+
+  /**
+   * Gate detected PRs against the ticket's persisted ``PullRequestLink``s and
+   * persist the survivors, returning the display-worthy subset. Detection is
+   * stateless — every poll re-runs ``gh pr list --state all`` in the
+   * container, so the branch re-reports every PR *ever* merged from it. The
+   * persisted links are the memory that separates "we watched this PR while
+   * it was open" from "historical merge nobody here ever saw":
+   *
+   * - OPEN PRs always display and are upserted (first sight stamps createdAt).
+   * - MERGED PRs display only when a link for ``sourceId:url`` already exists;
+   *   the open→merged transition is persisted (state flips), so the ✓ badge
+   *   survives app restarts.
+   * - MERGED PRs with no link are dropped — never watched here.
+   *
+   * Surfaces with no ticket (chat, un-ticketed code tabs) have no persistent
+   * home: everything passes through and the renderer's session memory does
+   * the same gating in-memory (see ``mergePollResult`` / the Changes badge).
+   */
+  private gateAndPersistPullRequests = (
+    ticketId: TicketId | undefined,
+    prs: ContainerPullRequest[]
+  ): ContainerPullRequest[] => {
+    if (prs.length === 0) {
+      return prs;
+    }
+    const ticket = ticketId ? this.getTicketById(ticketId) : undefined;
+    if (!ticketId || !ticket) {
+      return prs;
+    }
+    const now = Date.now();
+    const byKey = new Map((ticket.pullRequests ?? []).map((link) => [`${link.sourceId}:${link.url}`, link]));
+    const display: ContainerPullRequest[] = [];
+    let changed = false;
+    for (const pr of prs) {
+      if (!pr.projectId || !pr.sourceId || !pr.sourceMountName) {
+        display.push(pr);
+        continue;
+      }
+      const key = `${pr.sourceId}:${pr.url}`;
+      const existing = byKey.get(key);
+      if (pr.state === 'MERGED' && !existing) {
+        continue; // historical merge — never seen open here, never shown
+      }
+      display.push(pr);
+      const link: PullRequestLink = {
+        ...(existing ?? { createdAt: now }),
+        url: pr.url,
+        number: pr.number,
+        state: pr.state,
+        projectId: pr.projectId,
+        sourceId: pr.sourceId,
+        sourceMountName: pr.sourceMountName,
+        ...(pr.provider ? { provider: pr.provider } : {}),
+        ...(pr.branch ? { branch: pr.branch } : {}),
+        ...(pr.title ? { title: pr.title } : {}),
+        ticketId,
+        ...(pr.codeTabId ? { codeTabId: pr.codeTabId } : {}),
+        ...(pr.sessionId ? { sessionId: pr.sessionId } : {}),
+        ...(pr.workspaceDir ? { workspaceDir: pr.workspaceDir } : {}),
+        lastSeenAt: now,
+      };
+      byKey.set(key, link);
+      changed = true;
+    }
+    if (changed) {
+      this.updateTicket(ticketId, { pullRequests: [...byKey.values()] });
+    }
+    return display;
+  };
+
+  /** Bound length for the global `pullRequestLinks` store list (pruned by `lastSeenAt`). */
+  private static readonly MAX_SCOPED_PR_LINKS = 500;
+
+  /**
+   * Ticket-less twin of {@link gateAndPersistPullRequests}: links live in the
+   * global ``pullRequestLinks`` store key, scoped by the conversation/tab the
+   * PR was watched from (``sessionId`` preferred — a new conversation or
+   * re-seeded tab workspace is a new scope — falling back to ``codeTabId``).
+   * Same rules: OPEN displays and upserts; MERGED displays only with an
+   * existing link (the transition persists, so the ✓ badge survives
+   * restarts); unknown MERGED drops. No stable scope → only OPEN displays.
+   */
+  private gateAndPersistScopedPullRequests = (
+    scopeKey: string | undefined,
+    prs: ContainerPullRequest[]
+  ): ContainerPullRequest[] => {
+    if (prs.length === 0) {
+      return prs;
+    }
+    if (!scopeKey) {
+      return prs.filter((pr) => pr.state === 'OPEN');
+    }
+    const linkScope = (link: PullRequestLink): string | undefined => link.sessionId ?? link.codeTabId;
+    const all = this.store.get('pullRequestLinks') ?? [];
+    const byUrl = new Map(all.filter((link) => linkScope(link) === scopeKey).map((link) => [link.url, link]));
+    const now = Date.now();
+    const display: ContainerPullRequest[] = [];
+    let changed = false;
+    for (const pr of prs) {
+      const existing = byUrl.get(pr.url);
+      if (pr.state === 'MERGED' && !existing) {
+        continue; // historical merge — never seen open here, never shown
+      }
+      display.push(pr);
+      byUrl.set(pr.url, {
+        ...(existing ?? { createdAt: now }),
+        url: pr.url,
+        number: pr.number,
+        state: pr.state,
+        ...(pr.projectId ? { projectId: pr.projectId } : {}),
+        ...(pr.sourceId ? { sourceId: pr.sourceId } : {}),
+        ...(pr.sourceMountName ? { sourceMountName: pr.sourceMountName } : {}),
+        ...(pr.provider ? { provider: pr.provider } : {}),
+        ...(pr.branch ? { branch: pr.branch } : {}),
+        ...(pr.title ? { title: pr.title } : {}),
+        ...(pr.codeTabId ? { codeTabId: pr.codeTabId } : {}),
+        ...(pr.sessionId ? { sessionId: pr.sessionId } : {}),
+        ...(pr.workspaceDir ? { workspaceDir: pr.workspaceDir } : {}),
+        lastSeenAt: now,
+      });
+      changed = true;
+    }
+    if (changed) {
+      const merged = [...all.filter((link) => linkScope(link) !== scopeKey), ...byUrl.values()]
+        .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+        .slice(0, ProjectManager.MAX_SCOPED_PR_LINKS);
+      this.store.set('pullRequestLinks', merged);
+    }
+    return display;
+  };
+
+  /**
+   * Detect open PRs across *all* of a code tab's sources (one per source that
+   * has one). Used by the deck banner — a multi-source project can have a PR per
+   * repo. Best-effort → empty array.
+   */
+  detectCodeTabPullRequests = async (tabId: CodeTabId): Promise<ContainerPullRequest[]> => {
+    const ctx = this.codeTabPrContext(tabId);
+    if (!ctx) {
+      return this.detectProjectlessTabPullRequests(tabId);
+    }
+    const found: ContainerPullRequest[] = [];
+    for (const source of ctx.project.sources) {
+      const prs = (await detectContainerPullRequests(ctx.containerId, source.mountName)).map((pr) =>
+        this.attachPrContext(pr, ctx.project, source, {
+          ticketId: ctx.tab.ticketId,
+          codeTabId: tabId,
+          sessionId: ctx.tab.sessionId,
+          workspaceDir: ctx.tab.workspaceDir,
+        })
+      );
+      found.push(...prs);
+    }
+    return ctx.tab.ticketId
+      ? this.gateAndPersistPullRequests(ctx.tab.ticketId, found)
+      : this.gateAndPersistScopedPullRequests(ctx.tab.sessionId ?? tabId, found);
+  };
+
+  /**
+   * Detect open PRs for a projectless (chat) column. There's no project
+   * source list — the live process's workspace dir (the conversation's
+   * scratch dir, NOT the store's workspace root) is the single implicit
+   * source, mounted at its basename → at most one PR. Best-effort → [].
+   */
+  private detectProjectlessTabPullRequests = async (tabId: CodeTabId): Promise<ContainerPullRequest[]> => {
+    const tab = (
+      (this.store.get('codeTabs') ?? []) as Array<{ id: string; projectId: unknown; sessionId?: string }>
+    ).find((t) => t.id === tabId);
+    if (!tab || tab.projectId) {
+      // Unknown tab, or a project tab whose context lookup failed upstream
+      // (no container yet / project deleted) — nothing to detect.
+      return [];
+    }
+    const containerId = this.processManager?.getProcessContainerId(tabId) ?? null;
+    if (!containerId) {
+      return [];
+    }
+    const workspaceDir = this.processManager?.getProcessWorkspaceDir(tabId);
+    if (!workspaceDir) {
+      return [];
+    }
+    const mountName = path.basename(workspaceDir) || 'workspace';
+    const prs = await detectContainerPullRequests(containerId, mountName);
+    // Scope key = the conversation's sessionId — a new conversation is a new
+    // scope, so a merge watched in one conversation never badges another.
+    const enriched = prs.map((pr) => ({
+      ...pr,
+      sourceMountName: mountName,
+      codeTabId: tabId,
+      ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
+      workspaceDir,
+    }));
+    return this.gateAndPersistScopedPullRequests(tab.sessionId ?? tabId, enriched);
+  };
+
+  // #endregion
+
+  // #region Column movement
+
+  moveTicketToColumn = (ticketId: TicketId, columnId: ColumnId): void => {
+    const ticket = this.getTicketById(ticketId);
+    if (!ticket) {
+      return;
+    }
+
+    const column = this.getColumn(ticket.projectId, columnId);
+    if (!column) {
+      return;
+    }
+
+    this.updateTicket(ticketId, { columnId, columnChangedAt: Date.now() });
+
+    // Completion is the Done-category workflow state. Keep only its timestamp
+    // as metadata for recency/reporting; there is no second close state.
+    const movedTicket = this.getTicketById(ticketId);
+    if (movedTicket && this.isTerminalColumn(ticket.projectId, columnId) && movedTicket.completedAt === undefined) {
+      this.updateTicket(ticketId, { completedAt: Date.now() });
+    }
+
+    // Moving away from Done reopens the task. Archive is independent and is
+    // changed only through the explicit archive/restore action.
+    const ticket2 = this.getTicketById(ticketId);
+    if (ticket2?.completedAt !== undefined && !this.isTerminalColumn(ticket.projectId, columnId)) {
+      this.updateTicket(ticketId, {
+        completedAt: undefined,
+        cleanupPending: undefined,
+      });
+    }
+
+    // Reconciliation: stop supervisor and clean up workspace when ticket moves to a terminal column
+    if (this.isTerminalColumn(ticket.projectId, columnId)) {
+      // Settlement clears the carried plan snapshot (and its human-gate
+      // inbox items) — a Done ticket has no plan to reseed.
+      this.supervisors.settlePlanSnapshot(ticketId);
+      const entry = this.supervisors.machines.get(ticketId);
+      if (entry) {
+        console.log(
+          `[ProjectManager] Ticket ${ticketId} moved to terminal column "${columnId}" — stopping supervisor and cleaning up workspace.`
+        );
+        // Do the stop + cleanup inside a single ticket lock. We bypass
+        // `stopSupervisor` (which takes its own lock) to avoid a nested
+        // deadlock; the stop is inlined here.
+        void this.supervisors.withTicketLock(ticketId, async () => {
+          try {
+            await this.bridge.stop(ticketId);
+          } catch (err) {
+            console.warn(`[ProjectManager] bridge.stop failed for ${ticketId}:`, err);
+          }
+          entry.state.setRunId(null);
+          if (entry.state.getPhase() !== 'idle') {
+            entry.state.forcePhase('idle');
+          }
+          await this.supervisors.cleanupTicketWorkspace(ticketId);
+        });
+      } else {
+        void this.supervisors.cleanupTicketWorkspace(ticketId);
+      }
+    }
+
+    // Also stop if moving back to the first column (user is shelving the ticket).
+    if (this.isFirstColumn(ticket.projectId, columnId)) {
+      const entry = this.supervisors.machines.get(ticketId);
+      if (entry) {
+        console.log(`[ProjectManager] Ticket ${ticketId} moved to backlog — stopping supervisor.`);
+        void this.supervisors.stopSupervisor(ticketId);
+      }
+    }
+
+    // Stop supervisor (preserve workspace) when entering a gated column.
+    if (column.gate) {
+      const entry = this.supervisors.machines.get(ticketId);
+      if (entry) {
+        console.log(`[ProjectManager] Ticket ${ticketId} entered gated column "${columnId}" — stopping supervisor.`);
+        void this.supervisors.stopSupervisor(ticketId);
+      }
+    }
+  };
+
+  // #endregion
+
+  // #endregion
+
+  // Supervisor lifecycle, task persistence, auto-dispatch, dispatch preflight,
+  // tool dispatch, and supervisor prompt assembly all live in
+  // SupervisorOrchestrator. Reach via `pm.supervisors.*` directly. The PM-side
+  // delegators were dropped in Sprint C3.
+
+  // #region Migration
+
+  /**
+   * Migrate the store through every schema version up to the current one.
+   * Pure logic lives in `@/lib/project-migrations` — this wrapper injects
+   * the fs side-effects (v10 brief → root-page file) that can't run in
+   * the pure module.
+   *
+   * The v10 brief used to write `<projectDir>/context.md`; it now writes
+   * `<config>/pages/<projectId>/<rootId>.md` so the brief stays attached
+   * to the root page row, decoupled from any working directory.
+   */
+  static migrateToSupervisor(store: Store<StoreData>): void {
+    runSchemaMigrations(store as unknown as Parameters<typeof runSchemaMigrations>[0], {
+      newId: () => nanoid(),
+      now: () => Date.now(),
+      writeProjectContextBrief: (project) => {
+        try {
+          const pages = (store.get('pages', []) as Page[]).filter((p) => p.projectId === project.id && p.isRoot);
+          const rootPage = pages[0];
+          if (!rootPage) {
+            return;
+          }
+          const dir = getProjectPagesDir(project.id);
+          const filePath = path.join(dir, `${rootPage.id}.md`);
+          if (existsSync(filePath)) {
+            return;
+          }
+          mkdirSync(dir, { recursive: true });
+          writeFileSync(filePath, project.brief ?? DEFAULT_BRIEF_TEMPLATE, 'utf-8');
+        } catch (err) {
+          console.warn(`[ProjectManager] v10: failed to write brief for ${project.id}:`, err);
+        }
+      },
+      ensurePersonalProjectDir: () => {
+        // Historical v12: previously seeded a `context.md` in the workspace
+        // root for the Personal project. The brief now lives with the root
+        // page under `<config>/pages/<projectId>/`, so the Personal-special-
+        // case directory write is no longer needed. Keeping the hook
+        // present (no-op) so the migration runner's signature is stable.
+      },
+      repairProjectRoots: () => {
+        ProjectManager.repairProjectRoots(store);
+      },
+    });
+    // Run the repair pass once more after migrations return so idempotent
+    // boots (schemaVersion already at head) still fix any drift.
+    ProjectManager.repairProjectRoots(store);
+  }
+
+  private static repairProjectRoots(store: Store<StoreData>): void {
+    const projects = store.get('projects', []) as Project[];
+    const pages = store.get('pages', []) as Page[];
+    const now = Date.now();
+
+    const existingRootProjectIds = new Set(pages.filter((page) => page.isRoot).map((page) => page.projectId));
+    const repairedPages: Page[] = [];
+
+    for (const project of projects) {
+      if (!existingRootProjectIds.has(project.id)) {
+        repairedPages.push({
+          id: nanoid(),
+          projectId: project.id,
+          parentId: null,
+          title: project.label,
+          sortOrder: 0,
+          isRoot: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+
+    if (repairedPages.length > 0) {
+      store.set('pages', [...pages, ...repairedPages]);
+      console.log(`[ProjectManager] repaired ${repairedPages.length} missing root pages`);
+    }
+  }
+
+  // #endregion
+
+  exit = async (): Promise<void> => {
+    this.changeWatcher?.stop();
+    this.supervisors.stopAutoDispatch();
+    if (this.inboxSweepTimer) {
+      clearInterval(this.inboxSweepTimer);
+      this.inboxSweepTimer = null;
+    }
+    // Drain any queued write-through persistence before tearing down.
+    await this.flushPersists();
+    await this.pages.dispose();
+
+    // Dispose all supervisor state records + release renderer column bindings.
+    for (const [ticketId, entry] of this.supervisors.machines) {
+      try {
+        await this.bridge.dispose(ticketId);
+      } catch {
+        // Best-effort during shutdown
+      }
+      entry.state.dispose();
+      this.supervisors.machines.delete(ticketId);
+    }
+
+    await this.supervisors.exitAllTasks();
+    this.supervisors.dispose();
+    this.bridge.disposeAll();
+  };
+}
+
+export const createProjectManager = (arg: {
+  ipc: IIpcListener;
+  sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
+  store: Store<StoreData>;
+  processManager?: ProcessManager;
+  appControlManager?: import('@/main/app-control-manager').AppControlManager;
+  /** Optional async repo. When provided, project data is persisted here and cached in memory. */
+  repo?: IProjectsRepo;
+  /** Optional sync SQLite handle for the change-watcher (omit in Postgres mode). */
+  changeSeqRepo?: ProjectsRepo;
+  /** Notify on ticket assignment (resident wakeups; cloud member toasts). */
+  onAssign?: (assignee: string, ticket: Ticket) => void;
+  /** Extra keys merged over every snapshot/broadcast (resident mirrors). */
+  snapshotExtras?: () => Partial<StoreData>;
+}) => {
+  const { ipc, sendToWindow, store, processManager, appControlManager, repo, changeSeqRepo, onAssign, snapshotExtras } =
+    arg;
+
+  // Run migration
+  ProjectManager.migrateToSupervisor(store);
+
+  const projectManager = new ProjectManager({
+    store,
+    sendToWindow,
+    processManager,
+    appControlManager,
+    repo,
+    changeSeqRepo,
+    onAssign,
+    snapshotExtras,
+  });
+  const { supervisors, milestones, inbox, pages, bridge } = projectManager;
+  // Cache hydration + restorePersistedTasks now run inside ProjectManager.init()
+  // (the constructor kicks it off; awaited via projectManager.whenReady).
+
+  // Per-module IPC handler registration. Each helper returns the channel
+  // names it registered so the cleanup loop below can remove them all in
+  // one pass without a 50-line removeHandler block.
+  // Single-manager (Electron) wiring: every resolver returns the one manager.
+  const channels = [
+    ...registerProjectHandlers(ipc, () => projectManager),
+    ...registerSupervisorHandlers(ipc, () => supervisors),
+    ...registerMilestoneHandlers(ipc, () => milestones),
+    ...registerPageHandlers(
+      ipc,
+      () => pages,
+      (_event, projectId) => projectManager.getProjectDir(projectId)
+    ),
+    ...registerInboxHandlers(ipc, () => inbox),
+    ...bridge.registerIpc(ipc),
+  ];
+
+  const cleanup = async () => {
+    await projectManager.exit();
+    for (const channel of channels) {
+      ipcMain.removeHandler(channel);
+    }
+  };
+
+  return [projectManager, cleanup] as const;
+};

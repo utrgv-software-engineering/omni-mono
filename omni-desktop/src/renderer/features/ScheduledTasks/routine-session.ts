@@ -1,0 +1,101 @@
+import { formatTimestamp } from '@/lib/format-time';
+import { emitter } from '@/renderer/services/ipc';
+import { persistedStoreApi } from '@/renderer/services/store';
+import type { CodeTab, ScheduledTask } from '@/shared/types';
+import { firstSource } from '@/shared/types';
+
+/**
+ * Ensure a Code tab exists for a routine run, keyed by `sessionId`. Idempotent:
+ * an existing tab is refreshed with the latest routine metadata. The tab is the
+ * surface the routine's conversation streams into — it owns the omni-serve
+ * session the agent runs in (see `RoutineBridge`).
+ */
+export async function ensureRoutineSessionTab(
+  task: ScheduledTask,
+  sessionId: string,
+  store: ReturnType<typeof persistedStoreApi.get>,
+  activate = false
+): Promise<CodeTab> {
+  const tabs = persistedStoreApi.getKey('codeTabs') ?? [];
+  const existing = tabs.find((tab) => tab.sessionId === sessionId);
+  if (existing) {
+    return (await emitter.invoke('store:chat-command', {
+      method: 'ensureRoutineTab',
+      args: [
+        { ...existing, routineId: task.id, routineName: task.name, routineSchedule: formatSchedule(task) },
+        activate,
+      ],
+    })) as CodeTab;
+  }
+  const workspaceDir = await resolveRoutineWorkspaceDir(task, sessionId, store);
+  // A tab without a workspaceDir never launches (useAutoLaunch stays parked
+  // in idle), so the run would only die 90s later on the actor timeout with
+  // a generic message. Fail fast with the actionable reason instead.
+  if (!workspaceDir) {
+    throw new Error(
+      'No workspace folder available for this routine — set a workspace folder in Settings, ' +
+        'or attach the routine to a project with a local folder.'
+    );
+  }
+  const tab: CodeTab = {
+    id: `routine-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    projectId: task.projectId ?? null,
+    sessionId,
+    routineId: task.id,
+    routineName: task.name,
+    routineSchedule: formatSchedule(task),
+    profileName: task.profileName ?? store.defaultProfileName ?? 'host',
+    profileNameExplicit: Boolean(task.profileName),
+    createdAt: Date.now(),
+    ...(workspaceDir ? { workspaceDir } : {}),
+  };
+  return (await emitter.invoke('store:chat-command', { method: 'ensureRoutineTab', args: [tab, activate] })) as CodeTab;
+}
+
+export async function resolveRoutineWorkspaceDir(
+  task: ScheduledTask,
+  sessionId: string,
+  store: ReturnType<typeof persistedStoreApi.get>
+): Promise<string | undefined> {
+  if (task.projectId) {
+    const project = store.projects.find((item) => item.id === task.projectId);
+    const source = firstSource(project);
+    if (source?.kind === 'local') {
+      return source.workspaceDir;
+    }
+    if (store.workspaceDir && project) {
+      return `${store.workspaceDir.replace(/[/\\]+$/, '')}/Projects/${project.slug}`;
+    }
+    return undefined;
+  }
+  if (!store.workspaceDir) {
+    return undefined;
+  }
+  try {
+    return await emitter.invoke('util:session-workspace-dir', store.workspaceDir, sessionId);
+  } catch {
+    return undefined;
+  }
+}
+
+export function formatSchedule(task: ScheduledTask): string {
+  if (!task.enabled) {
+    return 'Paused';
+  }
+  const next = task.nextRunAt ? ` · next ${formatTimestamp(task.nextRunAt)}` : '';
+  const schedule = task.schedule;
+  if (schedule.kind === 'manual') {
+    return 'Manual';
+  }
+  if (schedule.kind === 'interval') {
+    return `Every ${schedule.everyMinutes} minutes${next}`;
+  }
+  if (schedule.kind === 'daily') {
+    return `${schedule.weekdaysOnly ? 'Weekdays' : 'Daily'} at ${schedule.time}${next}`;
+  }
+  return `Weekly on ${formatDayOfWeek(schedule.dayOfWeek)} at ${schedule.time}${next}`;
+}
+
+export function formatDayOfWeek(dayOfWeek: number): string {
+  return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dayOfWeek] ?? 'Monday';
+}

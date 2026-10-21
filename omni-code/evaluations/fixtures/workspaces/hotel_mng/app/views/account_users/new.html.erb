@@ -1,0 +1,280 @@
+<% content_for :page_title, "Invite Team Member" %>
+
+<div class="max-w-7xl mx-auto" data-controller="user-type">
+  <!-- Header -->
+  <div class="mb-6">
+    <nav class="flex mb-2" aria-label="Breadcrumb">
+      <%= link_to "Team Members", account_users_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <span class="text-sm text-gray-900">Invite Team Member</span>
+    </nav>
+    <h1 class="text-2xl font-bold text-gray-900">Invite Team Member</h1>
+    <p class="mt-1 text-sm text-gray-600">Add a new team member to <%= current_tenant.name %></p>
+  </div>
+
+  <%= form_with url: account_users_path, local: true do |form| %>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Main Form Fields (2/3 width) -->
+      <div class="lg:col-span-2 space-y-6">
+        <!-- User Type Selection -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Member Type</h2>
+            <p class="mt-1 text-sm text-gray-600">Choose whether to add a human team member or an AI agent</p>
+          </div>
+          <div class="px-6 py-4">
+            <div class="flex space-x-6">
+              <label class="flex items-center cursor-pointer">
+                <%= radio_button_tag :user_type, 'human', true, 
+                    class: "h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500",
+                    data: { action: "change->user-type#toggle" } %>
+                <span class="ml-2 text-sm font-medium text-gray-900">
+                  <svg class="inline w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd"/>
+                  </svg>
+                  Human User
+                </span>
+              </label>
+              <label class="flex items-center cursor-pointer">
+                <%= radio_button_tag :user_type, 'ai_agent', false, 
+                    class: "h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500",
+                    data: { action: "change->user-type#toggle" } %>
+                <span class="ml-2 text-sm font-medium text-gray-900">
+                  <svg class="inline w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M13 7H7v6h6V7z"/>
+                    <path fill-rule="evenodd" d="M7 2a1 1 0 012 0v1h2V2a1 1 0 112 0v1h2a2 2 0 012 2v2h1a1 1 0 110 2h-1v2h1a1 1 0 110 2h-1v2a2 2 0 01-2 2h-2v1a1 1 0 11-2 0v-1H9v1a1 1 0 11-2 0v-1H5a2 2 0 01-2-2v-2H2a1 1 0 110-2h1V9H2a1 1 0 010-2h1V5a2 2 0 012-2h2V2z" clip-rule="evenodd"/>
+                  </svg>
+                  AI Agent
+                </span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- User Information -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">
+              <span data-user-type-target="humanTitle">User Information</span>
+              <span data-user-type-target="aiTitle" class="hidden">Agent Configuration</span>
+            </h2>
+            <p class="mt-1 text-sm text-gray-600">
+              <span data-user-type-target="humanDescription">
+                Enter the email address of the person you want to invite. If they already have an account, 
+                they'll be added immediately. Otherwise, they'll receive an invitation email.
+              </span>
+              <span data-user-type-target="aiDescription" class="hidden">
+                Configure the AI agent that will have programmatic access to your account.
+              </span>
+            </p>
+          </div>
+          <div class="px-6 py-4 space-y-4">
+            <!-- Human User Fields -->
+            <div data-user-type-target="humanFields">
+              <div>
+                <%= label_tag :email, "Email Address", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                <%= email_field_tag :email, params[:email], 
+                    placeholder: "colleague@example.com",
+                    required: true,
+                    autofocus: true,
+                    class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500",
+                    data: { user_type_target: "humanEmail" } %>
+                <p class="mt-1 text-xs text-gray-500">An invitation will be sent to this email address</p>
+              </div>
+              
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <%= label_tag :first_name, "First Name (Optional)", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= text_field_tag :first_name, params[:first_name], 
+                      placeholder: "John",
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500",
+                      data: { user_type_target: "humanFirstName" } %>
+                  <p class="mt-1 text-xs text-gray-500">Helps personalize the invitation</p>
+                </div>
+                <div>
+                  <%= label_tag :last_name, "Last Name (Optional)", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                  <%= text_field_tag :last_name, params[:last_name], 
+                      placeholder: "Doe",
+                      class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500",
+                      data: { user_type_target: "humanLastName" } %>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI Agent Fields -->
+            <div data-user-type-target="aiFields" class="hidden">
+              <div>
+                <%= label_tag :agent_name, "Agent Name", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                <%= text_field_tag :agent_name, params[:agent_name], 
+                    placeholder: "Booking Assistant",
+                    class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500",
+                    data: { user_type_target: "agentName" } %>
+                <p class="mt-1 text-xs text-gray-500">A descriptive name for this AI agent (e.g., "Booking Assistant", "Guest Services Bot")</p>
+              </div>
+              
+              <div>
+                <%= label_tag :agent_description, "Description (Optional)", class: "block text-sm font-medium text-gray-700 mb-1" %>
+                <%= text_area_tag :agent_description, params[:agent_description], 
+                    placeholder: "Handles automated booking confirmations and guest inquiries",
+                    rows: 3,
+                    class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" %>
+                <p class="mt-1 text-xs text-gray-500">Brief description of what this agent does</p>
+              </div>
+              
+              <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p class="text-sm text-blue-800">
+                  <strong>Note:</strong> An API key will be automatically generated for this agent. 
+                  You can copy it from the team members page after creation. The agent will not use passwords for authentication.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Role Assignment -->
+        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Role Assignment</h2>
+            <p class="mt-1 text-sm text-gray-600">Select the role this team member will have</p>
+          </div>
+          <div class="px-6 py-4">
+            <fieldset>
+              <legend class="sr-only">Select a role</legend>
+              <div class="space-y-3">
+                <!-- Owner -->
+                <label class="relative flex items-start p-4 border rounded-lg cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-indigo-500">
+                  <div class="flex items-center h-5">
+                    <%= radio_button_tag :role, 'owner', false, 
+                        class: "h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500" %>
+                  </div>
+                  <div class="ml-3 flex-1">
+                    <span class="block text-sm font-medium text-gray-900">Owner</span>
+                    <span class="block text-sm text-gray-500">
+                      Full system access, can manage account settings, billing, and all hotel operations. 
+                      Can add/remove other users including other owners.
+                    </span>
+                  </div>
+                </label>
+
+                <!-- Admin -->
+                <label class="relative flex items-start p-4 border rounded-lg cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-indigo-500">
+                  <div class="flex items-center h-5">
+                    <%= radio_button_tag :role, 'admin', false, 
+                        class: "h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500" %>
+                  </div>
+                  <div class="ml-3 flex-1">
+                    <span class="block text-sm font-medium text-gray-900">Administrator</span>
+                    <span class="block text-sm text-gray-500">
+                      Can manage users, hotels, and most settings. Cannot access billing or remove owners.
+                    </span>
+                  </div>
+                </label>
+
+                <!-- Hotel Manager -->
+                <label class="relative flex items-start p-4 border rounded-lg cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-indigo-500">
+                  <div class="flex items-center h-5">
+                    <%= radio_button_tag :role, 'hotel_manager', true, 
+                        class: "h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500" %>
+                  </div>
+                  <div class="ml-3 flex-1">
+                    <span class="block text-sm font-medium text-gray-900">Hotel Manager</span>
+                    <span class="block text-sm text-gray-500">
+                      Full control over hotel operations including rooms, rates, and reservations. 
+                      Cannot manage users or account settings.
+                    </span>
+                  </div>
+                </label>
+
+                <!-- Front Desk -->
+                <label class="relative flex items-start p-4 border rounded-lg cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-indigo-500">
+                  <div class="flex items-center h-5">
+                    <%= radio_button_tag :role, 'front_desk', false, 
+                        class: "h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500" %>
+                  </div>
+                  <div class="ml-3 flex-1">
+                    <span class="block text-sm font-medium text-gray-900">Front Desk Staff</span>
+                    <span class="block text-sm text-gray-500">
+                      Can manage reservations, check-ins/outs, and guest profiles. 
+                      Cannot modify hotel settings or room configurations.
+                    </span>
+                  </div>
+                </label>
+
+                <!-- Housekeeping -->
+                <label class="relative flex items-start p-4 border rounded-lg cursor-pointer hover:bg-gray-50 focus-within:ring-2 focus-within:ring-indigo-500">
+                  <div class="flex items-center h-5">
+                    <%= radio_button_tag :role, 'housekeeping', false, 
+                        class: "h-4 w-4 text-indigo-600 border-gray-300 focus:ring-indigo-500" %>
+                  </div>
+                  <div class="ml-3 flex-1">
+                    <span class="block text-sm font-medium text-gray-900">Housekeeping Staff</span>
+                    <span class="block text-sm text-gray-500">
+                      Can view room status and update cleaning status. 
+                      Read-only access to reservations and guest information.
+                    </span>
+                  </div>
+                </label>
+              </div>
+            </fieldset>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sidebar (1/3 width) -->
+      <div class="lg:col-span-1">
+        <div class="bg-blue-50 rounded-lg p-6 border border-blue-200">
+          <h3 class="text-lg font-semibold text-blue-900 mb-4">Invitation Process</h3>
+          <div class="space-y-3 text-sm text-blue-800">
+            <div class="flex">
+              <svg class="w-5 h-5 mr-2 flex-shrink-0 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <div>
+                <p class="font-medium">New Users</p>
+                <p class="mt-1">Will receive an email invitation to create their account and set a password.</p>
+              </div>
+            </div>
+            <div class="flex">
+              <svg class="w-5 h-5 mr-2 flex-shrink-0 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <div>
+                <p class="font-medium">Existing Users</p>
+                <p class="mt-1">Will be immediately added to your account with the selected role.</p>
+              </div>
+            </div>
+            <div class="flex">
+              <svg class="w-5 h-5 mr-2 flex-shrink-0 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+              </svg>
+              <div>
+                <p class="font-medium">Role Changes</p>
+                <p class="mt-1">You can change a team member's role at any time after they've been added.</p>
+              </div>
+            </div>
+          </div>
+          
+          <div class="mt-6 pt-6 border-t border-blue-200">
+            <h4 class="text-sm font-semibold text-blue-900 mb-2">Role Hierarchy</h4>
+            <ol class="space-y-1 text-sm text-blue-800 list-decimal list-inside">
+              <li>Owner - Full access</li>
+              <li>Administrator - User & hotel management</li>
+              <li>Hotel Manager - Operations control</li>
+              <li>Front Desk - Guest services</li>
+              <li>Housekeeping - Room status only</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Form Actions -->
+    <div class="mt-6 flex items-center justify-end space-x-3">
+      <%= link_to "Cancel", account_users_path, 
+          class: "px-4 py-2 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500" %>
+      <%= submit_tag "Send Invitation", 
+          class: "px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500",
+          data: { user_type_target: "submitButton" } %>
+    </div>
+  <% end %>
+</div>

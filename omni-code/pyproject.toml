@@ -1,0 +1,122 @@
+[project]
+name = "omni-code"
+version = "0.6.34"
+description = "Omni Code: a full‑stack coding agent built with OmniAgents"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "omniagents[all]==0.7.40",
+    "python-dotenv",
+    "markitdown[all,docx,pdf]>=0.1.1",
+    "litellm>=1.0.0",  # For non-OpenAI model support
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+pythonpath = ["."]
+addopts = "-q"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.2",
+    "pytest-asyncio>=1.0",
+    "setuptools",  # tests/test_packaging.py imports setuptools
+    "pip",  # tests/test_packaging.py shells out to `python -m pip wheel`
+    "black>=26.5",
+    "ruff>=0.16",
+    "mypy>=2.3",
+]
+
+# ── Quality gates ─────────────────────────────────────────────────────
+# evaluations/fixtures/ holds eval fixture workspaces — deliberately
+# imperfect code the agent operates on during scenarios. It is test
+# material, not product code, so all three tools skip it.
+
+[tool.black]
+line-length = 88
+# Explicit floor from requires-python; without this black infers every
+# version through py315 and warns when run under an older interpreter.
+target-version = ["py310", "py311", "py312", "py313"]
+extend-exclude = "/evaluations/fixtures/"
+
+[tool.ruff]
+line-length = 88
+extend-exclude = ["evaluations/fixtures"]
+
+[tool.ruff.lint]
+# Pragmatic starter set: pyflakes + pycodestyle errors + import sorting.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately import after runtime setup calls (e.g.
+# install_model_catalog) — E402 is the pattern, not an accident.
+"tests/*" = ["E402"]
+
+[tool.mypy]
+# Matches CI. numpy ≥2.5 (pulled in via omniagents) ships stubs with PEP 695
+# `type` statements that mypy refuses to parse for a target below 3.12.
+python_version = "3.12"
+files = ["omni_code", "tests", "evaluations/measures.py"]
+check_untyped_defs = true
+# omniagents and other fury-hosted deps ship without stubs/py.typed.
+ignore_missing_imports = true
+
+[project.scripts]
+# Console scripts are the framework's generic product entries; they find
+# omni-code's packaged project.yml through the entry-point declaration
+# below — no product-side dispatcher module.
+omni = "omniagents.product_cli:main"
+omni-setup = "omniagents.product_cli:setup_main"
+
+[project.entry-points."omniagents.products"]
+# Product discovery: the value is the importable package whose packaged
+# project.yml (with its `product:` section) declares who omni-code is.
+# This is how bare `import omniagents` usage resolves omni-code identity
+# with no bootstrap import.
+omni-code = "omni_code"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = [
+    "omni_code*",
+]
+exclude = [
+    "tests*",
+    "evaluations*",
+]
+
+[tool.setuptools.package-data]
+# Everything ships inside the omni_code package: the project manifest,
+# agent specs/instructions, capability YAMLs, and the default
+# sandbox profile.
+"omni_code" = [
+    "project.yml",
+    # The declared model catalog (paths.model_catalog) — the store is
+    # built from this file at product bootstrap, so it must ship.
+    "models.yml",
+    "sandbox_profile_default.yml",
+    # Optional wheel-shipped omni-sandbox binary (built in the standalone
+    # omni-sandbox repo); governance.find_sandbox_binary checks here.
+    "assets/bin/*",
+    "agents/*/*.yml",
+    # Also matches agents/_shared/*.md — the {% include %} fragment files
+    # shared by the omni and voice_agent instruction templates.
+    "agents/*/*.md",
+    # Prompt-template files (paths.prompts) — goal_initial.md,
+    # goal_tick.md, loop.md; resolved by convention at runtime
+    # (omniagents.core.project.prompts), so they must ship.
+    "prompts/*.md",
+    "capabilities/*.yml",
+]
+"omni_agents.omni" = ["*.yml", "*.md"]
+"omni_agents.voice_agent" = ["*.yml", "*.md"]
+"omni_agents.init_agent" = ["*.yml", "*.md"]

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Rocketship pre-build hook
+#
+# This script runs before the Docker image is built.
+# Remove the .sample extension to activate.
+#
+# Available environment variables:
+#   ROCKETSHIP_IMAGE - The image name being built
+#   ROCKETSHIP_REGISTRY - The registry server
+
+# Example: Ensure git checkout is clean
+if [ -n "$(git status --porcelain)" ]; then
+    echo "Git checkout is not clean, aborting..." >&2
+    git status --porcelain >&2
+    exit 1
+fi
+
+echo "Pre-build checks passed"
+exit 0

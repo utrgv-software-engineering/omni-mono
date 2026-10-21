@@ -1,0 +1,40 @@
+<div class="container">
+  <h1>Your Accounts</h1>
+  
+  <% if @accounts.any? %>
+    <div class="accounts-list">
+      <% @accounts.each do |account| %>
+        <div class="account-card <%= 'current' if account.id == @current_account_id %>">
+          <div class="account-info">
+            <h3><%= account.name %></h3>
+            <p class="subdomain">
+              <%= account.subdomain %>.domain.com
+            </p>
+            <% if account.trial_active? %>
+              <span class="badge trial">Trial expires <%= account.trial_ends_at.to_date %></span>
+            <% end %>
+            <% if account.id == @current_account_id %>
+              <span class="badge current">Current Account</span>
+            <% end %>
+          </div>
+          
+          <div class="account-actions">
+            <% if account.id != @current_account_id %>
+              <%= button_to "Switch to this account", 
+                            switch_account_path(account), 
+                            method: :post,
+                            class: "btn btn-primary" %>
+            <% else %>
+              <%= link_to "Go to Dashboard", 
+                          authenticated_root_path, 
+                          class: "btn btn-secondary" %>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  <% else %>
+    <p>You don't have any accounts. This shouldn't happen!</p>
+    <%= link_to "Contact Support", "#", class: "btn btn-primary" %>
+  <% end %>
+</div>

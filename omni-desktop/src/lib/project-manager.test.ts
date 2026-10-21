@@ -1,0 +1,515 @@
+/**
+ * Tests for `ProjectManager`'s remaining responsibilities — project / ticket /
+ * milestone / page CRUD, getNextTicket priority queue, and processManager wiring.
+ *
+ * Supervisor-lifecycle behavior (machines, retries, stall detection,
+ * auto-dispatch, prompt assembly, tool dispatch) lives in
+ * `supervisor-orchestrator.test.ts` since Sprint C2c.9.
+ */
+
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { makePm } from '@/lib/project-manager-test-helpers';
+import type { Project, Ticket, TicketId } from '@/shared/types';
+
+describe('ProjectManager', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  describe('getNextTicket', () => {
+    it('returns null when no tickets are in the first column', () => {
+      const { pm } = makePm({
+        tickets: [{ id: 't1', columnId: 'in_progress' }],
+      });
+      expect(pm.getNextTicket('proj-1')).toBeNull();
+    });
+
+    it('picks the highest-priority ticket first', () => {
+      const { pm } = makePm({
+        tickets: [
+          { id: 'low', priority: 'low', createdAt: 1000 },
+          { id: 'crit', priority: 'critical', createdAt: 2000 },
+          { id: 'med', priority: 'medium', createdAt: 500 },
+        ],
+      });
+      expect(pm.getNextTicket('proj-1')?.id).toBe('crit');
+    });
+
+    it('breaks priority ties by createdAt ascending (oldest first)', () => {
+      const { pm } = makePm({
+        tickets: [
+          { id: 'newer', priority: 'medium', createdAt: 2000 },
+          { id: 'older', priority: 'medium', createdAt: 1000 },
+        ],
+      });
+      expect(pm.getNextTicket('proj-1')?.id).toBe('older');
+    });
+
+    it('skips tickets blocked by a non-terminal blocker', () => {
+      const { pm } = makePm({
+        tickets: [
+          { id: 'blocker', columnId: 'in_progress' },
+          { id: 'blocked', blockedBy: ['blocker' as TicketId] },
+          { id: 'free' },
+        ],
+      });
+      expect(pm.getNextTicket('proj-1')?.id).toBe('free');
+    });
+
+    it('ignores blocked-by when the blocker is already terminal', () => {
+      const { pm } = makePm({
+        tickets: [
+          { id: 'blocker', columnId: 'done' },
+          { id: 'blocked', blockedBy: ['blocker' as TicketId] },
+        ],
+      });
+      expect(pm.getNextTicket('proj-1')?.id).toBe('blocked');
+    });
+
+    it('ignores unknown blocker ids', () => {
+      const { pm } = makePm({
+        tickets: [{ id: 't1', blockedBy: ['does-not-exist' as TicketId] }],
+      });
+      expect(pm.getNextTicket('proj-1')?.id).toBe('t1');
+    });
+  });
+
+  describe('updateProject source validation', () => {
+    it('rejects duplicate mount names before persisting sources', () => {
+      const { pm, store } = makePm();
+
+      expect(() =>
+        pm.updateProject('proj-1', {
+          sources: [
+            { id: 's1', mountName: 'repo', kind: 'local', workspaceDir: '/tmp/repo-a' },
+            { id: 's2', mountName: 'repo', kind: 'local', workspaceDir: '/tmp/repo-b' },
+          ],
+        })
+      ).toThrow('Duplicate mount name');
+      expect(store.get('projects', [])[0]?.sources).toEqual([]);
+    });
+
+    it('rejects duplicate source identities before persisting sources', () => {
+      const { pm, store } = makePm();
+
+      expect(() =>
+        pm.updateProject('proj-1', {
+          sources: [
+            { id: 's1', mountName: 'repo', kind: 'git-remote', repoUrl: 'https://github.com/owner/repo.git' },
+            { id: 's2', mountName: 'repo-copy', kind: 'git-remote', repoUrl: 'git@github.com:owner/repo.git' },
+          ],
+        })
+      ).toThrow('already includes that repository');
+      expect(store.get('projects', [])[0]?.sources).toEqual([]);
+    });
+
+    it('persists different sources with unique mount names and identities', () => {
+      const { pm, store } = makePm();
+
+      pm.updateProject('proj-1', {
+        sources: [
+          { id: 's1', mountName: 'repo', kind: 'git-remote', repoUrl: 'https://github.com/owner/repo.git' },
+          { id: 's2', mountName: 'repo-2', kind: 'git-remote', repoUrl: 'https://github.com/owner/repo-2.git' },
+        ],
+      });
+
+      expect(store.get('projects', [])[0]?.sources).toHaveLength(2);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // T9 — Milestone CRUD (in-memory only, no fs)
+  // -------------------------------------------------------------------------
+  describe('milestone CRUD', () => {
+    it('addMilestone persists the new milestone', () => {
+      const { pm, store } = makePm({ tickets: [] });
+      const ms = pm.milestones.add({
+        projectId: 'proj-1',
+        title: 'Sprint 1',
+        description: '',
+        status: 'active',
+      } as Parameters<typeof pm.milestones.add>[0]);
+
+      const stored = store.get('milestones', []);
+      expect(stored).toHaveLength(1);
+      expect(stored[0]!.id).toBe(ms.id);
+    });
+
+    it('getByProject filters by projectId', () => {
+      const { pm, store } = makePm({ tickets: [] });
+      store.set('milestones', [
+        { id: 'm1', projectId: 'proj-1', title: 'A', description: '', status: 'active', createdAt: 0, updatedAt: 0 },
+        { id: 'm2', projectId: 'other', title: 'B', description: '', status: 'active', createdAt: 0, updatedAt: 0 },
+      ] as never);
+      expect(pm.milestones.getByProject('proj-1').map((m) => m.id)).toEqual(['m1']);
+    });
+
+    it('updateMilestone stamps completedAt when transitioning into completed', () => {
+      const { pm, store } = makePm({ tickets: [] });
+      store.set('milestones', [
+        { id: 'm1', projectId: 'proj-1', title: 'A', description: '', status: 'active', createdAt: 0, updatedAt: 0 },
+      ] as never);
+
+      pm.milestones.update('m1' as never, { status: 'completed' });
+
+      const ms = store.get('milestones', [])[0]!;
+      expect(ms.status).toBe('completed');
+      expect(ms.completedAt).toBeGreaterThan(0);
+    });
+
+    it('updateMilestone clears completedAt when transitioning out of completed', () => {
+      const { pm, store } = makePm({ tickets: [] });
+      store.set('milestones', [
+        {
+          id: 'm1',
+          projectId: 'proj-1',
+          title: 'A',
+          description: '',
+          status: 'completed',
+          completedAt: 12345,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ] as never);
+
+      pm.milestones.update('m1' as never, { status: 'active' });
+
+      const ms = store.get('milestones', [])[0]!;
+      expect(ms.status).toBe('active');
+      expect(ms.completedAt).toBeUndefined();
+    });
+
+    it('removeMilestone clears milestoneId on orphaned tickets', () => {
+      const { pm, store } = makePm({
+        tickets: [{ id: 't-orphan' }, { id: 't-other' }],
+      });
+      // Attach milestoneId to t-orphan.
+      const tickets = store.get('tickets', []);
+      tickets[0]!.milestoneId = 'm1' as never;
+      store.set('tickets', tickets);
+      store.set('milestones', [
+        { id: 'm1', projectId: 'proj-1', title: 'A', description: '', status: 'active', createdAt: 0, updatedAt: 0 },
+      ] as never);
+
+      pm.milestones.remove('m1' as never);
+
+      const t = store.get('tickets', []).find((x: Ticket) => x.id === 't-orphan')!;
+      expect(t.milestoneId).toBeUndefined();
+      expect(store.get('milestones', [])).toHaveLength(0);
+    });
+
+    it('removeMilestone is a no-op for unknown id', () => {
+      const { pm, store } = makePm({ tickets: [] });
+      store.set('milestones', [] as never);
+      expect(() => pm.milestones.remove('nope' as never)).not.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // T9 — Project + Page CRUD (fs-touching paths against tmpdir $HOME)
+  // -------------------------------------------------------------------------
+  describe('project + page CRUD (tmpdir)', () => {
+    let originalHome: string | undefined;
+    let homeDir: string;
+
+    beforeEach(() => {
+      // electron-shim uses os.homedir() which on Linux resolves $HOME.
+      // Point $HOME at a tmpdir so ensureProjectDir / addPage don't write
+      // into the operator's real home.
+      originalHome = process.env['HOME'];
+      homeDir = mkdtempSync(join(tmpdir(), 'pm-test-'));
+      process.env['HOME'] = homeDir;
+      // addProject fires-and-forgets ensureProjectDir(); real I/O runs async.
+      // The outer describe uses fake timers, but fs I/O doesn't schedule on
+      // the timer queue — it resolves through libuv. Swap to real timers for
+      // this block so we can flush pending microtasks before rmSync.
+      vi.useRealTimers();
+    });
+
+    afterEach(async () => {
+      // Let any pending void-chained fs writes from addProject complete
+      // before we rm the tmpdir, otherwise mkdir(recursive:true) re-creates
+      // the directory tree after cleanup. 50ms is generous for local fs.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      if (originalHome !== undefined) {
+        process.env['HOME'] = originalHome;
+      } else {
+        delete process.env['HOME'];
+      }
+      rmSync(homeDir, { recursive: true, force: true });
+      vi.useFakeTimers();
+    });
+
+    it('addProject seeds a root page for the new project', () => {
+      const { pm, store } = makePm({ tickets: [] });
+      // Wipe the seeded project so addProject starts clean.
+      store.set('projects', []);
+
+      const project = pm.addProject({
+        label: 'New Project',
+        slug: 'new-project',
+        sources: [{ id: 's1', mountName: 'work', kind: 'local', workspaceDir: join(homeDir, 'work') }],
+      } as unknown as Parameters<typeof pm.addProject>[0]);
+
+      const pages = store.get('pages', []);
+      const rootPage = pages.find((p) => p.projectId === project.id && p.isRoot);
+      expect(rootPage).toBeDefined();
+      expect(rootPage!.parentId).toBeNull();
+    });
+
+    it('removeProject cascades to tickets, milestones, and pages', async () => {
+      const { pm, store } = makePm({
+        tickets: [{ id: 't-target' }, { id: 't-unrelated' }],
+      });
+      // Seed a second project so we can verify the cascade doesn't overreach.
+      const projects = store.get('projects', []);
+      projects.push({
+        id: 'other-proj',
+        label: 'Other',
+        slug: 'other',
+        createdAt: Date.now(),
+      } as unknown as Project);
+      store.set('projects', projects);
+
+      // Move t-unrelated to the other project.
+      const tickets = store.get('tickets', []);
+      tickets.find((t: Ticket) => t.id === 't-unrelated')!.projectId = 'other-proj' as never;
+      store.set('tickets', tickets);
+
+      store.set('milestones', [
+        { id: 'm1', projectId: 'proj-1', title: 'A', description: '', status: 'active', createdAt: 0, updatedAt: 0 },
+        {
+          id: 'm2',
+          projectId: 'other-proj',
+          title: 'B',
+          description: '',
+          status: 'active',
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ] as never);
+      store.set('pages', [
+        {
+          id: 'p1',
+          projectId: 'proj-1',
+          parentId: null,
+          title: 'root1',
+          sortOrder: 0,
+          isRoot: true,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+        {
+          id: 'p2',
+          projectId: 'other-proj',
+          parentId: null,
+          title: 'root2',
+          sortOrder: 0,
+          isRoot: true,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ] as never);
+
+      await pm.removeProject('proj-1');
+
+      expect(store.get('projects', []).map((p) => p.id)).toEqual(['other-proj']);
+      expect(store.get('tickets', []).map((t) => t.id)).toEqual(['t-unrelated']);
+      expect(store.get('milestones', []).map((m) => m.id)).toEqual(['m2']);
+      expect(store.get('pages', []).map((p) => p.id)).toEqual(['p2']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // T-new — addTicket / updateTicket basics
+  // -------------------------------------------------------------------------
+  describe('addTicket / updateTicket', () => {
+    it('addTicket assigns the first column as default columnId', () => {
+      const { pm, store } = makePm({ tickets: [] });
+      const ticket = pm.addTicket({
+        projectId: 'proj-1',
+        title: 'New ticket',
+        description: '',
+        priority: 'medium',
+        blockedBy: [],
+        comments: [],
+        runs: [],
+      } as Parameters<typeof pm.addTicket>[0]);
+
+      expect(ticket.columnId).toBe('backlog'); // first column of TEST_PIPELINE
+      expect(ticket.id).toBeDefined();
+      expect(store.get('tickets', [])).toHaveLength(1);
+    });
+
+    it('updateTicket stamps updatedAt', () => {
+      vi.setSystemTime(new Date('2025-01-01T00:00:00Z'));
+      const { pm, store } = makePm({
+        tickets: [{ id: 't1' }],
+      });
+      const before = store.get('tickets', [])[0]!.updatedAt;
+
+      vi.setSystemTime(new Date('2025-06-01T00:00:00Z'));
+      pm.updateTicket('t1', { title: 'Updated' });
+
+      const after = store.get('tickets', [])[0]!.updatedAt;
+      expect(after).toBeGreaterThan(before);
+      expect(store.get('tickets', [])[0]!.title).toBe('Updated');
+    });
+
+    it('updateTicket is a no-op for unknown id', () => {
+      const { pm, store } = makePm({ tickets: [{ id: 't1' }] });
+      pm.updateTicket('nope' as never, { title: 'X' });
+      expect(store.get('tickets', [])[0]!.title).toBe('Ticket t1');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // T-new — getPipeline cascade
+  // -------------------------------------------------------------------------
+  describe('getPipeline', () => {
+    it('returns project.pipeline when present', () => {
+      const { pm } = makePm({
+        pipeline: {
+          columns: [
+            { id: 'todo', label: 'To Do' },
+            { id: 'done', label: 'Done' },
+          ],
+        },
+        tickets: [],
+      });
+      const pipeline = pm.getPipeline('proj-1');
+      expect(pipeline.columns.map((c) => c.id)).toEqual(['todo', 'done']);
+    });
+
+    it('falls back to SIMPLE_PIPELINE for projects without a source', () => {
+      const { pm, store } = makePm({ tickets: [] });
+      // Remove source from the project to simulate a "no source" project
+      const projects = store.get('projects', []);
+      delete (projects[0] as Record<string, unknown>).source;
+      // Also clear pipeline so we hit the final fallback
+      delete (projects[0] as Record<string, unknown>).pipeline;
+      store.set('projects', projects);
+
+      const pipeline = pm.getPipeline('proj-1');
+      // SIMPLE_PIPELINE has 3 columns: backlog, review, completed
+      expect(pipeline.columns).toHaveLength(3);
+      expect(pipeline.columns[0]!.id).toBe('backlog');
+      expect(pipeline.columns[1]!.id).toBe('review');
+      expect(pipeline.columns[1]!.gate).toBe(true);
+      expect(pipeline.columns[2]!.id).toBe('completed');
+    });
+
+    it('falls back to DEFAULT_PIPELINE for projects with a source but no pipeline', () => {
+      const { pm, store } = makePm({
+        tickets: [],
+        sources: [{ id: 's1', mountName: 'work', kind: 'local', workspaceDir: '/tmp/work' }],
+      });
+      // Remove pipeline from the project
+      const projects = store.get('projects', []);
+      delete (projects[0] as Record<string, unknown>).pipeline;
+      store.set('projects', projects);
+
+      const pipeline = pm.getPipeline('proj-1');
+      // DEFAULT_PIPELINE has ≥ 2 columns, starts with backlog, ends with completed
+      expect(pipeline.columns.length).toBeGreaterThanOrEqual(2);
+      expect(pipeline.columns[0]!.id).toBe('backlog');
+      expect(pipeline.columns[pipeline.columns.length - 1]!.id).toBe('completed');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // T-new — moveTicketToColumn
+  // -------------------------------------------------------------------------
+  describe('moveTicketToColumn', () => {
+    it('updates columnId and columnChangedAt', () => {
+      const { pm, store } = makePm({
+        tickets: [{ id: 't1', columnId: 'backlog' }],
+      });
+      pm.moveTicketToColumn('t1', 'in_progress');
+
+      const ticket = store.get('tickets', []).find((t: Ticket) => t.id === 't1')!;
+      expect(ticket.columnId).toBe('in_progress');
+      expect(ticket.columnChangedAt).toBeGreaterThan(0);
+    });
+
+    it('records completion when moving to a done column', () => {
+      const { pm, store } = makePm({
+        tickets: [{ id: 't1', columnId: 'in_progress' }],
+      });
+      pm.moveTicketToColumn('t1', 'done'); // terminal column of TEST_PIPELINE
+
+      const ticket = store.get('tickets', []).find((t: Ticket) => t.id === 't1')!;
+      expect(ticket.completedAt).toBeGreaterThan(0);
+    });
+
+    it('preserves an existing completion timestamp in a done column', () => {
+      const { pm, store } = makePm({
+        tickets: [{ id: 't1', columnId: 'in_progress' }],
+      });
+      pm.updateTicket('t1', { completedAt: 12345 });
+
+      pm.moveTicketToColumn('t1', 'done');
+
+      const ticket = store.get('tickets', []).find((t: Ticket) => t.id === 't1')!;
+      expect(ticket.completedAt).toBe(12345);
+    });
+
+    it('clears the completion timestamp when moving away from a done column', () => {
+      const { pm, store } = makePm({
+        tickets: [{ id: 't1', columnId: 'done' }],
+      });
+      pm.updateTicket('t1', { completedAt: Date.now() });
+
+      pm.moveTicketToColumn('t1', 'in_progress');
+
+      const ticket = store.get('tickets', []).find((t: Ticket) => t.id === 't1')!;
+      expect(ticket.completedAt).toBeUndefined();
+    });
+
+    it('is a no-op for unknown ticketId', () => {
+      const { pm, store } = makePm({
+        tickets: [{ id: 't1', columnId: 'backlog' }],
+      });
+      pm.moveTicketToColumn('nope' as never, 'in_progress');
+      // t1 should be unchanged
+      expect(store.get('tickets', [])[0]!.columnId).toBe('backlog');
+    });
+
+    it('is a no-op for unknown columnId', () => {
+      const { pm, store } = makePm({
+        tickets: [{ id: 't1', columnId: 'backlog' }],
+      });
+      pm.moveTicketToColumn('t1', 'nonexistent' as never);
+      expect(store.get('tickets', [])[0]!.columnId).toBe('backlog');
+    });
+  });
+
+  // migrateOrphanedTickets was removed — its replacement (repo.syncColumnsForProject)
+  // is exercised by packages/projects-db/src/repo.test.ts.
+
+  // -------------------------------------------------------------------------
+  // processManager wiring
+  // -------------------------------------------------------------------------
+  describe('processManager integration', () => {
+    // `statusFallback` was removed along with the main-process WS client —
+    // the Code tab's ProcessManager entry is now authoritative for sandbox
+    // status, so the orchestrator has nothing to inject.
+    it('does not fail when no processManager is provided', () => {
+      expect(() => makePm({ tickets: [{ id: 't1' }] })).not.toThrow();
+    });
+  });
+});

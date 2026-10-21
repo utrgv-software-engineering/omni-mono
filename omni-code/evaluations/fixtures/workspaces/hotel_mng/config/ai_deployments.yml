@@ -1,0 +1,16 @@
+# AI Deployment Configuration
+# This file defines AI agent deployments for the platform
+
+# Platform-wide AI agents (always enabled, no hotel control)
+platform:
+  data_analytics:
+    name: "Data Analytics Assistant"
+    agent_url: <%= ENV['DATA_ANALYTICS_AGENT_URL'] || (Rails.env.development? ? 'ws://0.0.0.0:9001/ws' : Rails.application.credentials.dig(:data_agent, :server_url)) %>
+    token: <%= ENV['DATA_ANALYTICS_TOKEN'] %>
+
+# Hotel-specific AI agents (hotels can enable/disable)
+hotel:
+  web_chat:
+    name: "Guest Web Chat"
+    agent_url: <%= ENV['HOTEL_CHAT_AGENT_URL'] || (Rails.env.development? ? 'ws://0.0.0.0:9000/ws' : Rails.application.credentials.dig(:agent, :server_url)) %>
+    token: <%= ENV['HOTEL_CHAT_TOKEN'] %>

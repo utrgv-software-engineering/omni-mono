@@ -1,0 +1,49 @@
+name: worker
+label: Worker
+description: "Autonomous coding worker for parallel subtasks"
+
+# instructions.md IS the worker's system prompt — the generic worker
+# protocol merged with omni-code's coding delta (no git commits, "list
+# every file" output emphasis) as one product-owned file; the framework
+# injects nothing. The `{% if additional_instructions %}` hook stays
+# live for caller-supplied extras (e.g. per-scenario eval variables)
+# forwarded by build_worker_context.
+instructions_file: instructions.md
+
+additional_tools_dirs:
+  - ../../tools
+
+# Worker is a focused coding subagent — it gets the file/shell/notebook
+# surface it needs to execute a task, plus task tracking and skills, but
+# no nested workers, no exploration subagent (workers
+# already operate on a focused task scope).
+capabilities:
+  - filesystem
+  - shell
+  - notebook
+  - markdown
+  - tasks
+  - skills
+  - compact # /compact checkpoint compaction — the reactive/proactive hooks in runtime_hooks/ call it on context pressure
+
+model_settings:
+  reasoning:
+    effort: low
+  parallel_tool_calls: true
+
+max_turns: 200
+
+# Workers use Guardian review by default. Only an explicit
+# safe_agent_options.skip_approvals=true on the worker or parent skips review;
+# enforced safety still takes precedence. Unresolved reviews reach the
+# parent conversation's approval UI.
+
+context: build_worker_context
+variables: {}
+
+session:
+  compaction:
+    # Settings mirror agents/omni/agent.yml — see the full rationale there.
+    enabled: true
+    compaction_mode: auto
+    threshold_fraction: 0.8

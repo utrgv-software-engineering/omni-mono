@@ -1,0 +1,32 @@
+<% content_for :page_title, @reservation ? "New Service Booking - Reservation #{@reservation.confirmation_number}" : "New Service Booking" %>
+
+<div class="max-w-7xl mx-auto">
+  <!-- Breadcrumb Navigation -->
+  <nav class="flex mb-4" aria-label="Breadcrumb">
+    <% if @reservation %>
+      <%= link_to "Reservations", reservations_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to @reservation.confirmation_number, reservation_path(@reservation), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to "Service Bookings", reservation_service_bookings_path(@reservation), class: "text-sm text-gray-500 hover:text-gray-700" %>
+    <% else %>
+      <%= link_to "Service Bookings", service_bookings_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+    <% end %>
+    <span class="mx-2 text-gray-400">/</span>
+    <span class="text-sm text-gray-900">New Booking</span>
+  </nav>
+
+  <!-- Page Header -->
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Book a Service</h1>
+    <p class="text-sm text-gray-600 mt-1">
+      <% if @reservation %>
+        Create a service booking for <%= @reservation.guest.full_name %>
+      <% else %>
+        Create a new service booking for a guest
+      <% end %>
+    </p>
+  </div>
+
+  <%= render 'form', service_booking: @service_booking, reservation: @reservation %>
+</div>
