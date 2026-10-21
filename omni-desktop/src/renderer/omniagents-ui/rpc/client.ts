@@ -50,8 +50,6 @@ type JSONRPCNotification = {
   params?: Record<string, unknown>;
 };
 
-export type ServerEvent = JSONRPCNotification;
-
 export type RPCConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
 type Listener = (payload: any) => void;
@@ -1202,12 +1200,6 @@ export class RPCClient {
     return this.call('ack_events', { session_id: sessionId, stream_id: streamId, seq });
   }
 
-  async getSessionHistory(sessionId: string): Promise<Array<{ role: string; content: unknown; timestamp: string }>> {
-    return this.call('get_session_history', { session_id: sessionId }) as Promise<
-      Array<{ role: string; content: unknown; timestamp: string }>
-    >;
-  }
-
   async listSessions(opts?: { limit: number; offset?: number }): Promise<
     Array<{
       id: string;
@@ -1503,11 +1495,4 @@ export type QueuedMessage = {
   safe_tool_overrides: Record<string, unknown> | null;
   source: string | null;
   enqueued_at: number;
-};
-
-/** Payload of the ``queue_changed`` server notification. */
-export type QueueChangedPayload = {
-  session_id: string;
-  depth: number;
-  items: QueuedMessage[];
 };

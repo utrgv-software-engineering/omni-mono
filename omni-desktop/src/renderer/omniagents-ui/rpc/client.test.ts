@@ -823,7 +823,7 @@ describe('RPCClient generated protocol integration', () => {
 
   it('preserves structured JSON-RPC error code and data', async () => {
     const { client, socket } = await connectedClient();
-    const response = client.getSessionHistory('session-1');
+    const response = client.request('fs_stat', { environment_id: 'environment', path: 'file' });
     const request = JSON.parse(socket.sent[0]!) as Record<string, unknown>;
 
     socket.receive({
@@ -832,7 +832,7 @@ describe('RPCClient generated protocol integration', () => {
       error: {
         code: -32602,
         message: 'Invalid params',
-        data: { method: 'get_session_history' },
+        data: { method: 'fs_stat' },
       },
     });
 
@@ -840,7 +840,7 @@ describe('RPCClient generated protocol integration', () => {
       name: 'OmniagentsRpcError',
       code: -32602,
       message: 'Invalid params',
-      data: { method: 'get_session_history' },
+      data: { method: 'fs_stat' },
     } satisfies Partial<OmniagentsRpcError>);
     client.dispose();
   });
@@ -867,7 +867,7 @@ describe('RPCClient generated protocol integration', () => {
 
   it('classifies permanent close metadata and rejects pending calls structurally', async () => {
     const { client, socket } = await connectedClient();
-    const pending = client.getSessionHistory('session-1');
+    const pending = client.request('fs_stat', { environment_id: 'environment', path: 'file' });
 
     socket.onclose?.({ code: 4401, reason: 'credentials rejected' });
 

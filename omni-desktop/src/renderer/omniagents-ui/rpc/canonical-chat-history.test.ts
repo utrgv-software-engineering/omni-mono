@@ -1,14 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { OmniagentsRpcError } from '@/shared/omniagents-rpc';
-
-import {
-  adaptCanonicalConversationItem,
-  listAllCanonicalConversationItems,
-  loadSessionTranscript,
-  mergeCanonicalConversationItems,
-} from './canonical-chat-history';
-import type { ConversationItem, ConversationRpcTransport } from './conversation';
+import { adaptCanonicalConversationItem } from './canonical-chat-history';
+import type { ConversationItem } from './conversation';
 
 const item = (overrides: Partial<ConversationItem> = {}): ConversationItem => ({
   item_id: 'itm_1',
@@ -324,97 +317,5 @@ describe('canonical conversation item adapters', () => {
       truncated: true,
       filesTruncated: true,
     });
-  });
-});
-
-describe('canonical transcript pagination boundary', () => {
-  it('loads a large overlapping history without dropping revisions or reordering rows', async () => {
-    const items = Array.from({ length: 1500 }, (_, index) =>
-      item({ item_id: `item-${index}`, seq: index + 1, content: { text: `message ${index}` } })
-    );
-    const revised = { ...items[499]!, revision: 2, content: { text: 'revised boundary message' } };
-    const request = vi
-      .fn()
-      .mockResolvedValueOnce(page(items.slice(0, 500), 'p2', 1500))
-      .mockResolvedValueOnce(page([revised, ...items.slice(500, 999)], 'p3', 1500))
-      .mockResolvedValueOnce(page(items.slice(999, 1499), 'p4', 1500))
-      .mockResolvedValueOnce(page(items.slice(1499), null, 1500));
-    const loaded = await loadSessionTranscript({ request, getSessionHistory: vi.fn() } as never, 'thread-1');
-    expect(loaded.rawItemCount).toBe(1500);
-    expect(loaded.items.map((entry) => entry.canonical?.seq)).toEqual(items.map((entry) => entry.seq));
-    expect(loaded.items[499]).toMatchObject({ content: 'revised boundary message', canonical: { revision: 2 } });
-  });
-
-  it('deduplicates page overlap by item_id/revision and orders by seq', () => {
-    const old = item({ item_id: 'itm-2', seq: 2, revision: 0, updated_at: 2, content: { text: 'old' } });
-    const revised = item({ item_id: 'itm-2', seq: 2, revision: 1, updated_at: 3, content: { text: 'new' } });
-    const first = item({ item_id: 'itm-1', seq: 1 });
-    expect(mergeCanonicalConversationItems([[old], [revised, first]])).toEqual([first, revised]);
-  });
-
-  it('loads every canonical page as the authoritative baseline', async () => {
-    const first = item({ item_id: 'itm-1', seq: 1 });
-    const second = item({ item_id: 'itm-2', seq: 2 });
-    const request = vi
-      .fn()
-      .mockResolvedValueOnce(page([first], 'cursor-2', 2))
-      .mockResolvedValueOnce(page([second], null, 2));
-    const getSessionHistory = vi.fn();
-
-    const loaded = await loadSessionTranscript({ request, getSessionHistory } as never, 'thread-1');
-
-    expect(loaded).toMatchObject({ source: 'canonical', rawItemCount: 2 });
-    expect(loaded.items.map((entry) => entry.canonical?.item_id)).toEqual(['itm-1', 'itm-2']);
-    expect(request).toHaveBeenNthCalledWith(1, 'list_items', { thread_id: 'thread-1', limit: 500, order: 'asc' });
-    expect(request).toHaveBeenNthCalledWith(2, 'list_items', {
-      thread_id: 'thread-1',
-      limit: 500,
-      order: 'asc',
-      cursor: 'cursor-2',
-    });
-    expect(getSessionHistory).not.toHaveBeenCalled();
-  });
-
-  it('falls back to legacy history only when canonical list_items is unsupported', async () => {
-    const getSessionHistory = vi.fn().mockResolvedValue([{ role: 'user', content: 'legacy' }]);
-    const request = vi.fn().mockRejectedValue(new OmniagentsRpcError({ code: -32601, message: 'Method not found' }));
-
-    const loaded = await loadSessionTranscript({ request, getSessionHistory } as never, 'thread-1');
-
-    expect(loaded).toMatchObject({ source: 'legacy', rawItemCount: 1 });
-    expect(loaded.items[0]).toMatchObject({ type: 'chat', role: 'user', content: 'legacy' });
-    expect(getSessionHistory).toHaveBeenCalledWith('thread-1');
-  });
-
-  it('treats a live session with no recorded canonical thread as an empty transcript', async () => {
-    const request = vi.fn().mockRejectedValue(
-      new OmniagentsRpcError({
-        code: -32080,
-        message: 'Unknown thread: fresh-session',
-        data: { kind: 'thread_not_found', thread_id: 'fresh-session' },
-      })
-    );
-    const getSessionHistory = vi.fn();
-
-    const loaded = await loadSessionTranscript({ request, getSessionHistory } as never, 'fresh-session');
-
-    expect(loaded).toEqual({ items: [], source: 'canonical', rawItemCount: 0 });
-    expect(getSessionHistory).not.toHaveBeenCalled();
-  });
-
-  it('does not hide canonical protocol or server failures behind legacy history', async () => {
-    const failure = new Error('database unavailable');
-    const request = vi.fn().mockRejectedValue(failure);
-    const getSessionHistory = vi.fn();
-
-    await expect(loadSessionTranscript({ request, getSessionHistory } as never, 'thread-1')).rejects.toBe(failure);
-    expect(getSessionHistory).not.toHaveBeenCalled();
-  });
-
-  it('rejects a pagination cursor loop', async () => {
-    const request = vi.fn().mockResolvedValue(page([item()], 'same-cursor'));
-    await expect(
-      listAllCanonicalConversationItems({ request } as unknown as ConversationRpcTransport, 'thread-1')
-    ).rejects.toThrow(/cursor did not advance/);
   });
 });
