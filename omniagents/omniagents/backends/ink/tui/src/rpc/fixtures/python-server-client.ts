@@ -194,8 +194,7 @@ async function ambiguousOutcome(): Promise<void> {
     }
   } else if (scenario === "lost_queue") {
     await lose("enqueue_message");
-    const queued = await client.enqueueMessage(run.session_id, "next", {
-    });
+    const queued = await client.enqueueMessage(run.session_id, "next", {});
     assert.equal(queued.ok, true);
     const queue = await client.listQueue(run.session_id);
     assert.equal(queue.items.length, 1);
@@ -314,7 +313,11 @@ await main();
 async function workspace(): Promise<void> {
   const env = client.defaultEnvironmentId();
   assert.ok(env);
-  const path = "雪 space '$(touch injected);*.txt";
+  // Hostile but legal: Windows file names cannot contain "*".
+  const path =
+    process.platform === "win32"
+      ? "雪 space '$(touch injected);.txt"
+      : "雪 space '$(touch injected);*.txt";
   const sha = (text: string) => createHash("sha256").update(text).digest("hex");
   async function upload(text: string, expected?: string) {
     const bytes = Buffer.from(text);

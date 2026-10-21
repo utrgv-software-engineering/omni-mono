@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import sys
 import asyncio
 
 import pytest
@@ -132,13 +133,13 @@ def test_mixin_wraps_in_lifecycle_session():
 def test_all_extended_clients_carry_the_mixin():
     from omniagents.core.sandbox.docker_extended import ExtendedDockerSandboxClient
     from omniagents.core.sandbox.host_bridge import HostBridgeSandboxClient
-    from omniagents.core.sandbox.unix_local_extended import (
-        ExtendedUnixLocalSandboxClient,
-    )
 
-    for cls in (
-        ExtendedDockerSandboxClient,
-        ExtendedUnixLocalSandboxClient,
-        HostBridgeSandboxClient,
-    ):
+    clients: list[type] = [ExtendedDockerSandboxClient, HostBridgeSandboxClient]
+    if sys.platform != "win32":  # the unix_local sandbox is POSIX-only
+        from omniagents.core.sandbox.unix_local_extended import (
+            ExtendedUnixLocalSandboxClient,
+        )
+
+        clients.append(ExtendedUnixLocalSandboxClient)
+    for cls in clients:
         assert issubclass(cls, LifecycleSessionClientMixin), cls

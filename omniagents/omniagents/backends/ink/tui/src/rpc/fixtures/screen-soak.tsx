@@ -41,7 +41,9 @@ class Input extends EventEmitter {
   }
 }
 async function until(check: () => boolean) {
-  const deadline = Date.now() + 10_000;
+  // A hang guard, not a latency budget: loaded CI runners with coverage
+  // instrumentation have taken over 10s for a single render.
+  const deadline = Date.now() + 30_000;
   while (!check()) {
     assert.ok(Date.now() < deadline, "screen soak timed out");
     await delay(10);

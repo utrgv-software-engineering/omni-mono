@@ -86,7 +86,14 @@ def test_default_roots_derive_from_installed_product(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("APPDATA", str(tmp_path / "config"))  # Windows config root
     set_product_info(
-        product_info_from_mapping({"slug": "omni_code", "config_dir": "omni_code"})
+        product_info_from_mapping(
+            # Windows defaults to the label ("OmniCode"); pin both names.
+            {
+                "slug": "omni_code",
+                "config_dir": "omni_code",
+                "windows_config_dir": "omni_code",
+            }
+        )
     )
     roots = skill_roots(str(tmp_path / "ws"))
     assert roots == [

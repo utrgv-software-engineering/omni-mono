@@ -174,7 +174,7 @@ async def test_run_records_a_run_diff_item_under_its_turn(
 async def test_repeated_edits_to_one_file_aggregate_to_the_net_diff(
     monkeypatch, workspace, isolated_store
 ):
-    (workspace / "a.txt").write_text("v0\n")
+    (workspace / "a.txt").write_bytes("v0\n".encode())
 
     async def during_run():
         await ws.write_text("a.txt", "v1\n")
@@ -247,7 +247,7 @@ async def test_an_edit_with_no_net_effect_records_no_run_diff(
     """A real mutation that leaves the tree byte-identical must not mint an
     item. Distinct from the case above: here the observer DOES fire, and it
     is the empty-aggregate gate that has to hold."""
-    (workspace / "a.txt").write_text("same\n")
+    (workspace / "a.txt").write_bytes("same\n".encode())
 
     async def during_run():
         await ws.write_text("a.txt", "same\n")
@@ -292,7 +292,7 @@ async def test_a_shell_rewrite_after_an_api_write_is_reconciled(
         await ws.write_text("mod.py", "def f( ):\n    pass\n")
         # Stand-in for ``execute_bash`` running a formatter: the bytes change
         # without going through omniagents.workspace at all.
-        (workspace / "mod.py").write_text("def f():\n    pass\n")
+        (workspace / "mod.py").write_bytes("def f():\n    pass\n".encode())
 
     service, session = await _drive(monkeypatch, workspace, during_run)
 
@@ -311,11 +311,11 @@ async def test_a_shell_revert_after_an_api_write_cancels_the_change(
 ):
     """The same reconciliation the other way: if the shell put the file back
     the way it was, the run changed nothing and must say so."""
-    (workspace / "mod.py").write_text("original\n")
+    (workspace / "mod.py").write_bytes("original\n".encode())
 
     async def during_run():
         await ws.write_text("mod.py", "edited\n")
-        (workspace / "mod.py").write_text("original\n")
+        (workspace / "mod.py").write_bytes("original\n".encode())
 
     service, session = await _drive(monkeypatch, workspace, during_run)
 
