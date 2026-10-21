@@ -52,13 +52,14 @@ def test_lapsed_lease_is_taken_over_without_ceremony(reserved):
 
 def test_heartbeat_keeps_the_lease_alive(reserved, monkeypatch):
     store, _, owner = reserved
-    monkeypatch.setattr(ownership, "LEASE_TTL", 0.05)
+    # Wide enough for a slow Windows runner to reserve inside the lease.
+    monkeypatch.setattr(ownership, "LEASE_TTL", 0.5)
     assert owner.heartbeat()
     with pytest.raises(RuntimeError, match="active runtime owner"):
         reserve_run(store, "thread")
     import time
 
-    time.sleep(0.1)
+    time.sleep(0.6)
     replacement = reserve_run(store, "thread")
     assert replacement.took_over_from is not None
     assert not owner.heartbeat()

@@ -459,4 +459,3 @@ def serve_main(argv: Optional[List[str]] = None) -> int:
         return asyncio.run(_serve(args))
     except KeyboardInterrupt:
         return 0
-

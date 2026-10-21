@@ -65,7 +65,7 @@ def test_expired_ticket_rejected(monkeypatch):
     ticket, _ = broker.mint(UserIdentity(user_id="alice"))
     import time
 
-    time.sleep(0.01)
+    time.sleep(0.05)  # past Windows' ~15ms monotonic clock tick
     assert broker.redeem(ticket) is None
 
 
