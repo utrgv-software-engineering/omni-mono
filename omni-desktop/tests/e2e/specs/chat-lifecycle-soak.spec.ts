@@ -6,7 +6,6 @@ import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({
   seedState: 'lazy-host-first-message',
-  extraHostProfile: true,
   // Keep actions/network diagnostics, explicit owner screenshots and the
   // full proof video. Per-action DOM snapshots over thirty minutes produce
   // multi-gigabyte traces; the focused story specs retain those snapshots.
@@ -112,11 +111,6 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
         }
         const column = page.locator('[data-deck-column]').last();
         await expect(textbox(column)).toBeEditable({ timeout: 90_000 });
-        const picker = column.getByRole('button', { name: 'Workstation', exact: true });
-        if (await picker.isVisible()) {
-          await picker.click();
-          await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-        }
         ids.push((await column.getAttribute('data-deck-column'))!);
         await textbox(column).fill(prompts[owner]!);
         await textbox(column).press('Enter');
@@ -166,7 +160,7 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
           }
         }
       }
-      const original = app.inspectChatCleanup().tabs.find((tab) => tab.id === ids[2])!;
+      const original = app.storedTabs().find((tab) => tab.id === ids[2])!;
       console.log('CHAT_SOAK_PHASE', cycle, 'archive and restore approval owner');
       await archive(c);
       await page.getByRole('button', { name: 'Archived sessions', exact: true }).click();
@@ -181,10 +175,9 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
       await page.keyboard.press('Escape');
       await page.getByRole('list', { name: 'Recents' }).getByRole('button', { name: prompts[2]!, exact: true }).click();
       await expect
-        .poll(() => app.inspectChatCleanup().tabs.find((tab) => tab.sessionId === original.sessionId)?.id)
+        .poll(() => app.storedTabs().find((tab) => tab.sessionId === original.sessionId)?.id)
         .not.toBeUndefined();
-      const restored = app.inspectChatCleanup().tabs.find((tab) => tab.sessionId === original.sessionId)!;
-      expect(restored.snapshotRef).not.toBe(original.snapshotRef);
+      const restored = app.storedTabs().find((tab) => tab.sessionId === original.sessionId)!;
       const restoredC = page.locator(`[data-deck-column="${restored.id}"]`);
       await expect(restoredC.getByRole('log')).toContainText(prompts[2]!);
       await expect(restoredC.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);
@@ -192,30 +185,15 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
       await textbox(restoredC).fill(`${prefix}_RESTORED`);
       await textbox(restoredC).press('Enter');
       await expect(restoredC.getByRole('log')).toContainText('HOST_FIRST_MESSAGE_READY', { timeout: 90_000 });
-      console.log('CHAT_SOAK_PHASE', cycle, 'switch live environment');
-      await expect(restoredC.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
-      await restoredC.getByRole('button', { name: 'My computer', exact: true }).click();
-      await page.getByRole('menuitemradio', { name: /^soak-host/i }).click();
-      await expect(restoredC.getByRole('button', { name: /^soak-host$/i })).toBeVisible();
-      await expect(textbox(restoredC)).toBeEditable({ timeout: 90_000 });
-      await textbox(restoredC).fill(`${prefix}_SWITCHED`);
-      await textbox(restoredC).press('Enter');
-      await expect(restoredC.getByRole('log').getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toHaveCount(2, {
-        timeout: 90_000,
-      });
       await expect(restoredC.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
       await expect(b.getByText('Question for tile B', { exact: true })).toBeVisible();
-      expect(app.inspectModelRequests().filter((request) => request.marker === `${prefix}_SWITCHED`)).toEqual([
-        { marker: `${prefix}_SWITCHED`, model: 'gpt-5.2' },
-      ]);
-      const { workerPids, ...resources } = await app.inspectChatResources();
-      expect(resources.activeEnvironments).toBeLessThanOrEqual(3);
+      const { workerPids, ...resources } = app.inspectRuntimeResources();
       if (cycle === 1 || cycle % 5 === 0) {
         for (const [owner, column] of [a, b, restoredC].entries()) {
           await attachProofPng(testInfo, `${prefix} owner ${owner} isolated conversation`, await column.screenshot());
         }
       }
-      const hosts = [...app.inspectChatCleanup().runtimePids, ...workerPids];
+      const hosts = [...app.runtimePids(), ...workerPids];
       const cId = restored.id;
       if (cycle % Number(process.env.OMNI_CHAT_SOAK_RESTART_EVERY ?? 10) === 0) {
         console.log('CHAT_SOAK_PHASE', cycle, 'backend-only crash');
@@ -233,10 +211,9 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
         await expect(textbox(resumedC)).toBeEditable({ timeout: 90_000 });
         await textbox(resumedC).fill(`${prefix}_AFTER_CRASH`);
         await textbox(resumedC).press('Enter');
-        await expect(resumedC.getByRole('log').getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toHaveCount(3, {
+        await expect(resumedC.getByRole('log').getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toHaveCount(2, {
           timeout: 90_000,
         });
-        await app.inspectChatResources();
       }
       console.log('CHAT_SOAK_PHASE', cycle, 'retire all owners');
       for (const id of [ids[0]!, ids[1]!, cId]) {
@@ -245,23 +222,17 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
       // Backend restart/reload can introduce an extra empty draft column.
       // Retire those through the same user action so the harness itself does
       // not accumulate deliberately open, unused chats between cycles.
-      const extras = app.inspectChatCleanup().tabs.slice(1);
+      const extras = app.storedTabs().slice(1);
       for (const tab of extras) {
         await archive(page.locator(`[data-deck-column="${tab.id}"]`));
       }
-      await expect.poll(() => app.inspectChatCleanup().jobs, { timeout: 90_000 }).toEqual([]);
-      console.log('CHAT_SOAK_PHASE', cycle, 'verify environment retirement');
+      console.log('CHAT_SOAK_PHASE', cycle, 'verify retirement');
       // The targetless product-management consumer intentionally shares a
-      // host with chat tiles. Its process can remain alive, but no retired
-      // chat environment may remain ready/stopping. Probe previously observed
-      // hosts even after their chat journals have been removed.
-      await expect.poll(async () => (await app.inspectChatResources()).activeEnvironments, { timeout: 90_000 }).toBe(0);
-      // The targetless management host does not need per-session MCP workers.
-      // Environment descriptors alone missed workers leaked by retired chats.
-      await expect.poll(async () => (await app.inspectChatResources()).childProcesses, { timeout: 30_000 }).toBe(0);
-      const idle = await app.inspectChatResources();
+      // host with chat tiles, so a host may stay alive, but retired chats
+      // must not leave per-session workers behind.
+      await expect.poll(() => app.inspectRuntimeResources().childProcesses, { timeout: 30_000 }).toBe(0);
+      const idle = app.inspectRuntimeResources();
       expect(idle.hosts).toBeLessThanOrEqual(2);
-      expect(app.inspectChatCleanup().runtimePids).toEqual([]);
       if (idleSocketBaseline !== undefined) {
         await expect
           .poll(() => page.evaluate(() => (window as any).soakSocketCount()), { timeout: 30_000 })
@@ -279,9 +250,7 @@ test('sustains mixed conversation lifecycles and checks ownership and retirement
         elapsedMs: Date.now() - started,
         ...resources,
         ...browserState,
-        cleanupJobs: 0,
         liveSharedHosts: idle.hosts,
-        activeEnvironmentsAfterCleanup: idle.activeEnvironments,
         idleRssBytes: idle.rssBytes,
         idleFileDescriptors: idle.fileDescriptors,
         idleChildProcesses: idle.childProcesses,

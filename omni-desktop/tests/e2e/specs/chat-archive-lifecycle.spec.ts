@@ -11,25 +11,18 @@ test('archives one active tile without stopping its neighbor, including a lost a
   const page = app.page;
   const inputs = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(inputs).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await inputs.fill('TILE_APPROVAL_A');
   await inputs.press('Enter');
   await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 240_000 });
   await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
   const ownerId = await page.locator('[data-deck-column]').first().getAttribute('data-deck-column');
-  const original = app.inspectChatCleanup().tabs.find((tab) => tab.id === ownerId)!;
+  const original = app.storedTabs().find((tab) => tab.id === ownerId)!;
   const a = page.locator(`[data-deck-column="${ownerId}"]`);
   await page.getByRole('button', { name: 'New chat', exact: true }).click();
   await expect(inputs).toHaveCount(2);
   const b = page
     .locator('[data-deck-column]')
     .filter({ hasNot: page.getByRole('log').filter({ hasText: 'TILE_APPROVAL_A' }) });
-  const picker = b.getByRole('button', { name: 'Workstation', exact: true });
-  if (await picker.isVisible()) {
-    await picker.click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-  }
   await b.getByRole('textbox', { name: 'How can I help you today?' }).fill('TILE_APPROVAL_B');
   await b.getByRole('textbox', { name: 'How can I help you today?' }).press('Enter');
   await expect(b.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
@@ -72,12 +65,9 @@ test('archives one active tile without stopping its neighbor, including a lost a
   await expect(page.getByRole('dialog')).toContainText('No archived sessions');
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'TILE_APPROVAL_A', exact: true }).click();
-  await expect
-    .poll(() => app.inspectChatCleanup().tabs.find((tab) => tab.sessionId === original.sessionId)?.id)
-    .not.toBeUndefined();
-  const reopened = app.inspectChatCleanup().tabs.find((tab) => tab.sessionId === original.sessionId)!;
+  await expect.poll(() => app.storedTabs().find((tab) => tab.sessionId === original.sessionId)?.id).not.toBeUndefined();
+  const reopened = app.storedTabs().find((tab) => tab.sessionId === original.sessionId)!;
   expect(reopened.id).not.toBe(original.id);
-  expect(reopened.snapshotRef).not.toBe(original.snapshotRef);
   await expect(page.locator(`[data-deck-column="${reopened.id}"]`).getByRole('log')).toContainText('TILE_APPROVAL_A');
   const restored = page.locator(`[data-deck-column="${reopened.id}"]`);
   await expect(restored.getByRole('button', { name: 'Approve Once', exact: true })).toHaveCount(0);

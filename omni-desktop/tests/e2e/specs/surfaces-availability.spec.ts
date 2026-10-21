@@ -1,5 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { createProject, openChat, openCode, openProject, openSettings } from 'tests/e2e/support/app';
+import { openChat, openCode, openSettings } from 'tests/e2e/support/app';
 
 test.describe('surfaces availability', () => {
   test('keeps primary user surfaces reachable and mode-appropriate', async ({ appPage, mode }) => {
@@ -18,13 +18,5 @@ test.describe('surfaces availability', () => {
     } else {
       await expect(installFromFile).toHaveCount(0);
     }
-
-    const projectName = `E2E Surface Project ${Date.now()}`;
-    await createProject(appPage, projectName);
-    await openProject(appPage, projectName);
-    await expect(appPage.getByRole('tree', { name: 'Project tree' })).toBeVisible();
-    await expect(appPage.getByRole('button', { name: 'New page' }).first()).toBeVisible();
-    await appPage.getByRole('treeitem', { name: /Board/ }).click();
-    await expect(appPage.getByRole('button', { name: 'New', exact: true }).first()).toBeVisible();
   });
 });

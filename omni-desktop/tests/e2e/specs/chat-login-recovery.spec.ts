@@ -43,8 +43,6 @@ test('explicit browser credential expiry preserves a draft and attachment throug
   await page.reload();
   const input = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(input).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await input.fill('LOGIN_RECOVERY_SETUP');
   await input.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });

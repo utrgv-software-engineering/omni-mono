@@ -24,8 +24,6 @@ for (const interaction of ['question', 'approval'] as const) {
     });
     const inputs = page.getByRole('textbox', { name: 'How can I help you today?' });
     await expect(inputs).toBeVisible({ timeout: 90_000 });
-    await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
     await inputs.fill(`TILE_${interaction.toUpperCase()}_A`);
     await inputs.press('Enter');
     await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible({ timeout: 240_000 });
@@ -36,11 +34,6 @@ for (const interaction of ['question', 'approval'] as const) {
     const ids = await columns.evaluateAll((elements) => elements.map((el) => el.getAttribute('data-deck-column')));
     const a = page.locator(`[data-deck-column="${ids[0]}"]`);
     const b = page.locator(`[data-deck-column="${ids[1]}"]`);
-    const picker = b.getByRole('button', { name: 'Workstation', exact: true });
-    if (await picker.isVisible()) {
-      await picker.click();
-      await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-    }
     await inputs.nth(1).fill(`TILE_${interaction.toUpperCase()}_B`);
     await inputs.nth(1).press('Enter');
     const pending = (column: typeof a, id: string) =>

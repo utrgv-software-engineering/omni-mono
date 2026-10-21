@@ -38,11 +38,6 @@ test('persisted response appears once in its own tile without its stream message
       await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
     }
     const column = page.locator('[data-deck-column]').nth(index);
-    const workstation = column.getByRole('button', { name: 'Workstation', exact: true });
-    if (await workstation.isVisible()) {
-      await workstation.click();
-      await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-    }
     await column.getByRole('textbox').fill(`PERSISTENCE_SETUP_${index}`);
     await column.getByRole('textbox').press('Enter');
     await expect(column.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });

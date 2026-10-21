@@ -51,11 +51,6 @@ test('isolates three mixed tiles through seeded layout churn, duplicate events, 
     }
     await expect(inputs).toHaveCount(index + 1);
     const column = page.locator('[data-deck-column]').nth(index);
-    const picker = column.getByRole('button', { name: 'Workstation', exact: true });
-    if (await picker.isVisible()) {
-      await picker.click();
-      await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-    }
     await inputs.nth(index).fill(prompts[index]!);
     await inputs.nth(index).press('Enter');
   }

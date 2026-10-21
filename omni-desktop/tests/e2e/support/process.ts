@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { execFileSync, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
 const delay = (ms: number) =>
   new Promise((resolve) => {
@@ -62,7 +63,44 @@ export function crashProcessTree(pid: number): void {
   }
 }
 
+/** `pid` and its live descendants, via /proc. Linux only. */
+export function processTree(pid: number): number[] {
+  const found = new Set<number>();
+  const pending = [pid];
+  while (pending.length) {
+    const next = pending.pop()!;
+    if (found.has(next)) {
+      continue;
+    }
+    try {
+      const children = readFileSync(`/proc/${next}/task/${next}/children`, 'utf8').trim().split(/\s+/);
+      found.add(next);
+      pending.push(...children.filter(Boolean).map(Number));
+    } catch {
+      /* A process may exit during the snapshot. */
+    }
+  }
+  return [...found];
+}
+
+export function commandLine(pid: number): string[] {
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The `omni serve` hosts a launcher spawned. The desktop always passes
+ * `--exit-on-stdin-close`, so the flag identifies them unambiguously.
+ */
+export function runtimePidsUnder(root: number): number[] {
+  return processTree(root).filter((pid) => commandLine(pid).includes('--exit-on-stdin-close'));
+}
+
 export type ManagedProcess = {
+  readonly pid: number | undefined;
   crashDescendant: (pid: number) => void;
   logs: () => string;
   stop: (signal?: NodeJS.Signals) => Promise<void>;
@@ -99,6 +137,7 @@ export function startProcess(input: {
   });
 
   return {
+    pid: child.pid,
     crashDescendant: (pid) => {
       const parents = new Map(
         execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })

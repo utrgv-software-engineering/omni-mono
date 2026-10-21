@@ -15,8 +15,6 @@ test('JavaScript filters and retrieves an automatically retained nested result',
   const page = app.page;
   const prompt = page.getByPlaceholder('How can I help you today?');
   await expect(prompt).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await prompt.fill(`JAVASCRIPT_OUTPUT_PROOF ${path.join(app.workspaceDir, 'oversized-output.txt')}`);
   await prompt.press('Enter');
   await expect(page.getByText('JAVASCRIPT_FILTER_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });

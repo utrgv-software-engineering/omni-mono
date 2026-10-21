@@ -11,8 +11,6 @@ for (const reload of [false, true]) {
     const page = app.page;
     const input = page.getByRole('textbox', { name: 'How can I help you today?' });
     await expect(input).toBeVisible({ timeout: 90_000 });
-    await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
     await input.fill('TILE_APPROVAL_A');
     await input.press('Enter');
     await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 240_000 });

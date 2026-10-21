@@ -50,8 +50,6 @@ for (const crash of [false, true]) {
     await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
     const aId = await page.locator('[data-deck-column]').first().getAttribute('data-deck-column');
     const a = page.locator(`[data-deck-column="${aId}"]`);
-    await a.getByRole('button', { name: 'Workstation', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
     await a.getByRole('textbox').fill('STOP_EXECUTOR_TREE');
     await a.getByRole('textbox').press('Enter');
     await a.getByRole('button', { name: 'Approve Once', exact: true }).click({ timeout: 90_000 });
@@ -59,7 +57,7 @@ for (const crash of [false, true]) {
     await expect
       .poll(
         () => {
-          ownedPids = descendants(app.inspectChatCleanup().runtimePids).filter((pid) => {
+          ownedPids = descendants(app.runtimePids()).filter((pid) => {
             try {
               const args = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);
               return ['OMNI_EXECUTOR_PARENT', 'OMNI_EXECUTOR_CHILD'].includes(args.at(-1) ?? '');
@@ -76,8 +74,6 @@ for (const crash of [false, true]) {
     await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
     const b = page.locator(`[data-deck-column]:not([data-deck-column="${aId}"])`);
     await expect(b).toHaveCount(1);
-    await b.getByRole('button', { name: 'Workstation', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
     await b.getByRole('textbox').fill('TILE_APPROVAL_B');
     await b.getByRole('textbox').press('Enter');
     await expect(b.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
@@ -85,7 +81,7 @@ for (const crash of [false, true]) {
       await a.getByRole('textbox').fill('QUEUED_AFTER_EXECUTOR_CRASH');
       await a.getByRole('textbox').press('Enter');
       await expect(a.getByText('Up next', { exact: true })).toBeVisible();
-      const scoped = descendants(app.inspectChatCleanup().runtimePids);
+      const scoped = descendants(app.runtimePids());
       const supervisor = scoped
         .map((pid) => {
           const args = readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean);

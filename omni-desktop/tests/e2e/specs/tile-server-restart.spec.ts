@@ -13,8 +13,6 @@ for (const crash of [false, true]) {
     let page = app.page;
     const input = page.getByRole('textbox', { name: 'How can I help you today?' });
     await expect(input).toBeVisible({ timeout: 90_000 });
-    await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
     await input.fill('TILE_APPROVAL_A');
     await input.press('Enter');
     await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
@@ -24,11 +22,6 @@ for (const crash of [false, true]) {
     await expect(columns).toHaveCount(2);
     const ids = await columns.evaluateAll((els) => els.map((el) => el.getAttribute('data-deck-column')));
     const b = columns.nth(1);
-    const picker = b.getByRole('button', { name: 'Workstation', exact: true });
-    if (await picker.isVisible()) {
-      await picker.click();
-      await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-    }
     await b.getByRole('textbox', { name: 'How can I help you today?' }).fill('TILE_QUESTION_B');
     await b.getByRole('textbox', { name: 'How can I help you today?' }).press('Enter');
     await expect(b.getByText('Question for tile B', { exact: true })).toBeVisible({ timeout: 90_000 });

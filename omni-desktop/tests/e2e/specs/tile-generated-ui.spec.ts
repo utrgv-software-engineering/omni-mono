@@ -48,8 +48,6 @@ test('keeps generated plans and artifacts in their tile through updates and reco
   });
   const inputs = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(inputs).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await inputs.fill('TILE_UI_A');
   await inputs.press('Enter');
   await page.getByRole('button', { name: 'New chat', exact: true }).click();
@@ -58,11 +56,6 @@ test('keeps generated plans and artifacts in their tile through updates and reco
   const columns = page.locator('[data-deck-column]');
   const a = columns.nth(0);
   const b = columns.nth(1);
-  const picker = b.getByRole('button', { name: 'Workstation', exact: true });
-  if (await picker.isVisible()) {
-    await picker.click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-  }
   await inputs.nth(1).fill('TILE_UI_B');
   await inputs.nth(1).press('Enter');
   for (const [column, id] of [

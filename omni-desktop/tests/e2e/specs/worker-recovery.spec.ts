@@ -19,8 +19,6 @@ test('recovers an interrupted worker after abrupt runtime death and resumes its 
   const page = app.page;
   const prompt = page.getByRole('textbox', { name: 'How can I help you today?' });
   await expect(prompt).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await prompt.fill('WORKER_RECOVERY_PROOF');
   await prompt.press('Enter');
   await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });

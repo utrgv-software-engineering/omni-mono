@@ -8,8 +8,6 @@ test('archiving during attachment encoding never dispatches the retired send', a
   const page = app.page;
   const input = page.getByRole('textbox', { name: 'How can I help you today?' });
   await input.waitFor({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
   await input.fill('RETIRE_UPLOAD_SETUP');
   await input.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });

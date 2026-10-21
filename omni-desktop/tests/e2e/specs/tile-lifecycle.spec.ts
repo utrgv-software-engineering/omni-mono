@@ -9,8 +9,6 @@ for (const scenario of ['questions', 'active-close', 'approvals']) {
     const page = app.page;
     const inputs = page.getByRole('textbox', { name: 'How can I help you today?' });
     await expect(inputs).toBeVisible({ timeout: 90_000 });
-    await page.getByRole('button', { name: 'Workstation', exact: true }).click();
-    await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
     await inputs.fill(
       scenario === 'questions' ? 'TILE_QUESTION_A' : scenario === 'approvals' ? 'TILE_APPROVAL_A' : 'WAIT_FOR_SESSION_A'
     );
@@ -24,11 +22,6 @@ for (const scenario of ['questions', 'active-close', 'approvals']) {
     const bId = await columns.nth(1).getAttribute('data-deck-column');
     const a = page.locator(`[data-deck-column="${aId}"]`);
     const b = page.locator(`[data-deck-column="${bId}"]`);
-    const picker = b.getByRole('button', { name: 'Workstation', exact: true });
-    if (await picker.isVisible()) {
-      await picker.click();
-      await page.getByRole('menuitemradio', { name: /^My computer/ }).click();
-    }
     const inputA = a.getByRole('textbox', { name: 'How can I help you today?' });
     const inputB = b.getByRole('textbox', { name: 'How can I help you today?' });
     await inputB.fill(
