@@ -37,16 +37,7 @@ Download the latest release from [GitHub Releases](https://github.com/ericmichae
 ### Prerequisites
 
 - **Node 22+** and npm
-- **Rust** (for building the `omni-sandbox` binary) — install via [rustup](https://rustup.rs):
-  ```sh
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
 - **Docker** (for sandbox functionality)
-- **bubblewrap** (Linux only, for process sandboxing):
-  ```sh
-  sudo apt-get install bubblewrap   # Debian/Ubuntu
-  sudo pacman -S bubblewrap         # Arch
-  ```
 
 ### Quick Start
 
@@ -61,9 +52,6 @@ npm run dev
 
 1. Rebuilds native modules (`node-pty`)
 2. Downloads the `uv` binary for your platform
-3. Builds `omni-sandbox` from `sandbox-cli/` (requires Rust)
-
-If Rust is not installed, the sandbox build is skipped with a warning. Install Rust and run `npm run build:sandbox` to build it later.
 
 On macOS, you may need to remove the quarantine flag from downloaded binaries:
 
@@ -80,13 +68,12 @@ npm run package     # Package into installers (dist/)
 
 ### Useful Commands
 
-| Command                 | Description                                               |
-| ----------------------- | --------------------------------------------------------- |
-| `npm run dev`           | Run in development with hot reload                        |
-| `npm run build:sandbox` | Rebuild the sandbox binary                                |
-| `npm run lint`          | Run all checks (ESLint, Prettier, TypeScript, knip, dpdm) |
-| `npm run fix`           | Auto-fix lint + format                                    |
-| `npm test`              | Run unit tests                                            |
+| Command        | Description                                               |
+| -------------- | --------------------------------------------------------- |
+| `npm run dev`  | Run in development with hot reload                        |
+| `npm run lint` | Run all checks (ESLint, Prettier, TypeScript, knip, dpdm) |
+| `npm run fix`  | Auto-fix lint + format                                    |
+| `npm test`     | Run unit tests                                            |
 
 ### Code Signing
 

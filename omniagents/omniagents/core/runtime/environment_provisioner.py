@@ -177,7 +177,6 @@ _FULL_CAPABILITIES = frozenset(
 _CONTAINED_CLIENT_TYPES = frozenset(
     {
         "docker",  # container
-        "process",  # omni-sandbox: bwrap / seatbelt / AppContainer
         "wasm",  # bashkit + pyodide: no syscalls, workspace-only FS reach
         "e2b",  # remote micro-VM / container providers
         "modal",
@@ -191,15 +190,14 @@ _CONTAINED_CLIENT_TYPES = frozenset(
 
 
 #: Truthful placement family per backend client type. Kind records WHERE
-#: the runtime lives — never trust: ``unix_local`` and ``process`` are
-#: host-placed even though they carry sandbox sessions, and ``host_bridge``
+#: the runtime lives — never trust: ``unix_local`` is
+#: host-placed even though it carries sandbox sessions, and ``host_bridge``
 #: executes on another machine entirely. Trust (containment) is the
 #: ``contained`` capability above; terminal routing keys on the lease's
 #: sandbox runtime. Unknown session-backed client types default to CONTAINER.
 _ENVIRONMENT_KINDS = {
     "host": EnvironmentKind.HOST,
     "unix_local": EnvironmentKind.HOST,
-    "process": EnvironmentKind.HOST,
     "wasm": EnvironmentKind.HOST,
     "docker": EnvironmentKind.CONTAINER,
     "host_bridge": EnvironmentKind.REMOTE,
@@ -261,10 +259,6 @@ def _sandbox_capabilities(profile_raw: dict[str, Any], brought: Any) -> frozense
     offline = (
         # docker: no network stack at all.
         client.get("network_mode") == "none"
-        # process (omni-sandbox): all-or-nothing, blocked unless the
-        # profile explicitly opts into "unrestricted" (blocked is the
-        # binary's default).
-        or (client_type == "process" and client.get("network") != "unrestricted")
         # wasm: both runtimes obey one policy derived from the profile's
         # ``network`` block (bashkit curl/git builtins + pyodide js.fetch),
         # OFF by default. Uses the same boot-state resolver the session

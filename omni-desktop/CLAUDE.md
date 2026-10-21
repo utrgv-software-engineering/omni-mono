@@ -9,8 +9,8 @@ Omni Code Launcher — an Electron + React desktop app for installing the Omni C
 ## Commands
 
 ```bash
-npm i                      # Install deps; postinstall runs electron-rebuild (node-pty),
-                           # downloads uv, and downloads/builds the omni-sandbox binary
+npm i                      # Install deps; postinstall runs electron-rebuild (node-pty)
+                           # and downloads uv
 npm run dev                # Electron dev with hot reload (electron-vite)
 npm run build              # Build main + preload + renderer into out/
 npm run package            # Clean + download assets + build + electron-builder (→ dist/)
@@ -28,7 +28,6 @@ npm run dev:server         # Concurrent: server watch build + browser Vite dev o
 npm run build:server       # Build server + browser SPA
 npm run start:server       # Run built server from out/server/index.mjs (default :3001)
 
-npm run build:sandbox      # Rebuild the Rust omni-sandbox binary (requires rustup)
 npm run build:wsl-payload  # Assemble the WSL daemon tarball (Linux/WSL only; run
                            # build:server first). Required before `wsl:link` works
                            # in dev — the Windows shell provisions this tarball
@@ -91,10 +90,6 @@ Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWin
 ### Extensions
 
 `src/main/extensions/` ships built-in extension manifests (currently Marimo). The registry (`registry.ts`) is built-in only today but the manifest contract is the same one that will load user-installed extensions from `~/.omni/extensions/` later.
-
-### Sandbox binary
-
-`omni-sandbox` is a Rust binary built from a sibling `sandbox-cli/` repo by `scripts/download-sandbox.mjs` during `postinstall`. If Rust is missing, the download is skipped with a warning — run `npm run build:sandbox` later. On Linux, `bubblewrap` is also required at runtime.
 
 ### WSL backend mode (Windows)
 

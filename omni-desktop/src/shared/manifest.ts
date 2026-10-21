@@ -294,11 +294,6 @@ export type McpServerConfig = McpServerStdio | McpServerSse | McpServerStreamabl
  * Built-in SDK clients:
  *   - `unix_local`: runs on the host in a tempdir (no isolation; tests only)
  *   - `docker`: runs in a Docker container
- *
- * The launcher's existing `omni-sandbox` Rust binary is not yet wired
- * into this union. If you decide to retire it, all production paths use
- * `docker`. If you decide to keep it, add an `omni_sandbox` variant here
- * and register a matching `OmniSandboxClient` on the Python side.
  */
 export type RuntimeConfig =
   | {

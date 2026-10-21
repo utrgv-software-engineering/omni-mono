@@ -104,9 +104,6 @@ exclude = [
     # built from this file at product bootstrap, so it must ship.
     "models.yml",
     "sandbox_profile_default.yml",
-    # Optional wheel-shipped omni-sandbox binary (built in the standalone
-    # omni-sandbox repo); governance.find_sandbox_binary checks here.
-    "assets/bin/*",
     "agents/*/*.yml",
     # Also matches agents/_shared/*.md — the {% include %} fragment files
     # shared by the omni and voice_agent instruction templates.

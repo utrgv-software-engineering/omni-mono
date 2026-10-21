@@ -66,16 +66,6 @@ export default {
       filter: 'uv*',
     },
     {
-      from: 'assets/bin',
-      to: './bin',
-      filter: 'omni-sandbox*',
-    },
-    {
-      from: 'assets/bin',
-      to: './bin',
-      filter: 'bwrap',
-    },
-    {
       // Vendored MCP-UI sandbox proxy HTML. Served by the
       // ``mcp-sandbox:`` custom protocol (see src/main/index.ts).
       from: 'assets/mcp-sandbox',

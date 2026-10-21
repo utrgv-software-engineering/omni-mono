@@ -538,15 +538,6 @@ async def test_devbox_capabilities_reflect_network_truth(monkeypatch, tmp_path):
     assert EnvironmentCapability.CONTAINED not in provisioned.capabilities
     assert EnvironmentCapability.NETWORK in provisioned.capabilities
 
-    # process (omni-sandbox): host-placed but a real boundary; network
-    # blocked by default, unrestricted only by explicit opt-in.
-    provisioned = await _provision_with({"type": "process"})
-    assert provisioned.kind is EnvironmentKind.HOST
-    assert EnvironmentCapability.CONTAINED in provisioned.capabilities
-    assert EnvironmentCapability.NETWORK not in provisioned.capabilities
-    provisioned = await _provision_with({"type": "process", "network": "unrestricted"})
-    assert EnvironmentCapability.NETWORK in provisioned.capabilities
-
     # host_bridge (computer-as-sandbox) executes on another machine: kind
     # remote, never contained.
     provisioned = await _provision_with({"type": "host_bridge"})

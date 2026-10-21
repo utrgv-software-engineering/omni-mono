@@ -175,12 +175,7 @@ class ExtendedUnixLocalSandboxClient(
     def _make_inner_session(
         self, state: UnixLocalSandboxSessionState
     ) -> UnixLocalSandboxSession:
-        """Instantiate the backend session for *state*.
-
-        Subclass seam: :class:`~omniagents.core.sandbox.process_extended.
-        ProcessSandboxClient` overrides this to build its wrapped-exec
-        session (and stamp the omni-sandbox invocation config on it).
-        """
+        """Instantiate the backend session for *state*."""
         return ExtendedUnixLocalSandboxSession.from_state(state)
 
     async def create(
