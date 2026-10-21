@@ -10,7 +10,6 @@ invoked outside the AgentService flow without populating context).
 
 from __future__ import annotations
 
-import os
 from typing import Any, Dict, Optional, Tuple
 
 from agents.run_context import RunContextWrapper
@@ -22,7 +21,8 @@ def workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]
     """Return the workspace_root from the run context, or ``None``.
 
     Accepts either a dict or an attribute-style object. Returns an
-    absolute path (``os.path.abspath``) when found, ``None`` otherwise.
+    absolute path in the active workspace's path syntax when found, ``None``
+    otherwise: a sandbox root stays POSIX on a Windows host.
     """
     if ctx is None:
         return None
@@ -34,7 +34,10 @@ def workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]
     else:
         wr = getattr(c, "workspace_root", None)
     if isinstance(wr, str) and wr.strip():
-        return os.path.abspath(wr)
+        from omniagents import workspace as _ws
+
+        pm = _ws.current_workspace().path_module
+        return pm.normpath(wr) if pm.isabs(wr) else pm.abspath(wr)
     return None
 
 

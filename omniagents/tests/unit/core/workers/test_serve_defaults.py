@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import os
+import posixpath
 
 import pytest
 
@@ -66,6 +67,8 @@ def _routed_sources(sources, *, kind=EnvironmentKind.HOST, root="/workspace"):
     )
     workspace = Mock()
     workspace.root = root
+    # As real workspaces: host paths use the host's syntax, sandboxes POSIX.
+    workspace.path_module = os.path if kind is EnvironmentKind.HOST else posixpath
     lease = EnvironmentLease(descriptor, workspace)
     token = bind_request_context(
         RequestContext(
