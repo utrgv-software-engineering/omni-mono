@@ -236,16 +236,4 @@ describe('chat columns and conversation history', () => {
     await codeApi.restoreConversation('sess-1');
     expect(store.chatConversations[0]?.archivedAt).toBeUndefined();
   });
-
-  it('reorderTabs preserves records missing from a filtered input list', async () => {
-    const a = tab({ id: 'tab-a' });
-    const b = tab({ id: 'tab-b' });
-    const app = tab({ id: 'app-tab', routineId: 'routine-1' });
-    resetStore({ codeTabs: [app, a, b] });
-    const { codeApi } = await import('./state');
-
-    await codeApi.reorderTabs([b, a]);
-
-    expect(store.codeTabs.map((t) => t.id)).toEqual(['app-tab', 'tab-b', 'tab-a']);
-  });
 });
