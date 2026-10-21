@@ -3,7 +3,17 @@ name: Typecheck
 on:
   push:
     branches: [main, dev]
+    paths:
+      - 'omniagents/**'
+      - '.github/workflows/omniagents-typecheck.yml'
   pull_request:
+    paths:
+      - 'omniagents/**'
+      - '.github/workflows/omniagents-typecheck.yml'
+
+defaults:
+  run:
+    working-directory: omniagents
 
 jobs:
   mypy:

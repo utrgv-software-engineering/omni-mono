@@ -1,7 +1,15 @@
 name: QuickJS platform smoke
 on:
   pull_request:
+    paths:
+      - 'omniagents/**'
+      - '.github/workflows/omniagents-quickjs.yml'
   workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: omniagents
+
 jobs:
   smoke:
     strategy:
@@ -50,4 +58,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: quickjs-intel-macos-wheel
-          path: dist/*.whl
+          path: omniagents/dist/*.whl

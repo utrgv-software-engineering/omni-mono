@@ -68,7 +68,7 @@ web|server`, `--host`, `--port`, `--output json` etc. pass through);
 
 ## Checks
 
-All four gates run in CI (`.github/workflows/quality.yml`) and must
+All four gates run in CI (`.github/workflows/omni-code-quality.yml` at the repository root) and must
 pass locally before pushing; the tools are in the `dev` dependency
 group and configured in `pyproject.toml`:
 

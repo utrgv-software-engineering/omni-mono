@@ -3,8 +3,18 @@ name: Python Tests
 on:
   push:
     branches: [main, dev]
+    paths:
+      - 'omniagents/**'
+      - '.github/workflows/omniagents-tests.yml'
   pull_request:
+    paths:
+      - 'omniagents/**'
+      - '.github/workflows/omniagents-tests.yml'
   workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: omniagents
 
 jobs:
   test:
@@ -26,16 +36,16 @@ jobs:
         # tests must execute rather than disappearing behind importorskip.
         run: python -m pip install '.[dev,server,sandbox-docker,sandbox-bashkit,sandbox-aci]'
       - name: Install web dependencies
-        working-directory: omniagents/studio/server/web
+        working-directory: omniagents/omniagents/studio/server/web
         run: npm ci
       - name: Install ink dependencies
-        working-directory: omniagents/backends/ink/tui
+        working-directory: omniagents/omniagents/backends/ink/tui
         run: npm ci
       - name: Install web UI dependencies
-        working-directory: omniagents/backends/web/ui
+        working-directory: omniagents/omniagents/backends/web/ui
         run: npm ci
       - name: Lint web UI
-        working-directory: omniagents/backends/web/ui
+        working-directory: omniagents/omniagents/backends/web/ui
         run: npm run lint
       - name: Run coverage suite
         env:
@@ -49,9 +59,9 @@ jobs:
         with:
           name: coverage-reports
           path: |
-            coverage/python/coverage.xml
-            coverage/web/lcov.info
-            coverage/ink/lcov.info
+            omniagents/coverage/python/coverage.xml
+            omniagents/coverage/web/lcov.info
+            omniagents/coverage/ink/lcov.info
 
   # The launcher runs this runtime natively on Windows (a venv under
   # %USERPROFILE%\.omni), so the Python suite must pass there too. Same
@@ -74,10 +84,10 @@ jobs:
       - name: Install dependencies
         run: python -m pip install ".[all,dev]"
       - name: Install web UI dependencies
-        working-directory: omniagents/backends/web/ui
+        working-directory: omniagents/omniagents/backends/web/ui
         run: npm ci
       - name: Install ink dependencies
-        working-directory: omniagents/backends/ink/tui
+        working-directory: omniagents/omniagents/backends/ink/tui
         run: npm ci
       - name: Run Python tests
         # Shell-heavy tests that hang on Windows fail fast instead of

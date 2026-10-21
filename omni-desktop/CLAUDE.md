@@ -120,16 +120,7 @@ Electron registers a privileged `artifact:` scheme before `app.ready` (`src/main
 
 ## Branches and releases
 
-Work happens on `dev` in all three repos (launcher, `../omniagents`, `../omni-code`); commit and push there. `main` holds released code only: every push to the launcher's `main` builds, smoke-tests and publishes the GitHub release for `package.json`'s version, and `make publish` in the Python repos refuses to run anywhere but a clean `main` that is in sync with `origin/main`. Tests run on `dev` pushes; to build and smoke-test installers from `dev` without publishing, dispatch `build.yml` on `dev` (`gh workflow run build.yml --ref dev`).
-
-Release train, in dependency order:
-
-1. **omniagents**: `git switch main && git merge dev`, `make bump-patch`, `git push --follow-tags`, `make publish`.
-2. **omni-code**: bump the `omniagents[all]==` pin in `pyproject.toml` on `dev`, merge into `main`, `make bump-patch`, `git push --follow-tags`, `make publish`.
-3. **launcher**: on `dev`, set `pinnedVersion` in `src/lib/product.ts` (and `product.test.ts`) and bump `package.json`'s version; merge into `main` and push. CI publishes the release.
-4. In each repo, merge `main` back into `dev` so the bump commits flow both ways.
-
-Hotfix for a released bug: branch from `main`, fix, release as above, then merge `main` into `dev`.
+See the repository root `CLAUDE.md`: work happens on `dev`, `main` holds released code, and a desktop release is cut by pushing an `omni-desktop-v<version>` tag.
 
 ## Build / packaging notes
 

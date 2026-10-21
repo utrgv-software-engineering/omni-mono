@@ -1,9 +1,6 @@
 name: Build Signed Artifacts and Publish
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       build_linux:
@@ -21,6 +18,10 @@ on:
         required: false
         default: true
         type: boolean
+      release_tag:
+        description: 'Tag to build, e.g. omni-desktop-v1.8.8 (defaults to the selected branch)'
+        required: false
+        type: string
 
 env:
   NODE_VERSION: '22'
@@ -28,15 +29,19 @@ env:
   # into OS-specific cache dirs (~/.electron is a legacy path it no longer
   # uses). Pin both caches inside the workspace so actions/cache captures
   # them and a GitHub CDN blip can't fail the build.
-  ELECTRON_CACHE: ${{ github.workspace }}/.cache/electron
-  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/.cache/electron-builder
+  ELECTRON_CACHE: ${{ github.workspace }}/omni-desktop/.cache/electron
+  ELECTRON_BUILDER_CACHE: ${{ github.workspace }}/omni-desktop/.cache/electron-builder
 
 permissions:
   contents: write
 
+defaults:
+  run:
+    working-directory: omni-desktop
+
 jobs:
   build-linux:
-    if: github.event_name == 'push' || github.event.inputs.build_linux == 'true'
+    if: github.event.inputs.build_linux == 'true'
     runs-on: ubuntu-latest
     environment: code-signing
     timeout-minutes: 15
@@ -51,6 +56,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: omni-desktop/package-lock.json
 
       - name: Generate lockfile hash without version
         id: lockfile-hash
@@ -61,10 +67,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            node_modules
+            omni-desktop/node_modules
             ~/.electron-gyp
-            .cache/electron
-            .cache/electron-builder
+            omni-desktop/.cache/electron
+            omni-desktop/.cache/electron-builder
           key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
 
       - name: Install dependencies
@@ -80,35 +86,33 @@ jobs:
         id: cache-uv
         uses: actions/cache@v4
         with:
-          path: assets/bin
+          path: omni-desktop/assets/bin
           key: ${{ runner.os }}-uv-${{ steps.uv-hash.outputs.hash }}
 
       - name: Download uv
         if: steps.cache-uv.outputs.cache-hit != 'true'
         run: npm run download linux
 
-      - name: Install bubblewrap
-        run: sudo apt-get install -y bubblewrap
-
       - name: Build application
         run: npm run publish
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Releases live in ericmichael/omni-desktop (the installed apps' update feed).
+          GH_TOKEN: ${{ secrets.OMNI_DESKTOP_RELEASE_TOKEN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: 'linux-artifacts-signed'
           path: |
-            dist/*.AppImage
-            dist/*.appimage
-            dist/*.blockmap
-            dist/*.yml
-            dist/*.yaml
+            omni-desktop/dist/*.AppImage
+            omni-desktop/dist/*.appimage
+            omni-desktop/dist/*.blockmap
+            omni-desktop/dist/*.yml
+            omni-desktop/dist/*.yaml
           retention-days: 90
 
   build-macos:
-    if: github.event_name == 'push' || github.event.inputs.build_macos == 'true'
+    if: github.event.inputs.build_macos == 'true'
     runs-on: macos-latest
     environment: code-signing
     timeout-minutes: 15
@@ -123,6 +127,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: omni-desktop/package-lock.json
 
       - name: Generate lockfile hash without version
         id: lockfile-hash
@@ -133,10 +138,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            node_modules
+            omni-desktop/node_modules
             ~/.electron-gyp
-            .cache/electron
-            .cache/electron-builder
+            omni-desktop/.cache/electron
+            omni-desktop/.cache/electron-builder
           key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
 
       - name: Install dependencies
@@ -152,7 +157,7 @@ jobs:
         id: cache-uv
         uses: actions/cache@v4
         with:
-          path: assets/bin
+          path: omni-desktop/assets/bin
           key: ${{ runner.os }}-uv-${{ steps.uv-hash.outputs.hash }}
 
       - name: Download uv
@@ -168,7 +173,8 @@ jobs:
       - name: Build and sign application
         run: npm run publish
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Releases live in ericmichael/omni-desktop (the installed apps' update feed).
+          GH_TOKEN: ${{ secrets.OMNI_DESKTOP_RELEASE_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -178,17 +184,17 @@ jobs:
         with:
           name: 'macos-artifacts-signed'
           path: |
-            dist/*.dmg
-            dist/*.DMG
-            dist/*.zip
-            dist/*.ZIP
-            dist/*.blockmap
-            dist/*.yml
-            dist/*.yaml
+            omni-desktop/dist/*.dmg
+            omni-desktop/dist/*.DMG
+            omni-desktop/dist/*.zip
+            omni-desktop/dist/*.ZIP
+            omni-desktop/dist/*.blockmap
+            omni-desktop/dist/*.yml
+            omni-desktop/dist/*.yaml
           retention-days: 90
 
   build-macos-x64:
-    if: github.event_name == 'push' || github.event.inputs.build_macos == 'true'
+    if: github.event.inputs.build_macos == 'true'
     runs-on: macos-15-intel
     environment: code-signing
     timeout-minutes: 15
@@ -203,6 +209,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: omni-desktop/package-lock.json
 
       - name: Generate lockfile hash without version
         id: lockfile-hash
@@ -213,10 +220,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            node_modules
+            omni-desktop/node_modules
             ~/.electron-gyp
-            .cache/electron
-            .cache/electron-builder
+            omni-desktop/.cache/electron
+            omni-desktop/.cache/electron-builder
           key: ${{ runner.os }}-x64-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
 
       - name: Install dependencies
@@ -232,7 +239,7 @@ jobs:
         id: cache-uv
         uses: actions/cache@v4
         with:
-          path: assets/bin
+          path: omni-desktop/assets/bin
           key: ${{ runner.os }}-x64-uv-${{ steps.uv-hash.outputs.hash }}
 
       - name: Download uv
@@ -248,7 +255,8 @@ jobs:
       - name: Build and sign application
         run: npm run publish
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Releases live in ericmichael/omni-desktop (the installed apps' update feed).
+          GH_TOKEN: ${{ secrets.OMNI_DESKTOP_RELEASE_TOKEN }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -258,20 +266,20 @@ jobs:
         with:
           name: 'macos-x64-artifacts-signed'
           path: |
-            dist/*.dmg
-            dist/*.DMG
-            dist/*.zip
-            dist/*.ZIP
-            dist/*.blockmap
-            dist/*.yml
-            dist/*.yaml
+            omni-desktop/dist/*.dmg
+            omni-desktop/dist/*.DMG
+            omni-desktop/dist/*.zip
+            omni-desktop/dist/*.ZIP
+            omni-desktop/dist/*.blockmap
+            omni-desktop/dist/*.yml
+            omni-desktop/dist/*.yaml
           retention-days: 90
 
   build-wsl-payload:
     # Linux-built payload shipped inside the Windows installer: out/server +
     # out/browser + linux-x64 node_modules for the server externals + a pinned
     # Node runtime. See docs/windows-wsl-backend-plan.md (Phase 5).
-    if: github.event_name == 'push' || github.event.inputs.build_windows == 'true'
+    if: github.event.inputs.build_windows == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -285,6 +293,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: omni-desktop/package-lock.json
 
       - name: Generate lockfile hash without version
         id: lockfile-hash
@@ -295,10 +304,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            node_modules
+            omni-desktop/node_modules
             ~/.electron-gyp
-            .cache/electron
-            .cache/electron-builder
+            omni-desktop/.cache/electron
+            omni-desktop/.cache/electron-builder
           key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
 
       - name: Install dependencies
@@ -315,11 +324,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: wsl-payload
-          path: out/wsl-payload/omni-wsl-payload.tar.gz
+          path: omni-desktop/out/wsl-payload/omni-wsl-payload.tar.gz
           if-no-files-found: error
 
   build-windows:
-    if: github.event_name == 'push' || github.event.inputs.build_windows == 'true'
+    if: github.event.inputs.build_windows == 'true'
     needs: build-wsl-payload
     runs-on: windows-latest
     environment: code-signing
@@ -335,6 +344,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: omni-desktop/package-lock.json
 
       - name: Generate lockfile hash without version
         id: lockfile-hash
@@ -346,10 +356,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            node_modules
+            omni-desktop/node_modules
             ~/.electron-gyp
-            .cache/electron
-            .cache/electron-builder
+            omni-desktop/.cache/electron
+            omni-desktop/.cache/electron-builder
           key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-v2-${{ steps.lockfile-hash.outputs.hash }}
 
       - name: Install dependencies
@@ -366,7 +376,7 @@ jobs:
         id: cache-uv
         uses: actions/cache@v4
         with:
-          path: assets/bin
+          path: omni-desktop/assets/bin
           key: ${{ runner.os }}-uv-${{ steps.uv-hash.outputs.hash }}
 
       - name: Download uv
@@ -379,7 +389,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wsl-payload
-          path: wsl-payload
+          path: omni-desktop/wsl-payload
 
       - name: Set tool paths for signing
         run: |
@@ -393,7 +403,8 @@ jobs:
         env:
           OMNI_WSL_PAYLOAD: wsl-payload/omni-wsl-payload.tar.gz
           ENABLE_SIGNING: true
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Releases live in ericmichael/omni-desktop (the installed apps' update feed).
+          GH_TOKEN: ${{ secrets.OMNI_DESKTOP_RELEASE_TOKEN }}
           SM_HOST: ${{ secrets.SM_HOST }}
           SM_API_KEY: ${{ secrets.SM_API_KEY }}
           SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
@@ -405,9 +416,9 @@ jobs:
         with:
           name: 'windows-artifacts-signed'
           path: |
-            dist/*.exe
-            dist/*.EXE
-            dist/*.blockmap
-            dist/*.yml
-            dist/*.yaml
+            omni-desktop/dist/*.exe
+            omni-desktop/dist/*.EXE
+            omni-desktop/dist/*.blockmap
+            omni-desktop/dist/*.yml
+            omni-desktop/dist/*.yaml
           retention-days: 90

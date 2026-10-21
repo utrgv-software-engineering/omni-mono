@@ -2,16 +2,17 @@ name: Windows uv venv smoke test
 
 on:
   push:
-    branches:
-      - 'main'
-      - 'dev'
+    branches: [main, dev]
+    paths:
+      - 'omni-desktop/**'
+      - '.github/workflows/omni-desktop-uv-venv-smoke.yml'
   pull_request:
-    types:
-      - 'ready_for_review'
-      - 'opened'
-      - 'synchronize'
-  merge_group:
+    types: [ready_for_review, opened, synchronize]
+    paths:
+      - 'omni-desktop/**'
+      - '.github/workflows/omni-desktop-uv-venv-smoke.yml'
   workflow_dispatch:
+  merge_group:
 
 env:
   NODE_VERSION: '22'
@@ -19,6 +20,10 @@ env:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: omni-desktop
 
 jobs:
   # Drives uv.exe through node-pty — exactly how the packaged app runs it in
@@ -55,6 +60,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: omni-desktop/package-lock.json
 
       - name: Generate lockfile hash without version
         id: lockfile-hash
@@ -66,7 +72,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            node_modules
+            omni-desktop/node_modules
             ~/.electron-gyp
           key: ${{ runner.os }}-node-${{ env.NODE_VERSION }}-modules-${{ steps.lockfile-hash.outputs.hash }}
 
@@ -83,7 +89,7 @@ jobs:
         id: cache-uv
         uses: actions/cache@v4
         with:
-          path: assets/bin
+          path: omni-desktop/assets/bin
           key: ${{ runner.os }}-uv-${{ steps.uv-hash.outputs.hash }}
 
       - name: Download uv
@@ -190,7 +196,7 @@ jobs:
         id: cache-uv
         uses: actions/cache@v4
         with:
-          path: assets/bin
+          path: omni-desktop/assets/bin
           key: ${{ runner.os }}-uv-${{ steps.uv-hash.outputs.hash }}
 
       # download_uv.ts needs ts-node and its npm deps; postinstall (native

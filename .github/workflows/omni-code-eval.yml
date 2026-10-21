@@ -5,6 +5,10 @@ name: Omni-Code Evaluation Suite
 on:
   workflow_dispatch:
 
+defaults:
+  run:
+    working-directory: omni-code
+
 jobs:
   # ── Lightweight evals: run in-process, no Docker ──────────────────
   eval-lightweight:
@@ -22,9 +26,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: omni-code/pyproject.toml
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        run: |
+          pip install -e ../omniagents
+          pip install -e ".[dev]"
 
       - name: Compile evaluation config
         run: omniagents compile --project omni_code/project.yml
@@ -41,4 +48,4 @@ jobs:
         if: always()
         with:
           name: eval-results-lightweight
-          path: target/eval_results.json
+          path: omni-code/target/eval_results.json

@@ -7,8 +7,20 @@ name: Quality Gates
 on:
   push:
     branches: [main, dev]
+    paths:
+      - 'omni-code/**'
+      - 'omniagents/**'
+      - '.github/workflows/omni-code-quality.yml'
   pull_request:
+    paths:
+      - 'omni-code/**'
+      - 'omniagents/**'
+      - '.github/workflows/omni-code-quality.yml'
   workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: omni-code
 
 jobs:
   quality:
@@ -21,12 +33,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: omni-code/pyproject.toml
 
       - name: Install dependencies
-        # omniagents is hosted on the public Gemfury index; keep PyPI as
-        # the primary index (see README "End-User Install" notes).
+        # Test against this repository's omniagents, so a framework change
+        # that breaks omni-code fails here. Other Gemfury-hosted deps still
+        # resolve from the extra index; keep PyPI as the primary index.
         run: |
           python -m pip install --upgrade pip
+          pip install -e ../omniagents
           pip install -e . --extra-index-url https://pypi.fury.io/ericmichael/
           pip install --group dev
 
@@ -55,10 +70,12 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: omni-code/pyproject.toml
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install -e ../omniagents
           pip install -e . --extra-index-url https://pypi.fury.io/ericmichael/
           pip install --group dev
 

@@ -158,7 +158,7 @@ pytest tests/integration/test_git_sandbox_substrate.py \
 ```
 
 CI runs them in the separate `sandbox-substrate` job
-(`.github/workflows/tests.yml`), which pulls the image and sets
+(`.github/workflows/omniagents-tests.yml` at the repository root), which pulls the image and sets
 `OMNIAGENTS_REQUIRE_SANDBOX_IMAGE=1` — that turns the skip into a
 collection error, so the job cannot pass by skipping everything.
 

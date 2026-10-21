@@ -10,13 +10,17 @@ on:
   push:
     branches: [main]
     paths:
-      - "evaluations/Dockerfile"
-      - "evaluations/apply-network-isolation.sh"
-      - ".github/workflows/build-eval-image.yml"
+      - 'omni-code/evaluations/Dockerfile'
+      - 'omni-code/evaluations/apply-network-isolation.sh'
+      - '.github/workflows/omni-code-build-eval-image.yml'
   workflow_dispatch:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/omni-code-eval
+
+defaults:
+  run:
+    working-directory: omni-code
 
 jobs:
   build-and-publish:
@@ -34,8 +38,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: evaluations
-          file: evaluations/Dockerfile
+          context: omni-code/evaluations
+          file: omni-code/evaluations/Dockerfile
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
