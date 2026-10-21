@@ -176,3 +176,16 @@ async def test_windows_shaped_filenames_are_listed_not_dropped() -> None:
 def test_resolve_refuses_escapes(path: str) -> None:
     with pytest.raises(WorkspaceEscapeError):
         _workspace(_FakeWorker()).resolve(path)
+
+
+def test_resolve_stays_posix_when_the_host_path_module_is_windows(monkeypatch) -> None:
+    # The sandbox address space is POSIX on every host; a Windows os.path
+    # must not turn /workspace/sub into \\workspace\\sub.
+    import ntpath
+
+    from omniagents.workspace import pyodide as pyodide_module
+
+    workspace = _workspace(_FakeWorker([]))
+    monkeypatch.setattr(pyodide_module.os, "path", ntpath)
+    assert workspace.resolve("sub") == "/workspace/sub"
+    assert workspace.resolve("/workspace/a/../b") == "/workspace/b"
