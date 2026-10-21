@@ -20,7 +20,6 @@ import { migrateAgentConfigFromFiles } from '@/main/config-files-migration';
 import { materializeAgentConfig } from '@/main/config-materializer';
 import { createConsoleManager } from '@/main/console-manager';
 import { PROJECT_KEYS } from '@/main/db-store-bridge';
-import { ExtensionManager, registerExtensionHandlers } from '@/main/extension-manager';
 import {
   linkWithDeviceFlow as githubLink,
   listOrgs as githubListOrgs,
@@ -271,7 +270,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     },
   });
   pullRequestWatcher.start();
-  const extension = new ExtensionManager({ store: store as any, sendToWindow: sendToAll });
   const browser = buildBrowserContext(store as any, sendToAll);
   const chatCleanup = new ChatCleanupRunner({
     read: async () => {
@@ -318,18 +316,13 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   registerProjectHandlers(ipc, () => projectManager);
   registerSupervisorHandlers(ipc, () => projectManager.supervisors);
   registerMilestoneHandlers(ipc, () => projectManager.milestones);
-  registerPageHandlers(
-    ipc,
-    () => projectManager.pages,
-    (_e, projectId) => projectManager.getProjectDir(projectId)
-  );
+  registerPageHandlers(ipc, () => projectManager.pages);
   registerInboxHandlers(ipc, () => projectManager.inbox);
   registerProcessHandlers(ipc, () => processManager);
   registerScheduledTaskHandlers(ipc, () => scheduledTaskManager);
   registerAutomationHandlers(ipc, () => automationManager);
   registerResidentHandlers(ipc, () => residentAgentManager);
   registerChatHandlers(ipc, () => residentAgentManager);
-  registerExtensionHandlers(ipc, () => extension);
   registerBrowserHandlers(ipc, () => browser);
   projectManager.bridge.registerIpc(ipc, () => projectManager.bridge);
   routineBridge.registerIpc(ipc, () => routineBridge);
@@ -597,7 +590,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
       Promise.resolve(routineBridge.disposeAll()),
       projectManager.exit(),
       processManager.cleanup(),
-      extension.cleanup(),
       cleanupOmniInstall(),
     ]);
     closeProjectDb();

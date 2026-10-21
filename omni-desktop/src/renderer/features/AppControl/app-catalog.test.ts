@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { buildAppCatalog, type CatalogInput } from '@/renderer/features/AppControl/app-catalog-core';
 import type { LiveAppSnapshot } from '@/shared/app-control-types';
 import { makeAppHandleId } from '@/shared/app-control-types';
-import { buildAppRegistry } from '@/shared/app-registry';
+import { APP_REGISTRY } from '@/shared/app-registry';
 import type { CodeTab } from '@/shared/types';
 
 const tab = (id: string, extra?: Partial<CodeTab>): CodeTab => ({
@@ -26,7 +26,7 @@ const liveColumn = (tabId: string, appId: string): LiveAppSnapshot => ({
 const base = (over: Partial<CatalogInput>): CatalogInput => ({
   filter: { allowGlobal: true },
   live: {},
-  registry: buildAppRegistry([]),
+  registry: APP_REGISTRY,
   codeTabs: [tab('t1')],
   servicesByTab: {},
   columnInfo: () => ({}),
@@ -103,54 +103,5 @@ describe('buildAppCatalog', () => {
     const t2Term = cat.find((a) => a.handleId === 'tab-t2:terminal');
     expect(t1Term?.column).toEqual({ tabId: 't1', sessionId: 's1', project: 'Proj' });
     expect(t2Term?.column).toEqual({ tabId: 't2', sessionId: 's2', project: 'Proj' });
-  });
-
-  it('superuser skips standalone app columns when enumerating dock apps', () => {
-    const cat = buildAppCatalog(
-      base({
-        filter: { allowGlobal: true, allColumns: true },
-        codeTabs: [tab('t1'), tab('app-col', { customAppId: 'marimo' })],
-      })
-    );
-    expect(cat.some((a) => a.tabId === 'app-col')).toBe(false);
-  });
-
-  it('lists global custom apps as available, and surfaces live global entries the registry lacks', () => {
-    const cat = buildAppCatalog(
-      base({
-        filter: { allowGlobal: true },
-        registry: buildAppRegistry([
-          { id: 'dash', label: 'Dash', icon: 'x', url: 'http://dash', order: 99, columnScoped: false },
-        ]),
-        live: {
-          'global:browser': {
-            handleId: 'global:browser',
-            appId: 'browser',
-            kind: 'builtin-browser',
-            scope: 'global',
-            label: 'Browser',
-            controllable: true,
-          },
-        },
-      })
-    );
-    const dash = cat.find((a) => a.id === 'dash');
-    expect(dash?.scope).toBe('global');
-    expect(dash?.available).toBe(true);
-    expect(dash?.running).toBe(false);
-    const globalBrowser = cat.find((a) => a.handleId === 'global:browser');
-    expect(globalBrowser?.running).toBe(true);
-  });
-
-  it('omits global apps when allowGlobal is false (autopilot)', () => {
-    const cat = buildAppCatalog(
-      base({
-        filter: { tabId: 't1', allowGlobal: false },
-        registry: buildAppRegistry([
-          { id: 'dash', label: 'Dash', icon: 'x', url: 'http://dash', order: 99, columnScoped: false },
-        ]),
-      })
-    );
-    expect(cat.some((a) => a.scope === 'global')).toBe(false);
   });
 });

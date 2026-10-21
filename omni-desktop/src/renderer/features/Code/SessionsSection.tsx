@@ -29,7 +29,7 @@ import { $columnActivity, activityStatusText } from '@/renderer/services/column-
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatConversation, CodeTab, ProjectId } from '@/shared/types';
 
-import { APP_LAUNCHER_ID, codeApi } from './state';
+import { codeApi } from './state';
 const PAGE_SIZE = 5;
 const PROJECT_PAGE_SIZE = 15;
 
@@ -323,8 +323,6 @@ export function RecentsSection({
   );
   const [archiveOpen, setArchiveOpen] = useState(false);
 
-  const customApps = useMemo(() => store.customApps ?? [], [store.customApps]);
-
   // Same resolution the deck uses for column titles (identity must match
   // between the sidebar row and the column it opens).
   const resolveLabel = useCallback(
@@ -333,36 +331,23 @@ export function RecentsSection({
         return entry.conversation.title;
       }
       const tab = entry.tab;
-      if (tab.customAppId === APP_LAUNCHER_ID) {
-        return 'Apps';
-      }
-      if (tab.customAppId === 'browser') {
-        return 'Browser';
-      }
-      if (tab.customAppId) {
-        return customApps.find((a) => a.id === tab.customAppId)?.label ?? 'App';
-      }
       if (tab.routineName) {
         return tab.routineName;
       }
       return (tab.sessionId ? sessionTitles.get(tab.sessionId) : undefined) ?? 'New chat';
     },
-    [customApps, sessionTitles]
+    [sessionTitles]
   );
 
   // One list, recency-sorted; open columns and retained history interleave.
   // Empty chats stay out: a chat column earns its row when its session
   // becomes a conversation (first message titles it). The pristine landing
-  // column in particular never shows. Bound columns (apps and routines)
+  // column in particular never shows. Bound columns (routines)
   // always have identities and always list. Project-bound tabs are rendered
   // beneath their project instead of being duplicated here.
   const entries = useMemo((): SessionEntry[] => {
     const isEmptyChat = (tab: CodeTab): boolean =>
-      !tab.projectId &&
-      !tab.customAppId &&
-      !tab.ticketId &&
-      !tab.routineId &&
-      (!tab.sessionId || !sessionTitles.has(tab.sessionId));
+      !tab.projectId && !tab.ticketId && !tab.routineId && (!tab.sessionId || !sessionTitles.has(tab.sessionId));
     const open: SessionEntry[] = tabs
       .filter((tab) => !tab.projectId && !isEmptyChat(tab))
       .map((tab) => ({ kind: 'open', key: tab.id, tab, ts: tab.createdAt }));

@@ -50,7 +50,6 @@ const defaultStoreData = (): StoreData =>
     activeCodeTabId: null,
     codeLayoutMode: 'tile',
     activeTicketId: null,
-    enabledExtensions: {},
   }) as unknown as StoreData;
 
 export const makeStore = (overrides: Partial<StoreData> = {}): IStore => {

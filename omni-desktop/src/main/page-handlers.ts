@@ -1,21 +1,13 @@
 /**
- * IPC handler registration for the pages surface (markdown + marimo notebooks).
+ * IPC handler registration for the pages surface (markdown).
  *
- * Takes `resolve(event)` callbacks (see registerMilestoneHandlers). The
- * notebook handlers also need the project's working directory, so the caller
- * injects `getProjectDir(event, projectId)`.
+ * Takes a `resolve(event)` callback (see registerMilestoneHandlers).
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { writeMarimoAiConfig } from '@/main/extensions/marimo-config';
 import type { PageManager } from '@/main/page-manager';
 import type { IIpcListener } from '@/shared/ipc-listener';
-import type { ProjectId } from '@/shared/types';
 
-export function registerPageHandlers(
-  ipc: IIpcListener,
-  resolve: (event: unknown) => PageManager,
-  getProjectDir: (event: unknown, projectId: ProjectId) => string | null
-): string[] {
+export function registerPageHandlers(ipc: IIpcListener, resolve: (event: unknown) => PageManager): string[] {
   const channels: string[] = [];
   const h = (ch: string, fn: (m: PageManager, event: unknown, ...args: any[]) => unknown): void => {
     ipc.handle(ch, (event: unknown, ...args: any[]) => fn(resolve(event), event, ...args));
@@ -32,37 +24,5 @@ export function registerPageHandlers(
   h('page:reorder', (m, _e, pageId, newParentId, newSortOrder) => m.reorder(pageId, newParentId, newSortOrder));
   h('page:watch', (m, _e, pageId) => m.watch(pageId));
   h('page:unwatch', (m, _e, pageId) => m.unwatch(pageId));
-  h('page:get-notebook-paths', (m, event, pageId) => {
-    const filePath = m.getNotebookFilePath(pageId);
-    if (!filePath) {
-      return null;
-    }
-    const page = m.getById(pageId);
-    if (!page) {
-      return null;
-    }
-    const projectDir = getProjectDir(event, page.projectId);
-    if (!projectDir) {
-      return null;
-    }
-    return { filePath, projectDir };
-  });
-  h('page:prepare-notebook', async (m, event, pageId) => {
-    const filePath = m.getNotebookFilePath(pageId);
-    if (!filePath) {
-      return;
-    }
-    // Wire the launcher's default model into marimo via .marimo.toml in the
-    // project directory (marimo searches up from cwd for it). Only writes
-    // when a default model with an api key is configured; refuses to
-    // clobber any pre-existing user-authored .marimo.toml.
-    const page = m.getById(pageId);
-    if (page) {
-      const projectDir = getProjectDir(event, page.projectId);
-      if (projectDir) {
-        await writeMarimoAiConfig(projectDir);
-      }
-    }
-  });
   return channels;
 }

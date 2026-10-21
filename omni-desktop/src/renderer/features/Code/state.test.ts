@@ -350,7 +350,7 @@ describe('chat columns and conversation history', () => {
   it('reorderTabs preserves records missing from a filtered input list', async () => {
     const a = tab({ id: 'tab-a' });
     const b = tab({ id: 'tab-b' });
-    const app = tab({ id: 'app-tab', customAppId: 'browser' });
+    const app = tab({ id: 'app-tab', routineId: 'routine-1' });
     resetStore({ codeTabs: [app, a, b] });
     const { codeApi } = await import('./state');
 

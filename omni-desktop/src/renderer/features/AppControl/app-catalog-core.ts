@@ -68,7 +68,7 @@ export function buildAppCatalog(input: CatalogInput): CatalogApp[] {
   const out: CatalogApp[] = [];
 
   const columns: CodeTab[] = filter.allColumns
-    ? codeTabs.filter((t) => !t.customAppId)
+    ? codeTabs
     : filter.tabId
       ? codeTabs.filter((t) => t.id === filter.tabId)
       : [];

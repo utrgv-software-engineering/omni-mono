@@ -206,7 +206,7 @@ export class AppControlManager {
       return;
     }
     const tabsetId = entry.registration.browserTabsetId;
-    if (!tabsetId && entry.registration.kind !== 'webview') {
+    if (!tabsetId) {
       return;
     }
     const onPopup = this.onBrowserPopup;

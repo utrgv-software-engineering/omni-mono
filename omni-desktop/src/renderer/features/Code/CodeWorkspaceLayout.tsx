@@ -1,4 +1,3 @@
-import { useStore } from '@nanostores/react';
 import { memo, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { dispatchOpenFileIntent, WorkspaceFilesPortal } from '@/renderer/features/Files';
@@ -13,9 +12,8 @@ import {
   registerSessionController,
   type SessionController,
 } from '@/renderer/services/session-control';
-import { persistedStoreApi } from '@/renderer/services/store';
 import type { AppId } from '@/shared/app-registry';
-import { buildAppRegistry } from '@/shared/app-registry';
+import { APP_REGISTRY } from '@/shared/app-registry';
 import type { AgentRuntimeConnection, ExecutionTarget, TicketId, WorkspaceMountDescriptor } from '@/shared/types';
 
 import { EnvironmentDock } from './EnvironmentDock';
@@ -137,11 +135,8 @@ export const CodeWorkspaceLayout = memo(
     ticketId,
     routineId,
   }: CodeWorkspaceLayoutProps) => {
-    const store = useStore(persistedStoreApi.$atom);
-    const registry = useMemo(() => buildAppRegistry(store.customApps ?? []), [store.customApps]);
-    // The dock only surfaces apps marked column-scoped. Global-only custom
-    // apps are opened via the app launcher as their own deck column instead.
-    // Capability-dependent apps additionally require the attached
+    const registry = APP_REGISTRY;
+    // The dock only surfaces apps marked column-scoped. Capability-dependent apps additionally require the attached
     // environment to affirmatively support them: Terminal appears only
     // once the environment reports the `pty` capability — no environment
     // yet means no shell to offer, and wasm sandboxes never grow one

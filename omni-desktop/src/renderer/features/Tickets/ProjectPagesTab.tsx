@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { Ellipsis, FileText, House, Notebook, Plus } from 'lucide-react';
+import { Ellipsis, FileText, House, Plus } from 'lucide-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
 import { flattenPageTree } from '@/lib/page-list';
@@ -101,7 +101,6 @@ const PageRowItem = memo(
               <span className="flex-initial min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
                 {page.title || 'Untitled'}
               </span>
-              {page.kind === 'notebook' && <span className="text-xs text-muted-foreground">notebook</span>}
             </Button>
           )}
           {!isRenaming && (
@@ -163,28 +162,23 @@ export const ProjectPagesTab = memo(({ projectId }: { projectId: ProjectId }) =>
     [renameValue]
   );
 
-  const createPage = useCallback(
-    async (kind?: Page['kind']) => {
-      const all = $pages.get();
-      const root = Object.values(all).find((p) => p.projectId === projectId && p.isRoot);
-      if (!root) {
-        return;
-      }
-      const siblings = Object.values(all).filter((p) => p.parentId === root.id);
-      const maxSort = siblings.reduce((max, p) => Math.max(max, p.sortOrder), 0);
-      const created = await pageApi.addPage({
-        projectId,
-        parentId: root.id,
-        title: kind === 'notebook' ? 'Untitled notebook' : 'Untitled',
-        sortOrder: maxSort + 1,
-        ...(kind ? { kind } : {}),
-      });
-      ticketApi.goToPage(created.id, projectId);
-    },
-    [projectId]
-  );
+  const createPage = useCallback(async () => {
+    const all = $pages.get();
+    const root = Object.values(all).find((p) => p.projectId === projectId && p.isRoot);
+    if (!root) {
+      return;
+    }
+    const siblings = Object.values(all).filter((p) => p.parentId === root.id);
+    const maxSort = siblings.reduce((max, p) => Math.max(max, p.sortOrder), 0);
+    const created = await pageApi.addPage({
+      projectId,
+      parentId: root.id,
+      title: 'Untitled',
+      sortOrder: maxSort + 1,
+    });
+    ticketApi.goToPage(created.id, projectId);
+  }, [projectId]);
   const handleNewPage = useCallback(() => void createPage(), [createPage]);
-  const handleNewNotebook = useCallback(() => void createPage('notebook'), [createPage]);
   const handleOpenHome = useCallback(() => {
     if (rootPage) {
       ticketApi.goToPage(rootPage.id, projectId);
@@ -202,10 +196,6 @@ export const ProjectPagesTab = memo(({ projectId }: { projectId: ProjectId }) =>
           <Button size="sm" variant="ghost" onClick={handleNewPage}>
             <Plus />
             New page
-          </Button>
-          <Button size="sm" variant="ghost" onClick={handleNewNotebook}>
-            <Notebook className="size-4" />
-            New notebook
           </Button>
         </div>
 

@@ -71,7 +71,7 @@ Lifecycle pattern: each manager is a factory returning `[instance, cleanup]`. Re
 - `ProjectManager` (`project-manager.ts`) — projects / tickets / pages / inbox / milestones; composes `InboxManager`, `MilestoneManager`, `PageManager`, `SupervisorOrchestrator`, and the `ticket-machine`. Runs schema migrations on boot.
 - `OmniInstallManager` — Python + venv via bundled `uv` binary
 - `ConsoleManager` — proxies `terminal:*` IPC into `omni serve`'s WebSocket so terminals run inside the sandbox via `omniagents.rpc.terminal_backends.SessionPtyBackend`. The shell lives in the agent process (one PTY per `terminal_id`); main is a thin transport. See `src/main/terminal-proxy.ts` for the WS plumbing and `omni-code/server_functions/terminal.py` for the server-side entry points (`terminal.create`, `terminal.close`).
-- `ExtensionManager`, `AppControlManager`
+- `AppControlManager`
 
 Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWindow` (Electron) / `sendToAll` (server). Store changes fan out on the `store:changed` channel.
 
@@ -81,15 +81,11 @@ Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWin
 
 ### Renderer structure
 
-- `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `AppControl`, `Banner`, `Chat`, `Code`, `Console`, `Inbox`, `Initiatives`, `Notebooks`, `Omni`, `Onboarding`, `Pages`, `Projects`, `SettingsModal`, `Tickets`, `Toast`, `XTermLogViewer`.
+- `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `AppControl`, `Banner`, `Chat`, `Code`, `Console`, `Inbox`, `Initiatives`, `Omni`, `Onboarding`, `Pages`, `Projects`, `SettingsModal`, `Tickets`, `Toast`, `XTermLogViewer`.
 - `src/renderer/ds/` — design system primitives (Fluent + Radix + custom)
 - `src/renderer/services/` — cross-cutting: `ipc`, `store` (mirrors main-process store into an atom), `status` (polls `main-process:get-status`), `navigation`, `agent-process`, `config`, `dev`
 - `src/renderer/common/` — shared UI (webview, layouts)
 - `src/renderer/transport/` — Electron and WS transport adapters
-
-### Extensions
-
-`src/main/extensions/` ships built-in extension manifests (currently Marimo). The registry (`registry.ts`) is built-in only today but the manifest contract is the same one that will load user-installed extensions from `~/.omni/extensions/` later.
 
 ### WSL backend mode (Windows)
 

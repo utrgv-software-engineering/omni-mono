@@ -1,6 +1,6 @@
 /**
- * PageManager — owns the lifecycle of user-authored pages (markdown + marimo
- * notebooks) for each project.
+ * PageManager — owns the lifecycle of user-authored markdown pages for each
+ * project.
  *
  * Pages live under `<config>/pages/<projectId>/<pageId>.{md,py}`. Keyed by
  * stable id, not slug, so project renames are pure DB ops. Shared 1:1 with
@@ -29,7 +29,6 @@ import path from 'path';
 import { computePagesToDelete } from '@/lib/page-cascade';
 import { getTemplate, type TemplateKey } from '@/lib/page-templates';
 import { PageWatcherManager } from '@/lib/page-watcher';
-import { MARIMO_NOTEBOOK_TEMPLATE } from '@/main/extensions/marimo';
 import { ensureDirectory, getProjectPagesDir } from '@/main/util';
 import type { IpcRendererEvents, Page, PageId, Project, ProjectId } from '@/shared/types';
 
@@ -143,12 +142,10 @@ export class PageManager {
     this.writeAll(pages);
 
     const filePath = this.getPageFilePath(page);
-    const rawInitial = page.kind === 'notebook' ? MARIMO_NOTEBOOK_TEMPLATE : getTemplate(template);
     // Normalize markdown so content is canonical CommonMark and downstream
-    // readers (Yoopta, agents, grep) get a parseable body. Skip notebooks —
-    // those are .py source, not markdown.
-    const initialContent = page.kind === 'notebook' ? rawInitial : normalizeMarkdown(rawInitial);
-    if (this.isDbBacked(page)) {
+    // readers (Yoopta, agents, grep) get a parseable body.
+    const initialContent = normalizeMarkdown(getTemplate(template));
+    if (this.isDbBacked()) {
       // Markdown doc → DB source of truth.
       void this.store.setContent!(page.id, initialContent).catch(() => {});
     } else {
@@ -214,9 +211,9 @@ export class PageManager {
 
   // ---------- File I/O ----------
 
-  /** Whether this page's body is DB-backed (markdown docs when a content store is wired). */
-  private isDbBacked(page: Page): boolean {
-    return page.kind !== 'notebook' && !!this.store.getContent;
+  /** Whether page bodies are DB-backed (when a content store is wired). */
+  private isDbBacked(): boolean {
+    return !!this.store.getContent;
   }
 
   private async readFileSafe(filePath: string): Promise<string | null> {
@@ -232,7 +229,7 @@ export class PageManager {
     if (!page) {
       return '';
     }
-    if (this.isDbBacked(page)) {
+    if (this.isDbBacked()) {
       const stored = await this.store.getContent!(pageId);
       if (stored != null) {
         return stored;
@@ -254,9 +251,8 @@ export class PageManager {
     if (!page) {
       return;
     }
-    // Canonicalize markdown; notebook pages stay raw (.py, not markdown).
-    const normalized = page.kind === 'notebook' ? content : normalizeMarkdown(content);
-    if (this.isDbBacked(page)) {
+    const normalized = normalizeMarkdown(content);
+    if (this.isDbBacked()) {
       await this.store.setContent!(pageId, normalized);
       return;
     }
@@ -276,7 +272,7 @@ export class PageManager {
     }
     // DB-backed docs have no file to watch — record interest so an external
     // write (other replica / agent) can be pushed via reemitWatchedContent.
-    if (this.isDbBacked(page)) {
+    if (this.isDbBacked()) {
       this.dbWatched.add(pageId);
       return { content: await this.readContent(pageId) };
     }
@@ -296,7 +292,7 @@ export class PageManager {
     if (!page) {
       return;
     }
-    if (this.isDbBacked(page)) {
+    if (this.isDbBacked()) {
       this.dbWatched.delete(pageId);
       return;
     }
@@ -318,15 +314,6 @@ export class PageManager {
         // page may have been deleted; ignore
       }
     }
-  };
-
-  /** Absolute filesystem path for a notebook page (null for non-notebook or unknown pages). */
-  getNotebookFilePath = (pageId: PageId): string | null => {
-    const page = this.getById(pageId);
-    if (!page || page.kind !== 'notebook') {
-      return null;
-    }
-    return this.getPageFilePath(page);
   };
 
   // ---------- Project-lifecycle helpers (called by ProjectManager) ----------
@@ -377,14 +364,13 @@ export class PageManager {
   // ---------- Internal ----------
 
   /**
-   * Page file path resolver. All pages — root and non-root, markdown and
-   * notebook — live at `<pagesDir>/<projectId>/<pageId>.{md,py}`. There is
+   * Page file path resolver. All pages — root and non-root — live at
+   * `<pagesDir>/<projectId>/<pageId>.md`. There is
    * no `context.md` special case; root pages are just rows with `is_root=1`.
    */
   private getPageFilePath = (page: Page): string => {
     const dir = this.resolvePagesDir(page.projectId);
-    const ext = page.kind === 'notebook' ? '.py' : '.md';
-    return path.join(dir, `${page.id}${ext}`);
+    return path.join(dir, `${page.id}.md`);
   };
 
   /** Reverse-lookup a pageId from its on-disk file path (for watcher events). */

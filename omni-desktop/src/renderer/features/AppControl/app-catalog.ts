@@ -8,7 +8,7 @@ import { $liveApps } from '@/renderer/features/AppControl/live-registry';
 import { $agentStatuses } from '@/renderer/services/agent-process';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { AppScopeFilter } from '@/shared/app-control-types';
-import { buildAppRegistry } from '@/shared/app-registry';
+import { APP_REGISTRY } from '@/shared/app-registry';
 
 export type { CatalogApp } from '@/renderer/features/AppControl/app-catalog-core';
 export { buildAppCatalog } from '@/renderer/features/AppControl/app-catalog-core';
@@ -16,7 +16,7 @@ export { buildAppCatalog } from '@/renderer/features/AppControl/app-catalog-core
 /** Gather live state and build the catalog for the caller's scope. */
 export function listAppsForScope(filter: AppScopeFilter): CatalogApp[] {
   const store = persistedStoreApi.get();
-  const registry = buildAppRegistry(store.customApps ?? []);
+  const registry = APP_REGISTRY;
 
   const servicesByTab: Record<string, Record<string, string> | undefined> = {};
   for (const [pid, st] of Object.entries($agentStatuses.get())) {

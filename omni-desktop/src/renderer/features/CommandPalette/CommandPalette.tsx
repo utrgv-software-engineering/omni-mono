@@ -37,7 +37,7 @@ import { ticketApi } from '@/renderer/features/Tickets/state';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { CodeTab, LayoutMode } from '@/shared/types';
 
-import { buildCommands, filterCommands, paletteColumns } from './commands';
+import { buildCommands, filterCommands } from './commands';
 
 const HOTKEY_OPTS = { enableOnFormTags: true, preventDefault: true } as const;
 
@@ -170,7 +170,7 @@ export const CommandPalette = memo(() => {
       if (!Number.isInteger(digit) || digit < 1) {
         return;
       }
-      const columns = paletteColumns(persistedStoreApi.getKey('codeTabs') ?? []);
+      const columns = persistedStoreApi.getKey('codeTabs') ?? [];
       const target = columns[digit - 1];
       if (target) {
         activateColumn(target.id);

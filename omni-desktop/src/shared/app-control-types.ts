@@ -122,7 +122,6 @@ export const CONTROLLABLE_APP_KINDS: ReadonlySet<AppKind> = new Set<AppKind>([
   'builtin-browser',
   'builtin-code',
   'builtin-desktop',
-  'webview',
 ]);
 
 export function isControllableKind(kind: AppKind): boolean {

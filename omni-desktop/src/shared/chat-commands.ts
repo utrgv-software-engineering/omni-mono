@@ -77,8 +77,7 @@ function operations(initial: StoreData) {
       const tabs = persistedStoreApi.getKey('codeTabs') ?? [];
       const known = new Set((persistedStoreApi.getKey('chatConversations') ?? []).map((c) => c.sessionId));
       const pristine = tabs.find(
-        (t) =>
-          !t.projectId && !t.customAppId && !t.ticketId && !t.routineId && (!t.sessionId || !known.has(t.sessionId))
+        (t) => !t.projectId && !t.ticketId && !t.routineId && (!t.sessionId || !known.has(t.sessionId))
       );
       if (pristine) {
         persistedStoreApi.setKey('activeCodeTabId', pristine.id);
@@ -260,7 +259,7 @@ function operations(initial: StoreData) {
     },
     archiveTab: (tabId: CodeTabId, title?: string) => {
       const tab = (persistedStoreApi.getKey('codeTabs') ?? []).find((candidate) => candidate.id === tabId);
-      if (tab?.sessionId && !tab.customAppId) {
+      if (tab?.sessionId) {
         const indexed = (persistedStoreApi.getKey('chatConversations') ?? []).find(
           (candidate) => candidate.sessionId === tab.sessionId
         );
@@ -326,27 +325,6 @@ function operations(initial: StoreData) {
       persistedStoreApi.setKey('codeTabs', tabs);
       persistedStoreApi.setKey('activeCodeTabId', tab.id);
       return tab;
-    },
-    addAppTab: (customAppId: string): CodeTab => {
-      const tab: CodeTab = {
-        id: nanoid(),
-        projectId: null,
-        sessionId: uuidv4(),
-        snapshotRef: uuidv4(),
-        customAppId,
-        profileName: resolveCodeTabProfileName(null),
-        profileNameExplicit: false,
-        createdAt: Date.now(),
-      };
-      const tabs = [...(persistedStoreApi.getKey('codeTabs') ?? []), tab];
-      persistedStoreApi.setKey('codeTabs', tabs);
-      return tab;
-    },
-    setTabAppId: (tabId: CodeTabId, customAppId: string) => {
-      const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) =>
-        t.id === tabId ? { ...t, customAppId } : t
-      );
-      persistedStoreApi.setKey('codeTabs', tabs);
     },
     openSidecarApp: (tabId: CodeTabId, appId: string) => {
       if (appId === 'chat') {
@@ -416,13 +394,7 @@ function operations(initial: StoreData) {
       // JSON transports encode an undefined positional argument as null.
       sessionId = sessionId ?? undefined;
       const current = (persistedStoreApi.getKey('codeTabs') ?? []).find((tab) => tab.id === tabId);
-      if (
-        current?.projectId &&
-        current.sessionId &&
-        current.sessionId !== sessionId &&
-        !current.customAppId &&
-        !current.routineId
-      ) {
+      if (current?.projectId && current.sessionId && current.sessionId !== sessionId && !current.routineId) {
         codeApi.recordConversation(current.sessionId);
       }
       const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) => {

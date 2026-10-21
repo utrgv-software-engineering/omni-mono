@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { Download, Globe, PlugZap, Plus } from 'lucide-react';
+import { Download, Globe, PlugZap } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useIsDesktop } from '@/renderer/common/use-is-desktop';
@@ -8,7 +8,6 @@ import { Button } from '@/renderer/ds/ui/button';
 import { Input } from '@/renderer/ds/ui/input';
 import { Skeleton } from '@/renderer/ds/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
-import { AppFormDialog } from '@/renderer/features/Plugins/AppFormDialog';
 import { ConnectorConfigDialog } from '@/renderer/features/Plugins/ConnectorConfigDialog';
 import { ExploreSection, FEATURED_MARKETPLACES, installKeyOf } from '@/renderer/features/Plugins/ExploreSection';
 import { InstalledSection } from '@/renderer/features/Plugins/InstalledSection';
@@ -38,8 +37,7 @@ import { agentConfigApi } from '@/renderer/services/config';
 import { emitter, isElectron } from '@/renderer/services/ipc';
 import { managementAdminApi } from '@/renderer/services/management-admin';
 import { persistedStoreApi } from '@/renderer/services/store';
-import type { CustomAppEntry } from '@/shared/app-registry';
-import type { BundleUpdateInfo, MarketplaceApp, McpServerEntry } from '@/shared/types';
+import type { BundleUpdateInfo, McpServerEntry } from '@/shared/types';
 
 const SKILL_FILE_FILTERS = [{ name: 'Skill packages', extensions: ['skill'] }];
 
@@ -50,35 +48,7 @@ const FILTER_OPTIONS: { value: PluginKind | 'all'; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'connector', label: 'Connectors' },
   { value: 'skill', label: 'Skills' },
-  { value: 'app', label: 'Apps' },
-  { value: 'extension', label: 'Extensions' },
 ];
-
-function installMarketplaceApp(app: MarketplaceApp): void {
-  const current = persistedStoreApi.$atom.get().customApps ?? [];
-  if (current.some((a) => a.url === app.url)) {
-    return;
-  }
-  const maxOrder = current.reduce((max, a) => Math.max(max, a.order), 40);
-  const entry: CustomAppEntry = {
-    id: app.id,
-    label: app.label,
-    icon: app.icon,
-    url: app.url,
-    order: maxOrder + 10,
-    columnScoped: app.columnScoped ?? false,
-  };
-  void persistedStoreApi.setKey('customApps', [...current, entry]);
-}
-
-/** Pull upstream label/icon onto the installed app; id, order, and the user's dock preference stay. */
-function updateMarketplaceAppEntry(app: MarketplaceApp): void {
-  const current = persistedStoreApi.$atom.get().customApps ?? [];
-  void persistedStoreApi.setKey(
-    'customApps',
-    current.map((a) => (a.url === app.url ? { ...a, label: app.label, icon: app.icon } : a))
-  );
-}
 
 export const PluginsView = memo(() => {
   const data = usePluginsData();
@@ -86,15 +56,12 @@ export const PluginsView = memo(() => {
   const refreshManagement = useProductManagementRefresh();
   const isDesktop = useIsDesktop();
   const store = useStore(persistedStoreApi.$atom);
-  const storeCustomApps = store.customApps;
-  const customApps = useMemo(() => storeCustomApps ?? [], [storeCustomApps]);
 
   const [filter, setFilter] = useState<PluginKind | 'all'>('all');
   const [query, setQuery] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [installingKey, setInstallingKey] = useState<string | null>(null);
   const [marketplaceOpen, setMarketplaceOpen] = useState(false);
-  const [appFormOpen, setAppFormOpen] = useState(false);
   /** `serverId: null` = create-new (name editable in the dialog). */
   const [connectorDialog, setConnectorDialog] = useState<{ serverId: string | null } | null>(null);
 
@@ -128,17 +95,15 @@ export const PluginsView = memo(() => {
         mcpConfig: effectiveMcpConfig,
         skills: data.skills,
         updates: data.updates,
-        customApps,
-        extensions: data.extensions,
         runtimeMcpServers: managementSnapshot.mcp.data?.servers,
       }),
-    [effectiveMcpConfig, data.skills, data.updates, customApps, data.extensions, managementSnapshot.mcp.data?.servers]
+    [effectiveMcpConfig, data.skills, data.updates, managementSnapshot.mcp.data?.servers]
   );
   const filteredInstalled = useMemo(() => filterPlugins(installed, filter, query), [installed, filter, query]);
 
   const ctx = useMemo(
-    () => ({ mcpConfig: effectiveMcpConfig, skills: data.skills, updates: data.updates, customApps }),
-    [effectiveMcpConfig, data.skills, data.updates, customApps]
+    () => ({ mcpConfig: effectiveMcpConfig, skills: data.skills, updates: data.updates }),
+    [effectiveMcpConfig, data.skills, data.updates]
   );
 
   const manifests = useFeaturedManifests(FEATURED_REPOS);
@@ -220,14 +185,10 @@ export const PluginsView = memo(() => {
           } else {
             await saveConnector(item.connector.id, item.connector.server);
           }
-        } else if (item.kind === 'skill') {
+        } else {
           const channel = mode === 'update' ? 'skills:update-marketplace-plugin' : 'skills:install-marketplace-plugin';
           await emitter.invoke(channel, item.repo, item.plugin.name);
           await refresh();
-        } else if (mode === 'update') {
-          updateMarketplaceAppEntry(item.app);
-        } else {
-          installMarketplaceApp(item.app);
         }
       } catch (e) {
         setActionError(e instanceof Error ? e.message : `Failed to ${mode} plugin`);
@@ -261,20 +222,6 @@ export const PluginsView = memo(() => {
           const merged = existing ? mergeConnectorUpdate(existing, c.connector.server) : c.connector.server;
           await saveConnector(c.connector.id, merged);
         }
-      }
-
-      // Drifted apps: patch label/icon in one store write.
-      const appDefs = driftedItems.flatMap((p) => (p.kind === 'app' ? [p.app] : []));
-      if (appDefs.length > 0) {
-        const byUrl = new Map(appDefs.map((a) => [a.url, a]));
-        const current = persistedStoreApi.$atom.get().customApps ?? [];
-        void persistedStoreApi.setKey(
-          'customApps',
-          current.map((a) => {
-            const def = byUrl.get(a.url);
-            return def ? { ...a, label: def.label, icon: def.icon } : a;
-          })
-        );
       }
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Failed to update plugins');
@@ -397,10 +344,6 @@ export const PluginsView = memo(() => {
             <div className="flex flex-col gap-2">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Add your own</span>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setAppFormOpen(true)}>
-                  <Plus className="mr-1" />
-                  Add custom app
-                </Button>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -428,7 +371,6 @@ export const PluginsView = memo(() => {
         )}
       </div>
 
-      <AppFormDialog open={appFormOpen} onClose={() => setAppFormOpen(false)} />
       <ConnectorConfigDialog
         open={connectorDialog !== null}
         serverId={connectorDialog?.serverId ?? null}

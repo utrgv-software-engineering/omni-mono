@@ -50,9 +50,6 @@ export { $agentStatuses as $codeTabStatuses, $agentXTerms as $codeTabXTerms };
 export const $codeTabPhases = map<Record<CodeTabId, AutoLaunchPhase>>({});
 export const $codeTabErrors = map<Record<CodeTabId, string | null>>({});
 
-/** The synthetic app-launcher column id ("Apps" grid). */
-export const APP_LAUNCHER_ID = '__launcher__';
-
 export function finishRemoval(tabId: string) {
   try {
     forgetTerminalsForTab(tabId);
@@ -117,8 +114,6 @@ export const codeApi = {
   restoreConversation: (...args: Parameters<ChatOperations['restoreConversation']>) =>
     run('restoreConversation', ...args),
   addTabForTicket: (...args: Parameters<ChatOperations['addTabForTicket']>) => run('addTabForTicket', ...args),
-  addAppTab: (...args: Parameters<ChatOperations['addAppTab']>) => run('addAppTab', ...args),
-  setTabAppId: (...args: Parameters<ChatOperations['setTabAppId']>) => run('setTabAppId', ...args),
   openSidecarApp: (...args: Parameters<ChatOperations['openSidecarApp']>) => run('openSidecarApp', ...args),
   setSidecarOpen: (...args: Parameters<ChatOperations['setSidecarOpen']>) => run('setSidecarOpen', ...args),
   setActiveSidecarApp: (...args: Parameters<ChatOperations['setActiveSidecarApp']>) =>
@@ -134,10 +129,6 @@ const listen = () => {
   const pollStatuses = async () => {
     const tabs = persistedStoreApi.getKey('codeTabs') ?? [];
     for (const tab of tabs) {
-      // Skip polling for custom app tabs — they have no sandbox
-      if (tab.customAppId) {
-        continue;
-      }
       await pollProcessStatus(tab.id);
     }
   };

@@ -1768,11 +1768,7 @@ export const createProjectManager = (arg: {
     ...registerProjectHandlers(ipc, () => projectManager),
     ...registerSupervisorHandlers(ipc, () => supervisors),
     ...registerMilestoneHandlers(ipc, () => milestones),
-    ...registerPageHandlers(
-      ipc,
-      () => pages,
-      (_event, projectId) => projectManager.getProjectDir(projectId)
-    ),
+    ...registerPageHandlers(ipc, () => pages),
     ...registerInboxHandlers(ipc, () => inbox),
     ...bridge.registerIpc(ipc),
   ];

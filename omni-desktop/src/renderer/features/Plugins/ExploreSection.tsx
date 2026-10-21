@@ -31,8 +31,6 @@ export function installKeyOf(item: ExplorePlugin): string {
       return `connector:${item.repo}:${item.connector.id}`;
     case 'skill':
       return `skill:${item.repo}:${item.plugin.name}`;
-    case 'app':
-      return `app:${item.repo}:${item.app.id}`;
   }
 }
 
@@ -45,8 +43,6 @@ function cardIcon(item: ExplorePlugin) {
       return item.connector.icon ? <AppIcon icon={item.connector.icon} size={20} /> : <PlugZap className="size-5" />;
     case 'skill':
       return <Lightbulb className="size-5" />;
-    case 'app':
-      return <AppIcon icon={item.app.icon} size={20} />;
   }
 }
 
@@ -56,8 +52,6 @@ function cardDescription(item: ExplorePlugin): string {
       return item.connector.description;
     case 'skill':
       return item.plugin.description;
-    case 'app':
-      return item.app.url;
   }
 }
 

@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExtensionDescriptor } from '@/shared/extensions';
 import type { BundleUpdateInfo, MarketplaceManifest, McpConfig, McpServerEntry, SkillEntry } from '@/shared/types';
 
 import {
-  appNeedsUpdate,
   buildExplorePlugins,
   buildInstalledPlugins,
   bundleUpdateKey,
@@ -23,15 +21,6 @@ const skill = (overrides: Partial<SkillEntry> = {}): SkillEntry => ({
   path: '/skills/git-workflow',
   enabled: true,
   source: { kind: 'marketplace', repo: 'omni/official', plugin: 'dev-tools', ref: 'main' },
-  ...overrides,
-});
-
-const extension = (overrides: Partial<ExtensionDescriptor> = {}): ExtensionDescriptor => ({
-  id: 'marimo',
-  name: 'Marimo',
-  description: 'Reactive notebooks',
-  enabled: true,
-  contentTypes: [{ id: 'notebook', label: 'Notebook', fileExtension: '.py' }],
   ...overrides,
 });
 
@@ -61,21 +50,17 @@ describe('formatPluginName', () => {
 });
 
 describe('buildInstalledPlugins', () => {
-  it('merges all four sources ordered by kind then name', () => {
+  it('merges both sources ordered by kind then name', () => {
     const items = buildInstalledPlugins({
       mcpConfig: mcpConfig({ github: { type: 'stdio', command: 'gh-mcp' } }),
       skills: [skill()],
       updates: {},
-      customApps: [{ id: 'a1', label: 'Teams', icon: 'Globe', url: 'https://teams', order: 50 }],
-      extensions: [extension()],
     });
-    expect(items.map((i) => i.kind)).toEqual(['connector', 'skill', 'app', 'extension']);
+    expect(items.map((i) => i.kind)).toEqual(['connector', 'skill']);
   });
 
   it('returns empty for empty inputs', () => {
-    expect(buildInstalledPlugins({ mcpConfig: null, skills: [], updates: {}, customApps: [], extensions: [] })).toEqual(
-      []
-    );
+    expect(buildInstalledPlugins({ mcpConfig: null, skills: [], updates: {} })).toEqual([]);
   });
 
   it('surfaces runtime-only managed servers with read-only metadata', () => {
@@ -83,8 +68,6 @@ describe('buildInstalledPlugins', () => {
       mcpConfig: null,
       skills: [],
       updates: {},
-      customApps: [],
-      extensions: [],
       runtimeMcpServers: [
         {
           server_name: 'omni-projects',
@@ -115,8 +98,6 @@ describe('buildInstalledPlugins', () => {
       mcpConfig: null,
       skills: [skill(), skill({ name: 'local-skill', source: { kind: 'local' } })],
       updates: { [bundleUpdateKey('omni/official', 'dev-tools')]: update() },
-      customApps: [],
-      extensions: [],
     });
     const [marketplaceSkill, localSkill] = items;
     expect(marketplaceSkill).toMatchObject({ kind: 'skill', update: { plugin: 'dev-tools' } });
@@ -128,8 +109,6 @@ describe('buildInstalledPlugins', () => {
       mcpConfig: null,
       skills: [skill()],
       updates: { [bundleUpdateKey('omni/official', 'dev-tools')]: update({ status: 'up-to-date' }) },
-      customApps: [],
-      extensions: [],
     });
     expect(items[0]).toMatchObject({ update: undefined });
   });
@@ -188,23 +167,8 @@ describe('mergeConnectorUpdate', () => {
   });
 });
 
-describe('appNeedsUpdate', () => {
-  const installed = { id: 'a1', label: 'Teams', icon: 'Globe', url: 'https://teams', order: 50 };
-  it('detects label/icon drift but ignores the dock preference', () => {
-    expect(appNeedsUpdate(installed, { id: 'x', label: 'Teams', icon: 'Globe', url: 'https://teams' })).toBe(false);
-    expect(appNeedsUpdate(installed, { id: 'x', label: 'MS Teams', icon: 'Globe', url: 'https://teams' })).toBe(true);
-    expect(appNeedsUpdate(installed, { id: 'x', label: 'Teams', icon: 'Users', url: 'https://teams' })).toBe(true);
-    expect(
-      appNeedsUpdate(
-        { ...installed, columnScoped: true },
-        { id: 'x', label: 'Teams', icon: 'Globe', url: 'https://teams', columnScoped: false }
-      )
-    ).toBe(false);
-  });
-});
-
 describe('collectDriftedItems', () => {
-  it('keeps only installed connectors/apps that drifted, deduped by identity across repos', () => {
+  it('keeps only installed connectors that drifted, deduped by identity across repos', () => {
     const drifted = buildExplorePlugins(
       'omni/official',
       manifest({
@@ -213,24 +177,19 @@ describe('collectDriftedItems', () => {
           { id: 'teams', label: 'Teams', description: 'Chats', server: { type: 'http', url: 'https://mcp' } },
         ],
         plugins: [{ name: 'dev-tools', description: 'Dev', source: '.', skills: [] }],
-        apps: [{ id: 'x1', label: 'MS Teams', icon: 'Globe', url: 'https://teams' }],
       }),
       {
         mcpConfig: mcpConfig({ github: { type: 'stdio', command: 'gh-mcp' } }),
         skills: [skill()],
         updates: { [bundleUpdateKey('omni/official', 'dev-tools')]: update() },
-        customApps: [{ id: 'a1', label: 'Teams', icon: 'Globe', url: 'https://teams', order: 50 }],
       }
     );
     // Same catalog surfaced by a second marketplace — must not double-count.
     const fromSecondRepo = drifted.map((p) => ({ ...p, repo: 'other/mirror' }));
 
     const result = collectDriftedItems([...drifted, ...fromSecondRepo]);
-    expect(result).toHaveLength(2);
-    expect(result).toMatchObject([
-      { kind: 'connector', repo: 'omni/official', connector: { id: 'github' } },
-      { kind: 'app', repo: 'omni/official', app: { label: 'MS Teams' } },
-    ]);
+    expect(result).toHaveLength(1);
+    expect(result).toMatchObject([{ kind: 'connector', repo: 'omni/official', connector: { id: 'github' } }]);
   });
 
   it('returns empty when nothing drifted', () => {
@@ -292,23 +251,6 @@ describe('buildExplorePlugins', () => {
       { kind: 'skill', installed: false, update: undefined },
     ]);
   });
-
-  it('detects app installs by URL', () => {
-    const items = buildExplorePlugins(
-      'omni/official',
-      manifest({
-        apps: [
-          { id: 'x1', label: 'Teams', icon: 'Globe', url: 'https://teams' },
-          { id: 'x2', label: 'Zoom', icon: 'Video', url: 'https://zoom' },
-        ],
-      }),
-      ctx
-    );
-    expect(items).toMatchObject([
-      { kind: 'app', installed: true },
-      { kind: 'app', installed: false },
-    ]);
-  });
 });
 
 describe('filterPlugins', () => {
@@ -316,21 +258,19 @@ describe('filterPlugins', () => {
     mcpConfig: mcpConfig({ github: { type: 'stdio', command: 'gh-mcp' } }),
     skills: [skill()],
     updates: {},
-    customApps: [{ id: 'a1', label: 'Teams', icon: 'Globe', url: 'https://teams', order: 50 }],
-    extensions: [extension()],
   });
 
   it('passes everything through for all + empty query', () => {
-    expect(filterPlugins(items, 'all', '')).toHaveLength(4);
+    expect(filterPlugins(items, 'all', '')).toHaveLength(2);
   });
 
   it('filters by kind', () => {
     expect(filterPlugins(items, 'connector', '').map(displayName)).toEqual(['github']);
-    expect(filterPlugins(items, 'extension', '').map(displayName)).toEqual(['Marimo']);
+    expect(filterPlugins(items, 'skill', '').map(displayName)).toEqual(['git-workflow']);
   });
 
   it('matches queries case-insensitively on name and description', () => {
-    expect(filterPlugins(items, 'all', 'NOTEBOOKS').map(displayName)).toEqual(['Marimo']);
+    expect(filterPlugins(items, 'all', 'GIT HELPERS').map(displayName)).toEqual(['git-workflow']);
     expect(filterPlugins(items, 'all', 'zoom').map(displayName)).toEqual([]);
     expect(filterPlugins(items, 'all', 'git').map(displayName)).toEqual(['github', 'git-workflow']);
     expect(filterPlugins(items, 'all', 'workflow').map(displayName)).toEqual(['git-workflow']);
@@ -340,14 +280,14 @@ describe('filterPlugins', () => {
     const explore = buildExplorePlugins(
       'omni/official',
       manifest({ plugins: [{ name: 'dev-tools', description: 'Dev', source: '.', skills: [] }] }),
-      { mcpConfig: null, skills: [], updates: {}, customApps: [] }
+      { mcpConfig: null, skills: [], updates: {} }
     );
     expect(filterPlugins(explore, 'skill', 'Dev Tools')).toHaveLength(1);
     expect(filterPlugins(explore, 'skill', 'dev-tools')).toHaveLength(1);
   });
 
   it('combines kind and query', () => {
-    expect(filterPlugins(items, 'app', 'github')).toHaveLength(0);
+    expect(filterPlugins(items, 'skill', 'github')).toHaveLength(0);
     expect(filterPlugins(items, 'connector', 'github')).toHaveLength(1);
   });
 });

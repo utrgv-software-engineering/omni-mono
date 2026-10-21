@@ -37,7 +37,7 @@ import { persistedStoreApi } from '@/renderer/services/store';
 import { getVoiceClient } from '@/renderer/services/voice-client';
 import type { AppClickButton, AppConsoleLevel, AppScopeFilter } from '@/shared/app-control-types';
 import { makeAppHandleId, parseAppHandleId } from '@/shared/app-control-types';
-import { buildAppRegistry } from '@/shared/app-registry';
+import { APP_REGISTRY } from '@/shared/app-registry';
 import type { ProjectId, TicketId } from '@/shared/types';
 import { getActivePersona, resolveVoiceArg } from '@/shared/voice-personas';
 
@@ -135,7 +135,7 @@ function handleLaunchApp(toolArgs: Record<string, unknown>, filter: AppScopeFilt
     return err('chat is the conversation surface, not a launchable app.');
   }
 
-  const registry = buildAppRegistry(persistedStoreApi.getKey('customApps') ?? []);
+  const registry = APP_REGISTRY;
   const desc = registry.find((a) => a.id === appId);
   if (!desc) {
     return err(`Unknown app: "${appId}". Call list_apps to see valid ids.`);
@@ -604,7 +604,6 @@ async function handleWorkspaceTools(
           project: t.projectId ? (projects.find((p) => p.id === t.projectId)?.label ?? null) : null,
           ticket_id: t.ticketId ?? null,
           ticket: t.ticketId ? (tickets.find((x) => x.id === t.ticketId)?.title ?? t.ticketTitle ?? null) : null,
-          app: t.customAppId ?? null,
           sandbox: statuses[t.id]?.type ?? 'uninitialized',
           // Structured pointer at the conversation; drill in with column_transcript.
           // `latest_cursor` is the high-water mark — poll column_transcript(after:)

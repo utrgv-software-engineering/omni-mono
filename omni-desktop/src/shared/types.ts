@@ -1,8 +1,6 @@
 import type { Rectangle } from 'electron/main';
 import type { Schema } from 'electron-store';
 
-import type { CustomAppEntry } from '@/shared/app-registry';
-import type { ExtensionDescriptor, ExtensionEnsureResult, ExtensionInstanceState } from '@/shared/extensions';
 import type { ManagementAdminRequest, ManagementAdminResult } from '@/shared/management-admin';
 import type { VoicePersona } from '@/shared/voice-personas';
 
@@ -598,12 +596,6 @@ export type StoreData = {
   activeTicketId: TicketId | null;
 
   /**
-   * Per-extension enabled flag. Missing/false means the extension is dormant
-   * and never spawns a subprocess. Toggled from Settings → Extensions.
-   */
-  enabledExtensions: Record<string, boolean>;
-
-  /**
    * How each skill was installed. Missing means discovered locally (user
    * created the directory manually). Persists across sessions so the UI
    * can show provenance (e.g. "Installed from pdf.skill").
@@ -619,9 +611,6 @@ export type StoreData = {
    * install time, so update checks can diff against the live manifest.
    */
   installedBundles: Record<string, InstalledBundle>;
-
-  /** User-added custom apps for the workspace dock. */
-  customApps: CustomAppEntry[];
 
   /**
    * Stored git credentials (metadata only — token bytes live in the
@@ -1364,7 +1353,6 @@ export const schema: Schema<StoreData> = {
         icon: { type: 'string' },
         sortOrder: { type: 'number' },
         isRoot: { type: 'boolean' },
-        kind: { type: 'string', enum: ['doc', 'notebook'] },
         createdAt: { type: 'number' },
         updatedAt: { type: 'number' },
         seedKey: { type: 'string' },
@@ -1462,11 +1450,6 @@ export const schema: Schema<StoreData> = {
       required: ['id', 'projectId', 'title', 'description', 'priority', 'blockedBy', 'createdAt', 'updatedAt'],
     },
   },
-  enabledExtensions: {
-    type: 'object',
-    additionalProperties: { type: 'boolean' },
-    default: {},
-  },
   skillSources: {
     type: 'object',
     additionalProperties: { type: 'object' },
@@ -1476,22 +1459,6 @@ export const schema: Schema<StoreData> = {
     type: 'object',
     additionalProperties: { type: 'object' },
     default: {},
-  },
-  customApps: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        label: { type: 'string' },
-        icon: { type: 'string' },
-        url: { type: 'string' },
-        order: { type: 'number' },
-        columnScoped: { type: 'boolean' },
-      },
-      required: ['id', 'label', 'icon', 'url', 'order'],
-    },
   },
   gitCredentials: {
     type: 'array',
@@ -1933,8 +1900,6 @@ export type CodeTab = {
   routineName?: string;
   routineSchedule?: string;
   workspaceDir?: string;
-  /** When set, this tab renders as a global app column (webview) instead of an agent session. */
-  customAppId?: string;
   /** Whether this session's right sidecar is visible. Open tabs remain mounted while hidden. */
   sidecarOpen?: boolean;
   /** Column-scoped apps currently open as tabs in this session's right sidecar. */
@@ -1974,8 +1939,8 @@ export type CodeTab = {
  * with ``surface: 'chat'`` variables. Purely derived — any tab the user
  * hasn't bound to a project, routine, or app is a chat column.
  */
-export const isChatColumn = (tab: Pick<CodeTab, 'projectId' | 'routineId' | 'customAppId'>): boolean =>
-  !tab.projectId && !tab.routineId && !tab.customAppId;
+export const isChatColumn = (tab: Pick<CodeTab, 'projectId' | 'routineId'>): boolean =>
+  !tab.projectId && !tab.routineId;
 
 /** An indexed agent conversation, resumable from the sidebar. */
 export type ChatConversation = {
@@ -2266,8 +2231,6 @@ export type Milestone = {
  * and markdown body (stored on disk, not in the store). Pages have no
  * lifecycle status — they are docs, not work items. Work happens on tickets.
  */
-export type PageKind = 'doc' | 'notebook';
-
 export type PageProperties = {
   status?: string;
   size?: string;
@@ -2290,12 +2253,6 @@ export type Page = {
   sortOrder: number;
   /** True for the auto-created root page. Cannot be deleted. */
   isRoot?: boolean;
-  /**
-   * Content kind. 'doc' (default) is a Yoopta markdown page stored as `.md`.
-   * 'notebook' is a marimo notebook stored as `.py`, edited via the marimo
-   * extension's webview surface. Root pages are always 'doc'.
-   */
-  kind?: PageKind;
   /** Structured metadata fields (status, size, outcome, etc.) for this page. */
   properties?: PageProperties;
   createdAt: number;
@@ -3110,19 +3067,6 @@ export type MarketplacePlugin = {
 };
 
 /**
- * Shape of a `.claude-plugin/marketplace.json` file as published by
- * Anthropic's skills repo and other Claude Code plugin marketplaces.
- */
-export type MarketplaceApp = {
-  id: string;
-  label: string;
-  icon: string;
-  url: string;
-  /** When true, install the app as column-scoped (visible in each session's dock). */
-  columnScoped?: boolean;
-};
-
-/**
  * One entry in a marketplace.json connectors[] array — a pre-configured MCP
  * server the user can install with one click. `server` is the exact entry
  * merged into `McpConfig.mcpServers` under key `id`.
@@ -3137,12 +3081,15 @@ export type MarketplaceConnector = {
   server: McpServerEntry;
 };
 
+/**
+ * Shape of a `.claude-plugin/marketplace.json` file as published by
+ * Anthropic's skills repo and other Claude Code plugin marketplaces.
+ */
 export type MarketplaceManifest = {
   name: string;
   owner?: { name?: string; email?: string };
   metadata?: { description?: string; version?: string };
   plugins: MarketplacePlugin[];
-  apps?: MarketplaceApp[];
   connectors?: MarketplaceConnector[];
 };
 
@@ -3540,14 +3487,6 @@ type PageIpcEvents = Namespaced<
     watch: (pageId: PageId) => { content: string } | null;
     /** Unsubscribe from external-edit notifications. */
     unwatch: (pageId: PageId) => void;
-    /**
-     * Resolve a notebook page to its on-disk `.py` absolute path and the
-     * containing project directory (used as the cwd for the marimo extension
-     * instance). Returns null if the page isn't a notebook.
-     */
-    'get-notebook-paths': (pageId: PageId) => { filePath: string; projectDir: string } | null;
-    /** Prepare the notebook's marimo configuration before launch. */
-    'prepare-notebook': (pageId: PageId) => void;
   }
 >;
 
@@ -3617,26 +3556,6 @@ type InboxIpcEvents = Namespaced<
      * Called on a schedule; exposed for manual triggering in tests/tools.
      */
     'gc-promoted': () => number;
-  }
->;
-
-/**
- * Extension API. Built-in (and eventually user-managed) external tools the
- * launcher orchestrates as local subprocesses. Marimo is the seed consumer.
- *
- * Instances are scoped to a working directory (typically a project folder)
- * and refcounted — multiple webview surfaces sharing the same cwd reuse a
- * single subprocess. See `src/main/extension-manager.ts` for the lifecycle.
- */
-type ExtensionIpcEvents = Namespaced<
-  'extension',
-  {
-    'list-descriptors': () => ExtensionDescriptor[];
-    'set-enabled': (id: string, enabled: boolean) => void;
-    'get-instance-status': (id: string, cwd: string) => ExtensionInstanceState;
-    'ensure-instance': (id: string, cwd: string) => ExtensionEnsureResult;
-    'release-instance': (id: string, cwd: string) => void;
-    'get-logs': (id: string, cwd: string) => string;
   }
 >;
 
@@ -3980,7 +3899,6 @@ export type IpcEvents = UserProfileIpcEvents &
   PageIpcEvents &
   InboxIpcEvents &
   MigrationIpcEvents &
-  ExtensionIpcEvents &
   AppControlIpcEvents &
   BrowserIpcEvents &
   SupervisorIpcEvents &
@@ -4108,18 +4026,6 @@ type PageIpcRendererEvents = Namespaced<
 >;
 
 /**
- * Extension events. Main process emits these, renderer listens. Status
- * updates fire on every state transition (idle → starting → running → idle/error)
- * for a given (extensionId, cwd) instance.
- */
-type ExtensionIpcRendererEvents = Namespaced<
-  'extension',
-  {
-    'status-changed': [string, string, ExtensionInstanceState];
-  }
->;
-
-/**
  * Supervisor bridge — main → renderer. Main issues commands to the column
  * actor. Tool calls / approvals never round-trip through main; the column's
  * `buildClientToolHandler` handles them directly.
@@ -4220,7 +4126,6 @@ export type IpcRendererEvents = TerminalIpcRendererEvents &
   ProjectIpcRendererEvents &
   PageIpcRendererEvents &
   ToastIpcRendererEvents &
-  ExtensionIpcRendererEvents &
   BrowserIpcRendererEvents &
   SupervisorIpcRendererEvents &
   RoutineIpcRendererEvents &

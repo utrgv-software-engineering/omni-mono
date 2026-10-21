@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { agentConfigApi } from '@/renderer/services/config';
 import { emitter } from '@/renderer/services/ipc';
-import type { ExtensionDescriptor } from '@/shared/extensions';
 import type { BundleUpdateInfo, MarketplaceManifest, McpConfig, SkillEntry } from '@/shared/types';
 
 export type PluginsData = {
@@ -10,30 +9,26 @@ export type PluginsData = {
   error: string | null;
   skills: SkillEntry[];
   updates: Record<string, BundleUpdateInfo>;
-  extensions: ExtensionDescriptor[];
   mcpConfig: McpConfig | null;
   /** Reload everything; used as the post-mutation callback. */
   refresh: () => Promise<void>;
 };
 
 /**
- * Loads the installed side of the Plugins tab (skills + bundle updates,
- * extensions, MCP config). Sources fail independently — one unreachable
- * backend surfaces as the error banner without blanking the others.
- * Custom apps come reactively from the persisted store, not from here.
+ * Loads the installed side of the Plugins tab (skills + bundle updates, MCP
+ * config). Sources fail independently — one unreachable backend surfaces as
+ * the error banner without blanking the others.
  */
 export function usePluginsData(): PluginsData {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillEntry[]>([]);
   const [updates, setUpdates] = useState<Record<string, BundleUpdateInfo>>({});
-  const [extensions, setExtensions] = useState<ExtensionDescriptor[]>([]);
   const [mcpConfig, setMcpConfig] = useState<McpConfig | null>(null);
 
   const refresh = useCallback(async () => {
     const results = await Promise.allSettled([
       emitter.invoke('skills:list').then(setSkills),
-      emitter.invoke('extension:list-descriptors').then(setExtensions),
       agentConfigApi.getMcp().then(setMcpConfig),
     ]);
     const failure = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
@@ -55,7 +50,7 @@ export function usePluginsData(): PluginsData {
     void refresh();
   }, [refresh]);
 
-  return { loading, error, skills, updates, extensions, mcpConfig, refresh };
+  return { loading, error, skills, updates, mcpConfig, refresh };
 }
 
 export type FeaturedManifestState = {

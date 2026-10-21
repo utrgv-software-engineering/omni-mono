@@ -25,11 +25,8 @@ import {
   Columns3,
   Ellipsis,
   GitFork,
-  Globe,
   GripVertical,
-  LayoutGrid,
   Maximize2,
-  MessageCircle,
   Minimize2,
   PanelRight,
   Plus,
@@ -39,12 +36,11 @@ import {
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { customAppPartition } from '@/lib/app-partition';
 import { Webview } from '@/renderer/common/Webview';
 import { ClosableTab, ClosableTabsList } from '@/renderer/ds/ClosableTabs';
 import { cn } from '@/renderer/ds/cn';
 import { Button } from '@/renderer/ds/ui/button';
-/** Sentinel customAppId meaning "show the app launcher picker". */ import {
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -72,8 +68,8 @@ import { persistedStoreApi } from '@/renderer/services/store';
 import { ENTER_ANIMATE, ENTER_INITIAL, FADE_DURATION_S, SPRING_GENTLE, SPRING_STANDARD } from '@/renderer/theme/motion';
 import type { AppHandleScope } from '@/shared/app-control-types';
 import { makeAppHandleId } from '@/shared/app-control-types';
-import type { AppDescriptor, AppId, CustomAppEntry } from '@/shared/app-registry';
-import { buildAppRegistry } from '@/shared/app-registry';
+import type { AppDescriptor, AppId } from '@/shared/app-registry';
+import { APP_REGISTRY } from '@/shared/app-registry';
 import type { AutoLaunchPhase } from '@/shared/machines/auto-launch.machine';
 import type { CodeLayoutMode, CodeTab, CodeTabId, ProjectId, TicketId } from '@/shared/types';
 import { firstSource, isChatColumn, projectHasRepoSource } from '@/shared/types';
@@ -81,28 +77,8 @@ import { firstSource, isChatColumn, projectHasRepoSource } from '@/shared/types'
 import { AppIcon } from './AppIcon';
 import { CodeTabContent } from './CodeTabContent';
 import { ColumnAura } from './ColumnAura';
-import { $codeTabPhases, $codeTabStatuses, APP_LAUNCHER_ID, codeApi, finishRemoval } from './state';
+import { $codeTabPhases, $codeTabStatuses, codeApi, finishRemoval } from './state';
 import { useRecentConversations } from './use-recent-conversations';
-
-const BROWSER_APP_ID = 'browser';
-const BROWSER_START_URL = 'https://duckduckgo.com';
-
-/**
- * Synthetic launcher entry for a global browser column. Rendered with a URL
- * bar (see `BrowserColumn`) instead of a plain webview — it's the "address-bar
- * browser" counterpart to per-session dock previews.
- */
-const SYNTHETIC_BROWSER_APP: CustomAppEntry = {
-  id: BROWSER_APP_ID,
-  label: 'Browser',
-  icon: 'Globe',
-  url: BROWSER_START_URL,
-  order: -1,
-  columnScoped: false,
-};
-
-// URL normalization lives in `@/lib/url` so it's shared with the
-// main-process BrowserManager and testable without the DOM.
 
 const COLUMN_WIDTH = 480;
 const COLUMN_WIDTH_SMALL = 360;
@@ -147,12 +123,10 @@ const CodeDeckHeader = memo(
     layoutMode,
     onLayoutModeChange,
     onNewSession,
-    onOpenApps,
   }: {
     layoutMode: CodeLayoutMode;
     onLayoutModeChange: (mode: CodeLayoutMode) => void;
     onNewSession: () => void;
-    onOpenApps: () => void;
   }) => {
     const { isMobile, state: sidebarState } = useSidebar();
     const navigationHidden = isMobile || sidebarState === 'collapsed';
@@ -189,26 +163,10 @@ const CodeDeckHeader = memo(
           </ToggleGroupItem>
         </ToggleGroup>
         <div className="flex items-center gap-2 ml-auto">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="ghost">
-                <Plus className="size-4" />
-                New
-              </Button>
-            </DropdownMenuTrigger>
-            <>
-              <DropdownMenuContent>
-                <DropdownMenuItem onClick={onNewSession}>
-                  <MessageCircle className="mr-1.5 size-4 align-text-bottom" />
-                  Chat
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={onOpenApps}>
-                  <LayoutGrid className="mr-1.5 size-4 align-text-bottom" />
-                  Apps
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </>
-          </DropdownMenu>
+          <Button size="sm" variant="ghost" onClick={onNewSession}>
+            <Plus className="size-4" />
+            New chat
+          </Button>
         </div>
       </div>
     );
@@ -676,228 +634,6 @@ const DeckColumn = memo(
 );
 DeckColumn.displayName = 'DeckColumn';
 
-const AppColumn = memo(
-  ({
-    tab,
-    app,
-    onClose,
-    onFocus,
-    isExpanded,
-    onToggleExpand,
-  }: {
-    tab: CodeTab;
-    app: CustomAppEntry;
-    onClose: (id: CodeTabId) => void;
-    onFocus: (id: CodeTabId) => void;
-    isExpanded: boolean;
-    onToggleExpand: (id: CodeTabId) => void;
-  }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tab.id });
-    const style = { transform: CSS.Transform.toString(transform), transition };
-    const registryProps = useMemo(() => {
-      const scope: AppHandleScope = app.columnScoped ? 'column' : 'global';
-      return {
-        handleId: makeAppHandleId(scope, app.id, scope === 'column' ? tab.id : undefined),
-        appId: app.id,
-        kind: 'webview' as const,
-        scope,
-        ...(scope === 'column' ? { tabId: tab.id } : {}),
-        label: app.label,
-      };
-    }, [app.id, app.label, app.columnScoped, tab.id]);
-
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className={cn(
-          'flex flex-col w-full h-full min-w-0 min-h-0 overflow-hidden bg-transparent',
-          isDragging && 'opacity-85'
-        )}
-      >
-        <div
-          className={cn(
-            'flex flex-1 flex-col min-w-0 min-h-0 relative border border-border rounded-2xl overflow-hidden m-2 bg-card transition-colors duration-100 ease-in-out [&:hover_.revealOnHover]:opacity-100 [&:focus-within_.revealOnHover]:opacity-100 hover:border-primary'
-          )}
-        >
-          <div
-            className={cn(
-              'relative flex items-center justify-between pl-4 pr-2 pt-1 pb-1 min-h-8 bg-transparent',
-              'cursor-grab select-none select-none touch-manipulation active:cursor-grabbing'
-            )}
-            {...listeners}
-          >
-            <div className={cn('flex items-center', 'gap-2', 'min-w-0')}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="sr-only cursor-grab text-muted-foreground focus-visible:not-sr-only focus-visible:relative focus-visible:size-5 focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-1"
-                {...attributes}
-                {...listeners}
-                aria-label={`Reorder ${app.label}`}
-              >
-                <GripVertical className="size-4" />
-              </Button>
-              <span
-                className="text-xs font-medium text-muted-foreground tracking-normal overflow-hidden text-ellipsis whitespace-nowrap"
-                title={app.label}
-              >
-                {app.label}
-              </span>
-            </div>
-            <div className={cn('flex items-center', 'gap-1')}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Focus ${app.label}`}
-                title="Focus app"
-                onClick={() => onFocus(tab.id)}
-              >
-                <Scan className="size-4" />
-              </Button>
-              <Toggle
-                size="sm"
-                pressed={isExpanded}
-                aria-label={isExpanded ? 'Collapse column' : 'Expand column'}
-                title={isExpanded ? 'Collapse column' : 'Expand column'}
-                onPressedChange={() => onToggleExpand(tab.id)}
-              >
-                {isExpanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-              </Toggle>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Close ${app.label}`}
-                title={`Close ${app.label}`}
-                onClick={() => onClose(tab.id)}
-              >
-                <Plus className="size-4 rotate-45" />
-              </Button>
-            </div>
-          </div>
-          <div className="flex-1 min-h-0 relative">
-            <Webview
-              src={app.url}
-              partition={customAppPartition(app.id)}
-              showUnavailable={false}
-              registry={registryProps}
-            />
-          </div>
-        </div>
-      </div>
-    );
-  }
-);
-AppColumn.displayName = 'AppColumn';
-
-/**
- * Standalone browser deck column. Chrome (drag handle, expand/collapse, close)
- * lives here; the browser itself is the shared `BrowserView` component so the
- * standalone column and the per-session dock stay behaviorally identical.
- */
-const BrowserColumn = memo(
-  ({
-    tab,
-    onClose,
-    onFocus,
-    isExpanded,
-    onToggleExpand,
-  }: {
-    tab: CodeTab;
-    onClose: (id: CodeTabId) => void;
-    onFocus: (id: CodeTabId) => void;
-    isExpanded: boolean;
-    onToggleExpand: (id: CodeTabId) => void;
-  }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tab.id });
-    const style = { transform: CSS.Transform.toString(transform), transition };
-
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className={cn(
-          'flex flex-col w-full h-full min-w-0 min-h-0 overflow-hidden bg-transparent',
-          isDragging && 'opacity-85'
-        )}
-      >
-        <div
-          className={cn(
-            'flex flex-1 flex-col min-w-0 min-h-0 relative border border-border rounded-2xl overflow-hidden m-2 bg-card transition-colors duration-100 ease-in-out [&:hover_.revealOnHover]:opacity-100 [&:focus-within_.revealOnHover]:opacity-100 hover:border-primary'
-          )}
-        >
-          <div
-            className={cn(
-              'relative flex items-center justify-between pl-4 pr-2 pt-1 pb-1 min-h-8 bg-transparent',
-              'cursor-grab select-none select-none touch-manipulation active:cursor-grabbing'
-            )}
-            {...listeners}
-          >
-            <div className={cn('flex items-center', 'gap-2', 'min-w-0')}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="sr-only cursor-grab text-muted-foreground focus-visible:not-sr-only focus-visible:relative focus-visible:size-5 focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-1"
-                {...attributes}
-                {...listeners}
-                aria-label="Reorder Browser"
-              >
-                <GripVertical className="size-4" />
-              </Button>
-              <Globe className="size-3.5 text-foreground/80" />
-              <span
-                className="text-xs font-medium text-muted-foreground tracking-normal overflow-hidden text-ellipsis whitespace-nowrap"
-                title="Browser"
-              >
-                Browser
-              </span>
-            </div>
-            <div className={cn('flex items-center', 'gap-1')}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Focus Browser"
-                title="Focus app"
-                onClick={() => onFocus(tab.id)}
-              >
-                <Scan className="size-4" />
-              </Button>
-              <Toggle
-                size="sm"
-                pressed={isExpanded}
-                aria-label={isExpanded ? 'Collapse column' : 'Expand column'}
-                title={isExpanded ? 'Collapse column' : 'Expand column'}
-                onPressedChange={() => onToggleExpand(tab.id)}
-              >
-                {isExpanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-              </Toggle>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Close Browser"
-                title="Close Browser"
-                onClick={() => onClose(tab.id)}
-              >
-                <Plus className="size-4 rotate-45" />
-              </Button>
-            </div>
-          </div>
-          <div className="flex-1 min-h-0 relative">
-            <BrowserView tabsetId={`col:${tab.id}`} />
-          </div>
-        </div>
-      </div>
-    );
-  }
-);
-BrowserColumn.displayName = 'BrowserColumn';
-
 type SidecarBodyProps = {
   app: AppDescriptor;
   originTabId: CodeTabId;
@@ -1027,17 +763,6 @@ const SidecarBody = memo(
         <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
           {app.label} is unavailable for this workspace.
         </div>
-      );
-    } else if (app.kind === 'webview') {
-      body = app.url ? (
-        <Webview
-          src={app.url}
-          partition={customAppPartition(app.id)}
-          showUnavailable={false}
-          registry={registryProps}
-        />
-      ) : (
-        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">No URL configured.</div>
       );
     }
 
@@ -1225,265 +950,6 @@ const SidecarColumn = memo(
 );
 SidecarColumn.displayName = 'SidecarColumn';
 
-const LAUNCHER_CELL_MIN_PX = 64;
-const LAUNCHER_CELL_MAX_PX = 96;
-const LAUNCHER_COL_GAP_PX = 20;
-const LAUNCHER_HEX_MAX_HEIGHT = 15;
-
-type LauncherLayout = { rows: number[]; cellWidth: number; uniform: boolean };
-
-/**
- * Picks the smallest symmetric hex-diamond shape whose capacity ≥ n, then
- * sizes cells to fit the container. A shape of height h (odd) and peak width
- * k has rows [k-m, …, k-1, k, k-1, …, k-m] where m=(h-1)/2, capacity =
- * k*h − m*(m+1). If the ideal shape's peak can't fit even at min cell width,
- * falls back to a taller/narrower shape; ultimately to uniform rows with
- * manual honeycomb offset.
- */
-function computeLauncherLayout(n: number, containerWidth: number): LauncherLayout {
-  if (n <= 0) {
-    return { rows: [], cellWidth: LAUNCHER_CELL_MIN_PX, uniform: false };
-  }
-
-  type Candidate = { h: number; k: number; capacity: number; cellWidth: number };
-  const candidates: Candidate[] = [];
-
-  for (let h = 1; h <= LAUNCHER_HEX_MAX_HEIGHT; h += 2) {
-    const m = (h - 1) / 2;
-    const minK = m + 1;
-    const k = Math.max(minK, Math.ceil((n + m * (m + 1)) / h));
-    const capacity = k * h - m * (m + 1);
-    if (capacity < n) {
-      continue;
-    }
-    const cellWidth = (containerWidth - LAUNCHER_COL_GAP_PX * (k - 1)) / k;
-    if (cellWidth < LAUNCHER_CELL_MIN_PX) {
-      continue;
-    }
-    candidates.push({ h, k, capacity, cellWidth });
-  }
-
-  if (candidates.length > 0) {
-    // Prefer smallest capacity (fewest empty slots), tiebreak by fewest rows.
-    candidates.sort((a, b) => a.capacity - b.capacity || a.h - b.h);
-    const { h, k, cellWidth } = candidates[0]!;
-    const m = (h - 1) / 2;
-    const rows: number[] = [];
-    for (let i = 0; i < h; i++) {
-      rows.push(k - Math.abs(i - m));
-    }
-    const uniform = rows.length === 1 || rows.every((w) => w === rows[0]);
-    return {
-      rows,
-      cellWidth: Math.min(LAUNCHER_CELL_MAX_PX, cellWidth),
-      uniform,
-    };
-  }
-
-  // Fallback: uniform rows at min cell width
-  const maxCols = Math.max(
-    2,
-    Math.floor((containerWidth + LAUNCHER_COL_GAP_PX) / (LAUNCHER_CELL_MIN_PX + LAUNCHER_COL_GAP_PX))
-  );
-  const rows: number[] = [];
-  let remaining = n;
-  while (remaining > 0) {
-    const w = Math.min(remaining, maxCols);
-    rows.push(w);
-    remaining -= w;
-  }
-  return { rows, cellWidth: LAUNCHER_CELL_MIN_PX, uniform: true };
-}
-
-const AppLauncherGrid = memo(({ apps, onPick }: { apps: CustomAppEntry[]; onPick: (appId: string) => void }) => {
-  const ref = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(480);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) {
-      return;
-    }
-    setContainerWidth(el.clientWidth);
-    const ro = new ResizeObserver(([entry]) => {
-      if (entry) {
-        setContainerWidth(entry.contentRect.width);
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  const { rows, cellWidth, uniform } = useMemo(() => {
-    const layout = computeLauncherLayout(apps.length, containerWidth);
-    const chunked: CustomAppEntry[][] = [];
-    let idx = 0;
-    for (const count of layout.rows) {
-      chunked.push(apps.slice(idx, idx + count));
-      idx += count;
-    }
-    return { rows: chunked, cellWidth: layout.cellWidth, uniform: layout.uniform };
-  }, [apps, containerWidth]);
-
-  return (
-    <div
-      ref={ref}
-      className="omni-code-deck-launcher-grid"
-      style={{ ['--launcher-cell-width' as string]: `${cellWidth}px` }}
-    >
-      {rows.map((row, rowIndex) => (
-        <div
-          key={rowIndex}
-          className={cn('flex justify-center gap-5', uniform && rowIndex % 2 === 1 && 'omni-code-deck-launcher-offset')}
-        >
-          {row.map((app) => (
-            <Button
-              key={app.id}
-              type="button"
-              variant="ghost"
-              className={cn(
-                'omni-code-deck-launcher-cell flex h-auto shrink-0 scale-105 cursor-pointer flex-col items-center gap-2 whitespace-normal border-0 bg-transparent p-0 transition-transform duration-200 ease-in-out hover:-translate-y-0.5 active:translate-y-0 active:scale-95 motion-reduce:hover:transform-none motion-reduce:active:transform-none'
-              )}
-              onClick={() => onPick(app.id)}
-              title={app.label}
-            >
-              <span
-                className={cn(
-                  'omni-code-deck-launcher-icon flex size-16 shrink-0 items-center justify-center rounded-full text-foreground'
-                )}
-              >
-                <AppIcon icon={app.icon} size={32} />
-              </span>
-              <span className="text-xs font-medium text-foreground text-center overflow-hidden text-ellipsis whitespace-nowrap max-w-full">
-                {app.label}
-              </span>
-            </Button>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-});
-AppLauncherGrid.displayName = 'AppLauncherGrid';
-
-const AppLauncherColumn = memo(
-  ({
-    tab,
-    customApps,
-    onClose,
-    onFocus,
-    isExpanded,
-    onToggleExpand,
-  }: {
-    tab: CodeTab;
-    customApps: CustomAppEntry[];
-    onClose: (id: CodeTabId) => void;
-    onFocus: (id: CodeTabId) => void;
-    isExpanded: boolean;
-    onToggleExpand: (id: CodeTabId) => void;
-  }) => {
-    const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tab.id });
-    const style = { transform: CSS.Transform.toString(transform), transition };
-
-    const handlePick = useCallback(
-      (appId: string) => {
-        void codeApi.setTabAppId(tab.id, appId);
-      },
-      [tab.id]
-    );
-
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className={cn(
-          'flex flex-col w-full h-full min-w-0 min-h-0 overflow-hidden bg-transparent',
-          isDragging && 'opacity-85'
-        )}
-      >
-        <div
-          className={cn(
-            'flex flex-1 flex-col min-w-0 min-h-0 relative border border-border rounded-2xl overflow-hidden m-2 bg-card transition-colors duration-100 ease-in-out [&:hover_.revealOnHover]:opacity-100 [&:focus-within_.revealOnHover]:opacity-100 hover:border-primary'
-          )}
-        >
-          <div
-            className={cn(
-              'relative flex items-center justify-between pl-4 pr-2 pt-1 pb-1 min-h-8 bg-transparent',
-              'cursor-grab select-none select-none touch-manipulation active:cursor-grabbing'
-            )}
-            {...listeners}
-          >
-            <div className={cn('flex items-center', 'gap-2', 'min-w-0')}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="sr-only cursor-grab text-muted-foreground focus-visible:not-sr-only focus-visible:relative focus-visible:size-5 focus-visible:rounded-lg focus-visible:outline-2 focus-visible:outline-offset-1"
-                {...attributes}
-                {...listeners}
-                aria-label="Reorder Apps"
-              >
-                <GripVertical className="size-4" />
-              </Button>
-              <span
-                className="text-xs font-medium text-muted-foreground tracking-normal overflow-hidden text-ellipsis whitespace-nowrap"
-                title="Apps"
-              >
-                Apps
-              </span>
-            </div>
-            <div className={cn('flex items-center', 'gap-1')}>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Focus Apps"
-                title="Focus apps"
-                onClick={() => onFocus(tab.id)}
-              >
-                <Scan className="size-4" />
-              </Button>
-              <Toggle
-                size="sm"
-                pressed={isExpanded}
-                aria-label={isExpanded ? 'Collapse column' : 'Expand column'}
-                title={isExpanded ? 'Collapse column' : 'Expand column'}
-                onPressedChange={() => onToggleExpand(tab.id)}
-              >
-                {isExpanded ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-              </Toggle>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Close Apps"
-                title="Close Apps"
-                onClick={() => onClose(tab.id)}
-              >
-                <Plus className="size-4 rotate-45" />
-              </Button>
-            </div>
-          </div>
-          <div
-            className={cn(
-              'flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center pt-12 pl-8 pr-8 pb-12 bg-card'
-            )}
-          >
-            {customApps.length === 0 ? (
-              <div className="text-muted-foreground text-xs text-center pt-8">
-                No apps installed. Add apps in Settings.
-              </div>
-            ) : (
-              <AppLauncherGrid apps={customApps} onPick={handlePick} />
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
-);
-AppLauncherColumn.displayName = 'AppLauncherColumn';
-
 const CodeSessionPane = memo(
   ({
     tab,
@@ -1603,7 +1069,7 @@ export const CodeDeck = memo(() => {
   }, [tabs]);
   // One persistent CodeTabContent per session tab, portaled into a stable
   // detached host that the live layout mode's TabContentSlot adopts.
-  const sessionTabs = useMemo(() => tabs.filter((t) => !t.customAppId), [tabs]);
+  const sessionTabs = tabs;
   const contentHostsRef = useRef<Map<CodeTabId, HTMLDivElement>>(new Map());
   const filesHostsRef = useRef<Map<CodeTabId, HTMLDivElement>>(new Map());
   const gitHostsRef = useRef<Map<CodeTabId, HTMLDivElement>>(new Map());
@@ -1933,8 +1399,7 @@ export const CodeDeck = memo(() => {
     return map;
   }, [store.projects]);
 
-  const customApps = useMemo(() => [SYNTHETIC_BROWSER_APP, ...(store.customApps ?? [])], [store.customApps]);
-  const appRegistry = useMemo(() => buildAppRegistry(store.customApps ?? []), [store.customApps]);
+  const appRegistry = APP_REGISTRY;
 
   // Conversation titles come from the launcher index ∪ the live session
   // listing, so open columns are titled even when the conversation predates
@@ -1945,13 +1410,6 @@ export const CodeDeck = memo(() => {
 
   const resolveLabel = useCallback(
     (tab: CodeTab) => {
-      if (tab.customAppId === APP_LAUNCHER_ID) {
-        return 'Apps';
-      }
-      if (tab.customAppId) {
-        const app = customApps.find((a) => a.id === tab.customAppId);
-        return app?.label ?? 'App';
-      }
       if (!tab.projectId) {
         // Chat column: the conversation's title once it has one, else the
         // fresh-column label.
@@ -1959,7 +1417,7 @@ export const CodeDeck = memo(() => {
       }
       return projectMap.get(tab.projectId)?.label ?? 'Unknown';
     },
-    [projectMap, customApps, sessionTitles]
+    [projectMap, sessionTitles]
   );
 
   const resolveTicketTitle = useCallback((tab: CodeTab) => tab.ticketTitle ?? null, []);
@@ -1977,10 +1435,6 @@ export const CodeDeck = memo(() => {
 
   const handleNewSession = useCallback(() => {
     codeApi.addTab();
-  }, []);
-
-  const handleOpenApps = useCallback(() => {
-    void codeApi.addAppTab(APP_LAUNCHER_ID);
   }, []);
 
   const getColumnWidth = useCallback(
@@ -2337,7 +1791,6 @@ export const CodeDeck = memo(() => {
           layoutMode={layoutMode}
           onLayoutModeChange={handleLayoutModeChange}
           onNewSession={handleNewSession}
-          onOpenApps={handleOpenApps}
         />
 
         {/* Archiving the last session leaves the deck genuinely empty — nothing
@@ -2374,10 +1827,7 @@ export const CodeDeck = memo(() => {
                   style={{ width: tilePanelGroupWidth }}
                 >
                   {tabs.map((tab, tabIndex) => {
-                    const isLauncher = tab.customAppId === APP_LAUNCHER_ID;
-                    const appEntry =
-                      tab.customAppId && !isLauncher ? customApps.find((a) => a.id === tab.customAppId) : undefined;
-                    const sidecar = !isLauncher && !appEntry ? visibleSidecarsByTab.get(tab.id) : undefined;
+                    const sidecar = visibleSidecarsByTab.get(tab.id);
                     return (
                       <Fragment key={tab.id}>
                         <ResizablePanel
@@ -2390,55 +1840,27 @@ export const CodeDeck = memo(() => {
                           className="flex flex-col w-full h-full min-w-0 min-h-0 overflow-hidden relative [@media(max-width:540px)]:snap-start"
                           data-deck-column={tab.id}
                         >
-                          {isLauncher ? (
-                            <AppLauncherColumn
-                              tab={tab}
-                              customApps={customApps}
-                              onClose={handleArchive}
-                              onFocus={handleFocusColumn}
-                              isExpanded={expandedTabIds.has(tab.id)}
-                              onToggleExpand={handleToggleExpand}
-                            />
-                          ) : appEntry?.id === BROWSER_APP_ID ? (
-                            <BrowserColumn
-                              tab={tab}
-                              onClose={handleArchive}
-                              onFocus={handleFocusColumn}
-                              isExpanded={expandedTabIds.has(tab.id)}
-                              onToggleExpand={handleToggleExpand}
-                            />
-                          ) : appEntry ? (
-                            <AppColumn
-                              tab={tab}
-                              app={appEntry}
-                              onClose={handleArchive}
-                              onFocus={handleFocusColumn}
-                              isExpanded={expandedTabIds.has(tab.id)}
-                              onToggleExpand={handleToggleExpand}
-                            />
-                          ) : (
-                            <DeckColumn
-                              tab={tab}
-                              label={resolveLabel(tab)}
-                              ticketTitle={resolveTicketTitle(tab)}
-                              routineName={resolveRoutineName(tab)}
-                              routineSchedule={resolveRoutineSchedule(tab)}
-                              ticketColumnBadge={renderTicketColumnBadge(tab)}
-                              ticketMetaBadge={renderTicketMetaBadge(tab)}
-                              ticketActions={renderTicketBannerActions(tab)}
-                              actions={renderSessionActions(tab)}
-                              onArchive={handleArchive}
-                              onFocus={handleFocusColumn}
-                              isExpanded={expandedTabIds.has(tab.id)}
-                              onToggleExpand={handleToggleExpand}
-                              headerActionsSlot={
-                                <OmniAgentsHeaderActionsSlot id={`code-deck-header-actions-${tab.id}`} />
-                              }
-                              hasSidecar={Boolean(sidecar)}
-                            >
-                              <TabContentSlot host={getContentHost(tab.id)} />
-                            </DeckColumn>
-                          )}
+                          <DeckColumn
+                            tab={tab}
+                            label={resolveLabel(tab)}
+                            ticketTitle={resolveTicketTitle(tab)}
+                            routineName={resolveRoutineName(tab)}
+                            routineSchedule={resolveRoutineSchedule(tab)}
+                            ticketColumnBadge={renderTicketColumnBadge(tab)}
+                            ticketMetaBadge={renderTicketMetaBadge(tab)}
+                            ticketActions={renderTicketBannerActions(tab)}
+                            actions={renderSessionActions(tab)}
+                            onArchive={handleArchive}
+                            onFocus={handleFocusColumn}
+                            isExpanded={expandedTabIds.has(tab.id)}
+                            onToggleExpand={handleToggleExpand}
+                            headerActionsSlot={
+                              <OmniAgentsHeaderActionsSlot id={`code-deck-header-actions-${tab.id}`} />
+                            }
+                            hasSidecar={Boolean(sidecar)}
+                          >
+                            <TabContentSlot host={getContentHost(tab.id)} />
+                          </DeckColumn>
                         </ResizablePanel>
                         {sidecar && (
                           <>
@@ -2509,60 +1931,6 @@ export const CodeDeck = memo(() => {
                 className="relative flex-1 min-w-0 min-h-0"
               >
                 {tabs.map((tab) => {
-                  const isLauncher = tab.customAppId === APP_LAUNCHER_ID;
-                  const appEntry =
-                    tab.customAppId && !isLauncher ? customApps.find((a) => a.id === tab.customAppId) : undefined;
-                  if (isLauncher) {
-                    return (
-                      <div
-                        key={tab.id}
-                        className={cn('h-full w-full flex-col', tab.id === activeTab?.id ? 'flex' : 'hidden')}
-                      >
-                        <div
-                          className={cn(
-                            'flex-1 min-h-0 overflow-y-auto flex flex-col items-center justify-center pt-12 pl-8 pr-8 pb-12 bg-card'
-                          )}
-                        >
-                          {customApps.length === 0 ? (
-                            <div className="text-muted-foreground text-xs text-center pt-8">
-                              No apps installed. Add apps in Settings.
-                            </div>
-                          ) : (
-                            <AppLauncherGrid apps={customApps} onPick={(appId) => codeApi.setTabAppId(tab.id, appId)} />
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }
-                  if (appEntry?.id === BROWSER_APP_ID) {
-                    return (
-                      <div
-                        key={tab.id}
-                        className={cn('h-full w-full flex-col', tab.id === activeTab?.id ? 'flex' : 'hidden')}
-                      >
-                        <BrowserView tabsetId={`col:${tab.id}`} />
-                      </div>
-                    );
-                  }
-                  if (appEntry) {
-                    const scope: AppHandleScope = appEntry.columnScoped ? 'column' : 'global';
-                    return (
-                      <div key={tab.id} className={tab.id === activeTab?.id ? 'block size-full' : 'hidden'}>
-                        <Webview
-                          src={appEntry.url}
-                          showUnavailable={false}
-                          registry={{
-                            handleId: makeAppHandleId(scope, appEntry.id, scope === 'column' ? tab.id : undefined),
-                            appId: appEntry.id,
-                            kind: 'webview',
-                            scope,
-                            ...(scope === 'column' ? { tabId: tab.id } : {}),
-                            label: appEntry.label,
-                          }}
-                        />
-                      </div>
-                    );
-                  }
                   return (
                     <CodeSessionPane
                       key={tab.id}

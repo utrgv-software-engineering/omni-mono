@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { CodeTab } from '@/shared/types';
 
-import { buildCommands, filterCommands, paletteColumns } from './commands';
+import { buildCommands, filterCommands } from './commands';
 
 const tab = (patch: Partial<CodeTab>): CodeTab => ({
   id: 'tab-1',
@@ -26,21 +26,9 @@ const ctx = (codeTabs: CodeTab[] = []) => ({
   toggleViewportDebug: vi.fn(),
 });
 
-describe('paletteColumns', () => {
-  it('includes chat columns and excludes app columns', () => {
-    const tabs = [
-      tab({ id: 'chat-col' }),
-      tab({ id: 'a', projectId: 'p1' }),
-      tab({ id: 'b', customAppId: 'browser' }),
-      tab({ id: 'c' }),
-    ];
-    expect(paletteColumns(tabs).map((t) => t.id)).toEqual(['chat-col', 'a', 'c']);
-  });
-});
-
 describe('buildCommands', () => {
   it('includes navigation, session, layout, and per-column commands', () => {
-    const c = ctx([tab({ id: 'a', projectId: 'p1' }), tab({ id: 'b', customAppId: 'browser' })]);
+    const c = ctx([tab({ id: 'a', projectId: 'p1' })]);
     const commands = buildCommands(c);
     const ids = commands.map((cmd) => cmd.id);
     expect(ids).toEqual(
@@ -57,7 +45,6 @@ describe('buildCommands', () => {
       ])
     );
     expect(ids).not.toContain('nav-spaces');
-    expect(ids).not.toContain('column-b');
   });
 
   it('labels the layout toggle by the current mode and numbers column hints', () => {

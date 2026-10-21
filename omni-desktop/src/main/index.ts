@@ -32,7 +32,6 @@ import { materializeAgentConfig } from '@/main/config-materializer';
 import { createConsoleManager } from '@/main/console-manager';
 import { rowToProject } from '@/main/db-store-bridge';
 import { createDownloadsManager } from '@/main/downloads-manager';
-import { createExtensionManager } from '@/main/extension-manager';
 import {
   linkWithDeviceFlow as githubLink,
   listOrgs as githubListOrgs,
@@ -569,11 +568,6 @@ const [, cleanupPrWatcher] = createPullRequestWatcher({
     automationManager.onPullRequestEvent(ev);
   },
 });
-const [, cleanupExtensions] = createExtensionManager({
-  ipc: main.ipc,
-  store,
-  sendToWindow: main.sendToWindow,
-});
 const [browserManager, cleanupBrowser] = createBrowserManager({
   ipc: main.ipc,
   sendToWindow: main.sendToWindow,
@@ -669,7 +663,6 @@ async function cleanup() {
     cleanupProcessManager(),
     Promise.resolve(cleanupPrWatcher()),
     cleanupProject(),
-    cleanupExtensions(),
     cleanupBrowser(),
     cleanupDownloads(),
     cleanupPermissions(),

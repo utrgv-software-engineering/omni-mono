@@ -282,56 +282,6 @@ describe('PageManager', () => {
       const onDisk = readFileSync(join(projectDir, 'proj-1', `${child.id}.md`), 'utf-8');
       expect(onDisk).toBe('child content\n');
     });
-
-    it('notebook pages are stored as .py files at <pagesDir>/<id>.py', async () => {
-      const { mgr } = makeMgr();
-      const root = mgr.seedRootPage(makeProject());
-      const nb = mgr.add({
-        projectId: 'proj-1',
-        parentId: root.id,
-        title: 'Notebook',
-        sortOrder: 0,
-        kind: 'notebook',
-      });
-
-      // add() seeds the file with MARIMO_NOTEBOOK_TEMPLATE (fire-and-forget).
-      // Wait for it to land, then overwrite.
-      await new Promise((r) => setTimeout(r, 50));
-
-      await mgr.writeContent(nb.id, '# marimo code');
-      const onDisk = readFileSync(join(projectDir, 'proj-1', `${nb.id}.py`), 'utf-8');
-      expect(onDisk).toBe('# marimo code');
-    });
-  });
-
-  describe('getNotebookFilePath', () => {
-    it('returns path for notebook pages', () => {
-      const { mgr } = makeMgr();
-      const root = mgr.seedRootPage(makeProject());
-      const nb = mgr.add({
-        projectId: 'proj-1',
-        parentId: root.id,
-        title: 'NB',
-        sortOrder: 0,
-        kind: 'notebook',
-      });
-
-      const p = mgr.getNotebookFilePath(nb.id);
-      expect(p).toBe(join(projectDir, 'proj-1', `${nb.id}.py`));
-    });
-
-    it('returns null for doc pages', () => {
-      const { mgr } = makeMgr();
-      const root = mgr.seedRootPage(makeProject());
-      const doc = mgr.add({ projectId: 'proj-1', parentId: root.id, title: 'Doc', sortOrder: 0 });
-
-      expect(mgr.getNotebookFilePath(doc.id)).toBeNull();
-    });
-
-    it('returns null for unknown pages', () => {
-      const { mgr } = makeMgr();
-      expect(mgr.getNotebookFilePath('nonexistent' as string)).toBeNull();
-    });
   });
 
   describe('cascade delete', () => {

@@ -294,10 +294,9 @@ describe('getSubstrateStatus', () => {
 describe('ownership label helpers', () => {
   const tab = (over: Partial<CodeTab>): CodeTab => ({ id: 'tab-1', projectId: null, createdAt: 0, ...over });
 
-  it('codeTabLabel prefers ticket title, then routine, then app, then Chat', () => {
+  it('codeTabLabel prefers ticket title, then routine, then Chat', () => {
     expect(codeTabLabel(tab({ ticketTitle: 'Fix bug', routineName: 'r' }))).toBe('Fix bug');
     expect(codeTabLabel(tab({ routineName: 'Nightly' }))).toBe('Nightly');
-    expect(codeTabLabel(tab({ customAppId: 'marimo' }))).toBe('marimo');
     expect(codeTabLabel(tab({}))).toBe('Chat');
   });
 

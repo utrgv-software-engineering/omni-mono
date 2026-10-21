@@ -34,7 +34,7 @@ export function useRecentConversations(tabs: CodeTab[]): {
   const [liveSessions, setLiveSessions] = useState<SessionItem[]>([]);
 
   const agentTabKey = tabs
-    .filter((tab) => !tab.customAppId && Boolean(tab.sessionId))
+    .filter((tab) => Boolean(tab.sessionId))
     .map((t) => t.id)
     .join(',');
 

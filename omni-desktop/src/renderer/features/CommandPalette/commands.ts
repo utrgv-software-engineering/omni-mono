@@ -31,9 +31,6 @@ export type PaletteContext = {
   toggleViewportDebug: () => void;
 };
 
-/** Session columns the palette can jump to (the deck's view of codeTabs). */
-export const paletteColumns = (codeTabs: CodeTab[]): CodeTab[] => codeTabs.filter((t) => !t.customAppId);
-
 export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
   const commands: PaletteCommand[] = [
     {
@@ -78,7 +75,7 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
     },
   ];
 
-  paletteColumns(ctx.codeTabs).forEach((tab, index) => {
+  ctx.codeTabs.forEach((tab, index) => {
     commands.push({
       id: `column-${tab.id}`,
       label: `Go to column ${index + 1}: ${ctx.resolveTabLabel(tab)}`,

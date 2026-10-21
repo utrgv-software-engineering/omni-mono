@@ -334,9 +334,6 @@ export function rowToPage(row: PageRow): Page {
   if (row.is_root) {
     page.isRoot = true;
   }
-  if (row.kind && row.kind !== 'doc') {
-    page.kind = row.kind as Page['kind'];
-  }
   if (row.properties) {
     page.properties = JSON.parse(row.properties);
   }
@@ -502,7 +499,7 @@ export function pageToRow(p: Page): PageRow {
     icon: p.icon ?? null,
     sort_order: p.sortOrder,
     is_root: p.isRoot ? 1 : 0,
-    kind: p.kind ?? 'doc',
+    kind: 'doc',
     properties: jsonStrOrNull(p.properties),
     created_at: toIso(p.createdAt),
     updated_at: toIso(p.updatedAt),

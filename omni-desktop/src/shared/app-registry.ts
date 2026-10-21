@@ -10,8 +10,7 @@ export type AppKind =
   | 'builtin-review'
   | 'builtin-agents'
   | 'builtin-jobs'
-  | 'builtin-terminal'
-  | 'webview';
+  | 'builtin-terminal';
 
 export type AppScope = 'always' | 'sandbox';
 export type SandboxUrlKey = 'codeServerUrl' | 'noVncUrl';
@@ -26,27 +25,8 @@ export type AppDescriptor = {
   sandboxUrlKey?: SandboxUrlKey;
   builtin: boolean;
   order: number;
-  /**
-   * When true, the app appears in a code session's `EnvironmentDock`.
-   * When false, the app is available only as a standalone global column (via
-   * the app launcher). Built-ins default to true.
-   */
+  /** When true, the app appears in a code session's `EnvironmentDock`. */
   columnScoped: boolean;
-};
-
-export type CustomAppEntry = {
-  id: AppId;
-  label: string;
-  icon: string;
-  url: string;
-  order: number;
-  /**
-   * When true, this custom app appears in every code session's dock and can
-   * be driven column-scoped by agents in that session. When false (default),
-   * the app is global-only — accessible as its own standalone deck column
-   * via the app launcher, but hidden from the dock.
-   */
-  columnScoped?: boolean;
 };
 
 export const BUILTIN_APPS: AppDescriptor[] = [
@@ -166,13 +146,5 @@ export const BUILTIN_APPS: AppDescriptor[] = [
   },
 ];
 
-export function buildAppRegistry(customApps: CustomAppEntry[]): AppDescriptor[] {
-  const custom: AppDescriptor[] = customApps.map((c) => ({
-    ...c,
-    kind: 'webview' as const,
-    scope: 'always' as const,
-    builtin: false,
-    columnScoped: c.columnScoped ?? false,
-  }));
-  return [...BUILTIN_APPS, ...custom].sort((a, b) => a.order - b.order);
-}
+/** Every dock app, in display order. */
+export const APP_REGISTRY: AppDescriptor[] = [...BUILTIN_APPS].sort((a, b) => a.order - b.order);

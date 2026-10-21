@@ -8,7 +8,6 @@ import { Button } from '@/renderer/ds/ui/button';
 import { ButtonGroup } from '@/renderer/ds/ui/button-group';
 import { Input } from '@/renderer/ds/ui/input';
 import { Skeleton } from '@/renderer/ds/ui/skeleton';
-import { NotebookView } from '@/renderer/features/Notebooks/NotebookView';
 import { acquirePageEditor, releasePageEditor } from '@/renderer/features/Pages/page-editor-registry';
 import type { PageId, ProjectId } from '@/shared/types';
 
@@ -41,7 +40,7 @@ type PageViewProps = {
   projectId: ProjectId;
 };
 
-const DocPageView = memo(({ pageId, projectId }: PageViewProps) => {
+export const PageView = memo(({ pageId, projectId }: PageViewProps) => {
   const pages = useStore($pages);
   const page = pages[pageId];
 
@@ -255,83 +254,6 @@ const DocPageView = memo(({ pageId, projectId }: PageViewProps) => {
       </div>
     </div>
   );
-});
-DocPageView.displayName = 'DocPageView';
-
-const NotebookPageView = memo(({ pageId, projectId }: PageViewProps) => {
-  const pages = useStore($pages);
-  const page = pages[pageId];
-  const [title, setTitle] = useState(page?.title ?? '');
-
-  useEffect(() => {
-    if (page) {
-      setTitle(page.title);
-    }
-  }, [page]);
-
-  const handleTitleBlur = useCallback(() => {
-    const trimmed = title.trim();
-    if (trimmed && page && !page.isRoot && trimmed !== page.title) {
-      void pageApi.updatePage(pageId, { title: trimmed });
-    }
-  }, [title, page, pageId]);
-
-  const handleTitleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        handleTitleBlur();
-      }
-    },
-    [handleTitleBlur]
-  );
-
-  if (!page) {
-    return null;
-  }
-
-  return (
-    <div className="flex flex-col h-full w-full">
-      <div className="shrink-0 flex flex-col gap-5 pl-8 pr-8 pt-8 pb-2 max-w-4xl w-full ml-auto mr-auto box-border">
-        <div className="hidden items-center gap-1 sm:flex">
-          <PageBreadcrumb projectId={projectId} pageId={pageId} />
-        </div>
-        <div className="flex items-center gap-4">
-          {page.isRoot ? (
-            <span className="flex-1 text-2xl font-semibold leading-8 text-foreground">Context</span>
-          ) : (
-            <Input
-              aria-label="Page title"
-              className={`${'flex-1 text-2xl font-semibold border-0 bg-transparent p-0 outline-none text-foreground leading-8 placeholder:text-muted-foreground'} h-auto`}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              onBlur={handleTitleBlur}
-              onKeyDown={handleTitleKeyDown}
-              placeholder="Untitled"
-            />
-          )}
-        </div>
-      </div>
-      <div className="flex-1 min-h-0">
-        <NotebookView pageId={pageId} />
-      </div>
-    </div>
-  );
-});
-NotebookPageView.displayName = 'NotebookPageView';
-
-/**
- * Dispatch on `page.kind`: notebook pages mount the marimo extension webview;
- * everything else uses the Yoopta-based DocPageView. Keeps hook order stable
- * because the dispatcher itself only ever runs one hook.
- */
-export const PageView = memo(({ pageId, projectId }: PageViewProps) => {
-  const pages = useStore($pages);
-  const page = pages[pageId];
-  if (page?.kind === 'notebook') {
-    return <NotebookPageView pageId={pageId} projectId={projectId} />;
-  }
-  return <DocPageView pageId={pageId} projectId={projectId} />;
 });
 PageView.displayName = 'PageView';
 

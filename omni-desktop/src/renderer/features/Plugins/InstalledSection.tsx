@@ -1,4 +1,4 @@
-import { Lightbulb, PlugZap, Puzzle, Settings, Trash2 } from 'lucide-react';
+import { Lightbulb, PlugZap, Settings, Trash2 } from 'lucide-react';
 import { memo, useState } from 'react';
 
 import {
@@ -24,17 +24,13 @@ import {
 } from '@/renderer/ds/ui/item';
 import { Spinner } from '@/renderer/ds/ui/spinner';
 import { Switch } from '@/renderer/ds/ui/switch';
-import { AppIcon } from '@/renderer/features/Code/AppIcon';
 import type { InstalledPlugin, PluginKind } from '@/renderer/features/Plugins/plugin-cards';
 import { emitter } from '@/renderer/services/ipc';
-import { persistedStoreApi } from '@/renderer/services/store';
 import type { BundleUpdateInfo, McpServerEntry, SkillEntry } from '@/shared/types';
 
 const KIND_LABELS: Record<PluginKind, string> = {
   connector: 'Connector',
   skill: 'Skill',
-  app: 'App',
-  extension: 'Extension',
 };
 
 function formatSkillSource(skill: SkillEntry): string {
@@ -117,22 +113,6 @@ export const InstalledSection = memo(
       } catch (e) {
         onError(e instanceof Error ? e.message : failureMessage);
       }
-    };
-
-    const toggleApp = (id: string, columnScoped: boolean) => {
-      const current = persistedStoreApi.$atom.get().customApps ?? [];
-      void persistedStoreApi.setKey(
-        'customApps',
-        current.map((a) => (a.id === id ? { ...a, columnScoped } : a))
-      );
-    };
-
-    const removeApp = (id: string) => {
-      const current = persistedStoreApi.$atom.get().customApps ?? [];
-      void persistedStoreApi.setKey(
-        'customApps',
-        current.filter((a) => a.id !== id)
-      );
     };
 
     const updatingAll = installingKey === 'update-all';
@@ -246,79 +226,6 @@ export const InstalledSection = memo(
                   </Item>
                 );
               }
-
-              case 'app':
-                return (
-                  <Item key={`app:${item.app.id}`} variant="outline">
-                    <ItemMedia variant="icon">
-                      <AppIcon icon={item.app.icon} size={20} />
-                    </ItemMedia>
-                    <ItemContent className="min-w-0">
-                      <ItemTitle className="max-w-full">
-                        <span className="truncate">{item.app.label}</span>
-                        <Badge variant="secondary">{KIND_LABELS.app}</Badge>
-                      </ItemTitle>
-                      <ItemDescription>{item.app.url}</ItemDescription>
-                    </ItemContent>
-                    <ItemActions>
-                      <label
-                        className="flex items-center gap-1 text-xs text-muted-foreground cursor-pointer select-none shrink-0"
-                        title="Show in the session dock (column-scoped). When off, the app only opens as its own deck column."
-                      >
-                        <span>In dock</span>
-                        <Switch
-                          checked={item.app.columnScoped ?? false}
-                          onCheckedChange={(v) => toggleApp(item.app.id, v)}
-                        />
-                      </label>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label={`Remove ${item.app.label}`}
-                        onClick={() => removeApp(item.app.id)}
-                      >
-                        <Trash2 />
-                      </Button>
-                    </ItemActions>
-                  </Item>
-                );
-
-              case 'extension':
-                return (
-                  <Item key={`extension:${item.ext.id}`} variant="outline">
-                    <ItemMedia variant="icon">
-                      <Puzzle className="text-primary" />
-                    </ItemMedia>
-                    <ItemContent className="min-w-0">
-                      <ItemTitle className="max-w-full">
-                        <span className="truncate">{item.ext.name}</span>
-                        <Badge variant="secondary">{KIND_LABELS.extension}</Badge>
-                      </ItemTitle>
-                      <ItemDescription>{item.ext.description}</ItemDescription>
-                      {item.ext.contentTypes.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {item.ext.contentTypes.map((ct) => (
-                            <Badge key={ct.id} variant="outline">
-                              {ct.label} ({ct.fileExtension})
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                    </ItemContent>
-                    <ItemActions>
-                      <Switch
-                        checked={item.ext.enabled}
-                        onCheckedChange={(enabled) =>
-                          run(
-                            () => emitter.invoke('extension:set-enabled', item.ext.id, enabled),
-                            'Failed to update extension'
-                          )
-                        }
-                      />
-                    </ItemActions>
-                  </Item>
-                );
             }
           })}
         </ItemGroup>
