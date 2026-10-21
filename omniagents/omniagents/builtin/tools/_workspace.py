@@ -10,6 +10,7 @@ invoked outside the AgentService flow without populating context).
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional, Tuple
 
 from agents.run_context import RunContextWrapper
@@ -35,8 +36,13 @@ def workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]
         wr = getattr(c, "workspace_root", None)
     if isinstance(wr, str) and wr.strip():
         from omniagents import workspace as _ws
+        from omniagents.workspace.types import WorkspaceNotBoundError
 
-        pm = _ws.current_workspace().path_module
+        try:
+            pm = _ws.current_workspace().path_module
+        except WorkspaceNotBoundError:
+            # Nothing bound yet (e.g. while spawning a worker): host syntax.
+            pm = os.path
         return pm.normpath(wr) if pm.isabs(wr) else pm.abspath(wr)
     return None
 

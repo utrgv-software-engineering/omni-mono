@@ -37,3 +37,13 @@ def test_workspace_root_uses_the_workspace_path_syntax(
 
 def test_missing_workspace_root_is_none():
     assert workspace_root_from_ctx(SimpleNamespace(context={})) is None
+
+
+def test_unbound_workspace_falls_back_to_host_syntax(monkeypatch, tmp_path):
+    from omniagents.workspace.types import WorkspaceNotBoundError
+
+    def unbound():
+        raise WorkspaceNotBoundError()
+
+    monkeypatch.setattr("omniagents.workspace.current_workspace", unbound)
+    assert workspace_root_from_ctx(_ctx(str(tmp_path))) == str(tmp_path)
