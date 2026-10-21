@@ -386,6 +386,11 @@ async def test_builder_merges_capability_tools_into_agent(tmp_path, monkeypatch)
     class _StubAgent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        # install_output_budget wraps the built agent's tool resolution.
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
 
     # Agent is imported inside _default_build_agent (`from agents import Agent`),
     # so patch on the source module rather than the builder module.
@@ -456,6 +461,11 @@ async def test_builder_attaches_capability_approvals(tmp_path, monkeypatch):
     class _StubAgent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        # install_output_budget wraps the built agent's tool resolution.
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
 
     # Agent is imported inside _default_build_agent (`from agents import Agent`),
     # so patch on the source module rather than the builder module.
@@ -507,6 +517,11 @@ async def test_builder_mixed_mode_tools_and_capabilities(tmp_path, monkeypatch):
     class _StubAgent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        # install_output_budget wraps the built agent's tool resolution.
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
 
     # Agent is imported inside _default_build_agent (`from agents import Agent`),
     # so patch on the source module rather than the builder module.

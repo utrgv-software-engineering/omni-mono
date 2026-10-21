@@ -12,6 +12,10 @@ class _FakeStore:
         self.voice_default = None
         self.single_provider = False
 
+    def require_selected_provider(self, ref):
+        # Only enforced in single-provider mode, which this fake leaves off.
+        return None
+
     def list_text_models(self):
         return [
             {

@@ -164,6 +164,11 @@ async def test_non_sandbox_mode_still_merges_caps_host_side(tmp_path, monkeypatc
     class _StubAgent:
         def __init__(self, **kwargs):
             captured.update(kwargs)
+            self.tools = kwargs.get("tools", [])
+
+        # install_output_budget wraps the built agent's tool resolution.
+        async def get_all_tools(self, run_context):
+            return list(self.tools)
 
     monkeypatch.setattr("agents.Agent", _StubAgent)
     await _default_build_agent({}, None, spec)
