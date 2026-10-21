@@ -1200,24 +1200,6 @@ export class RPCClient {
     return this.call('ack_events', { session_id: sessionId, stream_id: streamId, seq });
   }
 
-  async listSessions(opts?: { limit: number; offset?: number }): Promise<
-    Array<{
-      id: string;
-      created_at: string;
-      archived: boolean;
-      message_count: number;
-      first_message?: unknown;
-      last_message?: unknown;
-    }>
-  > {
-    if (!opts) {
-      return this.call('list_sessions') as ReturnType<RPCClient['listSessions']>;
-    }
-    return this.call('list_sessions', { limit: opts.limit, offset: opts.offset ?? 0 }) as ReturnType<
-      RPCClient['listSessions']
-    >;
-  }
-
   async clientResponse(
     requestId: string,
     ok: boolean,

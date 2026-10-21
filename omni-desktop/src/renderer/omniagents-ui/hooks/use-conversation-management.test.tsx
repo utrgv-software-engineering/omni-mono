@@ -89,9 +89,6 @@ function fakeClient(supported = true) {
   });
   return {
     request,
-    listSessions: vi.fn(async () => [
-      { id: 'legacy', created_at: new Date(0).toISOString(), archived: false, message_count: 1 },
-    ]),
     supportsExperimentalFeature: vi.fn(() => supported),
     supportsExperimentalOperation: vi.fn(() => supported),
     on: vi.fn((_event: string, handler: (payload: unknown) => void) => {
@@ -131,7 +128,6 @@ describe('useConversationManagement', () => {
       limit: 50,
       order: 'desc',
     });
-    expect(client.request).toHaveBeenCalledWith('get_thread', { thread_id: 'legacy' });
     expect(value.sessions[0]).toMatchObject({ id: 'thread-1', title: 'First title', pinned: false });
 
     act(() => value.setSearchQuery('matching'));
@@ -154,16 +150,16 @@ describe('useConversationManagement', () => {
     expect(client.request).toHaveBeenCalledWith('update_thread', { thread_id: 'thread-1', status: 'active' });
   });
 
-  it('falls back to legacy listing and never exposes canonical mutations when the feature was not negotiated', async () => {
+  it('lists nothing and exposes no canonical mutations when the feature was not negotiated', async () => {
     const client = fakeClient(false);
     await act(async () => {
       root.render(<Harness client={client as unknown as RPCClient} connected />);
       await Promise.resolve();
     });
 
-    expect(client.listSessions).toHaveBeenCalledWith({ limit: 50 });
+    expect(value.sessions).toEqual([]);
     expect(value.managementSupported).toBe(false);
-    await act(async () => value.archiveThread('legacy'));
+    await act(async () => value.archiveThread('thread-1'));
     expect(client.request).not.toHaveBeenCalled();
 
     act(() => value.setSearchQuery('local only'));
