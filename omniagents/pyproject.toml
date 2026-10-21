@@ -149,6 +149,9 @@ dev = [
     "pytest-asyncio",
     "pytest-xdist",
     "pytest-timeout",
+    # Distribution tests build wheels in-process; bdist_wheel is built into
+    # setuptools from 70.1 (older interpreters ship an older setuptools).
+    "setuptools>=70.1",
     "bump2version",
     "black==26.5.1",
     "mypy==2.4.0",
@@ -275,6 +278,7 @@ dev = [
     "pytest-cov",
     "pytest-xdist",
     "pytest-timeout",
+    "setuptools>=70.1",
     "types-PyYAML>=6.0",
     "vcrpy>=5.1.0",
 ]
