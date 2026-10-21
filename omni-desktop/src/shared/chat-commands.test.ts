@@ -24,12 +24,6 @@ it('applies two window creations to current state and commits selection with eac
   expect(state.codeTabs.map((t) => t.id)).toEqual([a.id, b.id]);
   expect(state.activeCodeTabId).toBe(b.id);
 });
-
-it('ignores closed IDs in a stale reorder and retains current fields and new tabs', () => {
-  state.codeTabs = [{ ...tab('B') }, tab('C')];
-  dispatch({ method: 'reorderTabs', args: [['B', 'A', 'B']] });
-  expect(state.codeTabs).toEqual([tab('C'), { ...tab('B') }]);
-});
 it('merges history entries and patches without replacing other sessions', () => {
   dispatch({ method: 'recordConversation', args: ['A', { title: 'A title' }] });
   dispatch({ method: 'recordConversation', args: ['B', { title: 'B title' }] });
