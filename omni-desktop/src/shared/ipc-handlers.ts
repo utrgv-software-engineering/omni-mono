@@ -11,7 +11,7 @@ import { mkdir, readdir, readFile, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import { emptyMcpConfig, modelProvider, stripModelConnectionFields, validateModelsConfig } from '@/lib/agent-config';
+import { modelProvider, stripModelConnectionFields, validateModelsConfig } from '@/lib/agent-config';
 import { normalizeCompatibleBaseUrl } from '@/lib/provider-config';
 import type { SkillStore } from '@/main/skills';
 import { installSkillFromFile, listSkills, setSkillEnabled, uninstallSkill } from '@/main/skills';
@@ -46,7 +46,6 @@ import type { SecretStore } from '@/shared/secret-store';
 import type {
   GitCredential,
   GitCredentialInput,
-  McpConfig,
   ModelsConfig,
   ProviderProbe,
   ProviderProbeResult,
@@ -71,11 +70,17 @@ export interface UtilHandlerOptions {
  * Register `config:*` handlers. All file I/O goes through `validateConfigPath`
  * so callers cannot escape the config directory.
  */
-export function registerConfigHandlers(
-  ipc: IIpcListener,
-  configDir: string,
-  hooks: { beforeWrite?: (filePath: string) => void | Promise<void> } = {}
-): void {
+/** models.json and mcp.json have owners with their own write paths. */
+const assertWritableConfigFile = (filePath: string): void => {
+  if (basename(filePath) === 'models.json') {
+    throw new Error('Use AI Settings to change models and provider connections.');
+  }
+  if (basename(filePath) === 'mcp.json') {
+    throw new Error('Omniagents owns mcp.json; use the per-server MCP controls');
+  }
+};
+
+export function registerConfigHandlers(ipc: IIpcListener, configDir: string): void {
   ipc.handle('config:get-omni-config-dir', () => configDir);
   ipc.handle('config:get-env-file-path', () => join(configDir, '.env'));
 
@@ -91,10 +96,7 @@ export function registerConfigHandlers(
 
   ipc.handle('config:write-json-file', async (_: unknown, filePath: string, data: unknown) => {
     validateConfigPath(filePath, configDir);
-    if (basename(filePath) === 'models.json') {
-      throw new Error('Use AI Settings to change models and provider connections.');
-    }
-    await hooks.beforeWrite?.(filePath);
+    assertWritableConfigFile(filePath);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
   });
@@ -110,10 +112,7 @@ export function registerConfigHandlers(
 
   ipc.handle('config:write-text-file', async (_: unknown, filePath: string, content: string) => {
     validateConfigPath(filePath, configDir);
-    if (basename(filePath) === 'models.json') {
-      throw new Error('Use AI Settings to change models and provider connections.');
-    }
-    await hooks.beforeWrite?.(filePath);
+    assertWritableConfigFile(filePath);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, content, 'utf-8');
   });
@@ -138,9 +137,6 @@ export interface SettingsConfigStore {
 export interface SettingsConfigHooks {
   readModels: (event: unknown) => ModelsConfig;
   saveModels: (event: unknown, config: ModelsConfig) => void;
-  /** Throw to reject a full-document MCP write. Local Electron always does:
-   * the Omniagents runtime owns its MCP configuration there. */
-  beforeSetMcp?: (event: unknown, config: McpConfig) => void | Promise<void>;
 }
 
 export function registerSettingsConfigHandlers(
@@ -192,14 +188,6 @@ export function registerSettingsConfigHandlers(
       return operation;
     }
   );
-  ipc.handle('settings:get-mcp-config', (e: unknown) => {
-    return resolveStore(e).get('mcpConfig') ?? emptyMcpConfig();
-  });
-  ipc.handle('settings:set-mcp-config', async (e: unknown, config: McpConfig) => {
-    await hooks.beforeSetMcp?.(e, config);
-    resolveStore(e).set('mcpConfig', config);
-    afterWrite(e);
-  });
   ipc.handle('settings:get-env', (e: unknown) => resolveStore(e).get('envVars') ?? '');
   ipc.handle('settings:set-env', (e: unknown, content: string) => {
     resolveStore(e).set('envVars', content);

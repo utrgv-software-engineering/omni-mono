@@ -43,21 +43,10 @@ export type McpServerSnapshot = Record<string, unknown> & {
   supported?: Record<string, boolean>;
 };
 
-/** Runtime-owned persistence and topology capabilities for local MCP CRUD.
- * Secret values are never returned here; this only describes where mutations
- * survive and which servers are host-managed/read-only. */
-export type McpMutationPersistence = {
-  user_config: { durable: boolean; scope: 'host' | null };
-  oauth_tokens: { durable: boolean; scope: 'host' | null };
-  pending_auth: { durable: false; scope: 'process' };
-  managed_servers: string[];
-};
-
 export type McpListServersResult = Record<string, unknown> & {
   servers: McpServerSnapshot[];
   user_mcp_allowed: boolean;
   write_target: string;
-  mutation_persistence: McpMutationPersistence | null;
 };
 
 export type McpAuthState = Record<string, unknown> & {
@@ -143,33 +132,6 @@ function state(value: unknown, label: string): McpServerState {
 function decodeBooleanMap(value: unknown, label: string): Record<string, boolean> {
   const item = record(value, label);
   return Object.fromEntries(Object.entries(item).map(([key, entry]) => [key, boolean(entry, `${label}.${key}`)]));
-}
-
-function decodePersistence(value: unknown, label: string): McpMutationPersistence {
-  const item = record(value, label);
-  const store = (field: 'user_config' | 'oauth_tokens'): { durable: boolean; scope: 'host' | null } => {
-    const entry = record(item[field], `${label}.${field}`);
-    const durable = boolean(entry.durable, `${label}.${field}.durable`);
-    const scope = entry.scope === null ? null : nonEmptyString(entry.scope, `${label}.${field}.scope`);
-    if (scope !== null && scope !== 'host') {
-      throw new McpManagementProtocolError(`${label}.${field}.scope has unsupported value ${JSON.stringify(scope)}`);
-    }
-    if (durable !== (scope === 'host')) {
-      throw new McpManagementProtocolError(`${label}.${field} durable/scope combination is invalid`);
-    }
-    return { durable, scope };
-  };
-  const pending = record(item.pending_auth, `${label}.pending_auth`);
-  if (pending.durable !== false || pending.scope !== 'process') {
-    throw new McpManagementProtocolError(`${label}.pending_auth must be process-scoped and non-durable`);
-  }
-  const managed = array(item.managed_servers, nonEmptyString, `${label}.managed_servers`);
-  return {
-    user_config: store('user_config'),
-    oauth_tokens: store('oauth_tokens'),
-    pending_auth: { durable: false, scope: 'process' },
-    managed_servers: managed,
-  };
 }
 
 function decodeSnapshot(value: unknown, label: string): McpServerSnapshot {
@@ -289,10 +251,6 @@ export class McpManagementClient {
       servers: array(raw.servers, decodeSnapshot, 'mcp_list_servers.servers'),
       user_mcp_allowed: boolean(raw.user_mcp_allowed, 'mcp_list_servers.user_mcp_allowed'),
       write_target: nonEmptyString(raw.write_target, 'mcp_list_servers.write_target'),
-      mutation_persistence:
-        raw.mutation_persistence === undefined
-          ? null
-          : decodePersistence(raw.mutation_persistence, 'mcp_list_servers.mutation_persistence'),
     };
   }
 

@@ -1,7 +1,7 @@
 import { atom } from 'nanostores';
 
 import { emitter } from '@/renderer/services/ipc';
-import type { McpConfig, ModelsConfig } from '@/shared/types';
+import type { ModelsConfig } from '@/shared/types';
 
 export const configApi = {
   getOmniConfigDir: () => emitter.invoke('config:get-omni-config-dir'),
@@ -35,8 +35,6 @@ export const agentConfigApi = {
     await emitter.invoke('settings:set-models-config', config, options);
     await refreshModelsConfig();
   },
-  getMcp: () => emitter.invoke('settings:get-mcp-config'),
-  setMcp: (config: McpConfig) => emitter.invoke('settings:set-mcp-config', config),
   getEnv: () => emitter.invoke('settings:get-env'),
   setEnv: (content: string) => emitter.invoke('settings:set-env', content),
 };

@@ -1,4 +1,4 @@
-import type { McpMutationPersistence, McpServerSnapshot } from '@/renderer/omniagents-ui/rpc/mcp-management';
+import type { McpServerSnapshot } from '@/renderer/omniagents-ui/rpc/mcp-management';
 import type { McpConfig, McpServerEntry } from '@/shared/types';
 
 const MCP_TYPES = new Set(['stdio', 'sse', 'http', 'streamable_http']);
@@ -62,12 +62,6 @@ export function mcpConfigFromSnapshots(snapshots: readonly McpServerSnapshot[]):
     ),
   };
 }
-
-export const hasDurableLocalMcpPersistence = (persistence: McpMutationPersistence | null): boolean =>
-  persistence?.user_config.durable === true &&
-  persistence.user_config.scope === 'host' &&
-  persistence.oauth_tokens.durable === true &&
-  persistence.oauth_tokens.scope === 'host';
 
 function nonEmptySecrets(values: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!values) {

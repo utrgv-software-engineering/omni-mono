@@ -4,7 +4,7 @@ if (process.env.NODE_ENV === 'development') {
 
 import { app, dialog, ipcMain, net, protocol, shell } from 'electron';
 import { writeFileSync } from 'fs';
-import { join, resolve } from 'path';
+import { join } from 'path';
 import { assert } from 'tsafe';
 import { pathToFileURL } from 'url';
 
@@ -21,8 +21,7 @@ import {
   listOrgs as githubListOrgs,
   searchRepos as githubSearchRepos,
 } from '@/main/github-auth';
-import { durableLocalCodexAgentHostEnv, LocalCodexAccount } from '@/main/local-codex-account';
-import { durableLocalMcpAgentHostEnv } from '@/main/local-mcp';
+import { LocalCodexAccount } from '@/main/local-codex-account';
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { MainProcessManager } from '@/main/main-process-manager';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
@@ -178,13 +177,7 @@ const [processManager, cleanupProcessManager] = createProcessManager({
   // (the agent/model loop), mirroring server mode's getExtraEnv. The sandbox
   // *container* gets these separately via the materialized `<config>/.env`,
   // which omni serve folds into manifest.environment (`_inject_user_env`).
-  // Trusted local-Electron topology attestation. Deliberately overrides a
-  // user-authored value; server managers never inject it and keep the broker
-  // account-mutation gate disabled.
-  getExtraEnv: () =>
-    durableLocalMcpAgentHostEnv(durableLocalCodexAgentHostEnv(parseEnvVars(store.get('envVars') ?? ''))),
-  durableLocalCodexAccountMutations: true,
-  durableLocalMcpMutations: true,
+  getExtraEnv: () => parseEnvVars(store.get('envVars') ?? ''),
 });
 const localCodexAccount = new LocalCodexAccount({
   runtime: {
@@ -483,13 +476,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 
 //#region Shared IPC handlers (config:*, util:*, skills:*)
 
-registerConfigHandlers(main.ipc, OMNI_CONFIG_DIR, {
-  beforeWrite: (filePath) => {
-    if (resolve(filePath) === resolve(OMNI_CONFIG_DIR, 'mcp.json')) {
-      throw new Error('Omniagents owns mcp.json; use the per-server MCP controls');
-    }
-  },
-});
+registerConfigHandlers(main.ipc, OMNI_CONFIG_DIR);
 registerUtilHandlers(main.ipc, {
   fetchFn: ((input, init) => net.fetch(input as string, init)) as typeof globalThis.fetch,
   launcherVersion: app.getVersion(),
@@ -509,9 +496,6 @@ registerSettingsConfigHandlers(
   {
     readModels: () => readLocalModels(OMNI_CONFIG_DIR),
     saveModels: (_event, config) => writeLocalModels(OMNI_CONFIG_DIR, config),
-    beforeSetMcp: () => {
-      throw new Error('Omniagents owns MCP configuration; use the per-server MCP controls');
-    },
   }
 );
 registerGitCredentialHandlers(

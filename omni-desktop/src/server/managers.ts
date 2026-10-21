@@ -1,22 +1,16 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { emptyMcpConfig } from '@/lib/agent-config';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { buildBrowserContext, registerBrowserHandlers } from '@/main/browser-manager';
 import { cleanupRemovedChat, completeChatRemoval } from '@/main/chat-removal';
-import {
-  getStatus as codexStatus,
-  loginWithDeviceFlow as codexDeviceLogin,
-  logout as codexLogout,
-} from '@/main/codex-auth';
-import { materializeAgentConfig } from '@/main/config-materializer';
 import { createConsoleManager } from '@/main/console-manager';
 import {
   linkWithDeviceFlow as githubLink,
   listOrgs as githubListOrgs,
   searchRepos as githubSearchRepos,
 } from '@/main/github-auth';
+import { LocalCodexAccount } from '@/main/local-codex-account';
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
 import { ProcessManager, registerProcessHandlers } from '@/main/process-manager';
@@ -111,16 +105,12 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   const browser = buildBrowserContext(store as any, sendToAll);
 
   /**
-   * Write the agent config (mcp) to the shared config dir —
-   * the same dir omni serve's get_config_dir() resolves — plus a real `.env`
-   * (omni serve reads it into the sandbox container's manifest.environment).
+   * Write the user's `.env` into the config dir omni serve's get_config_dir()
+   * resolves (it reads it into the sandbox container's manifest.environment).
    */
   const materializeConfig = (): void => {
     try {
-      materializeAgentConfig({
-        configDir,
-        mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
-      });
+      mkdirSync(configDir, { recursive: true });
       writeFileSync(join(configDir, '.env'), store.get('envVars') ?? '', 'utf-8');
     } catch (err) {
       console.error('[config-materializer] failed:', err);
@@ -300,11 +290,16 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     return githubSearchRepos(globalThis.fetch, await requireGithubToken(), query);
   });
 
-  // Codex device-flow sign-in: tokens go to `<omni-config>/codex.json`, the
-  // same file the runtime reads.
-  ipc.handle('codex:status', () => codexStatus());
-  ipc.handle('codex:logout', () => codexLogout());
-  ipc.handle('codex:link', () => codexDeviceLogin({ onCode: (code) => sendToAll('codex:device-code', code) }));
+  // ChatGPT sign-in goes through the runtime, which owns `codex.json`.
+  const codexAccount = new LocalCodexAccount({
+    runtime: {
+      status: () => processManager.getManagementAccountStatus(),
+      mutate: (request) => processManager.mutateManagement(request),
+    },
+  });
+  ipc.handle('codex:status', () => codexAccount.status());
+  ipc.handle('codex:logout', () => codexAccount.logout());
+  ipc.handle('codex:link', () => codexAccount.link((code) => sendToAll('codex:device-code', code)));
 
   ipc.handle('azure:list-repos', async (_e: unknown, input: { org: string; query: string }) => {
     const cred = (store.get('gitCredentials') ?? []).find((c: GitCredential) => c.host === 'dev.azure.com');

@@ -24,7 +24,7 @@ type UseAutoLaunchOptions = {
   workspaceDir: string | null;
   /** Project id, forwarded to ProcessManager to resolve the project's sources. */
   projectId?: string;
-  /** Conversation identity used by delegated-compute backends. */
+  /** Conversation identity; becomes the AgentHost thread id. */
   sessionId?: string;
   /** Logger tag. */
   logLabel?: string;

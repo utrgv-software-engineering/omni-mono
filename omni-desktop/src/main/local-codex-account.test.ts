@@ -5,8 +5,6 @@ import { LocalCodexAccount, type LocalCodexAccountRuntime } from '@/main/local-c
 const canonicalStatus = (options?: {
   state?: 'signed_in' | 'signed_out' | 'error';
   accountId?: string;
-  durable?: boolean;
-  scope?: 'host' | 'process' | null;
 }): Record<string, unknown> => ({
   providers: [
     {
@@ -15,13 +13,6 @@ const canonicalStatus = (options?: {
       identity: options?.accountId ? { account_id: options.accountId } : null,
     },
   ],
-  mutation_persistence: {
-    codex_oauth: {
-      durable: options?.durable ?? true,
-      scope: options?.scope === undefined ? 'host' : options.scope,
-    },
-    pending_logins: { durable: false, scope: 'process' },
-  },
 });
 
 const setup = (runtimeStatus?: Record<string, unknown>) => {
@@ -40,9 +31,7 @@ describe('LocalCodexAccount', () => {
 
   it('runs device-code start and completion polling through the broker', async () => {
     const ctx = setup();
-    vi.mocked(ctx.runtime.status)
-      .mockResolvedValueOnce(canonicalStatus())
-      .mockResolvedValue(canonicalStatus({ state: 'signed_in', accountId: 'acct-rpc' }));
+    vi.mocked(ctx.runtime.status).mockResolvedValue(canonicalStatus({ state: 'signed_in', accountId: 'acct-rpc' }));
     vi.mocked(ctx.runtime.mutate)
       .mockResolvedValueOnce({
         state: 'pending',
@@ -79,14 +68,5 @@ describe('LocalCodexAccount', () => {
       method: 'account_logout',
       params: { provider: 'openai-chatgpt' },
     });
-  });
-
-  it('fails closed without a durable host-scoped attestation', async () => {
-    const ctx = setup(canonicalStatus({ durable: false }));
-    const account = new LocalCodexAccount(ctx);
-    await expect(account.status()).rejects.toThrow('durable host-scoped');
-    await expect(account.logout()).rejects.toThrow('durable host-scoped');
-    await expect(account.link(vi.fn())).rejects.toThrow('durable host-scoped');
-    expect(ctx.runtime.mutate).not.toHaveBeenCalled();
   });
 });

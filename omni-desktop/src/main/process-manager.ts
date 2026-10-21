@@ -13,8 +13,7 @@ import {
   type AgentProcessStartArg,
   type FetchFn,
 } from '@/main/agent-process';
-import { hasDurableHostCodexMutation, isDurableCodexAccountRequest } from '@/main/local-codex-account';
-import { hasDurableHostMcpMutation, isMcpManagementMethod } from '@/main/local-mcp';
+import { isCodexAccountRequest } from '@/main/local-codex-account';
 import { gitTokenEnvName, resolveCredentialForUrl } from '@/shared/git-credentials';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import { assertManagementAdminRequest, type ManagementAdminResult } from '@/shared/management-admin';
@@ -80,11 +79,6 @@ export class ProcessManager {
    * installed or repaired. In particular, the omni-code console script may
    * exist before the development omniagents overlay is fully installed. */
   private waitForRuntimeInstall?: () => Promise<void>;
-  /** Trusted topology assertion. True only for the single-user local Electron
-   * manager; server managers must remain false even if child env is spoofed. */
-  private durableLocalCodexAccountMutations: boolean;
-  /** Independent trusted topology gate for canonical host MCP stores. */
-  private durableLocalMcpMutations: boolean;
 
   constructor(arg: {
     sendToWindow: ProcessManager['sendToWindow'];
@@ -96,10 +90,6 @@ export class ProcessManager {
     resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
     /** Wait for any in-flight local runtime install/repair to settle. */
     waitForRuntimeInstall?: () => Promise<void>;
-    /** Permit canonical Codex mutations only in local single-user Electron. */
-    durableLocalCodexAccountMutations?: boolean;
-    /** Permit canonical MCP CRUD/auth only in local single-user Electron. */
-    durableLocalMcpMutations?: boolean;
   }) {
     this.sendToWindow = arg.sendToWindow;
     this.fetchFn = arg.fetchFn ?? globalThis.fetch;
@@ -111,8 +101,6 @@ export class ProcessManager {
     this.getExtraEnv = arg.getExtraEnv;
     this.resolveGitToken = arg.resolveGitToken;
     this.waitForRuntimeInstall = arg.waitForRuntimeInstall;
-    this.durableLocalCodexAccountMutations = arg.durableLocalCodexAccountMutations === true;
-    this.durableLocalMcpMutations = arg.durableLocalMcpMutations === true;
   }
 
   private getOrCreate(processId: string, compatibilityKey: string): { proc: AgentProcess; created: boolean } {
@@ -504,27 +492,10 @@ export class ProcessManager {
     if (!proc) {
       throw new Error('Product management AgentHost is unavailable');
     }
-    if (request.method.startsWith('account_')) {
-      if (!isDurableCodexAccountRequest(request)) {
-        throw new Error('Only durable ChatGPT OAuth account mutations are available through this broker');
-      }
-      if (!this.durableLocalCodexAccountMutations) {
-        throw new Error('Account mutations are unavailable outside local single-user Electron');
-      }
-      const status = await proc.getManagementAccountStatus();
-      if (!hasDurableHostCodexMutation(status)) {
-        throw new Error('AgentHost did not attest durable host-scoped Codex account mutations');
-      }
+    if (request.method.startsWith('account_') && !isCodexAccountRequest(request)) {
+      throw new Error('Only ChatGPT OAuth account mutations are available through this broker');
     }
-    if (isMcpManagementMethod(request.method)) {
-      if (!this.durableLocalMcpMutations) {
-        throw new Error('MCP mutations are unavailable outside local single-user Electron');
-      }
-      const status = await proc.getManagementMcpStatus();
-      if (!hasDurableHostMcpMutation(status)) {
-        throw new Error('AgentHost did not attest durable host-scoped MCP configuration and OAuth stores');
-      }
-
+    if (request.method.startsWith('mcp_')) {
       const result = await proc.callManagementAdmin(request.method, request.params as never);
       // mcp_auth_cancel only discards process-local pending state. Every other
       // allowed MCP mutation can change config, credentials, or live instances.
@@ -581,7 +552,7 @@ export class ProcessManager {
     }
   };
 
-  /** Main-only account migration read. No IPC handler exposes this method. */
+  /** Main-only account status read for the `codex:*` handlers. */
   getManagementAccountStatus = async (): Promise<Record<string, unknown>> => {
     await this.ensureManagementConnection();
     const proc = this.processes.get('__product_management__');
@@ -589,16 +560,6 @@ export class ProcessManager {
       throw new Error('Product management AgentHost is unavailable');
     }
     return proc.getManagementAccountStatus();
-  };
-
-  /** Main-only MCP ownership migration read. No generic control RPC is exposed. */
-  getManagementMcpStatus = async (): Promise<Record<string, unknown>> => {
-    await this.ensureManagementConnection();
-    const proc = this.processes.get('__product_management__');
-    if (!proc) {
-      throw new Error('Product management AgentHost is unavailable');
-    }
-    return proc.getManagementMcpStatus();
   };
 
   private startConsumer = async (processId: string, opts: AgentProcessStartOptions, epoch: number): Promise<void> => {
@@ -952,20 +913,8 @@ export const createProcessManager = (arg: {
   resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
   getExtraEnv?: (processId?: string) => Record<string, string> | Promise<Record<string, string>>;
   waitForRuntimeInstall?: () => Promise<void>;
-  durableLocalCodexAccountMutations?: boolean;
-  durableLocalMcpMutations?: boolean;
 }) => {
-  const {
-    ipc,
-    sendToWindow,
-    fetchFn,
-    getStoreData,
-    resolveGitToken,
-    getExtraEnv,
-    waitForRuntimeInstall,
-    durableLocalCodexAccountMutations,
-    durableLocalMcpMutations,
-  } = arg;
+  const { ipc, sendToWindow, fetchFn, getStoreData, resolveGitToken, getExtraEnv, waitForRuntimeInstall } = arg;
 
   const processManager = new ProcessManager({
     sendToWindow,
@@ -974,8 +923,6 @@ export const createProcessManager = (arg: {
     resolveGitToken,
     getExtraEnv,
     waitForRuntimeInstall,
-    durableLocalCodexAccountMutations,
-    durableLocalMcpMutations,
   });
   const channels = registerProcessHandlers(ipc, () => processManager);
 

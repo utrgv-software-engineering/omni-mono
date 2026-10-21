@@ -425,40 +425,18 @@ export class AgentProcess {
   callManagementAdmin = async <Method extends ManagementAdminMethod>(
     method: Method,
     params: RpcMethodMap[Method]['params']
-  ): Promise<RpcMethodMap[Method]['result']> => {
-    const data = await this.waitForRunningData();
-    if (!data.wsUrl || !this.agentHostControlToken) {
-      throw new Error('AgentHost admin channel is unavailable');
-    }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    return control.call(method, params);
-  };
+  ): Promise<RpcMethodMap[Method]['result']> => (await this.control()).call(method, params);
 
-  /** Narrow main-process read used to verify durable local account ownership.
-   * It is deliberately not exposed through IPC as a generic control call. */
-  getManagementAccountStatus = async (): Promise<RpcMethodMap['account_status']['result']> => {
-    const data = await this.waitForRunningData();
-    if (!data.wsUrl || !this.agentHostControlToken) {
-      throw new Error('AgentHost admin channel is unavailable');
-    }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    return control.call('account_status', {});
-  };
+  /** Main-process account status read. Not exposed through IPC as a generic control call. */
+  getManagementAccountStatus = async (): Promise<RpcMethodMap['account_status']['result']> =>
+    (await this.control()).call('account_status', {});
 
-  /** Narrow main-process read used by the local MCP ownership/durability gate. */
-  getManagementMcpStatus = async (): Promise<RpcMethodMap['mcp_list_servers']['result']> => {
+  private control = async (): Promise<AgentHostControlClient> => {
     const data = await this.waitForRunningData();
     if (!data.wsUrl || !this.agentHostControlToken) {
-      throw new Error('AgentHost admin channel is unavailable');
+      throw new Error('AgentHost control channel is unavailable');
     }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    return control.call('mcp_list_servers', {});
+    return (this.agentHostControlClient ??= new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
   };
 
   /** Register and bind one launcher consumer inside this long-lived AgentHost. */
@@ -468,13 +446,8 @@ export class AgentProcess {
     arg: AgentProcessStartArg
   ): Promise<AgentHostConsumerRuntime> => {
     await this.ensureConsumerSources(arg);
+    const control = await this.control();
     const data = await this.waitForRunningData();
-    if (!data.wsUrl || !this.agentHostControlToken) {
-      throw new Error('AgentHost control channel is unavailable');
-    }
-    const control =
-      this.agentHostControlClient ??
-      (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
     let materializedEnvironmentId: string | undefined;
     // The desktop always runs omni-code's default (host) profile.
     const definition: Record<string, unknown> = {

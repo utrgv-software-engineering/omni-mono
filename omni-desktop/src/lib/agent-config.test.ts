@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  containsEnvRef,
-  emptyMcpConfig,
   emptyModelsConfig,
   parseEnvVars,
   PROVIDER_CONNECTION_FIELDS,
@@ -24,20 +22,9 @@ describe('parseEnvVars', () => {
   });
 });
 
-describe('containsEnvRef', () => {
-  it('detects ${VAR} and ${VAR:-default}', () => {
-    expect(containsEnvRef('${OPENAI_KEY}')).toBe(true);
-    expect(containsEnvRef('Bearer ${TOK:-none}')).toBe(true);
-  });
-  it('is false for plain values', () => {
-    expect(containsEnvRef('sk-abc123')).toBe(false);
-  });
-});
-
 describe('empty config factories', () => {
   it('produce schema-valid empties', () => {
     expect(emptyModelsConfig()).toEqual({ version: 3, default: null, voice_default: null, providers: {} });
-    expect(emptyMcpConfig()).toEqual({ mcpServers: {} });
   });
 });
 

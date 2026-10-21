@@ -1,39 +1,19 @@
 /**
- * Pure helpers for the agent's runtime config (models / MCP / env).
+ * Pure helpers for the agent's runtime config (models / env).
  *
  * No fs, Electron, or node:crypto imports — safe for the renderer, main, and
- * server bundles alike. The secret-rewrite logic that DOES need hashing lives
- * in `src/main/config-materializer.ts` (main/server only); this module holds
- * the default shapes, the `.env` parser, and the env-ref predicate they share.
+ * server bundles alike.
  */
-import type { McpConfig, ModelsConfig } from '@/shared/types';
+import type { ModelsConfig } from '@/shared/types';
 
 /** Empty `models.json` (current schema version). */
 export function emptyModelsConfig(): ModelsConfig {
   return { version: 3, default: null, voice_default: null, providers: {} };
 }
 
-/** Empty `mcp.json`. */
-export function emptyMcpConfig(): McpConfig {
-  return { mcpServers: {} };
-}
-
-/**
- * Matches a `${VAR}` or `${VAR:-default}` reference anywhere in a string —
- * the same grammar both omni-code (`models.py`) and omniagents (`user_mcp.py`)
- * expand at load time. Used to detect user-authored refs so the materializer
- * never double-rewrites them into launcher secrets.
- */
-const ENV_REF_RE = /\$\{[^}:]+(?::-[^}]*)?\}/;
-
-/** True when `value` already contains a `${...}` reference (user-supplied). */
-export function containsEnvRef(value: string): boolean {
-  return ENV_REF_RE.test(value);
-}
-
 /**
  * Parse raw `.env` text into a `{ KEY: value }` map for direct injection into
- * the agent process env (cloud, where no `.env` file is written). Mirrors the
+ * the agent process env. Mirrors the
  * structure the Environment tab round-trips: `#` comments and blank lines are
  * skipped, the first `=` splits key from value, surrounding whitespace on the
  * key is trimmed, the value is taken verbatim (no quote stripping — the agent

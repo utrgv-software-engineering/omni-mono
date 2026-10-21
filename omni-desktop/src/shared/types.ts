@@ -186,8 +186,6 @@ export type StoreData = {
    */
   githubAccount?: GithubAccount;
 
-  /** Server mode: agent MCP servers, materialized to `mcp.json`. Electron leaves MCP to the runtime. */
-  mcpConfig: McpConfig;
   /**
    * Raw `.env` contents for the agent, materialized to a real `.env` file.
    */
@@ -605,7 +603,6 @@ export const schema: Schema<StoreData> = {
       required: ['id', 'host', 'username', 'last4', 'createdAt'],
     },
   },
-  mcpConfig: { type: 'object', default: { mcpServers: {} } },
   envVars: { type: 'string', default: '' },
   audioSettings: {
     type: 'object',
@@ -793,7 +790,7 @@ export type ExecutionTarget = {
 
 /** Result of retiring one execution environment or its owning AgentHost. */
 export type AgentProcessStopResult = {
-  scope: 'environment' | 'host' | 'compute' | 'none';
+  scope: 'environment' | 'host' | 'none';
   /** Host-process termination mode. Environment-only stops do not terminate it. */
   shutdown: 'graceful' | 'forced' | 'not-applicable';
 };
@@ -872,10 +869,7 @@ export type AgentProcessStartOptions = {
    * while registering the consumer's default profile definition.
    */
   projectId?: string;
-  /**
-   * Conversation session id used for delegated-compute session ownership.
-   * Local AgentHost Workspace identity is deliberately independent.
-   */
+  /** Conversation session id; becomes the AgentHost thread id. */
   sessionId?: string;
 };
 
@@ -1437,8 +1431,6 @@ type SettingsConfigIpcEvents = Namespaced<
       config: ModelsConfig,
       options?: { expectedProvider: string | null; confirmProviderChange?: boolean }
     ) => void;
-    'get-mcp-config': () => McpConfig;
-    'set-mcp-config': (config: McpConfig) => void;
     'get-env': () => string;
     'set-env': (content: string) => void;
   }

@@ -1,7 +1,6 @@
 import type { ReadableAtom } from 'nanostores';
 import { atom } from 'nanostores';
 
-import { emptyMcpConfig } from '@/lib/agent-config';
 import { normalizeLayoutMode } from '@/lib/store-init';
 import { refreshModelsConfig } from '@/renderer/services/config';
 import { emitter, ipc } from '@/renderer/services/ipc';
@@ -36,7 +35,6 @@ const getDefaults = (): StoreData => ({
   skillSources: {},
   installedBundles: {},
   gitCredentials: [],
-  mcpConfig: emptyMcpConfig(),
   envVars: '',
   browserProfiles: [],
   browserTabsets: {},

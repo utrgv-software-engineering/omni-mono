@@ -13,7 +13,6 @@ import { ExploreSection, FEATURED_MARKETPLACES, installKeyOf } from '@/renderer/
 import { InstalledSection } from '@/renderer/features/Plugins/InstalledSection';
 import { MarketplaceDialog } from '@/renderer/features/Plugins/MarketplaceDialog';
 import {
-  hasDurableLocalMcpPersistence,
   mcpConfigFromSnapshots,
   mcpCreateInput,
   mcpUpdateInput,
@@ -33,7 +32,6 @@ import {
   useProductManagementRefresh,
   useProductManagementSnapshot,
 } from '@/renderer/omniagents-ui/product-management-context';
-import { agentConfigApi } from '@/renderer/services/config';
 import { emitter, isElectron } from '@/renderer/services/ipc';
 import { managementAdminApi } from '@/renderer/services/management-admin';
 import type { BundleUpdateInfo, McpServerEntry } from '@/shared/types';
@@ -75,17 +73,12 @@ export const PluginsView = memo(() => {
 
   const { refresh } = data;
 
-  /** In Electron the Omniagents runtime owns MCP configuration: reads and
-   * writes go through its per-server RPCs. Server mode keeps the store-backed
-   * mcp.json document. */
-  const canonicalMcpCapability = hasDurableLocalMcpPersistence(
-    managementSnapshot.mcp.data?.mutation_persistence ?? null
+  /** The Omniagents runtime owns MCP configuration: reads and writes go
+   * through its per-server RPCs. */
+  const effectiveMcpConfig = useMemo(
+    () => mcpConfigFromSnapshots(managementSnapshot.mcp.data?.servers ?? []),
+    [managementSnapshot.mcp.data?.servers]
   );
-  const canonicalMcpOwned = isElectron && canonicalMcpCapability;
-  const canonicalMcpConfig = canonicalMcpOwned
-    ? mcpConfigFromSnapshots(managementSnapshot.mcp.data?.servers ?? [])
-    : null;
-  const effectiveMcpConfig = canonicalMcpConfig ?? data.mcpConfig;
 
   const installed = useMemo(
     () =>
@@ -113,31 +106,21 @@ export const PluginsView = memo(() => {
   );
   const driftedItems = useMemo(() => collectDriftedItems(exploreItems), [exploreItems]);
 
-  /** Per-server runtime mutation in Electron; full-document writes in server mode. */
   const saveConnector = useCallback(
     async (id: string, entry: McpServerEntry) => {
-      if (isElectron && !canonicalMcpCapability) {
-        throw new Error('Omniagents MCP persistence is unavailable; restart the local agent before editing servers.');
-      }
       const runtime = managementSnapshot.mcp.data?.servers.find((server) => server.server_name === id);
       if (runtime?.read_only) {
         throw new Error(`MCP server "${id}" is managed by the Omniagents host and cannot be changed.`);
       }
-      if (canonicalMcpOwned) {
-        if (runtime) {
-          await managementAdminApi.updateMcpServer(id, mcpUpdateInput(entry, runtime));
-        } else {
-          await managementAdminApi.createMcpServer(mcpCreateInput(id, entry));
-        }
-        await refreshManagement();
-        await refresh();
-        return;
+      if (runtime) {
+        await managementAdminApi.updateMcpServer(id, mcpUpdateInput(entry, runtime));
+      } else {
+        await managementAdminApi.createMcpServer(mcpCreateInput(id, entry));
       }
-      const config = await agentConfigApi.getMcp();
-      await agentConfigApi.setMcp({ ...config, mcpServers: { ...config.mcpServers, [id]: entry } });
+      await refreshManagement();
       await refresh();
     },
-    [canonicalMcpCapability, canonicalMcpOwned, managementSnapshot.mcp.data?.servers, refresh, refreshManagement]
+    [managementSnapshot.mcp.data?.servers, refresh, refreshManagement]
   );
 
   const removeConnector = useCallback(
@@ -146,18 +129,11 @@ export const PluginsView = memo(() => {
       if (runtime?.read_only) {
         throw new Error(`MCP server "${id}" is managed by the Omniagents host and cannot be removed.`);
       }
-      if (canonicalMcpOwned) {
-        await managementAdminApi.deleteMcpServer(id);
-        await refreshManagement();
-        await refresh();
-        return;
-      }
-      const config = await agentConfigApi.getMcp();
-      const { [id]: _, ...rest } = config.mcpServers;
-      await agentConfigApi.setMcp({ ...config, mcpServers: rest });
+      await managementAdminApi.deleteMcpServer(id);
+      await refreshManagement();
       await refresh();
     },
-    [canonicalMcpOwned, managementSnapshot.mcp.data?.servers, refresh, refreshManagement]
+    [managementSnapshot.mcp.data?.servers, refresh, refreshManagement]
   );
 
   const handleInstall = useCallback(
@@ -338,8 +314,8 @@ export const PluginsView = memo(() => {
                   size="sm"
                   variant="ghost"
                   onClick={() => setConnectorDialog({ serverId: null })}
-                  disabled={canonicalMcpOwned && !userMcpAllowed}
-                  title={canonicalMcpOwned && !userMcpAllowed ? 'User MCP servers are disabled by the host' : undefined}
+                  disabled={!userMcpAllowed}
+                  title={userMcpAllowed ? undefined : 'User MCP servers are disabled by the host'}
                 >
                   <PlugZap className="mr-1" />
                   Add MCP server

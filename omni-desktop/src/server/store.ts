@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 
-import { emptyMcpConfig } from '@/lib/agent-config';
 import type { StoreData } from '@/shared/types';
 
 const STORE_PATH = join(homedir(), '.config', 'Omni Code', 'config.json');
@@ -35,7 +34,6 @@ export const DEFAULTS: StoreData = {
   skillSources: {},
   installedBundles: {},
   gitCredentials: [],
-  mcpConfig: emptyMcpConfig(),
   envVars: '',
   browserProfiles: [],
   browserTabsets: {},

@@ -57,12 +57,7 @@ describe('McpManagementClient', () => {
         ],
         user_mcp_allowed: true,
         write_target: '/config/mcp.json',
-        mutation_persistence: {
-          user_config: { durable: true, scope: 'host' },
-          oauth_tokens: { durable: true, scope: 'host' },
-          pending_auth: { durable: false, scope: 'process' },
-          managed_servers: ['omni-projects'],
-        },
+        managed_servers: [],
         future_list_field: 'kept',
       },
     });
@@ -79,29 +74,6 @@ describe('McpManagementClient', () => {
       ],
       future_list_field: 'kept',
     });
-    expect(result.mutation_persistence).toEqual({
-      user_config: { durable: true, scope: 'host' },
-      oauth_tokens: { durable: true, scope: 'host' },
-      pending_auth: { durable: false, scope: 'process' },
-      managed_servers: ['omni-projects'],
-    });
-  });
-
-  it('rejects malformed persistence capability claims', async () => {
-    const rpc = new FakeMcpRpc({
-      mcp_list_servers: {
-        servers: [server()],
-        user_mcp_allowed: true,
-        write_target: '/config/mcp.json',
-        mutation_persistence: {
-          user_config: { durable: true, scope: null },
-          oauth_tokens: { durable: false, scope: null },
-          pending_auth: { durable: false, scope: 'process' },
-          managed_servers: [],
-        },
-      },
-    });
-    await expect(new McpManagementClient(rpc).listServers()).rejects.toThrow(/durable\/scope/);
   });
 
   it('gets refreshed discovery with opaque MCP-spec records', async () => {

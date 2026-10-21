@@ -20,7 +20,6 @@ const hoisted = vi.hoisted(() => ({
     getStatus: ReturnType<typeof vi.fn>;
     getRuntimeConnection: ReturnType<typeof vi.fn>;
     getManagementAccountStatus: ReturnType<typeof vi.fn>;
-    getManagementMcpStatus: ReturnType<typeof vi.fn>;
     callManagementAdmin: ReturnType<typeof vi.fn>;
     configureConsumer: ReturnType<typeof vi.fn>;
     bindSession: ReturnType<typeof vi.fn>;
@@ -39,8 +38,6 @@ vi.mock('@/main/agent-process', () => ({
     stop = vi.fn(async () => ({
       scope: 'host',
       shutdown: 'graceful',
-      snapshotPersistence: 'complete',
-      pendingSnapshotRefs: [],
     }));
     exit = vi.fn(async () => {});
     getStatus = vi.fn(() => ({ type: 'uninitialized', timestamp: Date.now() }));
@@ -50,18 +47,6 @@ vi.mock('@/main/agent-process', () => ({
     }));
     getManagementAccountStatus = vi.fn(async () => ({
       providers: [{ id: 'openai-chatgpt', state: 'signed_out', identity: null }],
-      mutation_persistence: { codex_oauth: { durable: true, scope: 'host' } },
-    }));
-    getManagementMcpStatus = vi.fn(async () => ({
-      servers: [],
-      user_mcp_allowed: true,
-      write_target: '/config/mcp.json',
-      mutation_persistence: {
-        user_config: { durable: true, scope: 'host' },
-        oauth_tokens: { durable: true, scope: 'host' },
-        pending_auth: { durable: false, scope: 'process' },
-        managed_servers: [],
-      },
     }));
     callManagementAdmin = vi.fn(async (method: string) => ({ ok: true, method }));
     bindSession = vi.fn(async () => {});
@@ -81,8 +66,6 @@ vi.mock('@/main/agent-process', () => ({
     stopConsumerEnvironment = vi.fn(async () => ({
       scope: 'environment',
       shutdown: 'not-applicable',
-      snapshotPersistence: 'complete',
-      pendingSnapshotRefs: [],
     }));
     discardConsumerSnapshot = vi.fn(async () => {});
     pause = vi.fn(async () => ({ ok: true, supported: true, paused: true }));
@@ -134,8 +117,6 @@ function makePm(opts?: {
   storeData?: Partial<ProcessManagerStoreData>;
   resolveGitToken?: (credentialId: string) => Promise<string | undefined>;
   waitForRuntimeInstall?: () => Promise<void>;
-  durableLocalCodexAccountMutations?: boolean;
-  durableLocalMcpMutations?: boolean;
 }) {
   hoisted.agentProcessInstances = [];
   const sendCalls: Array<{ channel: string; args: unknown[] }> = [];
@@ -150,8 +131,6 @@ function makePm(opts?: {
     getStoreData: () => storeData,
     resolveGitToken: opts?.resolveGitToken,
     waitForRuntimeInstall: opts?.waitForRuntimeInstall,
-    durableLocalCodexAccountMutations: opts?.durableLocalCodexAccountMutations,
-    durableLocalMcpMutations: opts?.durableLocalMcpMutations,
   });
   return { pm, sendCalls };
 }
@@ -229,7 +208,7 @@ describe('ProcessManager', () => {
     });
 
     it('routes only allowlisted mutations through the host admin client', async () => {
-      const { pm } = makePm({ durableLocalMcpMutations: true });
+      const { pm } = makePm();
 
       await expect(pm.mutateManagement({ method: 'mcp_reload_server', params: {} })).resolves.toEqual({
         ok: true,
@@ -244,41 +223,8 @@ describe('ProcessManager', () => {
       expect(host.callManagementAdmin).toHaveBeenCalledOnce();
     });
 
-    it('denies account mutations by default for server and other non-Electron managers', async () => {
+    it('permits the Codex OAuth account subset', async () => {
       const { pm } = makePm();
-
-      await expect(
-        pm.mutateManagement({
-          method: 'account_logout',
-          params: { provider: 'openai-chatgpt' },
-        })
-      ).rejects.toThrow('outside local single-user Electron');
-
-      const host = hoisted.agentProcessInstances[0]!;
-      expect(host.getManagementAccountStatus).not.toHaveBeenCalled();
-      expect(host.callManagementAdmin).not.toHaveBeenCalled();
-    });
-
-    it('requires runtime durable-host attestation as well as the Electron topology flag', async () => {
-      const { pm } = makePm({ durableLocalCodexAccountMutations: true });
-      await pm.ensureManagementConnection();
-      const host = hoisted.agentProcessInstances[0]!;
-      host.getManagementAccountStatus.mockResolvedValue({
-        providers: [{ id: 'openai-chatgpt', state: 'signed_out', identity: null }],
-        mutation_persistence: { codex_oauth: { durable: false, scope: null } },
-      });
-
-      await expect(
-        pm.mutateManagement({
-          method: 'account_logout',
-          params: { provider: 'openai-chatgpt' },
-        })
-      ).rejects.toThrow('did not attest durable host-scoped');
-      expect(host.callManagementAdmin).not.toHaveBeenCalled();
-    });
-
-    it('permits only the durable Codex OAuth subset after both gates pass', async () => {
-      const { pm } = makePm({ durableLocalCodexAccountMutations: true });
 
       await expect(
         pm.mutateManagement({
@@ -288,7 +234,6 @@ describe('ProcessManager', () => {
       ).resolves.toEqual({ ok: true, method: 'account_login_start' });
 
       const host = hoisted.agentProcessInstances[0]!;
-      expect(host.getManagementAccountStatus).toHaveBeenCalledOnce();
       expect(host.callManagementAdmin).toHaveBeenCalledWith('account_login_start', {
         provider: 'openai-chatgpt',
         mode: 'device_code',
@@ -300,17 +245,16 @@ describe('ProcessManager', () => {
       { method: 'account_logout', params: { provider: 'openai' } },
       { method: 'account_refresh', params: { provider: 'anthropic' } },
       { method: 'account_select', params: { provider: 'openai-chatgpt' } },
-    ])('denies non-Codex or non-durable account mutation $method', async (request) => {
-      const { pm } = makePm({ durableLocalCodexAccountMutations: true });
+    ])('denies non-Codex account mutation $method', async (request) => {
+      const { pm } = makePm();
 
-      await expect(pm.mutateManagement(request)).rejects.toThrow('Only durable ChatGPT OAuth');
+      await expect(pm.mutateManagement(request)).rejects.toThrow('Only ChatGPT OAuth');
       const host = hoisted.agentProcessInstances[0]!;
-      expect(host.getManagementAccountStatus).not.toHaveBeenCalled();
       expect(host.callManagementAdmin).not.toHaveBeenCalled();
     });
 
-    it('gates MCP mutations on Electron topology and runtime durability', async () => {
-      const { pm } = makePm({ durableLocalMcpMutations: true });
+    it('reloads MCP after a committed mutation', async () => {
+      const { pm } = makePm();
       await pm.ensureManagementConnection();
       const host = hoisted.agentProcessInstances[0]!;
       host.getStatus.mockReturnValue({ type: 'running', timestamp: Date.now() });
@@ -322,43 +266,12 @@ describe('ProcessManager', () => {
         })
       ).resolves.toEqual({ ok: true, method: 'mcp_create_server' });
 
-      expect(host.getManagementMcpStatus).toHaveBeenCalledOnce();
       expect(host.callManagementAdmin).toHaveBeenNthCalledWith(1, 'mcp_create_server', {
         server_name: 'github',
         type: 'http',
         params: { url: 'https://mcp.test' },
       });
       expect(host.callManagementAdmin).toHaveBeenNthCalledWith(2, 'mcp_reload_server', {});
-    });
-
-    it('does not let MCP or global methods borrow one another topology gates', async () => {
-      const noMcp = makePm({ durableLocalCodexAccountMutations: true }).pm;
-      await expect(
-        noMcp.mutateManagement({ method: 'mcp_delete_server', params: { server_name: 'github' } })
-      ).rejects.toThrow('outside local single-user Electron');
-
-      const noAccount = makePm({ durableLocalMcpMutations: true }).pm;
-      await expect(
-        noAccount.mutateManagement({ method: 'account_logout', params: { provider: 'openai-chatgpt' } })
-      ).rejects.toThrow('outside local single-user Electron');
-    });
-
-    it('requires the complete runtime MCP durability attestation', async () => {
-      const { pm } = makePm({ durableLocalMcpMutations: true });
-      await pm.ensureManagementConnection();
-      const host = hoisted.agentProcessInstances[0]!;
-      host.getManagementMcpStatus.mockResolvedValue({
-        servers: [],
-        mutation_persistence: {
-          user_config: { durable: true, scope: 'host' },
-          oauth_tokens: { durable: false, scope: null },
-          managed_servers: [],
-        },
-      });
-      await expect(
-        pm.mutateManagement({ method: 'mcp_delete_server', params: { server_name: 'github' } })
-      ).rejects.toThrow('did not attest durable host-scoped MCP');
-      expect(host.callManagementAdmin).not.toHaveBeenCalled();
     });
 
     it('stops and evicts a distinct live host when post-commit reload fails', async () => {
@@ -381,7 +294,6 @@ describe('ProcessManager', () => {
           ],
         },
         resolveGitToken: async () => 'ghp_thetoken',
-        durableLocalMcpMutations: true,
       });
       await pm.start('mcp-peer', { workspaceDir: '/tmp/mcp-peer', projectId: 'proj_git' });
       await pm.ensureManagementConnection();
@@ -1064,8 +976,6 @@ describe('ProcessManager', () => {
       await expect(pm.stop('proc-1')).resolves.toEqual({
         scope: 'host',
         shutdown: 'graceful',
-        snapshotPersistence: 'complete',
-        pendingSnapshotRefs: [],
       });
 
       expect(hoisted.agentProcessInstances[0]!.stop).toHaveBeenCalled();
