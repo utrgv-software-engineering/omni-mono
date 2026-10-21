@@ -1,6 +1,6 @@
 # Omni
 
-One repository for the Omni agent stack.
+One repository for the Omni agent stack and related projects.
 
 | Directory | What it is | Published as |
 | --- | --- | --- |
