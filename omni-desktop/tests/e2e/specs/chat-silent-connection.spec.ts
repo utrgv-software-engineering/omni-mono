@@ -1,5 +1,6 @@
 import type { WebSocketRoute } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -52,7 +53,7 @@ test('recovers silently stalled RPC sockets while preserving each visible tile d
   await input.fill('SILENT_CONNECTION_SETUP');
   await input.press('Enter');
   await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true })).toBeVisible({ timeout: 90_000 });
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await newDeckChat(page);
   await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
   const first = page.locator('[data-deck-column]').nth(0);
   const second = page.locator('[data-deck-column]').nth(1);

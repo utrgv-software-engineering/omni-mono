@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -27,6 +28,9 @@ for (const dispatched of [false, true]) {
       await expect(page.getByText('Up next', { exact: true })).toHaveCount(0, { timeout: 90_000 });
       await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
     }
+    // A second column, so the checks below can prove the queue never leaks into it.
+    await newDeckChat(page);
+    await expect(page.locator('[data-deck-column]')).toHaveCount(2);
     await attachProofPng(info, 'queue before process death', await app.captureScreenshot());
     page = await app.restart({ crash: true });
     const restored = page.locator(`[data-deck-column="${columnId}"]`);

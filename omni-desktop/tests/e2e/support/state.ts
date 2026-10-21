@@ -212,6 +212,14 @@ const workspaceFilesSeed = (workspaceDir: string) => ({
   ],
   activeCodeTabId: 'code-e2e-workspace-files',
   codeLayoutMode: 'focus',
+  chatConversations: [
+    {
+      sessionId: 'session-e2e-workspace-files',
+      title: 'Workspace Files chat',
+      lastActiveAt: seededAt,
+      projectId: 'proj_e2e_workspace_files',
+    },
+  ],
 });
 
 const workspaceGitSeed = (workspaceDir: string) => ({
@@ -315,6 +323,20 @@ const pooledWorkspacesSeed = (workspaceDir: string) => {
     ],
     activeCodeTabId: 'code-e2e-pool-alpha',
     codeLayoutMode: 'focus',
+    chatConversations: [
+      {
+        sessionId: 'session-e2e-pool-alpha',
+        title: 'Pool Alpha chat',
+        lastActiveAt: seededAt,
+        projectId: 'proj_e2e_pool_alpha',
+      },
+      {
+        sessionId: 'session-e2e-pool-beta',
+        title: 'Pool Beta chat',
+        lastActiveAt: seededAt + 1,
+        projectId: 'proj_e2e_pool_beta',
+      },
+    ],
   };
 };
 

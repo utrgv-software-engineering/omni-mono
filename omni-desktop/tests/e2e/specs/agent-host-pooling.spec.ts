@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { sessionRow } from 'tests/e2e/support/app';
 import { invokeApp } from 'tests/e2e/support/invoke';
 import { attachProofScreenshot } from 'tests/e2e/support/proof';
 
@@ -45,11 +46,11 @@ async function processStatus(page: Page, processId: string): Promise<RunningStat
 }
 
 async function openIdentityFile(page: Page, sessionName: string, expectedIdentity: string): Promise<void> {
-  const session = page.getByRole('tree', { name: 'Sessions' }).getByRole('treeitem', { name: sessionName });
+  const session = sessionRow(page, sessionName);
   await expect(session).toBeVisible({ timeout: 120_000 });
   await session.click();
 
-  const filesButton = page.getByRole('button', { name: 'Files', exact: true });
+  const filesButton = page.getByRole('radio', { name: 'Files', exact: true });
   await expect(filesButton).toBeVisible({ timeout: 120_000 });
   await filesButton.click();
 
@@ -66,7 +67,7 @@ test.describe('AgentHost pooling', () => {
   test('routes two unrelated workspaces through distinct environments on one host', async ({ app }, testInfo) => {
     test.setTimeout(300_000);
     const page = app.page;
-    const alphaSession = page.getByRole('tree', { name: 'Sessions' }).getByRole('treeitem', { name: 'Pool Alpha' });
+    const alphaSession = sessionRow(page, 'Pool Alpha chat');
     await expect(alphaSession).toBeVisible({ timeout: 120_000 });
     await alphaSession.click();
 
@@ -74,7 +75,7 @@ test.describe('AgentHost pooling', () => {
       .poll(() => processStatus(page, 'code-e2e-pool-alpha'), { timeout: 180_000 })
       .toMatchObject({ type: 'running' });
 
-    const betaSession = page.getByRole('tree', { name: 'Sessions' }).getByRole('treeitem', { name: 'Pool Beta' });
+    const betaSession = sessionRow(page, 'Pool Beta chat');
     await expect(betaSession).toBeVisible({ timeout: 120_000 });
     await betaSession.click();
     await expect
@@ -91,8 +92,8 @@ test.describe('AgentHost pooling', () => {
     expect(alpha.data.workspaceId).not.toBe(beta.data.workspaceId);
     expect(alpha.data.environmentId).not.toBe(beta.data.environmentId);
 
-    await openIdentityFile(page, 'Pool Alpha', 'alpha workspace');
-    await openIdentityFile(page, 'Pool Beta', 'beta workspace');
+    await openIdentityFile(page, 'Pool Alpha chat', 'alpha workspace');
+    await openIdentityFile(page, 'Pool Beta chat', 'beta workspace');
     await attachProofScreenshot(page, testInfo, 'two workspaces routed through one AgentHost');
   });
 });

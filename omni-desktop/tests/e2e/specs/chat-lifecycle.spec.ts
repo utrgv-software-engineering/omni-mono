@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -60,6 +61,8 @@ test('reconciles an accepted send after its RPC reply is lost', async ({ app }, 
     timeout: 90_000,
   });
   await expect(composer).toHaveValue('');
+  // The composer is usable again (Send is disabled only while it is empty).
+  await composer.fill('NEXT_PROMPT_DRAFT');
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled({ timeout: 90_000 });
   await attachProofPng(testInfo, 'lost reply reconciled without duplicate prompt', await app.captureScreenshot());
 });
@@ -89,6 +92,13 @@ test('delivers an attachment when replying to an agent question', async ({ app }
     .poll(() => page.evaluate(() => (window as unknown as { lostReplyDropped?: boolean }).lostReplyDropped))
     .toBe(true);
   await expect(composer).toHaveValue('Here is the image');
+  // The "Message not sent" toast sits over the composer's Send button at
+  // this viewport; dismiss it the way a user would before retrying.
+  const notSent = page.getByRole('region', { name: /Notifications/ }).getByRole('listitem').filter({
+    hasText: 'Message not sent',
+  });
+  await expect(notSent).toBeVisible();
+  await notSent.getByRole('button', { name: 'Dismiss' }).click();
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled({ timeout: 90_000 });
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(composer).toHaveValue('');
@@ -151,7 +161,7 @@ test('keeps an in-flight reply and draft with their conversation while switching
   await composer.press('Enter');
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible({ timeout: 240_000 });
   await composer.fill('Unsent draft belongs to A');
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await newDeckChat(page);
   const focusLayout = page.getByRole('radio', { name: 'Focus', exact: true });
   if ((await focusLayout.getAttribute('aria-checked')) !== 'true') {
     await page.getByRole('button', { name: 'Focus New chat', exact: true }).click();

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { sessionRow } from 'tests/e2e/support/app';
 import { attachProofScreenshot } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'workspace-files' });
@@ -13,13 +14,11 @@ test.describe('workspace files', () => {
     const targetPath = path.join(app.workspaceDir, 'src', 'index.ts');
     const updatedContent = "export const greeting = 'updated';\r\nconsole.log(greeting);\r\n";
 
-    const seededSession = page
-      .getByRole('tree', { name: 'Sessions' })
-      .getByRole('treeitem', { name: /Workspace Files/ });
+    const seededSession = sessionRow(page, 'Workspace Files chat');
     await expect(seededSession).toBeVisible({ timeout: 120_000 });
     await seededSession.click();
 
-    const filesButton = page.getByRole('button', { name: 'Files', exact: true });
+    const filesButton = page.getByRole('radio', { name: 'Files', exact: true });
     await expect(filesButton).toBeVisible({ timeout: 120_000 });
     await filesButton.click();
 

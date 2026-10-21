@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -50,7 +51,7 @@ test('keeps generated plans and artifacts in their tile through updates and reco
   await expect(inputs).toBeVisible({ timeout: 90_000 });
   await inputs.fill('TILE_UI_A');
   await inputs.press('Enter');
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await newDeckChat(page);
   await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
   await expect(inputs).toHaveCount(2);
   const columns = page.locator('[data-deck-column]');

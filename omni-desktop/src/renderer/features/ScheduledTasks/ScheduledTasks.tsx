@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react';
 import { Edit, Ellipsis, ExternalLink, Play, Plus, Trash2 } from 'lucide-react';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useId, useMemo, useState } from 'react';
 
 import { formatDuration, formatTimestamp } from '@/lib/format-time';
 import { useIsDesktop } from '@/renderer/common/use-is-desktop';
@@ -814,20 +814,23 @@ const RoutineForm = ({
   const setField = <K extends keyof RoutineFormState>(field: K, fieldValue: RoutineFormState[K]) => {
     onChange({ ...value, [field]: fieldValue });
   };
+  const id = useId();
 
   return (
     <div className="grid gap-4">
       <Field>
-        <FieldLabel>Name</FieldLabel>
+        <FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel>
         <Input
+          id={`${id}-name`}
           value={value.name}
           onChange={(e) => setField('name', e.target.value)}
           placeholder="Morning code review"
         />
       </Field>
       <Field>
-        <FieldLabel>Instructions</FieldLabel>
+        <FieldLabel htmlFor={`${id}-instructions`}>Instructions</FieldLabel>
         <Textarea
+          id={`${id}-instructions`}
           value={value.instructions}
           onChange={(e) => setField('instructions', e.target.value)}
           placeholder="Review yesterday's changes and summarize any risks."
@@ -835,8 +838,12 @@ const RoutineForm = ({
         />
       </Field>
       <Field>
-        <FieldLabel>Project</FieldLabel>
-        <Select value={value.projectId} onChange={(e) => setField('projectId', e.currentTarget.value)}>
+        <FieldLabel htmlFor={`${id}-project`}>Project</FieldLabel>
+        <Select
+          id={`${id}-project`}
+          value={value.projectId}
+          onChange={(e) => setField('projectId', e.currentTarget.value)}
+        >
           <option value="">No project</option>
           {projects.map((project) => (
             <option key={project.id} value={project.id}>
@@ -847,8 +854,9 @@ const RoutineForm = ({
         <FieldDescription>Without a project, each run gets a fresh session workspace.</FieldDescription>
       </Field>
       <Field>
-        <FieldLabel>Schedule</FieldLabel>
+        <FieldLabel htmlFor={`${id}-schedule`}>Schedule</FieldLabel>
         <Select
+          id={`${id}-schedule`}
           value={value.scheduleKind}
           onChange={(e) => setField('scheduleKind', e.currentTarget.value as ScheduleKind)}
         >
@@ -861,14 +869,18 @@ const RoutineForm = ({
       </Field>
       {value.scheduleKind !== 'manual' && value.scheduleKind !== 'hourly' && (
         <Field>
-          <FieldLabel>Time</FieldLabel>
-          <Input type="time" value={value.time} onChange={(e) => setField('time', e.target.value)} />
+          <FieldLabel htmlFor={`${id}-time`}>Time</FieldLabel>
+          <Input id={`${id}-time`} type="time" value={value.time} onChange={(e) => setField('time', e.target.value)} />
         </Field>
       )}
       {value.scheduleKind === 'weekly' && (
         <Field>
-          <FieldLabel>Day</FieldLabel>
-          <Select value={value.dayOfWeek} onChange={(e) => setField('dayOfWeek', e.currentTarget.value)}>
+          <FieldLabel htmlFor={`${id}-day`}>Day</FieldLabel>
+          <Select
+            id={`${id}-day`}
+            value={value.dayOfWeek}
+            onChange={(e) => setField('dayOfWeek', e.currentTarget.value)}
+          >
             <option value="1">Monday</option>
             <option value="2">Tuesday</option>
             <option value="3">Wednesday</option>

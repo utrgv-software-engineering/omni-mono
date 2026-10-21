@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -61,7 +62,7 @@ test('large persisted histories stay isolated while scrolling, streaming and swi
   await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
   for (let i = 0; i < 2; i++) {
     if (i) {
-      await page.getByRole('button', { name: 'New chat', exact: true }).click();
+      await newDeckChat(page);
       await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
     }
     const column = page.locator('[data-deck-column]').nth(i);

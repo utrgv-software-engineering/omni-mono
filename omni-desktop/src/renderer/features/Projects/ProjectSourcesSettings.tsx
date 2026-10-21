@@ -121,7 +121,7 @@ export const ProjectSourcesSettings = memo(({ projectId }: { projectId: ProjectI
         </ItemGroup>
       ) : (
         <div className="rounded-lg border border-dashed px-4 py-5 text-sm text-muted-foreground">
-          Nothing connected. You can still use Pages, Tasks, and Ask Omni without attaching files.
+          Nothing connected. You can still chat in this project without attaching files.
         </div>
       )}
 

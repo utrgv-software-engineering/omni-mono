@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -16,7 +17,7 @@ for (const crash of [false, true]) {
     await input.fill('TILE_APPROVAL_A');
     await input.press('Enter');
     await expect(page.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible({ timeout: 90_000 });
-    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await newDeckChat(page);
     await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
     const columns = page.locator('[data-deck-column]');
     await expect(columns).toHaveCount(2);

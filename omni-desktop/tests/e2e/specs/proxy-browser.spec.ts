@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { openCode } from 'tests/e2e/support/app';
+import { openSpaces } from 'tests/e2e/support/app';
 import { WebSocketServer } from 'ws';
 
 type TestUpstream = {
@@ -100,7 +100,7 @@ async function startTestUpstream(): Promise<TestUpstream> {
 }
 
 async function openStandaloneBrowser(page: import('@playwright/test').Page): Promise<void> {
-  await openCode(page);
+  await openSpaces(page);
   await page.getByRole('button', { name: 'New' }).first().click();
   await page.getByRole('menuitem', { name: 'Apps' }).click();
   await page.getByRole('button', { name: 'Browser' }).click();

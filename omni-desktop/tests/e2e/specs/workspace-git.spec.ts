@@ -11,7 +11,7 @@ async function openSourceControl(page: Page) {
   await expect(seededSession).toBeVisible({ timeout: 120_000 });
   await seededSession.click();
 
-  const gitButton = page.getByRole('button', { name: 'Git', exact: true });
+  const gitButton = page.getByRole('radio', { name: 'Git', exact: true });
   await expect(gitButton).toBeVisible({ timeout: 120_000 });
   await gitButton.click();
 

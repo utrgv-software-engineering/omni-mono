@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -70,7 +71,7 @@ for (const crash of [false, true]) {
         { timeout: 30_000 }
       )
       .toBe(2);
-    await page.getByRole('button', { name: 'New chat', exact: true }).click();
+    await newDeckChat(page);
     await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
     const b = page.locator(`[data-deck-column]:not([data-deck-column="${aId}"])`);
     await expect(b).toHaveCount(1);
@@ -101,7 +102,9 @@ for (const crash of [false, true]) {
       const restoredPage = await app.restart({ crash: true });
       const restoredA = restoredPage.locator(`[data-deck-column="${aId}"]`);
       const restoredB = restoredPage.locator(`[data-deck-column]:not([data-deck-column="${aId}"])`);
-      await expect(restoredA.getByText(/Waiting for the previous runtime/)).toBeVisible({ timeout: 90_000 });
+      // The queued message survives the crash and is listed plainly (see
+      // chat-durable-queue), never replayed into the transcript.
+      await expect(restoredA.getByText('Up next', { exact: true })).toBeVisible({ timeout: 90_000 });
       await expect(restoredA.getByRole('log').getByText('QUEUED_AFTER_EXECUTOR_CRASH', { exact: true })).toHaveCount(0);
       await expect(restoredB.getByRole('log')).toContainText('TILE_APPROVAL_B');
       await expect(restoredB.getByRole('log')).not.toContainText('STOP_EXECUTOR_TREE');

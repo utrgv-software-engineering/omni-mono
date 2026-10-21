@@ -5,89 +5,81 @@ test.use({ seedState: 'seeded-project' });
 
 test.describe('routines', () => {
   test('creates, edits, pauses, runs, opens, and deletes a desktop scheduled task', async ({ app }) => {
-    await openRoutines(app.page);
+    const page = app.page;
+    await openRoutines(page);
 
     await test.step('create routine', async () => {
-      await expect(app.page.getByText('Routine index')).toBeVisible();
-      await expect(app.page.getByText('Create routine').first()).toBeVisible();
-      await app.page.getByRole('textbox', { name: 'Name' }).fill('E2E morning review');
-      await app.page.getByRole('textbox', { name: 'Instructions' }).fill('Summarize the workspace status.');
-      await expect(app.page.getByRole('combobox', { name: 'Project' })).toBeVisible();
-      await expect(app.page.getByRole('combobox', { name: 'Approvals' })).toHaveValue('ask');
-      await expect(app.page.getByText(/Function tools can be always allowed by tool name/)).toBeVisible();
-      await expect(
-        app.page.getByText(/MCP tools can be always allowed only for a specific server and tool pair/)
-      ).toBeVisible();
-      await expect(app.page.getByText(/auto[- ]approve all/i)).toHaveCount(0);
-      await app.page.getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Seeded Project' });
-      await app.page.getByRole('button', { name: 'Create routine' }).click();
-      await expect(app.page.getByText('E2E morning review').first()).toBeVisible();
-      await expect(app.page.getByText(/Daily at 09:00/).first()).toBeVisible();
-      await expect(app.page.getByLabel('E2E morning review always allowed function tools')).toBeVisible();
-      await expect(app.page.getByText('Always allowed function tools')).toBeVisible();
-      await expect(app.page.getByText('No function tools are always allowed for this routine.')).toBeVisible();
-      await expect(app.page.getByLabel('E2E morning review always allowed MCP tools')).toBeVisible();
-      await expect(app.page.getByText('Always allowed MCP tools')).toBeVisible();
-      await expect(
-        app.page.getByText('MCP approvals are scoped to the exact server label and tool name.')
-      ).toBeVisible();
-      await expect(
-        app.page.getByText('No MCP server and tool pairs are always allowed for this routine.')
-      ).toBeVisible();
-      await expect(app.page.locator('div').filter({ hasText: /^Seeded Project$/ })).toBeVisible();
+      await expect(page.getByText('No routines yet')).toBeVisible();
+      await page.getByRole('main').getByRole('button', { name: 'New routine' }).first().click();
+      await page.getByRole('textbox', { name: 'Name' }).fill('E2E morning review');
+      await page.getByRole('textbox', { name: 'Instructions' }).fill('Summarize the workspace status.');
+      await expect(page.getByRole('combobox', { name: 'Schedule' })).toHaveValue('daily');
+      await expect(page.getByText(/Runs ask before using tools/)).toBeVisible();
+      await page.getByRole('combobox', { name: 'Project' }).selectOption({ label: 'Seeded Project' });
+      await page.getByRole('button', { name: 'Create routine' }).click();
+
+      const properties = page.getByLabel('E2E morning review properties');
+      await expect(properties).toBeVisible();
+      await expect(properties.getByText(/^Daily at \d\d:\d\d$/)).toBeVisible();
+      await expect(properties.getByText('Seeded Project', { exact: true })).toBeVisible();
+      await expect(page.getByLabel('E2E morning review recent runs').getByText('No runs yet.')).toBeVisible();
     });
 
     await test.step('edit routine', async () => {
-      await app.page.getByRole('button', { name: 'Edit' }).click();
-      const editPanel = app.page.getByLabel('Edit E2E morning review');
-      await expect(editPanel).toBeVisible();
-      await expect(editPanel.getByRole('combobox', { name: 'Approvals' })).toHaveValue('ask');
-      await expect(editPanel.getByText(/Function tools can be always allowed by tool name/)).toBeVisible();
-      await expect(
-        editPanel.getByText(/MCP tools can be always allowed only for a specific server and tool pair/)
-      ).toBeVisible();
-      await expect(editPanel.getByText(/auto[- ]approve all/i)).toHaveCount(0);
-      await editPanel.getByRole('textbox', { name: 'Name' }).fill('E2E edited review');
-      await editPanel.getByRole('combobox', { name: 'Schedule' }).selectOption('weekly');
-      await editPanel.getByLabel('Time').fill('10:30');
-      await editPanel.getByRole('combobox', { name: 'Day' }).selectOption('2');
-      await editPanel.getByRole('button', { name: 'Save changes' }).click();
-      await expect(app.page.getByText('E2E edited review').first()).toBeVisible();
-      await expect(app.page.getByText(/Weekly on Tuesday at 10:30/).first()).toBeVisible();
-      await expect(editPanel).toHaveCount(0);
+      await page.getByRole('button', { name: 'Edit', exact: true }).click();
+      await expect(page.getByText('Edit routine', { exact: true })).toBeVisible();
+      await page.getByRole('textbox', { name: 'Name' }).fill('E2E edited review');
+      await page.getByRole('combobox', { name: 'Schedule' }).selectOption('weekly');
+      await page.getByLabel('Time').fill('10:30');
+      await page.getByRole('combobox', { name: 'Day' }).selectOption('2');
+      await page.getByRole('button', { name: 'Save changes' }).click();
+      const properties = page.getByLabel('E2E edited review properties');
+      await expect(properties).toBeVisible();
+      await expect(properties.getByText('Tuesdays at 10:30', { exact: true })).toBeVisible();
     });
 
     await test.step('pause and resume routine', async () => {
-      await app.page.getByRole('switch', { name: 'Active' }).click();
-      await expect(app.page.getByRole('switch', { name: 'Paused' })).toBeVisible();
-      await app.page.getByRole('switch', { name: 'Paused' }).click();
-      await expect(app.page.getByRole('switch', { name: 'Active' })).toBeVisible();
+      const properties = page.getByLabel('E2E edited review properties');
+      await properties.getByRole('switch').click();
+      await expect(properties.getByText('Paused', { exact: true })).toBeVisible();
+      await properties.getByRole('switch').click();
+      await expect(properties.getByText('Active', { exact: true })).toBeVisible();
     });
 
-    await test.step('run manually records launch attempt', async () => {
-      await app.page.getByRole('button', { name: 'Run now' }).click();
-      await expect(app.page.getByText(/Last (Running|Completed|Failed|Waiting for approval)/)).toBeVisible({
+    await test.step('run now streams into the routine session column', async () => {
+      await page.getByRole('button', { name: 'Run now' }).click();
+      const main = page.getByRole('main');
+      await expect(main.getByRole('radiogroup', { name: 'Layout' })).toBeVisible({ timeout: 30_000 });
+      await expect(main.getByText('Routine', { exact: true })).toBeVisible();
+      await expect(main.getByText('Weekly on Tuesday at 10:30').first()).toBeVisible();
+    });
+
+    await test.step('the run is recorded and its session reopens', async () => {
+      await openRoutines(page);
+      await page
+        .getByRole('main')
+        .getByRole('button', { name: /E2E edited review/ })
+        .first()
+        .click();
+      const runs = page.getByLabel('E2E edited review recent runs');
+      await expect(runs.getByText(/^(Running|Completed|Failed|Needs approval)$/).first()).toBeVisible({
         timeout: 30_000,
       });
-      await expect(app.page.getByLabel('E2E edited review recent runs')).toBeVisible();
-      await expect(app.page.getByText(/Status: (Running|Completed|Failed|Waiting for approval)/)).toBeVisible();
-      await expect(app.page.getByText(/Session:/)).toBeVisible();
-      await expect(app.page.getByRole('button', { name: 'Open session' })).toBeVisible();
-    });
-
-    await test.step('open run session for review', async () => {
-      await app.page.getByRole('button', { name: 'Open session' }).click();
-      await expect(app.page.getByRole('tab', { name: 'Spaces' })).toHaveAttribute('aria-selected', 'true');
-      await expect(app.page.getByText('Routine', { exact: true })).toBeVisible();
-      await expect(app.page.getByText('E2E edited review').first()).toBeVisible();
-      await expect(app.page.getByText('Weekly on Tuesday at 10:30').first()).toBeVisible();
-      await expect(app.page.getByText('Select a project')).toHaveCount(0);
-      await openRoutines(app.page);
+      await runs.getByRole('button', { name: 'Open session' }).first().click();
+      await expect(page.getByRole('main').getByText('Weekly on Tuesday at 10:30').first()).toBeVisible();
+      await openRoutines(page);
     });
 
     await test.step('delete routine', async () => {
-      await app.page.getByRole('button', { name: 'Delete' }).click();
-      await expect(app.page.getByText('No routines yet.')).toBeVisible();
+      await page
+        .getByRole('main')
+        .getByRole('button', { name: /E2E edited review/ })
+        .first()
+        .click();
+      await page.getByRole('button', { name: 'More actions' }).click();
+      await page.getByRole('menuitem', { name: 'Delete routine…' }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Delete' }).click();
+      await expect(page.getByText('No routines yet')).toBeVisible();
     });
   });
 });

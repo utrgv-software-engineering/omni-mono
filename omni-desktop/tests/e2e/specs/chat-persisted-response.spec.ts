@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -34,7 +35,7 @@ test('persisted response appears once in its own tile without its stream message
   await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
   for (let index = 0; index < 2; index++) {
     if (index) {
-      await page.getByRole('button', { name: 'New chat', exact: true }).click();
+      await newDeckChat(page);
       await page.getByRole('radio', { name: 'Spaces', exact: true }).click();
     }
     const column = page.locator('[data-deck-column]').nth(index);

@@ -1,4 +1,5 @@
 import { expect, test } from 'tests/e2e/fixtures/test';
+import { newDeckChat } from 'tests/e2e/support/app';
 import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
@@ -18,7 +19,7 @@ test('archives one active tile without stopping its neighbor, including a lost a
   const ownerId = await page.locator('[data-deck-column]').first().getAttribute('data-deck-column');
   const original = app.storedTabs().find((tab) => tab.id === ownerId)!;
   const a = page.locator(`[data-deck-column="${ownerId}"]`);
-  await page.getByRole('button', { name: 'New chat', exact: true }).click();
+  await newDeckChat(page);
   await expect(inputs).toHaveCount(2);
   const b = page
     .locator('[data-deck-column]')
