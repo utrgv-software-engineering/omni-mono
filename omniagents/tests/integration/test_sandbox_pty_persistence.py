@@ -108,7 +108,12 @@ async def test_pty_daemon_survives_intervening_session_work():
 
         # Phase C — heartbeat must have advanced; the daemon kept ticking
         # alongside the foreground session work.
+        # The work can finish within one tick, so wait (bounded) for the next.
         after = await _read_heartbeat_count(session, heartbeat_path)
+        deadline = asyncio.get_running_loop().time() + TICK_INTERVAL * 20
+        while after <= baseline and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(TICK_INTERVAL)
+            after = await _read_heartbeat_count(session, heartbeat_path)
         assert after > baseline, (
             f"daemon stopped during intervening work "
             f"(baseline={baseline}, after={after})"

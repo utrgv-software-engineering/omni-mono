@@ -1065,6 +1065,7 @@ class TestCascadeSafety:
             previous = thread_id
         return [f"{prefix}-{index:03d}" for index in range(depth)]
 
+    @pytest.mark.timeout(300)  # thousands of durable commits; slow on Windows
     def test_the_guard_walk_is_not_bounded_by_the_read_caps(self, store, service):
         from omniagents.core.conversation.model import Thread
         from omniagents.core.conversation.service import MAX_DESCENDANTS
@@ -1814,6 +1815,7 @@ class TestTheWalkIsLinear:
         assert len(seen["descendants"]) == 5  # the read really did run
         return elapsed
 
+    @pytest.mark.timeout(300)  # thousands of durable commits; slow on Windows
     def test_doubling_the_chain_does_not_quadruple_the_work(self, store, service):
         small = self._elapsed(store, service, 1500, "s-")
         large = self._elapsed(store, service, 3000, "l-")

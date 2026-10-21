@@ -7,6 +7,8 @@ import textwrap
 from pathlib import Path
 from typing import Any, Dict
 
+import sys
+
 import pytest
 
 from omniagents.core.capabilities import (
@@ -179,6 +181,9 @@ async def test_non_sandbox_mode_still_merges_caps_host_side(tmp_path, monkeypatc
     assert "host fs rules" in rendered  # appended
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="the unix_local sandbox is POSIX-only"
+)
 @pytest.mark.asyncio
 async def test_sandbox_mode_combines_legacy_and_pack_caps(tmp_path, monkeypatch):
     """Legacy `sandbox.capabilities:` block and new `capabilities:` packs

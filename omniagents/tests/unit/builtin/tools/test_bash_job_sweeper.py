@@ -130,8 +130,10 @@ def test_sweeper_broadcasts_per_session(invoke_tool, tmp_path):
     listings across session boundaries."""
     # Spawn two jobs; manually re-tag the second with a different session_id
     # to simulate two concurrent sessions sharing the same registry.
-    job_a = _spawn_background(invoke_tool, tmp_path, "sleep 0.2")
-    job_b = _spawn_background(invoke_tool, tmp_path, "sleep 0.2")
+    # The sweeper only reports changes after it starts, so the jobs must still
+    # be running then; on a loaded machine spawning both can take over 0.2s.
+    job_a = _spawn_background(invoke_tool, tmp_path, "sleep 2")
+    job_b = _spawn_background(invoke_tool, tmp_path, "sleep 2")
     get_registry().get(job_a).session_id = "sess-A"
     get_registry().get(job_b).session_id = "sess-B"
 
@@ -140,7 +142,7 @@ def test_sweeper_broadcasts_per_session(invoke_tool, tmp_path):
         sweeper = JobSweeper(rec, interval_s=0.05)
         sweeper.start()
         try:
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(3.5)
         finally:
             sweeper.stop()
             await asyncio.sleep(0.1)
