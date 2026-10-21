@@ -243,7 +243,13 @@ async function launchElectronLocal(
       : null;
   const electronApp: ElectronApplication = await electron.launch({
     executablePath: electronExecutablePath,
-    args: [...(process.env.E2E_ELECTRON_X11 === '1' ? ['--ozone-platform=x11'] : []), '.'],
+    // E2E_ELECTRON_OZONE=wayland targets a headless compositor (set
+    // WAYLAND_DISPLAY/XDG_RUNTIME_DIR to it) instead of the live desktop.
+    args: [
+      ...(process.env.E2E_ELECTRON_X11 === '1' ? ['--ozone-platform=x11'] : []),
+      ...(process.env.E2E_ELECTRON_OZONE ? [`--ozone-platform=${process.env.E2E_ELECTRON_OZONE}`] : []),
+      '.',
+    ],
     cwd: process.cwd(),
     env: {
       ...electronEnv,
@@ -255,7 +261,7 @@ async function launchElectronLocal(
         process.env.SANDBOX_OPENAI_BASE_URL ??
         'http://127.0.0.1:9/v1',
       OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? process.env.SANDBOX_OPENAI_API_KEY ?? 'test-key',
-      DISPLAY: process.env.DISPLAY ?? ':0',
+      ...(process.env.DISPLAY ? { DISPLAY: process.env.DISPLAY } : {}),
     },
     recordVideo: videoOptions(testInfo, launchIndex),
     slowMo: visualProofEnabled ? proofSlowMo : undefined,
