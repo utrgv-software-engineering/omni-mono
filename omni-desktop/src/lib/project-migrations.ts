@@ -1,0 +1,838 @@
+/**
+ * Pure schema migrations for the ProjectManager store.
+ *
+ * Extracted from `ProjectManager.migrateToSupervisor` so each migration step
+ * can be unit-tested in isolation without touching the real filesystem.
+ *
+ * Side effects on the filesystem (v10 brief → context.md backfill, v12 Personal
+ * project dir) are injected through `MigrationDeps` so tests can pass no-ops
+ * and the live main-process path can wire real fs writes.
+ */
+import { upgradeLegacyInbox } from '@/lib/inbox-migration';
+import { uuidv4 } from '@/lib/uuid';
+import type { ColumnId, InboxItem, Milestone, StoreData, TicketId, TicketPriority } from '@/shared/types';
+
+/**
+ * v26's reserved chat-record id, kept as a local literal: the constant is
+ * gone from shared/types (v27 dissolved the reserved record into an ordinary
+ * projectless column) but the v26 step still describes the historical shape.
+ */
+const LEGACY_CHAT_TAB_ID = 'chat';
+
+// ---------------------------------------------------------------------------
+// Narrow store interface — anything that implements this can be migrated.
+// electron-store implements it natively; tests use an in-memory fake.
+// ---------------------------------------------------------------------------
+
+export interface IMigrationStore {
+  get<K extends keyof StoreData>(key: K): StoreData[K] | undefined;
+  get<K extends keyof StoreData>(key: K, defaultValue: StoreData[K]): StoreData[K];
+  get(key: string): unknown;
+  get(key: string, defaultValue: unknown): unknown;
+  set<K extends keyof StoreData>(key: K, value: StoreData[K]): void;
+  set(key: string, value: unknown): void;
+  delete(key: string): void;
+}
+
+export interface MigrationDeps {
+  /** Mint an id (nanoid in production, deterministic in tests). */
+  newId: () => string;
+  /**
+   * Mint a session id — must be a real UUID, since `omni serve`'s docker
+   * resume path coerces it to `uuid.UUID`. Defaults to {@link uuidv4};
+   * tests may override for determinism.
+   */
+  newSessionId?: () => string;
+  /** Current wall-clock time (Date.now in production, frozen in tests). */
+  now: () => number;
+  /**
+   * v10 backfill: write `<projectDir>/context.md` using the project's legacy
+   * `brief` field. No-op by default so tests don't touch disk.
+   */
+  writeProjectContextBrief?: (project: {
+    id: string;
+    label: string;
+    slug?: string;
+    isPersonal?: boolean;
+    brief?: string;
+  }) => void;
+  /**
+   * v12 backfill: ensure the Personal project's workspace directory exists
+   * and has a default context.md. No-op by default.
+   */
+  ensurePersonalProjectDir?: () => void;
+  /**
+   * Post-migration repair pass: re-seed missing root pages and re-create
+   * any missing context.md files. Called after each schema-version bump
+   * and once on the idempotent v-current path. No-op by default.
+   */
+  repairProjectRoots?: () => void;
+}
+
+const DEFAULT_BRIEF_TEMPLATE = `## Problem
+
+
+## Appetite
+
+
+## Solution direction
+
+
+## Open questions
+- [ ]
+
+## Decisions
+
+
+## Out of scope
+
+`;
+
+// ---------------------------------------------------------------------------
+// Migration entry point
+// ---------------------------------------------------------------------------
+
+export function runMigrations(store: IMigrationStore, deps: MigrationDeps): void {
+  const version = (store.get('schemaVersion', 0) as number) ?? 0;
+
+  // v3 → v4: replace supervisorStatus + runPhase with phase
+  if (version === 3) {
+    const tickets = (store.get('tickets', []) as Record<string, unknown>[]) ?? [];
+    const migrated = tickets.map((raw) => {
+      const { supervisorStatus: _s, runPhase: _r, ...rest } = raw;
+      void _s;
+      void _r;
+      return { ...rest, phase: 'idle' };
+    });
+    store.set('tickets', migrated);
+    store.set('schemaVersion', 4);
+  }
+
+  // v4 → v5: create default milestones per project, assign tickets
+  if (version === 4 || (store.get('schemaVersion', 0) as number) === 4) {
+    const projects = (store.get('projects', []) as Array<{ id: string }>) ?? [];
+    const tickets = (store.get('tickets', []) as Record<string, unknown>[]) ?? [];
+
+    const milestones: Milestone[] = [];
+    const projectToDefaultMilestone = new Map<string, string>();
+
+    for (const proj of projects) {
+      const msId = deps.newId();
+      projectToDefaultMilestone.set(proj.id, msId);
+      const now = deps.now();
+      milestones.push({
+        id: msId,
+        projectId: proj.id,
+        title: 'General',
+        description: 'Default milestone',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      } as Milestone);
+    }
+
+    const migratedTickets = tickets.map((raw) => ({
+      ...raw,
+      milestoneId: projectToDefaultMilestone.get(raw.projectId as string) ?? '',
+    }));
+
+    store.set('milestones', milestones);
+    store.set('tickets', migratedTickets);
+    store.set('schemaVersion', 5);
+  }
+
+  // v5 → v6: migrate inbox 'deferred' → 'iceboxed', add wipLimit
+  if (version === 5 || (store.get('schemaVersion', 0) as number) === 5) {
+    const inboxItems = (store.get('inboxItems', []) as Record<string, unknown>[]) ?? [];
+    const migratedInbox = inboxItems.map((item) => ({
+      ...item,
+      status: (item.status as string) === 'deferred' ? 'iceboxed' : item.status,
+    }));
+    store.set('inboxItems', migratedInbox);
+    if (store.get('wipLimit') === undefined) {
+      store.set('wipLimit', 3);
+    }
+    store.set('schemaVersion', 6);
+  }
+
+  // v6 → v7: migrate Project.workspaceDir → Project.source
+  if (version === 6 || (store.get('schemaVersion', 0) as number) === 6) {
+    const projects = (store.get('projects', []) as Record<string, unknown>[]) ?? [];
+    const migrated = projects.map((raw) => {
+      if (raw.source && typeof raw.source === 'object') {
+        return raw;
+      }
+      const { workspaceDir, ...rest } = raw;
+      return {
+        ...rest,
+        source: { kind: 'local', workspaceDir: workspaceDir as string },
+      };
+    });
+    store.set('projects', migrated);
+    store.set('schemaVersion', 7);
+  }
+
+  // v7 → v8: rename initiatives → milestones, strip isDefault,
+  //          rename ticket.initiativeId → milestoneId
+  if (version === 7 || (store.get('schemaVersion', 0) as number) === 7) {
+    const legacyInitiatives = (store.get('initiatives', []) as Record<string, unknown>[]) ?? [];
+    const existingMilestones = (store.get('milestones', []) as Record<string, unknown>[]) ?? [];
+    const rawItems = legacyInitiatives.length > 0 ? legacyInitiatives : existingMilestones;
+    const milestones = rawItems.map((raw) => {
+      const { isDefault: _d, ...rest } = raw;
+      void _d;
+      return rest;
+    });
+    if (legacyInitiatives.length > 0) {
+      store.delete('initiatives');
+    }
+    store.set('milestones', milestones);
+
+    const tickets = (store.get('tickets', []) as Record<string, unknown>[]) ?? [];
+    const migratedTickets = tickets.map((raw) => {
+      const { initiativeId, ...rest } = raw;
+      if (initiativeId !== undefined && !('milestoneId' in raw)) {
+        return { ...rest, milestoneId: initiativeId };
+      }
+      return raw;
+    });
+    store.set('tickets', migratedTickets);
+
+    const inboxItems = (store.get('inboxItems', []) as Record<string, unknown>[]) ?? [];
+    const migratedInbox = inboxItems.map((raw) => {
+      const { linkedInitiativeId, ...rest } = raw;
+      return linkedInitiativeId ? { ...rest, linkedMilestoneId: linkedInitiativeId } : rest;
+    });
+    store.set('inboxItems', migratedInbox);
+
+    store.set('schemaVersion', 8);
+  }
+
+  // v8 → v9: add slug to projects
+  if (version === 8 || (store.get('schemaVersion', 0) as number) === 8) {
+    const projects = (store.get('projects', []) as Record<string, unknown>[]) ?? [];
+    const migrated = projects.map((raw) => {
+      if (raw.slug) {
+        return raw;
+      }
+      const label = (raw.label as string) ?? 'project';
+      const slug =
+        label
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-|-$/g, '') || 'project';
+      return { ...raw, slug };
+    });
+    store.set('projects', migrated);
+    store.set('schemaVersion', 9);
+  }
+
+  // v9 → v10: add pages collection, seed root page per project,
+  //           backfill project.brief → <projectDir>/context.md (fs side-effect)
+  if (version === 9 || (store.get('schemaVersion', 0) as number) === 9) {
+    const projects =
+      (store.get('projects', []) as Array<{
+        id: string;
+        label: string;
+        slug?: string;
+        isPersonal?: boolean;
+        brief?: string;
+      }>) ?? [];
+    const now = deps.now();
+    const pages = projects.map((project) => ({
+      id: deps.newId(),
+      projectId: project.id,
+      parentId: null,
+      title: project.label,
+      sortOrder: 0,
+      isRoot: true,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    store.set('pages', pages);
+
+    if (deps.writeProjectContextBrief) {
+      for (const project of projects) {
+        try {
+          deps.writeProjectContextBrief(project);
+        } catch {
+          /* non-critical */
+        }
+      }
+    }
+
+    store.set('schemaVersion', 10);
+  }
+
+  // v10 → v11: strip legacy `brief` field from project records
+  if (version === 10 || (store.get('schemaVersion', 0) as number) === 10) {
+    const projects = (store.get('projects', []) as Record<string, unknown>[]) ?? [];
+    const cleaned = projects.map((raw) => {
+      if ('brief' in raw) {
+        const { brief: _brief, ...rest } = raw;
+        void _brief;
+        return rest;
+      }
+      return raw;
+    });
+    store.set('projects', cleaned);
+    store.set('schemaVersion', 11);
+  }
+
+  // v11 → v13: upgrade legacy inbox records, ensure a Personal project exists
+  if (version === 11 || (store.get('schemaVersion', 0) as number) === 11) {
+    const projects =
+      (store.get('projects', []) as Array<{
+        id: string;
+        label: string;
+        isPersonal?: boolean;
+        slug?: string;
+      }>) ?? [];
+    const legacyItems = (store.get('inboxItems', []) as Array<Record<string, unknown>>) ?? [];
+    const now = deps.now();
+
+    let personal = projects.find((p) => p.isPersonal);
+    if (!personal) {
+      personal = {
+        id: deps.newId(),
+        label: 'Personal',
+        slug: 'personal',
+        isPersonal: true,
+      };
+      (personal as unknown as { createdAt: number }).createdAt = now;
+      projects.push(personal);
+      store.set('projects', projects);
+      deps.ensurePersonalProjectDir?.();
+    }
+
+    const upgraded = upgradeLegacyInbox(legacyItems, now, deps.newId);
+    store.set('inboxItems', upgraded);
+    store.set('schemaVersion', 13);
+  }
+
+  // v13 → v14: recover orphaned inbox data from pages[].properties
+  if (version === 13 || (store.get('schemaVersion', 0) as number) === 13) {
+    const pagesRaw = (store.get('pages', []) as Array<Record<string, unknown>>) ?? [];
+    const existingInbox = ((store.get('inboxItems') ?? []) as InboxItem[]) ?? [];
+    const recovered: InboxItem[] = [];
+    const keptPages: Array<Record<string, unknown>> = [];
+    /** True when we stripped at least one `properties` key (even an empty one). */
+    let strippedAny = false;
+    const now = deps.now();
+
+    for (const pageRaw of pagesRaw) {
+      const props = pageRaw.properties as Record<string, unknown> | undefined;
+      if (!props || Object.keys(props).length === 0) {
+        if ('properties' in pageRaw) {
+          strippedAny = true;
+        }
+        const { properties: _p, ...rest } = pageRaw;
+        void _p;
+        keptPages.push(rest);
+        continue;
+      }
+
+      const legacyStatus = props.status;
+      if (legacyStatus === 'done') {
+        continue;
+      }
+
+      const status: InboxItem['status'] = legacyStatus === 'later' ? 'later' : 'new';
+
+      // Legacy scope properties (outcome / notDoing) fold into the note —
+      // the structured shaping system was removed in v25 and these pages
+      // predate it, so they convert straight to the folded form.
+      const foldedLines: string[] = [];
+      if (typeof props.outcome === 'string' && (props.outcome as string).trim()) {
+        foldedLines.push(`**Done when:** ${(props.outcome as string).trim()}`);
+      }
+      if (typeof props.notDoing === 'string' && (props.notDoing as string).trim()) {
+        foldedLines.push(`**Out of scope:** ${(props.notDoing as string).trim()}`);
+      }
+
+      const item: InboxItem = {
+        id: (pageRaw.id as string) ?? deps.newId(),
+        title: (pageRaw.title as string | undefined)?.trim() || 'Untitled',
+        status,
+        projectId: typeof props.projectId === 'string' ? (props.projectId as string) : null,
+        createdAt: typeof pageRaw.createdAt === 'number' ? (pageRaw.createdAt as number) : now,
+        updatedAt: typeof pageRaw.updatedAt === 'number' ? (pageRaw.updatedAt as number) : now,
+      };
+      if (foldedLines.length > 0) {
+        item.note = foldedLines.join('\n');
+      }
+      if (status === 'later') {
+        item.laterAt = typeof props.laterAt === 'number' ? (props.laterAt as number) : now;
+      }
+      recovered.push(item);
+    }
+
+    if (recovered.length > 0 || keptPages.length !== pagesRaw.length || strippedAny) {
+      if (recovered.length > 0) {
+        store.set('inboxItems', [...existingInbox, ...recovered]);
+      }
+      store.set('pages', keptPages);
+    }
+    store.set('schemaVersion', 14);
+  }
+
+  // v14 → v15: backfill activity timestamps for dashboard ranking
+  if (version === 14 || (store.get('schemaVersion', 0) as number) === 14) {
+    const tickets = (store.get('tickets', []) as Record<string, unknown>[]) ?? [];
+    const migratedTickets = tickets.map((raw) => {
+      const updatedAt = typeof raw.updatedAt === 'number' ? (raw.updatedAt as number) : deps.now();
+      const next: Record<string, unknown> = { ...raw };
+      if (next.phaseChangedAt === undefined) {
+        next.phaseChangedAt = updatedAt;
+      }
+      if (next.columnChangedAt === undefined) {
+        next.columnChangedAt = updatedAt;
+      }
+      if (raw.resolution !== undefined && next.resolvedAt === undefined) {
+        next.resolvedAt = updatedAt;
+      }
+      return next;
+    });
+    store.set('tickets', migratedTickets);
+
+    const milestones = (store.get('milestones', []) as Record<string, unknown>[]) ?? [];
+    const migratedMilestones = milestones.map((raw) => {
+      if (raw.status === 'completed' && raw.completedAt === undefined) {
+        const updatedAt = typeof raw.updatedAt === 'number' ? (raw.updatedAt as number) : deps.now();
+        return { ...raw, completedAt: updatedAt };
+      }
+      return raw;
+    });
+    store.set('milestones', migratedMilestones);
+
+    if ((store.get('layoutMode') as string) === 'home') {
+      store.set('layoutMode', 'chat');
+    }
+
+    store.set('schemaVersion', 15);
+    deps.repairProjectRoots?.();
+    // Fall through to v15→v16.
+  }
+
+  // v15 → v16: add ticket archive support (archivedAt field).
+  if (version === 15 || (store.get('schemaVersion', 0) as number) === 15) {
+    const tickets = (store.get('tickets', []) as Record<string, unknown>[]) ?? [];
+    const migratedTickets = tickets.map((raw) => {
+      if ('archivedAt' in raw) {
+        return raw;
+      }
+      return { ...raw, archivedAt: undefined };
+    });
+    store.set('tickets', migratedTickets);
+    store.set('schemaVersion', 16);
+    deps.repairProjectRoots?.();
+    // Fall through to v16→v17.
+  }
+
+  // v16 → v17: add customApps (trivial — default is [])
+  if (version === 16 || (store.get('schemaVersion', 0) as number) === 16) {
+    store.set('schemaVersion', 17);
+    deps.repairProjectRoots?.();
+    // Fall through to v17→v18.
+  }
+
+  // v17 → v18: drop ticket.supervisorSessionId. The Code column owns the
+  // session id now; any persisted value is stale and must not feed back into
+  // newly mounted columns.
+  if (version === 17 || (store.get('schemaVersion', 0) as number) === 17) {
+    const tickets = (store.get('tickets', []) as Record<string, unknown>[]) ?? [];
+    const migrated = tickets.map((raw) => {
+      if (!('supervisorSessionId' in raw)) {
+        return raw;
+      }
+      const { supervisorSessionId: _s, ...rest } = raw;
+      void _s;
+      return rest;
+    });
+    store.set('tickets', migrated);
+    store.set('schemaVersion', 18);
+    deps.repairProjectRoots?.();
+    // Fall through to v18→v19.
+  }
+
+  // v18 → v19: backfill installedBundles from existing skillSources so
+  // marketplace bundles installed before bundle tracking existed are still
+  // updatable. One bundle record per (repo, plugin) pair seen in skillSources.
+  if (version === 18 || (store.get('schemaVersion', 0) as number) === 18) {
+    const sources = (store.get('skillSources', {}) as Record<string, Record<string, unknown>>) ?? {};
+    const bundles: Record<string, Record<string, unknown>> = {};
+    const now = deps.now();
+    for (const [skillName, source] of Object.entries(sources)) {
+      if (source && source.kind === 'marketplace') {
+        const repo = source.repo as string;
+        const plugin = source.plugin as string;
+        const ref = (source.ref as string) ?? 'main';
+        const key = `${repo}:${plugin}`;
+        const existing = bundles[key];
+        if (existing) {
+          (existing.skillNames as string[]).push(skillName);
+        } else {
+          bundles[key] = {
+            repo,
+            plugin,
+            ref,
+            skillNames: [skillName],
+            installedAt: now,
+          };
+        }
+      }
+    }
+    store.set('installedBundles', bundles);
+    store.set('schemaVersion', 19);
+    deps.repairProjectRoots?.();
+    // Fall through to v19→v20.
+  }
+
+  // v19 → v20: rename Code tab to Spaces, and its Deck layout mode to Tile.
+  // 'os' and 'spaces' (codeLayoutMode) are intermediate names from in-flight
+  // dev builds — convert them as well so no one is stranded.
+  if (version === 19 || (store.get('schemaVersion', 0) as number) === 19) {
+    const layoutMode = store.get('layoutMode') as string | undefined;
+    if (layoutMode === 'code' || layoutMode === 'os') {
+      store.set('layoutMode', 'spaces');
+    }
+    const codeLayoutMode = store.get('codeLayoutMode') as string | undefined;
+    if (codeLayoutMode === 'deck' || codeLayoutMode === 'spaces') {
+      store.set('codeLayoutMode', 'tile');
+    }
+    store.set('schemaVersion', 20);
+    // Fall through to v20→v21.
+  }
+
+  // v20 → v21: add audioSettings (trivial — JSON schema default fills it).
+  if (version === 20 || (store.get('schemaVersion', 0) as number) === 20) {
+    store.set('schemaVersion', 21);
+    // Fall through to v21→v22.
+  }
+
+  // v21 → v22: collapse the 6-mode sandbox backend into a single
+  // `defaultProfileName` string + drop platform-pushed machine profiles +
+  // strip per-project `sandbox: { image, dockerfile }` (custom images now
+  // become first-class profiles, not inline project fields).
+  //
+  // Backend mapping:
+  //   docker          → "devbox"   (the launcher-published image with code-server + VNC)
+  //   platform        → "platform" (deferred to step 6; old PlatformClient path still wired)
+  //   podman/vm/local/none → "host" (no isolation, unix_local)
+  if (version === 21 || (store.get('schemaVersion', 0) as number) === 21) {
+    const legacyBackend = store.get('sandboxBackend') as string | undefined;
+    let profileName = 'host';
+    if (legacyBackend === 'docker') {
+      profileName = 'devbox';
+    } else if (legacyBackend === 'platform') {
+      profileName = 'platform';
+    }
+    store.set('defaultProfileName', profileName);
+
+    store.delete('sandboxBackend');
+    store.delete('sandboxProfiles');
+    store.delete('selectedMachineId');
+
+    // Strip the legacy per-project sandbox field. Custom images become
+    // user-created profiles (a follow-up surface) — for now, drop the inline
+    // shape so the migration is clean.
+    const projects = (store.get('projects', []) as Record<string, unknown>[]) ?? [];
+    if (projects.length > 0) {
+      const stripped = projects.map((p) => {
+        const { sandbox: _drop, ...rest } = p;
+        void _drop;
+        return rest;
+      });
+      store.set('projects', stripped);
+    }
+
+    store.set('schemaVersion', 22);
+    // Fall through to v22→v23.
+  }
+
+  // v22 → v23: persist sticky profile bindings so a later change to
+  // `defaultProfileName` doesn't silently drift existing chat / code tabs
+  // into a different sandbox. Seeds chatProfileName from the global default
+  // and each codeTab.profileName from the resolution chain used at launch
+  // time (per-project sandboxProfile → default).
+  if ((store.get('schemaVersion', 0) as number) === 22) {
+    const defaultProfile = (store.get('defaultProfileName') as string | undefined) ?? 'host';
+
+    if (store.get('chatProfileName') == null) {
+      store.set('chatProfileName', defaultProfile);
+    }
+
+    const projects = (store.get('projects', []) as Array<Record<string, unknown>>) ?? [];
+    const projectProfile = new Map<string, string>();
+    for (const p of projects) {
+      const id = p.id as string | undefined;
+      const profile = p.sandboxProfile as string | null | undefined;
+      if (id && typeof profile === 'string' && profile.length > 0) {
+        projectProfile.set(id, profile);
+      }
+    }
+
+    const codeTabs = (store.get('codeTabs', []) as Array<Record<string, unknown>>) ?? [];
+    if (codeTabs.length > 0) {
+      const migrated = codeTabs.map((tab) => {
+        if (typeof tab.profileName === 'string') {
+          return tab;
+        }
+        const projectId = tab.projectId as string | null | undefined;
+        const inherited = projectId ? projectProfile.get(projectId) : undefined;
+        return { ...tab, profileName: inherited ?? defaultProfile };
+      });
+      store.set('codeTabs', migrated as never);
+    }
+
+    store.set('schemaVersion', 23);
+    // Fall through to v23→v24.
+  }
+
+  // v23 → v24: re-mint non-UUID session ids. Early builds minted chat/code
+  // session ids with nanoid, but `omni serve`'s docker resume path coerces the
+  // id to a `uuid.UUID` and throws on a nanoid ("badly formed hexadecimal UUID
+  // string"). Replace any id that isn't a UUID so resume works. The old
+  // workspace snapshot is keyed by the old id, so the tab effectively starts
+  // fresh — acceptable, since those sessions could never resume anyway.
+  if (version === 23 || (store.get('schemaVersion', 0) as number) === 23) {
+    const newSessionId = deps.newSessionId ?? uuidv4;
+    const isUuid = (v: unknown): boolean =>
+      typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+
+    const chatSessionId = store.get('chatSessionId');
+    if (chatSessionId !== undefined && !isUuid(chatSessionId)) {
+      store.set('chatSessionId', newSessionId());
+    }
+
+    const codeTabs = (store.get('codeTabs', []) as Array<Record<string, unknown>>) ?? [];
+    if (codeTabs.length > 0) {
+      const migrated = codeTabs.map((tab) => (isUuid(tab.sessionId) ? tab : { ...tab, sessionId: newSessionId() }));
+      store.set('codeTabs', migrated as never);
+    }
+
+    store.set('schemaVersion', 24);
+    // Fall through to v24→v25.
+  }
+
+  // v24 → v25: remove the shaping system. Structured shaping blocks fold into
+  // the free-text channel (ticket description / inbox note) — the one thing
+  // humans, the UI, and the agent all actually read. The 'shaped' inbox
+  // status collapses to 'new'; previously-shaped items get a fresh capture
+  // timestamp so the expiry sweep doesn't instantly defer them.
+  if (version === 24 || (store.get('schemaVersion', 0) as number) === 24) {
+    const foldShaping = (done: unknown, outOfScope: unknown): string => {
+      const lines: string[] = [];
+      if (typeof done === 'string' && done.trim()) {
+        lines.push(`**Done when:** ${done.trim()}`);
+      }
+      if (typeof outOfScope === 'string' && outOfScope.trim()) {
+        lines.push(`**Out of scope:** ${outOfScope.trim()}`);
+      }
+      return lines.join('\n');
+    };
+
+    const tickets = (store.get('tickets', []) as Record<string, unknown>[]) ?? [];
+    const migratedTickets = tickets.map((raw) => {
+      if (!('shaping' in raw)) {
+        return raw;
+      }
+      const { shaping, ...rest } = raw;
+      const s = (shaping ?? {}) as Record<string, unknown>;
+      const folded = foldShaping(s.doneLooksLike, s.outOfScope);
+      if (!folded) {
+        return rest;
+      }
+      const description = typeof rest.description === 'string' ? rest.description : '';
+      return { ...rest, description: [description, folded].filter(Boolean).join('\n\n') };
+    });
+    store.set('tickets', migratedTickets);
+
+    const inboxItems = (store.get('inboxItems', []) as Record<string, unknown>[]) ?? [];
+    const migratedInbox = inboxItems.map((raw) => {
+      const hasShaping = 'shaping' in raw;
+      const wasShaped = raw.status === 'shaped';
+      if (!hasShaping && !wasShaped) {
+        return raw;
+      }
+      const { shaping, ...rest } = raw;
+      const s = (shaping ?? {}) as Record<string, unknown>;
+      const folded = foldShaping(s.outcome, s.notDoing);
+      const next: Record<string, unknown> = { ...rest };
+      if (folded) {
+        const note = typeof next.note === 'string' ? next.note : '';
+        next.note = [note, folded].filter(Boolean).join('\n\n');
+      }
+      if (wasShaped) {
+        next.status = 'new';
+        next.createdAt = deps.now();
+      }
+      return next;
+    });
+    store.set('inboxItems', migratedInbox);
+
+    store.set('schemaVersion', 25);
+    // Fall through to v25→v26.
+  }
+
+  // v25 → v26: chat unification. The Chat tab's session identity moves onto a
+  // reserved ``codeTabs`` entry (LEGACY_CHAT_TAB_ID) so chat renders through the
+  // same column implementation as the Spaces deck. The legacy chatSessionId /
+  // chatProfileName / chatContainerId keys fold into the record and are
+  // deleted. Existing conversation + container reattach carry over via the
+  // copied values.
+  if (version === 25 || (store.get('schemaVersion', 0) as number) === 25) {
+    const newSessionId = deps.newSessionId ?? uuidv4;
+    const codeTabs = (store.get('codeTabs', []) as Array<Record<string, unknown>>) ?? [];
+    if (!codeTabs.some((t) => t.id === LEGACY_CHAT_TAB_ID)) {
+      const chatSessionId = store.get('chatSessionId') as string | null | undefined;
+      const chatProfileName = store.get('chatProfileName') as string | null | undefined;
+      const chatContainerId = store.get('chatContainerId') as string | null | undefined;
+      const chatTab: Record<string, unknown> = {
+        id: LEGACY_CHAT_TAB_ID,
+        projectId: null,
+        sessionId: chatSessionId ?? newSessionId(),
+        profileName: chatProfileName ?? (store.get('defaultProfileName') as string | undefined) ?? 'host',
+        profileNameExplicit: false,
+        createdAt: deps.now(),
+      };
+      if (chatContainerId) {
+        chatTab.containerId = chatContainerId;
+      }
+      store.set('codeTabs', [chatTab, ...codeTabs] as never);
+    }
+    store.delete('chatSessionId');
+    store.delete('chatProfileName');
+    store.delete('chatContainerId');
+
+    store.set('schemaVersion', 26);
+    // Fall through to v26→v27.
+  }
+
+  // v26 → v27: Chat/Spaces tab merge. The deck now lives behind the Chat tab
+  // and chat is an ordinary projectless column (the v26 reserved record simply
+  // becomes one — its id string stays 'chat', which keeps the process key,
+  // container reattach, and voice scope coherent).
+  if ((store.get('schemaVersion', 0) as number) === 26) {
+    // The 'spaces' layout mode folds into 'chat'.
+    if ((store.get('layoutMode') as string) === 'spaces') {
+      store.set('layoutMode', 'chat');
+    }
+
+    // Every pre-merge tab launched eagerly on mount; stamp activatedAt so the
+    // new lazy-launch gate (chat columns boot on first message) doesn't
+    // strand them un-booted.
+    const codeTabs = (store.get('codeTabs', []) as Array<Record<string, unknown>>) ?? [];
+    store.set(
+      'codeTabs',
+      codeTabs.map((t) => (t.activatedAt ? t : { ...t, activatedAt: (t.createdAt as number) ?? deps.now() })) as never
+    );
+
+    // Focus is the new default landing (it reads like the old Chat tab), but
+    // an install with deck columns open chose multitasking — leave its stored
+    // layout (implicit 'tile' or explicit 'focus') untouched.
+    const hadDeckColumns = codeTabs.some((t) => t.id !== 'chat');
+    if (!hadDeckColumns) {
+      store.set('codeLayoutMode', 'focus');
+    }
+
+    store.set('schemaVersion', 27);
+    // Fall through to v27→v28.
+  }
+
+  // v27 → v28: the plan-week ritual is gone. Pins are plain durable pins
+  // (they always were, mechanically); the review-day schedule and its
+  // last-completed timestamp have no reader left.
+  if ((store.get('schemaVersion', 0) as number) === 27) {
+    store.delete('weeklyReviewDay');
+    store.delete('lastWeeklyReviewAt');
+    store.set('schemaVersion', 28);
+    deps.repairProjectRoots?.();
+    // Fall through to v28→v29.
+  }
+
+  // v28 → v29: remove Jira-style ticket resolution. The pipeline's Done
+  // category is the sole completion state; archive is the sole retirement
+  // state. This is a one-way migration, not a runtime compatibility path.
+  if ((store.get('schemaVersion', 0) as number) === 28) {
+    const projects = (store.get('projects', []) as Array<Record<string, unknown>>) ?? [];
+    const doneColumnByProject = new Map<string, string>();
+    for (const project of projects) {
+      const pipeline = project.pipeline as { columns?: Array<Record<string, unknown>> } | undefined;
+      const columns = pipeline?.columns ?? [];
+      const done = [...columns].reverse().find((column) => column.category === 'done') ?? columns.at(-1);
+      if (typeof project.id === 'string' && typeof done?.id === 'string') {
+        doneColumnByProject.set(project.id, done.id);
+      }
+    }
+
+    const tickets = (store.get('tickets', []) as Array<Record<string, unknown>>) ?? [];
+    const migrated = tickets.map((raw) => {
+      const { resolution, resolvedAt, ...rest } = raw;
+      const next: Record<string, unknown> = { ...rest };
+      const updatedAt = typeof raw.updatedAt === 'number' ? raw.updatedAt : deps.now();
+      const legacyCompletedAt = typeof resolvedAt === 'number' ? resolvedAt : updatedAt;
+      const doneColumnId = typeof raw.projectId === 'string' ? doneColumnByProject.get(raw.projectId) : undefined;
+
+      if (resolution === 'completed') {
+        if (doneColumnId) {
+          next.columnId = doneColumnId;
+        }
+        next.completedAt = typeof raw.completedAt === 'number' ? raw.completedAt : legacyCompletedAt;
+      } else if (resolution !== undefined) {
+        next.archivedAt = typeof raw.archivedAt === 'number' ? raw.archivedAt : legacyCompletedAt;
+        delete next.completedAt;
+      } else if (doneColumnId && raw.columnId === doneColumnId) {
+        next.completedAt = typeof raw.completedAt === 'number' ? raw.completedAt : legacyCompletedAt;
+      }
+      return next;
+    });
+    store.set('tickets', migrated);
+    store.set('schemaVersion', 29);
+    deps.repairProjectRoots?.();
+  }
+
+  if (((store.get('schemaVersion', 0) as number) ?? 0) >= 29) {
+    // Stale pre-v26 clients (an old PWA tab against a migrated server) can
+    // re-mint the legacy chat keys after the fold ran. They're dead weight —
+    // sweep them on every boot of the migrated store.
+    store.delete('chatSessionId');
+    store.delete('chatProfileName');
+    store.delete('chatContainerId');
+    deps.repairProjectRoots?.();
+    return;
+  }
+
+  // Initial v0/v1/v2 → v3 boot: strip legacy phase/loop fields on tickets,
+  // normalize to the minimal shape, then re-enter to run v3→v4+.
+  const tickets = (store.get('tickets', []) as Record<string, unknown>[]) ?? [];
+  const migrated: Record<string, unknown>[] = [];
+  for (const raw of tickets) {
+    const ticket: Record<string, unknown> = {
+      id: (raw.id as string) ?? deps.newId(),
+      projectId: (raw.projectId as string) ?? '',
+      title: (raw.title as string) ?? '',
+      description: (raw.description as string) ?? '',
+      priority: (raw.priority as TicketPriority) ?? 'medium',
+      blockedBy: (raw.blockedBy as TicketId[]) ?? [],
+      createdAt: (raw.createdAt as number) ?? deps.now(),
+      updatedAt: (raw.updatedAt as number) ?? deps.now(),
+      columnId: (raw.columnId as ColumnId) ?? 'backlog',
+    };
+    if (!ticket.columnId) {
+      const status = raw.status as string;
+      if (status === 'in_progress') {
+        ticket.columnId = 'implementation';
+      } else if (status === 'completed' || status === 'closed') {
+        ticket.columnId = 'completed';
+      }
+    }
+    migrated.push(ticket);
+  }
+  store.set('tickets', migrated);
+  store.set('schemaVersion', 4);
+  // Re-enter to run v4→v5+ migrations.
+  runMigrations(store, deps);
+}
+
+export { DEFAULT_BRIEF_TEMPLATE };

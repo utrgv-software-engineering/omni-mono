@@ -1,0 +1,38 @@
+{
+  "protocol_version": "2.0.0",
+  "canonical_sha256": "ce951c6dbd76846cbe94c8ce89859d77f16f6024f5d5afc67e64c57da17ea015",
+  "generated_typescript_sha256": "5966c96359d5bb3c93e87c803e6482c27fbce15f3e665f2ee08c8c58afb2d994",
+  "source_repository": "https://github.com/utrgv-software-engineering/omniagents.git",
+  "source_commit": "556c87edbcb0ed2ebc45a141bcc039c815910404",
+  "source_artifact": "omniagents/backends/web/ui/src/protocol/generated/gui-v2.ts",
+  "source_manifest": "protocol/openrpc/v2/manifest.json",
+  "source_openrpc": "protocol/openrpc/v2/omniagents-gui-v2.json",
+  "source_schema": "protocol/openrpc/v2/schemas/gui-v2.schema.json",
+  "transport_manifest": "canonical/manifest.json",
+  "transport_openrpc": "canonical/omniagents-gui-v2.json",
+  "transport_schema": "canonical/gui-v2.schema.json",
+  "transport_manifest_sha256": "929deca6bcdbc08c3594edeebd36f49cb27364af360de8535d2781b97d492d45",
+  "transport_openrpc_sha256": "da0c6712769f198b15d268bc396953b4c142008c207ba27d2b16ffc603fcc34e",
+  "transport_schema_sha256": "2aff0c0fddc2510be131f3f287ed1687e02ba78bf9bcbeeb7b72ad4ef5cc9073",
+  "generator": "scripts.protocol.generate_gui_protocol",
+  "generator_version": "2",
+  "toolchain": {
+    "openrpc_meta_schema": "@open-rpc/meta-schema@1.14.9",
+    "python": {
+      "name": "datamodel-code-generator",
+      "options": [
+        "--output-model-type=pydantic_v2.BaseModel",
+        "--disable-timestamp",
+        "--use-annotated"
+      ],
+      "version": "0.71.0"
+    },
+    "typescript": {
+      "name": "json-schema-to-typescript",
+      "options": [
+        "--bannerComment="
+      ],
+      "version": "15.0.4"
+    }
+  }
+}

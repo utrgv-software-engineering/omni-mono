@@ -1,0 +1,327 @@
+import type * as Nanostores from 'nanostores';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { $omniRuntimeReadiness } from '@/renderer/features/Omni/state';
+import { $agentStatuses, agentProcessApi } from '@/renderer/services/agent-process';
+import { $initialized, persistedStoreApi } from '@/renderer/services/store';
+import type { AgentProcessStatus, StoreData, WithTimestamp } from '@/shared/types';
+
+import { useAutoLaunch } from './use-auto-launch';
+
+const invoke = vi.hoisted(() => vi.fn());
+const setKey = vi.hoisted(() => vi.fn());
+const clearStatus = vi.hoisted(() => vi.fn());
+const start = vi.hoisted(() => vi.fn());
+const stop = vi.hoisted(() => vi.fn());
+const switchSandbox = vi.hoisted(() => vi.fn());
+const successToast = vi.hoisted(() => vi.fn());
+const errorToast = vi.hoisted(() => vi.fn());
+const warningToast = vi.hoisted(() => vi.fn());
+const createMachineLogger = vi.hoisted(() => vi.fn(() => () => {}));
+
+vi.mock('@/renderer/services/ipc', () => ({
+  emitter: { invoke },
+  ipc: { on: vi.fn(() => () => {}) },
+}));
+
+vi.mock('@/renderer/services/store', async () => {
+  const { atom } = await vi.importActual<typeof Nanostores>('nanostores');
+  return {
+    $initialized: atom(true),
+    persistedStoreApi: {
+      $atom: atom({ defaultProfileName: 'host' }),
+      setKey,
+    },
+  };
+});
+
+vi.mock('@/renderer/features/Omni/state', async () => {
+  const { atom } = await vi.importActual<typeof Nanostores>('nanostores');
+  return {
+    $omniRuntimeReadiness: atom({ status: 'ready' }),
+    ensureRuntimeReady: vi.fn(),
+    retryRuntimeCheck: vi.fn(),
+  };
+});
+
+vi.mock('@/renderer/services/agent-process', async () => {
+  const { map } = await vi.importActual<typeof Nanostores>('nanostores');
+  return {
+    $agentStatuses: map({}),
+    agentProcessApi: {
+      start,
+      stop,
+      switchSandbox,
+    },
+    clearStatus,
+  };
+});
+
+vi.mock('@/renderer/features/SandboxProfile/profile-list', () => ({
+  getProfileMenuLabel: (profileName: string) => profileName,
+}));
+
+vi.mock('@/renderer/features/Toast/state', () => ({
+  toast: {
+    success: successToast,
+    error: errorToast,
+    warning: warningToast,
+  },
+}));
+
+vi.mock('@/shared/machines/machine-logger', () => ({
+  createMachineLogger,
+}));
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+type HookProps = Parameters<typeof useAutoLaunch>[0];
+
+let container: HTMLDivElement;
+let root: Root;
+
+const runningStatus = (): WithTimestamp<AgentProcessStatus> => ({
+  type: 'running',
+  timestamp: Date.now(),
+  data: { uiUrl: 'http://127.0.0.1:3000' },
+});
+
+function HookHarness(props: HookProps) {
+  useAutoLaunch(props);
+  return null;
+}
+
+async function renderHook(props: HookProps) {
+  await act(async () => {
+    root.render(<HookHarness {...props} />);
+    await flushEffects();
+  });
+}
+
+async function flushEffects() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+beforeEach(() => {
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+
+  ($initialized as { set: (value: boolean) => void }).set(true);
+  ($omniRuntimeReadiness as { set: (value: { status: 'ready' }) => void }).set({ status: 'ready' });
+  (persistedStoreApi.$atom as unknown as { set: (value: Partial<StoreData>) => void }).set({
+    defaultProfileName: 'host',
+  });
+  $agentStatuses.set({});
+
+  invoke.mockImplementation((channel: string, processId?: string) => {
+    if (channel === 'settings:get-models-config') {
+      return Promise.resolve({ providers: { openai: {} } });
+    }
+    if (channel === 'agent-process:get-status' && processId) {
+      return Promise.resolve($agentStatuses.get()[processId] ?? { type: 'uninitialized', timestamp: Date.now() });
+    }
+    return Promise.resolve();
+  });
+  switchSandbox.mockResolvedValue({ ok: true });
+  stop.mockResolvedValue(undefined);
+  start.mockResolvedValue(undefined);
+  clearStatus.mockImplementation((id: string) => {
+    const next = { ...$agentStatuses.get() };
+    delete next[id];
+    $agentStatuses.set(next);
+  });
+});
+
+afterEach(() => {
+  act(() => {
+    root.unmount();
+  });
+  container.remove();
+  vi.clearAllMocks();
+});
+
+describe('useAutoLaunch sandbox profile override switching', () => {
+  it('does not let a delayed status seed overwrite a newer runtime endpoint', async () => {
+    await renderHook({ processId: 'tile-a', workspaceDir: '/workspace/a' });
+    let resolve!: (value: WithTimestamp<AgentProcessStatus>) => void;
+    invoke.mockImplementation((channel: string) =>
+      channel === 'agent-process:get-status'
+        ? new Promise((done) => {
+            resolve = done;
+          })
+        : Promise.resolve()
+    );
+    const oldStatus = runningStatus();
+    await act(async () => {
+      $agentStatuses.setKey('tile-a', oldStatus);
+    });
+    const newStatus = {
+      ...runningStatus(),
+      data: { uiUrl: 'http://new-runtime.test' },
+    } as WithTimestamp<AgentProcessStatus>;
+    await act(async () => {
+      $agentStatuses.setKey('tile-a', newStatus);
+      resolve(oldStatus);
+      await flushEffects();
+    });
+    expect($agentStatuses.get()['tile-a']).toBe(newStatus);
+  });
+  it('recovers an authoritatively missing runtime with the same conversation and workspace', async () => {
+    const props = {
+      processId: 'tile-a',
+      workspaceDir: '/workspace/a',
+      sessionId: 'session-a',
+      snapshotRef: 'snapshot-a',
+      profileNameOverride: 'host',
+    };
+    await renderHook(props);
+    await act(async () => {
+      $agentStatuses.setKey('tile-a', runningStatus());
+      await flushEffects();
+    });
+    start.mockClear();
+    await act(async () => {
+      $agentStatuses.setKey('tile-a', { type: 'uninitialized', timestamp: Date.now() });
+      await flushEffects();
+    });
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledWith('tile-a', {
+      workspaceDir: '/workspace/a',
+      sessionId: 'session-a',
+      snapshotRef: 'snapshot-a',
+      profileNameOverride: 'host',
+    });
+    expect(stop).not.toHaveBeenCalled();
+  });
+  it('labels lifecycle logs with the tab-selected profile instead of the global default', async () => {
+    (persistedStoreApi.$atom as unknown as { set: (value: Partial<StoreData>) => void }).set({
+      defaultProfileName: 'devbox',
+    });
+
+    await renderHook({
+      processId: 'code-tab-1',
+      workspaceDir: null,
+      profileNameOverride: 'host',
+    });
+
+    expect(createMachineLogger).toHaveBeenCalledWith('autoLaunch:code-tab-1', {
+      tags: { tab: 'code-tab-1', sandbox: 'host' },
+    });
+  });
+
+  it('surfaces a rejected process start through the launch state machine', async () => {
+    start.mockRejectedValueOnce(new Error('provisioning failed'));
+
+    function ErrorHarness(props: HookProps) {
+      const result = useAutoLaunch(props);
+      return <output data-phase={result.phase}>{result.error}</output>;
+    }
+
+    await act(async () => {
+      root.render(<ErrorHarness processId="code-tab-1" workspaceDir="/workspace/project" />);
+      await flushEffects();
+      await flushEffects();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const output = container.querySelector('output');
+    expect(output?.dataset['phase']).toBe('error');
+    expect(output?.textContent).toBe('provisioning failed');
+  });
+
+  it('starts the process again on retry after a rejected start', async () => {
+    start.mockRejectedValueOnce(new Error('provisioning failed'));
+    let value!: ReturnType<typeof useAutoLaunch>;
+
+    function RetryHarness(props: HookProps) {
+      value = useAutoLaunch(props);
+      return <output data-phase={value.phase} />;
+    }
+
+    await act(async () => {
+      root.render(<RetryHarness processId="code-tab-1" workspaceDir="/workspace/project" />);
+      await flushEffects();
+      await flushEffects();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(value.phase).toBe('error');
+    expect(start).toHaveBeenCalledTimes(1);
+
+    // RETRY used to leave `hasLaunched` set, so `ready` bounced straight to
+    // idle and nothing was ever started again.
+    await act(async () => {
+      value.retry();
+      await flushEffects();
+      await flushEffects();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(value.phase).toBe('starting');
+  });
+
+  it('does not switch sandboxes when the profile override changes before launch', async () => {
+    await renderHook({
+      processId: 'code-tab-1',
+      workspaceDir: null,
+      profileNameOverride: 'host',
+    });
+
+    await renderHook({
+      processId: 'code-tab-1',
+      workspaceDir: null,
+      profileNameOverride: 'devbox',
+    });
+
+    expect(agentProcessApi.switchSandbox).not.toHaveBeenCalled();
+  });
+
+  it('switches sandboxes when the profile override changes for a running session', async () => {
+    $agentStatuses.set({ 'code-tab-1': runningStatus() });
+
+    await renderHook({
+      processId: 'code-tab-1',
+      workspaceDir: '/workspace/project',
+      profileNameOverride: 'host',
+    });
+    await flushEffects();
+
+    await renderHook({
+      processId: 'code-tab-1',
+      workspaceDir: '/workspace/project',
+      profileNameOverride: 'devbox',
+    });
+
+    expect(agentProcessApi.switchSandbox).toHaveBeenCalledWith('code-tab-1', 'devbox');
+  });
+
+  it('relaunches when the registered source override changes', async () => {
+    await renderHook({
+      processId: 'code-tab-1',
+      workspaceDir: '/workspace/project',
+      sourceOverrideDir: '/workspace/worktree-a',
+      profileNameOverride: 'host',
+    });
+    await flushEffects();
+    await act(async () => {
+      $agentStatuses.set({ 'code-tab-1': runningStatus() });
+      await flushEffects();
+    });
+    stop.mockClear();
+
+    await renderHook({
+      processId: 'code-tab-1',
+      workspaceDir: '/workspace/project',
+      sourceOverrideDir: '/workspace/worktree-b',
+      profileNameOverride: 'host',
+    });
+    await act(async () => {
+      await flushEffects();
+    });
+
+    expect(agentProcessApi.stop).toHaveBeenCalledWith('code-tab-1');
+  });
+});

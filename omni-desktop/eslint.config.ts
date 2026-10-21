@@ -1,0 +1,450 @@
+import { fileURLToPath } from 'node:url';
+
+import { includeIgnoreFile } from '@eslint/compat';
+import js from '@eslint/js';
+import typescriptEslint from '@typescript-eslint/eslint-plugin';
+import typescriptParser from '@typescript-eslint/parser';
+import pluginImport from 'eslint-plugin-import';
+import pluginPath from 'eslint-plugin-path';
+import pluginReact from 'eslint-plugin-react';
+import pluginReactHooks from 'eslint-plugin-react-hooks';
+import pluginReactRefresh from 'eslint-plugin-react-refresh';
+import pluginSimpleImportSort from 'eslint-plugin-simple-import-sort';
+import pluginUnusedImports from 'eslint-plugin-unused-imports';
+import globals from 'globals';
+
+const gitignorePath = fileURLToPath(new URL('.gitignore', import.meta.url));
+
+export default [
+  js.configs.recommended,
+  includeIgnoreFile(gitignorePath, 'Imported .gitignore patterns'),
+  {
+    ignores: ['src/generated/**'],
+  },
+  {
+    languageOptions: {
+      parser: typescriptParser,
+      parserOptions: {
+        ecmaFeatures: {
+          jsx: true,
+        },
+      },
+      globals: {
+        ...globals.browser,
+        ...globals.node,
+        GlobalCompositeOperation: 'readonly',
+        RequestInit: 'readonly',
+        NodeJS: 'readonly',
+        Electron: 'readonly',
+        React: 'readonly',
+        HeadersInit: 'readonly',
+      },
+    },
+
+    files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+
+    plugins: {
+      react: pluginReact,
+      '@typescript-eslint': typescriptEslint,
+      'react-hooks': pluginReactHooks,
+      import: pluginImport,
+      'unused-imports': pluginUnusedImports,
+      'simple-import-sort': pluginSimpleImportSort,
+      'react-refresh': pluginReactRefresh.configs.vite,
+      path: pluginPath,
+    },
+
+    rules: {
+      ...typescriptEslint.configs.recommended?.rules,
+      ...pluginReact.configs.recommended.rules,
+      ...pluginReact.configs['jsx-runtime'].rules,
+      ...pluginReactHooks.configs.recommended.rules,
+
+      'react/jsx-no-bind': [
+        'error',
+        {
+          allowBind: true,
+        },
+      ],
+
+      'react/jsx-curly-brace-presence': [
+        'error',
+        {
+          props: 'never',
+          children: 'never',
+        },
+      ],
+
+      'react-hooks/exhaustive-deps': 'error',
+      'react/prop-types': 'off',
+
+      curly: 'error',
+      'no-var': 'error',
+      'brace-style': 'error',
+      'prefer-template': 'error',
+      radix: 'error',
+      'space-before-blocks': 'error',
+      eqeqeq: ['error', 'always', { null: 'ignore' }],
+      'one-var': ['error', 'never'],
+      'no-eval': 'error',
+      'no-extend-native': 'error',
+      'no-implied-eval': 'error',
+      'no-label-var': 'error',
+      'no-return-assign': 'error',
+      'no-sequences': 'error',
+      'no-template-curly-in-string': 'error',
+      'no-throw-literal': 'error',
+      'no-unmodified-loop-condition': 'error',
+      'no-undef': 'off',
+      'no-empty': ['error', { allowEmptyCatch: true }],
+      'import/no-duplicates': 'error',
+      'import/prefer-default-export': 'off',
+      'unused-imports/no-unused-imports': 'error',
+
+      'unused-imports/no-unused-vars': [
+        'error',
+        {
+          vars: 'all',
+          varsIgnorePattern: '^_',
+          args: 'after-used',
+          argsIgnorePattern: '^_',
+        },
+      ],
+
+      'simple-import-sort/imports': 'error',
+      'simple-import-sort/exports': 'error',
+      '@typescript-eslint/no-unused-vars': 'off',
+
+      '@typescript-eslint/ban-ts-comment': [
+        'error',
+        {
+          'ts-expect-error': 'allow-with-description',
+          'ts-ignore': true,
+          'ts-nocheck': true,
+          'ts-check': false,
+          minimumDescriptionLength: 10,
+        },
+      ],
+
+      '@typescript-eslint/no-empty-interface': [
+        'error',
+        {
+          allowSingleExtends: true,
+        },
+      ],
+
+      '@typescript-eslint/consistent-type-imports': [
+        'error',
+        {
+          prefer: 'type-imports',
+          fixStyle: 'separate-type-imports',
+          disallowTypeAnnotations: false,
+        },
+      ],
+
+      '@typescript-eslint/no-import-type-side-effects': 'error',
+
+      '@typescript-eslint/consistent-type-assertions': [
+        'error',
+        {
+          assertionStyle: 'as',
+        },
+      ],
+
+      'path/no-relative-imports': [
+        'error',
+        {
+          maxDepth: 0,
+        },
+      ],
+
+      'no-promise-executor-return': 'error',
+      'require-await': 'off',
+
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.name="setActiveTab"]',
+          message:
+            'setActiveTab() can only be called from use-navigation-api.tsx. Use navigationApi.switchToTab() instead.',
+        },
+      ],
+
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'crypto',
+          property: 'randomUUID',
+          message: 'Use of crypto.randomUUID is not allowed as it is not available in all browsers.',
+        },
+      ],
+
+      // Typescript handles this for us: https://eslint.org/docs/latest/rules/no-redeclare#handled_by_typescript
+      'no-redeclare': 'off',
+
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'lodash-es',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'lodash-es',
+              message: 'Please use es-toolkit instead.',
+            },
+            {
+              name: 'es-toolkit',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'es-toolkit/compat',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'zod/v3',
+              message: 'Import from zod instead.',
+            },
+          ],
+        },
+      ],
+    },
+
+    settings: {
+      react: {
+        version: 'detect',
+      },
+    },
+  },
+
+  {
+    files: ['**/*.mjs'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
+
+  {
+    files: ['**/*.test.ts', '**/*.test.tsx', 'tests/e2e/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      'no-template-curly-in-string': 'off',
+      'no-promise-executor-return': 'off',
+      'require-await': 'off',
+      'unused-imports/no-unused-vars': 'off',
+    },
+  },
+
+  {
+    files: ['src/renderer/**/*', 'scripts/seed/content/**/*'],
+    rules: {
+      'react/jsx-no-bind': 'off',
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.name="setActiveTab"]',
+          message:
+            'setActiveTab() can only be called from use-navigation-api.tsx. Use navigationApi.switchToTab() instead.',
+        },
+        {
+          selector:
+            "JSXAttribute[name.name='style'] > JSXExpressionContainer > ObjectExpression > Property[key.name=/^(background|backgroundColor|color|border|borderColor|borderRadius|boxShadow|outline|outlineColor)$/]",
+          message:
+            'Static paint belongs in shadcn variants or semantic Tailwind classes, not React inline styles. Generated user colors and third-party integrations require a scoped ESLint exception.',
+        },
+      ],
+    },
+  },
+
+  {
+    files: ['src/renderer/features/Residents/agent-avatar.tsx', 'src/renderer/features/Tickets/ContextEditor.tsx'],
+    rules: {
+      // These two components render generated user-selected colors: stable
+      // agent identity hues and editor highlight colors respectively.
+      'no-restricted-syntax': 'off',
+    },
+  },
+
+  {
+    files: ['scripts/seed/content/**/*'],
+    rules: {
+      // Seed content is standalone sample apps written into user projects;
+      // they have no shadcn or launcher navigation to route through.
+      'no-restricted-syntax': 'off',
+    },
+  },
+
+  {
+    files: ['src/renderer/ds/ui/field.tsx'],
+    rules: {
+      // This file is registry-owned and pinned byte-for-byte to shadcn. Keep
+      // upstream's intentional loose comparison without weakening app code.
+      eqeqeq: 'off',
+    },
+  },
+
+  {
+    files: ['src/renderer/omniagents-ui/**/*'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      'react-hooks/exhaustive-deps': 'off',
+      'unused-imports/no-unused-vars': 'off',
+    },
+  },
+
+  {
+    files: ['src/lib/uuid.ts'],
+    rules: {
+      'no-restricted-properties': 'off',
+    },
+  },
+
+  {
+    files: ['src/renderer/features/Browser/Devtools/NetworkTab.tsx'],
+    rules: {
+      'no-restricted-imports': 'off',
+    },
+  },
+
+  {
+    files: ['src/main/**/*', 'src/preload/**/*', 'electron-builder.config.ts'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
+
+  {
+    files: ['**/use-navigation-api.tsx'],
+    rules: {
+      'no-restricted-syntax': 'off',
+    },
+  },
+
+  {
+    files: ['**/*.stories.tsx'],
+    rules: {
+      'i18next/no-literal-string': 'off',
+    },
+  },
+  {
+    files: ['src/renderer/**/*'],
+
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            // Keep the original lodash-es restrictions
+            {
+              name: 'lodash-es',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'lodash-es',
+              message: 'Please use es-toolkit instead.',
+            },
+            {
+              name: 'es-toolkit',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'es-toolkit/compat',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'zod/v3',
+              message: 'Import from zod instead.',
+            },
+            // Add the renderer-specific restriction
+            {
+              name: '@/main',
+              message:
+                'Files in @/renderer/* cannot import from @/main/*. If you need to access something from both, consider moving it to @/shared.',
+            },
+          ],
+
+          patterns: ['@/main/**'],
+        },
+      ],
+    },
+  },
+  {
+    files: ['src/main/**/*'],
+
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            // Keep the original lodash-es restrictions
+            {
+              name: 'lodash-es',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'lodash-es',
+              message: 'Please use es-toolkit instead.',
+            },
+            {
+              name: 'es-toolkit',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'es-toolkit/compat',
+              importNames: ['isEqual'],
+              message: 'Please use objectEquals from @observ33r/object-equals instead.',
+            },
+            {
+              name: 'zod/v3',
+              message: 'Import from zod instead.',
+            },
+            // Add the main-specific restriction
+            {
+              name: '@/renderer',
+              message:
+                'Files in @/main/* cannot import from @/renderer/*. If you need to access something from both, consider moving it to @/shared.',
+            },
+          ],
+
+          patterns: ['@/renderer/**'],
+        },
+      ],
+    },
+  },
+
+  {
+    files: ['src/renderer/features/Browser/Devtools/NetworkTab.tsx'],
+    rules: {
+      'no-restricted-imports': 'off',
+    },
+  },
+
+  {
+    ignores: [
+      '**/dist/',
+      '**/static/',
+      '**/.husky/',
+      '**/node_modules/',
+      '**/patches/',
+      '**/stats.html',
+      '**/index.html',
+      '**/.yarn/',
+      '**/*.scss',
+      'src/services/api/schema.ts',
+      '.prettierrc.js',
+      '.storybook',
+      '.vite',
+    ],
+  },
+];

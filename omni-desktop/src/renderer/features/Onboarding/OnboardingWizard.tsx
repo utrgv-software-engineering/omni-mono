@@ -1,0 +1,351 @@
+import { AnimatePresence, motion } from 'framer-motion';
+import { memo, useCallback, useState } from 'react';
+
+import { buildProviderConfig, maskApiKey } from '@/lib/provider-config';
+import { OmniMark } from '@/renderer/common/OmniMark';
+import { Card } from '@/renderer/ds/ui/card';
+import { Progress } from '@/renderer/ds/ui/progress';
+import { OnboardingChatGptStep } from '@/renderer/features/Onboarding/OnboardingChatGptStep';
+import type { IdentityKind } from '@/renderer/features/Onboarding/OnboardingChooseStep';
+import { OnboardingChooseStep } from '@/renderer/features/Onboarding/OnboardingChooseStep';
+import { OnboardingConnectedStep } from '@/renderer/features/Onboarding/OnboardingConnectedStep';
+import { OnboardingCredentialsStep } from '@/renderer/features/Onboarding/OnboardingCredentialsStep';
+import { OnboardingKeyEntryStep } from '@/renderer/features/Onboarding/OnboardingKeyEntryStep';
+import { OnboardingLocalStep } from '@/renderer/features/Onboarding/OnboardingLocalStep';
+import type { PickedModel } from '@/renderer/features/Onboarding/OnboardingModelPickStep';
+import { OnboardingModelPickStep } from '@/renderer/features/Onboarding/OnboardingModelPickStep';
+import { OnboardingModelStep } from '@/renderer/features/Onboarding/OnboardingModelStep';
+import { OnboardingProviderTypeStep } from '@/renderer/features/Onboarding/OnboardingProviderTypeStep';
+import { OnboardingValidationStep } from '@/renderer/features/Onboarding/OnboardingValidationStep';
+import { OnboardingWslStep } from '@/renderer/features/Onboarding/OnboardingWslStep';
+import { agentConfigApi } from '@/renderer/services/config';
+import { bootstrapPlatform, isCloudLinked, isElectron, isWslLinked } from '@/renderer/services/ipc';
+import { persistedStoreApi } from '@/renderer/services/store';
+import { resolveModelChoices } from '@/shared/model-catalog';
+import type { ProviderEntry } from '@/shared/types';
+
+type Step =
+  | 'wsl'
+  | 'choose'
+  | 'chatgpt'
+  | 'key-entry'
+  | 'local'
+  | 'model-pick'
+  | 'connected'
+  | 'adv-provider'
+  | 'adv-credentials'
+  | 'adv-model'
+  | 'adv-validate';
+
+/** Per-branch step order, for the progress bar. */
+const BRANCH_STEPS: Record<IdentityKind, Step[]> = {
+  chatgpt: ['choose', 'chatgpt', 'connected'],
+  openai: ['choose', 'key-entry', 'model-pick', 'connected'],
+  anthropic: ['choose', 'key-entry', 'model-pick', 'connected'],
+  local: ['choose', 'local', 'model-pick', 'connected'],
+  advanced: ['choose', 'adv-provider', 'adv-credentials', 'adv-model', 'adv-validate', 'connected'],
+};
+
+/** Advanced flow: stable provider-entry names per runtime type. */
+const ADVANCED_PROVIDER_NAMES: Record<string, string> = {
+  openai: 'openai',
+  'openai-compatible': 'local',
+  litellm: 'litellm',
+  azure: 'azure',
+};
+
+const ADVANCED_PROVIDER_LABELS: Record<string, string> = {
+  openai: 'OpenAI',
+  'openai-compatible': 'your server',
+  litellm: 'LiteLLM',
+  azure: 'Azure',
+};
+
+type ConnectedInfo = { providerLabel: string; modelLabel: string; maskedKey?: string };
+
+// The WSL step runs FIRST (before provider setup) so the config the rest of
+// the wizard writes lands in the backend that will actually be used — choosing
+// WSL relaunches the app against a fresh data root inside the distro. Only on
+// Windows Electron that isn't already linked to a remote backend.
+const WSL_STEP_ELIGIBLE = isElectron && bootstrapPlatform === 'win32' && !isCloudLinked && !isWslLinked;
+
+const stepVariants = {
+  initial: { opacity: 0, x: 24 },
+  animate: { opacity: 1, x: 0 },
+  exit: { opacity: 0, x: -24 },
+};
+
+export const OnboardingWizard = memo(() => {
+  const [step, setStep] = useState<Step>(WSL_STEP_ELIGIBLE ? 'wsl' : 'choose');
+  const [identity, setIdentity] = useState<IdentityKind | null>(null);
+
+  // Identity-flow state
+  const [apiKey, setApiKey] = useState('');
+  const [localBaseUrl, setLocalBaseUrl] = useState('');
+  const [localKind, setLocalKind] = useState<'ollama' | 'openai-compatible'>('ollama');
+  const [liveModels, setLiveModels] = useState<string[]>([]);
+  const [connected, setConnected] = useState<ConnectedInfo | null>(null);
+
+  // Advanced-flow state (the pre-existing three-step setup)
+  const [advProviderType, setAdvProviderType] = useState<ProviderEntry['type'] | null>(null);
+  const [advApiKey, setAdvApiKey] = useState('');
+  const [advBaseUrl, setAdvBaseUrl] = useState('');
+  const [advModelId, setAdvModelId] = useState('');
+  const [advDisplayName, setAdvDisplayName] = useState('');
+
+  const branch = identity ? BRANCH_STEPS[identity] : null;
+  const stepIndex = branch ? branch.indexOf(step) : -1;
+  const showProgress = branch !== null && stepIndex > 0 && step !== 'connected';
+
+  const handleWslSkip = useCallback(() => setStep('choose'), []);
+
+  const handleChoose = useCallback((kind: IdentityKind) => {
+    setIdentity(kind);
+    if (kind === 'chatgpt') {
+      setStep('chatgpt');
+    } else if (kind === 'openai' || kind === 'anthropic') {
+      setStep('key-entry');
+    } else if (kind === 'local') {
+      setStep('local');
+    } else {
+      setStep('adv-provider');
+    }
+  }, []);
+
+  const handleBackToChoose = useCallback(() => {
+    setIdentity(null);
+    setApiKey('');
+    setLiveModels([]);
+    setStep('choose');
+  }, []);
+
+  const handleKeyValidated = useCallback((key: string, models: string[]) => {
+    setApiKey(key);
+    setLiveModels(models);
+    setStep('model-pick');
+  }, []);
+
+  const handleLocalDetected = useCallback((kind: 'ollama' | 'openai-compatible', baseUrl: string, models: string[]) => {
+    setLocalKind(kind);
+    setLocalBaseUrl(baseUrl);
+    setLiveModels(models);
+    setStep('model-pick');
+  }, []);
+
+  const handleEscapeToAdvanced = useCallback(() => {
+    setIdentity('advanced');
+    setStep('adv-provider');
+  }, []);
+
+  const handleModelPickBack = useCallback(() => {
+    setStep(identity === 'local' ? 'local' : 'key-entry');
+  }, [identity]);
+
+  const handleModelPicked = useCallback(
+    async (model: PickedModel) => {
+      const kind = identity === 'openai' ? 'openai' : identity === 'anthropic' ? 'anthropic' : localKind;
+      const current = await agentConfigApi.getModels();
+      const { config } = buildProviderConfig(current, {
+        kind,
+        ...(apiKey ? { apiKey } : {}),
+        ...(localBaseUrl ? { baseUrl: localBaseUrl } : {}),
+        model,
+        makeDefault: 'always',
+      });
+      await agentConfigApi.setModels(config);
+      const providerLabel =
+        identity === 'openai'
+          ? 'OpenAI'
+          : identity === 'anthropic'
+            ? 'Anthropic'
+            : kind === 'ollama'
+              ? 'Ollama'
+              : 'your local server';
+      setConnected({
+        providerLabel,
+        modelLabel: model.label,
+        ...(apiKey ? { maskedKey: maskApiKey(apiKey) } : {}),
+      });
+      setStep('connected');
+    },
+    [identity, localKind, apiKey, localBaseUrl]
+  );
+
+  const handleChatGptConnected = useCallback((defaultModel: string | undefined) => {
+    setConnected({
+      providerLabel: 'ChatGPT',
+      modelLabel: defaultModel ?? 'ChatGPT models — switch with /model in chat',
+    });
+    setStep('connected');
+  }, []);
+
+  // ── Advanced branch (pre-existing flow, unchanged behavior) ──
+  const handleAdvProviderNext = useCallback(() => setStep('adv-credentials'), []);
+  const handleAdvCredentialsBack = useCallback(() => setStep('adv-provider'), []);
+  const handleAdvCredentialsNext = useCallback(() => setStep('adv-model'), []);
+  const handleAdvModelBack = useCallback(() => setStep('adv-credentials'), []);
+  const handleAdvValidateBack = useCallback(() => setStep('adv-model'), []);
+
+  const handleAdvModelNext = useCallback(async () => {
+    if (!advProviderType || !advModelId.trim()) {
+      return;
+    }
+    const providerName = ADVANCED_PROVIDER_NAMES[advProviderType] ?? 'openai';
+    const modelKey = advModelId.split('/').pop() || advModelId;
+    const label = advDisplayName.trim() || modelKey;
+
+    const config = await agentConfigApi.getModels();
+    const provider: ProviderEntry = config.providers[providerName] ?? { type: advProviderType, models: {} };
+    provider.type = advProviderType;
+    if (advProviderType === 'litellm' && !provider.routing_prefix && advModelId.includes('/')) {
+      provider.routing_prefix = advModelId.trim().split('/')[0];
+    }
+    if (advApiKey.trim()) {
+      provider.api_key = advApiKey.trim();
+    }
+    if (advBaseUrl.trim()) {
+      provider.base_url = advBaseUrl.trim();
+    }
+    provider.models[modelKey] = {
+      model: advModelId.trim(),
+      label,
+      max_input_tokens: 272000,
+      max_output_tokens: 128000,
+      ...(advProviderType === 'openai'
+        ? { model_settings: { store: false, extra_body: { include: ['reasoning.encrypted_content'] } } }
+        : {}),
+    };
+    config.providers[providerName] = provider;
+    if (!config.default) {
+      config.default = `${providerName}/${modelKey}`;
+    }
+    await agentConfigApi.setModels(config);
+    setStep('adv-validate');
+  }, [advProviderType, advModelId, advDisplayName, advApiKey, advBaseUrl]);
+
+  const handleAdvValidateNext = useCallback(() => {
+    setConnected({
+      providerLabel: ADVANCED_PROVIDER_LABELS[advProviderType ?? 'openai'] ?? 'your provider',
+      modelLabel: advDisplayName.trim() || advModelId,
+      ...(advApiKey.trim() ? { maskedKey: maskApiKey(advApiKey) } : {}),
+    });
+    setStep('connected');
+  }, [advProviderType, advDisplayName, advModelId, advApiKey]);
+
+  const handleFinish = useCallback(async () => {
+    await persistedStoreApi.setKey('layoutMode', 'chat');
+    await persistedStoreApi.setKey('onboardingComplete', true);
+  }, []);
+
+  const modelChoices =
+    identity === 'openai' || identity === 'anthropic'
+      ? resolveModelChoices(identity, liveModels)
+      : resolveModelChoices(localKind, liveModels);
+
+  return (
+    <div className="flex h-full min-w-0 flex-1 items-center justify-center bg-background">
+      <Card className="w-full max-w-lg p-8 flex flex-col gap-6 overflow-hidden">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2.5">
+            <OmniMark size={28} />
+            <span className="font-display text-xl font-semibold text-foreground">Welcome to Omni</span>
+          </div>
+          {step === 'choose' && (
+            <span className="text-xs text-muted-foreground">
+              Omni runs AI agents securely on your computer — they chat, write code, browse, and get real work done.
+              Connect the AI you already use to power them.
+            </span>
+          )}
+        </div>
+
+        {showProgress && branch && <Progress value={((stepIndex + 1) / branch.length) * 100} />}
+
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={step}
+            variants={stepVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            transition={{
+              duration: 0.2,
+              ease: 'easeOut',
+            }}
+          >
+            {step === 'wsl' && <OnboardingWslStep onSkip={handleWslSkip} />}
+
+            {step === 'choose' && <OnboardingChooseStep showLocal={isElectron} onSelect={handleChoose} />}
+
+            {step === 'chatgpt' && (
+              <OnboardingChatGptStep onConnected={handleChatGptConnected} onBack={handleBackToChoose} />
+            )}
+
+            {step === 'key-entry' && (identity === 'openai' || identity === 'anthropic') && (
+              <OnboardingKeyEntryStep
+                kind={identity}
+                onValidated={handleKeyValidated}
+                onBack={handleBackToChoose}
+                onAdvanced={handleEscapeToAdvanced}
+              />
+            )}
+
+            {step === 'local' && <OnboardingLocalStep onDetected={handleLocalDetected} onBack={handleBackToChoose} />}
+
+            {step === 'model-pick' && (
+              <OnboardingModelPickStep
+                choices={modelChoices}
+                liveModels={liveModels}
+                onContinue={handleModelPicked}
+                onBack={handleModelPickBack}
+              />
+            )}
+
+            {step === 'connected' && connected && (
+              <OnboardingConnectedStep
+                providerLabel={connected.providerLabel}
+                modelLabel={connected.modelLabel}
+                maskedKey={connected.maskedKey}
+                onFinish={handleFinish}
+              />
+            )}
+
+            {step === 'adv-provider' && (
+              <OnboardingProviderTypeStep
+                selected={advProviderType}
+                onSelect={setAdvProviderType}
+                onNext={handleAdvProviderNext}
+                onBack={handleBackToChoose}
+              />
+            )}
+            {step === 'adv-credentials' && advProviderType && (
+              <OnboardingCredentialsStep
+                providerType={advProviderType}
+                apiKey={advApiKey}
+                baseUrl={advBaseUrl}
+                onChangeApiKey={setAdvApiKey}
+                onChangeBaseUrl={setAdvBaseUrl}
+                onNext={handleAdvCredentialsNext}
+                onBack={handleAdvCredentialsBack}
+              />
+            )}
+            {step === 'adv-model' && advProviderType && (
+              <OnboardingModelStep
+                providerType={advProviderType}
+                modelId={advModelId}
+                displayName={advDisplayName}
+                onChangeModelId={setAdvModelId}
+                onChangeDisplayName={setAdvDisplayName}
+                onNext={handleAdvModelNext}
+                onBack={handleAdvModelBack}
+              />
+            )}
+            {step === 'adv-validate' && (
+              <OnboardingValidationStep onBack={handleAdvValidateBack} onFinish={handleAdvValidateNext} />
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </Card>
+    </div>
+  );
+});
+OnboardingWizard.displayName = 'OnboardingWizard';
