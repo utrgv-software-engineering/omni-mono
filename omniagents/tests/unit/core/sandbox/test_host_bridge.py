@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import io
 
+import sys
+
 import pytest
 import websockets
 
@@ -43,6 +45,10 @@ def test_factory_resolves_host_bridge() -> None:
     assert options.exposed_ports == (8080,)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the sandbox host runs on the POSIX local sandbox; Windows hosts are declined",
+)
 @pytest.mark.asyncio
 async def test_host_bridge_exec_fileio_pty_ports(tmp_path) -> None:
     server, port = await _start_host_server()

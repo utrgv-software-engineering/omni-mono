@@ -27,6 +27,7 @@ import asyncio
 import base64
 import io
 import json
+import sys
 from typing import Any, AsyncIterator, Optional
 
 import websockets
@@ -678,6 +679,9 @@ async def _host_dispatch(
 
 
 async def _host_create(msg: dict[str, Any], workspace_root: str | None = None) -> Any:
+    if sys.platform == "win32":
+        # The host side runs on the SDK's POSIX local sandbox.
+        raise RuntimeError("This computer cannot be used as a sandbox on Windows yet.")
     from agents.sandbox.sandboxes import UnixLocalSandboxClientOptions
 
     from omniagents.core.sandbox.unix_local_extended import (

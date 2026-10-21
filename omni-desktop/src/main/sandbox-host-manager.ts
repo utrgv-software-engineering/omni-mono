@@ -63,6 +63,11 @@ export class SandboxHostManager {
    * the existing port.
    */
   async ensure(sessionId: string, workspaceHint?: string): Promise<EnsureHostResult> {
+    if (process.platform === 'win32') {
+      // The sandbox host runs commands through a POSIX local sandbox; there is
+      // no Windows equivalent yet. Decline before the cloud starts its agent.
+      return { ok: false, error: 'This computer cannot be used as a sandbox on Windows yet.' };
+    }
     const existing = this.procs.get(sessionId);
     if (existing && existing.child.exitCode === null) {
       return { ok: true, execPort: existing.execPort, workspace: existing.workspace };
