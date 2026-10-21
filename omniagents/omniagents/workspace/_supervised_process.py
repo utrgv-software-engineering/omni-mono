@@ -16,7 +16,7 @@ import uuid
 from ._process import create_process
 from ._supervisor import save
 
-_watchers = set()
+_watchers: set[asyncio.Task[None]] = set()
 
 
 class SupervisedProcess:

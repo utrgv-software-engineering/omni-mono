@@ -229,6 +229,7 @@ async def execute_bash(
         return RichToolOutput(llm_output, ui_metadata)
 
     resolved_cwd = _resolve_cwd(ctx, cwd, where="execute_bash")
+    directory_error: str | None
     try:
         valid_directory = await _ws.current_workspace().is_exec_dir(resolved_cwd)
     except Exception as exc:

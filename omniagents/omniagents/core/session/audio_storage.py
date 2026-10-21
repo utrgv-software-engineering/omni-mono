@@ -32,7 +32,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Any, Mapping, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,7 @@ class AzureBlobAudioStorage(AudioStorageBackend):
         self._account = account
         self._key = key
         self._container_name = container
-        self._client = None  # lazy
+        self._client: Any = None  # lazy; azure ContainerClient (optional dependency)
 
     def _get_container(self):
         if self._client is not None:
