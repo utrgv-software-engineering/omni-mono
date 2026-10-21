@@ -8,23 +8,7 @@ from omniagents.core.tools.artifacts import emit_artifact
 from omniagents.core.tools.discovery import function_tool
 from omniagents import workspace as _workspace
 
-
-def _workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]:
-    try:
-        if ctx is None:
-            return None
-        c = getattr(ctx, "context", None)
-        if c is None:
-            return None
-        if isinstance(c, dict):
-            wr = c.get("workspace_root")
-        else:
-            wr = getattr(c, "workspace_root", None)
-        if isinstance(wr, str) and wr.strip():
-            return os.path.abspath(wr)
-    except Exception:
-        pass
-    return None
+from ._workspace import workspace_root_from_ctx as _workspace_root_from_ctx
 
 
 async def _resolve_workspace_file_content(path: str, mode: str) -> str:

@@ -43,7 +43,8 @@ def workspace_root_from_ctx(ctx: RunContextWrapper[Any] | None) -> Optional[str]
         except WorkspaceNotBoundError:
             # Nothing bound yet (e.g. while spawning a worker): host syntax.
             pm = os.path
-        return pm.normpath(wr) if pm.isabs(wr) else pm.abspath(wr)
+        # A root that is not absolute in the workspace's syntax is a host path.
+        return pm.normpath(wr) if pm.isabs(wr) else os.path.abspath(wr)
     return None
 
 
