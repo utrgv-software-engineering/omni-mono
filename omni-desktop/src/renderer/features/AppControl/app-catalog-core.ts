@@ -25,8 +25,6 @@ export type CatalogApp = {
   controllable: boolean;
   /** A live webview is currently mounted for this app. */
   running: boolean;
-  /** The app can be opened in this scope (sandbox services present, etc.). */
-  available: boolean;
   url?: string;
   title?: string;
   /** Set for column-scoped apps. */
@@ -65,7 +63,6 @@ export function buildAppCatalog(input: CatalogInput): CatalogApp[] {
         label: app.label,
         controllable: liveEntry ? liveEntry.controllable : isControllableKind(app.kind),
         running: !!liveEntry,
-        available: true,
         url: liveEntry?.url,
         title: liveEntry?.title,
         tabId: tab.id,
@@ -74,45 +71,41 @@ export function buildAppCatalog(input: CatalogInput): CatalogApp[] {
   }
 
   // Global dock apps.
-  if (filter.allowGlobal) {
-    for (const app of registry) {
-      if (app.columnScoped) {
-        continue;
-      }
-      const handleId = makeAppHandleId('global', app.id);
-      const liveEntry = live[handleId];
-      out.push({
-        id: app.id,
-        handleId,
-        kind: app.kind,
-        scope: 'global',
-        label: app.label,
-        controllable: liveEntry ? liveEntry.controllable : isControllableKind(app.kind),
-        running: !!liveEntry,
-        available: true,
-        url: liveEntry?.url,
-        title: liveEntry?.title,
-      });
+  for (const app of registry) {
+    if (app.columnScoped) {
+      continue;
     }
-    // Live global entries the registry doesn't cover (e.g. the shell's global
-    // dock browser, `global:browser`).
-    for (const entry of Object.values(live)) {
-      if (entry.scope !== 'global' || out.some((o) => o.handleId === entry.handleId)) {
-        continue;
-      }
-      out.push({
-        id: entry.appId,
-        handleId: entry.handleId,
-        kind: entry.kind,
-        scope: 'global',
-        label: entry.label,
-        controllable: entry.controllable,
-        running: true,
-        available: true,
-        url: entry.url,
-        title: entry.title,
-      });
+    const handleId = makeAppHandleId('global', app.id);
+    const liveEntry = live[handleId];
+    out.push({
+      id: app.id,
+      handleId,
+      kind: app.kind,
+      scope: 'global',
+      label: app.label,
+      controllable: liveEntry ? liveEntry.controllable : isControllableKind(app.kind),
+      running: !!liveEntry,
+      url: liveEntry?.url,
+      title: liveEntry?.title,
+    });
+  }
+  // Live global entries the registry doesn't cover (e.g. the shell's global
+  // dock browser, `global:browser`).
+  for (const entry of Object.values(live)) {
+    if (entry.scope !== 'global' || out.some((o) => o.handleId === entry.handleId)) {
+      continue;
     }
+    out.push({
+      id: entry.appId,
+      handleId: entry.handleId,
+      kind: entry.kind,
+      scope: 'global',
+      label: entry.label,
+      controllable: entry.controllable,
+      running: true,
+      url: entry.url,
+      title: entry.title,
+    });
   }
 
   return out;

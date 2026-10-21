@@ -20,6 +20,7 @@ import { ChatShell, type PendingMessage } from '@/renderer/omniagents-ui/ChatShe
 import { ConversationComposerProvider } from '@/renderer/omniagents-ui/components/ConversationComposer';
 import { DraftSessionControls } from '@/renderer/omniagents-ui/components/DraftSessionControls';
 import { getGreeting } from '@/renderer/omniagents-ui/greeting';
+import { $agentStatuses } from '@/renderer/services/agent-process';
 import { emitter, serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { $hoveredVoiceScope, VoiceScopeContext } from '@/renderer/services/voice-recording';
@@ -31,7 +32,7 @@ import { getActivePersona } from '@/shared/voice-personas';
 import { AttachProjectMenu } from './AttachProjectMenu';
 import { CodeWorkspaceLayout } from './CodeWorkspaceLayout';
 import { CHAT_SUGGESTIONS, COLUMN_SUGGESTIONS } from './empty-suggestions';
-import { $codeTabErrors, $codeTabStatuses, codeApi } from './state';
+import { $codeTabErrors, codeApi } from './state';
 import { useCodeAutoLaunch } from './use-code-auto-launch';
 import { workspaceScopeFromMounts } from './workspace-mounts';
 
@@ -331,7 +332,7 @@ export const CodeTabContent = memo(
     });
     const launchFailed = phase === 'error' && launchRetry.exhausted;
 
-    const allStatuses = useStore($codeTabStatuses);
+    const allStatuses = useStore($agentStatuses);
     const agentStatus = allStatuses[tab.id];
 
     // Only mount the iframe on ``running``. ``connecting`` arrives the

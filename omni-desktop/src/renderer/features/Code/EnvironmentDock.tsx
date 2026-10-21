@@ -6,7 +6,6 @@ import type { AppDescriptor, AppId } from '@/shared/app-registry';
 
 import { AppIcon } from './AppIcon';
 
-export { ICON_MAP } from './AppIcon';
 export type { AppId };
 
 type EnvironmentDockProps = {

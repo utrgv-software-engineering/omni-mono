@@ -10,11 +10,6 @@
  */
 import { atom } from 'nanostores';
 
-/** Legacy compatibility shim; preview URLs are now canonical before storage. */
-export function reverseProxyUrl(url: string): string {
-  return url;
-}
-
 export type PreviewRequest = {
   id: string;
   url: string;

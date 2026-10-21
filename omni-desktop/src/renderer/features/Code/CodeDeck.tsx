@@ -57,6 +57,7 @@ import { $previewRequest, clearPreviewRequest } from '@/renderer/features/Code/p
 import { ConsoleStarted } from '@/renderer/features/Console/ConsoleRunning';
 import { JobsSurface } from '@/renderer/features/Jobs';
 import { OmniAgentsHeaderActionsSlot } from '@/renderer/omniagents-ui/header-actions';
+import { $agentStatuses } from '@/renderer/services/agent-process';
 import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { ENTER_ANIMATE, ENTER_INITIAL, FADE_DURATION_S, SPRING_GENTLE, SPRING_STANDARD } from '@/renderer/theme/motion';
@@ -69,7 +70,7 @@ import { firstSource, isChatColumn } from '@/shared/types';
 import { AppIcon } from './AppIcon';
 import { CodeTabContent } from './CodeTabContent';
 import { ColumnAura } from './ColumnAura';
-import { $codeTabPhases, $codeTabStatuses, codeApi, finishRemoval } from './state';
+import { $codeTabPhases, codeApi, finishRemoval } from './state';
 import { useRecentConversations } from './use-recent-conversations';
 
 const COLUMN_WIDTH = 480;
@@ -928,7 +929,7 @@ TabContentSlot.displayName = 'TabContentSlot';
 
 export const CodeDeck = memo(() => {
   const store = useStore(persistedStoreApi.$atom);
-  const statuses = useStore($codeTabStatuses);
+  const statuses = useStore($agentStatuses);
   const tabs = useMemo(() => store.codeTabs ?? [], [store.codeTabs]);
   const previousTabIds = useRef(new Set(tabs.map((tab) => tab.id)));
   useEffect(() => {

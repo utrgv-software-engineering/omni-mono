@@ -3,21 +3,11 @@ import { map } from 'nanostores';
 import { STATUS_POLL_INTERVAL_MS } from '@/renderer/constants';
 import type { AutoLaunchPhase } from '@/renderer/features/Code/use-code-auto-launch';
 import { forgetTerminalsForTab } from '@/renderer/features/Console/state';
-import {
-  $agentStatuses,
-  $agentXTerms,
-  clearStatus,
-  pollProcessStatus,
-  teardownTerminal,
-} from '@/renderer/services/agent-process';
+import { clearStatus, pollProcessStatus, teardownTerminal } from '@/renderer/services/agent-process';
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatCommand, ChatOperations } from '@/shared/chat-commands';
 import type { CodeTab, CodeTabId } from '@/shared/types';
-
-// Re-export agent status/xterm maps so existing imports from Code/state still work.
-// Components can read per-tab status via $agentStatuses.get()[tabId].
-export { $agentStatuses as $codeTabStatuses, $agentXTerms as $codeTabXTerms };
 
 export const $codeTabPhases = map<Record<CodeTabId, AutoLaunchPhase>>({});
 export const $codeTabErrors = map<Record<CodeTabId, string | null>>({});

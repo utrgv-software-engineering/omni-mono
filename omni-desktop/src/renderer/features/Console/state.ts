@@ -1,6 +1,6 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
-import { atom, computed } from 'nanostores';
+import { atom } from 'nanostores';
 
 import { DEFAULT_XTERM_OPTIONS } from '@/renderer/constants';
 import { emitter, ipc } from '@/renderer/services/ipc';
@@ -31,9 +31,6 @@ export const $activeTerminalIdByTab = atom<Record<string, string | null>>({});
  * actionable empty-state when the agent process isn't running.
  */
 export const $terminalCreateErrorByTab = atom<Record<string, TerminalCreateError | null>>({});
-
-export const terminalsForTab = (tabId: string) => computed($terminalsByTab, (map) => map[tabId] ?? []);
-export const activeTerminalIdForTab = (tabId: string) => computed($activeTerminalIdByTab, (map) => map[tabId] ?? null);
 
 // Track hydration per tab so we don't double-fetch if multiple components
 // mount for the same column.
@@ -168,17 +165,6 @@ export const destroyTerminal = async (tabId: string, id?: string): Promise<void>
   if ($activeTerminalIdByTab.get()[tabId] === targetId) {
     setActiveTerminal(tabId, remaining.length > 0 ? remaining[remaining.length - 1]!.id : null);
   }
-};
-
-export const destroyAllTerminalsForTab = async (tabId: string): Promise<void> => {
-  const list = $terminalsByTab.get()[tabId] ?? [];
-  if (list.length === 0) {
-    hydratedTabs.delete(tabId);
-    return;
-  }
-
-  await emitter.invoke('terminal:dispose-all-for-tab', tabId);
-  forgetTerminalsForTab(tabId);
 };
 
 /** Renderer-only cleanup; authoritative chat removal owns remote shutdown. */

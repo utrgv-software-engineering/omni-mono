@@ -1196,7 +1196,6 @@ type TerminalIpcEvents = Namespaced<
     write: (id: string, data: string) => void;
     resize: (id: string, cols: number, rows: number) => void;
     dispose: (id: string) => void;
-    'dispose-all-for-tab': (tabId: string) => void;
   }
 >;
 

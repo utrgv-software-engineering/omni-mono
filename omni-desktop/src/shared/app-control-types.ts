@@ -129,7 +129,6 @@ export type AppClickButton = 'left' | 'right' | 'middle';
 // Convenience export used by unit tests and the variables-builder scope logic.
 export type AppScopeFilter = {
   tabId?: string;
-  allowGlobal: boolean;
 };
 
 // Re-export so downstream files don't need a second import path.

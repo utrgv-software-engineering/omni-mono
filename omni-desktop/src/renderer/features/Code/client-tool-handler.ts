@@ -119,7 +119,6 @@ async function handleAppControlTools(
       label: a.label,
       controllable: a.controllable,
       running: a.running,
-      available: a.available,
       ...(a.tabId ? { tab_id: a.tabId } : {}),
     }));
     return ok({ apps });
@@ -511,13 +510,9 @@ async function handleVoiceTools(toolName: string, toolArgs: Record<string, unkno
   }
 }
 
-/**
- * Build a ClientToolCallHandler for a column's session. `allowGlobal`
- * (default true) controls whether the caller can drive the global dock apps
- * via `app_*` tools.
- */
-export function buildClientToolHandler(opts?: { tabId?: string; allowGlobal?: boolean }): ClientToolCallHandler {
-  const appFilter: AppScopeFilter = { tabId: opts?.tabId, allowGlobal: opts?.allowGlobal ?? true };
+/** Build a ClientToolCallHandler for a column's session. */
+export function buildClientToolHandler(opts?: { tabId?: string }): ClientToolCallHandler {
+  const appFilter: AppScopeFilter = { tabId: opts?.tabId };
   return async (toolName: string, toolArgs: Record<string, unknown>) => {
     const voiceResult = await handleVoiceTools(toolName, toolArgs);
     if (voiceResult) {

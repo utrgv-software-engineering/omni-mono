@@ -100,11 +100,5 @@ export function resolveAppHandle(appId: string, filter: AppScopeFilter): LiveApp
       return column;
     }
   }
-  if (filter.allowGlobal) {
-    const global = entries.find((e) => e.scope === 'global' && e.appId === appId);
-    if (global) {
-      return global;
-    }
-  }
-  return null;
+  return entries.find((e) => e.scope === 'global' && e.appId === appId) ?? null;
 }

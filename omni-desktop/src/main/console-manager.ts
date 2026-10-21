@@ -77,10 +77,6 @@ export const createConsoleManager = (arg: {
     await consoleManager.disposeOne(id);
   });
 
-  ipc.handle('terminal:dispose-all-for-tab', async (_, tabId) => {
-    await consoleManager.disposeAllForTab(tabId);
-  });
-
   ipc.handle('terminal:resize', (_, id, cols, rows) => {
     consoleManager.resize(id, cols, rows);
   });
@@ -97,7 +93,6 @@ export const createConsoleManager = (arg: {
     await consoleManager.disposeAll();
     ipcMain.removeHandler('terminal:create');
     ipcMain.removeHandler('terminal:dispose');
-    ipcMain.removeHandler('terminal:dispose-all-for-tab');
     ipcMain.removeHandler('terminal:resize');
     ipcMain.removeHandler('terminal:write');
     ipcMain.removeHandler('terminal:list');
