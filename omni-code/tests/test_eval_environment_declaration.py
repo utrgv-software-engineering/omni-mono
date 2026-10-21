@@ -93,13 +93,14 @@ def test_declared_mcp_fixture_matches_deleted_workspace_env():
     assert mf.dbs_dir == REPO_ROOT / "evaluations" / "fixtures" / "dbs"
     assert mf.config_name == "omni_code"
     assert mf.server_name == "omni-projects"
-    # Launcher cli default with its env-var override, verbatim.
+    # omni-desktop cli default with its env-var override, verbatim.
     assert mf.cli_env_var == "OMNI_PROJECTS_MCP_CLI"
     assert mf.cli_default == (
         Path.home()
         / "Omni"
         / "Workspace"
-        / "launcher"
+        / "omni-mono"
+        / "omni-desktop"
         / "packages"
         / "projects-mcp"
         / "dist"
