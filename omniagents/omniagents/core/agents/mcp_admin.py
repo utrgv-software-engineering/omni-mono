@@ -46,7 +46,6 @@ from omniagents.core.agents.specs import MCPServerConfig
 
 __all__ = [
     "MCP_SERVER_TYPES",
-    "MCP_STORE_DURABILITY_ENV",
     "MANAGED_MCP_SERVERS_ENV",
     "McpAuthFailed",
     "McpAuthStateInvalid",
@@ -91,7 +90,6 @@ SOURCE_HOST_MANAGED = "host_managed"
 #: Host attestations for the product-scoped MCP configuration and OAuth
 #: stores.  Durability is never inferred from writability, and server names
 #: are deliberately the only managed-store metadata exposed to clients.
-MCP_STORE_DURABILITY_ENV = "OMNIAGENTS_MCP_STORE_DURABILITY"
 MANAGED_MCP_SERVERS_ENV = "OMNIAGENTS_MANAGED_MCP_SERVERS"
 _MANAGED_SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -1114,17 +1112,6 @@ class McpServerManager:
             "servers": servers,
             "user_mcp_allowed": self.user_mcp_allowed(),
             "write_target": str(self._user_mcp_path()),
-            "mutation_persistence": self.mutation_persistence(),
-        }
-
-    def mutation_persistence(self) -> Dict[str, Any]:
-        """Redacted deployment guarantees for Desktop-owned mutations."""
-        durable = os.getenv(MCP_STORE_DURABILITY_ENV) == "host"
-        host_scope = "host" if durable else None
-        return {
-            "user_config": {"durable": durable, "scope": host_scope},
-            "oauth_tokens": {"durable": durable, "scope": host_scope},
-            "pending_auth": {"durable": False, "scope": "process"},
             "managed_servers": sorted(_managed_server_names()),
         }
 

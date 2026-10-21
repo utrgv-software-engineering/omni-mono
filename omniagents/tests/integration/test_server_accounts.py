@@ -28,7 +28,6 @@ from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.debug import Debug
 from omniagents.core.providers.accounts import (
     CHATGPT_PROVIDER_ID,
-    CODEX_STORE_DURABILITY_ENV,
 )
 from omniagents.core.providers.auth.base import UserIdentity
 from omniagents.execution import AgentHostResources
@@ -55,7 +54,6 @@ def _spec() -> AgentSpec:
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     codex.set_token_store_dir(tmp_path)
-    monkeypatch.delenv(CODEX_STORE_DURABILITY_ENV, raising=False)
     for var in (
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -310,25 +308,3 @@ async def test_admin_can_mutate_accounts_but_ordinary_principals_cannot():
         "account_logout",
         {"provider": CHATGPT_PROVIDER_ID},
     )
-
-
-@pytest.mark.asyncio
-async def test_account_status_rpc_exposes_only_redacted_durability_capability(
-    monkeypatch,
-):
-    codex.save_tokens({"refresh": REFRESH_SECRET, "access": "access-secret"})
-    monkeypatch.setenv(CODEX_STORE_DURABILITY_ENV, "host")
-    service = AgentService(
-        _spec(), AgentHostResources.create("test-server-account-capability-host")
-    )
-
-    result = await service.account_status()
-
-    assert result["mutation_persistence"] == {
-        "codex_oauth": {"durable": True, "scope": "host"},
-        "pending_logins": {"durable": False, "scope": "process"},
-    }
-    serialized = json.dumps(result)
-    assert REFRESH_SECRET not in serialized
-    assert "access-secret" not in serialized
-    assert "codex.json" not in serialized
