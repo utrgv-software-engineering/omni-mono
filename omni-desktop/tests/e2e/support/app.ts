@@ -138,3 +138,10 @@ export async function workspaceFileTree(filesSurface: Locator): Promise<Locator>
   }
   return filesSurface.getByRole('tree', { name: 'Workspace files' });
 }
+
+/** A file-tree row by its label (rows also carry their actions button's name). */
+export function fileTreeItem(tree: Locator, label: string): Locator {
+  return tree.getByRole('treeitem', {
+    name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} Actions for `),
+  });
+}

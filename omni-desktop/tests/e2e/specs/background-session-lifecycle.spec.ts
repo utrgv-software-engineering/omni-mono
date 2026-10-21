@@ -114,6 +114,9 @@ for (const scenario of ['stream', 'approval', 'artifact'] as const) {
     }
     if (scenario === 'artifact') {
       await expect(a.getByText('A_PLAN_initial', { exact: true }).first()).toBeVisible();
+      // KNOWN BUG: the desktop renders chat with uiMinimal, which hides the chat
+      // Header, and the tile-header portal that used to host "Toggle artifacts"
+      // is gone (1c1327c3), so Focus has no way to open the artifacts panel.
       await a.getByRole('button', { name: 'Toggle artifacts', exact: true }).click();
       await a.getByRole('button', { name: 'A artifact', exact: true }).click();
       await expect(a.getByText(marker, { exact: true })).toBeVisible();

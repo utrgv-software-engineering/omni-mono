@@ -119,6 +119,9 @@ test.describe('browser/server proxy browser', () => {
       await omnibox.fill(upstream.origin);
       await omnibox.press('Enter');
 
+      // KNOWN BUG: the suggestion list (cmdk) auto-highlights its first entry,
+      // so Enter on a typed http:// URL navigates to the DuckDuckGo search
+      // suggestion instead of the URL. Fails here until Omnibox is fixed.
       await expect(omnibox).toHaveValue(upstreamHome);
       const iframe = appPage.locator('iframe[src*="/proxy/"]').first();
       await expect(iframe).toBeVisible();

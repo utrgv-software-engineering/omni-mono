@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { sessionRow, workspaceFileTree } from 'tests/e2e/support/app';
+import { fileTreeItem, openSession, sessionRow, workspaceFileTree } from 'tests/e2e/support/app';
 import { invokeApp } from 'tests/e2e/support/invoke';
 import { attachProofScreenshot } from 'tests/e2e/support/proof';
 
@@ -46,18 +46,17 @@ async function processStatus(page: Page, processId: string): Promise<RunningStat
 }
 
 async function openIdentityFile(page: Page, sessionName: string, expectedIdentity: string): Promise<void> {
-  const session = sessionRow(page, sessionName);
-  await expect(session).toBeVisible({ timeout: 120_000 });
-  await session.click();
+  await expect(sessionRow(page, sessionName)).toBeVisible({ timeout: 120_000 });
+  await openSession(page, sessionName);
 
-  const filesButton = page.getByRole('radio', { name: 'Files', exact: true });
+  const filesButton = page.getByRole('radio', { name: 'Files', exact: true }).filter({ visible: true });
   await expect(filesButton).toBeVisible({ timeout: 120_000 });
   await filesButton.click();
 
-  const filesSurface = page.getByRole('region', { name: 'Workspace files', exact: true });
+  const filesSurface = page.getByRole('region', { name: 'Workspace files', exact: true }).filter({ visible: true });
   await expect(filesSurface).toBeVisible({ timeout: 90_000 });
   const tree = await workspaceFileTree(filesSurface);
-  const identityFile = tree.getByRole('treeitem', { name: 'identity.txt', exact: true });
+  const identityFile = fileTreeItem(tree, 'identity.txt');
   await expect(identityFile).toBeVisible({ timeout: 90_000 });
   await identityFile.click();
   await expect(page.getByRole('textbox', { name: 'Editor for identity.txt' })).toHaveText(expectedIdentity);
