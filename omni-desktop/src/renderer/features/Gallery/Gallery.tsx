@@ -373,21 +373,21 @@ export const auth = () => {
     item: {
       type: 'tool',
       call_id: 'gallery-mcp-labels',
-      tool: 'mcp_omni-projects__list_tickets',
-      server_label: 'omni-projects',
-      tool_label: 'list_tickets',
+      tool: 'mcp_github__list_issues',
+      server_label: 'github',
+      tool_label: 'list_issues',
       status: 'result',
-      input: JSON.stringify({ project_id: 'proj-1', column: 'In Progress' }),
-      output: '3 tickets',
+      input: JSON.stringify({ repo: 'acme/web', state: 'open' }),
+      output: '3 issues',
       metadata: {
         display_type: 'table',
-        summary: '3 tickets in "In Progress"',
+        summary: '3 open issues in acme/web',
         table: {
           columns: [{ title: 'id' }, { title: 'title' }],
           rows: [
-            ['t-11', 'Fix login redirect'],
-            ['t-12', 'Add CSV export'],
-            ['t-13', 'Migrate components to shadcn'],
+            ['#11', 'Fix login redirect'],
+            ['#12', 'Add CSV export'],
+            ['#13', 'Migrate components to shadcn'],
           ],
         },
       },
@@ -664,7 +664,7 @@ export const Gallery = memo(() => {
 
           <Section title="Suggestions">
             <Suggestions>
-              <Suggestion suggestion="Summarize this ticket" />
+              <Suggestion suggestion="Summarize this file" />
               <Suggestion suggestion="Run the failing test" />
               <Suggestion suggestion="Open the latest PR" />
               <Suggestion suggestion="Explain this stack trace" />
