@@ -105,33 +105,9 @@
       "rule": "inline-style",
       "file": "src/renderer/features/Code/CodeDeck.tsx",
       "match": "style",
-      "source": "style={{\n    transform: CSS.Transform.toString(transform),\n}}",
-      "expressionHash": "8d00fa6b71908a38a3031e045309d68a2be4e016ce517ab432d835b86cc7c904",
-      "reason": "dnd-kit drag position: the transform and transition change every pointer move and must be applied inline."
-    },
-    {
-      "rule": "inline-style",
-      "file": "src/renderer/features/Code/CodeDeck.tsx",
-      "match": "style",
       "source": "style={{ transform: CSS.Transform.toString(transform), transition }}",
       "expressionHash": "99fcbfa8c84f1cd367c73dc5f0de4280a05cdd415c250659f769de423645f25b",
       "reason": "dnd-kit drag position: the transform and transition change every pointer move and must be applied inline."
-    },
-    {
-      "rule": "inline-style",
-      "file": "src/renderer/features/Code/CodeDeck.tsx",
-      "match": "style",
-      "source": "style={{ ['--launcher-cell-width' as string]: `${cellWidth}px` }}",
-      "expressionHash": "5bfc3c4762da61af59e19ee798d6f2821d3a7f5d274a9ccc15fd2ec9bfa2d3ae",
-      "reason": "Publishes the measured deck cell width as a CSS variable for the column layout."
-    },
-    {
-      "rule": "inline-style",
-      "file": "src/renderer/features/Code/CodeDeck.tsx",
-      "match": "style",
-      "source": "style={{ width: tilePanelGroupWidth }}",
-      "expressionHash": "3efc7ab8754c5f18a598e12d6825068be58c4624f54c9b0603a0b28c742b4f43",
-      "reason": "Tile panel group width is computed from the measured deck and the column count."
     },
     {
       "rule": "arbitrary-value",
@@ -169,134 +145,11 @@
       "reason": "Viewport-relative height cap so long content scrolls inside the surface; Tailwind has no fractional viewport max-height utilities."
     },
     {
-      "rule": "arbitrary-property",
-      "file": "src/renderer/features/Residents/ResidentsTab.tsx",
-      "match": "[animation-delay:150ms]",
-      "source": "<span className=\"size-1 rounded-full bg-muted-foreground/60 motion-safe:animate-bounce [animation-delay:150ms]\" />",
-      "reason": "Staggers the three typing-indicator dots; Tailwind has no animation-delay utility."
-    },
-    {
-      "rule": "arbitrary-property",
-      "file": "src/renderer/features/Residents/ResidentsTab.tsx",
-      "match": "[animation-delay:300ms]",
-      "source": "<span className=\"size-1 rounded-full bg-muted-foreground/60 motion-safe:animate-bounce [animation-delay:300ms]\" />",
-      "reason": "Staggers the three typing-indicator dots; Tailwind has no animation-delay utility."
-    },
-    {
-      "rule": "arbitrary-value",
-      "file": "src/renderer/features/Residents/ResidentsTab.tsx",
-      "match": "max-w-[85%]",
-      "source": "'max-w-[85%] rounded-lg px-2.5 py-1.5 text-xs leading-relaxed',",
-      "reason": "Chat bubbles cap at 85% of the column so alternating speakers stay visually distinct."
-    },
-    {
-      "rule": "inline-style",
-      "file": "src/renderer/features/Residents/agent-avatar.tsx",
-      "match": "style",
-      "source": "style={{ backgroundColor: `hsl(${avatarHue(colorId)} 65% 45%)` }}",
-      "expressionHash": "ecec82f37de9ab8a9bf08ca85cd365ff770264fb90a02a6622b6700e9815a331",
-      "reason": "Each agent's avatar hue is derived from its id so agents stay distinguishable; it is data, not a theme color."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Residents/agent-avatar.tsx",
-      "match": "hsl(",
-      "source": "style={{ backgroundColor: `hsl(${avatarHue(colorId)} 65% 45%)` }}",
-      "reason": "Each agent's avatar hue is derived from its id so agents stay distinguishable; it is data, not a theme color."
-    },
-    {
-      "rule": "arbitrary-value",
-      "file": "src/renderer/features/ScheduledTasks/AutomationsSection.tsx",
-      "match": "max-h-[85vh]",
-      "source": "<DialogContent className=\"max-h-[85vh] overflow-y-auto\">",
-      "reason": "Viewport-relative height cap so long content scrolls inside the surface; Tailwind has no fractional viewport max-height utilities."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "#FFFF00",
-      "source": "presets={['#FFFF00', '#FFE066', '#FFCC99', '#FF9999', '#99CCFF', '#99FF99', '#FF99FF', '#000000']}",
-      "reason": "Highlight color presets are the user-selectable marks stored with page content; they must be fixed values that render the same in every theme."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "#FFE066",
-      "source": "presets={['#FFFF00', '#FFE066', '#FFCC99', '#FF9999', '#99CCFF', '#99FF99', '#FF99FF', '#000000']}",
-      "reason": "Highlight color presets are the user-selectable marks stored with page content; they must be fixed values that render the same in every theme."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "#FFCC99",
-      "source": "presets={['#FFFF00', '#FFE066', '#FFCC99', '#FF9999', '#99CCFF', '#99FF99', '#FF99FF', '#000000']}",
-      "reason": "Highlight color presets are the user-selectable marks stored with page content; they must be fixed values that render the same in every theme."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "#FF9999",
-      "source": "presets={['#FFFF00', '#FFE066', '#FFCC99', '#FF9999', '#99CCFF', '#99FF99', '#FF99FF', '#000000']}",
-      "reason": "Highlight color presets are the user-selectable marks stored with page content; they must be fixed values that render the same in every theme."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "#99CCFF",
-      "source": "presets={['#FFFF00', '#FFE066', '#FFCC99', '#FF9999', '#99CCFF', '#99FF99', '#FF99FF', '#000000']}",
-      "reason": "Highlight color presets are the user-selectable marks stored with page content; they must be fixed values that render the same in every theme."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "#99FF99",
-      "source": "presets={['#FFFF00', '#FFE066', '#FFCC99', '#FF9999', '#99CCFF', '#99FF99', '#FF99FF', '#000000']}",
-      "reason": "Highlight color presets are the user-selectable marks stored with page content; they must be fixed values that render the same in every theme."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "#FF99FF",
-      "source": "presets={['#FFFF00', '#FFE066', '#FFCC99', '#FF9999', '#99CCFF', '#99FF99', '#FF99FF', '#000000']}",
-      "reason": "Highlight color presets are the user-selectable marks stored with page content; they must be fixed values that render the same in every theme."
-    },
-    {
-      "rule": "hardcoded-color",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "#000000",
-      "source": "presets={['#FFFF00', '#FFE066', '#FFCC99', '#FF9999', '#99CCFF', '#99FF99', '#FF99FF', '#000000']}",
-      "reason": "Highlight color presets are the user-selectable marks stored with page content; they must be fixed values that render the same in every theme."
-    },
-    {
-      "rule": "inline-style",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "style",
-      "source": "style={{\n    backgroundColor: Marks.isActive(editor, { type: 'highlight' })\n        ? highlightValue?.backgroundColor\n        : undefined,\n    color: Marks.isActive(editor, { type: 'highlight' }) ? highlightValue?.color : undefined,\n}}",
-      "expressionHash": "dbad60dd6a231f6f1ea91dd781c41756dee9b77cae298e0eeb986534b540ffae",
-      "reason": "The highlight toolbar swatch previews the selection's stored highlight color."
-    },
-    {
-      "rule": "inline-style",
-      "file": "src/renderer/features/Tickets/ContextEditor.tsx",
-      "match": "style",
-      "source": "style={{ paddingLeft: `${depth * 24}px` }}",
-      "expressionHash": "eb38d96d5f0341053f423b81c3b883985f521a5c4bb948fa2de372860207931a",
-      "reason": "Outline indentation scales with nesting depth."
-    },
-    {
       "rule": "arbitrary-value",
       "file": "src/renderer/omniagents-ui/activity-presentation.tsx",
       "match": "grid-cols-[auto_minmax(0,1fr)]",
       "source": "<dl className=\"grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-xs\">",
       "reason": "Term/description list: the label column sizes to content and the value column takes the rest without overflowing."
-    },
-    {
-      "rule": "inline-style",
-      "file": "src/renderer/omniagents-ui/components/ImageLightbox.tsx",
-      "match": "style",
-      "source": "style={{\n    transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,\n}}",
-      "expressionHash": "bf4a41fba7b8aa8e813fbde3ca470bdaf88a3031e71921cc925eaa2fb97c4cae",
-      "reason": "Lightbox pan and zoom follow the pointer and wheel continuously."
     },
     {
       "rule": "inline-style",
