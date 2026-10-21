@@ -43,6 +43,10 @@ def test_builtin_capabilities_auto_discovered(tmp_path):
     assert "artifacts" in proj.capability_registry
     # `image` is folded into `filesystem` (read_image is a file op)
     assert "image" not in proj.capability_registry
+    # `swarms` extends `workers`, which parses after it alphabetically.
+    swarms = proj.capability_registry["swarms"]
+    workers = proj.capability_registry["workers"]
+    assert {t.name for t in swarms.tools()} == {t.name for t in workers.tools()}
 
     # Filesystem bundles file ops + read_image
     fs = proj.capability_registry["filesystem"]
