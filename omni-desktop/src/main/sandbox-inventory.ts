@@ -40,11 +40,10 @@ const errorMessage = (err: unknown): string => (err instanceof Error ? err.messa
 // ---------------------------------------------------------------------------
 
 /**
- * Human label for a code tab: ticket title or routine name; plain chat
- * columns fall back to "Chat".
+ * Human label for a code tab: the routine name; plain chat columns fall
+ * back to "Chat".
  */
-export const codeTabLabel = (tab: Pick<CodeTab, 'ticketTitle' | 'routineName'>): string =>
-  tab.ticketTitle ?? tab.routineName ?? 'Chat';
+export const codeTabLabel = (tab: Pick<CodeTab, 'routineName'>): string => tab.routineName ?? 'Chat';
 
 /**
  * Join live process containers to labels. Code-tab processes are keyed by the

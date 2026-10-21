@@ -1,17 +1,5 @@
 import { useStore } from '@nanostores/react';
-import {
-  Beaker,
-  Box,
-  CalendarClock,
-  Columns3,
-  Ellipsis,
-  Inbox,
-  ListTodo,
-  Puzzle,
-  Search,
-  Settings,
-  SquarePen,
-} from 'lucide-react';
+import { Beaker, Box, CalendarClock, Columns3, Ellipsis, Puzzle, Search, Settings, SquarePen } from 'lucide-react';
 import { memo, useCallback, useEffect } from 'react';
 
 import { OmniLogo } from '@/renderer/common/AsciiLogo';
@@ -20,8 +8,7 @@ import { Button } from '@/renderer/ds/ui/button';
 /**
  * The unified app sidebar (desktop): one persistent nav replacing the rail
  * and the per-tab sidebars. Three zones — fixed surface rows (New chat,
- * Inbox, Tasks, Activity) whose badges make the sidebar the attention surface;
- * container sections (Projects, Channels, DMs); and a pinned management
+ * Spaces); container sections (Projects, Recents); and a pinned management
  * cluster (Routines, Plugins, Settings).
  *
  * On mobile the same nav is an overlay DRAWER (the ChatGPT/Gmail model):
@@ -43,7 +30,6 @@ import {
   SidebarGroupContent,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
@@ -52,19 +38,13 @@ import { RecentsSection } from '@/renderer/features/Code/SessionsSection';
 import { codeApi } from '@/renderer/features/Code/state';
 import { useRecentConversations } from '@/renderer/features/Code/use-recent-conversations';
 import { $commandPaletteOpen } from '@/renderer/features/CommandPalette/CommandPalette';
-import { $activeInboxCount } from '@/renderer/features/Inbox/state';
+import { ProjectsSection } from '@/renderer/features/Projects/ProjectsSection';
 import { goToRoutine } from '@/renderer/features/ScheduledTasks/state';
-import { ProjectsSection } from '@/renderer/features/Tickets/ProjectsSection';
-import { $needsYouCount, $tickets, $ticketsView, ticketApi, viewToNavValue } from '@/renderer/features/Tickets/state';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { LayoutMode } from '@/shared/types';
 
 export const AppSidebar = memo(() => {
   const store = useStore(persistedStoreApi.$atom);
-  const ticketsView = useStore($ticketsView);
-  const tickets = useStore($tickets);
-  const inboxCount = useStore($activeInboxCount);
-  const needsYouCount = useStore($needsYouCount);
   const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
   const { recent: recentConversations, sessionTitles } = useRecentConversations(store.codeTabs ?? []);
 
@@ -104,14 +84,6 @@ export const AppSidebar = memo(() => {
     codeApi.setLayoutMode('tile');
     setMode('chat');
   }, [setMode]);
-  const handleInbox = useCallback(() => {
-    ticketApi.goToInbox();
-    closeDrawer();
-  }, [closeDrawer]);
-  const handleAllWork = useCallback(() => {
-    ticketApi.goToAllWork();
-    closeDrawer();
-  }, [closeDrawer]);
   const handleRoutines = useCallback(() => {
     goToRoutine();
     closeDrawer();
@@ -125,7 +97,6 @@ export const AppSidebar = memo(() => {
   // Selection derives from (layoutMode, per-feature view atoms) — the same
   // derivation the per-tab sidebars used, widened to the app.
   const mode = store.layoutMode;
-  const workNav = mode === 'work' ? viewToNavValue(ticketsView, tickets) : undefined;
   const routinesSelected = mode === 'routines';
   // The More row owns every management surface — it paints selected when
   // any of them is frontmost, so "where am I" survives the collapse.
@@ -150,7 +121,7 @@ export const AppSidebar = memo(() => {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {/* ── Fixed surface rows — the badges are the attention system ── */}
+        {/* ── Fixed surface rows ── */}
         <SidebarGroup className="py-0">
           <SidebarGroupContent>
             <SidebarMenu aria-label="Surfaces">
@@ -170,20 +141,6 @@ export const AppSidebar = memo(() => {
                   <Columns3 />
                   <span>Spaces</span>
                 </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton isActive={workNav === 'inbox'} onClick={handleInbox} tooltip="Inbox">
-                  <Inbox />
-                  <span>Inbox</span>
-                </SidebarMenuButton>
-                {workNav !== 'inbox' && inboxCount > 0 && <SidebarMenuBadge>{inboxCount}</SidebarMenuBadge>}
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton isActive={workNav === 'all-work'} onClick={handleAllWork} tooltip="Tasks">
-                  <ListTodo />
-                  <span>Tasks</span>
-                </SidebarMenuButton>
-                {workNav !== 'all-work' && needsYouCount > 0 && <SidebarMenuBadge>{needsYouCount}</SidebarMenuBadge>}
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>

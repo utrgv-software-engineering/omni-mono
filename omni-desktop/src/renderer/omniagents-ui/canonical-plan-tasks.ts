@@ -1,9 +1,8 @@
 import type { PlanItem as RpcPlanItem } from '@/renderer/omniagents-ui/rpc/plans-and-diffs';
 import type { MessageItem, PlanItem } from '@/shared/chat-types';
-import type { PlanSnapshotEntry, SupervisorBridgeEvent, TicketId } from '@/shared/types';
 
 /** One row of the session's plan, as the Tasks pill/popover renders it.
- *  Structurally compatible with `PlanSnapshotEntry` (shared/types). */
+ */
 export type TaskSummary = {
   id: string;
   subject: string;
@@ -105,37 +104,4 @@ export function negotiatedPlanTasks(
   featureSupported: boolean
 ): TaskSummary[] {
   return canonicalPlanTasks(items) ?? (featureSupported ? [] : [...legacyTasks]);
-}
-
-/**
- * Project the panel's task list into the supervisor-bridge `plan-update`
- * event that persists `ticket.lastPlanSnapshot` in main
- * (docs/agentic-workflow-enforcement-plan.md §F). Null when the host has no
- * ticket context (plain chat columns have no persistence home) — the same
- * guard the `goal-update` forward uses. An empty task list forwards
- * `snapshot: null`; main ignores it (clearing happens at ticket settlement),
- * so a fresh session's empty panel never clobbers a stored snapshot.
- */
-export function planUpdateForBridge(
-  ticketId: TicketId | undefined,
-  tasks: readonly TaskSummary[]
-): Extract<SupervisorBridgeEvent, { kind: 'plan-update' }> | null {
-  if (!ticketId) {
-    return null;
-  }
-  const snapshot: PlanSnapshotEntry[] | null =
-    tasks.length > 0
-      ? tasks.map((t) => ({
-          id: t.id,
-          subject: t.subject,
-          activeForm: t.activeForm,
-          status: t.status,
-          owner: t.owner,
-          blockedBy: t.blockedBy,
-          exitCriteria: t.exitCriteria,
-          verified: t.verified,
-          criteriaEdited: t.criteriaEdited,
-        }))
-      : null;
-  return { kind: 'plan-update', ticketId, snapshot };
 }

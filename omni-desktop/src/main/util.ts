@@ -238,19 +238,6 @@ export const getProjectDir = (slug: string): string => {
   return path.join(getProjectsDir(), slug);
 };
 
-/**
- * Absolute filesystem directory holding a project's pages and notebooks.
- *
- * Pages now live under `<config>/pages/<projectId>/<pageId>.{md,py}` rather
- * than `<workspaceDir>/Projects/<slug>/pages/`. Keyed by stable id, not slug,
- * so rename doesn't break the filesystem. Shared 1:1 with the MCP layout
- * (`getDefaultPagesDir` in omni-projects-db), so both writers land on the
- * same files.
- */
-export const getProjectPagesDir = (projectId: string): string => {
-  return path.join(getOmniConfigDir(), 'pages', projectId);
-};
-
 /** Generate a filesystem-safe slug from a project label. */
 export const slugify = (label: string): string => {
   return (

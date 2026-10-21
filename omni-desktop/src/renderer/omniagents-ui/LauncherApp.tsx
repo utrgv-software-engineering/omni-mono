@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { serverOrigin } from '@/renderer/services/ipc';
 import type { SessionController } from '@/renderer/services/session-control';
 import type { PlanItem } from '@/shared/chat-types';
-import type { AgentRuntimeConnection, ExecutionTarget, TicketId } from '@/shared/types';
+import type { AgentRuntimeConnection, ExecutionTarget } from '@/shared/types';
 
 import type { ClientToolCallHandler } from './App';
 import { App as OmniAgentsCore } from './App';
@@ -47,8 +47,6 @@ type OmniAgentsAppProps = {
   onRunStarted?: (runId: string) => void;
   pendingPlan?: PlanItem | null;
   onPlanDecision?: (approved: boolean) => void;
-  /** Ticket bound to this column. When set, the app registers a supervisor bridge actor. */
-  ticketId?: TicketId;
   /** Routine (scheduled task) bound to this column. When set, the app registers a routine bridge actor. */
   routineId?: string;
   /** Project workspace directory the launcher already knows about. Used to
@@ -90,7 +88,6 @@ export const OmniAgentsApp = ({
   onRunStarted,
   pendingPlan,
   onPlanDecision,
-  ticketId,
   routineId,
   workspaceDir,
   onOpenApp,
@@ -133,7 +130,6 @@ export const OmniAgentsApp = ({
           onRunStarted={onRunStarted}
           pendingPlan={pendingPlan}
           onPlanDecision={onPlanDecision}
-          ticketId={ticketId}
           routineId={routineId}
           workspaceDir={workspaceDir}
           onOpenApp={onOpenApp}

@@ -1,12 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { migrateAgentConfigFromFiles } from '@/main/config-files-migration';
+import { migrateAgentConfigFromFiles, removeRetiredProjectsMcpEntry } from '@/main/config-files-migration';
 import type { SettingsConfigStore } from '@/shared/ipc-handlers';
-import { MCP_ENTRY_NAME } from '@/shared/mcp-entry';
 import type { StoreData } from '@/shared/types';
 
 /** Minimal in-memory store satisfying SettingsConfigStore. */
@@ -30,7 +29,7 @@ afterEach(() => {
 });
 
 describe('migrateAgentConfigFromFiles', () => {
-  it('imports on-disk files, stripping the managed MCP entry, and sets the guard', () => {
+  it('imports on-disk files, dropping the retired omni-projects entry, and sets the guard', () => {
     writeFileSync(
       join(dir, 'models.json'),
       JSON.stringify({
@@ -43,7 +42,7 @@ describe('migrateAgentConfigFromFiles', () => {
     writeFileSync(
       join(dir, 'mcp.json'),
       JSON.stringify({
-        mcpServers: { mine: { type: 'stdio', command: 'x' }, [MCP_ENTRY_NAME]: { type: 'stdio', command: 'managed' } },
+        mcpServers: { mine: { type: 'stdio', command: 'x' }, 'omni-projects': { type: 'stdio', command: 'managed' } },
       })
     );
     writeFileSync(join(dir, '.env'), 'FOO=bar\n');
@@ -53,7 +52,7 @@ describe('migrateAgentConfigFromFiles', () => {
 
     expect(store.data.modelsConfig?.providers.openai).toBeDefined();
     expect(store.data.mcpConfig?.mcpServers.mine).toBeDefined();
-    expect(store.data.mcpConfig?.mcpServers[MCP_ENTRY_NAME]).toBeUndefined(); // stripped
+    expect(store.data.mcpConfig?.mcpServers['omni-projects']).toBeUndefined();
     expect(store.data.envVars).toBe('FOO=bar\n');
     expect(store.data.agentConfigMigratedFromFiles).toBe(true);
   });
@@ -71,5 +70,34 @@ describe('migrateAgentConfigFromFiles', () => {
     const store = fakeStore();
     expect(migrateAgentConfigFromFiles(store, dir)).toBe(false);
     expect(store.data.agentConfigMigratedFromFiles).toBe(true);
+  });
+});
+
+describe('removeRetiredProjectsMcpEntry', () => {
+  const readMcp = () => JSON.parse(readFileSync(join(dir, 'mcp.json'), 'utf-8')) as { mcpServers: object };
+
+  it('drops the launcher-managed entry and keeps everything else', () => {
+    writeFileSync(
+      join(dir, 'mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          mine: { type: 'stdio', command: 'x' },
+          'omni-projects': { type: 'stdio', command: 'node', args: ['cli.js'], _managed: 'omni-launcher' },
+        },
+      })
+    );
+    removeRetiredProjectsMcpEntry(dir);
+    expect(readMcp().mcpServers).toEqual({ mine: { type: 'stdio', command: 'x' } });
+  });
+
+  it('leaves a user-authored entry of the same name alone', () => {
+    const config = { mcpServers: { 'omni-projects': { type: 'stdio', command: 'mine' } } };
+    writeFileSync(join(dir, 'mcp.json'), JSON.stringify(config));
+    removeRetiredProjectsMcpEntry(dir);
+    expect(readMcp()).toEqual(config);
+  });
+
+  it('tolerates a missing mcp.json', () => {
+    expect(() => removeRetiredProjectsMcpEntry(dir)).not.toThrow();
   });
 });

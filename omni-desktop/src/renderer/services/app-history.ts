@@ -11,18 +11,18 @@
  * stores, so the (async, IPC round-trip) store echo arrives with a key we
  * already recorded and is not pushed again.
  */
-import { $ticketsView, pushTicketsHistory, type TicketsView } from '@/renderer/features/Tickets/state';
+import { $projectView, type ProjectView } from '@/renderer/features/Projects/view-state';
 import { $initialized, persistedStoreApi } from '@/renderer/services/store';
 import type { LayoutMode } from '@/shared/types';
 
 type AppHistoryState = {
   omni: true;
   layoutMode: LayoutMode;
-  ticketsView: TicketsView;
+  projectView: ProjectView;
 };
 
 const TAB_TITLES: Record<LayoutMode, string> = {
-  work: 'Work',
+  work: 'Projects',
   chat: 'Chat',
   routines: 'Routines',
   plugins: 'Plugins',
@@ -34,53 +34,21 @@ const TAB_TITLES: Record<LayoutMode, string> = {
 const currentState = (): AppHistoryState => ({
   omni: true,
   layoutMode: persistedStoreApi.get().layoutMode,
-  ticketsView: $ticketsView.get(),
+  projectView: $projectView.get(),
 });
 
-const keyOf = (state: AppHistoryState): string => JSON.stringify([state.layoutMode, state.ticketsView]);
+const keyOf = (state: AppHistoryState): string => JSON.stringify([state.layoutMode, state.projectView]);
 
 /** History entries persist across reloads — an old entry may carry a retired mode. */
 const isValidMode = (mode: unknown): mode is LayoutMode => typeof mode === 'string' && mode in TAB_TITLES;
 
-/**
- * History entries also persist across app versions — migrate retired view
- * shapes (pre-shell `board` views, `project` views without a tab) instead of
- * letting them land in `$ticketsView` malformed.
- */
-const normalizeTicketsView = (view: TicketsView): TicketsView => {
-  const legacy = view as unknown as { type: string; projectId?: string; tab?: unknown };
-  if (legacy.type === 'board' && legacy.projectId) {
-    return { type: 'project', projectId: legacy.projectId, tab: 'tasks' };
+/** History entries persist across app versions — drop shapes that aren't a project view. */
+const normalizeProjectView = (view: unknown): ProjectView => {
+  const candidate = view as { projectId?: unknown; tab?: unknown } | null;
+  if (!candidate || typeof candidate.projectId !== 'string') {
+    return null;
   }
-  // 'dashboard' moved to its own rail tab; an old Work-view entry carrying
-  // it lands on the all-work list. ('inbox' is a valid Work view again.)
-  if (legacy.type === 'dashboard') {
-    return { type: 'all' };
-  }
-  // The sidebar itself is the projects list; the retired projects index was
-  // redundant. Old history entries land on the Tasks surface instead.
-  if (legacy.type === 'projects') {
-    return { type: 'all' };
-  }
-  if (view.type === 'project' && !legacy.tab) {
-    return { type: 'project', projectId: view.projectId, tab: 'home' };
-  }
-  if (view.type === 'project') {
-    const retiredTabs: Record<string, 'home' | 'pages' | 'tasks'> = {
-      overview: 'home',
-      work: 'tasks',
-      board: 'tasks',
-      context: 'pages',
-      review: 'tasks',
-      sessions: 'home',
-      outputs: 'tasks',
-    };
-    const nextTab = typeof legacy.tab === 'string' ? retiredTabs[legacy.tab] : undefined;
-    if (nextTab) {
-      return { type: 'project', projectId: view.projectId, tab: nextTab };
-    }
-  }
-  return view;
+  return { projectId: candidate.projectId, tab: candidate.tab === 'settings' ? 'settings' : 'home' };
 };
 
 let lastKey = '';
@@ -106,10 +74,7 @@ const applyHistoryState = (state: AppHistoryState): void => {
   if (persistedStoreApi.get().layoutMode !== state.layoutMode) {
     void persistedStoreApi.setKey('layoutMode', state.layoutMode);
   }
-  // Keep the in-app contextual Back buttons coherent: the view being left
-  // becomes "previous" for them too.
-  pushTicketsHistory($ticketsView.get());
-  $ticketsView.set(normalizeTicketsView(state.ticketsView));
+  $projectView.set(normalizeProjectView(state.projectView));
   syncTitle(state.layoutMode);
 };
 
@@ -151,11 +116,11 @@ export const initAppHistory = (): void => {
     window.history.replaceState(state, '');
 
     persistedStoreApi.$atom.listen(onNavChange);
-    $ticketsView.listen(onNavChange);
+    $projectView.listen(onNavChange);
 
     window.addEventListener('popstate', (event: PopStateEvent) => {
       const state = event.state as Partial<AppHistoryState> | null;
-      if (!state?.omni || !isValidMode(state.layoutMode) || !state.ticketsView) {
+      if (!state?.omni || !isValidMode(state.layoutMode)) {
         return;
       }
       applyHistoryState(state as AppHistoryState);

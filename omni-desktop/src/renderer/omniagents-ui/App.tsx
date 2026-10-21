@@ -2,7 +2,6 @@ import { useStore } from '@nanostores/react';
 import { useSelector } from '@xstate/react';
 import { AnimatePresence, motion } from 'framer-motion';
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { flushSync } from 'react-dom';
 import { waitFor } from 'xstate';
 
 import { MAX_CHAT_CONVERSATIONS } from '@/lib/chat-conversations';
@@ -22,7 +21,6 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/renderer
 import { Spinner } from '@/renderer/ds/ui/spinner';
 import { toast } from '@/renderer/features/Toast/state';
 import { useAutoRetry } from '@/renderer/hooks/use-auto-retry';
-import { resetConversation } from '@/renderer/omniagents-ui/session/reset-conversation';
 import { clearColumnActivity, publishColumnActivity } from '@/renderer/services/column-activity';
 import { forwardRoutineEvent, registerRoutineActor } from '@/renderer/services/routine-bridge';
 import {
@@ -33,11 +31,10 @@ import {
   transcriptPage,
 } from '@/renderer/services/session-control';
 import { persistedStoreApi } from '@/renderer/services/store';
-import { forwardEvent, registerColumnActor } from '@/renderer/services/supervisor-bridge';
 import { VoiceScopeContext } from '@/renderer/services/voice-recording';
 import type { RunDiffItem } from '@/shared/chat-types';
 import { voiceActive } from '@/shared/machines/voice-session.machine';
-import type { ExecutionTarget, TicketId } from '@/shared/types';
+import type { ExecutionTarget } from '@/shared/types';
 
 import {
   $activityBySession,
@@ -50,7 +47,7 @@ import {
   registerActivityActions,
   type WorkersKillResult,
 } from './activity-store';
-import { negotiatedPlanTasks, planUpdateForBridge, rpcPlanTasks, type TaskSummary } from './canonical-plan-tasks';
+import { negotiatedPlanTasks, rpcPlanTasks, type TaskSummary } from './canonical-plan-tasks';
 import type { PendingMessage } from './ChatShell';
 import { type ArtifactItem, ArtifactsPanel } from './components/ArtifactsPanel';
 import { ConversationComposer } from './components/ConversationComposer';
@@ -120,13 +117,11 @@ type AppProps = {
   onRunStarted?: (runId: string) => void;
   pendingPlan?: import('@/shared/chat-types').PlanItem | null;
   onPlanDecision?: (approved: boolean) => void;
-  ticketId?: TicketId;
   /** Routine (scheduled task) id when this column hosts a routine run. */
   routineId?: string;
   workspaceDir?: string;
   /** Opens a column app (deck sidecar tab). When absent — hosts without a
-   *  deck column, e.g. Residents — pills that would deep-link fall back to
-   *  a popover. */
+   *  deck column — pills that would deep-link fall back to a popover. */
   onOpenApp?: (appId: string) => void;
   /** Transcript-viewer mode: no composer or pill row — used when this app
    *  is embedded to READ another session (e.g. a subagent's transcript in
@@ -195,7 +190,6 @@ function SessionView({
   onRunStarted,
   pendingPlan,
   onPlanDecision,
-  ticketId,
   routineId,
   workspaceDir,
   onOpenApp,
@@ -520,14 +514,9 @@ function SessionView({
         onRunEndRef.current?.({ runId: p?.run_id, reason: String(p?.end_reason ?? 'completed') });
         void refreshSessions();
       }),
-      session.on('client_request', (p: any) => {
-        if (ticketId && p?.function === 'ui.goal.update') {
-          void forwardEvent({ kind: 'goal-update', ticketId, snapshot: p?.args?.snapshot ?? null });
-        }
-      }),
     ];
     return () => offs.forEach((off) => off());
-  }, [session, refreshSessions, ticketId]);
+  }, [session, refreshSessions]);
   useEffect(() => {
     if (!onClientToolCall || readOnly) {
       return;
@@ -574,26 +563,6 @@ function SessionView({
     const filteredTasks = runActive ? liveTasks : liveTasks.filter((t) => t.status !== 'completed');
     return { rawTasks: lastTasks, tasks: filteredTasks, derivedBashJobs: lastJobs };
   }, [client, connected, items, runActive, dismissedTaskIds]);
-
-  // Forward the unfiltered plan projection to main's SupervisorOrchestrator,
-  // which persists it as `ticket.lastPlanSnapshot` (workflow-enforcement §F).
-  // Ticket-bound columns only — same guard as the goal-update forward. The
-  // raw (pre-dismissal) list is forwarded because the snapshot must retain
-  // completed steps the panel hides when idle. Serialized-compare so bursty
-  // item updates don't spam IPC; main debounces the write on its side.
-  const lastPlanForwardRef = useRef<string | null>(null);
-  useEffect(() => {
-    const event = planUpdateForBridge(ticketId, rawTasks);
-    if (!event) {
-      return;
-    }
-    const serialized = JSON.stringify(event.snapshot);
-    if (serialized === lastPlanForwardRef.current) {
-      return;
-    }
-    lastPlanForwardRef.current = serialized;
-    void forwardEvent(event);
-  }, [ticketId, rawTasks]);
 
   // Live override (from ui.bash_jobs.update broadcasts and bash_jobs.* server
   // calls) takes precedence over history-derived state when present. Mirror
@@ -939,192 +908,7 @@ function SessionView({
   }, [session]);
 
   // ---------------------------------------------------------------------------
-  // Supervisor bridge event forwarding. The Code column owns the session id;
-  // main observes this narrow event stream to drive phase / retry / stall state.
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (!ticketId) {
-      return;
-    }
-    type RunEvent = {
-      run_id?: unknown;
-      end_reason?: unknown;
-      content?: unknown;
-      role?: unknown;
-      tool_name?: unknown;
-      total_token_usage?: { input_tokens?: unknown; output_tokens?: unknown; total_tokens?: unknown };
-      input_tokens?: unknown;
-      output_tokens?: unknown;
-      total_tokens?: unknown;
-    };
-    const num = (v: unknown): number => Number(v ?? 0);
-    const offs: Array<() => void> = [];
-
-    offs.push(
-      session.on('run_started', (raw: unknown) => {
-        const p = (raw ?? {}) as RunEvent;
-        const runId = String(p.run_id ?? '');
-        forwardEvent({ kind: 'run-started', ticketId, runId });
-      })
-    );
-    offs.push(
-      session.on('run_end', (raw: unknown) => {
-        const p = (raw ?? {}) as RunEvent;
-        forwardEvent({ kind: 'run-end', ticketId, reason: String(p.end_reason ?? 'completed') });
-      })
-    );
-    offs.push(
-      session.on('message_output', (raw: unknown) => {
-        const p = (raw ?? {}) as RunEvent;
-        forwardEvent({
-          kind: 'message',
-          ticketId,
-          content: String(p.content ?? ''),
-          role: p.role === 'user' ? 'user' : 'assistant',
-          toolName: typeof p.tool_name === 'string' ? p.tool_name : undefined,
-        });
-      })
-    );
-    offs.push(
-      session.on('token_usage', (raw: unknown) => {
-        const p = (raw ?? {}) as RunEvent;
-        const u = p.total_token_usage ?? p;
-        forwardEvent({
-          kind: 'token-usage',
-          ticketId,
-          usage: {
-            inputTokens: num(u.input_tokens),
-            outputTokens: num(u.output_tokens),
-            totalTokens: num(u.total_tokens),
-          },
-        });
-      })
-    );
-
-    return () => {
-      for (const off of offs) {
-        off();
-      }
-    };
-  }, [ticketId, client]);
-
-  // ---------------------------------------------------------------------------
-  // Supervisor bridge actor registration. This is the one path autopilot uses
-  // to submit, send, stop, and reset runs through the live Code column.
-  // ---------------------------------------------------------------------------
-  useEffect(() => {
-    if (!ticketId) {
-      return;
-    }
-
-    const awaitChatReady = (): Promise<void> =>
-      waitFor(
-        actor,
-        (s) => {
-          const v = s.value;
-          return typeof v === 'object' && v !== null && 'ready' in v && (v as { ready?: unknown }).ready === 'idle';
-        },
-        { timeout: 30_000 }
-      ).then(() => undefined);
-
-    const unregister = registerColumnActor({
-      ticketId,
-      // The bridge resolves the runId from `start_run`'s RPC response rather
-      // than waiting for a `run_started` event. Event-based waits used to
-      // live in a component-local ref, which lost waiters across React
-      // StrictMode's mount → unmount → mount dance and stranded the bridge
-      // dispatch in a 60s timeout. The RPC ack carries the same run_id.
-      submit: async (prompt, runOverrides) => {
-        await awaitChatReady();
-        const result = await handleSubmit(prompt, undefined, runOverrides);
-        if (!result?.runId) {
-          throw new Error('start_run did not return a run_id');
-        }
-        return { runId: result.runId };
-      },
-      goalStart: async ({ prompt, maxTurns, tickInterval, runOverrides }) => {
-        await awaitChatReady();
-        const sid = session.id;
-
-        // Session variables are non-execution metadata. The goal server
-        // function receives the selected environment explicitly below.
-        const baseVariables: Record<string, unknown> = {
-          ...((variablesProp as Record<string, unknown> | undefined) ?? {}),
-        };
-        const variables: Record<string, unknown> = runOverrides
-          ? {
-              ...baseVariables,
-              ...(runOverrides.additionalInstructions
-                ? {
-                    additional_instructions:
-                      typeof baseVariables.additional_instructions === 'string'
-                        ? `${runOverrides.additionalInstructions}\n\n${baseVariables.additional_instructions}`
-                        : runOverrides.additionalInstructions,
-                  }
-                : {}),
-              ...(runOverrides.safeToolOverrides ? { safe_tool_overrides: runOverrides.safeToolOverrides } : {}),
-            }
-          : baseVariables;
-
-        await client.serverCall('session.ensure', {
-          session_id: sid,
-          variables,
-        });
-        // Goal ticks start their runs server-side, so the reviewer must be
-        // set durably on the session rather than ride a start_run param.
-        if (runOverrides?.approvalsReviewer && client.supportsExperimentalFeature('approvalReviewer')) {
-          await client.setSessionApprovals(sid, runOverrides.approvalsReviewer).catch(() => {});
-        }
-        // Kick off the /goal loop. The agent-side server function
-        // enqueues the initial prompt, installs the tick, and registers
-        // the run-end listener — launcher reacts via ui.goal.update.
-        const goalArgs: Record<string, unknown> = { text: prompt };
-        if (typeof maxTurns === 'number') {
-          goalArgs.max_turns = maxTurns;
-        }
-        if (typeof tickInterval === 'number') {
-          goalArgs.tick_interval = tickInterval;
-        }
-        if (runOverrides?.safeToolOverrides) {
-          goalArgs.safe_tool_overrides = runOverrides.safeToolOverrides;
-        }
-        await client.serverCall('goal', goalArgs, sid, executionTarget);
-      },
-      goalStop: async () => {
-        const sid = actor.getSnapshot().context.sessionId;
-        if (!sid) {
-          return;
-        }
-        await client.serverCall('goal.stop', {}, sid, executionTarget).catch(() => {});
-      },
-      send: async (message) => {
-        await awaitChatReady();
-        await handleSubmit(message, undefined);
-      },
-      stop: async () => {
-        await session.stopRun();
-      },
-      reset: async () => {
-        await resetConversation({
-          runId: actor.getSnapshot().context.runId,
-          stopRun: (id) => client.stopRun(id),
-          selectNew: () => {
-            machine.stop();
-            // Commit the new owner only after the stop RPC succeeds.
-            flushSync(() => onSelectConversation());
-          },
-        });
-      },
-    });
-
-    return () => {
-      unregister();
-    };
-  }, [ticketId, client, machine, actor, handleSubmit, session, onSelectConversation]);
-
-  // ---------------------------------------------------------------------------
-  // Routine bridge — same column-ownership model as the supervisor bridge
-  // above, but for scheduled tasks. Main starts a single run on this column's
+  // Routine bridge — for scheduled tasks. Main starts a single run on this column's
   // session via the actor; the conversation streams into the live UI and tool
   // approvals surface here. Run/approval events forward back so main can drive
   // routine history / status / toasts.

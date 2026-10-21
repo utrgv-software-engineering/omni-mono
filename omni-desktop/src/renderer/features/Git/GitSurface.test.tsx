@@ -532,7 +532,7 @@ describe('GitSurface', () => {
     );
   });
 
-  it('reviews all tracked session changes and confirms before applying them to a local folder', async () => {
+  it('reviews all tracked session changes for a sandboxed local source', async () => {
     mocks.store = {
       defaultProfileName: 'docker',
       codeTabs: [{ id: 'tab-1', projectId: 'project-1', profileName: 'docker' }],
@@ -562,15 +562,6 @@ describe('GitSurface', () => {
       mode: 'range',
       fromRev: 'refs/tags/omni/seed',
     });
-
-    act(() => button('Apply to local folder').click());
-    expect(mocks.invoke).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('/home/user/work');
-
-    await act(async () => button('Apply changes').click());
-    await settle();
-    expect(mocks.invoke).toHaveBeenCalledWith('project:apply-code-tab-source-changes', 'tab-1', 'source-1');
-    expect(container.textContent).toContain('Applied sandbox changes to /home/user/work.');
   });
 });
 

@@ -7,7 +7,6 @@ import {
   Keyboard,
   Palette,
   Puzzle,
-  Rocket,
   Settings,
   SlidersHorizontal,
   SquareTerminal,
@@ -38,7 +37,6 @@ import { SettingsModalGeneralTab } from '@/renderer/features/SettingsModal/Setti
 import { SettingsModalGitTab } from '@/renderer/features/SettingsModal/SettingsModalGitTab';
 import { SettingsModalHotkeysTab } from '@/renderer/features/SettingsModal/SettingsModalHotkeysTab';
 import { SettingsModalNetworkTab } from '@/renderer/features/SettingsModal/SettingsModalNetworkTab';
-import { SettingsModalProjectsTab } from '@/renderer/features/SettingsModal/SettingsModalProjectsTab';
 import { SettingsModalResetButton } from '@/renderer/features/SettingsModal/SettingsModalResetButton';
 import { SettingsModalWorkspaceTab } from '@/renderer/features/SettingsModal/SettingsModalWorkspaceTab';
 
@@ -46,7 +44,6 @@ type SettingsTab =
   | 'General'
   | 'AI'
   | 'Appearance'
-  | 'Projects'
   | 'Audio'
   | 'Hotkeys'
   | 'Account'
@@ -69,7 +66,6 @@ const TAB_GROUPS: ReadonlyArray<{ label: string | null; tabs: ReadonlyArray<TabD
       { value: 'General', label: 'General', icon: <Settings /> },
       { value: 'AI', label: 'AI', icon: <Box /> },
       { value: 'Appearance', label: 'Appearance', icon: <Palette /> },
-      { value: 'Projects', label: 'Projects', icon: <Rocket /> },
       { value: 'Audio', label: 'Voice & Audio', icon: <SlidersHorizontal /> },
       { value: 'Hotkeys', label: 'Hotkeys', icon: <Keyboard /> },
       { value: 'Account', label: 'Account', icon: <User /> },
@@ -199,7 +195,6 @@ export const SettingsPage = memo(() => {
           {shownTab === 'General' && <SettingsModalGeneralTab />}
           {shownTab === 'AI' && <SettingsModalAiTab />}
           {shownTab === 'Appearance' && <SettingsModalAppearanceTab />}
-          {shownTab === 'Projects' && <SettingsModalProjectsTab />}
           {shownTab === 'Audio' && <SettingsModalAudioTab />}
           {shownTab === 'Hotkeys' && <SettingsModalHotkeysTab />}
           {shownTab === 'Account' && <SettingsModalAccountTab />}

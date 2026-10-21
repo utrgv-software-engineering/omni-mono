@@ -261,8 +261,6 @@ describe('chat columns and conversation history', () => {
           projectId: 'p1',
           sessionId: 'sess-proj',
           snapshotRef: 'snapshot-proj',
-          ticketId: 'ticket-1',
-          ticketTitle: 'Fix the sidebar',
         }),
       ],
     });
@@ -321,16 +319,12 @@ describe('chat columns and conversation history', () => {
       lastActiveAt: 1,
       profileName: 'devbox',
       projectId: 'project-1',
-      ticketId: 'ticket-1',
-      ticketTitle: 'Fix the sidebar',
     });
 
     expect(opened).toMatchObject({
       projectId: 'project-1',
       sessionId: 'sess-1',
       profileName: 'devbox',
-      ticketId: 'ticket-1',
-      ticketTitle: 'Fix the sidebar',
     });
     expect(opened.activatedAt).toBeTypeOf('number');
   });

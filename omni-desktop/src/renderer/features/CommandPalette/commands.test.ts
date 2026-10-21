@@ -17,9 +17,7 @@ const ctx = (codeTabs: CodeTab[] = []) => ({
   resolveTabLabel: (t: CodeTab) => `label:${t.id}`,
   navigate: vi.fn(),
   activateColumn: vi.fn(),
-  goToInbox: vi.fn(),
   goToRoutines: vi.fn(),
-  addInboxItem: vi.fn(),
   createProject: vi.fn(),
   newSession: vi.fn(),
   setDeckLayout: vi.fn(),
@@ -35,9 +33,7 @@ describe('buildCommands', () => {
       expect.arrayContaining([
         'nav-work',
         'nav-chat',
-        'nav-inbox',
         'nav-settings',
-        'add-inbox-item',
         'create-project',
         'new-session',
         'toggle-layout',
@@ -62,12 +58,8 @@ describe('buildCommands', () => {
     const commands = buildCommands(c);
     commands.find((cmd) => cmd.id === 'nav-work')!.run();
     expect(c.navigate).toHaveBeenCalledWith('work');
-    commands.find((cmd) => cmd.id === 'nav-inbox')!.run();
-    expect(c.goToInbox).toHaveBeenCalled();
     commands.find((cmd) => cmd.id === 'nav-routines')!.run();
     expect(c.goToRoutines).toHaveBeenCalled();
-    commands.find((cmd) => cmd.id === 'add-inbox-item')!.run();
-    expect(c.addInboxItem).toHaveBeenCalled();
     commands.find((cmd) => cmd.id === 'create-project')!.run();
     expect(c.createProject).toHaveBeenCalled();
     commands.find((cmd) => cmd.id === 'column-a')!.run();
@@ -88,6 +80,6 @@ describe('filterCommands', () => {
 
   it('matches keywords', () => {
     expect(filterCommands(commands, 'kanban board').map((c) => c.id)).toEqual([]);
-    expect(filterCommands(commands, 'board').map((c) => c.id)).toEqual(['nav-work']);
+    expect(filterCommands(commands, 'folders').map((c) => c.id)).toEqual(['nav-work']);
   });
 });

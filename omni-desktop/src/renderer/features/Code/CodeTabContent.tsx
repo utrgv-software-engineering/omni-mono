@@ -3,7 +3,6 @@ import { motion } from 'framer-motion';
 import { FolderOpen } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { getArtifactsDir, getContainerArtifactsDir, profileRunsOnHost } from '@/lib/artifacts';
 import { conversationTitle } from '@/lib/chat-conversations';
 import { buildSessionVariables } from '@/lib/client-tools';
 import { uuidv4 } from '@/lib/uuid';
@@ -11,6 +10,8 @@ import { cn } from '@/renderer/ds/cn';
 import { Button } from '@/renderer/ds/ui/button';
 import { Spinner } from '@/renderer/ds/ui/spinner';
 import { SessionStatusBanner } from '@/renderer/features/Banner/SessionStatusBanner';
+import { buildClientToolHandler } from '@/renderer/features/Code/client-tool-handler';
+import { $pendingPlan, resolvePlanApproval } from '@/renderer/features/Code/plan-approval-bridge';
 import { $sandboxProfiles, $substrateStatus } from '@/renderer/features/Sandboxes/state';
 import {
   getAvailableProfileNames,
@@ -19,8 +20,6 @@ import {
   getProfileTitle,
 } from '@/renderer/features/SandboxProfile/profile-list';
 import { openSettingsTab } from '@/renderer/features/SettingsModal/settings-nav';
-import { buildClientToolHandler } from '@/renderer/features/Tickets/client-tool-handler';
-import { $pendingPlan, resolvePlanApproval } from '@/renderer/features/Tickets/plan-approval-bridge';
 import { useAutoRetry } from '@/renderer/hooks/use-auto-retry';
 import { useSessionWorkspaceDir } from '@/renderer/hooks/use-session-workspace-dir';
 import type { ClientToolCallHandler } from '@/renderer/omniagents-ui/App';
@@ -29,12 +28,11 @@ import { ConversationComposerProvider } from '@/renderer/omniagents-ui/component
 import { DraftSessionControls } from '@/renderer/omniagents-ui/components/DraftSessionControls';
 import { getGreeting } from '@/renderer/omniagents-ui/greeting';
 import { buildProfileLabel } from '@/renderer/omniagents-ui/sandbox-label';
-import { configApi } from '@/renderer/services/config';
 import { emitter, serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { $hoveredVoiceScope, VoiceScopeContext } from '@/renderer/services/voice-recording';
 import type { AppId } from '@/shared/app-registry';
-import type { CodeTab, CodeTabId, ExecutionTarget, TicketId, WorkspaceMountDescriptor } from '@/shared/types';
+import type { CodeTab, CodeTabId, ExecutionTarget, WorkspaceMountDescriptor } from '@/shared/types';
 import { firstSource, isChatColumn } from '@/shared/types';
 import { getActivePersona } from '@/shared/voice-personas';
 
@@ -89,7 +87,6 @@ const CodeRunningView = memo(
     filesHost,
     gitHost,
     reviewHost,
-    ticketId,
     routineId,
     switching,
     greeting,
@@ -129,7 +126,6 @@ const CodeRunningView = memo(
     filesHost: HTMLDivElement;
     gitHost: HTMLDivElement;
     reviewHost: HTMLDivElement;
-    ticketId?: TicketId;
     routineId?: string;
     switching?: boolean;
     /** Chat mode: time-of-day greeting shown on the empty conversation. */
@@ -193,7 +189,6 @@ const CodeRunningView = memo(
             filesHost={filesHost}
             gitHost={gitHost}
             reviewHost={reviewHost}
-            ticketId={ticketId}
             routineId={routineId}
             greeting={greeting}
             suggestions={suggestions}
@@ -483,35 +478,10 @@ export const CodeTabContent = memo(
     const handleClientToolCall = useMemo(
       () =>
         buildClientToolHandler({
-          ...(tab.ticketId && tab.projectId ? { ticketId: tab.ticketId as TicketId, projectId: tab.projectId } : {}),
           tabId: tab.id,
         }),
-      [tab.id, tab.ticketId, tab.projectId]
+      [tab.id]
     );
-
-    // Resolve the host omni config dir once — we need it to tell the agent
-    // where to write PR artifacts when it runs on the host (no sandbox).
-    const [hostConfigDir, setHostConfigDir] = useState<string | null>(null);
-    useEffect(() => {
-      let cancelled = false;
-      void configApi.getOmniConfigDir().then((dir) => {
-        if (!cancelled) {
-          setHostConfigDir(dir);
-        }
-      });
-      return () => {
-        cancelled = true;
-      };
-    }, []);
-
-    // Look up the ticket's autopilot flag so the column builds its variables
-    // with catch-all safe_tool_overrides when autopilot is driving it.
-    const ticketAutopilot = useMemo(() => {
-      if (!tab.ticketId) {
-        return false;
-      }
-      return store.tickets.some((t) => t.id === tab.ticketId && t.autopilot === true);
-    }, [tab.ticketId, store.tickets]);
 
     const baseSessionArgs = useMemo(() => {
       if (chatMode) {
@@ -523,24 +493,14 @@ export const CodeTabContent = memo(
           ...(workspaceDir ? { context: { workspaceDir } } : {}),
         };
       }
-      const artifactsDir = tab.ticketId
-        ? profileRunsOnHost(profileName)
-          ? hostConfigDir
-            ? getArtifactsDir(hostConfigDir, tab.ticketId)
-            : undefined
-          : getContainerArtifactsDir(tab.ticketId)
-        : undefined;
       return {
         surface: 'code' as const,
-        autopilot: ticketAutopilot,
         context: {
           ...(project ? { projectId: project.id, projectLabel: project.label, sources: project.sources } : {}),
-          ...(tab.ticketId ? { ticketId: tab.ticketId } : {}),
-          ...(artifactsDir ? { artifactsDir } : {}),
           ...(tab.workspaceDir ? { workspaceDir: tab.workspaceDir } : {}),
         },
       };
-    }, [chatMode, workspaceDir, tab.ticketId, tab.workspaceDir, project, profileName, hostConfigDir, ticketAutopilot]);
+    }, [chatMode, workspaceDir, tab.workspaceDir, project]);
 
     // Base runs are speak-free; the mic button arms the voice variant per-run.
     const clientToolVariables = useMemo(() => buildSessionVariables(baseSessionArgs), [baseSessionArgs]);
@@ -598,7 +558,6 @@ export const CodeTabContent = memo(
                   filesHost={filesHost}
                   gitHost={gitHost}
                   reviewHost={reviewHost}
-                  ticketId={tab.ticketId as TicketId | undefined}
                   routineId={tab.routineId}
                   switching={sandboxStatus?.type === 'running' && !!sandboxStatus.data.switching}
                   greeting={chatMode ? greeting : undefined}

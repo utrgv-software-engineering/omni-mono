@@ -128,13 +128,6 @@ export function isControllableKind(kind: AppKind): boolean {
   return CONTROLLABLE_APP_KINDS.has(kind);
 }
 
-/** Options accepted by `app:screenshot`. */
-export type AppScreenshotOptions = {
-  fullPage?: boolean;
-  /** Optional subdirectory under the artifacts root — usually a ticketId. */
-  artifactsSubdir?: string;
-};
-
 /** Mouse button accepted by app_click. */
 export type AppClickButton = 'left' | 'right' | 'middle';
 

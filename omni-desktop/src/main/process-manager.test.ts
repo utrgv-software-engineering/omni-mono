@@ -63,7 +63,7 @@ vi.mock('@/main/agent-process', () => ({
         user_config: { durable: true, scope: 'host' },
         oauth_tokens: { durable: true, scope: 'host' },
         pending_auth: { durable: false, scope: 'process' },
-        managed_servers: ['omni-projects'],
+        managed_servers: [],
       },
     }));
     callManagementAdmin = vi.fn(async (method: string) => ({ ok: true, method }));
@@ -404,16 +404,6 @@ describe('ProcessManager', () => {
       ).rejects.toThrow('outside local single-user Electron');
     });
 
-    it('rejects managed omni-projects mutations before invoking the runtime', async () => {
-      const { pm } = makePm({ durableLocalMcpMutations: true });
-      await expect(
-        pm.mutateManagement({ method: 'mcp_delete_server', params: { server_name: 'omni-projects' } })
-      ).rejects.toThrow('managed by Omni Desktop');
-      const host = hoisted.agentProcessInstances[0]!;
-      expect(host.getManagementMcpStatus).not.toHaveBeenCalled();
-      expect(host.callManagementAdmin).not.toHaveBeenCalled();
-    });
-
     it('requires the complete runtime MCP durability attestation', async () => {
       const { pm } = makePm({ durableLocalMcpMutations: true });
       await pm.ensureManagementConnection();
@@ -423,7 +413,7 @@ describe('ProcessManager', () => {
         mutation_persistence: {
           user_config: { durable: true, scope: 'host' },
           oauth_tokens: { durable: false, scope: null },
-          managed_servers: ['omni-projects'],
+          managed_servers: [],
         },
       });
       await expect(

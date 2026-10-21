@@ -26,14 +26,12 @@ export function listAppsForScope(filter: AppScopeFilter): CatalogApp[] {
   }
 
   const projects = store.projects ?? [];
-  const tickets = store.tickets ?? [];
   const codeTabs = store.codeTabs ?? [];
-  const columnInfo = (tabId: string): { sessionId?: string; project?: string; ticket?: string } => {
+  const columnInfo = (tabId: string): { sessionId?: string; project?: string } => {
     const tab = codeTabs.find((t) => t.id === tabId);
     return {
       sessionId: tab?.sessionId,
       project: tab?.projectId ? projects.find((p) => p.id === tab.projectId)?.label : undefined,
-      ticket: tab?.ticketId ? (tickets.find((t) => t.id === tab.ticketId)?.title ?? tab.ticketTitle) : undefined,
     };
   };
 

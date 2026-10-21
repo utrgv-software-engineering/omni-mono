@@ -39,7 +39,7 @@ export type CatalogApp = {
   /** Set for column-scoped apps. */
   tabId?: string;
   /** Column context — only attached for superuser callers. */
-  column?: { tabId: string; sessionId?: string; project?: string; ticket?: string };
+  column?: { tabId: string; sessionId?: string; project?: string };
 };
 
 export type CatalogInput = {
@@ -51,7 +51,7 @@ export type CatalogInput = {
   /** Running sandbox `services` map per column id (for availability gating). */
   servicesByTab: Record<string, Record<string, string> | undefined>;
   /** Resolve display context for a column id (superuser only). */
-  columnInfo: (tabId: string) => { sessionId?: string; project?: string; ticket?: string };
+  columnInfo: (tabId: string) => { sessionId?: string; project?: string };
 };
 
 const descriptorAvailable = (app: AppDescriptor, services: Record<string, string> | undefined): boolean => {

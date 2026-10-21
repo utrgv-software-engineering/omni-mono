@@ -30,10 +30,9 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Field, FieldLabel } from '@/renderer/ds/ui/field';
 import { Input } from '@/renderer/ds/ui/input';
 import { codeApi } from '@/renderer/features/Code/state';
-import { $quickCaptureOpen } from '@/renderer/features/Inbox/QuickCapture';
-import { goToInbox } from '@/renderer/features/Inbox/state';
+import { projectsApi } from '@/renderer/features/Projects/state';
+import { goToProject } from '@/renderer/features/Projects/view-state';
 import { goToRoutine } from '@/renderer/features/ScheduledTasks/state';
-import { ticketApi } from '@/renderer/features/Tickets/state';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { CodeTab, LayoutMode } from '@/shared/types';
 
@@ -63,16 +62,8 @@ export const CommandPalette = memo(() => {
     persistedStoreApi.setKey('layoutMode', 'chat');
   }, []);
 
-  const handleGoToInbox = useCallback(() => {
-    goToInbox();
-  }, []);
-
   const handleGoToRoutines = useCallback(() => {
     goToRoutine();
-  }, []);
-
-  const addInboxItem = useCallback(() => {
-    $quickCaptureOpen.set(true);
   }, []);
 
   const createProject = useCallback(() => {
@@ -90,9 +81,9 @@ export const CommandPalette = memo(() => {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '') || 'project';
-    void ticketApi.addProject({ label, slug, sources: [] }).then((project) => {
-      // goToProject raises the Work rail tab itself.
-      ticketApi.goToProject(project.id);
+    void projectsApi.addProject({ label, slug, sources: [] }).then((project) => {
+      // goToProject raises the Projects surface itself.
+      goToProject(project.id);
     });
     setCreateProjectOpen(false);
   }, [projectName]);
@@ -101,7 +92,7 @@ export const CommandPalette = memo(() => {
     (tab: CodeTab) => {
       const project = store.projects.find((p) => p.id === tab.projectId);
       if (project) {
-        return tab.ticketTitle ? `${project.label} — ${tab.ticketTitle}` : project.label;
+        return project.label;
       }
       return 'New Session';
     },
@@ -116,9 +107,7 @@ export const CommandPalette = memo(() => {
         resolveTabLabel,
         navigate,
         activateColumn,
-        goToInbox: handleGoToInbox,
         goToRoutines: handleGoToRoutines,
-        addInboxItem,
         createProject,
         newSession: () => {
           void codeApi.addTab();
@@ -132,17 +121,7 @@ export const CommandPalette = memo(() => {
           $viewportDebug.set(!$viewportDebug.get());
         },
       }),
-    [
-      store.codeTabs,
-      store.codeLayoutMode,
-      resolveTabLabel,
-      navigate,
-      activateColumn,
-      handleGoToInbox,
-      handleGoToRoutines,
-      addInboxItem,
-      createProject,
-    ]
+    [store.codeTabs, store.codeLayoutMode, resolveTabLabel, navigate, activateColumn, handleGoToRoutines, createProject]
   );
 
   const filtered = useMemo(() => filterCommands(commands, query), [commands, query]);

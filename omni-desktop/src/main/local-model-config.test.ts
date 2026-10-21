@@ -26,7 +26,6 @@ describe('local model ownership', () => {
       configDir: directory,
       mcp: { mcpServers: {} },
       network: {} as never,
-      managedMcpEntry: {} as never,
     });
     expect(JSON.parse(readFileSync(join(directory, 'models.json'), 'utf8')).default).toBe('cli/a');
     writeLocalModels(directory, config('desktop'));

@@ -71,13 +71,13 @@ describe('canonical MCP config adapter', () => {
     });
   });
 
-  it('requires both durable stores and managed connector protection', () => {
+  it('requires both durable stores', () => {
     expect(
       hasDurableLocalMcpPersistence({
         user_config: { durable: true, scope: 'host' },
         oauth_tokens: { durable: true, scope: 'host' },
         pending_auth: { durable: false, scope: 'process' },
-        managed_servers: ['omni-projects'],
+        managed_servers: [],
       })
     ).toBe(true);
     expect(
@@ -85,7 +85,7 @@ describe('canonical MCP config adapter', () => {
         user_config: { durable: true, scope: 'host' },
         oauth_tokens: { durable: false, scope: null },
         pending_auth: { durable: false, scope: 'process' },
-        managed_servers: ['omni-projects'],
+        managed_servers: [],
       })
     ).toBe(false);
   });

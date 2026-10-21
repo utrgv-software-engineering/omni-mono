@@ -20,8 +20,6 @@ import { SystemInfoLoadingGate, SystemInfoProvider } from '@/renderer/contexts/S
 import { TooltipProvider } from '@/renderer/ds/ui/tooltip';
 import { ConnectionStatusBanner } from '@/renderer/features/Banner/ConnectionStatusBanner';
 import { CommandPalette } from '@/renderer/features/CommandPalette/CommandPalette';
-import { QuickCapture } from '@/renderer/features/Inbox/QuickCapture';
-import { MigrationNotice } from '@/renderer/features/MigrationNotice/MigrationNotice';
 import { ToastContainer } from '@/renderer/features/Toast/ToastContainer';
 import { VoiceHotkeys } from '@/renderer/features/Voice/VoiceHotkeys';
 import { ProductManagementProvider } from '@/renderer/omniagents-ui/product-management-context';
@@ -72,11 +70,9 @@ export const App = () => {
               <SystemInfoLoadingGate>
                 <ProductManagementProvider>
                   <ConnectionStatusBanner />
-                  <MigrationNotice />
                   <div className="flex min-h-0 w-full flex-1">
                     <MainContent />
                   </div>
-                  <QuickCapture />
                   <VoiceHotkeys />
                   <CommandPalette />
                   <ViewportDebug />

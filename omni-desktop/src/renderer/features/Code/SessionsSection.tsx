@@ -207,7 +207,6 @@ export const ProjectSessionRows = memo(function ProjectSessionRows({
             entry.kind === 'history'
               ? entry.conversation.title
               : ((entry.tab.sessionId ? sessionTitles.get(entry.tab.sessionId) : undefined) ??
-                entry.tab.ticketTitle ??
                 entry.tab.routineName ??
                 'New chat');
           return (
@@ -347,7 +346,7 @@ export function RecentsSection({
   // beneath their project instead of being duplicated here.
   const entries = useMemo((): SessionEntry[] => {
     const isEmptyChat = (tab: CodeTab): boolean =>
-      !tab.projectId && !tab.ticketId && !tab.routineId && (!tab.sessionId || !sessionTitles.has(tab.sessionId));
+      !tab.projectId && !tab.routineId && (!tab.sessionId || !sessionTitles.has(tab.sessionId));
     const open: SessionEntry[] = tabs
       .filter((tab) => !tab.projectId && !isEmptyChat(tab))
       .map((tab) => ({ kind: 'open', key: tab.id, tab, ts: tab.createdAt }));

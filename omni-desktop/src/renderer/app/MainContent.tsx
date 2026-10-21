@@ -8,10 +8,10 @@ import { Code } from '@/renderer/features/Code/Code';
 import { Gallery } from '@/renderer/features/Gallery/Gallery';
 import { OnboardingWizard } from '@/renderer/features/Onboarding/OnboardingWizard';
 import { PluginsView } from '@/renderer/features/Plugins/PluginsView';
+import { ProjectsSurface } from '@/renderer/features/Projects/ProjectsSurface';
 import { SandboxesTabContent } from '@/renderer/features/Sandboxes/SandboxesTabContent';
 import { ScheduledTasks } from '@/renderer/features/ScheduledTasks/ScheduledTasks';
 import { SettingsPage } from '@/renderer/features/SettingsModal/SettingsPage';
-import { Tickets } from '@/renderer/features/Tickets/Tickets';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { LayoutMode } from '@/shared/types';
 
@@ -70,8 +70,8 @@ export const MainContent = memo(() => {
   }
 
   const panels: { key: LayoutMode; Component: React.ComponentType }[] = [
-    // Work owns the inbox, projects, tasks, pages, and milestones.
-    { key: 'work', Component: Tickets },
+    // The Projects surface (layout mode 'work').
+    { key: 'work', Component: ProjectsSurface },
     // Chat IS the deck since the tab merge: chat columns and work sessions
     // share one surface (Spaces/Focus), so there's a single panel for both.
     { key: 'chat', Component: Code },

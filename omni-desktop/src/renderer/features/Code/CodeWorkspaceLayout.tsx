@@ -14,7 +14,7 @@ import {
 } from '@/renderer/services/session-control';
 import type { AppId } from '@/shared/app-registry';
 import { APP_REGISTRY } from '@/shared/app-registry';
-import type { AgentRuntimeConnection, ExecutionTarget, TicketId, WorkspaceMountDescriptor } from '@/shared/types';
+import type { AgentRuntimeConnection, ExecutionTarget, WorkspaceMountDescriptor } from '@/shared/types';
 
 import { EnvironmentDock } from './EnvironmentDock';
 import { codeApi } from './state';
@@ -91,8 +91,6 @@ type CodeWorkspaceLayoutProps = {
   reviewHost: HTMLDivElement;
   /** Execution environment whose workspace the Files and Git RPC surfaces address. */
   executionTarget?: ExecutionTarget;
-  /** Ticket bound to this column — enables the supervisor bridge actor. */
-  ticketId?: TicketId;
   /** Routine bound to this column — enables the routine bridge actor. */
   routineId?: string;
 };
@@ -132,7 +130,6 @@ export const CodeWorkspaceLayout = memo(
     gitHost,
     reviewHost,
     executionTarget,
-    ticketId,
     routineId,
   }: CodeWorkspaceLayoutProps) => {
     const registry = APP_REGISTRY;
@@ -284,7 +281,6 @@ export const CodeWorkspaceLayout = memo(
               onRunStarted={handleRunStarted}
               pendingPlan={pendingPlan}
               onPlanDecision={onPlanDecision}
-              ticketId={ticketId}
               routineId={routineId}
               workspaceDir={agentWorkspaceDir}
               onOpenApp={tabId ? handleOpenApp : undefined}

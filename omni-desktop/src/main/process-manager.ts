@@ -16,11 +16,7 @@ import {
 } from '@/main/agent-process';
 import { ChatRuntimeJournal } from '@/main/chat-runtime-journal';
 import { hasDurableHostCodexMutation, isDurableCodexAccountRequest } from '@/main/local-codex-account-owner';
-import {
-  hasDurableHostMcpMutation,
-  isMcpManagementMethod,
-  isProtectedManagedMcpRequest,
-} from '@/main/local-mcp-config-owner';
+import { hasDurableHostMcpMutation, isMcpManagementMethod } from '@/main/local-mcp-config-owner';
 import { getDefaultWorkspaceDir } from '@/main/util';
 import { gitTokenEnvName, resolveCredentialForUrl } from '@/shared/git-credentials';
 import type { IIpcListener } from '@/shared/ipc-listener';
@@ -749,9 +745,6 @@ export class ProcessManager {
     if (isMcpManagementMethod(request.method)) {
       if (!this.durableLocalMcpMutations) {
         throw new Error('MCP mutations are unavailable outside local single-user Electron');
-      }
-      if (isProtectedManagedMcpRequest(request as { method: string; params: Record<string, unknown> })) {
-        throw new Error('The omni-projects MCP server is managed by Omni Desktop and cannot be changed');
       }
       const status = await proc.getManagementMcpStatus();
       if (!hasDurableHostMcpMutation(status)) {

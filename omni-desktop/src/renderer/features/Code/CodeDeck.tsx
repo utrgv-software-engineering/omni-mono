@@ -24,7 +24,6 @@ import {
   Archive,
   Columns3,
   Ellipsis,
-  GitFork,
   GripVertical,
   Maximize2,
   Minimize2,
@@ -44,7 +43,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/renderer/ds/ui/dropdown-menu';
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/renderer/ds/ui/empty';
@@ -56,12 +54,9 @@ import { ToggleGroup, ToggleGroupItem } from '@/renderer/ds/ui/toggle-group';
 import { AgentsSurface } from '@/renderer/features/Agents';
 import { $appLaunchRequest, clearAppLaunchRequest } from '@/renderer/features/AppControl/app-launch-bridge';
 import { BrowserView } from '@/renderer/features/Browser/BrowserView';
+import { $previewRequest, clearPreviewRequest } from '@/renderer/features/Code/preview-bridge';
 import { ConsoleStarted } from '@/renderer/features/Console/ConsoleRunning';
 import { JobsSurface } from '@/renderer/features/Jobs';
-import { $previewRequest, clearPreviewRequest } from '@/renderer/features/Tickets/preview-bridge';
-import { PullRequestBanner } from '@/renderer/features/Tickets/PullRequestBanner';
-import { TicketBannerActions, TicketColumnBadge } from '@/renderer/features/Tickets/TicketControls';
-import { type TicketPanel, TicketPanelOverlay } from '@/renderer/features/Tickets/TicketPanelOverlay';
 import { OmniAgentsHeaderActionsSlot } from '@/renderer/omniagents-ui/header-actions';
 import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
@@ -71,8 +66,8 @@ import { makeAppHandleId } from '@/shared/app-control-types';
 import type { AppDescriptor, AppId } from '@/shared/app-registry';
 import { APP_REGISTRY } from '@/shared/app-registry';
 import type { AutoLaunchPhase } from '@/shared/machines/auto-launch.machine';
-import type { CodeLayoutMode, CodeTab, CodeTabId, ProjectId, TicketId } from '@/shared/types';
-import { firstSource, isChatColumn, projectHasRepoSource } from '@/shared/types';
+import type { CodeLayoutMode, CodeTab, CodeTabId } from '@/shared/types';
+import { firstSource, isChatColumn } from '@/shared/types';
 
 import { AppIcon } from './AppIcon';
 import { CodeTabContent } from './CodeTabContent';
@@ -351,42 +346,23 @@ const CodeSessionHeader = memo(
     label,
     subLabel,
     statusTabId,
-    ticketTitle,
     routineName,
     routineSchedule,
-    ticketColumnBadge,
-    ticketMetaBadge,
-    ticketActions,
     actions,
     onArchive,
     dragHandle,
     dragSurfaceProps,
-    ticketId,
-    projectId,
-    onOpenPanel,
   }: {
     label: string;
-    /** Identity context when there is no ticket banner (e.g. "Started 2h ago"). */ subLabel?: string | null;
+    /** Identity context when there is no routine banner (e.g. "Started 2h ago"). */ subLabel?: string | null;
     /** When set, a live ColumnStatusLine for this tab renders under the header. */ statusTabId?: CodeTabId;
-    ticketTitle?: string | null;
     routineName?: string | null;
     routineSchedule?: string | null;
-    ticketColumnBadge?: React.ReactNode;
-    ticketMetaBadge?: React.ReactNode;
-    ticketActions?: React.ReactNode;
     actions?: React.ReactNode;
     onArchive?: () => void;
     dragHandle?: React.ReactNode;
     dragSurfaceProps?: React.HTMLAttributes<HTMLDivElement>;
-    ticketId?: TicketId;
-    projectId?: ProjectId | null;
-    onOpenPanel?: (panel: TicketPanel) => void;
   }) => {
-    // Artifacts is a developer surface: it only exists for ticket runs on
-    // repo-source projects. Plain-folder projects have one output concept —
-    // the folder itself — so the menu item never appears for them.
-    const store = useStore(persistedStoreApi.$atom);
-    const showArtifacts = Boolean(ticketId) && projectHasRepoSource(store.projects.find((p) => p.id === projectId));
     return (
       <>
         <div
@@ -424,15 +400,6 @@ const CodeSessionHeader = memo(
                 </DropdownMenuTrigger>
                 <>
                   <DropdownMenuContent>
-                    {onOpenPanel && (
-                      <>
-                        <DropdownMenuItem onClick={() => onOpenPanel('overview')}>Overview</DropdownMenuItem>
-                        {showArtifacts && (
-                          <DropdownMenuItem onClick={() => onOpenPanel('artifacts')}>Results</DropdownMenuItem>
-                        )}
-                        <DropdownMenuSeparator />
-                      </>
-                    )}
                     <DropdownMenuItem onClick={onArchive}>
                       <Archive />
                       Archive session
@@ -443,24 +410,7 @@ const CodeSessionHeader = memo(
             )}
           </div>
         </div>
-        {ticketTitle && (
-          <div className={cn('flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-4 pr-4 pt-0.5 pb-1 bg-transparent')}>
-            <span
-              className="basis-full grow min-w-0 text-xs text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap sm:flex-1"
-              title={ticketTitle}
-            >
-              {ticketTitle}
-            </span>
-            {(ticketColumnBadge || ticketMetaBadge) && (
-              <span className="flex items-center gap-2 shrink-0">
-                {ticketColumnBadge}
-                {ticketMetaBadge}
-              </span>
-            )}
-            {ticketActions && <div className="flex items-center gap-1.5 shrink-0 ml-auto">{ticketActions}</div>}
-          </div>
-        )}
-        {!ticketTitle && routineName && (
+        {routineName && (
           <div
             className={cn(
               'flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-4 pr-4 pt-0.5 pb-1 bg-muted border-t border-border border-b border-border'
@@ -497,12 +447,8 @@ const DeckColumn = memo(
   ({
     tab,
     label,
-    ticketTitle,
     routineName,
     routineSchedule,
-    ticketColumnBadge,
-    ticketMetaBadge,
-    ticketActions,
     actions,
     onArchive,
     onFocus,
@@ -514,12 +460,8 @@ const DeckColumn = memo(
   }: {
     tab: CodeTab;
     label: string;
-    ticketTitle?: string | null;
     routineName?: string | null;
     routineSchedule?: string | null;
-    ticketColumnBadge?: React.ReactNode;
-    ticketMetaBadge?: React.ReactNode;
-    ticketActions?: React.ReactNode;
     actions?: React.ReactNode;
     onArchive: (id: CodeTabId) => void;
     onFocus: (id: CodeTabId) => void;
@@ -539,8 +481,6 @@ const DeckColumn = memo(
     const style = {
       transform: CSS.Transform.toString(transform),
     };
-    const [activePanel, setActivePanel] = useState<TicketPanel | null>(null);
-    const handleClosePanel = useCallback(() => setActivePanel(null), []);
     useNowMinute();
 
     return (
@@ -567,14 +507,10 @@ const DeckColumn = memo(
           <ColumnAura tabId={tab.id} />
           <CodeSessionHeader
             label={label}
-            subLabel={ticketTitle || routineName ? null : startedLabel(tab)}
+            subLabel={routineName ? null : startedLabel(tab)}
             statusTabId={tab.id}
-            ticketTitle={ticketTitle}
             routineName={routineName}
             routineSchedule={routineSchedule}
-            ticketColumnBadge={ticketColumnBadge}
-            ticketMetaBadge={ticketMetaBadge}
-            ticketActions={ticketActions}
             actions={
               <div className={cn('flex items-center', 'gap-1')}>
                 {headerActionsSlot}
@@ -601,9 +537,6 @@ const DeckColumn = memo(
               </div>
             }
             onArchive={() => onArchive(tab.id)}
-            ticketId={tab.ticketId as TicketId | undefined}
-            projectId={tab.projectId}
-            onOpenPanel={tab.ticketId ? setActivePanel : undefined}
             dragSurfaceProps={listeners}
             dragHandle={
               <Button
@@ -620,13 +553,7 @@ const DeckColumn = memo(
             }
           />
 
-          <PullRequestBanner scope={{ kind: 'code-tab', tabId: tab.id }} />
-          <div className="flex-1 min-h-0 relative">
-            {children}
-            {tab.ticketId && (
-              <TicketPanelOverlay panel={activePanel} ticketId={tab.ticketId as TicketId} onClose={handleClosePanel} />
-            )}
-          </div>
+          <div className="flex-1 min-h-0 relative">{children}</div>
         </motion.div>
       </div>
     );
@@ -954,12 +881,8 @@ const CodeSessionPane = memo(
   ({
     tab,
     label,
-    ticketTitle,
     routineName,
     routineSchedule,
-    ticketColumnBadge,
-    ticketMetaBadge,
-    ticketActions,
     actions,
     onArchive,
     isVisible,
@@ -967,19 +890,13 @@ const CodeSessionPane = memo(
   }: {
     tab: CodeTab;
     label: string;
-    ticketTitle?: string | null;
     routineName?: string | null;
     routineSchedule?: string | null;
-    ticketColumnBadge?: React.ReactNode;
-    ticketMetaBadge?: React.ReactNode;
-    ticketActions?: React.ReactNode;
     actions?: React.ReactNode;
     onArchive: (id: CodeTabId) => void;
     isVisible: boolean;
     /** The tab's content slot — CodeDeck portals the persistent CodeTabContent here. */ content: React.ReactNode;
   }) => {
-    const [activePanel, setActivePanel] = useState<TicketPanel | null>(null);
-    const handleClosePanel = useCallback(() => setActivePanel(null), []);
     useNowMinute();
 
     return (
@@ -1002,28 +919,15 @@ const CodeSessionPane = memo(
         <ColumnAura tabId={tab.id} />
         <CodeSessionHeader
           label={label}
-          subLabel={ticketTitle || routineName ? null : startedLabel(tab)}
+          subLabel={routineName ? null : startedLabel(tab)}
           statusTabId={tab.id}
-          ticketTitle={ticketTitle}
           routineName={routineName}
           routineSchedule={routineSchedule}
-          ticketColumnBadge={ticketColumnBadge}
-          ticketMetaBadge={ticketMetaBadge}
-          ticketActions={ticketActions}
           actions={actions}
           onArchive={() => onArchive(tab.id)}
-          ticketId={tab.ticketId as TicketId | undefined}
-          projectId={tab.projectId}
-          onOpenPanel={tab.ticketId ? setActivePanel : undefined}
         />
 
-        <PullRequestBanner scope={{ kind: 'code-tab', tabId: tab.id }} />
-        <div className="flex-1 min-h-0 relative">
-          {content}
-          {tab.ticketId && (
-            <TicketPanelOverlay panel={activePanel} ticketId={tab.ticketId as TicketId} onClose={handleClosePanel} />
-          )}
-        </div>
+        <div className="flex-1 min-h-0 relative">{content}</div>
       </motion.div>
     );
   }
@@ -1420,7 +1324,6 @@ export const CodeDeck = memo(() => {
     [projectMap, sessionTitles]
   );
 
-  const resolveTicketTitle = useCallback((tab: CodeTab) => tab.ticketTitle ?? null, []);
   const resolveRoutineName = useCallback((tab: CodeTab) => tab.routineName ?? null, []);
   const resolveRoutineSchedule = useCallback((tab: CodeTab) => tab.routineSchedule ?? null, []);
 
@@ -1653,53 +1556,6 @@ export const CodeDeck = memo(() => {
     [handleSidecarOpenChange]
   );
 
-  const renderTicketColumnBadge = useCallback((tab: CodeTab) => {
-    if (!tab.ticketId) {
-      return undefined;
-    }
-    return <TicketColumnBadge ticketId={tab.ticketId} />;
-  }, []);
-
-  const renderTicketBannerActions = useCallback((tab: CodeTab) => {
-    if (!tab.ticketId) {
-      return undefined;
-    }
-    return <TicketBannerActions ticketId={tab.ticketId} />;
-  }, []);
-
-  const renderTicketMetaBadge = useCallback(
-    (tab: CodeTab) => {
-      if (!tab.ticketId) {
-        return undefined;
-      }
-
-      const ticket = store.tickets.find((item) => item.id === tab.ticketId);
-      if (!ticket) {
-        return undefined;
-      }
-
-      const milestone = store.milestones.find((item) => item.id === ticket.milestoneId);
-      const effectiveBranch = ticket.branch ?? milestone?.branch;
-      const projectWorkspaceDir = tab.projectId ? projectMap.get(tab.projectId)?.workspaceDir : undefined;
-      const isIsolatedWorkspace =
-        !!tab.workspaceDir && !!projectWorkspaceDir && tab.workspaceDir !== projectWorkspaceDir;
-
-      if (!effectiveBranch && !isIsolatedWorkspace) {
-        return undefined;
-      }
-
-      return (
-        <span className="flex shrink-0 items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5 text-xs font-medium text-secondary-foreground">
-          <GitFork className="size-3" />
-          {effectiveBranch ?? 'Isolated workspace'}
-          {isIsolatedWorkspace ? ' · isolated' : ''}
-          {!ticket.branch && milestone?.branch ? ' · inherited' : ''}
-        </span>
-      );
-    },
-    [projectMap, store.milestones, store.tickets]
-  );
-
   type SidecarState = {
     apps: AppDescriptor[];
     activeAppId: AppId | undefined;
@@ -1843,12 +1699,8 @@ export const CodeDeck = memo(() => {
                           <DeckColumn
                             tab={tab}
                             label={resolveLabel(tab)}
-                            ticketTitle={resolveTicketTitle(tab)}
                             routineName={resolveRoutineName(tab)}
                             routineSchedule={resolveRoutineSchedule(tab)}
-                            ticketColumnBadge={renderTicketColumnBadge(tab)}
-                            ticketMetaBadge={renderTicketMetaBadge(tab)}
-                            ticketActions={renderTicketBannerActions(tab)}
                             actions={renderSessionActions(tab)}
                             onArchive={handleArchive}
                             onFocus={handleFocusColumn}
@@ -1936,12 +1788,8 @@ export const CodeDeck = memo(() => {
                       key={tab.id}
                       tab={tab}
                       label={resolveLabel(tab)}
-                      ticketTitle={resolveTicketTitle(tab)}
                       routineName={resolveRoutineName(tab)}
                       routineSchedule={resolveRoutineSchedule(tab)}
-                      ticketColumnBadge={renderTicketColumnBadge(tab)}
-                      ticketMetaBadge={renderTicketMetaBadge(tab)}
-                      ticketActions={renderTicketBannerActions(tab)}
                       actions={renderSessionActions(tab)}
                       onArchive={handleArchive}
                       isVisible={tab.id === activeTab?.id}

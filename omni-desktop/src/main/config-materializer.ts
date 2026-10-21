@@ -9,7 +9,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { type ManagedMcpEntry, mergeManagedMcpEntry } from '@/shared/mcp-entry';
 import type { McpConfig, NetworkConfig } from '@/shared/types';
 
 function writeJson(path: string, data: unknown): void {
@@ -19,26 +18,21 @@ function writeJson(path: string, data: unknown): void {
 }
 
 /**
- * Write `mcp.json` and `network.json` into `configDir`, merging the managed
- * `omni-projects` MCP entry on top of the user's own servers. `.env` is
+ * Write `mcp.json` and `network.json` into `configDir`. `.env` is
  * deliberately NOT written here — the callers write it next to these files.
  */
 export function materializeAgentConfig(opts: {
   configDir: string;
   mcp: McpConfig;
   network: NetworkConfig;
-  managedMcpEntry: ManagedMcpEntry;
   /** Local Electron relinquishes mcp.json after canonical ownership transfer.
    * The network config remains Desktop-owned and continues to materialize. */
   writeMcp?: boolean;
 }): void {
-  const { configDir, mcp, network, managedMcpEntry, writeMcp = true } = opts;
+  const { configDir, mcp, network, writeMcp = true } = opts;
   mkdirSync(configDir, { recursive: true });
   if (writeMcp) {
-    writeJson(join(configDir, 'mcp.json'), {
-      ...mcp,
-      mcpServers: mergeManagedMcpEntry(mcp.mcpServers, managedMcpEntry),
-    });
+    writeJson(join(configDir, 'mcp.json'), mcp);
   }
   writeJson(join(configDir, 'network.json'), network);
 }

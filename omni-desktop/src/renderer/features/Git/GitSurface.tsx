@@ -3,7 +3,6 @@ import { PanelLeftIcon, RefreshCwIcon, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { profileRunsOnHost } from '@/lib/artifacts';
 import { cn } from '@/renderer/ds/cn';
 import { Alert, AlertDescription, AlertTitle } from '@/renderer/ds/ui/alert';
 import {
@@ -32,7 +31,6 @@ import {
   type WorkspaceRepo,
 } from '@/renderer/omniagents-ui/rpc/git';
 import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
-import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { CodeTabId, ExecutionTarget, ProjectSource } from '@/shared/types';
 
@@ -121,10 +119,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
   const [collapsedPaths, setCollapsedPaths] = useState<ReadonlySet<string>>(new Set());
   const [toolsOpen, setToolsOpen] = useState(false);
   const [syncOptionsState, setSyncOptionsState] = useState<GitSyncOptions | null>(null);
-  const [pendingApply, setPendingApply] = useState<ApplyTarget | null>(null);
-  const [applyPending, setApplyPending] = useState(false);
-  const [applyStatus, setApplyStatus] = useState<string | null>(null);
-  const [applyError, setApplyError] = useState<string | null>(null);
   const [discoveryRevision, setDiscoveryRevision] = useState(0);
   const [refreshRevision, setRefreshRevision] = useState(0);
   const [detailsRevision, setDetailsRevision] = useState(0);
@@ -160,7 +154,7 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
     currentRepository && currentProject ? sourceForRepository(currentProject.sources, currentRepository) : null;
   const profileName = currentTab?.profileName ?? currentProject?.sandboxProfile ?? store.defaultProfileName ?? 'host';
   const currentApplyTarget: ApplyTarget | null =
-    activeSource?.kind === 'local' && !activeSource.readOnly && !profileRunsOnHost(profileName)
+    activeSource?.kind === 'local' && !activeSource.readOnly && profileName !== 'host'
       ? { source: activeSource, localPath: activeSource.workspaceDir }
       : null;
   const hasApplyTarget = currentApplyTarget !== null;
@@ -382,9 +376,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
       if (!identityKey) {
         return;
       }
-      setPendingApply(null);
-      setApplyStatus(null);
-      setApplyError(null);
       setCollapsedPaths(new Set());
       setSyncOptionsState(null);
       setSelectedRepository({ identityKey, value: repo });
@@ -427,30 +418,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
     bodyRef.current?.querySelector(`[data-diff-file="${CSS.escape(path)}"]`)?.scrollIntoView?.({ block: 'start' });
   }, []);
 
-  const confirmApply = useCallback(async () => {
-    const target = pendingApply;
-    if (!tabId || !target) {
-      return;
-    }
-    setApplyPending(true);
-    setApplyError(null);
-    setApplyStatus(null);
-    try {
-      const result = await emitter.invoke('project:apply-code-tab-source-changes', tabId, target.source.id);
-      if (!result.ok) {
-        setApplyError(result.error ?? 'Could not apply sandbox changes to the local folder.');
-        return;
-      }
-      setPendingApply(null);
-      setApplyStatus(`Applied sandbox changes to ${target.localPath}.`);
-      refresh();
-    } catch (error: unknown) {
-      setApplyError(errorMessage(error, 'Could not apply sandbox changes to the local folder.'));
-    } finally {
-      setApplyPending(false);
-    }
-  }, [pendingApply, refresh, tabId]);
-
   const mergedEntries = useMemo(() => (currentData ? mergeUntracked(currentData.status) : []), [currentData]);
   const entriesByPath = useMemo(() => new Map(mergedEntries.map((entry) => [entry.path, entry])), [mergedEntries]);
   const actionsDisabled = mutations.busy !== null || !connected;
@@ -481,8 +448,8 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
 
   const pendingDescription = mutations.pending ? describeConfirmation(mutations.pending) : null;
   const conflictStatus = currentData?.status;
-  const errorText = mutations.error ?? applyError ?? (currentData ? loadError : null);
-  const noticeText = mutations.notice ?? applyStatus ?? mutations.progress;
+  const errorText = mutations.error ?? (currentData ? loadError : null);
+  const noticeText = mutations.notice ?? mutations.progress;
 
   let body;
   if (!identityKey) {
@@ -720,16 +687,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
             Tools
           </Toggle>
         ) : null}
-        {currentApplyTarget && (
-          <Button
-            disabled={!connected || applyPending}
-            onClick={() => setPendingApply(currentApplyTarget)}
-            size="sm"
-            className="h-7"
-          >
-            {applyPending ? 'Applying…' : 'Apply to local folder'}
-          </Button>
-        )}
         <Button
           variant="ghost"
           size="icon-sm"
@@ -821,23 +778,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
             >
               {pendingDescription?.action ?? 'Confirm'}
             </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={pendingApply !== null} onOpenChange={(open) => !open && setPendingApply(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Apply sandbox changes to the local folder?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingApply
-                ? `Copy every changed and untracked file from the sandbox source “${pendingApply.source.mountName}” to ${pendingApply.localPath}. Local files deleted in the sandbox will be removed; unrelated local files are left untouched.`
-                : ''}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void confirmApply()}>Apply changes</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

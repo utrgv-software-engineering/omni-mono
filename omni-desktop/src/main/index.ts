@@ -3,14 +3,12 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 import { app, dialog, ipcMain, net, protocol, shell } from 'electron';
-import { existsSync, writeFileSync } from 'fs';
-import { migrateFromJson } from 'omni-projects-db';
+import { writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { assert } from 'tsafe';
 import { pathToFileURL } from 'url';
 
 import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig, parseEnvVars } from '@/lib/agent-config';
-import { getArtifactsDir } from '@/lib/artifacts';
 import { winToWslPath } from '@/lib/wsl-path';
 import { createAppControlManager } from '@/main/app-control-manager';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
@@ -23,10 +21,9 @@ import {
   loginWithDeviceFlow,
   logout as codexLogout,
 } from '@/main/codex-auth';
-import { migrateAgentConfigFromFiles } from '@/main/config-files-migration';
+import { migrateAgentConfigFromFiles, removeRetiredProjectsMcpEntry } from '@/main/config-files-migration';
 import { materializeAgentConfig } from '@/main/config-materializer';
 import { createConsoleManager } from '@/main/console-manager';
-import { rowToProject } from '@/main/db-store-bridge';
 import { createDownloadsManager } from '@/main/downloads-manager';
 import {
   linkWithDeviceFlow as githubLink,
@@ -37,18 +34,14 @@ import { durableLocalCodexAgentHostEnv, LocalCodexAccountOwner } from '@/main/lo
 import { durableLocalMcpAgentHostEnv, LocalMcpConfigOwner } from '@/main/local-mcp-config-owner';
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { MainProcessManager } from '@/main/main-process-manager';
-import { getMcpBinPath } from '@/main/mcp-config-manager';
-import { registerMigrationHandlers } from '@/main/migration-handlers';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
-import { migrateLegacyPagesToConfigDir } from '@/main/pages-relocation-migration';
 import { createPermissionsManager } from '@/main/permissions-manager';
 import { createProcessManager } from '@/main/process-manager';
 import { refreshProductRuntimeInfo } from '@/main/product-runtime';
 import { registerProfileCatalogHandlers } from '@/main/profile-catalog';
 import { getBundledProfilesDir } from '@/main/profile-resolver';
-import { backfillProjectConfigs } from '@/main/project-config-backfill';
-import { closeProjectDb, getDb, openProjectDb } from '@/main/project-db';
 import { createProjectManager } from '@/main/project-manager';
+import { importLegacyProjectsDb } from '@/main/projects-import';
 import { RoutineBridge } from '@/main/routine-bridge';
 import {
   defaultSandboxInventoryDeps,
@@ -85,8 +78,7 @@ import {
   registerSkillsHandlers,
   registerUtilHandlers,
 } from '@/shared/ipc-handlers';
-import { buildStdioMcpEntry } from '@/shared/mcp-entry';
-import type { GitCredential, GithubOwner, GithubRepoQuery, GithubStatus, RemoteRepo, TicketId } from '@/shared/types';
+import type { GitCredential, GithubOwner, GithubRepoQuery, GithubStatus, RemoteRepo } from '@/shared/types';
 
 // Process-level crash visibility. Log only — do not exit. Killing the
 // Electron main process from an unhandled rejection would take the whole
@@ -100,22 +92,7 @@ process.on('uncaughtException', (err) => {
   console.error('[fatal] uncaughtException:', err);
 });
 
-// Register artifact: protocol as privileged before app is ready.
-// NOTE: `bypassCSP` is intentionally NOT set. Artifacts are agent-generated
-// content (Omni Code writes them into ticket workspaces) — bypassing CSP
-// would let a malicious or buggy artifact execute scripts with full renderer
-// privileges. The `protocol.handle` callback below sets a strict CSP header
-// on every artifact response that blocks script execution while still
-// allowing images, styles, fonts, and media to render.
 protocol.registerSchemesAsPrivileged([
-  {
-    scheme: 'artifact',
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-    },
-  },
   // MCP Apps sandbox proxy origin. Registered as a separate, opaque
   // origin so the AppFrame iframe (mcp-ui) is cross-origin isolated from
   // the renderer. ``bypassCSP`` is intentionally not set — the handler
@@ -168,82 +145,13 @@ if (process.env.NODE_ENV === 'development' || process.env.OMNI_DEBUG_PORT) {
 const OMNI_CONFIG_DIR = getOmniConfigDir();
 const store = getStore();
 const secretStore = new LocalSecretStore();
-const { repo, asyncRepo } = openProjectDb();
-
-// One-time migration: move project data from electron-store JSON to SQLite.
-// This is idempotent — it skips if the DB already has projects.
-try {
-  const migrated = migrateFromJson(repo, getDb(), {
-    projects: store.get('projects', []) as import('@/shared/types').Project[],
-    tickets: store.get('tickets', []) as import('@/shared/types').Ticket[],
-    milestones: store.get('milestones', []) as import('@/shared/types').Milestone[],
-    pages: store.get('pages', []) as import('@/shared/types').Page[],
-    inboxItems: store.get('inboxItems', []) as import('@/shared/types').InboxItem[],
-    tasks: store.get('tasks', []) as import('@/shared/types').Task[],
-  });
-  if (migrated > 0) {
-    console.log(`[ProjectDb] Migrated ${migrated} projects from electron-store to SQLite`);
-  }
-} catch (err) {
-  console.error('[ProjectDb] Failed to migrate from electron-store:', err);
-}
-
-// Backfill any project rows whose `config` column is NULL — added in
-// schema v3. Idempotent; only touches rows without an existing config.
-try {
-  const backfilled = backfillProjectConfigs(repo);
-  if (backfilled > 0) {
-    console.log(`[ProjectDb] Backfilled config for ${backfilled} projects`);
-  }
-} catch (err) {
-  console.error('[ProjectDb] Failed to backfill project configs:', err);
-}
-
-// Task #18: copy legacy on-disk pages (`<workspaceDir>/Projects/<slug>/pages`,
-// per-project `context.md`, and MCP's `<config>/projects/<slug>/pages`) into
-// the new `<config>/pages/<projectId>/` layout. Idempotent; never deletes
-// originals so a bad migration can be recovered by hand.
-//
-// Records a one-shot notice in the store when legacy paths still exist so
-// the renderer can show a dismissible cleanup banner. The notice is left
-// in place across reboots until the user acknowledges or runs cleanup.
-try {
-  const summary = migrateLegacyPagesToConfigDir(repo);
-  const total = summary.perProjectPagesCopied + summary.rootPagesFromContextMd + summary.mcpPagesCopied;
-  if (total > 0) {
-    console.log(
-      `[ProjectDb] Pages migration copied ${total} files ` +
-        `(per-project: ${summary.perProjectPagesCopied}, ` +
-        `context.md → root: ${summary.rootPagesFromContextMd}, ` +
-        `MCP: ${summary.mcpPagesCopied}, ` +
-        `skipped existing: ${summary.skippedAlreadyMigrated})`
-    );
-  }
-  // Only seed the notice on the first boot where we found something
-  // worth telling the user about. Subsequent boots leave the existing
-  // state alone (so a user mid-decision doesn't get re-prompted).
-  const existing = store.get('pagesMigration');
-  if (!existing && summary.legacyPaths.length > 0) {
-    store.set('pagesMigration', {
-      summary: {
-        perProjectPagesCopied: summary.perProjectPagesCopied,
-        rootPagesFromContextMd: summary.rootPagesFromContextMd,
-        mcpPagesCopied: summary.mcpPagesCopied,
-        skippedAlreadyMigrated: summary.skippedAlreadyMigrated,
-      },
-      legacyPaths: summary.legacyPaths,
-      acknowledged: false,
-    });
-  }
-} catch (err) {
-  console.error('[ProjectDb] Failed to migrate legacy pages:', err);
-}
+importLegacyProjectsDb(store);
 
 /**
  * Materialize the agent's on-disk config from the store (desktop = single user,
  * plaintext). Models/network/env remain Desktop-owned; mcp.json is a derived
  * copy only until the local MCP ownership marker transfers it to Omniagents.
- * Merges the managed `omni-projects` stdio MCP entry and writes a real `.env`.
+ * Writes a real `.env`.
  * Runs at startup and after every `settings:*` write.
  */
 function materializeDesktopConfig(): void {
@@ -252,7 +160,6 @@ function materializeDesktopConfig(): void {
       configDir: OMNI_CONFIG_DIR,
       mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
       network: store.get('networkConfig') ?? emptyNetworkConfig(),
-      managedMcpEntry: buildStdioMcpEntry(getMcpBinPath()),
       writeMcp: store.get('mcpConfigOwnership') !== 'omniagents',
     });
     writeFileSync(join(OMNI_CONFIG_DIR, '.env'), store.get('envVars') ?? '', 'utf-8');
@@ -264,6 +171,7 @@ function materializeDesktopConfig(): void {
 // Import legacy settings once. Existing local models.json remains authoritative;
 // its stored copy is used only to seed a missing file during migration.
 migrateAgentConfigFromFiles(store, OMNI_CONFIG_DIR);
+removeRetiredProjectsMcpEntry(OMNI_CONFIG_DIR);
 materializeDesktopConfig();
 
 const main = new MainProcessManager({ store });
@@ -273,7 +181,7 @@ let isShuttingDown = false;
 // AppControlManager needs its popup callback at construction time so
 // `setWindowOpenHandler` can route `window.open` into `BrowserManager.createTab`.
 let browserManagerRef: ReturnType<typeof createBrowserManager>[0] | null = null;
-const [appControlManager, cleanupAppControl] = createAppControlManager({
+const [, cleanupAppControl] = createAppControlManager({
   ipc: main.ipc,
   onBrowserPopup: (tabsetId, url, disposition) => {
     if (!browserManagerRef) {
@@ -313,7 +221,7 @@ const [processManager, cleanupProcessManager] = createProcessManager({
   fetchFn: (input, init) => net.fetch(input as string, init),
   getStoreData: () => ({
     defaultProfileName: store.get('defaultProfileName') ?? 'host',
-    projects: repo.listProjects().map(rowToProject),
+    projects: store.get('projects') ?? [],
     gitCredentials: store.get('gitCredentials') ?? [],
   }),
   resolveGitToken: (id) => secretStore.getGitToken(id),
@@ -343,7 +251,6 @@ const [processManager, cleanupProcessManager] = createProcessManager({
 });
 localMcpConfigOwner = new LocalMcpConfigOwner({
   store,
-  managedEntry: buildStdioMcpEntry(getMcpBinPath()),
   environment: () => ({ ...process.env, ...parseEnvVars(store.get('envVars') ?? '') }),
 });
 /** Complete the local MCP ownership transfer once the management host is
@@ -357,7 +264,7 @@ function ensureLocalMcpOwnership(status?: Record<string, unknown>): Promise<void
     localMcpOwnershipPromise = (status ? Promise.resolve(status) : processManager.getManagementMcpStatus())
       .then((current) => localMcpConfigOwner.ensureOwnership(current))
       .then(() => {
-        main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
+        main.sendToWindow('store:changed', store.store);
       })
       .finally(() => {
         localMcpOwnershipPromise = null;
@@ -385,7 +292,7 @@ const scheduledTaskManager = new ScheduledTaskManager({
   sendToWindow: main.sendToWindow,
   // Composed snapshot for broadcasts — read at call time; getStoreSnapshot
   // is assigned after ProjectManager boots.
-  getSnapshot: () => (main.getStoreSnapshot ? main.getStoreSnapshot() : store.store),
+  getSnapshot: () => store.store,
 });
 const scheduledTaskChannels = [
   ...registerScheduledTaskHandlers(main.ipc, () => scheduledTaskManager),
@@ -469,19 +376,10 @@ void (async () => {
     console.error('[snapshot-gc] failed:', err);
   }
 })();
-const [projectManager, cleanupProject] = createProjectManager({
+const [, cleanupProject] = createProjectManager({
   ipc: main.ipc,
-  sendToWindow: main.sendToWindow,
   store,
-  processManager,
-  appControlManager,
-  // Async repo backs the cached projection; sync repo drives the change-watcher.
-  repo: asyncRepo,
-  changeSeqRepo: repo,
 });
-// Wire up the store snapshot provider so MainProcessManager serves project data
-// from SQLite.
-main.getStoreSnapshot = () => projectManager.getStoreSnapshot();
 const [browserManager, cleanupBrowser] = createBrowserManager({
   ipc: main.ipc,
   sendToWindow: main.sendToWindow,
@@ -582,7 +480,6 @@ async function cleanup() {
   } else {
     console.debug('Successfully cleaned up all processes');
   }
-  closeProjectDb();
   main.cleanup();
 }
 
@@ -596,10 +493,6 @@ app.on('ready', () => {
   // convention-based fallbacks cover the not-yet-installed case.
   void refreshProductRuntimeInfo();
 
-  // Register artifact: protocol handler for serving ticket artifact files
-  // URL format: artifact://file/{ticketId}/{relativePath}
-  // We use a dummy hostname ("file") because URL spec lowercases hostnames,
-  // which corrupts case-sensitive ticket IDs like nanoid.
   // MCP Apps sandbox proxy. Serves the vendored mcp-ui ``index.html``
   // (assets/mcp-sandbox/) at ``mcp-sandbox://app/index.html``. The
   // AppFrame iframe loads this URL to host a cross-origin sandbox for
@@ -638,51 +531,6 @@ app.on('ready', () => {
           'connect-src https: wss: ws: data: blob:',
           'frame-src about: data: blob: https: http:',
         ].join('; ')
-      );
-      return new Response(upstream.body, {
-        status: upstream.status,
-        statusText: upstream.statusText,
-        headers,
-      });
-    } catch {
-      return new Response('Not found', { status: 404 });
-    }
-  });
-
-  protocol.handle('artifact', async (request) => {
-    try {
-      const url = new URL(request.url);
-      // pathname = /file/{ticketId}/{relativePath...}  or  /{ticketId}/{relativePath...}
-      const segments = decodeURIComponent(url.pathname).split('/').filter(Boolean);
-      // Skip the dummy hostname segment if present
-      const startIdx = segments[0] === 'file' ? 1 : 0;
-      const ticketId = segments[startIdx];
-      const relativePath = segments.slice(startIdx + 1).join('/');
-      if (!ticketId || !relativePath) {
-        return new Response('Bad request', { status: 400 });
-      }
-      const artifactsRoot = getArtifactsDir(OMNI_CONFIG_DIR, ticketId);
-      const fullPath = resolve(artifactsRoot, relativePath);
-      // Path traversal protection
-      if (!fullPath.startsWith(artifactsRoot)) {
-        return new Response('Forbidden', { status: 403 });
-      }
-      // Container substrates write artifacts inside the sandbox, not to the
-      // host dir — materialize (docker cp into this exact layout) before
-      // serving so image/HTML previews work there too. Host profile: the
-      // file already exists and this resolves to it directly.
-      if (!existsSync(fullPath)) {
-        await projectManager.materializeArtifact(ticketId as TicketId, relativePath);
-      }
-      const upstream = await net.fetch(pathToFileURL(fullPath).toString());
-      // Strict CSP: artifacts are agent-generated content, never trusted to
-      // run scripts. `default-src 'none'` blocks script execution by default;
-      // we explicitly re-enable images, styles, fonts, and media so typical
-      // markdown/HTML artifacts still render.
-      const headers = new Headers(upstream.headers);
-      headers.set(
-        'Content-Security-Policy',
-        "default-src 'none'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
       );
       return new Response(upstream.body, {
         status: upstream.status,
@@ -844,7 +692,7 @@ registerSettingsConfigHandlers(
   () => store,
   () => {
     materializeDesktopConfig();
-    main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
+    main.sendToWindow('store:changed', store.store);
   },
   {
     readModels: () => readLocalModels(OMNI_CONFIG_DIR, store.get('modelsConfig') ?? emptyModelsConfig()),
@@ -864,23 +712,9 @@ registerGitCredentialHandlers(
   () => store,
   () => secretStore,
   () => {
-    main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
+    main.sendToWindow('store:changed', store.store);
   }
 );
-registerMigrationHandlers(main.ipc, () => ({
-  get: () => store.get('pagesMigration') ?? null,
-  set: (value) => {
-    if (value === null) {
-      store.delete('pagesMigration');
-    } else {
-      store.set('pagesMigration', value);
-    }
-    // Renderer mirrors electron-store via `store:changed`; pushing the
-    // full snapshot keeps the migration banner reactive without a
-    // dedicated event channel.
-    main.getWindow()?.webContents.send('store:changed', store.store);
-  },
-}));
 
 //#endregion
 
@@ -944,8 +778,7 @@ main.ipc.handle('codex:status', () => localCodexAccount.status());
 
 // Hoisted from the GitHub block below so both regions can fan store changes
 // out to the renderer.
-const broadcastStore = (): void =>
-  main.sendToWindow('store:changed', main.getStoreSnapshot ? main.getStoreSnapshot() : store.store);
+const broadcastStore = (): void => main.sendToWindow('store:changed', store.store);
 
 /** Restart the Electron app on a short delay so the IPC reply (the new
  *  ``undefined``) flushes to the renderer first. The transport choice is

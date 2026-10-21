@@ -34,25 +34,11 @@ export function formatRelativeTime(timestamp: string | Date | undefined): string
 }
 
 /**
- * Orchestrated sessions (Autopilot / goal loops) open with an injected
- * prompt, not a human message — echoing it as the title fills the session
- * list with "You are a supervisor agent…" noise. Detect the known prompt
- * openers and derive a humane label instead (the ticket title when the
- * prompt carries one).
+ * `/goal` loops open with an injected prompt, not a human message — echoing it
+ * as the title fills the session list with prompt noise. Label them instead.
  */
-const ORCHESTRATED_PREFIXES = ['You are a supervisor agent', 'You are working toward'];
-
 function orchestratedTitle(text: string): string | null {
-  if (!ORCHESTRATED_PREFIXES.some((p) => text.startsWith(p))) {
-    return null;
-  }
-  const m = /^Title:\s*(.+)$/m.exec(text);
-  const title = m?.[1]?.trim();
-  if (title) {
-    const t = title;
-    return `Autopilot: ${t.length > 40 ? `${t.slice(0, 40)}...` : t}`;
-  }
-  return 'Autopilot run';
+  return text.startsWith('You are working toward') ? 'Goal run' : null;
 }
 
 /**

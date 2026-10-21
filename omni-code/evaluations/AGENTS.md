@@ -73,28 +73,6 @@ This works in both the basic and extended (environment-backed) eval
 pipelines. `runs_per_prompt:` on a scenario overrides the global default
 in `evaluation.yml::defaults`.
 
-For `db_fixture` scenarios the env serializes itself with a class-level
-lock (because `XDG_CONFIG_HOME` is process-global), so multi-run is
-safe but sequential. Other scenarios stay parallelizable.
-
----
-
-## DB fixtures (omni-projects MCP)
-
-Scenarios with `db_fixture: <name>` get an isolated `XDG_CONFIG_HOME` and
-a fresh sqlite seeded from `evaluations/fixtures/dbs/<name>.db`. The
-launcher's `omni-projects-mcp` cli is auto-resolved (or override with
-`OMNI_PROJECTS_MCP_CLI=/path/to/cli.js`).
-
-To rebuild a seed db:
-
-```bash
-python evaluations/fixtures/dbs/build_<name>.py
-```
-
-The seeders use the real cli over stdio so the fixture stays in sync
-with whatever schema the cli expects.
-
 ---
 
 ## Keeping a tempdir for post-mortem inspection
@@ -151,15 +129,9 @@ already exists. The gap is usually *discoverability*, not data.
 
 Project-specific measures registered in `evaluations/measures.py`.
 
-Outcome measures (success criteria for the autopilot scenario):
-- `db_row_exists` — generic SQL row check against the env-staged db
+Outcome measures:
 - `command_in_workspace_succeeds` — runs a shell command in the
   workspace, passes on exit 0
-- `bug_caught_by_tests` — reverts a target file to the pristine fixture
-  version, re-runs tests, expects failure (proves the agent's regression
-  test actually catches the bug)
 
 Process / workflow measures (cross-tab variables, not gates):
-- `mcp_used_to_discover_ticket`, `ticket_moved_through_pipeline`
-- `no_remote_operations`, `no_test_disabling`, `scope_respected`
 - `<skill_name>_skill_activated` — one per tracked skill

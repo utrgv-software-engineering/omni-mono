@@ -4,12 +4,11 @@
  *
  * The transfer is deliberately in-place: both implementations read the same
  * host file. Desktop stops writing it only after the runtime attests durable
- * host stores, protects the launcher-managed server name, and reports a
- * redacted snapshot equivalent to the file Desktop just materialized.
+ * host stores and reports a redacted snapshot equivalent to the file Desktop
+ * just materialized.
  */
 import type { RpcMethodMap } from '@omniagents/protocol/gui-v2';
 
-import { type ManagedMcpEntry, MCP_ENTRY_NAME, mergeManagedMcpEntry } from '@/shared/mcp-entry';
 import type { McpConfig, McpServerEntry } from '@/shared/types';
 
 const OWNERSHIP = 'omniagents' as const;
@@ -35,26 +34,16 @@ const durableHostStore = (value: unknown): boolean => {
 export const hasDurableHostMcpMutation = (value: unknown): boolean => {
   const root = record(value);
   const persistence = record(root?.['mutation_persistence']);
-  const managed = persistence?.['managed_servers'];
-  return (
-    durableHostStore(persistence?.['user_config']) &&
-    durableHostStore(persistence?.['oauth_tokens']) &&
-    Array.isArray(managed) &&
-    managed.includes(MCP_ENTRY_NAME)
-  );
+  return durableHostStore(persistence?.['user_config']) && durableHostStore(persistence?.['oauth_tokens']);
 };
 
 export const durableLocalMcpAgentHostEnv = (env: Record<string, string>): Record<string, string> => ({
   ...env,
   // These are trusted topology assertions, never user preferences.
   OMNIAGENTS_MCP_STORE_DURABILITY: 'host',
-  OMNIAGENTS_MANAGED_MCP_SERVERS: MCP_ENTRY_NAME,
 });
 
 export const isMcpManagementMethod = (method: string): boolean => method.startsWith('mcp_');
-
-export const isProtectedManagedMcpRequest = (request: { method: string; params: Record<string, unknown> }): boolean =>
-  isMcpManagementMethod(request.method) && request.params['server_name'] === MCP_ENTRY_NAME;
 
 export type LocalMcpOwnershipStore = {
   get(key: 'mcpConfigOwnership'): 'omniagents' | undefined;
@@ -64,7 +53,6 @@ export type LocalMcpOwnershipStore = {
 
 type LocalMcpConfigOwnerOptions = {
   store: LocalMcpOwnershipStore;
-  managedEntry: ManagedMcpEntry;
   /** Environment visible to omni serve, used to mirror its ${VAR} expansion
    * for non-secret fields during the one-time parity proof. */
   environment?: () => Record<string, string | undefined>;
@@ -104,7 +92,7 @@ const redactSecretMap = (value: unknown): Record<string, { is_set: true }> | und
 
 const expectedSnapshot = (
   serverName: string,
-  rawEntry: McpServerEntry | ManagedMcpEntry,
+  rawEntry: McpServerEntry,
   source: ExpectedSnapshot['source'],
   env: Record<string, string | undefined>
 ): ExpectedSnapshot => {
@@ -182,13 +170,9 @@ export class LocalMcpConfigOwner {
     }
 
     const stored = this.options.store.get('mcpConfig') ?? { mcpServers: {} };
-    if (Object.hasOwn(stored.mcpServers, MCP_ENTRY_NAME)) {
-      throw new Error(`Desktop user MCP configuration claims the reserved ${MCP_ENTRY_NAME} server name`);
-    }
-    const merged = mergeManagedMcpEntry(stored.mcpServers, this.options.managedEntry);
     const env = this.options.environment?.() ?? process.env;
-    const expected = Object.entries(merged)
-      .map(([name, entry]) => expectedSnapshot(name, entry, name === MCP_ENTRY_NAME ? 'host_managed' : 'user', env))
+    const expected = Object.entries(stored.mcpServers)
+      .map(([name, entry]) => expectedSnapshot(name, entry, 'user', env))
       .sort((a, b) => a.server_name.localeCompare(b.server_name));
 
     const root = record(status);

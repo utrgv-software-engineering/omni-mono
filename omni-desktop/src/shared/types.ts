@@ -203,27 +203,7 @@ export type StoreData = {
    */
   remoteBackend: RemoteBackend | null;
   projects: Project[];
-  milestones: Milestone[];
-  pages: Page[];
-  inboxItems: InboxItem[];
-  tasks: Task[];
-  tickets: Ticket[];
-  /**
-   * Autopilot dispatch concurrency: the max tickets auto-dispatch will run
-   * at once across all projects. Manual starts are never gated by this.
-   * Default: 3.
-   */
-  wipLimit: number;
   scheduledTasks: ScheduledTask[];
-  /**
-   * Background-actor outcomes for Home's "While you were away" feed,
-   * newest-first. Appended by main-process managers via
-   * `appendActivityEvent`; capped and time-pruned on every write.
-   */
-  activityLog: ActivityEvent[];
-  /** Growth hints (Home's one-slot suggestions) the user dismissed, by id. */
-  dismissedHomeHints: string[];
-  schemaVersion: number;
   codeTabs: CodeTab[];
   /** Authority-owned removal outbox. Never writable through generic renderer settings. */
   chatCleanupJobs?: CodeTab[];
@@ -235,7 +215,6 @@ export type StoreData = {
   chatConversations: ChatConversation[];
   activeCodeTabId: CodeTabId | null;
   codeLayoutMode: CodeLayoutMode;
-  activeTicketId: TicketId | null;
 
   /**
    * How each skill was installed. Missing means discovered locally (user
@@ -261,15 +240,6 @@ export type StoreData = {
    * because it carries no secret. See `git-credentials.ts`.
    */
   gitCredentials: GitCredential[];
-
-  /**
-   * Pull requests detected for ticket-less scopes (chat conversations,
-   * un-ticketed code tabs), scoped by `sessionId`/`codeTabId`. This is the
-   * memory that lets a merged PR render the ✓ badge only when this launcher
-   * watched it while open — restart-proof, mirroring `Ticket.pullRequests`
-   * for tickets. Pruned by `lastSeenAt` to a bounded length on write.
-   */
-  pullRequestLinks: PullRequestLink[];
 
   /**
    * Linked GitHub account (display metadata only — the OAuth token lives in the
@@ -335,36 +305,6 @@ export type StoreData = {
   browserHistory: BrowserHistoryEntry[];
   /** User-curated bookmarks. */
   browserBookmarks: BrowserBookmark[];
-
-  /**
-   * One-shot notice surfaced after the v18 pages-relocation migration
-   * (Task #18). Present only when (a) the migration found legacy files
-   * that still exist on disk and (b) the user hasn't dismissed the
-   * notice yet. Cleared when the user clicks dismiss or runs cleanup.
-   */
-  pagesMigration?: PagesMigrationState;
-};
-
-/**
- * Persisted state for the post-migration notice. The summary is captured
- * once on the boot the migration ran and replayed to the renderer until
- * the user acknowledges it.
- */
-export type PagesMigrationState = {
-  /** Counts of files copied per source bucket. */
-  summary: {
-    perProjectPagesCopied: number;
-    rootPagesFromContextMd: number;
-    mcpPagesCopied: number;
-    skippedAlreadyMigrated: number;
-  };
-  /**
-   * Legacy directories/files still on disk that the user can safely delete
-   * to reclaim space. Absolute paths, sorted.
-   */
-  legacyPaths: string[];
-  /** True once the user dismissed the notice or ran cleanup. */
-  acknowledged: boolean;
 };
 
 export type ScheduledTaskSchedule =
@@ -417,29 +357,6 @@ export type ScheduledTask = {
   allowedMcpTools: ScheduledTaskAllowedMcpTool[];
   history: ScheduledTaskRun[];
 };
-
-/**
- * One entry in Home's "While you were away" feed: something a background
- * actor (routine run, ticket agent) finished without the user watching.
- * Outcomes only — transient attention states (approvals, gates) live in the
- * Needs-you rollup, never here, so the feed can't go stale.
- */
-export type ActivityEvent = {
-  id: string;
-  /** When the event happened (ms). */
-  at: number;
-  kind: 'routine_run_finished' | 'agent_run_finished' | 'run_failed';
-  /** What ran — the routine's name or the ticket's title. */
-  title: string;
-  /** One-line result summary, when the actor reported one. */
-  outcome?: string;
-  projectId?: ProjectId;
-  /** Exactly one deep-link target. */
-  link: { type: 'ticket'; ticketId: TicketId } | { type: 'routine'; taskId: string };
-};
-
-/** The pull-request watcher's event vocabulary (see src/lib/pull-request-watch.ts). */
-export type PullRequestEventKind = 'merged' | 'closed' | 'approved' | 'changes_requested' | 'ci_failed' | 'ci_green';
 
 export type ScheduledTaskInput = {
   name: string;
@@ -681,10 +598,6 @@ export const schema: Schema<StoreData> = {
       },
     ],
   },
-  wipLimit: {
-    type: 'number',
-    default: 3,
-  },
   scheduledTasks: {
     type: 'array',
     default: [],
@@ -734,32 +647,6 @@ export const schema: Schema<StoreData> = {
         'history',
       ],
     },
-  },
-  activityLog: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        at: { type: 'number' },
-        kind: { type: 'string', enum: ['routine_run_finished', 'agent_run_finished', 'run_failed'] },
-        title: { type: 'string' },
-        outcome: { type: 'string' },
-        projectId: { type: 'string' },
-        link: { type: 'object' },
-      },
-      required: ['id', 'at', 'kind', 'title', 'link'],
-    },
-  },
-  dismissedHomeHints: {
-    type: 'array',
-    default: [],
-    items: { type: 'string' },
-  },
-  schemaVersion: {
-    type: 'number',
-    default: 0,
   },
   codeTabs: {
     type: 'array',
@@ -819,17 +706,8 @@ export const schema: Schema<StoreData> = {
   },
   codeLayoutMode: {
     type: 'string',
-    // 'deck' and 'spaces' are pre-v20 names for 'tile'; kept so existing
-    // stores load before the v19→v20 migration runs. Migration converts them.
-    enum: ['tile', 'spaces', 'deck', 'focus'],
-    // Still 'tile' so a migrated store's absent key keeps meaning the old
-    // default; the v27 migration stamps 'focus' explicitly for installs
-    // without deck columns (and fresh stores hit that path on first boot).
-    default: 'tile',
-  },
-  activeTicketId: {
-    type: ['string', 'null'],
-    default: null,
+    enum: ['tile', 'focus'],
+    default: 'focus',
   },
   projects: {
     type: 'array',
@@ -843,146 +721,10 @@ export const schema: Schema<StoreData> = {
         isPersonal: { type: 'boolean' },
         sources: { type: 'array', default: [] },
         createdAt: { type: 'number' },
-        pipeline: { type: 'object' },
         sandboxProfile: { type: ['string', 'null'] },
-        dueDate: { type: 'number' },
         pinnedAt: { type: ['number', 'null'] },
-        seedKey: { type: 'string' },
       },
       required: ['id', 'label', 'slug', 'createdAt'],
-    },
-  },
-  milestones: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        projectId: { type: 'string' },
-        title: { type: 'string' },
-        description: { type: 'string' },
-        branch: { type: 'string' },
-        brief: { type: 'string' },
-        status: { type: 'string', enum: ['active', 'completed', 'archived'] },
-        dueDate: { type: 'number' },
-        completedAt: { type: 'number' },
-        pinnedAt: { type: ['number', 'null'] },
-        createdAt: { type: 'number' },
-        updatedAt: { type: 'number' },
-        seedKey: { type: 'string' },
-      },
-      required: ['id', 'projectId', 'title', 'description', 'status', 'createdAt', 'updatedAt'],
-    },
-  },
-  pages: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        projectId: { type: 'string' },
-        parentId: { type: ['string', 'null'] },
-        title: { type: 'string' },
-        icon: { type: 'string' },
-        sortOrder: { type: 'number' },
-        isRoot: { type: 'boolean' },
-        createdAt: { type: 'number' },
-        updatedAt: { type: 'number' },
-        seedKey: { type: 'string' },
-      },
-      required: ['id', 'projectId', 'title', 'sortOrder', 'createdAt', 'updatedAt'],
-    },
-  },
-  inboxItems: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        title: { type: 'string' },
-        note: { type: 'string' },
-        attachments: { type: 'array', items: { type: 'string' } },
-        projectId: { type: ['string', 'null'] },
-        status: { type: 'string', enum: ['new', 'later'] },
-        laterAt: { type: 'number' },
-        promotedTo: {
-          type: 'object',
-          properties: {
-            kind: { type: 'string', enum: ['ticket', 'project'] },
-            id: { type: 'string' },
-            at: { type: 'number' },
-          },
-          required: ['kind', 'id', 'at'],
-        },
-        createdAt: { type: 'number' },
-        updatedAt: { type: 'number' },
-        seedKey: { type: 'string' },
-      },
-      required: ['id', 'title', 'status', 'createdAt', 'updatedAt'],
-    },
-  },
-  tasks: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        projectId: { type: 'string' },
-        taskDescription: { type: 'string' },
-        status: { type: 'object' },
-        createdAt: { type: 'number' },
-        branch: { type: 'string' },
-        worktreePath: { type: 'string' },
-        worktreeName: { type: 'string' },
-        sessionId: { type: 'string' },
-        ticketId: { type: 'string' },
-        phaseId: { type: 'string' },
-        columnId: { type: 'string' },
-        iteration: { type: 'number' },
-      },
-      required: ['id', 'projectId', 'taskDescription', 'status', 'createdAt'],
-    },
-  },
-  tickets: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        id: { type: 'string' },
-        projectId: { type: 'string' },
-        milestoneId: { type: 'string' },
-        title: { type: 'string' },
-        description: { type: 'string' },
-        priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
-        blockedBy: { type: 'array', items: { type: 'string' } },
-        createdAt: { type: 'number' },
-        updatedAt: { type: 'number' },
-        phaseChangedAt: { type: 'number' },
-        columnChangedAt: { type: 'number' },
-        completedAt: { type: 'number' },
-        archivedAt: { type: 'number' },
-        cleanupPending: { type: 'boolean' },
-        // Per-source map keyed by ProjectSource.id (last sync-to-host timestamps).
-        prMergedAt: { type: 'object' },
-        assignee: { type: 'string' },
-        // Kanban fields
-        columnId: { type: 'string' },
-        currentPhaseId: { type: ['string', 'null'] },
-        phases: { type: 'array', default: [] },
-        // Legacy fields (kept for migration)
-        taskId: { type: 'string' },
-        loopEnabled: { type: 'boolean' },
-        loopMaxIterations: { type: 'number' },
-        loopIteration: { type: 'number' },
-        loopStatus: { type: 'string', enum: ['running', 'completed', 'stopped', 'error'] },
-        seedKey: { type: 'string' },
-      },
-      required: ['id', 'projectId', 'title', 'description', 'priority', 'blockedBy', 'createdAt', 'updatedAt'],
     },
   },
   skillSources: {
@@ -1009,31 +751,6 @@ export const schema: Schema<StoreData> = {
         createdAt: { type: 'number' },
       },
       required: ['id', 'host', 'username', 'last4', 'createdAt'],
-    },
-  },
-  pullRequestLinks: {
-    type: 'array',
-    default: [],
-    items: {
-      type: 'object',
-      properties: {
-        url: { type: 'string' },
-        number: { type: 'number' },
-        state: { type: 'string' },
-        projectId: { type: 'string' },
-        sourceId: { type: 'string' },
-        sourceMountName: { type: 'string' },
-        provider: { type: 'string' },
-        branch: { type: 'string' },
-        title: { type: 'string' },
-        ticketId: { type: 'string' },
-        codeTabId: { type: 'string' },
-        sessionId: { type: 'string' },
-        workspaceDir: { type: 'string' },
-        createdAt: { type: 'number' },
-        lastSeenAt: { type: 'number' },
-      },
-      required: ['url', 'number', 'state', 'createdAt', 'lastSeenAt'],
     },
   },
   modelsConfig: {
@@ -1407,11 +1124,9 @@ export type CodeTab = {
   runtimeOwner?: string;
   id: CodeTabId;
   projectId: ProjectId | null;
-  ticketId?: TicketId;
   sessionId?: string;
   /** Durable Workspace snapshot identity; never used for chat/RPC routing. */
   snapshotRef?: string;
-  ticketTitle?: string;
   routineId?: string;
   routineName?: string;
   routineSchedule?: string;
@@ -1469,16 +1184,13 @@ export type ChatConversation = {
   profileName?: string;
   /** Project grouping retained independently of an active column. */
   projectId?: ProjectId;
-  /** Ticket context retained when the session originated from a ticket. */
-  ticketId?: TicketId;
-  ticketTitle?: string;
   /** Hidden from normal history until restored. */
   archivedAt?: number;
 };
 
 // #endregion
 
-// #region Project & Ticket types
+// #region Project types
 
 // --- ID types ---
 
@@ -1491,75 +1203,11 @@ export type ProjectId = string;
  */
 export type ProjectIndexEntry = { id: ProjectId; dir: string };
 
-export type MilestoneId = string;
-export type PageId = string;
-export type InboxItemId = string;
-export type TaskId = string;
-export type TicketId = string;
-export type TicketCommentId = string;
-export type ColumnId = string;
-
-// --- Enums ---
-
-export type TicketPriority = 'low' | 'medium' | 'high' | 'critical';
-export type MilestoneStatus = 'active' | 'completed' | 'archived';
-
-/** Re-export TicketPhase so renderer can import from shared/types. */
-export type { TicketPhase } from '@/shared/ticket-phase';
-
-/** Accumulated token usage for a supervisor session. */
+/** Accumulated token usage for a session. */
 export type TokenUsage = {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
-};
-
-// --- Pipeline & columns ---
-
-/**
- * Human-facing workflow status. The column graph stays the agent's custom
- * state machine; the category is the universal state global views group by.
- * Valid pipelines read `todo* doing* done` in column order.
- */
-export type ColumnCategory = 'todo' | 'doing' | 'done';
-
-/**
- * A single column in the kanban pipeline. Visual milestones for the supervisor.
- */
-export type Column = {
-  id: ColumnId;
-  label: string;
-  /** Human-readable description of what this column represents. */
-  description?: string;
-  /** Max concurrent supervisors allowed in this column. Unlimited if undefined. */
-  maxConcurrent?: number;
-  /** When true, the supervisor is stopped on entry and only a human can move the ticket out. */
-  gate?: boolean;
-  /** DB-backed workflow metadata used by humans, agents, and project tools. */
-  workflow?: ColumnWorkflowContract;
-  /**
-   * Status category. Optional only because legacy in-store pipelines predate
-   * it — readers resolve through `categoryOf()` in `@/lib/pipeline-category`,
-   * which falls back to the positional rule (first=todo, last=done).
-   */
-  category?: ColumnCategory;
-};
-
-export type ColumnWorkflowContract = {
-  purpose?: string;
-  entryCriteria?: string[];
-  definitionOfDone?: string[];
-  agentInstructions?: string;
-  recommendedSkills?: string[];
-  allowedTransitions?: ColumnId[];
-  autoDispatch?: boolean;
-};
-
-/**
- * The pipeline definition for a project. Ordered list of columns.
- */
-export type Pipeline = {
-  columns: Column[];
 };
 
 // --- Core entities ---
@@ -1701,296 +1349,14 @@ export type Project = {
    */
   sources: ProjectSource[];
   createdAt: number;
-  /** Pipeline configuration. If undefined, DEFAULT_PIPELINE is used. */
-  pipeline?: Pipeline;
-  /** When true, automatically dispatch tickets from backlog in priority order. */
-  autoDispatch?: boolean;
   /**
    * Per-project sandbox profile name. Overrides ``defaultProfileName`` for
    * this project. ``null``/missing inherits the user-default.
    */
   sandboxProfile?: string | null;
-  /** Optional target date (epoch ms). Drives deadline-pressure risk signals. */
-  dueDate?: number;
   /** Timestamp of the most recent pin action. Set = pinned to Home; undefined = not pinned. */
   /** Pinned to This Week. `null` = explicit unpin (undefined doesn't survive the WS JSON transport). */
   pinnedAt?: number | null;
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-export type Milestone = {
-  id: MilestoneId;
-  projectId: ProjectId;
-  title: string;
-  description: string;
-  /** Optional feature branch. Tickets inherit this unless they override with their own branch. */
-  branch?: string;
-  /** Milestone brief — describes the deliverable, goals, and scope. */
-  brief?: string;
-  status: MilestoneStatus;
-  /** Optional target date (epoch ms). Drives deadline-pressure risk signals. */
-  dueDate?: number;
-  /** Stamped when status transitions to 'completed'. */
-  completedAt?: number;
-  /** Timestamp of the most recent pin action. Set = pinned to Home; undefined = not pinned. */
-  /** Pinned to This Week. `null` = explicit unpin (undefined doesn't survive the WS JSON transport). */
-  pinnedAt?: number | null;
-  createdAt: number;
-  updatedAt: number;
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-/**
- * A knowledge-base page. Notion-style: hierarchical doc with a title, icon,
- * and markdown body (stored on disk, not in the store). Pages have no
- * lifecycle status — they are docs, not work items. Work happens on tickets.
- */
-export type PageProperties = {
-  status?: string;
-  size?: string;
-  projectId?: ProjectId;
-  milestoneId?: MilestoneId;
-  outcome?: string;
-  notDoing?: string;
-  laterAt?: number;
-};
-
-export type Page = {
-  id: PageId;
-  projectId: ProjectId;
-  /** Null for root-level pages in the project. */
-  parentId: PageId | null;
-  title: string;
-  /** Emoji for sidebar display. */
-  icon?: string;
-  /** Sort position among siblings. Lower = first. */
-  sortOrder: number;
-  /** True for the auto-created root page. Cannot be deleted. */
-  isRoot?: boolean;
-  /** Structured metadata fields (status, size, outcome, etc.) for this page. */
-  properties?: PageProperties;
-  createdAt: number;
-  updatedAt: number;
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-// --- Inbox ---
-
-/**
- * Inbox lifecycle:
- * - new:   captured, waiting to be promoted or deferred
- * - later: deferred; `laterAt` drives stale-item reminders
- *
- * Terminal transition is promotion: the item is stamped with `promotedTo`
- * pointing at the ticket or project it became, and is filtered out of the
- * active inbox view. Promoted items stay as tombstones for undo + audit
- * (GC'd after 30d by the inbox manager).
- *
- * (A legacy 'shaped' status existed before v25 — migrated to 'new' on boot,
- * with its structured shaping block folded into the item note.)
- */
-export type InboxItemStatus = 'new' | 'later';
-
-export type InboxPromotion = {
-  kind: 'ticket' | 'project';
-  /** ID of the ticket or project this inbox item became. */
-  id: string;
-  /** Timestamp of promotion, used for tombstone GC. */
-  at: number;
-};
-
-export type InboxItem = {
-  id: InboxItemId;
-  title: string;
-  /** Free-form capture body. */
-  note?: string;
-  attachments?: string[];
-  /** Optional project context at capture time. Null = loose / global. */
-  projectId?: ProjectId | null;
-  status: InboxItemStatus;
-  /** Stamped when moved to `later`. Drives the stale-items reminder. */
-  laterAt?: number;
-  /** Stamped on promotion. Presence hides the item from the active view. */
-  promotedTo?: InboxPromotion;
-  createdAt: number;
-  updatedAt: number;
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-export type TicketComment = {
-  id: TicketCommentId;
-  author: 'agent' | 'human';
-  content: string;
-  createdAt: number;
-};
-
-export type TicketRun = {
-  id: string;
-  startedAt: number;
-  endedAt: number;
-  endReason: string;
-  tokenUsage?: TokenUsage;
-};
-
-/**
- * One detected pull request, remembered so the UI can tell "we watched this PR
- * while it was open" from "historical PR detection re-reports forever". Two
- * homes: ticket-backed links live on `Ticket.pullRequests` (DB `pr_review`
- * column); links for ticket-less scopes (chat conversations, un-ticketed code
- * tabs) live in the global `StoreData.pullRequestLinks` list, scoped by
- * `sessionId`/`codeTabId`. Project/source fields are absent for chat-scratch
- * links — a chat conversation has no project or `ProjectSource`.
- */
-export type PullRequestLink = {
-  url: string;
-  number: number;
-  state: string;
-  projectId?: ProjectId;
-  sourceId?: string;
-  sourceMountName?: string;
-  provider?: 'github' | 'azure';
-  branch?: string;
-  title?: string;
-  ticketId?: TicketId;
-  codeTabId?: CodeTabId;
-  sessionId?: string;
-  workspaceDir?: string;
-  createdAt: number;
-  lastSeenAt: number;
-  /** Newest review timestamp already delivered (or covered at first sight) by
-   *  the pull-request watcher — its durable review cursor, so reviews are
-   *  never re-announced across restarts. */
-  reviewWatermarkAt?: number;
-  /** The watcher's CI announce cursor: the last settled check verdict and the
-   *  head commit it was computed from (always persisted together — `failing`
-   *  is meaningless without knowing for which commit). */
-  ciState?: 'failing' | 'green';
-  ciSha?: string;
-};
-
-/**
- * One step of an omniagents plan snapshot — the `tasks_snapshot` summary
- * shape (`to_summaries()` in omniagents' plans.py). Persisted per ticket as
- * `last_plan_snapshot` so a relaunched session can be prompted to recreate
- * its plan (docs/agentic-workflow-enforcement-plan.md §F). The renderer's
- * `TaskSummary` (omniagents-ui/canonical-plan-tasks.ts) is the same wire
- * shape minus the review fields.
- */
-export type PlanSnapshotEntry = {
-  id: string;
-  subject: string;
-  activeForm?: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'blocked';
-  /** Owning principal ('agent:<id>' for agents; anything else is a human gate). */
-  owner?: string;
-  blockedBy?: string[];
-  /** Checkable definition-of-done. Empty/absent = no semantic review. */
-  exitCriteria?: string;
-  /** Completion review: true verified, false unverified, null/absent unreviewed. */
-  verified?: boolean | null;
-  /** True when the criteria were edited while the step was in progress (ratchet stamp). */
-  criteriaEdited?: boolean;
-};
-
-export type Ticket = {
-  id: TicketId;
-  projectId: ProjectId;
-  milestoneId?: MilestoneId;
-  title: string;
-  description: string;
-  priority: TicketPriority;
-  blockedBy: TicketId[];
-  createdAt: number;
-  updatedAt: number;
-
-  // Kanban state
-  /** Current column in the kanban pipeline. */
-  columnId: ColumnId;
-
-  // Git settings
-  /** Git branch to work on. If set with useWorktree, a worktree is created from this branch. */
-  branch?: string;
-  /** Whether to create an isolated git worktree for this ticket's sandbox. */
-  useWorktree?: boolean;
-
-  // Worktree state (persisted so worktrees survive server restarts)
-  /** Path to the git worktree on disk. */
-  worktreePath?: string;
-  /** Name of the git worktree (used for branch naming). */
-  worktreeName?: string;
-  /**
-   * Set when the ticket was moved to the terminal column but the worktree
-   * had uncommitted changes, so cleanup was deferred. The worktree + sandbox
-   * stay alive until the user explicitly finalizes via `project:finalize-ticket-cleanup`.
-   */
-  cleanupPending?: boolean;
-
-  // --- Sync to host (per source) ---
-  /**
-   * Stamped per source when that source's container changes were last applied
-   * to its host working copy ("synced"). Keyed by ``ProjectSource.id``.
-   * (Legacy DB column name: ``pr_merged_at``.)
-   */
-  prMergedAt?: Record<string, number>;
-
-  // Supervisor state
-  /** True when autopilot is driving this ticket. Flipped by start/stopSupervisor. */
-  autopilot?: boolean;
-  /** Current supervisor lifecycle phase. */
-  phase?: import('@/shared/ticket-phase').TicketPhase;
-  /** Stamped whenever `phase` transitions. Drives stalled-ticket risk. */
-  phaseChangedAt?: number;
-  /** Stamped whenever `columnId` changes. Drives aging-in-column risk. */
-  columnChangedAt?: number;
-  /** Stamped when the task enters a Done-category column; cleared when reopened. */
-  completedAt?: number;
-  /** Task ID for the supervisor's sandbox. */
-  supervisorTaskId?: TaskId;
-  /** Accumulated token usage across all supervisor runs. */
-  tokenUsage?: TokenUsage;
-  /** Timestamp when the ticket was archived from active views. */
-  archivedAt?: number;
-  /** Agent/human comments — serves as persistent memory across runs. */
-  comments?: TicketComment[];
-  /**
-   * Assigned principal id (a resident `agent:<id>`). Undefined = unassigned.
-   */
-  assignee?: string;
-  /** History of supervisor runs on this ticket. */
-  runs?: TicketRun[];
-  /**
-   * Latest plan snapshot from the ticket's agent session (`tasks_snapshot`).
-   * Seeds the supervisor prompt's "Prior plan" section on relaunch and the
-   * kanban card's step fraction; cleared when the ticket settles into a
-   * Done-category column. Absent = no prior plan.
-   */
-  lastPlanSnapshot?: PlanSnapshotEntry[];
-  pullRequests?: PullRequestLink[];
-  /** Populated by the seed script; tracked in seed-manifest for reset. */
-  seedKey?: string;
-};
-
-export type Task = {
-  id: TaskId;
-  projectId: ProjectId;
-  taskDescription: string;
-  status: WithTimestamp<AgentProcessStatus>;
-  createdAt: number;
-  branch?: string;
-  worktreePath?: string;
-  worktreeName?: string;
-  sessionId?: string;
-  ticketId?: TicketId;
-  /** Snapshot of sandbox URLs from the last 'running' state, for replaying past sessions. */
-  lastUrls?: {
-    uiUrl: string;
-    codeServerUrl?: string;
-    noVncUrl?: string;
-  };
 };
 
 export type ArtifactFileEntry = {
@@ -1999,13 +1365,6 @@ export type ArtifactFileEntry = {
   isDirectory: boolean;
   size: number;
   modifiedAt: number;
-};
-
-export type ArtifactFileContent = {
-  relativePath: string;
-  mimeType: string;
-  textContent: string | null;
-  size: number;
 };
 
 export type SessionMessage = {
@@ -2017,32 +1376,6 @@ export type SessionMessage = {
 };
 
 export type GitRepoInfo = { isGitRepo: true; branches: string[]; currentBranch: string } | { isGitRepo: false };
-
-export type PrMergeResult = { ok: true; mergeCommitSha: string } | { ok: false; error: string };
-
-/**
- * A GitHub pull request detected for one source's branch by running
- * ``gh pr view`` inside the running container (where the agent pushed the
- * branch and ``gh`` is authenticated). Absent (null) when the source has no
- * open PR — e.g. a plain local directory, a git repo with no remote, or a
- * branch the agent hasn't opened a PR for yet.
- */
-export interface ContainerPullRequest {
-  number: number;
-  url: string;
-  /** Normalized across providers: Azure `active` → OPEN, `completed` → MERGED. */
-  state: 'OPEN' | 'MERGED';
-  title?: string;
-  sourceId?: string;
-  sourceMountName?: string;
-  projectId?: ProjectId;
-  ticketId?: TicketId;
-  codeTabId?: CodeTabId;
-  sessionId?: string;
-  workspaceDir?: string;
-  provider?: 'github' | 'azure';
-  branch?: string;
-}
 
 // #endregion
 
@@ -2624,7 +1957,7 @@ type SkillsIpcEvents = Namespaced<
 >;
 
 /**
- * Project & Ticket API. Main process handles these events, renderer process invokes them.
+ * Project API. Main process handles these events, renderer process invokes them.
  */
 type ProjectIpcEvents = Namespaced<
   'project',
@@ -2635,62 +1968,15 @@ type ProjectIpcEvents = Namespaced<
     /** Resolved project directory — `Projects/<slug>/` or the default workspace root for Personal. Null if the project is unknown. */
     'get-dir': (projectId: ProjectId) => string | null;
     'check-git-repo': (workspaceDir: string) => GitRepoInfo;
-    'add-ticket': (ticket: Omit<Ticket, 'id' | 'createdAt' | 'updatedAt' | 'columnId'>) => Ticket;
-    'update-ticket': (id: TicketId, patch: Partial<Omit<Ticket, 'id' | 'projectId' | 'createdAt'>>) => void;
-    'get-tickets': (projectId: ProjectId) => Ticket[];
-    'get-ticket-workspace': (ticketId: TicketId) => string;
-    'get-tasks': () => Task[];
-    'get-next-ticket': (projectId: ProjectId) => Ticket | null;
-    'move-ticket-to-column': (ticketId: TicketId, columnId: ColumnId) => void;
-    'get-pipeline': (projectId: ProjectId) => Pipeline;
-    'list-artifacts': (ticketId: TicketId, dirPath?: string) => ArtifactFileEntry[];
-    'read-artifact': (ticketId: TicketId, relativePath: string) => ArtifactFileContent;
-    'open-artifact-external': (ticketId: TicketId, relativePath: string) => void;
-    'apply-code-tab-source-changes': (tabId: CodeTabId, sourceId: string) => PrMergeResult;
-    /**
-     * Detect open PRs across a code tab's sources (deck banner). For
-     * projectless (chat) columns the tab's live process workspace dir is the
-     * single implicit source, so this returns 0 or 1 entries.
-     */
-    'detect-code-tab-pull-requests': (tabId: CodeTabId) => ContainerPullRequest[];
-    // Supervisor operations
-    'ensure-supervisor-infra': (ticketId: TicketId) => void;
-    'start-supervisor': (ticketId: TicketId, profileName?: string) => void;
-    'stop-supervisor': (ticketId: TicketId) => void;
-    'send-supervisor-message': (ticketId: TicketId, message: string) => void;
-    'reset-supervisor-session': (ticketId: TicketId) => void;
-    /** Assign (string principal id) or unassign (null) a ticket. */
-    'assign-ticket': (ticketId: TicketId, assignee: string | null) => void;
-    /**
-     * Retry the deferred cleanup for a completed ticket whose worktree was
-     * dirty. Returns true when cleanup succeeded, false when the worktree
-     * still has uncommitted changes (cleanupPending stays set).
-     */
-    'finalize-ticket-cleanup': (ticketId: TicketId) => boolean;
-    'set-auto-dispatch': (projectId: ProjectId, enabled: boolean) => void;
-    // Context file operations (replaces project.brief)
-    'read-context': (projectId: ProjectId) => string;
-    'write-context': (projectId: ProjectId, content: string) => void;
     // Project file listing
     'list-project-files': (projectId: ProjectId) => ArtifactFileEntry[];
-    'get-context-preview': (projectId: ProjectId) => string;
     'open-project-file': (projectId: ProjectId, relativePath: string) => void;
   }
 >;
 
 /**
- * Supervisor bridge. The Code column owns the session, the WebSocket, and the
- * run lifecycle. Main only orchestrates — decides *when* to submit a prompt
- * and reacts to forwarded events. No main-process session id; no prepare step;
- * no client-request round trip (tool calls are handled entirely in the
- * renderer's `buildClientToolHandler`).
- */
-/**
- * Per-dispatch run intent. The orchestrator composes this from its own state
- * (autopilot mode, supervisor framing, retry context, etc.) and ships it with
- * the `bridge.run` dispatch. The column merges it onto its locally owned
- * variables. Fields here are the subset that need to differ between
- * orchestrator-driven and user-driven submits.
+ * Per-dispatch run intent shipped with a bridge-driven run. The column merges
+ * it onto its locally owned variables.
  */
 export type RunOverrides = {
   /** Prepended to the column's existing additional_instructions. */
@@ -2705,124 +1991,8 @@ export type RunOverrides = {
   };
 };
 
-export type SupervisorBridgeRequest =
-  | {
-      /**
-       * Make sure a Code tab exists for this ticket. Creates one if needed,
-       * switches the layout to code. Resolves after the actor registers.
-       */
-      kind: 'ensure-column';
-      ticketId: TicketId;
-      workspaceDir?: string;
-      profileName?: string;
-    }
-  | {
-      /**
-       * Start a run. Routes through the same handleSubmit path the user's
-       * keyboard uses. `runOverrides` carries the orchestrator's intent for
-       * THIS run (supervisor prompt to inject, approval policy) atomically
-       * with the dispatch — the column merges these on top of its locally
-       * owned variables (`client_tools`, `workspace_root`) without having to
-       * read steady-state autopilot mode (which would race with the dispatch).
-       *
-       * For user-initiated submits, `runOverrides` is undefined and the
-       * column derives variables from steady-state `ticket.autopilot`.
-       */
-      kind: 'run';
-      ticketId: TicketId;
-      prompt: string;
-      runOverrides?: RunOverrides;
-    }
-  | {
-      /**
-       * Start an autopilot ``/goal`` loop on this ticket's session. The
-       * agent-side ``goal`` server function (in omni-code) owns the loop:
-       * it installs the periodic tick, drives continuation prompts, and
-       * stops when the agent calls ``goal_complete`` or when the launcher
-       * issues a ``goal-stop``. Launcher subscribes to ``goal-update``
-       * events to mirror snapshot state into the ticket record.
-       */
-      kind: 'goal-start';
-      ticketId: TicketId;
-      prompt: string;
-      maxTurns?: number;
-      tickInterval?: number;
-      runOverrides?: RunOverrides;
-    }
-  | {
-      /** Cancel the running ``/goal`` loop on this ticket's session. */
-      kind: 'goal-stop';
-      ticketId: TicketId;
-    }
-  | { kind: 'send'; ticketId: TicketId; message: string }
-  | { kind: 'stop'; ticketId: TicketId }
-  | {
-      /** Stop current run and mint a fresh session id on the column. */
-      kind: 'reset';
-      ticketId: TicketId;
-    }
-  | { kind: 'dispose'; ticketId: TicketId };
-
-export type GoalSnapshotPayload = {
-  goal: string;
-  turn: number;
-  max_turns: number;
-  tick_interval?: number;
-  last_reason: string | null;
-  status: 'active' | 'completed' | 'cancelled';
-  started_at: number;
-  completion_reason: string | null;
-};
-
-export type SupervisorBridgeEvent =
-  | { kind: 'run-started'; ticketId: TicketId; runId: string }
-  | { kind: 'run-end'; ticketId: TicketId; reason: string }
-  | {
-      kind: 'message';
-      ticketId: TicketId;
-      content: string;
-      role?: 'user' | 'assistant';
-      toolName?: string;
-    }
-  | { kind: 'token-usage'; ticketId: TicketId; usage: TokenUsage }
-  | { kind: 'disconnected'; ticketId: TicketId }
-  | {
-      /**
-       * Forwarded ``ui.goal.update`` snapshot from the omniagents ``/goal``
-       * loop. ``snapshot`` is null when no goal is set on the session
-       * (terminal cleanup). The orchestrator maps this onto ticket phase.
-       */
-      kind: 'goal-update';
-      ticketId: TicketId;
-      snapshot: GoalSnapshotPayload | null;
-    }
-  | {
-      /**
-       * Forwarded plan (`tasks_snapshot`) update from the column's session.
-       * The orchestrator persists non-empty snapshots to the ticket's
-       * `lastPlanSnapshot`. `null` means the session currently has no
-       * canonical plan — which every fresh session reports before the agent
-       * (re)creates its plan — so it carries no information and is ignored;
-       * clearing happens at ticket settlement instead.
-       */
-      kind: 'plan-update';
-      ticketId: TicketId;
-      snapshot: PlanSnapshotEntry[] | null;
-    };
-
-type SupervisorIpcEvents = Namespaced<
-  'supervisor',
-  {
-    /** Renderer reports the result of a bridge request issued by main. */
-    'dispatch-result': (requestId: string, ok: boolean, result?: { runId?: string }, error?: string) => void;
-    /** Renderer forwards a sandbox run event so main's orchestrator can react. */
-    event: (event: SupervisorBridgeEvent) => void;
-  }
->;
-
 /**
- * Routine bridge — same column-ownership model as the supervisor bridge, but
- * for scheduled tasks (Routines). When a routine fires, main asks the renderer
+ * Routine bridge for scheduled tasks (Routines). When a routine fires, main asks the renderer
  * to ensure a Code column exists for the run and to start a single run on that
  * column's live session, so the conversation streams into the visible UI
  * exactly like a user-driven session. Main only orchestrates (history, status,
@@ -2894,114 +2064,6 @@ type RoutineIpcEvents = Namespaced<
 >;
 
 /**
- * Milestone API. Main process handles these events, renderer process invokes them.
- */
-type MilestoneIpcEvents = Namespaced<
-  'milestone',
-  {
-    'get-items': (projectId: ProjectId) => Milestone[];
-    'add-item': (item: Omit<Milestone, 'id' | 'createdAt' | 'updatedAt'>) => Milestone;
-    'update-item': (id: MilestoneId, patch: Partial<Omit<Milestone, 'id' | 'projectId' | 'createdAt'>>) => void;
-    'remove-item': (id: MilestoneId) => void;
-  }
->;
-
-/**
- * Page API. Main process handles these events, renderer process invokes them.
- */
-type PageIpcEvents = Namespaced<
-  'page',
-  {
-    'get-items': (projectId: ProjectId) => Page[];
-    /** All pages across all projects. Used by the global Inbox view. */
-    'get-all': () => Page[];
-    /** Create a new page. Optional `template` seeds the body with starter content. */
-    'add-item': (
-      item: Omit<Page, 'id' | 'createdAt' | 'updatedAt'>,
-      template?: import('@/lib/page-templates').TemplateKey
-    ) => Page;
-    'update-item': (id: PageId, patch: Partial<Omit<Page, 'id' | 'projectId' | 'createdAt'>>) => void;
-    'remove-item': (id: PageId) => void;
-    'read-content': (pageId: PageId) => string;
-    'write-content': (pageId: PageId, content: string) => void;
-    reorder: (pageId: PageId, newParentId: PageId | null, newSortOrder: number) => void;
-    /** Subscribe to external-edit notifications for a page's file. Returns the current on-disk content. */
-    watch: (pageId: PageId) => { content: string } | null;
-    /** Unsubscribe from external-edit notifications. */
-    unwatch: (pageId: PageId) => void;
-  }
->;
-
-/**
- * One-shot migration notice IPC. The Task #18 pages-relocation migration
- * records its summary into the store on boot; the renderer reads it to
- * show a dismissible notice, then either acknowledges or runs cleanup
- * (which `rm -rf`s the legacy paths and clears the notice in one step).
- */
-type MigrationIpcEvents = Namespaced<
-  'migration',
-  {
-    /** Read the current notice state. Null = nothing to show. */
-    'get-pages-state': () => PagesMigrationState | null;
-    /** Mark the notice dismissed without touching legacy files. */
-    'acknowledge-pages': () => void;
-    /**
-     * Delete the recorded legacy directories/files and clear the notice.
-     * Returns the count actually removed (paths that no longer exist are
-     * skipped silently). Idempotent.
-     */
-    'cleanup-legacy-pages': () => { removed: number };
-  }
->;
-
-/**
- * Inbox API. Renderer invokes, main handles. The inbox is a global capture
- * surface (items can be projectless) backed by electron-store. Its lifecycle
- * is: new → promoted (to ticket/project) or deferred.
- */
-type InboxIpcEvents = Namespaced<
-  'inbox',
-  {
-    /** All inbox items including promoted tombstones. */
-    'get-all': () => InboxItem[];
-    /** Active view: status !== 'later' and not promoted. */
-    'get-active': () => InboxItem[];
-    /** Create a new item. Defaults status to 'new'. */
-    add: (input: { title: string; note?: string; projectId?: ProjectId | null; attachments?: string[] }) => InboxItem;
-    /** Patch basic fields. Status transitions use the dedicated verbs below. */
-    update: (id: InboxItemId, patch: Partial<Pick<InboxItem, 'title' | 'note' | 'projectId' | 'attachments'>>) => void;
-    /** Hard delete. Use sparingly — prefer defer/promote for audit trail. */
-    remove: (id: InboxItemId) => void;
-    /** Move to 'later'. Stamps `laterAt`. */
-    defer: (id: InboxItemId) => void;
-    /** Move out of 'later' back to 'new'. Clears `laterAt`. */
-    reactivate: (id: InboxItemId) => void;
-    /**
-     * Promote to a ticket. Requires projectId. Seeds the ticket's title and
-     * description from the inbox item. Stamps `promotedTo` on the inbox item
-     * so it disappears from active views but stays as a tombstone for
-     * undo/audit.
-     */
-    'promote-to-ticket': (
-      id: InboxItemId,
-      opts: { projectId: ProjectId; milestoneId?: MilestoneId; columnId?: ColumnId }
-    ) => Ticket;
-    /**
-     * Promote to a new project. Seeds the project's label. Stamps
-     * `promotedTo`.
-     */
-    'promote-to-project': (id: InboxItemId, opts: { label: string }) => Project;
-    /** Manually trigger the expiry sweep. Returns number of items flipped to later. */
-    sweep: () => number;
-    /**
-     * GC promoted tombstones older than 30d. Returns number removed.
-     * Called on a schedule; exposed for manual triggering in tests/tools.
-     */
-    'gc-promoted': () => number;
-  }
->;
-
-/**
  * App-control events. Renderer registers every live `<Webview>` with main so
  * agents can drive them via client tools (list_apps, app_click, app_snapshot,
  * ...). See `src/shared/app-control-types.ts` for payload shapes.
@@ -3021,10 +2083,7 @@ type AppControlIpcEvents = Namespaced<
     back: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
     forward: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
     eval: (handleId: import('@/shared/app-control-types').AppHandleId, code: string) => unknown;
-    screenshot: (
-      handleId: import('@/shared/app-control-types').AppHandleId,
-      options?: import('@/shared/app-control-types').AppScreenshotOptions
-    ) => string;
+    screenshot: (handleId: import('@/shared/app-control-types').AppHandleId) => string;
     console: (
       handleId: import('@/shared/app-control-types').AppHandleId,
       options?: { minLevel?: import('@/shared/app-control-types').AppConsoleLevel; clear?: boolean }
@@ -3066,17 +2125,10 @@ type AppControlIpcEvents = Namespaced<
     ) => import('@/main/app-control-cdp').NetworkLogEntry[];
     pdf: (
       handleId: import('@/shared/app-control-types').AppHandleId,
-      options?: { artifactsSubdir?: string; landscape?: boolean; printBackground?: boolean }
+      options?: { landscape?: boolean; printBackground?: boolean }
     ) => string;
-    'full-screenshot': (
-      handleId: import('@/shared/app-control-types').AppHandleId,
-      options?: import('@/shared/app-control-types').AppScreenshotOptions
-    ) => string;
-    'element-screenshot': (
-      handleId: import('@/shared/app-control-types').AppHandleId,
-      ref: string,
-      options?: import('@/shared/app-control-types').AppScreenshotOptions
-    ) => string;
+    'full-screenshot': (handleId: import('@/shared/app-control-types').AppHandleId) => string;
+    'element-screenshot': (handleId: import('@/shared/app-control-types').AppHandleId, ref: string) => string;
     'set-viewport': (
       handleId: import('@/shared/app-control-types').AppHandleId,
       options: { width: number; height: number; deviceScaleFactor?: number; mobile?: boolean } | { clear: true }
@@ -3314,13 +2366,8 @@ export type IpcEvents = MainProcessIpcEvents &
   AzureIpcEvents &
   SkillsIpcEvents &
   ProjectIpcEvents &
-  MilestoneIpcEvents &
-  PageIpcEvents &
-  InboxIpcEvents &
-  MigrationIpcEvents &
   AppControlIpcEvents &
   BrowserIpcEvents &
-  SupervisorIpcEvents &
   RoutineIpcEvents &
   SandboxIpcEvents;
 
@@ -3416,47 +2463,8 @@ type ToastIpcRendererEvents = Namespaced<
 >;
 
 /**
- * Project events. Main process emits these events, renderer process listens to them.
- */
-type ProjectIpcRendererEvents = Namespaced<
-  'project',
-  {
-    'task-status': [TaskId, WithTimestamp<AgentProcessStatus>];
-    'task-session': [TaskId, string];
-    phase: [TicketId, import('@/shared/ticket-phase').TicketPhase];
-    'supervisor-message': [TicketId, SessionMessage];
-    'token-usage': [TicketId, TokenUsage];
-  }
->;
-
-/**
- * Page content events. Main process emits when a watched page file changes on
- * disk due to an external edit (e.g. the user edited a page in their IDE, or
- * an MCP client like Claude Desktop wrote into `<config>/pages/<projectId>/`).
- */
-type PageIpcRendererEvents = Namespaced<
-  'page',
-  {
-    'content-changed': [PageId, string];
-    'content-deleted': [PageId];
-  }
->;
-
-/**
- * Supervisor bridge — main → renderer. Main issues commands to the column
- * actor. Tool calls / approvals never round-trip through main; the column's
- * `buildClientToolHandler` handles them directly.
- */
-type SupervisorIpcRendererEvents = Namespaced<
-  'supervisor',
-  {
-    dispatch: [string, SupervisorBridgeRequest];
-  }
->;
-
-/**
  * Routine bridge — main → renderer. Main issues commands to the routine column
- * actor (ensure the column, start a run). Mirrors the supervisor bridge: tool
+ * actor (ensure the column, start a run). Tool
  * calls / approvals are handled by the column itself, never round-tripped
  * through main.
  */
@@ -3510,11 +2518,8 @@ export type IpcRendererEvents = TerminalIpcRendererEvents &
   AgentProcessIpcRendererEvents &
   DevIpcRendererEvents &
   StoreIpcRendererEvents &
-  ProjectIpcRendererEvents &
-  PageIpcRendererEvents &
   ToastIpcRendererEvents &
   BrowserIpcRendererEvents &
-  SupervisorIpcRendererEvents &
   RoutineIpcRendererEvents;
 
 // #region Config file types

@@ -14,7 +14,6 @@ import { ipcMain, shell, webContents as webContentsNS } from 'electron';
 import fs from 'fs/promises';
 import path from 'path';
 
-import { getArtifactsDir } from '@/lib/artifacts';
 import { normalizeAddress } from '@/lib/url';
 import { isAbortError } from '@/lib/webview-navigation';
 import {
@@ -41,7 +40,6 @@ import type {
   AppConsoleLevel,
   AppHandleId,
   AppRegistrationPayload,
-  AppScreenshotOptions,
   AxNode,
   LiveAppSnapshot,
 } from '@/shared/app-control-types';
@@ -307,16 +305,14 @@ export class AppControlManager {
     return wc.executeJavaScript(code, true);
   }
 
-  async screenshot(handleId: AppHandleId, options: AppScreenshotOptions = {}): Promise<string> {
+  async screenshot(handleId: AppHandleId): Promise<string> {
     const { entry, wc } = this.requireWebContents(handleId);
     // `capturePage()` with no rect grabs the full visible viewport. For
     // `fullPage: true` we'd need to scroll-and-stitch via CDP; skip for v1.
     const image = await wc.capturePage();
     const buffer = image.toPNG();
 
-    const rootDir = options.artifactsSubdir
-      ? getArtifactsDir(getOmniConfigDir(), options.artifactsSubdir)
-      : path.join(getOmniConfigDir(), 'app-control-screenshots');
+    const rootDir = path.join(getOmniConfigDir(), 'app-control-screenshots');
     await fs.mkdir(rootDir, { recursive: true });
     const filename = `${entry.registration.appId}-${Date.now()}.png`;
     const filepath = path.join(rootDir, filename);
@@ -516,19 +512,14 @@ export class AppControlManager {
     return entries;
   }
 
-  /** Save the active tab as PDF to the ticket artifacts dir; returns path. */
-  async pdf(
-    handleId: AppHandleId,
-    options: { artifactsSubdir?: string; landscape?: boolean; printBackground?: boolean } = {}
-  ): Promise<string> {
+  /** Save the active tab as PDF to the captures dir; returns path. */
+  async pdf(handleId: AppHandleId, options: { landscape?: boolean; printBackground?: boolean } = {}): Promise<string> {
     const { entry, wc } = this.requireWebContents(handleId);
     const buffer = await wc.printToPDF({
       landscape: options.landscape ?? false,
       printBackground: options.printBackground ?? true,
     });
-    const rootDir = options.artifactsSubdir
-      ? getArtifactsDir(getOmniConfigDir(), options.artifactsSubdir)
-      : path.join(getOmniConfigDir(), 'app-control-pdfs');
+    const rootDir = path.join(getOmniConfigDir(), 'app-control-pdfs');
     await fs.mkdir(rootDir, { recursive: true });
     const filename = `${entry.registration.appId}-${Date.now()}.pdf`;
     const filepath = path.join(rootDir, filename);
@@ -537,13 +528,11 @@ export class AppControlManager {
   }
 
   /** Per-element screenshot. `ref` comes from the most recent snapshot. */
-  async elementScreenshot(handleId: AppHandleId, ref: string, options: AppScreenshotOptions = {}): Promise<string> {
+  async elementScreenshot(handleId: AppHandleId, ref: string): Promise<string> {
     const { entry, wc } = this.requireWebContents(handleId);
     ensureAttached(wc);
     const buffer = await elementScreenshot(wc, ref);
-    const rootDir = options.artifactsSubdir
-      ? getArtifactsDir(getOmniConfigDir(), options.artifactsSubdir)
-      : path.join(getOmniConfigDir(), 'app-control-screenshots');
+    const rootDir = path.join(getOmniConfigDir(), 'app-control-screenshots');
     await fs.mkdir(rootDir, { recursive: true });
     const filename = `${entry.registration.appId}-element-${Date.now()}.png`;
     const filepath = path.join(rootDir, filename);
@@ -552,12 +541,10 @@ export class AppControlManager {
   }
 
   /** Full-page (scroll-and-stitch equivalent) screenshot via CDP. */
-  async fullPageScreenshot(handleId: AppHandleId, options: AppScreenshotOptions = {}): Promise<string> {
+  async fullPageScreenshot(handleId: AppHandleId): Promise<string> {
     const { entry, wc } = this.requireWebContents(handleId);
     const buffer = await fullPageScreenshot(wc);
-    const rootDir = options.artifactsSubdir
-      ? getArtifactsDir(getOmniConfigDir(), options.artifactsSubdir)
-      : path.join(getOmniConfigDir(), 'app-control-screenshots');
+    const rootDir = path.join(getOmniConfigDir(), 'app-control-screenshots');
     await fs.mkdir(rootDir, { recursive: true });
     const filename = `${entry.registration.appId}-full-${Date.now()}.png`;
     const filepath = path.join(rootDir, filename);
@@ -759,7 +746,7 @@ export const createAppControlManager = (arg: {
   ipc.handle('app:back', (_, handleId) => manager.back(handleId));
   ipc.handle('app:forward', (_, handleId) => manager.forward(handleId));
   ipc.handle('app:eval', (_, handleId, code) => manager.eval(handleId, code));
-  ipc.handle('app:screenshot', (_, handleId, options) => manager.screenshot(handleId, options));
+  ipc.handle('app:screenshot', (_, handleId) => manager.screenshot(handleId));
   ipc.handle('app:console', (_, handleId, options) => manager.console(handleId, options));
   ipc.handle('app:snapshot', (_, handleId) => manager.snapshot(handleId));
   ipc.handle('app:snapshot-diff', (_, handleId) => manager.snapshotDiff(handleId));
@@ -776,10 +763,8 @@ export const createAppControlManager = (arg: {
   ipc.handle('app:stop-find', (_, handleId) => manager.stopFindInPage(handleId));
   ipc.handle('app:wait-for', (_, handleId, options) => manager.waitFor(handleId, options));
   ipc.handle('app:pdf', (_, handleId, options) => manager.pdf(handleId, options));
-  ipc.handle('app:full-screenshot', (_, handleId, options) => manager.fullPageScreenshot(handleId, options));
-  ipc.handle('app:element-screenshot', (_, handleId, ref, options) =>
-    manager.elementScreenshot(handleId, ref, options)
-  );
+  ipc.handle('app:full-screenshot', (_, handleId) => manager.fullPageScreenshot(handleId));
+  ipc.handle('app:element-screenshot', (_, handleId, ref) => manager.elementScreenshot(handleId, ref));
   ipc.handle('app:set-viewport', (_, handleId, options) => manager.setViewport(handleId, options));
   ipc.handle('app:set-user-agent', (_, handleId, ua) => manager.setUserAgent(handleId, ua));
   ipc.handle('app:set-zoom', (_, handleId, factor) => manager.setZoom(handleId, factor));

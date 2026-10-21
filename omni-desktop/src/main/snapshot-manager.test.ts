@@ -88,12 +88,12 @@ describe('claim helpers', () => {
   it('protectedSnapshotsFromTabs mirrors the GC keep set', () => {
     expect(
       protectedSnapshotsFromTabs([
-        tab({ id: 'a', sessionId: 'conversation-1', snapshotRef: 'snapshot-1', ticketTitle: 'Fix bug' }),
+        tab({ id: 'a', sessionId: 'conversation-1', snapshotRef: 'snapshot-1', routineName: 'Nightly' }),
         tab({ id: 'b', sessionId: 'conversation-2' }),
         tab({ id: 'c', snapshotRef: 'snapshot-2' }),
       ])
     ).toEqual([
-      { snapshotRef: 'snapshot-1', label: 'Fix bug' },
+      { snapshotRef: 'snapshot-1', label: 'Nightly' },
       { snapshotRef: 'snapshot-2', label: 'Chat' },
     ]);
   });

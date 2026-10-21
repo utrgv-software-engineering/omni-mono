@@ -21,13 +21,6 @@ evaluation:
       OMNI_WORKSPACE_ROOT: "${workspace}"
       # Disable real web API calls during evaluation
       SERPAPI_API_KEY: ""
-      # Auto-trust mise.toml inside any eval workspace. Without this,
-      # fixtures that ship a mise.toml (e.g. Rails projects pinning a
-      # Ruby version) cause every shell invocation to die with "Config
-      # files in <path> are not trusted" before the command even runs.
-      # Scoped to the eval workspace root, so only paths we ourselves
-      # stage are trusted.
-      MISE_TRUSTED_CONFIG_PATHS: "${workspace_root}"
     container_routing:
       # The product profile resolver (the same layered YAML system `omni
       # serve` uses), called hermetically with explicit_path. The default
@@ -40,25 +33,6 @@ evaluation:
       # image is a separate product surface and is not used here.
       profile_resolver: product
       default_profile: profiles/devbox.yml
-    # MCP-backed project state (`db_fixture` field on a scenario): stages
-    # an isolated XDG_CONFIG_HOME inside the temp dir with an
-    # omni_code/mcp.json pointing at the real omni-projects-mcp cli; the
-    # spawned cli opens the per-scenario projects.db instead of the
-    # user's real one. If evaluations/fixtures/dbs/<name>.db exists it is
-    # copied; otherwise the cli initializes a fresh schema on first open.
-    mcp_fixture:
-      scenario_key: db_fixture
-      dbs_dir: fixtures/dbs
-      config_name: omni_code
-      server_name: omni-projects
-      command: { env_var: OMNI_PROJECTS_MCP_NODE, default: node }
-      # $OMNI_PROJECTS_MCP_CLI overrides omni-desktop's default build path.
-      cli:
-        env_var: OMNI_PROJECTS_MCP_CLI
-        default: ~/Omni/Workspace/omni-mono/omni-desktop/packages/projects-mcp/dist/cli.js
-      args: ["${cli}", "--db-path", "${db_path}", "--pages-dir", "${pages_dir}"]
-      db_dest: projects.db
-      pages_dest: projects
 
   judges:
     adherence:

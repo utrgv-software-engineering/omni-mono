@@ -1,5 +1,4 @@
 import { readFileSync, writeFileSync } from 'fs';
-import { migrateFromJson } from 'omni-projects-db';
 import { join } from 'path';
 
 import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig } from '@/lib/agent-config';
@@ -12,30 +11,21 @@ import {
   loginWithDeviceFlow as codexDeviceLogin,
   logout as codexLogout,
 } from '@/main/codex-auth';
-import { migrateAgentConfigFromFiles } from '@/main/config-files-migration';
+import { migrateAgentConfigFromFiles, removeRetiredProjectsMcpEntry } from '@/main/config-files-migration';
 import { materializeAgentConfig } from '@/main/config-materializer';
 import { createConsoleManager } from '@/main/console-manager';
-import { PROJECT_KEYS } from '@/main/db-store-bridge';
 import {
   linkWithDeviceFlow as githubLink,
   listOrgs as githubListOrgs,
   searchRepos as githubSearchRepos,
 } from '@/main/github-auth';
-import { registerInboxHandlers } from '@/main/inbox-handlers';
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
-import { getMcpBinPath } from '@/main/mcp-config-manager';
-import { registerMigrationHandlers } from '@/main/migration-handlers';
-import { registerMilestoneHandlers } from '@/main/milestone-handlers';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
-import { registerPageHandlers } from '@/main/page-handlers';
-import { migrateLegacyPagesToConfigDir } from '@/main/pages-relocation-migration';
 import { ProcessManager, registerProcessHandlers } from '@/main/process-manager';
 import { registerProfileCatalogHandlers } from '@/main/profile-catalog';
 import { getBundledProfilesDir } from '@/main/profile-resolver';
-import { backfillProjectConfigs } from '@/main/project-config-backfill';
-import { closeProjectDb, getDb, openProjectDb } from '@/main/project-db';
-import { registerProjectHandlers } from '@/main/project-handlers';
-import { ProjectManager } from '@/main/project-manager';
+import { ProjectManager, registerProjectHandlers } from '@/main/project-manager';
+import { importLegacyProjectsDb } from '@/main/projects-import';
 import { RoutineBridge } from '@/main/routine-bridge';
 import {
   defaultSandboxInventoryDeps,
@@ -45,7 +35,6 @@ import {
 } from '@/main/sandbox-inventory';
 import { registerScheduledTaskHandlers, ScheduledTaskManager } from '@/main/scheduled-task-manager';
 import { deleteSnapshot, protectedSnapshotsFromTabs, registerSnapshotHandlers } from '@/main/snapshot-manager';
-import { registerSupervisorHandlers } from '@/main/supervisor-handlers';
 import { getOmniConfigDir } from '@/main/util';
 import { ServerIpcAdapter } from '@/server/ipc-adapter';
 import { ServerSecretStore } from '@/server/secret-store';
@@ -61,7 +50,6 @@ import {
   registerUtilHandlers,
   type SettingsConfigStore,
 } from '@/shared/ipc-handlers';
-import { buildStdioMcpEntry } from '@/shared/mcp-entry';
 import type {
   GitCredential,
   GithubOwner,
@@ -93,65 +81,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   const ipc = new ServerIpcAdapter(wsHandler.handleCtx.bind(wsHandler));
   const sendToAll: SendToWindow = wsHandler.sendToAll.bind(wsHandler);
 
-  // Both this server and any agent-spawned MCP stdio subprocesses read/write
-  // the same projects.db via WAL.
-  const { repo: syncRepo, asyncRepo } = openProjectDb();
-
-  try {
-    const migrated = migrateFromJson(syncRepo, getDb(), {
-      projects: store.get('projects', []) as import('@/shared/types').Project[],
-      tickets: store.get('tickets', []) as import('@/shared/types').Ticket[],
-      milestones: store.get('milestones', []) as import('@/shared/types').Milestone[],
-      pages: store.get('pages', []) as import('@/shared/types').Page[],
-      inboxItems: store.get('inboxItems', []) as import('@/shared/types').InboxItem[],
-      tasks: store.get('tasks', []) as import('@/shared/types').Task[],
-    });
-    if (migrated > 0) {
-      console.log(`[ProjectDb] Migrated ${migrated} projects from server-store to SQLite`);
-    }
-  } catch (err) {
-    console.error('[ProjectDb] Failed to migrate from server-store:', err);
-  }
-
-  try {
-    const backfilled = backfillProjectConfigs(syncRepo);
-    if (backfilled > 0) {
-      console.log(`[ProjectDb] Backfilled config for ${backfilled} projects`);
-    }
-  } catch (err) {
-    console.error('[ProjectDb] Failed to backfill project configs:', err);
-  }
-
-  try {
-    const summary = migrateLegacyPagesToConfigDir(syncRepo);
-    const total = summary.perProjectPagesCopied + summary.rootPagesFromContextMd + summary.mcpPagesCopied;
-    if (total > 0) {
-      console.log(
-        `[ProjectDb] Pages migration copied ${total} files ` +
-          `(per-project: ${summary.perProjectPagesCopied}, ` +
-          `context.md → root: ${summary.rootPagesFromContextMd}, ` +
-          `MCP: ${summary.mcpPagesCopied}, ` +
-          `skipped existing: ${summary.skippedAlreadyMigrated})`
-      );
-    }
-    const existing = store.get('pagesMigration');
-    if (!existing && summary.legacyPaths.length > 0) {
-      store.set('pagesMigration', {
-        summary: {
-          perProjectPagesCopied: summary.perProjectPagesCopied,
-          rootPagesFromContextMd: summary.rootPagesFromContextMd,
-          mcpPagesCopied: summary.mcpPagesCopied,
-          skippedAlreadyMigrated: summary.skippedAlreadyMigrated,
-        },
-        legacyPaths: summary.legacyPaths,
-        acknowledged: false,
-      });
-    }
-  } catch (err) {
-    console.error('[ProjectDb] Failed to migrate legacy pages:', err);
-  }
-
-  ProjectManager.migrateToSupervisor(store as any);
+  importLegacyProjectsDb(store as any);
 
   const configDir = getOmniConfigDir();
   const secretStore = new ServerSecretStore();
@@ -161,9 +91,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     sendToWindow: sendToAll,
   });
 
-  // Snapshot-aware broadcasts: `store:changed` always carries the full
-  // projection (project keys from SQL + settings), never the raw settings.
-  const getStoreSnapshot = (): StoreData => projectManager.getStoreSnapshot();
+  const getStoreSnapshot = (): StoreData => store.store;
   const sendSnapshot = (): void => wsHandler.sendToAll('store:changed', getStoreSnapshot());
   const snapshotSend: SendToWindow = (channel, ...args) => {
     if (channel === 'store:changed') {
@@ -190,7 +118,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     fetchFn: globalThis.fetch,
     getStoreData: () => ({
       defaultProfileName: store.get('defaultProfileName') ?? 'host',
-      projects: projectManager.getStoreSnapshot().projects ?? [],
+      projects: store.get('projects') ?? [],
       gitCredentials: store.get('gitCredentials') ?? [],
     }),
     resolveGitToken: (id) => secretStore.getGitToken(id),
@@ -203,14 +131,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     sendToWindow: snapshotSend,
   });
   scheduledTaskManager.start();
-  const projectManager: ProjectManager = new ProjectManager({
-    store: store as any,
-    sendToWindow: sendToAll,
-    processManager,
-    repo: asyncRepo,
-    changeSeqRepo: syncRepo,
-    skillsDir: join(configDir, 'skills'),
-  });
+  const projectManager: ProjectManager = new ProjectManager({ store: store as any, onProjectsChanged: sendSnapshot });
   const browser = buildBrowserContext(store as any, sendToAll);
   const chatCleanup = new ChatCleanupRunner({
     read: async () => {
@@ -246,7 +167,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
         configDir,
         mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
         network: store.get('networkConfig') ?? emptyNetworkConfig(),
-        managedMcpEntry: buildStdioMcpEntry(getMcpBinPath()),
       });
       writeFileSync(join(configDir, '.env'), store.get('envVars') ?? '', 'utf-8');
     } catch (err) {
@@ -255,19 +175,14 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   };
 
   registerProjectHandlers(ipc, () => projectManager);
-  registerSupervisorHandlers(ipc, () => projectManager.supervisors);
-  registerMilestoneHandlers(ipc, () => projectManager.milestones);
-  registerPageHandlers(ipc, () => projectManager.pages);
-  registerInboxHandlers(ipc, () => projectManager.inbox);
   registerProcessHandlers(ipc, () => processManager);
   registerScheduledTaskHandlers(ipc, () => scheduledTaskManager);
   registerBrowserHandlers(ipc, () => browser);
-  projectManager.bridge.registerIpc(ipc, () => projectManager.bridge);
   routineBridge.registerIpc(ipc, () => routineBridge);
 
   // Import any pre-v23 on-disk config files into the store once.
   migrateAgentConfigFromFiles(store as unknown as SettingsConfigStore, configDir);
-  await projectManager.whenReady;
+  removeRetiredProjectsMcpEntry(configDir);
   // Write the agent's on-disk config so the next omni-serve spawn reads
   // fresh model/mcp/network files.
   materializeConfig();
@@ -288,17 +203,9 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   // Global status getters
   ipc.handle('omni-install-process:get-status', () => omniInstall.getStatus());
 
-  // Store handlers — snapshot-aware: project keys come from the SQL projection;
-  // every other (settings) key reads/writes the settings store. SQLite-backed
-  // project changes are broadcast by ProjectManager/DbChangeWatcher; settings
-  // writes broadcast explicitly below.
-  ipc.handle('store:get-key', (_ctx, key) => {
-    const k = key as keyof StoreData;
-    if (PROJECT_KEYS.has(k)) {
-      return getStoreSnapshot()[k];
-    }
-    return store.get(k);
-  });
+  // Store handlers. The server store doesn't announce its own writes, so
+  // every write broadcasts explicitly.
+  ipc.handle('store:get-key', (_ctx, key) => store.get(key as keyof StoreData));
   ipc.handle('store:chat-command', async (_ctx, command) => {
     const { patch, result } = applyChatCommand(getStoreSnapshot(), command);
     store.set(patch);
@@ -313,13 +220,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId' || key === 'chatCleanupJobs') {
       throw new Error('Use store:chat-command for chat state mutations');
     }
-    const k = key as keyof StoreData;
-    if (PROJECT_KEYS.has(k)) {
-      throw new Error(
-        `store:set-key for project key "${String(k)}" is not allowed when SQLite is active. Use ProjectManager APIs.`
-      );
-    }
-    store.set(k, value as never);
+    store.set(key as keyof StoreData, value as never);
     sendSnapshot();
   });
   ipc.handle('store:get', () => getStoreSnapshot());
@@ -329,10 +230,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     }
     if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data || 'chatCleanupJobs' in data) {
       throw new Error('Use store:chat-command for chat state mutations');
-    }
-    const conflicts = [...PROJECT_KEYS].filter((k) => k in data);
-    if (conflicts.length > 0) {
-      throw new Error(`store:set with project keys [${conflicts.join(', ')}] is not allowed when SQLite is active.`);
     }
     store.store = data;
     sendSnapshot();
@@ -496,18 +393,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     return azureListRepos(globalThis.fetch, token, input.org, input.query);
   });
 
-  registerMigrationHandlers(ipc, () => ({
-    get: () => store.get('pagesMigration') ?? null,
-    set: (value) => {
-      if (value === null) {
-        store.delete('pagesMigration');
-      } else {
-        store.set('pagesMigration', value);
-      }
-      sendSnapshot();
-    },
-  }));
-
   // Desktop-only handlers — stubbed for browser mode
   ipc.handle('util:select-directory', () => null);
   ipc.handle('util:select-file', () => null);
@@ -519,11 +404,9 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
       chatCleanup.dispose(),
       Promise.resolve(scheduledTaskManager.stop()),
       Promise.resolve(routineBridge.disposeAll()),
-      projectManager.exit(),
       processManager.cleanup(),
       cleanupOmniInstall(),
     ]);
-    closeProjectDb();
     const errors = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map((r) => r.reason);
     if (errors.length > 0) {
       console.error('Error cleaning up global managers:', errors);

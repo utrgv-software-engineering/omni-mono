@@ -16,14 +16,6 @@ const config = {
       ],
       project: ['*.{ts,tsx,js,mjs}', 'src/**/*.{ts,tsx}', 'tests/e2e/**/*.{ts,tsx}', 'scripts/**/*.{js,mjs,ts}'],
     },
-    'packages/projects-db': {
-      entry: ['src/**/*.test.ts'],
-      project: ['src/**/*.ts'],
-      ignoreUnresolved: ['tsx'],
-    },
-    'packages/projects-mcp': {
-      project: ['src/**/*.ts', '*.ts'],
-    },
   },
   ignoreDependencies: [
     // Optional/runtime provider packages and UI dependencies kept for feature-gated code paths.

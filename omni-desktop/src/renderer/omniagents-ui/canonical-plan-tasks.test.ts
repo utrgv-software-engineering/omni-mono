@@ -3,13 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { PlanItem as RpcPlanItem } from '@/renderer/omniagents-ui/rpc/plans-and-diffs';
 import type { MessageItem, PlanItem, PlanStep } from '@/shared/chat-types';
 
-import {
-  canonicalPlanTasks,
-  negotiatedPlanTasks,
-  planUpdateForBridge,
-  rpcPlanTasks,
-  type TaskSummary,
-} from './canonical-plan-tasks';
+import { canonicalPlanTasks, negotiatedPlanTasks, rpcPlanTasks } from './canonical-plan-tasks';
 
 const plan = (seq: number, revision: number, subject: string, scope = 'main'): PlanItem => ({
   type: 'plan',
@@ -169,54 +163,5 @@ describe('rpcPlanTasks', () => {
     expect(tasks[3]!.exitCriteria).toBeUndefined();
     expect(tasks[3]!.verified).toBeUndefined();
     expect(tasks[3]!.criteriaEdited).toBeUndefined();
-  });
-});
-
-describe('planUpdateForBridge', () => {
-  const tasks: TaskSummary[] = [
-    {
-      id: '1',
-      subject: 'repro',
-      activeForm: 'Reproducing',
-      status: 'completed',
-      owner: 'agent:omni',
-      blockedBy: [],
-      exitCriteria: 'failing test exists',
-      verified: false,
-    },
-    { id: '2', subject: 'fix', status: 'in_progress' },
-  ];
-
-  it('returns null without a ticket context', () => {
-    expect(planUpdateForBridge(undefined, tasks)).toBeNull();
-  });
-
-  it('maps the panel task list into a plan-update snapshot for the ticket', () => {
-    const event = planUpdateForBridge('ticket-1', tasks);
-    expect(event).toEqual({
-      kind: 'plan-update',
-      ticketId: 'ticket-1',
-      snapshot: [
-        {
-          id: '1',
-          subject: 'repro',
-          activeForm: 'Reproducing',
-          status: 'completed',
-          owner: 'agent:omni',
-          blockedBy: [],
-          exitCriteria: 'failing test exists',
-          verified: false,
-        },
-        { id: '2', subject: 'fix', status: 'in_progress' },
-      ],
-    });
-  });
-
-  it('forwards an empty panel as a null snapshot (main ignores it)', () => {
-    expect(planUpdateForBridge('ticket-1', [])).toEqual({
-      kind: 'plan-update',
-      ticketId: 'ticket-1',
-      snapshot: null,
-    });
   });
 });

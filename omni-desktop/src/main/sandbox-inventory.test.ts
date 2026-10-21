@@ -294,8 +294,7 @@ describe('getSubstrateStatus', () => {
 describe('ownership label helpers', () => {
   const tab = (over: Partial<CodeTab>): CodeTab => ({ id: 'tab-1', projectId: null, createdAt: 0, ...over });
 
-  it('codeTabLabel prefers ticket title, then routine, then Chat', () => {
-    expect(codeTabLabel(tab({ ticketTitle: 'Fix bug', routineName: 'r' }))).toBe('Fix bug');
+  it('codeTabLabel prefers the routine name, then Chat', () => {
     expect(codeTabLabel(tab({ routineName: 'Nightly' }))).toBe('Nightly');
     expect(codeTabLabel(tab({}))).toBe('Chat');
   });
@@ -306,10 +305,10 @@ describe('ownership label helpers', () => {
         { processId: 'tab-1', containerId: 'c1' },
         { processId: 'mystery', containerId: 'c3' },
       ],
-      [tab({ id: 'tab-1', ticketTitle: 'Fix bug' })]
+      [tab({ id: 'tab-1', routineName: 'Nightly' })]
     );
     expect(owners).toEqual([
-      { containerId: 'c1', label: 'Fix bug' },
+      { containerId: 'c1', label: 'Nightly' },
       { containerId: 'c3', label: 'mystery' },
     ]);
   });

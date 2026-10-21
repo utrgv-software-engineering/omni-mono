@@ -7,16 +7,11 @@
 
 export type EmptySuggestion = { label: string; prompt: string };
 
-/** Ambient Chat surface — no project bound; the agent has the projects MCP. */
+/** Ambient Chat surface — no project bound. */
 export const CHAT_SUGGESTIONS: ReadonlyArray<EmptySuggestion> = [
   {
     label: 'Plan my week',
-    prompt: 'Review my projects and open tasks, then propose a focused plan for this week.',
-  },
-  {
-    label: 'Triage my inbox',
-    prompt:
-      'Go through my inbox items and summarize what needs attention — suggest what to promote to tickets, defer, or drop.',
+    prompt: 'Look over my projects and recent chats, then propose a focused plan for this week.',
   },
   {
     label: 'Show me around',

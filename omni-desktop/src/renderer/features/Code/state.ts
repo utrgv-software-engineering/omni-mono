@@ -113,7 +113,6 @@ export const codeApi = {
   },
   restoreConversation: (...args: Parameters<ChatOperations['restoreConversation']>) =>
     run('restoreConversation', ...args),
-  addTabForTicket: (...args: Parameters<ChatOperations['addTabForTicket']>) => run('addTabForTicket', ...args),
   openSidecarApp: (...args: Parameters<ChatOperations['openSidecarApp']>) => run('openSidecarApp', ...args),
   setSidecarOpen: (...args: Parameters<ChatOperations['setSidecarOpen']>) => run('setSidecarOpen', ...args),
   setActiveSidecarApp: (...args: Parameters<ChatOperations['setActiveSidecarApp']>) =>

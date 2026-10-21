@@ -59,7 +59,6 @@ describe('ChatShell lazy launch guidance', () => {
 
     expect(container.textContent).toContain('Your first message starts a session in Devbox.');
     expect(buttonNamed('Plan my week')).toBeTruthy();
-    expect(buttonNamed('Triage my inbox')).toBeTruthy();
     expect(buttonNamed('Show me around')).toBeTruthy();
     expect(buttonNamed('Attach project')).toBeTruthy();
     expect(container.querySelector('textarea')?.disabled).toBe(false);
@@ -71,7 +70,7 @@ describe('ChatShell lazy launch guidance', () => {
     act(() => buttonNamed('Show me around').click());
 
     expect(onSubmit).toHaveBeenCalledOnce();
-    expect(onSubmit).toHaveBeenCalledWith({ text: CHAT_SUGGESTIONS[2]?.prompt });
+    expect(onSubmit).toHaveBeenCalledWith({ text: CHAT_SUGGESTIONS[1]?.prompt });
   });
 
   it('gates missing workspace inline and opens settings', async () => {

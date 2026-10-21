@@ -21,10 +21,8 @@ export type PaletteContext = {
   /** Resolve a session tab's display label (project name etc.). */
   resolveTabLabel: (tab: CodeTab) => string;
   navigate: (mode: LayoutMode) => void;
-  goToInbox: () => void;
   goToRoutines: () => void;
   activateColumn: (tabId: string) => void;
-  addInboxItem: () => void;
   createProject: () => void;
   newSession: () => void;
   setDeckLayout: (mode: CodeLayoutMode) => void;
@@ -35,8 +33,8 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
   const commands: PaletteCommand[] = [
     {
       id: 'nav-work',
-      label: 'Go to Tasks',
-      keywords: 'work tickets board projects all tasks',
+      label: 'Go to Projects',
+      keywords: 'work projects folders sources',
       run: () => ctx.navigate('work'),
     },
     {
@@ -45,7 +43,6 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
       keywords: 'conversation talk deck columns sessions',
       run: () => ctx.navigate('chat'),
     },
-    { id: 'nav-inbox', label: 'Go to Inbox', keywords: 'capture ideas todo triage', run: ctx.goToInbox },
     {
       id: 'nav-settings',
       label: 'Go to Settings',
@@ -58,7 +55,6 @@ export function buildCommands(ctx: PaletteContext): PaletteCommand[] {
       keywords: 'scheduled tasks automation recurring agents',
       run: ctx.goToRoutines,
     },
-    { id: 'add-inbox-item', label: 'Add inbox item', keywords: 'capture idea todo quick', run: ctx.addInboxItem },
     { id: 'create-project', label: 'Create project', keywords: 'new workspace initiative', run: ctx.createProject },
     { id: 'new-session', label: 'New chat', keywords: 'create column agent session conversation', run: ctx.newSession },
     {

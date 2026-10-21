@@ -1,7 +1,7 @@
 /**
  * Renderer-side routine bridge.
  *
- * Mirrors `supervisor-bridge.ts` but for Routines (scheduled tasks). Main asks
+ * For Routines (scheduled tasks). Main asks
  * the renderer to ensure a Code column exists for a routine run (creating the
  * tab on demand) and to start a single run on that column's live session. The
  * run therefore streams into the visible UI exactly like a user-driven session,

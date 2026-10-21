@@ -67,8 +67,7 @@ export const hasDurableLocalMcpPersistence = (persistence: McpMutationPersistenc
   persistence?.user_config.durable === true &&
   persistence.user_config.scope === 'host' &&
   persistence.oauth_tokens.durable === true &&
-  persistence.oauth_tokens.scope === 'host' &&
-  persistence.managed_servers.includes('omni-projects');
+  persistence.oauth_tokens.scope === 'host';
 
 function nonEmptySecrets(values: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!values) {

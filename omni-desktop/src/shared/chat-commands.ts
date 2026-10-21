@@ -2,15 +2,7 @@ import { nanoid } from 'nanoid';
 
 import { pruneConversations, upsertConversation } from '@/lib/chat-conversations';
 import { uuidv4 } from '@/lib/uuid';
-import type {
-  ChatConversation,
-  CodeLayoutMode,
-  CodeTab,
-  CodeTabId,
-  ProjectId,
-  StoreData,
-  TicketId,
-} from '@/shared/types';
+import type { ChatConversation, CodeLayoutMode, CodeTab, CodeTabId, ProjectId, StoreData } from '@/shared/types';
 import { isChatColumn } from '@/shared/types';
 
 type ChatState = Pick<
@@ -76,9 +68,7 @@ function operations(initial: StoreData) {
     openFreshChat: (): void => {
       const tabs = persistedStoreApi.getKey('codeTabs') ?? [];
       const known = new Set((persistedStoreApi.getKey('chatConversations') ?? []).map((c) => c.sessionId));
-      const pristine = tabs.find(
-        (t) => !t.projectId && !t.ticketId && !t.routineId && (!t.sessionId || !known.has(t.sessionId))
-      );
+      const pristine = tabs.find((t) => !t.projectId && !t.routineId && (!t.sessionId || !known.has(t.sessionId)));
       if (pristine) {
         persistedStoreApi.setKey('activeCodeTabId', pristine.id);
         return;
@@ -214,8 +204,6 @@ function operations(initial: StoreData) {
       const tab: CodeTab = {
         id: nanoid(),
         projectId: conversation.projectId ?? null,
-        ...(conversation.ticketId ? { ticketId: conversation.ticketId } : {}),
-        ...(conversation.ticketTitle ? { ticketTitle: conversation.ticketTitle } : {}),
         sessionId: conversation.sessionId,
         snapshotRef: uuidv4(),
         profileName: conversation.profileName ?? resolveCodeTabProfileName(conversation.projectId),
@@ -238,8 +226,6 @@ function operations(initial: StoreData) {
         ? {
             ...(tab.profileName ? { profileName: tab.profileName } : {}),
             ...(tab.projectId ? { projectId: tab.projectId } : {}),
-            ...(tab.ticketId ? { ticketId: tab.ticketId } : {}),
-            ...(tab.ticketTitle ? { ticketTitle: tab.ticketTitle } : {}),
           }
         : {};
       const { kept } = pruneConversations(
@@ -264,11 +250,9 @@ function operations(initial: StoreData) {
           (candidate) => candidate.sessionId === tab.sessionId
         );
         codeApi.recordConversation(tab.sessionId, {
-          title: title ?? indexed?.title ?? tab.ticketTitle ?? tab.routineName ?? 'New chat',
+          title: title ?? indexed?.title ?? tab.routineName ?? 'New chat',
           ...(tab.profileName ? { profileName: tab.profileName } : {}),
           ...(tab.projectId ? { projectId: tab.projectId } : {}),
-          ...(tab.ticketId ? { ticketId: tab.ticketId } : {}),
-          ...(tab.ticketTitle ? { ticketTitle: tab.ticketTitle } : {}),
         });
         const conversation = (persistedStoreApi.getKey('chatConversations') ?? []).find(
           (candidate) => candidate.sessionId === tab.sessionId
@@ -287,44 +271,6 @@ function operations(initial: StoreData) {
           conversation.sessionId === sessionId ? { ...conversation, archivedAt: undefined } : conversation
         )
       );
-    },
-    addTabForTicket: (
-      ticketId: TicketId,
-      projectId: ProjectId,
-      opts?: { ticketTitle?: string; workspaceDir?: string; profileName?: string }
-    ): CodeTab => {
-      const existingTabs = persistedStoreApi.getKey('codeTabs') ?? [];
-      const existing = existingTabs.find((t) => t.ticketId === ticketId);
-      if (existing) {
-        const nextExisting = {
-          ...existing,
-          ...(opts?.workspaceDir ? { workspaceDir: opts.workspaceDir } : {}),
-          ...(opts?.profileName ? { profileName: opts.profileName } : {}),
-          ...(opts?.workspaceDir && opts.workspaceDir !== existing.workspaceDir ? { snapshotRef: uuidv4() } : {}),
-        };
-        if (nextExisting.workspaceDir !== existing.workspaceDir || nextExisting.profileName !== existing.profileName) {
-          const updated = existingTabs.map((t) => (t.id === existing.id ? nextExisting : t));
-          persistedStoreApi.setKey('codeTabs', updated);
-        }
-        persistedStoreApi.setKey('activeCodeTabId', existing.id);
-        return nextExisting;
-      }
-      const tab: CodeTab = {
-        id: nanoid(),
-        projectId,
-        ticketId,
-        sessionId: uuidv4(),
-        snapshotRef: uuidv4(),
-        ticketTitle: opts?.ticketTitle,
-        workspaceDir: opts?.workspaceDir,
-        profileName: opts?.profileName ?? resolveCodeTabProfileName(projectId),
-        profileNameExplicit: Boolean(opts?.profileName),
-        createdAt: Date.now(),
-      };
-      const tabs = [...existingTabs, tab];
-      persistedStoreApi.setKey('codeTabs', tabs);
-      persistedStoreApi.setKey('activeCodeTabId', tab.id);
-      return tab;
     },
     openSidecarApp: (tabId: CodeTabId, appId: string) => {
       if (appId === 'chat') {

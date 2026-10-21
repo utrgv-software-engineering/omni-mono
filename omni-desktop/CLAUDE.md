@@ -68,7 +68,7 @@ Lifecycle pattern: each manager is a factory returning `[instance, cleanup]`. Re
 
 - `MainProcessManager` (`main-process-manager.ts`) — Electron window + store IPC
 - `ProcessManager` (`process-manager.ts`) — all agent processes (chat + code tabs) keyed by string ID, driven by `AgentProcess` (`agent-process.ts`)
-- `ProjectManager` (`project-manager.ts`) — projects / tickets / pages / inbox / milestones; composes `InboxManager`, `MilestoneManager`, `PageManager`, `SupervisorOrchestrator`, and the `ticket-machine`. Runs schema migrations on boot.
+- `ProjectManager` (`project-manager.ts`) — projects (named sets of sources plus their chats), persisted as `StoreData.projects`; seeds the Personal project. `projects-import.ts` is the one-time import from the retired `projects.db`.
 - `OmniInstallManager` — Python + venv via bundled `uv` binary
 - `ConsoleManager` — proxies `terminal:*` IPC into `omni serve`'s WebSocket so terminals run inside the sandbox via `omniagents.rpc.terminal_backends.SessionPtyBackend`. The shell lives in the agent process (one PTY per `terminal_id`); main is a thin transport. See `src/main/terminal-proxy.ts` for the WS plumbing and `omni-code/server_functions/terminal.py` for the server-side entry points (`terminal.create`, `terminal.close`).
 - `AppControlManager`
@@ -77,11 +77,11 @@ Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWin
 
 ### XState machines (shared)
 
-`src/shared/machines/` holds pure XState v5 definitions used by the renderer — `chat-session`, `chat-boot`, `rpc-client`, `page-editor`, `terminal-tab`, `auto-launch`. They have no React, IPC, or DOM imports, and reuse pure helpers from `src/lib/` (e.g. `session-filter`). When adding chat/session state, extend the machine rather than adding side-channel React state.
+`src/shared/machines/` holds pure XState v5 definitions used by the renderer — `chat-session`, `chat-boot`, `rpc-client`, `file-editor`, `terminal-tab`, `voice-session`, `auto-launch`. They have no React, IPC, or DOM imports, and reuse pure helpers from `src/lib/` (e.g. `session-filter`). When adding chat/session state, extend the machine rather than adding side-channel React state.
 
 ### Renderer structure
 
-- `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `AppControl`, `Banner`, `Chat`, `Code`, `Console`, `Inbox`, `Initiatives`, `Omni`, `Onboarding`, `Pages`, `Projects`, `SettingsModal`, `Tickets`, `Toast`, `XTermLogViewer`.
+- `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `Agents`, `AppControl`, `Banner`, `Browser`, `Code`, `CommandPalette`, `Console`, `Files`, `Gallery`, `Git`, `Jobs`, `Omni`, `Onboarding`, `Plugins`, `Projects`, `Review`, `Sandboxes`, `SandboxProfile`, `ScheduledTasks`, `SettingsModal`, `Toast`, `Voice`, `XTermLogViewer`.
 - `src/renderer/ds/` — design system primitives (Fluent + Radix + custom)
 - `src/renderer/services/` — cross-cutting: `ipc`, `store` (mirrors main-process store into an atom), `status` (polls `main-process:get-status`), `navigation`, `agent-process`, `config`, `dev`
 - `src/renderer/common/` — shared UI (webview, layouts)
@@ -96,10 +96,6 @@ provisions/spawns/health-checks the daemon via `wsl.exe --exec` (never the plain
 `--` form — it destroys argv quoting), and auth is a per-boot shared secret with
 tokens minted in main. Native file dialogs translate paths at the single
 `toBackendPath` boundary in `src/main/index.ts` via `@/lib/wsl-path`.
-
-### Artifacts protocol
-
-Electron registers a privileged `artifact:` scheme before `app.ready` (`src/main/index.ts`). The handler serves agent-generated files with a strict CSP that blocks script execution — `bypassCSP` is intentionally **not** set. If you extend the artifact pipeline, don't loosen the response headers.
 
 ## Conventions
 
