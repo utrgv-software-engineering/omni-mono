@@ -37,6 +37,11 @@
   --breakpoint-xl: 80rem;
   --breakpoint-2xl: 96rem;
 
+  /* Type below text-xs (12px) for dense badges, labels and git rows. Size
+     only, like the arbitrary values they replace: line height is inherited. */
+  --text-2xs: 0.6875rem;
+  --text-3xs: 0.625rem;
+
   /* Fonts */
   --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
   --font-serif: Georgia, 'Times New Roman', ui-serif, serif;

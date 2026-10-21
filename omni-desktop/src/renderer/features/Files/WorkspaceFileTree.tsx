@@ -217,10 +217,7 @@ const WorkspaceTreeNode = memo(
           aside={
             <>
               {mount && !mount.writable ? (
-                <Badge
-                  variant="outline"
-                  className="ml-1 shrink-0 px-1 py-0 text-[10px] font-normal text-muted-foreground"
-                >
+                <Badge variant="outline" className="ml-1 shrink-0 px-1 py-0 text-3xs font-normal text-muted-foreground">
                   read-only
                 </Badge>
               ) : null}

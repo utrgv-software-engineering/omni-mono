@@ -1,4 +1,5 @@
 import { useControllableState } from '@radix-ui/react-use-controllable-state';
+import { cva } from 'class-variance-authority';
 import { BrainIcon, ChevronDownIcon, DotIcon, type LucideIcon } from 'lucide-react';
 import type { ComponentProps, ReactNode } from 'react';
 import { createContext, memo, useContext, useMemo } from 'react';
@@ -82,6 +83,16 @@ export type ChainOfThoughtStepProps = ComponentProps<'div'> & {
   status?: 'complete' | 'active' | 'pending';
 };
 
+const chainOfThoughtStepVariants = cva('flex gap-2 text-sm fade-in-0 slide-in-from-top-2 animate-in', {
+  variants: {
+    status: {
+      complete: 'text-muted-foreground',
+      active: 'text-foreground',
+      pending: 'text-muted-foreground/50',
+    },
+  },
+});
+
 export const ChainOfThoughtStep = memo(
   ({
     className,
@@ -93,22 +104,8 @@ export const ChainOfThoughtStep = memo(
     children,
     ...props
   }: ChainOfThoughtStepProps) => {
-    const statusStyles = {
-      complete: 'text-muted-foreground',
-      active: 'text-foreground',
-      pending: 'text-muted-foreground/50',
-    };
-
     return (
-      <div
-        className={cn(
-          'flex gap-2 text-sm',
-          statusStyles[status],
-          'fade-in-0 slide-in-from-top-2 animate-in',
-          className
-        )}
-        {...props}
-      >
+      <div className={cn(chainOfThoughtStepVariants({ status }), className)} {...props}>
         <div className="relative mt-0.5">
           <Icon className={cn('size-4', iconClassName)} />
           <div className="-mx-px absolute top-7 bottom-0 left-1/2 w-px bg-border" />

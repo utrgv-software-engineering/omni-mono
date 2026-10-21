@@ -130,7 +130,7 @@ const HunkBlock = ({
   return (
     <section aria-label={`Changes in ${file.path}, hunk ${hunk.index + 1}`}>
       <header className="flex min-h-6 items-center gap-2 border-y border-border/60 bg-muted/40 px-2 py-0.5">
-        <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+        <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground">
           {hunk.section_heading || range}
         </span>
         {showActions && (onStage || onUnstage || onDiscard) ? (

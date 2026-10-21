@@ -164,7 +164,7 @@ export function DiffSection({
             </span>
             <Counts additions={additions} deletions={deletions} />
             {notes.map((note) => (
-              <Badge key={note} variant="outline" className="shrink-0 px-1 py-0 text-[10px] font-normal text-warning">
+              <Badge key={note} variant="outline" className="shrink-0 px-1 py-0 text-3xs font-normal text-warning">
                 {note}
               </Badge>
             ))}

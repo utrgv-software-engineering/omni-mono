@@ -131,7 +131,7 @@ export function subagentBadgeLabel(s: SubagentSummary): string {
 
 export function KindBadge({ subagent }: { subagent: SubagentSummary }) {
   return (
-    <Badge variant="outline" className="shrink-0 px-1 py-0 text-[10px] font-normal">
+    <Badge variant="outline" className="shrink-0 px-1 py-0 text-3xs font-normal">
       {subagentBadgeLabel(subagent)}
     </Badge>
   );
@@ -357,7 +357,7 @@ export function ActivitySectionLabel({ children }: { children: string }) {
   return (
     <p
       aria-hidden
-      className="px-2.5 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground first:pt-1"
+      className="px-2.5 pb-1 pt-2 text-3xs font-medium uppercase tracking-wide text-muted-foreground first:pt-1"
     >
       {children}
     </p>
@@ -436,7 +436,7 @@ export function ActivityStopButton({
 /** Overline heading for one detail-page section (Task, Activity, Result, Log). */
 export function ActivityDetailLabel({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <p className={cn('mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground', className)}>
+    <p className={cn('mb-1.5 text-3xs font-medium uppercase tracking-wide text-muted-foreground', className)}>
       {children}
     </p>
   );

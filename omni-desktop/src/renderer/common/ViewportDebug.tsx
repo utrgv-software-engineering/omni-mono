@@ -86,7 +86,7 @@ export const ViewportDebug = memo(() => {
   }
   return (
     <div
-      className="fixed top-12 right-2 z-9999 w-56 rounded-lg border border-border bg-card/95 p-2 font-mono text-[10px] leading-4 text-foreground shadow-lg"
+      className="fixed top-12 right-2 z-9999 w-56 rounded-lg border border-border bg-card/95 p-2 font-mono text-3xs leading-4 text-foreground shadow-lg"
       role="status"
       aria-label="Viewport debug"
     >
