@@ -88,7 +88,7 @@ export const SettingsModalWorkspaceTab = memo(() => {
         </SettingsSection>
       )}
 
-      {/* Runtime install + CLI-in-PATH are host operations; in cloud the runtime is image-baked. */}
+      {/* Runtime install + CLI-in-PATH are host operations; server mode manages its own runtime. */}
       {isElectron && (
         <SettingsSection title="Runtime">
           <Card>

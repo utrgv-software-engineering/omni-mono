@@ -503,8 +503,8 @@ export const SettingsModalAiTab = memo(() => {
           <AlertDialogHeader>
             <AlertDialogTitle>Use this provider throughout the workspace?</AlertDialogTitle>
             <AlertDialogDescription>
-              Continuing existing conversations will send their history to {selectedProvider}. All projects and
-              residents will use this provider for subsequent runs.
+              Continuing existing conversations will send their history to {selectedProvider}. All chats and projects
+              will use this provider for subsequent runs.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -589,7 +589,7 @@ export const SettingsModalAiTab = memo(() => {
               </Select>
             </Field>
             <p className="text-sm text-muted-foreground">
-              All projects, residents, subagents, reviews, and recaps use this provider.
+              All chats, projects, subagents, reviews, and recaps use this provider.
             </p>
             <Field orientation="horizontal" className="justify-between gap-4">
               <div className="min-w-0">

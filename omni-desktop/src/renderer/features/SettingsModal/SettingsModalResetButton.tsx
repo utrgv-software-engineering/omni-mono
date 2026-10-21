@@ -34,8 +34,8 @@ export const SettingsModalResetButton = memo(() => {
           <AlertDialogHeader>
             <AlertDialogTitle>Reset all settings?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will restore all launcher settings to their defaults. Your projects and data will not be deleted, but
-              configuration such as theme, models, and sandbox options will be lost.
+              This will restore all launcher settings to their defaults. Your projects and conversation history are
+              kept, but configuration such as theme, models, and connections will be lost.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

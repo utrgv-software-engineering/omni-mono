@@ -12,9 +12,8 @@ import { SettingsModalOptInToLauncherPrereleases } from '@/renderer/features/Set
 import { isElectron } from '@/renderer/services/ipc';
 
 /**
- * App-level basics only: notifications, preview features, install/updates.
- * Connections live in Account; appearance, projects pacing, and all
- * developer concerns have their own tabs.
+ * App-level basics only: notifications and install/updates. Appearance, AI,
+ * voice, and developer concerns have their own tabs.
  */
 export const SettingsModalGeneralTab = memo(() => {
   return (
@@ -32,7 +31,7 @@ export const SettingsModalGeneralTab = memo(() => {
           <CardContent className={settingsCardContentClassName}>
             {/* Renders nothing unless the browser reports installability. */}
             <SettingsModalInstallApp />
-            {/* Launcher auto-update is Electron-only; cloud updates via the container image. */}
+            {/* Launcher auto-update is Electron-only; server mode updates with its deployment. */}
             {isElectron && <SettingsModalOptInToLauncherPrereleases />}
           </CardContent>
         </Card>

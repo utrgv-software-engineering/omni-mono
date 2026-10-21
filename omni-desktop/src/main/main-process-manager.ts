@@ -73,7 +73,10 @@ export class MainProcessManager {
       this.store.store = data;
     });
     this.ipc.handle('store:reset', (_) => {
+      // Settings reset, not a data wipe: projects and conversation history stay.
+      const { projects, chatConversations } = this.store.store;
       this.store.clear();
+      this.store.set({ projects, chatConversations });
     });
 
     contextMenu({

@@ -242,7 +242,7 @@ export const RemoteBackendCard = memo(() => {
               <span
                 className={cn('text-xs text-muted-foreground', error ? 'text-destructive' : 'text-muted-foreground')}
               >
-                {error ?? 'Sessions, projects, and tasks live on your server'}
+                {error ?? 'Sessions and projects live on your server'}
               </span>
             </div>
             <Button size="sm" variant="ghost" onClick={onDisconnect}>
@@ -323,7 +323,7 @@ export const RemoteBackendCard = memo(() => {
           <div className="flex flex-col gap-5">
             <FieldContent>
               <FieldLabel>Windows Subsystem for Linux</FieldLabel>
-              <FieldDescription>Run sandboxes and agents in a local Linux environment.</FieldDescription>
+              <FieldDescription>Run agents in a local Linux environment.</FieldDescription>
             </FieldContent>
             {wslDetect?.wsl === 'missing' ? (
               wslInstallStarted ? (

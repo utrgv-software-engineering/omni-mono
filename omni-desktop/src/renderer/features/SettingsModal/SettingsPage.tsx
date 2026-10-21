@@ -1,16 +1,5 @@
 import { useStore } from '@nanostores/react';
-import {
-  ArrowLeft,
-  Box,
-  GitBranch,
-  Keyboard,
-  Palette,
-  Puzzle,
-  Settings,
-  SlidersHorizontal,
-  SquareTerminal,
-  User,
-} from 'lucide-react';
+import { ArrowLeft, Box, GitBranch, Palette, Puzzle, Settings, SlidersHorizontal, SquareTerminal } from 'lucide-react';
 import { memo, useCallback, useEffect, useState } from 'react';
 
 import { cn } from '@/renderer/ds/cn';
@@ -27,27 +16,16 @@ import {
 } from '@/renderer/ds/ui/sidebar';
 import { openPlugins } from '@/renderer/features/Plugins/plugins-nav';
 import { $settingsInitialTab } from '@/renderer/features/SettingsModal/settings-nav';
-import { SettingsModalAccountTab } from '@/renderer/features/SettingsModal/SettingsModalAccountTab';
 import { SettingsModalAiTab } from '@/renderer/features/SettingsModal/SettingsModalAiTab';
 import { SettingsModalAppearanceTab } from '@/renderer/features/SettingsModal/SettingsModalAppearanceTab';
 import { SettingsModalAudioTab } from '@/renderer/features/SettingsModal/SettingsModalAudioTab';
 import { SettingsModalEnvironmentTab } from '@/renderer/features/SettingsModal/SettingsModalEnvironmentTab';
 import { SettingsModalGeneralTab } from '@/renderer/features/SettingsModal/SettingsModalGeneralTab';
 import { SettingsModalGitTab } from '@/renderer/features/SettingsModal/SettingsModalGitTab';
-import { SettingsModalHotkeysTab } from '@/renderer/features/SettingsModal/SettingsModalHotkeysTab';
 import { SettingsModalResetButton } from '@/renderer/features/SettingsModal/SettingsModalResetButton';
 import { SettingsModalWorkspaceTab } from '@/renderer/features/SettingsModal/SettingsModalWorkspaceTab';
 
-type SettingsTab =
-  | 'General'
-  | 'AI'
-  | 'Appearance'
-  | 'Audio'
-  | 'Hotkeys'
-  | 'Account'
-  | 'Workspace'
-  | 'Environment'
-  | 'Git';
+type SettingsTab = 'General' | 'AI' | 'Appearance' | 'Audio' | 'Workspace' | 'Environment' | 'Git';
 
 type TabDef = { value: SettingsTab; label: string; icon: React.JSX.Element };
 
@@ -64,14 +42,12 @@ const TAB_GROUPS: ReadonlyArray<{ label: string | null; tabs: ReadonlyArray<TabD
       { value: 'AI', label: 'AI', icon: <Box /> },
       { value: 'Appearance', label: 'Appearance', icon: <Palette /> },
       { value: 'Audio', label: 'Voice & Audio', icon: <SlidersHorizontal /> },
-      { value: 'Hotkeys', label: 'Hotkeys', icon: <Keyboard /> },
-      { value: 'Account', label: 'Account', icon: <User /> },
     ],
   },
   {
     label: 'Developer',
     tabs: [
-      { value: 'Workspace', label: 'Workspace & Sandbox', icon: <Box /> },
+      { value: 'Workspace', label: 'Workspace', icon: <Box /> },
       { value: 'Environment', label: 'Environment', icon: <SquareTerminal /> },
       { value: 'Git', label: 'Git', icon: <GitBranch /> },
     ],
@@ -192,8 +168,6 @@ export const SettingsPage = memo(() => {
           {shownTab === 'AI' && <SettingsModalAiTab />}
           {shownTab === 'Appearance' && <SettingsModalAppearanceTab />}
           {shownTab === 'Audio' && <SettingsModalAudioTab />}
-          {shownTab === 'Hotkeys' && <SettingsModalHotkeysTab />}
-          {shownTab === 'Account' && <SettingsModalAccountTab />}
           {shownTab === 'Workspace' && <SettingsModalWorkspaceTab />}
           {shownTab === 'Environment' && <SettingsModalEnvironmentTab />}
           {shownTab === 'Git' && <SettingsModalGitTab />}

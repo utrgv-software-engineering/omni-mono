@@ -25,7 +25,6 @@ export const DEFAULTS: StoreData = {
   layoutMode: 'chat',
   theme: 'omni',
   onboardingComplete: false,
-  cliCardDismissed: false,
   remoteBackend: null,
   projects: [],
   codeTabs: [],

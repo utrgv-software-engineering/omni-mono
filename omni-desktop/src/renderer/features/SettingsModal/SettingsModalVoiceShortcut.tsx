@@ -1,6 +1,6 @@
 /**
- * Hotkeys settings. One voice binding toggles recording on the hovered
- * code-deck column / active chat. The recorder captures a key combo and
+ * Voice shortcut setting (shown in the Voice & Audio tab). The binding toggles
+ * recording on the hovered code-deck column / active chat. The recorder captures a key combo and
  * stores it in react-hotkeys-hook format (e.g. `alt+v`).
  */
 
@@ -11,11 +11,7 @@ import { Button } from '@/renderer/ds/ui/button';
 import { Card, CardContent } from '@/renderer/ds/ui/card';
 import { Field, FieldContent, FieldDescription, FieldLabel } from '@/renderer/ds/ui/field';
 import { Kbd } from '@/renderer/ds/ui/kbd';
-import {
-  settingsCardContentClassName,
-  SettingsPane,
-  SettingsSection,
-} from '@/renderer/features/SettingsModal/SettingsLayout';
+import { settingsCardContentClassName, SettingsSection } from '@/renderer/features/SettingsModal/SettingsLayout';
 import { persistedStoreApi } from '@/renderer/services/store';
 
 const MOD_ORDER = ['ctrl', 'alt', 'shift', 'meta'] as const;
@@ -118,7 +114,7 @@ function HotkeyRecorder({
   );
 }
 
-export function SettingsModalHotkeysTab(): React.ReactElement {
+export function SettingsModalVoiceShortcut(): React.ReactElement {
   const store = useStore(persistedStoreApi.$atom);
   const hotkey = store.voiceToggleHotkey;
 
@@ -127,22 +123,20 @@ export function SettingsModalHotkeysTab(): React.ReactElement {
   }, []);
 
   return (
-    <SettingsPane>
-      <SettingsSection title="Voice">
-        <Card>
-          <CardContent className={settingsCardContentClassName}>
-            <Field orientation="horizontal" className="justify-between gap-5">
-              <FieldContent>
-                <FieldLabel>Voice shortcut</FieldLabel>
-                <FieldDescription>
-                  Record in the active chat or the column under your pointer. Tap to toggle or hold to talk.
-                </FieldDescription>
-              </FieldContent>
-              <HotkeyRecorder value={hotkey} onChange={setVoiceHotkey} />
-            </Field>
-          </CardContent>
-        </Card>
-      </SettingsSection>
-    </SettingsPane>
+    <SettingsSection title="Shortcut">
+      <Card>
+        <CardContent className={settingsCardContentClassName}>
+          <Field orientation="horizontal" className="justify-between gap-5">
+            <FieldContent>
+              <FieldLabel>Voice shortcut</FieldLabel>
+              <FieldDescription>
+                Record in the active chat or the column under your pointer. Tap to toggle or hold to talk.
+              </FieldDescription>
+            </FieldContent>
+            <HotkeyRecorder value={hotkey} onChange={setVoiceHotkey} />
+          </Field>
+        </CardContent>
+      </Card>
+    </SettingsSection>
   );
 }

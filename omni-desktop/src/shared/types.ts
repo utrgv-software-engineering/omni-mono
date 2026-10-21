@@ -100,7 +100,6 @@ export type RemoteBackendBootstrap = (WslBackend & { url: string }) | ServerBack
 export type StoreData = {
   workspaceDir?: string;
   launcherWindowProps?: WindowProps;
-  appWindowProps?: WindowProps;
   optInToLauncherPrereleases: boolean;
   /** System notifications when a backgrounded agent finishes or needs approval. */
   notifyOnAgentAttention: boolean;
@@ -125,8 +124,6 @@ export type StoreData = {
   layoutMode: LayoutMode;
   theme: OmniTheme;
   onboardingComplete: boolean;
-  /** User dismissed the "Use Omni from your terminal" card in Spaces. */
-  cliCardDismissed: boolean;
   /**
    * Set when the Electron app is linked to a remote launcher backend. When
    * non-null the renderer routes its transport to the backend over WebSocket
@@ -416,7 +413,6 @@ export const schema: Schema<StoreData> = {
     type: 'string',
   },
   launcherWindowProps: winSizePropsSchema,
-  appWindowProps: winSizePropsSchema,
   optInToLauncherPrereleases: {
     type: 'boolean',
     default: false,
@@ -495,10 +491,6 @@ export const schema: Schema<StoreData> = {
     default: 'omni',
   },
   onboardingComplete: {
-    type: 'boolean',
-    default: false,
-  },
-  cliCardDismissed: {
     type: 'boolean',
     default: false,
   },

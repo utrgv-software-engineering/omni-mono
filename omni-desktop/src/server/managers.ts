@@ -221,7 +221,10 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     sendSnapshot();
   });
   ipc.handle('store:reset', () => {
+    // Settings reset, not a data wipe: projects and conversation history stay.
+    const { projects, chatConversations } = store.store;
     store.clear();
+    store.set({ projects, chatConversations });
     sendSnapshot();
   });
 

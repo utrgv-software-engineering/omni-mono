@@ -14,6 +14,7 @@ import {
   SettingsSection,
 } from '@/renderer/features/SettingsModal/SettingsLayout';
 import { SettingsModalVoicePersonas } from '@/renderer/features/SettingsModal/SettingsModalVoicePersonas';
+import { SettingsModalVoiceShortcut } from '@/renderer/features/SettingsModal/SettingsModalVoiceShortcut';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { AudioSettings } from '@/shared/types';
 
@@ -223,6 +224,8 @@ export const SettingsModalAudioTab = memo(() => {
 
       {/* Personas shape the local voice's personality — only meaningful when
            local voice is on (AI tab → Voice → Local). */}
+      <SettingsModalVoiceShortcut />
+
       {store.localVoiceEnabled && (
         <SettingsSection title="Personas">
           <Card>
