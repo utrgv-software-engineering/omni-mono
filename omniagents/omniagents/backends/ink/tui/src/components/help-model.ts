@@ -11,7 +11,7 @@ const GLOBAL: HelpSection = {
   title: "Everywhere",
   rows: [
     { keys: "tab / shift+tab", label: "next / previous screen" },
-    { keys: "alt+1..4", label: "chat · review · agents · files" },
+    { keys: "alt+1..2", label: "chat · agents" },
     { keys: "ctrl+p", label: "sessions: switch, search, fork" },
     { keys: "ctrl+k", label: "command palette" },
     { keys: "ctrl+g", label: "git panel" },
@@ -62,30 +62,11 @@ const DECISIONS: HelpSection = {
 
 const SCREENS: Record<Screen, HelpSection> = {
   chat: { title: "Chat", rows: [] },
-  review: {
-    title: "Review",
-    rows: [
-      { keys: "j / k", label: "next / previous file or hunk" },
-      { keys: "t", label: "this turn's diff ↔ working tree" },
-      { keys: "space", label: "stage / unstage" },
-      { keys: "x", label: "discard" },
-      { keys: "c", label: "commit" },
-      { keys: "]", label: "next repository" },
-    ],
-  },
   agents: {
     title: "Agents",
     rows: [
       { keys: "↑↓", label: "select a worker" },
       { keys: "enter", label: "open its transcript" },
-    ],
-  },
-  files: {
-    title: "Files",
-    rows: [
-      { keys: "↑↓ enter", label: "browse · expand" },
-      { keys: "e", label: "edit (ctrl+s saves)" },
-      { keys: "m", label: "mention the file in the composer" },
     ],
   },
 };

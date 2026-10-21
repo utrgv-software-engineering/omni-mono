@@ -12,7 +12,7 @@ describe("helpSections", () => {
     for (const key of [
       "ctrl+o",
       "shift+↑ / shift+↓",
-      "alt+1..4",
+      "alt+1..2",
       "ctrl+b",
       "ctrl+n",
       "ctrl+g",
@@ -32,8 +32,7 @@ describe("helpSections", () => {
   });
   it("adds the current screen's keys and omits an empty section", () => {
     expect(helpSections("chat").map((s) => s.title)).not.toContain("Chat");
-    expect(helpSections("files").map((s) => s.title)).toContain("Files");
-    expect(allKeys("files")).toContain("m");
+    expect(helpSections("agents").map((s) => s.title)).toContain("Agents");
     // No terminal screen: students use their own terminal.
     expect(allKeys("chat")).not.toContain("ctrl+]");
   });

@@ -82,8 +82,8 @@ export interface MultiLineInputProps {
   maxHeight?: number;
   history?: string[];
   disableSubmit?: boolean;
-  /** External one-shot insertion (e.g. the Files screen's @path
-   * mention). Consumed at the cursor; the owner clears it via
+  /** External one-shot insertion (e.g. a command completed from the
+   * palette). Consumed at the cursor; the owner clears it via
    * onInsertConsumed. */
   pendingInsert?: string | null;
   onInsertConsumed?: () => void;
@@ -442,7 +442,7 @@ export const MultiLineInputOptimized = themedMemo<MultiLineInputProps>(
       return true;
     };
 
-    // One-shot external insertion (Files screen mention bridge): text
+    // One-shot external insertion (command palette completion): text
     // arrives via props, lands at the cursor, and is acknowledged so
     // the owner clears it — re-renders can't double-insert.
     useEffect(() => {

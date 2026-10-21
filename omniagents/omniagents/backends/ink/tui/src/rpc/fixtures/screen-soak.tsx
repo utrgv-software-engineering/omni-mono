@@ -8,7 +8,6 @@ import stripAnsi from "strip-ansi";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
 import { MouseProvider } from "../../contexts/MouseContext.js";
 import { ScrollProvider } from "../../contexts/ScrollProvider.js";
-import { ReviewScreen } from "../../components/ReviewScreen.js";
 import { AgentsScreen } from "../../components/AgentsScreen.js";
 import { SessionManager } from "../../components/SessionManager.js";
 import { ApprovalDialog } from "../../components/ApprovalDialog.js";
@@ -70,9 +69,7 @@ export async function runScreenSoak(client: RPCClient, base: string) {
     return (
       <Box flexDirection="column" height={38}>
         <Text>{`SCREEN_${tab} SESSION_${sessions.indexOf(session)}`}</Text>
-        {tab === "review" ? (
-          <ReviewScreen active height={35} client={client} onExit={() => {}} />
-        ) : tab === "agents" ? (
+        {tab === "agents" ? (
           <AgentsScreen active height={35} onExit={() => {}} />
         ) : tab === "sessions" ? (
           <SessionManager client={client} onOpen={() => {}} onNew={() => {}} />
@@ -131,7 +128,7 @@ export async function runScreenSoak(client: RPCClient, base: string) {
   try {
     await until(() => !!useAppStore.getState().approval);
     const baseline = listeners();
-    const tabs = ["review", "agents", "sessions", "chat", "approval"];
+    const tabs = ["agents", "sessions", "chat", "approval"];
     for (let i = 0; i < 25; i++) {
       const tab = tabs[i % tabs.length];
       const selected = Math.floor(i / tabs.length) % 2;

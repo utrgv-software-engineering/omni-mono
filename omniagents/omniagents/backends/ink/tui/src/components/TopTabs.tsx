@@ -41,15 +41,13 @@ export const TopTabs = themedMemo<{
         ? ` 1 chat${star("chat")} ⚠ `
         : ` 1 chat${star("chat")} `,
     },
-    { id: "review", text: ` 2 review${star("review")} ` },
     {
       id: "agents",
       text:
         runningWorkers > 0
-          ? ` 3 agents${star("agents")} ${runningWorkers} `
-          : ` 3 agents${star("agents")} `,
+          ? ` 2 agents${star("agents")} ${runningWorkers} `
+          : ` 2 agents${star("agents")} `,
     },
-    { id: "files", text: ` 4 files${star("files")} ` },
   ];
   const hint = "tab ";
   const tabsWidth = labels.reduce((sum, l) => sum + l.text.length, 0);

@@ -65,17 +65,6 @@ export const BUILTIN_COMMANDS: readonly CommandRow[] = [
     source: "client",
   },
   {
-    name: "diff",
-    function: null,
-    description: "Review this session's changes (the review screen)",
-    usage: "",
-    args: { kind: "none" },
-    aliases: ["review"],
-    during_run: true,
-    order: 23,
-    source: "client",
-  },
-  {
     name: "status",
     function: null,
     description: "Session, model, tokens, workspace, goal",

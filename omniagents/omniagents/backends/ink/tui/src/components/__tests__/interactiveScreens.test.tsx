@@ -1,10 +1,8 @@
 import React from "react";
-import { EventEmitter } from "node:events";
 import { cleanup, render } from "ink-testing-library";
 import stripAnsi from "strip-ansi";
 import { afterEach, expect, it, vi } from "vitest";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
-import { ReviewScreen } from "../ReviewScreen.js";
 import { AgentsScreen } from "../AgentsScreen.js";
 import { ApprovalDialog } from "../ApprovalDialog.js";
 import { McpApprovalDialog } from "../McpApprovalDialog.js";
@@ -36,89 +34,6 @@ function mount(view: React.ReactNode) {
 
 const initial = useAppStore.getState();
 afterEach(() => useAppStore.setState(initial, true));
-function reviewClient() {
-  return Object.assign(new EventEmitter(), {
-    defaultEnvironmentId: () => "env",
-    isGranted: () => true,
-    gitListRepositories: vi
-      .fn()
-      .mockResolvedValue({ repositories: [{ repo: "repo" }] }),
-    gitStatus: vi.fn().mockResolvedValue({
-      entries: [],
-      untracked: ["a.txt", "b.txt"],
-      conflicted: [],
-    }),
-    gitDiff: vi.fn().mockResolvedValue({ files: [] }),
-    gitStage: vi.fn().mockReturnValue(new Promise(() => {})),
-    gitUnstage: vi.fn(),
-    gitDiscard: vi.fn(),
-    gitCommit: vi.fn(),
-  });
-}
-const review = (api: ReturnType<typeof reviewClient>, active = true) => (
-  <ReviewScreen
-    active={active}
-    height={30}
-    client={api as unknown as RPCClient}
-    onExit={() => {}}
-  />
-);
-
-it("Review stages the newly selected file exactly once during a key burst", async () => {
-  const api = reviewClient();
-  const ui = mount(review(api));
-  await settle();
-  ui.stdin.write("\x1b[B  ");
-  await settle();
-  expect(api.gitStage).toHaveBeenCalledTimes(1);
-  expect(api.gitStage).toHaveBeenCalledWith("env", "repo", {
-    paths: ["b.txt"],
-  });
-});
-
-it("Review treats pasted commands as text rather than actions", async () => {
-  const api = reviewClient();
-  const ui = mount(review(api));
-  await settle();
-  for (const key of [" ", "x", "c"]) ui.stdin.write(`\x1b[200~${key}\x1b[201~`);
-  await settle();
-  expect(api.gitStage).not.toHaveBeenCalled();
-  expect(api.gitDiscard).not.toHaveBeenCalled();
-  expect(plain(ui.lastFrame())).not.toContain("commit: ");
-});
-
-it("Review ignores a listing that resolves after the screen closes", async () => {
-  const api = reviewClient();
-  const listing = deferred<unknown>();
-  api.gitListRepositories.mockReturnValue(listing.promise);
-  const ui = mount(review(api));
-  await settle();
-  ui.rerender(review(api, false));
-  await settle();
-  listing.resolve({ repositories: [{ repo: "late" }] });
-  await settle();
-  expect(api.gitStatus).not.toHaveBeenCalled();
-});
-
-it("Review keeps selection identity when refreshed files reorder", async () => {
-  const api = reviewClient();
-  const ui = mount(review(api));
-  await settle();
-  ui.stdin.write("\x1b[B");
-  await settle();
-  api.gitStatus.mockResolvedValue({
-    entries: [],
-    untracked: ["b.txt", "a.txt"],
-    conflicted: [],
-  });
-  ui.stdin.write("r");
-  await settle();
-  ui.stdin.write(" ");
-  await settle();
-  expect(api.gitStage).toHaveBeenCalledWith("env", "repo", {
-    paths: ["b.txt"],
-  });
-});
 
 it("Agents keeps the selected worker when completion changes the sort order", async () => {
   const worker = (id: string, status: "running" | "completed") =>

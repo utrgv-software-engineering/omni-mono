@@ -20,7 +20,7 @@ import { buildStripTokens, type StripTone } from "./strip-model.js";
 import { Theme, roleMap } from "../theme.js";
 import { themedMemo } from "../theme/themed-memo.js";
 
-export type Screen = "chat" | "review" | "agents" | "files";
+export type Screen = "chat" | "agents";
 
 // The status bar: ONE background-filled row at the very bottom of the
 // screen, tmux-style — what's HAPPENING. Mission tokens on the left

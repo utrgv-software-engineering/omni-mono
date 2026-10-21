@@ -35,7 +35,6 @@ import {
   useCurrentRunId,
   usePreamble,
   useBashJobs,
-  useRunDiff,
   useSubagents,
   useTranscriptDetail,
   useThemeVersion,
@@ -65,9 +64,7 @@ import { LoopPanel } from "./LoopPanel.js";
 import { SkillsPanel } from "./SkillsPanel.js";
 import { ThemePanel } from "./ThemePanel.js";
 import { QueuedMessages } from "./QueuedMessages.js";
-import { ReviewScreen } from "./ReviewScreen.js";
 import { AgentsScreen } from "./AgentsScreen.js";
-import { FilesScreen } from "./FilesScreen.js";
 import { StatusBar, type Screen } from "./StatusBar.js";
 import { TopTabs } from "./TopTabs.js";
 import { GitPanel } from "./GitPanel.js";
@@ -377,11 +374,11 @@ export const App: React.FC<AppProps> = ({
   // open, so panels can never stack two live cursors.
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
   // Screen router: full-screen scenes switched with alt+1/2. Chat is
-  // the conversation (composer, transcript, decisions inline); review
-  // is the full-height diff screen. Drawer overlays live on chat.
+  // the conversation (composer, transcript, decisions inline); agents
+  // lists workers. Drawer overlays live on chat.
   const [screen, setScreen] = useState<Screen>("chat");
-  // Text queued for the composer (the Files screen's @path mention
-  // bridge): consumed by MultiLineInputOptimized on the next render.
+  // Text queued for the composer (the command palette's completion):
+  // consumed by MultiLineInputOptimized on the next render.
   const [pendingInsert, setPendingInsert] = useState<string | null>(null);
   const composerDrafts = React.useRef(new ComposerDrafts()).current;
   // Inline completion popup: the `/command` or `@file` token under the
@@ -423,25 +420,20 @@ export const App: React.FC<AppProps> = ({
   // visiting the screen clears it.
   const [unread, setUnread] = useState<Record<Screen, boolean>>({
     chat: false,
-    review: false,
     agents: false,
-    files: false,
   });
-  const runDiffForBadge = useRunDiff();
   const workersForBadge = useSubagents();
   const workersSignature = workersForBadge
     .map((w) => `${w.subagent_id}:${w.status}`)
     .join(",");
   const prevSignals = useRef<{
     messages: number;
-    runDiff: unknown;
     subagents: string;
   } | null>(null);
   useEffect(() => {
     const prev = prevSignals.current;
     prevSignals.current = {
       messages: messages.length,
-      runDiff: runDiffForBadge,
       subagents: workersSignature,
     };
     if (!prev) return;
@@ -453,11 +445,10 @@ export const App: React.FC<AppProps> = ({
         }
       };
       if (messages.length > prev.messages) mark("chat");
-      if (runDiffForBadge && runDiffForBadge !== prev.runDiff) mark("review");
       if (workersSignature !== prev.subagents) mark("agents");
       return next;
     });
-  }, [messages.length, runDiffForBadge, workersSignature, screen]);
+  }, [messages.length, workersSignature, screen]);
   useEffect(() => {
     setUnread((current) =>
       current[screen] ? { ...current, [screen]: false } : current,
@@ -607,7 +598,7 @@ export const App: React.FC<AppProps> = ({
   // drawers open and close. Observe the element instead of enumerating
   // every state that could change it — a missed dependency here paints
   // the footer over the transcript. Zero is a REAL measurement on
-  // screens without a composer (review/agents with no drawer open).
+  // screens without a composer (agents with no drawer open).
   useLayoutEffect(() => {
     const element = controlsRef.current;
     if (!element) return;
@@ -931,9 +922,6 @@ export const App: React.FC<AppProps> = ({
               return { result: `Fork failed: ${err}` };
             }
           }
-          case "diff":
-            setScreen("review");
-            return {};
           case "status": {
             const state = useAppStore.getState();
             let workspaceRoot: string | null = null;
@@ -1291,7 +1279,7 @@ export const App: React.FC<AppProps> = ({
         // Tab cycles screens — from anywhere, always. Overlays close so
         // the switch is never invisible. Shift+Tab reverses.
         if (key.tab && !key.ctrl && !key.meta) {
-          const order: Screen[] = ["chat", "review", "agents", "files"];
+          const order: Screen[] = ["chat", "agents"];
           setScreen((prev) => {
             const index = order.indexOf(prev);
             const step = key.shift ? order.length - 1 : 1;
@@ -1306,21 +1294,13 @@ export const App: React.FC<AppProps> = ({
             return;
           }
           if (input === "2") {
-            setScreen("review");
-            return;
-          }
-          if (input === "3") {
             setScreen("agents");
-            return;
-          }
-          if (input === "4") {
-            setScreen("files");
             return;
           }
         }
         // Panel chords — each toggles its own panel; opening one closes
         // whatever else was open (single-owner rule).
-        // Screens are reached with Tab and alt+1..4.
+        // Screens are reached with Tab and alt+1..2.
         if (key.ctrl && input === "b") {
           setActivePanel((prev) => (prev === "jobs" ? null : "jobs"));
           return;
@@ -1530,14 +1510,7 @@ export const App: React.FC<AppProps> = ({
             minHeight={0}
             overflowY="hidden"
           >
-            {screen === "review" ? (
-              <ReviewScreen
-                active={screen === "review"}
-                height={availableTerminalHeight}
-                client={client}
-                onExit={() => setScreen("chat")}
-              />
-            ) : screen === "agents" ? (
+            {screen === "agents" ? (
               <AgentsScreen
                 active={screen === "agents"}
                 height={availableTerminalHeight}
@@ -1580,17 +1553,6 @@ export const App: React.FC<AppProps> = ({
                     : undefined
                 }
                 onExit={() => setScreen("chat")}
-              />
-            ) : screen === "files" ? (
-              <FilesScreen
-                active={screen === "files"}
-                height={availableTerminalHeight}
-                client={client}
-                onExit={() => setScreen("chat")}
-                onMention={(path) => {
-                  setPendingInsert(`@${path} `);
-                  setScreen("chat");
-                }}
               />
             ) : messages.length === 0 ? (
               /* Fresh session: the dashboard IS the body, vertically
