@@ -14,7 +14,7 @@ import {
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatCommand, ChatOperations } from '@/shared/chat-commands';
-import type { AgentProcessStopOptions, CodeTab, CodeTabId } from '@/shared/types';
+import type { CodeTab, CodeTabId } from '@/shared/types';
 
 // Re-export agent status/xterm maps so existing imports from Code/state still work.
 // Components can read per-tab status via $agentStatuses.get()[tabId].
@@ -50,9 +50,9 @@ export const codeApi = {
     clearStatus(tabId);
     agentProcessApi.start(tabId, arg);
   },
-  stopSandbox: async (tabId: CodeTabId, opts?: AgentProcessStopOptions) => {
+  stopSandbox: async (tabId: CodeTabId) => {
     teardownTerminal(tabId);
-    await agentProcessApi.stop(tabId, opts);
+    await agentProcessApi.stop(tabId);
   },
   rebuildSandbox: (tabId: CodeTabId, fallbackArg: { workspaceDir: string }) => {
     clearStatus(tabId);

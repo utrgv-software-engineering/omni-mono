@@ -141,7 +141,6 @@ function makePm(opts?: {
   waitForRuntimeInstall?: () => Promise<void>;
   durableLocalCodexAccountMutations?: boolean;
   durableLocalMcpMutations?: boolean;
-  prepareLocalMcpOwnership?: (status: Record<string, unknown>) => void | Promise<void>;
 }) {
   hoisted.agentProcessInstances = [];
   const sendCalls: Array<{ channel: string; args: unknown[] }> = [];
@@ -158,7 +157,6 @@ function makePm(opts?: {
     waitForRuntimeInstall: opts?.waitForRuntimeInstall,
     durableLocalCodexAccountMutations: opts?.durableLocalCodexAccountMutations,
     durableLocalMcpMutations: opts?.durableLocalMcpMutations,
-    prepareLocalMcpOwnership: opts?.prepareLocalMcpOwnership,
   });
   return { pm, sendCalls };
 }
@@ -316,9 +314,8 @@ describe('ProcessManager', () => {
       expect(host.callManagementAdmin).not.toHaveBeenCalled();
     });
 
-    it('gates MCP mutations on Electron topology, runtime durability, and ownership preparation', async () => {
-      const prepare = vi.fn();
-      const { pm } = makePm({ durableLocalMcpMutations: true, prepareLocalMcpOwnership: prepare });
+    it('gates MCP mutations on Electron topology and runtime durability', async () => {
+      const { pm } = makePm({ durableLocalMcpMutations: true });
       await pm.ensureManagementConnection();
       const host = hoisted.agentProcessInstances[0]!;
       host.getStatus.mockReturnValue({ type: 'running', timestamp: Date.now() });
@@ -331,7 +328,6 @@ describe('ProcessManager', () => {
       ).resolves.toEqual({ ok: true, method: 'mcp_create_server' });
 
       expect(host.getManagementMcpStatus).toHaveBeenCalledOnce();
-      expect(prepare).toHaveBeenCalledOnce();
       expect(host.callManagementAdmin).toHaveBeenNthCalledWith(1, 'mcp_create_server', {
         server_name: 'github',
         type: 'http',
@@ -391,7 +387,6 @@ describe('ProcessManager', () => {
         },
         resolveGitToken: async () => 'ghp_thetoken',
         durableLocalMcpMutations: true,
-        prepareLocalMcpOwnership: vi.fn(),
       });
       await pm.start('mcp-peer', { workspaceDir: '/tmp/mcp-peer', projectId: 'proj_git' });
       await pm.ensureManagementConnection();
@@ -1080,25 +1075,6 @@ describe('ProcessManager', () => {
       finishHost();
       await Promise.all([stopB, retryA]);
       expect(acknowledged).toBe(true);
-    });
-
-    it('routes snapshot discard to the selected consumer environment', async () => {
-      const { pm } = makePm();
-      await pm.start('tab-a', { workspaceDir: '/tmp/ws' });
-      const host = hoisted.agentProcessInstances[0]!;
-      const workspaceId = host.configureConsumer.mock.calls[0]![1] as string;
-      const environmentId = `environment-${workspaceId}`;
-      host.getStatus.mockReturnValue({
-        type: 'running',
-        data: { wsUrl: 'ws://localhost:9000/ws', uiUrl: 'http://localhost:9000' },
-        timestamp: Date.now(),
-      } satisfies WithTimestamp<AgentProcessStatus>);
-
-      await pm.stop('tab-a', { discardSnapshot: true });
-      expect(host.discardConsumerSnapshot).toHaveBeenCalledWith(
-        expect.objectContaining({ environmentId, environmentGeneration: 3 })
-      );
-      expect(host.stop).toHaveBeenCalledTimes(1);
     });
 
     it('start adopts a live process instead of restarting it', async () => {

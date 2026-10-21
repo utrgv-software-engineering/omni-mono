@@ -15,7 +15,6 @@ import { SimpleLogger } from '@/lib/simple-logger';
 import { wsAuthOptions } from '@/lib/ws-auth';
 import { AgentHostControlClient } from '@/main/agent-host-control-client';
 import { getGitBashEnv } from '@/main/git-bash';
-import { initializeMainRpcConnection } from '@/main/omniagents-rpc-handshake';
 import { assertServeProtocolSupported } from '@/main/product-runtime';
 import { getOmniCliPath, getOmniConfigDir, isDirectory, pathExists } from '@/main/util';
 import type { ManagementAdminMethod } from '@/shared/management-admin';
@@ -26,7 +25,6 @@ import type {
   AgentRuntimeConnection,
   ExecutionTarget,
   LogEntry,
-  ServerCallResult,
   WithTimestamp,
   WorkspaceMountDescriptor,
 } from '@/shared/types';
@@ -369,150 +367,6 @@ export const decodeAgentHostResources = (value: unknown): AgentHostResourceSnaps
     }),
   };
 };
-
-const SERVER_CALL_TIMEOUT_MS = 8_000;
-
-/**
- * Open a one-shot JSON-RPC WebSocket to omni serve, send one
- * ``server_call`` for *fn*, await the result, then close. Used by
- * lifecycle calls (pause/unpause) that don't need a long-lived control
- * channel. When the server is authenticated, *authToken* rides as an
- * ``Authorization: Bearer`` upgrade header — never in the URL.
- */
-async function oneShotServerCall(
-  wsUrl: string,
-  target: ExecutionTarget,
-  fn: string,
-  args: Record<string, unknown> = {},
-  timeoutMs: number = SERVER_CALL_TIMEOUT_MS,
-  authToken?: string
-): Promise<ServerCallResult> {
-  return new Promise<ServerCallResult>((resolve) => {
-    let settled = false;
-    let nextId = 1;
-    const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-    const finish = (result: ServerCallResult) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      for (const call of pending.values()) {
-        call.reject(new Error(`${fn} connection closed`));
-      }
-      pending.clear();
-      try {
-        socket.close();
-      } catch {
-        // ignore
-      }
-      resolve(result);
-    };
-
-    const socket = new WsWebSocket(wsUrl, wsAuthOptions(authToken));
-    const timer = setTimeout(() => finish({ ok: false, supported: false, reason: `${fn} timed out` }), timeoutMs);
-
-    const request = (method: string, params: object): Promise<unknown> => {
-      const id = nextId++;
-      return new Promise((resolveRequest, rejectRequest) => {
-        pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
-        socket.send(JSON.stringify({ jsonrpc: '2.0', id, method, params }), (error) => {
-          if (!error) {
-            return;
-          }
-          pending.delete(id);
-          rejectRequest(error);
-        });
-      });
-    };
-
-    socket.once('open', async () => {
-      try {
-        await initializeMainRpcConnection({
-          name: 'omni-desktop-lifecycle',
-          request: (method, params) => request(method, params),
-          notify: (method, params) =>
-            new Promise<void>((resolveSend, rejectSend) => {
-              socket.send(JSON.stringify({ jsonrpc: '2.0', method, params }), (error) => {
-                if (error) {
-                  rejectSend(error);
-                } else {
-                  resolveSend();
-                }
-              });
-            }),
-        });
-        const result = await request('server_call', {
-          function: fn,
-          args,
-          workspace_id: target.workspaceId,
-          environment_id: target.environmentId,
-          environment_generation: target.environmentGeneration,
-        });
-        if (typeof result !== 'object' || result === null) {
-          finish({ ok: false, supported: false, reason: `${fn} returned no result` });
-          return;
-        }
-        const r = result as Record<string, unknown>;
-        finish({
-          ok: r.ok === true,
-          supported: r.supported !== false,
-          data: r,
-          ...(typeof r.paused === 'boolean' ? { paused: r.paused } : {}),
-          ...(typeof r.reason === 'string' ? { reason: r.reason } : {}),
-        });
-      } catch (err) {
-        finish({
-          ok: false,
-          supported: false,
-          reason: `${fn} send failed: ${(err as Error).message ?? err}`,
-        });
-      }
-    });
-
-    socket.on('message', (raw) => {
-      let msg: unknown;
-      try {
-        msg = JSON.parse(String(raw));
-      } catch {
-        return;
-      }
-      if (typeof msg !== 'object' || msg === null) {
-        return;
-      }
-      const obj = msg as Record<string, unknown>;
-      const id = obj.id;
-      if (typeof id !== 'number') {
-        return;
-      }
-      const call = pending.get(id);
-      if (!call) {
-        return;
-      }
-      pending.delete(id);
-      if ('error' in obj && obj.error && typeof obj.error === 'object') {
-        const errMsg = String((obj.error as Record<string, unknown>).message ?? `${fn} rpc error`);
-        call.reject(new Error(errMsg));
-        return;
-      }
-      call.resolve(obj.result);
-    });
-
-    socket.on('error', (err) => {
-      finish({
-        ok: false,
-        supported: false,
-        reason: `${fn} ws error: ${(err as Error).message ?? err}`,
-      });
-    });
-
-    socket.on('close', () => {
-      // If the socket closes before we got a result, treat as failure.
-      // The settled guard makes this a no-op in the normal path.
-      finish({ ok: false, supported: false, reason: `${fn} ws closed unexpectedly` });
-    });
-  });
-}
 
 // ---------------------------------------------------------------------------
 // AgentProcess
@@ -929,20 +783,6 @@ export class AgentProcess {
       }
     }
     return this.stopResult('environment', 'not-applicable');
-  };
-
-  /**
-   * Flag the environment's shutdown as terminal. On close, omni serve
-   * destroys the durable state instead of preserving it — for docker that
-   * means stopping and removing the container (the workspace lives in its
-   * writable layer) and deleting the session-state record.
-   */
-  discardConsumerSnapshot = async (target: ExecutionTarget): Promise<void> => {
-    const data = await this.waitForRunningData();
-    if (!data.wsUrl) {
-      return;
-    }
-    await oneShotServerCall(data.wsUrl, target, 'sandbox.discard_snapshot', {}, SERVER_CALL_TIMEOUT_MS, data.authToken);
   };
 
   start = async (arg: AgentProcessStartArg): Promise<void> => {

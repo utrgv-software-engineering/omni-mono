@@ -30,20 +30,13 @@ import type { SecretStore } from '@/shared/secret-store';
 
 const DEFAULT_CONFIG_DIR = join(homedir(), '.config', 'Omni Code');
 
-/** AES-256-GCM envelope (current format). */
-type AesBlob = { iv: string; tag: string; ct: string };
-/** Legacy Electron-store envelope (read-only; `enc:true` needs safeStorage). */
-type LegacyBlob = { v: string; enc: boolean };
-type Blob = AesBlob | LegacyBlob;
+/** AES-256-GCM envelope. */
+type Blob = { iv: string; tag: string; ct: string };
 
 type SecretsFile = {
   gitTokens: Record<string, Blob>;
   oauthTokens: Record<string, Blob>;
 };
-
-function isAesBlob(b: Blob): b is AesBlob {
-  return 'iv' in b;
-}
 
 export class LocalSecretStore implements SecretStore {
   private readonly secretsPath: string;
@@ -98,7 +91,7 @@ export class LocalSecretStore implements SecretStore {
     chmodSync(this.secretsPath, 0o600);
   }
 
-  private encrypt(value: string): AesBlob {
+  private encrypt(value: string): Blob {
     const iv = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.key(), iv);
     const ct = Buffer.concat([cipher.update(value, 'utf-8'), cipher.final()]);
@@ -109,25 +102,14 @@ export class LocalSecretStore implements SecretStore {
     if (!entry) {
       return undefined;
     }
-    if (isAesBlob(entry)) {
-      try {
-        const decipher = createDecipheriv('aes-256-gcm', this.key(), Buffer.from(entry.iv, 'base64'));
-        decipher.setAuthTag(Buffer.from(entry.tag, 'base64'));
-        return Buffer.concat([decipher.update(Buffer.from(entry.ct, 'base64')), decipher.final()]).toString('utf-8');
-      } catch (err) {
-        console.error(`[secret-store] failed to decrypt ${label}:`, err);
-        return undefined;
-      }
+    try {
+      const decipher = createDecipheriv('aes-256-gcm', this.key(), Buffer.from(entry.iv, 'base64'));
+      decipher.setAuthTag(Buffer.from(entry.tag, 'base64'));
+      return Buffer.concat([decipher.update(Buffer.from(entry.ct, 'base64')), decipher.final()]).toString('utf-8');
+    } catch (err) {
+      console.error(`[secret-store] failed to decrypt ${label}:`, err);
+      return undefined;
     }
-    // Legacy Electron envelope.
-    if (!entry.enc) {
-      return Buffer.from(entry.v, 'base64').toString('utf-8');
-    }
-    console.warn(
-      `[secret-store] ${label} was written with OS-keychain encryption by the desktop app and ` +
-        `can't be read here; re-link it in Settings to re-save in the shared format`
-    );
-    return undefined;
   }
 
   // fs + crypto are synchronous; the SecretStore interface is async, hence the

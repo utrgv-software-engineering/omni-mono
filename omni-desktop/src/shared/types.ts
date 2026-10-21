@@ -188,45 +188,12 @@ export type StoreData = {
    */
   githubAccount?: GithubAccount;
 
-  /**
-   * Agent model providers — the source of truth for what the desktop wrote to
-   * `models.json`. Materialized to `<configDir>/models.json` at agent launch.
-   * See `config-materializer.ts`.
-   */
-  modelsConfig: ModelsConfig;
-  /** Agent MCP servers (`mcp.json`). Same materialization as `modelsConfig`. */
+  /** Server mode: agent MCP servers, materialized to `mcp.json`. Electron leaves MCP to the runtime. */
   mcpConfig: McpConfig;
   /**
    * Raw `.env` contents for the agent, materialized to a real `.env` file.
    */
   envVars: string;
-  /**
-   * One-shot guard for the v23 migration that imported pre-existing on-disk
-   * `models.json`/`mcp.json`/`network.json`/`.env` into the store keys above.
-   * Set once the import runs.
-   */
-  agentConfigMigratedFromFiles?: boolean;
-
-  /**
-   * Set only after the local Electron AgentHost proves structural parity with
-   * Desktop's materialized mcp.json and attests durable host-scoped MCP config
-   * and OAuth stores. Once set, Desktop must never materialize mcp.json again;
-   * canonical Omniagents CRUD/auth RPCs are its sole writer.
-   *
-   * Server deployments ignore this host-local marker.
-   */
-  mcpConfigOwnership?: 'omniagents';
-
-  /**
-   * Set only after the local Electron AgentHost proves that its canonical
-   * account RPCs persist Codex OAuth credentials durably in the product's host
-   * config directory. Before this marker, the legacy Desktop OAuth handlers
-   * remain available as a migration fallback. After it, account mutations fail
-   * closed instead of writing/removing `codex.json` behind Omniagents' back.
-   *
-   * Server deployments never read or write this host-local marker.
-   */
-  codexAccountOwnership?: 'omniagents';
 
   /** Voice mode audio device + processing preferences. */
   audioSettings: AudioSettings;
@@ -455,30 +422,9 @@ export const schema: Schema<StoreData> = {
   },
 
   layoutMode: {
+    // No enum: an unknown stored value must not fail store validation at boot;
+    // the renderer's normalizeLayoutMode resets it.
     type: 'string',
-    // 'code' and 'os' are pre-v20 names for 'spaces'; 'more' is the retired
-    // mobile overflow page; 'projects' is the pre-split container tab;
-    // 'inbox' folded into Work, 'routines' into Agents, and 'home' retired
-    // with the unified sidebar. Kept so existing stores load before the
-    // renderer's migrateLayoutMode pass converts them.
-    enum: [
-      'home',
-      'inbox',
-      'work',
-      'chat',
-      'spaces',
-      'os',
-      'code',
-      'projects',
-      'dashboards',
-      'routines',
-      'agents',
-      'plugins',
-      'sandboxes',
-      'settings',
-      'more',
-      'gallery',
-    ],
     default: 'chat',
   },
   theme: {
@@ -629,7 +575,6 @@ export const schema: Schema<StoreData> = {
   },
   codeLayoutMode: {
     type: 'string',
-    enum: ['tile', 'focus'],
     default: 'focus',
   },
   projects: {
@@ -675,15 +620,8 @@ export const schema: Schema<StoreData> = {
       required: ['id', 'host', 'username', 'last4', 'createdAt'],
     },
   },
-  modelsConfig: {
-    type: 'object',
-    default: { version: 3, default: null, voice_default: null, providers: {} },
-  },
   mcpConfig: { type: 'object', default: { mcpServers: {} } },
   envVars: { type: 'string', default: '' },
-  agentConfigMigratedFromFiles: { type: 'boolean', default: false },
-  mcpConfigOwnership: { type: 'string', enum: ['omniagents'] },
-  codexAccountOwnership: { type: 'string', enum: ['omniagents'] },
   audioSettings: {
     type: 'object',
     default: {
@@ -1323,21 +1261,6 @@ type VoiceIpcEvents = Namespaced<
 >;
 
 /**
- * Options for ``agent-process:stop``.
- */
-export type AgentProcessStopOptions = {
-  /**
-   * Skip persisting the workspace snapshot during serve's SIGTERM teardown.
-   * Set when a non-chat code column is removed and its terminal exits, where
-   * the caller deletes the snapshot tar right after the stop — persisting it
-   * (fingerprint pass + full workspace tar export) would be wasted work.
-   * Best-effort: an older omni-code without the ``sandbox.discard_snapshot``
-   * server function just persists as before.
-   */
-  discardSnapshot?: boolean;
-};
-
-/**
  * Unified agent process API. Main process handles these events, renderer process invokes them.
  * All operations are keyed by a processId — "chat" for the chat tab, CodeTabId for code tabs.
  */
@@ -1345,7 +1268,7 @@ type AgentProcessIpcEvents = Namespaced<
   'agent-process',
   {
     start: (processId: string, arg: AgentProcessStartOptions) => void;
-    stop: (processId: string, opts?: AgentProcessStopOptions) => AgentProcessStopResult;
+    stop: (processId: string) => AgentProcessStopResult;
     rebuild: (processId: string, arg: AgentProcessStartOptions) => void;
     resize: (processId: string, cols: number, rows: number) => void;
     'get-status': (processId: string) => WithTimestamp<AgentProcessStatus>;
@@ -1363,15 +1286,6 @@ type ManagementRuntimeIpcEvents = Namespaced<
     mutate: (request: ManagementAdminRequest) => ManagementAdminResult;
   }
 >;
-
-/** Result envelope of a one-shot omni-code server-function call. */
-export type ServerCallResult = {
-  ok: boolean;
-  supported: boolean;
-  reason?: string;
-  /** Raw server-function result, when a caller needs fields beyond the envelope. */
-  data?: Record<string, unknown>;
-};
 
 type SnapshotIpcEvents = Namespaced<
   'snapshot',
@@ -1469,9 +1383,6 @@ type ConfigIpcEvents = Namespaced<
 type CodexIpcEvents = Namespaced<
   'codex',
   {
-    /** Open the consent page, await the loopback callback, persist tokens.
-     *  Electron-only: requires browser open + loopback :1455. */
-    login: () => CodexAuthStatus;
     /** Device-flow sign-in (server/headless). Surfaces user code + URL via
      *  `codex:device-code` then polls until authorized. Works everywhere. */
     link: () => CodexAuthStatus;

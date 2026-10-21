@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { emptyMcpConfig, emptyModelsConfig } from '@/lib/agent-config';
+import { emptyMcpConfig } from '@/lib/agent-config';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { buildBrowserContext, registerBrowserHandlers } from '@/main/browser-manager';
 import { ChatCleanupRunner, cleanupRemovedChat, completeChatRemoval } from '@/main/chat-removal';
@@ -11,7 +11,6 @@ import {
   loginWithDeviceFlow as codexDeviceLogin,
   logout as codexLogout,
 } from '@/main/codex-auth';
-import { migrateAgentConfigFromFiles, removeRetiredProjectsMcpEntry } from '@/main/config-files-migration';
 import { materializeAgentConfig } from '@/main/config-materializer';
 import { createConsoleManager } from '@/main/console-manager';
 import {
@@ -166,11 +165,8 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   registerBrowserHandlers(ipc, () => browser);
   routineBridge.registerIpc(ipc, () => routineBridge);
 
-  // Import any pre-v23 on-disk config files into the store once.
-  migrateAgentConfigFromFiles(store as unknown as SettingsConfigStore, configDir);
-  removeRetiredProjectsMcpEntry(configDir);
   // Write the agent's on-disk config so the next omni-serve spawn reads
-  // fresh model/mcp files.
+  // fresh mcp/env files.
   materializeConfig();
 
   // Downloads are an Electron-only feature (Chromium session.will-download).
@@ -200,9 +196,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     return result;
   });
   ipc.handle('store:set-key', (_ctx, key, value) => {
-    if (key === 'modelsConfig') {
-      throw new Error('Use AI Settings to change model configuration.');
-    }
     if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId' || key === 'chatCleanupJobs') {
       throw new Error('Use store:chat-command for chat state mutations');
     }
@@ -211,9 +204,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   });
   ipc.handle('store:get', () => getStoreSnapshot());
   ipc.handle('store:set', (_ctx, data) => {
-    if (Object.hasOwn(data, 'modelsConfig')) {
-      throw new Error('Use AI Settings to change model configuration.');
-    }
     if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data || 'chatCleanupJobs' in data) {
       throw new Error('Use store:chat-command for chat state mutations');
     }
@@ -258,7 +248,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
       sendSnapshot();
     },
     {
-      readModels: () => readLocalModels(configDir, store.get('modelsConfig') ?? emptyModelsConfig()),
+      readModels: () => readLocalModels(configDir),
       saveModels: (_event, config) => writeLocalModels(configDir, config),
     }
   );

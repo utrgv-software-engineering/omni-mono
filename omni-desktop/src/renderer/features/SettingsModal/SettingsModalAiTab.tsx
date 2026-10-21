@@ -3,7 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import type { ChangeEvent } from 'react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { modelConnectionIssues, modelProvider, useProviderConnections } from '@/lib/agent-config';
+import { modelProvider } from '@/lib/agent-config';
 import { buildCodexConfig, probeForProvider } from '@/lib/provider-config';
 import { SaveBar } from '@/renderer/ds/SaveBar';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/renderer/ds/ui/accordion';
@@ -104,7 +104,6 @@ export const SettingsModalAiTab = memo(() => {
   const [loading, setLoading] = useState(true);
   const [savedProvider, setSavedProvider] = useState<string | null>(null);
   const [confirmChange, setConfirmChange] = useState(false);
-  const [confirmLegacy, setConfirmLegacy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -201,7 +200,6 @@ export const SettingsModalAiTab = memo(() => {
     ])
   ).sort();
   const modelKeys = allModelKeys.filter((key) => modelProvider(key) === selectedProvider);
-  const legacyConnections = config ? modelConnectionIssues(config) : [];
 
   // Same union, narrowed to realtime-capable models — what Hosted voice may use.
   const realtimeModelKeys = useMemo(() => {
@@ -513,39 +511,6 @@ export const SettingsModalAiTab = memo(() => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AlertDialog open={confirmLegacy} onOpenChange={setConfirmLegacy}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Use provider connections for all models?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This removes model-specific credentials and endpoints. Those models will use their provider connection
-              instead, which may send conversation data to a different account or endpoint. Review your provider
-              settings before saving.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => updateConfig(useProviderConnections)}>
-              Use provider connections
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      {legacyConnections.length > 0 && (
-        <SettingsSection title="Connection settings need attention">
-          <p>
-            These models have their own connection settings. Models now use their provider credentials and endpoint.
-          </p>
-          <ul>
-            {legacyConnections.map((issue) => (
-              <li key={issue}>{issue}</li>
-            ))}
-          </ul>
-          <Button variant="outline" onClick={() => setConfirmLegacy(true)}>
-            Review connection migration
-          </Button>
-        </SettingsSection>
-      )}
       <SettingsSection title="Connections">
         <CodexSignInCard
           onSignedIn={applyCodexSignIn}

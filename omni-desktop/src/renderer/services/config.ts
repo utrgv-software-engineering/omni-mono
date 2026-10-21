@@ -1,3 +1,5 @@
+import { atom } from 'nanostores';
+
 import { emitter } from '@/renderer/services/ipc';
 import type { McpConfig, ModelsConfig } from '@/shared/types';
 
@@ -11,13 +13,28 @@ export const configApi = {
 };
 
 /**
- * Typed agent-config API — the source of truth is the store, not a file path. Replaces the four Settings tabs' `config:*` file I/O;
- * the backend persists the value and re-materializes the agent's on-disk config.
+ * The shared `models.json`, mirrored for renderer reads that can't await IPC
+ * (e.g. whether hosted voice is configured). Loaded at boot and refreshed on
+ * every save through {@link agentConfigApi.setModels}.
  */
+export const $modelsConfig = atom<ModelsConfig | null>(null);
+
+export const refreshModelsConfig = async (): Promise<ModelsConfig> => {
+  const config = await emitter.invoke('settings:get-models-config');
+  $modelsConfig.set(config);
+  return config;
+};
+
+/** Typed agent-config API; the backend persists each value. */
 export const agentConfigApi = {
-  getModels: () => emitter.invoke('settings:get-models-config'),
-  setModels: (config: ModelsConfig, options?: { expectedProvider: string | null; confirmProviderChange?: boolean }) =>
-    emitter.invoke('settings:set-models-config', config, options),
+  getModels: () => refreshModelsConfig(),
+  setModels: async (
+    config: ModelsConfig,
+    options?: { expectedProvider: string | null; confirmProviderChange?: boolean }
+  ) => {
+    await emitter.invoke('settings:set-models-config', config, options);
+    await refreshModelsConfig();
+  },
   getMcp: () => emitter.invoke('settings:get-mcp-config'),
   setMcp: (config: McpConfig) => emitter.invoke('settings:set-mcp-config', config),
   getEnv: () => emitter.invoke('settings:get-env'),

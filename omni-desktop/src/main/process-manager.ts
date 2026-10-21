@@ -14,15 +14,14 @@ import {
   type FetchFn,
 } from '@/main/agent-process';
 import { ChatRuntimeJournal } from '@/main/chat-runtime-journal';
-import { hasDurableHostCodexMutation, isDurableCodexAccountRequest } from '@/main/local-codex-account-owner';
-import { hasDurableHostMcpMutation, isMcpManagementMethod } from '@/main/local-mcp-config-owner';
+import { hasDurableHostCodexMutation, isDurableCodexAccountRequest } from '@/main/local-codex-account';
+import { hasDurableHostMcpMutation, isMcpManagementMethod } from '@/main/local-mcp';
 import { gitTokenEnvName, resolveCredentialForUrl } from '@/shared/git-credentials';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import { assertManagementAdminRequest, type ManagementAdminResult } from '@/shared/management-admin';
 import type {
   AgentProcessStartOptions,
   AgentProcessStatus,
-  AgentProcessStopOptions,
   AgentProcessStopResult,
   AgentRuntimeConnection,
   GitCredential,
@@ -96,11 +95,6 @@ export class ProcessManager {
   private durableLocalCodexAccountMutations: boolean;
   /** Independent trusted topology gate for canonical host MCP stores. */
   private durableLocalMcpMutations: boolean;
-  /** One-time parity/ownership transfer, injected only by Electron main. */
-  private prepareLocalMcpOwnership?: (status: Record<string, unknown>) => void | Promise<void>;
-  /** Readiness hook for local ownership transfer; runs after the control
-   * channel is usable and never gates the legacy settings read. */
-  private onManagementReady?: (proc: AgentProcess) => void | Promise<void>;
 
   constructor(arg: {
     sendToWindow: ProcessManager['sendToWindow'];
@@ -116,10 +110,6 @@ export class ProcessManager {
     durableLocalCodexAccountMutations?: boolean;
     /** Permit canonical MCP CRUD/auth only in local single-user Electron. */
     durableLocalMcpMutations?: boolean;
-    /** Verify legacy/canonical parity before the first canonical mutation. */
-    prepareLocalMcpOwnership?: (status: Record<string, unknown>) => void | Promise<void>;
-    /** Run local ownership transfer after the management host is ready. */
-    onManagementReady?: (proc: AgentProcess) => void | Promise<void>;
     runtimeJournalDir?: string;
     claimChatRuntime?: (id: string) => void | Promise<void>;
   }) {
@@ -140,8 +130,6 @@ export class ProcessManager {
     this.waitForRuntimeInstall = arg.waitForRuntimeInstall;
     this.durableLocalCodexAccountMutations = arg.durableLocalCodexAccountMutations === true;
     this.durableLocalMcpMutations = arg.durableLocalMcpMutations === true;
-    this.prepareLocalMcpOwnership = arg.prepareLocalMcpOwnership;
-    this.onManagementReady = arg.onManagementReady;
   }
 
   /** Try to resolve the git remote URL and current branch from a workspace directory. */
@@ -613,9 +601,6 @@ export class ProcessManager {
         await proc.start(startArg);
       }
       const connection = await proc.getRuntimeConnection();
-      // Host MCP ownership transfer is a readiness side effect. It must not
-      // make the legacy settings read wait for a cold runtime to boot.
-      await this.onManagementReady?.(proc);
       return connection;
     } catch (error) {
       this.processes.delete(processId);
@@ -654,7 +639,6 @@ export class ProcessManager {
       if (!hasDurableHostMcpMutation(status)) {
         throw new Error('AgentHost did not attest durable host-scoped MCP configuration and OAuth stores');
       }
-      await this.prepareLocalMcpOwnership?.(status);
 
       const result = await proc.callManagementAdmin(request.method, request.params as never);
       // mcp_auth_cancel only discards process-local pending state. Every other
@@ -853,7 +837,7 @@ export class ProcessManager {
     }
   };
 
-  stop = async (processId: string, opts?: AgentProcessStopOptions): Promise<AgentProcessStopResult> => {
+  stop = async (processId: string): Promise<AgentProcessStopResult> => {
     const pending = this.pendingStops.get(processId);
     if (pending) {
       return pending;
@@ -863,7 +847,7 @@ export class ProcessManager {
     const operation = (async () => {
       await pendingStart?.catch(() => undefined);
       if (this.isCurrentConsumerEpoch(processId, epoch)) {
-        return this.stopConsumer(processId, opts);
+        return this.stopConsumer(processId);
       }
       return this.emptyStopResult();
     })().finally(() => {
@@ -878,7 +862,7 @@ export class ProcessManager {
   retire = async (processId: string): Promise<AgentProcessStopResult> => {
     this.retiredConsumers.add(processId);
     try {
-      const result = await this.stop(processId, { discardSnapshot: true });
+      const result = await this.stop(processId);
       await this.runtimeJournal?.retire(processId);
       return result;
     } finally {
@@ -891,7 +875,7 @@ export class ProcessManager {
     shutdown: 'not-applicable',
   });
 
-  private stopConsumer = async (processId: string, opts?: AgentProcessStopOptions): Promise<AgentProcessStopResult> => {
+  private stopConsumer = async (processId: string): Promise<AgentProcessStopResult> => {
     let target = this.detachedStops.get(processId);
     if (!target) {
       const proc = this.processes.get(processId);
@@ -914,9 +898,6 @@ export class ProcessManager {
       if (hostStop) {
         await this.stop(hostStop[0]);
       }
-    }
-    if (opts?.discardSnapshot && runtime) {
-      await proc.discardConsumerSnapshot(runtime).catch(() => {});
     }
     const result = lastConsumer
       ? await proc.stop()
@@ -1094,7 +1075,7 @@ export function registerProcessHandlers(ipc: IIpcListener, resolve: (event: unkn
   };
 
   h('agent-process:start', (pm, processId, startArg) => pm.start(processId, startArg));
-  h('agent-process:stop', (pm, processId, opts) => pm.stop(processId, opts));
+  h('agent-process:stop', (pm, processId) => pm.stop(processId));
   h('agent-process:rebuild', (pm, processId, rebuildArg) => pm.rebuild(processId, rebuildArg));
   h('agent-process:resize', (pm, processId, cols, rows) => pm.resizePty(processId, cols, rows));
   h('agent-process:get-status', (pm, processId) => pm.getStatus(processId));
@@ -1115,8 +1096,6 @@ export const createProcessManager = (arg: {
   waitForRuntimeInstall?: () => Promise<void>;
   durableLocalCodexAccountMutations?: boolean;
   durableLocalMcpMutations?: boolean;
-  prepareLocalMcpOwnership?: (status: Record<string, unknown>) => void | Promise<void>;
-  onManagementReady?: (proc: AgentProcess) => void | Promise<void>;
   runtimeJournalDir?: string;
   claimChatRuntime?: (id: string) => void | Promise<void>;
 }) => {
@@ -1130,8 +1109,6 @@ export const createProcessManager = (arg: {
     waitForRuntimeInstall,
     durableLocalCodexAccountMutations,
     durableLocalMcpMutations,
-    prepareLocalMcpOwnership,
-    onManagementReady,
   } = arg;
 
   const processManager = new ProcessManager({
@@ -1145,8 +1122,6 @@ export const createProcessManager = (arg: {
     waitForRuntimeInstall,
     durableLocalCodexAccountMutations,
     durableLocalMcpMutations,
-    prepareLocalMcpOwnership,
-    onManagementReady,
   });
   const channels = registerProcessHandlers(ipc, () => processManager);
 

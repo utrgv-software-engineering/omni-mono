@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { emptyModelsConfig } from '@/lib/agent-config';
 import type { ModelsConfig } from '@/shared/types';
 
-/** Local desktop and CLI share this file. The settings store is only a migration seed. */
-export function readLocalModels(configDir: string, seed: ModelsConfig): ModelsConfig {
+/** Local desktop and CLI share this file; it is the only copy of the model config. */
+export function readLocalModels(configDir: string): ModelsConfig {
   const path = join(configDir, 'models.json');
   if (!existsSync(path)) {
-    writeLocalModels(configDir, seed);
+    writeLocalModels(configDir, emptyModelsConfig());
   }
   const config = JSON.parse(readFileSync(path, 'utf8')) as ModelsConfig;
   if (config.version !== 3 || !config.providers || typeof config.providers !== 'object') {

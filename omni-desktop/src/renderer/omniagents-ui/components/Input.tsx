@@ -26,6 +26,7 @@ import {
   getConversationDraft,
   updateConversationDraft,
 } from '@/renderer/omniagents-ui/conversation-drafts';
+import { $modelsConfig } from '@/renderer/services/config';
 import { persistedStoreApi } from '@/renderer/services/store';
 
 import { AttachmentPreview } from './AttachmentPreview';
@@ -117,7 +118,7 @@ export function Input({
   // Which mic to show follows the configured mode, not availability: gating
   // the hosted button on `voiceEnabled` alone meant a credential existing was
   // enough to render it, so Voice = Off still showed a mic.
-  const voiceMode = configuredVoiceMode(useStore(persistedStoreApi.$atom));
+  const voiceMode = configuredVoiceMode(useStore(persistedStoreApi.$atom).localVoiceEnabled, useStore($modelsConfig));
   const localVoiceSupported = voiceMode === 'local';
   const hostedVoiceSupported = voiceMode === 'hosted' && Boolean(voiceEnabled);
   const speakerToggleLabel = speakRepliesEnabled ? 'Spoken replies on' : 'Spoken replies off';

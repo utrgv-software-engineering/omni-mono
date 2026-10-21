@@ -48,10 +48,12 @@ describe('config ownership hooks', () => {
     expect(JSON.parse(readFileSync(modelsPath, 'utf8'))).toEqual({ version: 3 });
   });
 
-  it('rejects the legacy full-document MCP setter before mutating the store', async () => {
+  it('rejects the full-document MCP setter before mutating the store', async () => {
     const { ipc, handlers } = fakeIpc();
     const set = vi.fn();
     registerSettingsConfigHandlers(ipc, () => ({ get: vi.fn(), set }) as never, vi.fn(), {
+      readModels: vi.fn(),
+      saveModels: vi.fn(),
       beforeSetMcp: () => Promise.reject(new Error('canonical owner')),
     });
 

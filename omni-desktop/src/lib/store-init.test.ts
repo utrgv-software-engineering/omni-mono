@@ -1,80 +1,16 @@
-/**
- * Tests for store init pure logic — layout migration.
- */
 import { describe, expect, it } from 'vitest';
 
-import { migrateLayoutMode } from '@/lib/store-init';
+import { normalizeLayoutMode } from '@/lib/store-init';
 
-// ---------------------------------------------------------------------------
-// migrateLayoutMode
-// ---------------------------------------------------------------------------
-
-describe('migrateLayoutMode', () => {
-  it('migrates the split "projects" tab to "work"', () => {
-    expect(migrateLayoutMode('projects')).toBe('work');
+describe('normalizeLayoutMode', () => {
+  it('keeps current modes', () => {
+    for (const mode of ['work', 'chat', 'routines', 'plugins', 'settings', 'gallery']) {
+      expect(normalizeLayoutMode(mode)).toBeNull();
+    }
   });
 
-  it('migrates "desktop" to "chat"', () => {
-    expect(migrateLayoutMode('desktop')).toBe('chat');
-  });
-
-  it('migrates unknown mode to "chat"', () => {
-    expect(migrateLayoutMode('fleet')).toBe('chat');
-  });
-
-  it('returns null for valid "chat" mode', () => {
-    expect(migrateLayoutMode('chat')).toBeNull();
-  });
-
-  it('migrates legacy "code" mode to "chat"', () => {
-    expect(migrateLayoutMode('code')).toBe('chat');
-  });
-
-  it('migrates intermediate "os" mode to "chat"', () => {
-    expect(migrateLayoutMode('os')).toBe('chat');
-  });
-
-  it('migrates the retired "more" page to "settings"', () => {
-    expect(migrateLayoutMode('more')).toBe('settings');
-  });
-
-  it('migrates the merged "spaces" tab to "chat"', () => {
-    expect(migrateLayoutMode('spaces')).toBe('chat');
-  });
-
-  it('migrates the folded "inbox" tab to "work"', () => {
-    expect(migrateLayoutMode('inbox')).toBe('work');
-  });
-
-  it('migrates the removed "agents" tab to "routines"', () => {
-    expect(migrateLayoutMode('agents')).toBe('routines');
-  });
-
-  it('migrates the retired "home" tab to "chat"', () => {
-    expect(migrateLayoutMode('home')).toBe('chat');
-  });
-
-  it('returns null for valid "work" mode', () => {
-    expect(migrateLayoutMode('work')).toBeNull();
-  });
-
-  it('returns null for valid "routines" mode', () => {
-    expect(migrateLayoutMode('routines')).toBeNull();
-  });
-
-  it('migrates the retired "dashboards" mode to chat', () => {
-    expect(migrateLayoutMode('dashboards')).toBe('chat');
-  });
-
-  it('returns null for valid "settings" mode', () => {
-    expect(migrateLayoutMode('settings')).toBeNull();
-  });
-
-  it('returns null for valid "plugins" mode', () => {
-    expect(migrateLayoutMode('plugins')).toBeNull();
-  });
-
-  it('migrates the retired "sandboxes" mode to chat', () => {
-    expect(migrateLayoutMode('sandboxes')).toBe('chat');
+  it('sends anything else to chat', () => {
+    expect(normalizeLayoutMode('sandboxes')).toBe('chat');
+    expect(normalizeLayoutMode('')).toBe('chat');
   });
 });

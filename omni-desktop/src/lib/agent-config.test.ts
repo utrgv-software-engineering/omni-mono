@@ -6,7 +6,7 @@ import {
   emptyModelsConfig,
   parseEnvVars,
   PROVIDER_CONNECTION_FIELDS,
-  useProviderConnections,
+  stripModelConnectionFields,
   validateModelsConfig,
 } from '@/lib/agent-config';
 
@@ -42,37 +42,20 @@ describe('empty config factories', () => {
 });
 
 describe('provider-owned connections', () => {
-  it('rejects model connection overrides without exposing their values', () => {
+  it('strips per-model connection fields and keeps everything else', () => {
     for (const field of PROVIDER_CONNECTION_FIELDS) {
       const config = emptyModelsConfig();
       config.providers.company = {
         type: 'azure',
+        api_key: 'provider-key',
         models: { deployment: { model: 'deployment', [field]: 'private-secret' } },
       };
-      expect(() => validateModelsConfig(config)).toThrow('provider-only');
-      expect(() => validateModelsConfig(config)).not.toThrow('private-secret');
-      expect(config.providers.company.models.deployment).toHaveProperty(field, 'private-secret');
+      const stripped = stripModelConnectionFields(config);
+      expect(stripped.providers.company!.models.deployment).toEqual({ model: 'deployment' });
+      expect(stripped.providers.company!.api_key).toBe('provider-key');
     }
   });
-  it('requires explicit migration and preserves provider connections', () => {
-    const config = emptyModelsConfig();
-    config.providers.company = {
-      type: 'azure',
-      api_key: 'company-key',
-      base_url: 'https://company.invalid',
-      models: {
-        deployment: {
-          model: 'deployment',
-          model_settings: { extra_headers: { Authorization: 'legacy' }, temperature: 0.4 },
-        },
-      },
-    };
-    const migrated = useProviderConnections(config);
-    expect(() => validateModelsConfig(config)).toThrow('provider-only');
-    expect(() => validateModelsConfig(migrated)).not.toThrow();
-    expect(migrated.providers.company?.api_key).toBe('company-key');
-    expect(migrated.providers.company?.models.deployment?.model_settings).toEqual({ temperature: 0.4 });
-  });
+
   it('rejects hosted voice from a different provider', () => {
     expect(() =>
       validateModelsConfig({ ...emptyModelsConfig(), default: 'company/chat', voice_default: 'personal/voice' })

@@ -8,21 +8,13 @@ import { join, resolve } from 'path';
 import { assert } from 'tsafe';
 import { pathToFileURL } from 'url';
 
-import { emptyMcpConfig, emptyModelsConfig, parseEnvVars } from '@/lib/agent-config';
+import { parseEnvVars } from '@/lib/agent-config';
 import { winToWslPath } from '@/lib/wsl-path';
 import { createAppControlManager } from '@/main/app-control-manager';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { createBrowserManager } from '@/main/browser-manager';
 import { ChatCleanupRunner, cleanupRemovedChat } from '@/main/chat-removal';
 import { assertCleanupOwner, runtimeOwner } from '@/main/chat-runtime-journal';
-import {
-  getStatus as codexStatus,
-  loginWithBrowser,
-  loginWithDeviceFlow,
-  logout as codexLogout,
-} from '@/main/codex-auth';
-import { migrateAgentConfigFromFiles, removeRetiredProjectsMcpEntry } from '@/main/config-files-migration';
-import { materializeAgentConfig } from '@/main/config-materializer';
 import { createConsoleManager } from '@/main/console-manager';
 import { createDownloadsManager } from '@/main/downloads-manager';
 import {
@@ -30,8 +22,8 @@ import {
   listOrgs as githubListOrgs,
   searchRepos as githubSearchRepos,
 } from '@/main/github-auth';
-import { durableLocalCodexAgentHostEnv, LocalCodexAccountOwner } from '@/main/local-codex-account-owner';
-import { durableLocalMcpAgentHostEnv, LocalMcpConfigOwner } from '@/main/local-mcp-config-owner';
+import { durableLocalCodexAgentHostEnv, LocalCodexAccount } from '@/main/local-codex-account';
+import { durableLocalMcpAgentHostEnv } from '@/main/local-mcp';
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { MainProcessManager } from '@/main/main-process-manager';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
@@ -133,30 +125,18 @@ const secretStore = new LocalSecretStore();
 importLegacyProjectsDb(store);
 
 /**
- * Materialize the agent's on-disk config from the store (desktop = single user,
- * plaintext). Models/env remain Desktop-owned; mcp.json is a derived
- * copy only until the local MCP ownership marker transfers it to Omniagents.
- * Writes a real `.env`.
- * Runs at startup and after every `settings:*` write.
+ * Write the user's Settings → Environment vars to `<config>/.env`, which omni
+ * serve reads. Runs at startup and after every `settings:*` write. MCP servers
+ * and models live in the runtime's own config files.
  */
-function materializeDesktopConfig(): void {
+function writeDesktopEnvFile(): void {
   try {
-    materializeAgentConfig({
-      configDir: OMNI_CONFIG_DIR,
-      mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
-      writeMcp: store.get('mcpConfigOwnership') !== 'omniagents',
-    });
     writeFileSync(join(OMNI_CONFIG_DIR, '.env'), store.get('envVars') ?? '', 'utf-8');
   } catch (err) {
-    console.error('[config-materializer] desktop materialize failed:', err);
+    console.error('[config] writing .env failed:', err);
   }
 }
-
-// Import legacy settings once. Existing local models.json remains authoritative;
-// its stored copy is used only to seed a missing file during migration.
-migrateAgentConfigFromFiles(store, OMNI_CONFIG_DIR);
-removeRetiredProjectsMcpEntry(OMNI_CONFIG_DIR);
-materializeDesktopConfig();
+writeDesktopEnvFile();
 
 const main = new MainProcessManager({ store });
 let isShuttingDown = false;
@@ -185,8 +165,6 @@ const [omniInstall, cleanupOmniInstall] = createOmniInstallManager({
   ipc: main.ipc,
   sendToWindow: main.sendToWindow,
 });
-let localMcpConfigOwner: LocalMcpConfigOwner;
-let localMcpOwnershipPromise: Promise<void> | null = null;
 const [processManager, cleanupProcessManager] = createProcessManager({
   runtimeJournalDir: join(getOmniConfigDir(), 'chat-runtime-journal'),
   claimChatRuntime: (id) => {
@@ -220,52 +198,11 @@ const [processManager, cleanupProcessManager] = createProcessManager({
     durableLocalMcpAgentHostEnv(durableLocalCodexAgentHostEnv(parseEnvVars(store.get('envVars') ?? ''))),
   durableLocalCodexAccountMutations: true,
   durableLocalMcpMutations: true,
-  prepareLocalMcpOwnership: (status) => ensureLocalMcpOwnership(status),
-  onManagementReady: async (proc) => {
-    try {
-      await ensureLocalMcpOwnership(await proc.getManagementMcpStatus());
-    } catch (error) {
-      // Keep the management read surface available during migration. The
-      // canonical mutation broker still reruns the same parity proof and
-      // fails closed until it succeeds.
-      console.warn(`[mcp-ownership] local transfer deferred: ${(error as Error).message}`);
-    }
-  },
 });
-localMcpConfigOwner = new LocalMcpConfigOwner({
-  store,
-  environment: () => ({ ...process.env, ...parseEnvVars(store.get('envVars') ?? '') }),
-});
-/** Complete the local MCP ownership transfer once the management host is
- * ready. The transfer is fail-closed and idempotent; legacy reads can still
- * render while a cold host is starting. */
-function ensureLocalMcpOwnership(status?: Record<string, unknown>): Promise<void> {
-  if (store.get('mcpConfigOwnership') === 'omniagents') {
-    return Promise.resolve();
-  }
-  if (!localMcpOwnershipPromise) {
-    localMcpOwnershipPromise = (status ? Promise.resolve(status) : processManager.getManagementMcpStatus())
-      .then((current) => localMcpConfigOwner.ensureOwnership(current))
-      .then(() => {
-        main.sendToWindow('store:changed', store.store);
-      })
-      .finally(() => {
-        localMcpOwnershipPromise = null;
-      });
-  }
-  return localMcpOwnershipPromise;
-}
-const localCodexAccount = new LocalCodexAccountOwner({
-  store,
+const localCodexAccount = new LocalCodexAccount({
   runtime: {
     status: () => processManager.getManagementAccountStatus(),
     mutate: (request) => processManager.mutateManagement(request),
-  },
-  legacy: {
-    status: codexStatus,
-    login: () => loginWithBrowser((url) => void shell.openExternal(url)),
-    link: (onCode) => loginWithDeviceFlow({ onCode }),
-    logout: codexLogout,
   },
 });
 const routineBridge = new RoutineBridge(main.sendToWindow);
@@ -577,11 +514,8 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 
 registerConfigHandlers(main.ipc, OMNI_CONFIG_DIR, {
   beforeWrite: (filePath) => {
-    if (
-      store.get('mcpConfigOwnership') === 'omniagents' &&
-      resolve(filePath) === resolve(OMNI_CONFIG_DIR, 'mcp.json')
-    ) {
-      throw new Error('Omniagents owns mcp.json; use the canonical per-server MCP controls');
+    if (resolve(filePath) === resolve(OMNI_CONFIG_DIR, 'mcp.json')) {
+      throw new Error('Omniagents owns mcp.json; use the per-server MCP controls');
     }
   },
 });
@@ -598,19 +532,14 @@ registerSettingsConfigHandlers(
   main.ipc,
   () => store,
   () => {
-    materializeDesktopConfig();
+    writeDesktopEnvFile();
     main.sendToWindow('store:changed', store.store);
   },
   {
-    readModels: () => readLocalModels(OMNI_CONFIG_DIR, store.get('modelsConfig') ?? emptyModelsConfig()),
+    readModels: () => readLocalModels(OMNI_CONFIG_DIR),
     saveModels: (_event, config) => writeLocalModels(OMNI_CONFIG_DIR, config),
-    // Reading the legacy document must remain responsive while a cold
-    // management host starts. Ownership is transferred by the readiness hook
-    // above; this guard only blocks writes after the marker is durable.
     beforeSetMcp: () => {
-      if (store.get('mcpConfigOwnership') === 'omniagents') {
-        throw new Error('Omniagents owns MCP configuration; use the canonical per-server MCP controls');
-      }
+      throw new Error('Omniagents owns MCP configuration; use the per-server MCP controls');
     },
   }
 );
@@ -674,7 +603,6 @@ main.ipc.handle('util:open-external', (_, url) => shell.openExternal(url));
 
 //#region Codex (ChatGPT OAuth) handlers
 
-main.ipc.handle('codex:login', () => localCodexAccount.login());
 main.ipc.handle('codex:link', () => localCodexAccount.link((code) => main.sendToWindow('codex:device-code', code)));
 main.ipc.handle('codex:logout', () => localCodexAccount.logout());
 main.ipc.handle('codex:status', () => localCodexAccount.status());

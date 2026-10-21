@@ -86,56 +86,9 @@ export const PROVIDER_CONNECTION_FIELDS = [
   'use_responses_websocket',
 ] as const;
 
-export function modelConnectionIssues(config: ModelsConfig): string[] {
-  const issues: string[] = [];
-  for (const [provider, entry] of Object.entries(config.providers)) {
-    for (const [id, model] of Object.entries(entry.models)) {
-      const settings = model.model_settings ?? {};
-      const connectionSettings = ['extra_headers', 'extra_query', 'extra_args'].filter((key) =>
-        Object.hasOwn(settings, key)
-      );
-      if (connectionSettings.length) {
-        issues.push(`${provider}/${id}: model_settings.${connectionSettings.join(', model_settings.')}`);
-      }
-      const fields = PROVIDER_CONNECTION_FIELDS.filter((field) => Object.hasOwn(model, field));
-      if (fields.length) {
-        issues.push(`${provider}/${id}: ${fields.join(', ')}`);
-      }
-    }
-  }
-  return issues;
-}
-
-export function validateModelsConfig(config: ModelsConfig): void {
-  const issues = modelConnectionIssues(config);
-  if (issues.length) {
-    throw new Error(
-      `Models contain provider-only connection fields: ${issues.join('; ')}. Move these fields to the provider or create a separate provider. Existing settings have not been changed.`
-    );
-  }
-  const selected = config.providers[modelProvider(config.default) ?? ''];
-  if (selected?.type === 'litellm') {
-    const prefix = selected.routing_prefix;
-    if (!prefix || !/^[a-z][a-z0-9_-]*$/.test(prefix)) {
-      throw new Error('Set the provider Routing prefix in Advanced (for example, anthropic) before using LiteLLM.');
-    }
-    if (
-      Object.values(selected.models).some(
-        (model) => !model.model.startsWith(`${prefix}/`) || model.model_settings?.extra_body
-      )
-    ) {
-      throw new Error('LiteLLM models must use the provider Routing prefix and cannot supply extra request bodies.');
-    }
-  }
-  if (config.voice_default && modelProvider(config.voice_default) !== modelProvider(config.default)) {
-    throw new Error(
-      'Hosted voice must use the selected workspace provider. Choose a voice model from that provider or turn hosted voice off.'
-    );
-  }
-}
-
-/** Explicit migration: caller confirms the change of connection before using it. */
-export function useProviderConnections(config: ModelsConfig): ModelsConfig {
+/** Models never carry their own connection: the provider's applies. Drop any
+ * per-model connection fields before saving. */
+export function stripModelConnectionFields(config: ModelsConfig): ModelsConfig {
   return {
     ...config,
     providers: Object.fromEntries(
@@ -164,4 +117,26 @@ export function useProviderConnections(config: ModelsConfig): ModelsConfig {
       ])
     ),
   };
+}
+
+export function validateModelsConfig(config: ModelsConfig): void {
+  const selected = config.providers[modelProvider(config.default) ?? ''];
+  if (selected?.type === 'litellm') {
+    const prefix = selected.routing_prefix;
+    if (!prefix || !/^[a-z][a-z0-9_-]*$/.test(prefix)) {
+      throw new Error('Set the provider Routing prefix in Advanced (for example, anthropic) before using LiteLLM.');
+    }
+    if (
+      Object.values(selected.models).some(
+        (model) => !model.model.startsWith(`${prefix}/`) || model.model_settings?.extra_body
+      )
+    ) {
+      throw new Error('LiteLLM models must use the provider Routing prefix and cannot supply extra request bodies.');
+    }
+  }
+  if (config.voice_default && modelProvider(config.voice_default) !== modelProvider(config.default)) {
+    throw new Error(
+      'Hosted voice must use the selected workspace provider. Choose a voice model from that provider or turn hosted voice off.'
+    );
+  }
 }

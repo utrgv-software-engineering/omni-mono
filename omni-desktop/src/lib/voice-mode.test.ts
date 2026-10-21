@@ -11,28 +11,17 @@ const models = (voiceDefault: string | null): ModelsConfig => ({
 });
 
 describe('configuredVoiceMode', () => {
-  it('is off when neither key is set', () => {
-    expect(configuredVoiceMode({})).toBe('off');
-    expect(configuredVoiceMode({ localVoiceEnabled: false, modelsConfig: models(null) })).toBe('off');
+  it('is off when neither is set', () => {
+    expect(configuredVoiceMode(undefined, null)).toBe('off');
+    expect(configuredVoiceMode(false, models(null))).toBe('off');
   });
 
   it('is hosted when a voice model is configured', () => {
-    expect(configuredVoiceMode({ localVoiceEnabled: false, modelsConfig: models('codex/gpt-realtime-1.5') })).toBe(
-      'hosted'
-    );
+    expect(configuredVoiceMode(false, models('codex/gpt-realtime-1.5'))).toBe('hosted');
   });
 
-  it('is local when local voice is on', () => {
-    expect(configuredVoiceMode({ localVoiceEnabled: true, modelsConfig: models(null) })).toBe('local');
-  });
-
-  it('prefers local if both somehow got set — the settings UI clears one when setting the other', () => {
-    expect(configuredVoiceMode({ localVoiceEnabled: true, modelsConfig: models('codex/gpt-realtime') })).toBe('local');
-  });
-
-  it('distinguishes hosted from off, which reading localVoiceEnabled alone cannot', () => {
-    const hosted = { localVoiceEnabled: false, modelsConfig: models('codex/gpt-realtime') };
-    const off = { localVoiceEnabled: false, modelsConfig: models(null) };
-    expect(configuredVoiceMode(hosted)).not.toBe(configuredVoiceMode(off));
+  it('is local when local voice is on, even if a voice model is set', () => {
+    expect(configuredVoiceMode(true, models(null))).toBe('local');
+    expect(configuredVoiceMode(true, models('codex/gpt-realtime'))).toBe('local');
   });
 });

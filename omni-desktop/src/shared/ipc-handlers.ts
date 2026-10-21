@@ -11,7 +11,7 @@ import { mkdir, readdir, readFile, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import { emptyMcpConfig, emptyModelsConfig, modelProvider, validateModelsConfig } from '@/lib/agent-config';
+import { emptyMcpConfig, modelProvider, stripModelConnectionFields, validateModelsConfig } from '@/lib/agent-config';
 import { normalizeCompatibleBaseUrl } from '@/lib/provider-config';
 import type { SkillStore } from '@/main/skills';
 import { installSkillFromFile, listSkills, setSkillEnabled, uninstallSkill } from '@/main/skills';
@@ -136,13 +136,10 @@ export interface SettingsConfigStore {
  * `store:changed` and re-materialize the agent's on-disk config.
  */
 export interface SettingsConfigHooks {
-  readModels?: (event: unknown) => ModelsConfig;
-  saveModels?: (event: unknown, config: ModelsConfig) => void;
-  /** Run before returning the local MCP document so ownership transfer can
-   * complete before a renderer selects its canonical CRUD path. */
-  beforeGetMcp?: (event: unknown) => void | Promise<void>;
-  /** Throw to reject a legacy full-document MCP write. Local Electron uses
-   * this after canonical ownership transfers; server stores remain unchanged. */
+  readModels: (event: unknown) => ModelsConfig;
+  saveModels: (event: unknown, config: ModelsConfig) => void;
+  /** Throw to reject a full-document MCP write. Local Electron always does:
+   * the Omniagents runtime owns its MCP configuration there. */
   beforeSetMcp?: (event: unknown, config: McpConfig) => void | Promise<void>;
 }
 
@@ -150,24 +147,24 @@ export function registerSettingsConfigHandlers(
   ipc: IIpcListener,
   resolveStore: (event: unknown) => SettingsConfigStore,
   afterWrite: (event: unknown) => void,
-  hooks: SettingsConfigHooks = {}
+  hooks: SettingsConfigHooks
 ): void {
   ipc.handle('settings:get-models-config', (e: unknown) => {
-    return hooks.readModels?.(e) ?? resolveStore(e).get('modelsConfig') ?? emptyModelsConfig();
+    return hooks.readModels(e);
   });
   let pendingModelWrite: Promise<unknown> = Promise.resolve();
   ipc.handle(
     'settings:set-models-config',
     (
       e: unknown,
-      next: ModelsConfig,
+      requested: ModelsConfig,
       options?: { expectedProvider: string | null; confirmProviderChange?: boolean }
     ) => {
+      const next = stripModelConnectionFields(requested);
       const operation = pendingModelWrite
         .catch(() => undefined)
         .then(async () => {
-          const store = resolveStore(e);
-          const previous = hooks.readModels?.(e) ?? store.get('modelsConfig') ?? emptyModelsConfig();
+          const previous = hooks.readModels(e);
           const previousProvider = modelProvider(previous.default);
           if (options && options.expectedProvider !== previousProvider) {
             throw new Error('The workspace provider changed in another window. Reload Settings before saving.');
@@ -186,11 +183,7 @@ export function registerSettingsConfigHandlers(
                   ? 1
                   : undefined,
             };
-            if (hooks.saveModels) {
-              hooks.saveModels(e, saved);
-            } else {
-              store.set('modelsConfig', saved);
-            }
+            hooks.saveModels(e, saved);
             afterWrite(e);
           };
           write();
@@ -200,9 +193,7 @@ export function registerSettingsConfigHandlers(
     }
   );
   ipc.handle('settings:get-mcp-config', (e: unknown) => {
-    return Promise.resolve(hooks.beforeGetMcp?.(e)).then(() => {
-      return resolveStore(e).get('mcpConfig') ?? emptyMcpConfig();
-    });
+    return resolveStore(e).get('mcpConfig') ?? emptyMcpConfig();
   });
   ipc.handle('settings:set-mcp-config', async (e: unknown, config: McpConfig) => {
     await hooks.beforeSetMcp?.(e, config);

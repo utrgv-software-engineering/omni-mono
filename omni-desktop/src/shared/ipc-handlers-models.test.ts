@@ -18,14 +18,14 @@ function setup() {
   const after = vi.fn();
   registerSettingsConfigHandlers(
     { handle: (name: string, fn: any) => handlers.set(name, fn) } as IIpcListener,
-    () =>
-      ({
-        get: () => config,
-        set: (_key: string, next: ModelsConfig) => {
-          config = next;
-        },
-      }) as never,
-    after
+    () => ({ get: vi.fn(), set: vi.fn() }) as never,
+    after,
+    {
+      readModels: () => config,
+      saveModels: (_event, next) => {
+        config = next;
+      },
+    }
   );
   return { read: () => config, set: handlers.get('settings:set-models-config')!, after };
 }
@@ -54,13 +54,12 @@ describe('workspace provider changes', () => {
     );
     expect(h.read().default).toBe('personal/b');
   });
-  it('rejects model credentials before stopping runs and does not disclose secrets', async () => {
+  it('drops per-model credentials on save', async () => {
     const h = setup();
     const next = structuredClone(h.read());
-    Object.assign(next.providers.company!.models.a!, { api_key: 'do-not-disclose' });
-    await expect(h.set(null, next)).rejects.toThrow('provider-only');
-    expect(h.after).not.toHaveBeenCalled();
-    expect(h.after).not.toHaveBeenCalled();
+    Object.assign(next.providers.company!.models.a!, { api_key: 'model-key' });
+    await h.set(null, next);
+    expect(h.read().providers.company!.models.a).toEqual({ model: 'a' });
   });
   it('does not silently acknowledge old mixed-provider conversations on an ordinary settings save', async () => {
     const h = setup();

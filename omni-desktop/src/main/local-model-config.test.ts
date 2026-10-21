@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 
 import type { ModelsConfig } from '@/shared/types';
 
-import { materializeAgentConfig } from './config-materializer';
 import { readLocalModels, writeLocalModels } from './local-model-config';
 
 const config = (provider: string): ModelsConfig => ({
@@ -16,25 +15,18 @@ const config = (provider: string): ModelsConfig => ({
   providers: { [provider]: { type: 'openai', models: { a: { model: 'a' } } } },
 });
 
-describe('local model ownership', () => {
-  it('seeds once and preserves CLI changes across startup and unrelated settings writes', () => {
+describe('shared models.json', () => {
+  it('creates an empty file once and reads CLI changes back', () => {
     const directory = mkdtempSync(join(tmpdir(), 'local-models-'));
-    expect(readLocalModels(directory, config('old')).default).toBe('old/a');
+    expect(readLocalModels(directory)).toEqual({ version: 3, default: null, voice_default: null, providers: {} });
     writeLocalModels(directory, config('cli'));
-    expect(readLocalModels(directory, config('old')).default).toBe('cli/a');
-    materializeAgentConfig({
-      configDir: directory,
-      mcp: { mcpServers: {} },
-    });
-    expect(JSON.parse(readFileSync(join(directory, 'models.json'), 'utf8')).default).toBe('cli/a');
-    writeLocalModels(directory, config('desktop'));
-    expect(readLocalModels(directory, config('old')).default).toBe('desktop/a');
+    expect(readLocalModels(directory).default).toBe('cli/a');
   });
 
-  it('does not replace corrupt external configuration with stale settings', () => {
+  it('does not replace a corrupt file', () => {
     const directory = mkdtempSync(join(tmpdir(), 'local-models-'));
     writeFileSync(join(directory, 'models.json'), '{invalid');
-    expect(() => readLocalModels(directory, config('old'))).toThrow();
+    expect(() => readLocalModels(directory)).toThrow();
     expect(readFileSync(join(directory, 'models.json'), 'utf8')).toBe('{invalid');
   });
 });

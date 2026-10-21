@@ -1,8 +1,9 @@
 import type { ReadableAtom } from 'nanostores';
 import { atom } from 'nanostores';
 
-import { emptyMcpConfig, emptyModelsConfig } from '@/lib/agent-config';
-import { migrateLayoutMode } from '@/lib/store-init';
+import { emptyMcpConfig } from '@/lib/agent-config';
+import { normalizeLayoutMode } from '@/lib/store-init';
+import { refreshModelsConfig } from '@/renderer/services/config';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import type { OperatingSystem, StoreData } from '@/shared/types';
 
@@ -35,7 +36,6 @@ const getDefaults = (): StoreData => ({
   skillSources: {},
   installedBundles: {},
   gitCredentials: [],
-  modelsConfig: emptyModelsConfig(),
   mcpConfig: emptyMcpConfig(),
   envVars: '',
   browserProfiles: [],
@@ -136,8 +136,7 @@ const init = async () => {
   await persistedStoreApi.sync();
   const store = persistedStoreApi.get();
 
-  // Migrate legacy layoutMode values to current valid modes
-  const layoutReset = migrateLayoutMode(store.layoutMode as string);
+  const layoutReset = normalizeLayoutMode(store.layoutMode as string);
   if (layoutReset) {
     await persistedStoreApi.setKey('layoutMode', layoutReset);
   }
@@ -149,18 +148,7 @@ const init = async () => {
     await persistedStoreApi.setKey('workspaceDir', defaultDir);
   }
 
-  // Existing-user migration: if onboardingComplete is not set, mark it done when
-  // model providers are already configured (now sourced from the store, not a file).
-  if (!store.onboardingComplete) {
-    try {
-      const modelsConfig = await emitter.invoke('settings:get-models-config');
-      if (Object.keys(modelsConfig.providers).length > 0) {
-        await persistedStoreApi.setKey('onboardingComplete', true);
-      }
-    } catch {
-      // If we can't read the config, just leave onboardingComplete as false
-    }
-  }
+  await refreshModelsConfig().catch(() => undefined);
 
   $initialized.set(true);
 };

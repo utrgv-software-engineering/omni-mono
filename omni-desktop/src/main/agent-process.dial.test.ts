@@ -206,23 +206,6 @@ describe('AgentProcess dial auth (serve mode)', () => {
     expect(serve.connections[0]!.authorization).toBe('Bearer serve-token-1');
     expect(serve.connections[0]!.query).toBe('');
 
-    // One-shot server_call dials (snapshot discard) carry the same header.
-    await proc.discardConsumerSnapshot({
-      workspaceId: 'workspace-authenticated',
-      environmentId: 'environment-authenticated',
-      environmentGeneration: 3,
-    });
-    const callConn = serve.connections.find((c) => c.calls.includes('sandbox.discard_snapshot'));
-    expect(callConn?.authorization).toBe('Bearer serve-token-1');
-    expect(callConn?.query).toBe('');
-    expect(callConn?.methods.slice(0, 3)).toEqual(['initialize', 'initialized', 'server_call']);
-    expect(callConn?.environmentIds).toEqual(['environment-authenticated']);
-    expect(callConn?.routing[0]).toMatchObject({
-      workspace_id: 'workspace-authenticated',
-      environment_id: 'environment-authenticated',
-      environment_generation: 3,
-    });
-
     // The echoed readiness line (renderer log viewer / stdout) never carries
     // the token — it is redacted at the echo chokepoint.
     const echoed = rawOutput.join('');

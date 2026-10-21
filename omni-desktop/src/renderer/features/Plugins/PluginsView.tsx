@@ -36,7 +36,6 @@ import {
 import { agentConfigApi } from '@/renderer/services/config';
 import { emitter, isElectron } from '@/renderer/services/ipc';
 import { managementAdminApi } from '@/renderer/services/management-admin';
-import { persistedStoreApi } from '@/renderer/services/store';
 import type { BundleUpdateInfo, McpServerEntry } from '@/shared/types';
 
 const SKILL_FILE_FILTERS = [{ name: 'Skill packages', extensions: ['skill'] }];
@@ -55,7 +54,6 @@ export const PluginsView = memo(() => {
   const managementSnapshot = useProductManagementSnapshot();
   const refreshManagement = useProductManagementRefresh();
   const isDesktop = useIsDesktop();
-  const store = useStore(persistedStoreApi.$atom);
 
   const [filter, setFilter] = useState<PluginKind | 'all'>('all');
   const [query, setQuery] = useState('');
@@ -77,13 +75,13 @@ export const PluginsView = memo(() => {
 
   const { refresh } = data;
 
-  /** The ownership marker is written only after the main process has proved
-   * parity. Until then, the legacy store remains the source for UI reads and
-   * writes; once owned, all MCP mutations go through the canonical RPCs. */
+  /** In Electron the Omniagents runtime owns MCP configuration: reads and
+   * writes go through its per-server RPCs. Server mode keeps the store-backed
+   * mcp.json document. */
   const canonicalMcpCapability = hasDurableLocalMcpPersistence(
     managementSnapshot.mcp.data?.mutation_persistence ?? null
   );
-  const canonicalMcpOwned = isElectron && store.mcpConfigOwnership === 'omniagents' && canonicalMcpCapability;
+  const canonicalMcpOwned = isElectron && canonicalMcpCapability;
   const canonicalMcpConfig = canonicalMcpOwned
     ? mcpConfigFromSnapshots(managementSnapshot.mcp.data?.servers ?? [])
     : null;
@@ -115,11 +113,10 @@ export const PluginsView = memo(() => {
   );
   const driftedItems = useMemo(() => collectDriftedItems(exploreItems), [exploreItems]);
 
-  /** Canonical per-server mutation after local ownership; legacy full-config
-   * writes remain available only during migration or in server mode. */
+  /** Per-server runtime mutation in Electron; full-document writes in server mode. */
   const saveConnector = useCallback(
     async (id: string, entry: McpServerEntry) => {
-      if (isElectron && store.mcpConfigOwnership === 'omniagents' && !canonicalMcpCapability) {
+      if (isElectron && !canonicalMcpCapability) {
         throw new Error('Omniagents MCP persistence is unavailable; restart the local agent before editing servers.');
       }
       const runtime = managementSnapshot.mcp.data?.servers.find((server) => server.server_name === id);
@@ -140,14 +137,7 @@ export const PluginsView = memo(() => {
       await agentConfigApi.setMcp({ ...config, mcpServers: { ...config.mcpServers, [id]: entry } });
       await refresh();
     },
-    [
-      canonicalMcpCapability,
-      canonicalMcpOwned,
-      managementSnapshot.mcp.data?.servers,
-      refresh,
-      refreshManagement,
-      store.mcpConfigOwnership,
-    ]
+    [canonicalMcpCapability, canonicalMcpOwned, managementSnapshot.mcp.data?.servers, refresh, refreshManagement]
   );
 
   const removeConnector = useCallback(

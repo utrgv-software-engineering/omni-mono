@@ -3,7 +3,7 @@
  * same dir, as desktop + local-server do), and back-compat reads of the legacy
  * Electron `{v, enc}` envelope.
  */
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,40 +37,6 @@ describe('LocalSecretStore', () => {
     await new LocalSecretStore(dir).setGitToken('c1', 'tok-1');
     // A second instance on the same dir (the other shell) reads it back.
     expect(await new LocalSecretStore(dir).getGitToken('c1')).toBe('tok-1');
-  });
-
-  it('reads a legacy enc:false (base64 plaintext) entry written by the old desktop store', async () => {
-    writeFileSync(
-      join(dir, 'git-secrets.json'),
-      JSON.stringify({
-        gitTokens: { 'github-oauth': { v: Buffer.from('gho_legacy').toString('base64'), enc: false } },
-        oauthTokens: {},
-      })
-    );
-    expect(await new LocalSecretStore(dir).getGitToken('github-oauth')).toBe('gho_legacy');
-  });
-
-  it('cannot read a legacy enc:true entry (safeStorage-encrypted) and warns', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    writeFileSync(
-      join(dir, 'git-secrets.json'),
-      JSON.stringify({ gitTokens: { x: { v: 'AAAA', enc: true } }, oauthTokens: {} })
-    );
-    expect(await new LocalSecretStore(dir).getGitToken('x')).toBeUndefined();
-    expect(warn).toHaveBeenCalled();
-  });
-
-  it('a write upgrades the file to the AES format in place', async () => {
-    writeFileSync(
-      join(dir, 'git-secrets.json'),
-      JSON.stringify({ gitTokens: { a: { v: Buffer.from('old').toString('base64'), enc: false } }, oauthTokens: {} })
-    );
-    const store = new LocalSecretStore(dir);
-    await store.setGitToken('b', 'new'); // touches the file
-    const data = JSON.parse(readFileSync(join(dir, 'git-secrets.json'), 'utf-8'));
-    expect(data.gitTokens.a).toEqual({ v: Buffer.from('old').toString('base64'), enc: false }); // untouched legacy
-    expect(data.gitTokens.b).toHaveProperty('iv'); // new entry is AES
-    expect(await store.getGitToken('a')).toBe('old'); // still readable
   });
 
   it('delete removes a git token', async () => {

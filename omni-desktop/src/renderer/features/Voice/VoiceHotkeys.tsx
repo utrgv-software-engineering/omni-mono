@@ -14,7 +14,6 @@ import { useStore } from '@nanostores/react';
 import { useCallback, useRef } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 
-import { configuredVoiceMode } from '@/lib/voice-mode';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { getVoiceMic, resolveCodeVoiceScope } from '@/renderer/services/voice-recording';
 
@@ -92,7 +91,7 @@ function useVoiceHotkey(hotkey: string | null, enabled: boolean, resolveScope: (
 
 export function VoiceHotkeys(): null {
   const store = useStore(persistedStoreApi.$atom);
-  const voiceOn = configuredVoiceMode(store) === 'local';
+  const voiceOn = Boolean(store.localVoiceEnabled);
 
   useVoiceHotkey(store.voiceToggleHotkey, Boolean(store.voiceToggleHotkey) && voiceOn, resolveColumnScope);
 

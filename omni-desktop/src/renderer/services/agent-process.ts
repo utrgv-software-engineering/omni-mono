@@ -8,7 +8,6 @@ import { emitter, ipc, wsEmitter } from '@/renderer/services/ipc';
 import type {
   AgentProcessStartOptions,
   AgentProcessStatus,
-  AgentProcessStopOptions,
   AgentProcessStopResult,
   WithTimestamp,
 } from '@/shared/types';
@@ -85,8 +84,8 @@ export const agentProcessApi = {
     return emitter.invoke('agent-process:start', processId, arg);
   },
 
-  stop: async (processId: string, opts?: AgentProcessStopOptions) => {
-    const result = await emitter.invoke('agent-process:stop', processId, opts);
+  stop: async (processId: string) => {
+    const result = await emitter.invoke('agent-process:stop', processId);
     warnForUncertainStop(result);
     teardownTerminal(processId);
     return result;
