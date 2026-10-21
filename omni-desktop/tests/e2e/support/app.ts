@@ -39,7 +39,11 @@ export async function activeSessionId(page: Page): Promise<string> {
 
 /** Switch the chat surface to a session from the sidebar, by its title. */
 export async function openSession(page: Page, title: string | RegExp): Promise<void> {
-  await sessionRow(page, title).click();
+  const row = sessionRow(page, title);
+  await row.click();
+  // Wait for the switch to land so later locators don't grab the outgoing pane.
+  await expect(row).toHaveAttribute('data-active', 'true');
+  await expect(page.locator('[data-deck-column]:not([aria-hidden="true"])')).toHaveCount(1);
 }
 
 /** Deck header "New chat": always opens another chat column. */
@@ -124,4 +128,13 @@ export async function openSourceEditor(page: Page, mountName: string): Promise<v
 /** The chat composer of the visible chat column (Focus keeps other columns mounted but hidden). */
 export function visibleComposer(page: Page): Locator {
   return page.getByPlaceholder('How can I help you today?').filter({ visible: true });
+}
+
+/** The Files app's tree, opened if the sidecar starts with it collapsed. */
+export async function workspaceFileTree(filesSurface: Locator): Promise<Locator> {
+  const showTree = filesSurface.getByRole('button', { name: 'Show file tree', exact: true });
+  if (await showTree.isVisible()) {
+    await showTree.click();
+  }
+  return filesSurface.getByRole('tree', { name: 'Workspace files' });
 }

@@ -101,7 +101,9 @@ async function startTestUpstream(): Promise<TestUpstream> {
 
 async function openSessionBrowser(page: import('@playwright/test').Page): Promise<void> {
   await openChat(page);
-  await page.getByRole('radio', { name: 'Browser', exact: true }).click();
+  // The browser app needs no running agent: open it in the session's sidecar.
+  await page.getByRole('button', { name: 'Show apps', exact: true }).click();
+  await page.getByRole('button', { name: 'Browser', exact: true }).click();
   await expect(page.getByPlaceholder('Search or enter URL').first()).toBeVisible();
 }
 

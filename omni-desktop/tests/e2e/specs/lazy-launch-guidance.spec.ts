@@ -27,6 +27,9 @@ test.describe('lazy session launch guidance', () => {
       await captureState(app.page, testInfo, '01-workspace-required');
 
       await app.page.getByRole('button', { name: 'Open workspace settings' }).click();
+      // KNOWN BUG (server mode): the Workspace settings tab only renders the
+      // workspace-directory control under Electron, so this link dead-ends in
+      // the browser build. Fails in server-local until that is fixed.
       await expect(app.page.getByText('Workspace directory', { exact: true })).toBeVisible();
       await captureState(app.page, testInfo, '02-workspace-settings');
     });

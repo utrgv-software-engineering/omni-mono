@@ -367,12 +367,12 @@ function seedWorkspaceGit(workspaceDir: string): void {
   );
   writeFileSync(path.join(sourceDir, 'utility.ts'), 'export const answer = 42;\n', 'utf-8');
   execFileSync('git', ['init', '--initial-branch=main'], { cwd: workspaceDir, stdio: 'ignore' });
+  // Repo-local identity: the isolated HOME has no global git config, and the
+  // UI's commit runs without one.
+  execFileSync('git', ['config', 'user.name', 'Omni E2E'], { cwd: workspaceDir, stdio: 'ignore' });
+  execFileSync('git', ['config', 'user.email', 'omni-e2e@example.invalid'], { cwd: workspaceDir, stdio: 'ignore' });
   execFileSync('git', ['add', '.'], { cwd: workspaceDir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=Omni E2E', '-c', 'user.email=omni-e2e@example.invalid', 'commit', '-m', 'fixture baseline'],
-    { cwd: workspaceDir, stdio: 'ignore' }
-  );
+  execFileSync('git', ['commit', '-m', 'fixture baseline'], { cwd: workspaceDir, stdio: 'ignore' });
   writeFileSync(
     path.join(sourceDir, 'index.ts'),
     "export const greeting = 'hello';\nexport const target = 'after';\nconsole.log(greeting);\n",

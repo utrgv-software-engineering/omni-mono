@@ -67,8 +67,11 @@ for (const scenario of ['stream', 'approval', 'artifact'] as const) {
     const marker =
       scenario === 'stream' ? 'SESSION_A_REPLY' : scenario === 'approval' ? 'TILE_APPROVAL_A' : 'A_ARTIFACT_initial';
     await openSession(page, 'BACKGROUND_0');
+    await expect(a.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
+    await expect(composer).toBeEditable({ timeout: 90_000 });
     await composer.fill(`${prompt} BACKGROUND_LIFECYCLE_GATE`);
-    await composer.press('Enter');
+    await a.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect(composer).toHaveValue('');
     // A now works in the background while B is shown with its own draft.
     await openSession(page, 'BACKGROUND_1');
     await composer.fill('independent background-check draft');

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { sessionRow } from 'tests/e2e/support/app';
+import { sessionRow, workspaceFileTree } from 'tests/e2e/support/app';
 import { attachProofScreenshot } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'workspace-files' });
@@ -24,7 +24,7 @@ test.describe('workspace files', () => {
 
     const filesSurface = page.locator('section[aria-label="Workspace files"]');
     await expect(filesSurface).toBeVisible({ timeout: 90_000 });
-    const tree = filesSurface.getByRole('tree', { name: 'Workspace files' });
+    const tree = await workspaceFileTree(filesSurface);
     await expect(tree).toBeVisible({ timeout: 90_000 });
     await attachProofScreenshot(filesSurface, testInfo, 'workspace files loaded');
 

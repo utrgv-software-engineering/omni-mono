@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from 'tests/e2e/fixtures/test';
-import { sessionRow } from 'tests/e2e/support/app';
+import { sessionRow, workspaceFileTree } from 'tests/e2e/support/app';
 import { invokeApp } from 'tests/e2e/support/invoke';
 import { attachProofScreenshot } from 'tests/e2e/support/proof';
 
@@ -56,7 +56,7 @@ async function openIdentityFile(page: Page, sessionName: string, expectedIdentit
 
   const filesSurface = page.getByRole('region', { name: 'Workspace files', exact: true });
   await expect(filesSurface).toBeVisible({ timeout: 90_000 });
-  const tree = filesSurface.getByRole('tree', { name: 'Workspace files' });
+  const tree = await workspaceFileTree(filesSurface);
   const identityFile = tree.getByRole('treeitem', { name: 'identity.txt', exact: true });
   await expect(identityFile).toBeVisible({ timeout: 90_000 });
   await identityFile.click();
@@ -86,7 +86,8 @@ test.describe('AgentHost pooling', () => {
     const beta = (await processStatus(page, 'code-e2e-pool-beta')) as RunningStatus;
     expect(alpha.data.agentHostId).toBeTruthy();
     expect(alpha.data.agentHostId).toBe(beta.data.agentHostId);
-    expect(alpha.data.wsUrl).toBe(beta.data.wsUrl);
+    // Server mode proxies each consumer under its own path, so the browser-facing
+    // wsUrl differs per chat even when both reach the same host.
     expect(alpha.data.hasAuthToken).toBe(true);
     expect(beta.data.hasAuthToken).toBe(true);
     expect(alpha.data.workspaceId).not.toBe(beta.data.workspaceId);

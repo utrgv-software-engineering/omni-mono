@@ -49,7 +49,7 @@ test.describe('routines', () => {
     await test.step('run now streams into the routine session column', async () => {
       await page.getByRole('button', { name: 'Run now' }).click();
       const main = page.getByRole('main');
-      await expect(main.getByRole('radiogroup', { name: 'Layout' })).toBeVisible({ timeout: 30_000 });
+      await expect(main.getByRole('button', { name: 'Session menu', exact: true })).toBeVisible({ timeout: 30_000 });
       await expect(main.getByText('Routine', { exact: true })).toBeVisible();
       await expect(main.getByText('Weekly on Tuesday at 10:30').first()).toBeVisible();
     });
