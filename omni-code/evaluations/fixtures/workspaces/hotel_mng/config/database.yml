@@ -1,0 +1,65 @@
+# Database configuration
+# SQLite for development/test, PostgreSQL for production (after migration)
+#
+# Production switches between SQLite and PostgreSQL based on DATABASE_URL:
+# - If DATABASE_URL is set: uses PostgreSQL
+# - If DATABASE_URL is not set: uses SQLite (legacy)
+
+default: &default
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  timeout: 5000
+
+development:
+  <<: *default
+  adapter: sqlite3
+  database: storage/development.sqlite3
+
+test:
+  <<: *default
+  adapter: sqlite3
+  database: storage/test.sqlite3
+
+staging:
+  <<: *default
+  adapter: sqlite3
+  database: storage/staging.sqlite3
+
+# Production: PostgreSQL if DATABASE_URL is set, otherwise SQLite (for migration)
+production:
+  primary:
+    adapter: <%= ENV["DATABASE_URL"] ? "postgresql" : "sqlite3" %>
+    encoding: <%= ENV["DATABASE_URL"] ? "unicode" : nil %>
+    pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+    <% if ENV["DATABASE_URL"] %>
+    url: <%= ENV["DATABASE_URL"] %>
+    <% else %>
+    database: <%= ENV.fetch("SQLITE3_STORAGE_PATH", "storage") %>/production.sqlite3
+    timeout: 5000
+    <% end %>
+  cache:
+    adapter: <%= ENV["DATABASE_URL"] ? "postgresql" : "sqlite3" %>
+    pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+    <% if ENV["DATABASE_URL"] %>
+    url: <%= ENV.fetch("CACHE_DATABASE_URL") { ENV["DATABASE_URL"].sub(/\/[^\/]+$/, "/hotel_cache") } %>
+    <% else %>
+    database: <%= ENV.fetch("SQLITE3_STORAGE_PATH", "storage") %>/production_cache.sqlite3
+    <% end %>
+    migrations_paths: db/cache_migrate
+  queue:
+    adapter: <%= ENV["DATABASE_URL"] ? "postgresql" : "sqlite3" %>
+    pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+    <% if ENV["DATABASE_URL"] %>
+    url: <%= ENV.fetch("QUEUE_DATABASE_URL") { ENV["DATABASE_URL"].sub(/\/[^\/]+$/, "/hotel_queue") } %>
+    <% else %>
+    database: <%= ENV.fetch("SQLITE3_STORAGE_PATH", "storage") %>/production_queue.sqlite3
+    <% end %>
+    migrations_paths: db/queue_migrate
+  cable:
+    adapter: <%= ENV["DATABASE_URL"] ? "postgresql" : "sqlite3" %>
+    pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+    <% if ENV["DATABASE_URL"] %>
+    url: <%= ENV.fetch("CABLE_DATABASE_URL") { ENV["DATABASE_URL"].sub(/\/[^\/]+$/, "/hotel_cable") } %>
+    <% else %>
+    database: <%= ENV.fetch("SQLITE3_STORAGE_PATH", "storage") %>/production_cable.sqlite3
+    <% end %>
+    migrations_paths: db/cable_migrate

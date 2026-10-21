@@ -1,0 +1,134 @@
+<%# Cancellation Confirmation Page %>
+<div class="min-h-screen bg-gray-50">
+  <div class="container mx-auto px-4 py-12">
+    <div class="max-w-3xl mx-auto">
+      <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+        <%# Header %>
+        <div class="bg-red-600 p-6">
+          <h1 class="text-2xl font-bold text-white mb-2">Cancel Reservation</h1>
+          <p class="text-white/90">Please review the cancellation details below</p>
+        </div>
+        
+        <%# Cancellation Details %>
+        <div class="p-8">
+          <%# Reservation Info %>
+          <div class="bg-gray-50 rounded-lg p-4 mb-6">
+            <h2 class="font-semibold text-gray-900 mb-3">Reservation Details</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <span class="text-gray-600">Confirmation Number:</span>
+                <span class="font-medium text-gray-900 ml-2"><%= @reservation.confirmation_number %></span>
+              </div>
+              <div>
+                <span class="text-gray-600">Guest:</span>
+                <span class="font-medium text-gray-900 ml-2"><%= @reservation.guest.full_name %></span>
+              </div>
+              <div>
+                <span class="text-gray-600">Check-in:</span>
+                <span class="font-medium text-gray-900 ml-2"><%= @reservation.check_in_date.strftime("%B %d, %Y") %></span>
+              </div>
+              <div>
+                <span class="text-gray-600">Check-out:</span>
+                <span class="font-medium text-gray-900 ml-2"><%= @reservation.check_out_date.strftime("%B %d, %Y") %></span>
+              </div>
+              <div>
+                <span class="text-gray-600">Room Type:</span>
+                <span class="font-medium text-gray-900 ml-2"><%= @reservation.room_type.name %></span>
+              </div>
+              <div>
+                <span class="text-gray-600">Total Amount:</span>
+                <span class="font-medium text-gray-900 ml-2">$<%= @reservation.total_amount.to_i %></span>
+              </div>
+            </div>
+          </div>
+          
+          <%# Cancellation Policy %>
+          <div class="border-2 border-amber-200 bg-amber-50 rounded-lg p-4 mb-6">
+            <h2 class="font-semibold text-amber-900 mb-3 flex items-center">
+              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+              </svg>
+              Cancellation Policy
+            </h2>
+            
+            <div class="text-amber-800">
+              <% if @cancellation_policy %>
+                <p class="font-medium mb-2"><%= @cancellation_policy.name || @cancellation_policy.cancellation_type.humanize %></p>
+                <p class="text-sm mb-2"><%= @cancellation_policy.description %></p>
+                
+                <% if @cancellation_fee == 0 %>
+                  <p class="font-medium text-green-700">✓ Free Cancellation - No fee will be charged</p>
+                <% elsif @cancellation_fee == @reservation.total_amount %>
+                  <p class="font-medium text-red-700">✗ Full Charge Applies - The full reservation amount will be charged</p>
+                <% else %>
+                  <p class="font-medium text-yellow-700">⚠ Partial Charge Applies - A cancellation fee of $<%= @cancellation_fee.to_i %> will be charged</p>
+                <% end %>
+              <% else %>
+                <%# Fallback to calculated fee display %>
+                <% if @cancellation_fee == 0 %>
+                  <p class="font-medium text-green-700 mb-2">✓ Free Cancellation</p>
+                  <p class="text-sm">No cancellation fee will be charged.</p>
+                <% elsif @cancellation_fee == @reservation.total_amount %>
+                  <p class="font-medium text-red-700 mb-2">✗ Full Charge Applies</p>
+                  <p class="text-sm">The full reservation amount will be charged.</p>
+                <% else %>
+                  <p class="font-medium text-yellow-700 mb-2">⚠ Partial Charge Applies</p>
+                  <p class="text-sm">A cancellation fee of $<%= @cancellation_fee.to_i %> will be charged.</p>
+                <% end %>
+              <% end %>
+            </div>
+          </div>
+          
+          <%# Financial Summary %>
+          <div class="bg-gray-50 rounded-lg p-4 mb-6">
+            <h2 class="font-semibold text-gray-900 mb-3">Financial Summary</h2>
+            <div class="space-y-2">
+              <div class="flex justify-between text-sm">
+                <span class="text-gray-600">Amount Paid:</span>
+                <span class="font-medium text-gray-900">$<%= @reservation.paid_amount.to_i %></span>
+              </div>
+              <div class="flex justify-between text-sm">
+                <span class="text-gray-600">Cancellation Fee:</span>
+                <span class="font-medium text-red-600">-$<%= @cancellation_fee.to_i %></span>
+              </div>
+              <div class="pt-2 border-t flex justify-between">
+                <span class="font-medium text-gray-900">Refund Amount:</span>
+                <span class="text-xl font-bold <%= @refund_amount > 0 ? 'text-green-600' : 'text-gray-900' %>">
+                  $<%= @refund_amount.to_i %>
+                </span>
+              </div>
+            </div>
+            
+            <% if @refund_amount > 0 %>
+              <p class="text-xs text-gray-600 mt-3">
+                * Refunds will be processed within 5-7 business days to the original payment method.
+              </p>
+            <% end %>
+          </div>
+          
+          <%# Confirmation Actions %>
+          <div class="border-t pt-6">
+            <h3 class="font-medium text-gray-900 mb-4">Are you sure you want to cancel this reservation?</h3>
+            
+            <%= form_with url: confirm_cancel_public_reservation_path(@reservation.confirmation_number), method: :post, local: true do |f| %>
+              <%= hidden_field_tag :email, params[:email] %>
+              <%= hidden_field_tag :phone, params[:phone] %>
+              
+              <div class="flex gap-4">
+                <%= link_to "← Keep Reservation",
+                    public_reservation_path(@reservation.confirmation_number,
+                                           email: params[:email],
+                                           phone: params[:phone]),
+                    class: "flex-1 text-center bg-gray-200 text-gray-900 font-semibold py-3 px-6 rounded-lg hover:bg-gray-300 transition-colors duration-200" %>
+                
+                <%= f.submit "Yes, Cancel Reservation",
+                    data: { confirm: "Are you sure? This action cannot be undone." },
+                    class: "flex-1 bg-red-600 text-white font-semibold py-3 px-6 rounded-lg hover:bg-red-700 transition-colors duration-200 cursor-pointer" %>
+              </div>
+            <% end %>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

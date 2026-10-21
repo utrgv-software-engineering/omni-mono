@@ -1,0 +1,94 @@
+scenarios:
+  # ── Correct activation ──────────────────────────────────────────
+
+  - name: deploy_skill_activated_for_deployment_task
+    prompt: |
+      we need to get this fastapi app deployed to AWS by end of week.
+      can you walk me through what needs to happen?
+    fixture: python_fastapi
+    expect:
+      expected_skills: ["deploy"]
+    measures:
+      - agents_md_in_instructions
+      - expected_skills_in_instructions
+      - correct_skill_activated
+
+  - name: testing_skill_for_test_request
+    prompt: |
+      im about to open a PR and want to make sure test coverage is
+      solid. can you write tests for the post and comment endpoints?
+    fixture: python_fastapi
+    expect:
+      expected_skills: ["testing"]
+    measures:
+      - agents_md_in_instructions
+      - expected_skills_in_instructions
+      - correct_skill_activated
+
+  # ── Chained skill activation ────────────────────────────────────
+
+  - name: deploy_chains_to_testing
+    prompt: |
+      ok ship it — deploy this thing to prod. make sure everything
+      is actually working first tho, don't want another incident
+    fixture: python_fastapi
+    expect:
+      expected_skills: ["deploy", "testing"]
+      skill_chains:
+        deploy: ["testing"]
+    measures:
+      - agents_md_in_instructions
+      - expected_skills_in_instructions
+      - correct_skill_activated
+      - chained_skill_activated
+
+  - name: review_chains_to_testing
+    prompt: |
+      can you do a thorough code review of this project? we're about
+      to hand it off to another team and i want to make sure its solid
+    fixture: python_fastapi
+    expect:
+      expected_skills: ["review", "testing"]
+      skill_chains:
+        review: ["testing"]
+    measures:
+      - agents_md_in_instructions
+      - expected_skills_in_instructions
+      - correct_skill_activated
+      - chained_skill_activated
+
+  # ── No skill needed ─────────────────────────────────────────────
+
+  - name: simple_question_no_skill
+    prompt: "what does the root endpoint in src/main.py return?"
+    fixture: python_fastapi
+    expect:
+      forbidden_skills: ["deploy", "testing", "review"]
+    measures:
+      - agents_md_in_instructions
+      - no_wrong_skill_activated
+
+  - name: read_file_no_skill
+    prompt: "show me src/models/user.py"
+    fixture: python_fastapi
+    expect:
+      forbidden_skills: ["deploy", "testing", "review"]
+    measures:
+      - agents_md_in_instructions
+      - no_wrong_skill_activated
+
+  # ── Testing skill required to fix failure ───────────────────────
+
+  - name: testing_skill_needed_to_fix_failures
+    prompt: |
+      can you run the tests? i think something broke in the comments
+      tests after the last refactor. fix whatever's failing
+    fixture: python_fastapi
+    expect:
+      expected_skills: ["testing"]
+      forbidden_skills: ["deploy"]
+    measures:
+      - agents_md_in_instructions
+      - expected_skills_in_instructions
+      - correct_skill_activated
+      - no_wrong_skill_activated

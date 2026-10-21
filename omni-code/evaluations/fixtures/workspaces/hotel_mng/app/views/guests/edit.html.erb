@@ -1,0 +1,18 @@
+<% content_for :page_title, "Edit #{@guest.full_name}" %>
+
+<div class="max-w-7xl mx-auto">
+  <!-- Header -->
+  <div class="mb-6">
+    <nav class="flex mb-2" aria-label="Breadcrumb">
+      <%= link_to "Guests", guests_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to @guest.full_name, guest_path(@guest), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <span class="text-sm text-gray-900">Edit</span>
+    </nav>
+    <h1 class="text-2xl font-bold text-gray-900">Edit Guest Profile</h1>
+    <p class="mt-1 text-sm text-gray-600">Update guest information and preferences.</p>
+  </div>
+
+  <%= render 'form', guest: @guest %>
+</div>

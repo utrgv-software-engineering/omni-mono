@@ -1,0 +1,133 @@
+# End-to-end verification that workspace_root propagates from the eval
+# environment through the agent's tool context and into sub-agents.
+#
+# Background: the omniagents framework was previously falling back to
+# `os.getcwd()` when a client started a run without populating
+# workspace_root. In server mode that anchored sub-agents and tool
+# subprocesses to whatever directory the server process happened to be
+# running in. Strict-mode (omniagents v0.6.48+) raises
+# WorkspaceRootRequiredError instead. These scenarios are the
+# end-to-end signal that the strict path lands the right value in the
+# right place across both single-tool runs and worker fan-out.
+#
+# The declared eval environment stages a fresh tempdir per run and writes
+# both `PWD` and `OMNI_WORKSPACE_ROOT` env vars and `spec.context =
+# {"workspace_root": tmp_dir}`. If everything is wired correctly:
+#   * `execute_bash` lands in tmp_dir → marker file appears there.
+#   * `spawn_worker` forwards tmp_dir to the worker's start_run; the
+#     worker's `write_file`/`execute_bash` also land in tmp_dir.
+#
+# How to run:
+#   # Scenario 1 (orchestrator-only) — default agent works fine:
+#   python -m omniagents.cli eval suite run -P omni_code/project.yml \
+#       --select 'name:workspace_root_visible_to_orchestrator_tools' \
+#       --reporter pretty
+#
+#   # Scenario 2 (subagent fan-out) — needs the worker tools, which
+#   # the production `omni` agent has commented out. Run against the
+#   # test-only agent that has them enabled:
+#   python -m omniagents.cli eval suite run -P omni_code/project.yml \
+#       --agent eval_subagent_test \
+#       --select 'name:workspace_root_visible_to_spawned_worker' \
+#       --reporter pretty
+
+scenarios:
+  - name: workspace_root_visible_to_orchestrator_tools
+    fixture: subagent_workspace
+    environment:
+      profile: evaluations/profiles/devbox.yml
+    runs_per_prompt: 1
+    prompt: |
+      Use execute_bash to create a file named `marker.txt` in the
+      current working directory containing exactly the text `hello`
+      (no newline). Use the command:
+
+        printf hello > marker.txt
+
+      Then output exactly the line [DONE].
+    until_sentinel: "[DONE]"
+    expect:
+      command: "test -f marker.txt && [ \"$(cat marker.txt)\" = hello ]"
+      command_timeout_s: 30
+    measures:
+      outcome:
+        - command_in_workspace_succeeds
+
+  # MUST be invoked with `--agent eval_subagent_test`. That agent has
+  # spawn_worker / wait_for_workers wired up; the production `omni`
+  # agent has them commented out and would silently work around the
+  # instruction by writing the file directly — a false-positive test.
+  - name: workspace_root_visible_to_spawned_worker
+    fixture: subagent_workspace
+    environment:
+      profile: evaluations/profiles/devbox.yml
+    runs_per_prompt: 1
+    prompt: |
+      Spawn a single worker with this exact task description:
+
+        Use write_file to create a file named `worker_marker.txt` in
+        the current working directory with the contents
+        `hello-from-worker`.
+
+      Wait for the worker to finish with wait_for_workers, then output
+      exactly the line [DONE].
+    until_sentinel: "[DONE]"
+    max_continuations: 3
+    expect:
+      command: "test -f worker_marker.txt && [ \"$(cat worker_marker.txt)\" = hello-from-worker ]"
+      command_timeout_s: 30
+      # Read by `appropriate_worker_delegation`. Without it, an agent
+      # that lacks the worker tools could satisfy the outcome by
+      # writing the file itself — a false positive. With it, the test
+      # fails loudly when spawn_worker isn't actually called.
+      should_delegate: true
+    measures:
+      outcome:
+        # The worker's write_file landed in the eval tempdir, not the
+        # eval host's cwd. If workspace_root didn't propagate to the
+        # worker's RunContextWrapper.context, the file would land
+        # somewhere else and this fails.
+        - command_in_workspace_succeeds
+      quality:
+        - appropriate_worker_delegation
+
+  # Same shape as the worker scenario, but for the explorer sub-agent.
+  # The explorer is invoked via the `explore` tool which spawns a
+  # LocalAgent passing context={"workspace_root": <parent's value>}.
+  # If that context flow is broken, the explorer's read_file lands in
+  # the wrong directory and the sentinel content never makes it back.
+  #
+  # Run with:
+  #   python -m omniagents.cli eval suite run -P omni_code/project.yml \
+  #       --agent eval_subagent_test \
+  #       --select 'name:workspace_root_visible_to_explorer_subagent' \
+  #       --reporter pretty
+  - name: workspace_root_visible_to_explorer_subagent
+    fixture: subagent_workspace
+    environment:
+      profile: evaluations/profiles/devbox.yml
+    runs_per_prompt: 1
+    prompt: |
+      Use the `explore` tool to find the contents of the file
+      `sentinel.txt` in the workspace. Then write the exact contents
+      the explorer reports into a new file named `found.txt` (using
+      `write_file`, no trailing newlines added). Output exactly the
+      line [DONE] when done.
+    until_sentinel: "[DONE]"
+    max_continuations: 3
+    expect:
+      # If workspace_root propagated correctly to the explorer's
+      # read_file ctx, the sentinel string we wrote into the fixture
+      # comes back here. Anchored to a sentinel string the LLM cannot
+      # plausibly hallucinate.
+      command: "grep -q 'explorer_sentinel_marker_xyz_42' found.txt"
+      command_timeout_s: 30
+      # Read by `appropriate_explore_usage`. Without it the agent
+      # could satisfy the outcome by reading sentinel.txt itself —
+      # a false positive that wouldn't exercise the explorer flow.
+      should_explore: true
+    measures:
+      outcome:
+        - command_in_workspace_succeeds
+      quality:
+        - appropriate_explore_usage

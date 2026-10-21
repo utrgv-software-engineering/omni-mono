@@ -1,0 +1,126 @@
+name: omni
+label: Omni Code
+description: "Full-stack coding agent with workspace access"
+instructions_file: instructions.md
+welcome_text: |
+  Welcome to Omni Code! I'm here to help you with your coding needs.
+
+# Tool surface composed from capability packs (see capabilities/*.yml and
+# omniagents builtin capabilities). Each cap bundles a tool family plus an
+# instructions fragment. `filesystem` and `shell` are the builtin packs
+# as-is: the coding-flavored guidance omni-code used to append
+# (apply_patch-exact-name, no re-read after edit, rg-over-cat/grep/find)
+# now ships in the builtins themselves.
+capabilities:
+  - javascript # bounded QuickJS orchestration of authorized tools
+  - tool_outputs # retained result range/search access
+  - filesystem    # read/list/glob/grep/write/edit/apply_patch + read_image (builtin)
+  - shell         # execute_bash + bash_status/logs/kill (builtin)
+  - web           # web_fetch + download_file (builtin, provider-agnostic)
+  - serpapi       # web_search / youtube_search / scholar_search (builtin)
+  - markdown      # convert_to_markdown
+  - notebook      # read_notebook / edit_notebook
+  - workers       # spawn_worker family
+  - tasks         # task_create / list / get / update
+  - skills        # load_skill
+  - artifacts     # display_artifact (builtin)
+  - exploration   # explorer subagent exposed as `explore`
+  - goal          # goal_complete (signals /goal autopilot stop)
+  - wakeup        # schedule_wakeup / cancel_wakeup (self-scheduled recurring notifications)
+  - loop          # loop_continue (dynamic /loop continuation scheduling)
+  - human         # notify / escalate (UI-implemented client tools)
+  - feedback      # /good /bad /note /notes (builtin, control-plane only)
+  - recap         # /recap catch-up panel (builtin; summarizer installed in omni/context.py)
+  - compact       # /compact checkpoint compaction (builtin; summarizer installed in omni/context.py)
+  - model_picker  # /models /model /reasoning /voice-model* (builtin, control-plane only)
+  - sandbox       # builtin: sandbox_get_state / sandbox_wait_until_ready tools (read-only) + the operator-only sandbox.* lifecycle RPCs (pause/unpause/notify_activity/discard_snapshot/switch)
+  - workspace_info # fs_get_cwd/workspace_root/home/list_dir/sources picker RPCs (builtin; providers installed in omni/context.py)
+  - terminal      # terminal.create / terminal.close (builtin; omni serve installs the sandboxed TerminalManager)
+
+model_settings:
+  reasoning:
+    effort: low
+  parallel_tool_calls: true
+
+max_turns: 10000
+
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - read_image
+    - read_file
+    - list_directory
+    - display_artifact
+    - bash_status
+    - bash_logs
+    - web_fetch
+    - web_search
+    - youtube_search
+    - scholar_search
+    - convert_to_markdown
+    - read_notebook
+    - explore
+    - get_worker_status
+    - wait_for_workers
+    - send_worker_message
+    - close_worker
+    - resume_worker
+    - task_create
+    - task_list
+    - task_get
+    - task_update
+    - load_skill
+    - goal_complete
+    - schedule_wakeup
+    - cancel_wakeup
+    - loop_continue
+    - notify
+    - escalate
+    - sandbox_get_state
+    - sandbox_wait_until_ready
+
+# No server_functions list: every server function this agent needs —
+# feedback / model-picker / artifact / help / compact / fs_* /
+# terminal.* / goal / loop / cron / wakeup / bash-jobs, and the
+# sandbox.* lifecycle RPCs (pause/unpause/notify_activity/
+# discard_snapshot/switch) — is carried by a builtin capability pack it
+# activates above and registers through the capability-gated path.
+
+context: build_coding_context
+model_config_resolver: resolve_default_model
+variables: {}
+
+# Sub-agent (explorer) is bundled into the project `exploration` capability
+# above via agent_tools: [{agent: explorer, tool_name: explore, ...}]. Both
+# the capability pack (capabilities/exploration.yml) and the explorer agent
+# (agents/explorer/) are product-owned — the framework ships packs, tools,
+# and prompt seams, but no agents. The sub-agent inherits the parent's RunConfig
+# (model_provider with credentials) and the parent's RunContextWrapper
+# (workspace_root, session vars); it declares no model of its own, so it
+# runs on the orchestrator's resolved model — the user's currently-selected
+# model from omni-code's models.json.
+
+# SDK 0.16+ proactive compaction. Wraps the session with
+# OpenAIResponsesCompactionSession so the Responses ``compact`` endpoint
+# trims context after each turn (default trigger: >=10 candidate items).
+# The wrap helper builds a dedicated AsyncOpenAI client from the resolved
+# model_config (api_key + base_url) so this works against any endpoint
+# that serves the Responses API — OpenAI proper, Azure /openai/v1, or a
+# compatible proxy. If you point at a backend that doesn't implement
+# ``responses.compact``, flip ``enabled: false`` here; the on_error
+# reactive-compaction path remains the safety net either way.
+session:
+  compaction:
+    enabled: true
+    # No ``model``: compaction inherits the parent session's selected model
+    # and provider transport (incl. openai-oauth/Codex), so responses.compact
+    # hits the same endpoint/credentials. Pin a model here only to route
+    # compaction to a different endpoint on purpose.
+    compaction_mode: auto
+    # Trigger at 80% of the model's context window. The default 0.9 leaves
+    # too little headroom for this agent's large tool surface + system
+    # prompt: a single big tool output can leap a turn from under-threshold
+    # to over the ceiling before the post-turn compaction runs.
+    threshold_fraction: 0.8

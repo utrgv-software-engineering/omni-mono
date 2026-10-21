@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.build/
+build/
+dist/
+.eggs/
+.venv/
+.env
+.env.*
+
+# Node
+node_modules/
+
+# OS/IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Test/Runtime artifacts
+.pytest_cache/
+.ruff_cache/
+sessions.db
+
+# Eval run outputs (regenerated each run)
+artifacts/
+evaluations/__pycache__/
+
+# playwright-cli / playwright-mcp working dirs (transient)
+.playwright-cli/
+.playwright-mcp/
+
+# Rust
+target/
+
+# Misc
+*.log

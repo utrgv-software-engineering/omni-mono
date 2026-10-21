@@ -1,0 +1,64 @@
+# Product identity — the single declaration of who this product is.
+# One name seeds every derived facet (slug omni_code, label "Omni Code",
+# config dirs, OMNI_CODE env prefix, tracing project/name). Declared
+# here is only what deviates from or cannot derive by convention: the
+# historical CLI program name `omni` and the self-update index.
+product:
+  name: omni-code
+  prog: omni
+  update:
+    index_url: https://pypi.fury.io/ericmichael/omni-code/
+allow_user_mcp_servers: true
+# Explicit on purpose (conventions would resolve the same values): which
+# agent runs is too load-bearing to leave implicit.
+agents:
+  entrypoint: omni
+  voice_entrypoint: voice_agent
+# Sessions conventions (framework sessions CLI). The coding-flavored
+# summary envelope: content keys ensured on every `omni sessions
+# summarize` result, must agree with the JSON schema in
+# agents/session_summarizer/instructions.md (that agent, named by
+# convention, IS the summarizer — see
+# omniagents.core.session.summarize).
+sessions:
+  summary_envelope:
+    summary: ""
+    decisions: []
+    constraints: []
+    key_files: []
+    commands: []
+    tests: []
+    open_questions: []
+    next_steps: []
+    notable_errors: []
+# Conventional paths (agents/, capabilities/, prompts/, and the sibling
+# models.yml catalog) need no declaration. Evaluations and target are
+# repo-only, live outside the omni_code package, and are absent from
+# wheels (the loader tolerates missing dirs) — the two remaining
+# overrides.
+paths:
+  evaluations: ../evaluations
+  target: ../target
+# Declarative slash → project-agent bindings. The framework registers each
+# as a server function carrying a slash declaration, so clients list it in
+# the slash catalog and run it directly (omniagents.core.runtime.slash_agents
+# over run_project_agent_once); the model is never involved. The final-line protocol (the exact status
+# strings below) is declared in agents/init_agent/instructions.md; this
+# binding is only the dispatch + response formatting.
+slash_commands:
+  init:
+    agent: init_agent
+    description: Create or update AGENTS.md for this repository
+    usage: ""
+    prompt: begin
+    max_turns: 1000
+    # Historical behavior for this path: the init agent takes the
+    # runtime's raw model id (no provider-prefix normalization).
+    normalize_model: false
+    failure_message: Failed to update AGENTS.md
+    attach_file:
+      path: AGENTS.md
+      when_status:
+        - Created AGENTS.md
+        - Updated AGENTS.md
+      language: markdown

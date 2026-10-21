@@ -1,0 +1,77 @@
+{
+  "description": "Session where user imposed multiple negative constraints ('do NOT' rules). Tests whether compaction preserves all of them, especially the non-obvious ones.",
+  "pre_compaction_messages": [
+    {
+      "role": "user",
+      "content": "Add a caching layer to our API. Requirements:\n1. Use Redis (not memcached)\n2. Do NOT use decorator-based caching — use explicit cache.get/set calls\n3. Cache TTL must be configurable per-endpoint, not global\n4. Do NOT cache any POST/PUT/DELETE responses, only GET\n5. Include cache invalidation when write operations happen on the same resource"
+    },
+    {
+      "role": "assistant",
+      "content": "I'll add Redis caching with explicit get/set calls, per-endpoint TTL configuration, GET-only caching, and write-triggered invalidation. Let me start by examining the current API structure."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "type": "function_call",
+          "name": "read_file",
+          "arguments": "{\"file_path\": \"/workspace/src/routes/user_routes.py\"}",
+          "call_id": "call_010"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "from fastapi import APIRouter\n\nrouter = APIRouter(prefix=\"/users\")\n\n@router.get(\"/{user_id}\")\nasync def get_user(user_id: int):\n    return {\"id\": user_id}\n\n@router.post(\"/\")\nasync def create_user(name: str):\n    return {\"name\": name}",
+      "tool_call_id": "call_010"
+    },
+    {
+      "role": "assistant",
+      "content": "I see the route structure. I'll create a cache utility module first, then integrate it into the routes.\n\nKey decisions:\n- Explicit `cache.get(key)` / `cache.set(key, value, ttl)` calls (no decorators)\n- Each endpoint defines its own TTL\n- Only GET handlers use caching\n- POST handler invalidates the relevant cache keys"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "type": "function_call",
+          "name": "write_file",
+          "arguments": "{\"file_path\": \"/workspace/src/cache.py\", \"content\": \"import redis\\n\\n_client = redis.Redis()\\n\\nasync def get(key: str) -> str | None:\\n    return _client.get(key)\\n\\nasync def set(key: str, value: str, ttl: int = 300) -> None:\\n    _client.setex(key, ttl, value)\\n\\nasync def delete(key: str) -> None:\\n    _client.delete(key)\"}",
+          "call_id": "call_011"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "File written.",
+      "tool_call_id": "call_011"
+    },
+    {
+      "role": "user",
+      "content": "Good start. Continue with integrating it into the user routes."
+    },
+    {
+      "role": "assistant",
+      "content": "I'll update user_routes.py to add caching to the GET endpoint with a 60s TTL, and invalidation on the POST endpoint."
+    }
+  ],
+  "post_compaction_prompts": [
+    "What are ALL the constraints I gave you for the caching implementation? List every single one.",
+    "Continue implementing. What have you done so far and what's left?"
+  ],
+  "expected_recall": {
+    "task": "add Redis caching to API",
+    "constraints": [
+      "use Redis not memcached",
+      "explicit cache.get/set, no decorators",
+      "per-endpoint TTL, not global",
+      "only cache GET responses",
+      "cache invalidation on write operations"
+    ],
+    "progress": {
+      "completed": ["src/cache.py created"],
+      "remaining": ["integrate into user_routes.py", "integrate into other routes"]
+    }
+  }
+}

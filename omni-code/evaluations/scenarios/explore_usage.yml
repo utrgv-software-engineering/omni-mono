@@ -1,0 +1,55 @@
+scenarios:
+  # ── Should use explore ─────────────────────────────────────────
+
+  - name: broad_investigation_uses_explore
+    prompt: |
+      just got added to this repo and have no idea whats going on. can
+      you dig through everything and give me the full picture? endpoints,
+      auth, data layer, tests, the whole thing
+    fixture: python_fastapi
+    expect:
+      should_explore: true
+    measures:
+      - appropriate_explore_usage
+
+  - name: cross_cutting_concern_uses_explore
+    prompt: |
+      we're getting 401s on the comment creation endpoint in prod but
+      it works fine in our test suite. can you trace what happens when
+      a POST /comments/ request comes in? i need to understand every
+      layer it goes through — middleware, routing, service, storage
+    fixture: python_fastapi
+    expect:
+      should_explore: true
+    measures:
+      - appropriate_explore_usage
+
+  # ── Should NOT use explore (targeted lookup) ───────────────────
+
+  - name: specific_file_read_no_explore
+    prompt: "whats in src/models/user.py? just show me the file"
+    fixture: python_fastapi
+    expect:
+      should_explore: false
+    measures:
+      - appropriate_explore_usage
+
+  - name: specific_function_no_explore
+    prompt: |
+      the validate_email function in src/services/user_service.py is
+      letting through emails without TLDs. whats the current logic?
+    fixture: python_fastapi
+    expect:
+      should_explore: false
+    measures:
+      - appropriate_explore_usage
+
+  - name: known_file_edit_no_explore
+    prompt: |
+      add a __repr__ to the Post class in src/models/post.py, should
+      show the id and title
+    fixture: python_fastapi
+    expect:
+      should_explore: false
+    measures:
+      - appropriate_explore_usage

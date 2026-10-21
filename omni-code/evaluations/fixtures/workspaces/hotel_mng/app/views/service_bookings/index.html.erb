@@ -1,0 +1,341 @@
+<% content_for :page_title, @reservation ? "Service Bookings - Reservation #{@reservation.confirmation_number}" : "Service Bookings" %>
+
+<div class="max-w-7xl mx-auto">
+  <!-- Breadcrumb Navigation -->
+  <% if @reservation %>
+    <nav class="flex mb-4" aria-label="Breadcrumb">
+      <%= link_to "Reservations", reservations_path, class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <%= link_to @reservation.confirmation_number, reservation_path(@reservation), class: "text-sm text-gray-500 hover:text-gray-700" %>
+      <span class="mx-2 text-gray-400">/</span>
+      <span class="text-sm text-gray-900">Service Bookings</span>
+    </nav>
+  <% end %>
+
+  <!-- Page Header with Actions -->
+  <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Service Bookings</h1>
+      <p class="text-sm text-gray-600 mt-1">
+        <% if @reservation %>
+          Services booked for <%= @reservation.guest.full_name %>
+        <% else %>
+          Manage all service bookings across the hotel
+        <% end %>
+      </p>
+    </div>
+    <div class="mt-4 sm:mt-0">
+      <% if policy(ServiceBooking).new? %>
+        <% if @reservation %>
+          <%= link_to new_reservation_service_booking_path(@reservation), class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            Book Service
+          <% end %>
+        <% else %>
+          <%= link_to new_service_booking_path, class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors" do %>
+            <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            New Booking
+          <% end %>
+        <% end %>
+      <% end %>
+    </div>
+  </div>
+
+  <!-- View Toggle and Filters -->
+  <div class="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+    <%= form_with url: @reservation ? reservation_service_bookings_path(@reservation) : service_bookings_path, 
+                  method: :get, local: true, class: "space-y-4" do |f| %>
+      
+      <!-- View Toggle -->
+      <div class="flex items-center space-x-2 mb-4">
+        <span class="text-sm font-medium text-gray-700">View:</span>
+        <div class="flex rounded-lg shadow-sm">
+          <%= link_to @reservation ? reservation_service_bookings_path(@reservation, view: 'list') : service_bookings_path(view: 'list'),
+              class: "px-3 py-2 text-sm font-medium rounded-l-lg #{(params[:view] || 'list') == 'list' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'} border border-gray-300" do %>
+            <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+            </svg>
+            List
+          <% end %>
+          <%= link_to @reservation ? reservation_service_bookings_path(@reservation, view: 'calendar') : service_bookings_path(view: 'calendar'),
+              class: "px-3 py-2 text-sm font-medium rounded-r-lg #{params[:view] == 'calendar' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'} border border-gray-300 border-l-0" do %>
+            <svg class="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+            </svg>
+            Calendar
+          <% end %>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+        <!-- Search -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Search</label>
+          <%= text_field_tag :search, params[:search], 
+              placeholder: "Guest name or service", 
+              class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+        </div>
+        
+        <!-- Status Filter -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Status</label>
+          <%= select_tag :status, 
+              options_for_select([
+                ['All Statuses', ''],
+                ['Pending', 'pending'],
+                ['Confirmed', 'confirmed'],
+                ['Completed', 'completed'],
+                ['Cancelled', 'cancelled']
+              ], params[:status]),
+              class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+        </div>
+        
+        <!-- Date From -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">From Date</label>
+          <%= date_field_tag :start_date, params[:start_date] || Date.current, 
+              class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+        </div>
+        
+        <!-- Date To -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">To Date</label>
+          <%= date_field_tag :end_date, params[:end_date] || Date.current.end_of_month, 
+              class: "w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500" %>
+        </div>
+        
+        <!-- Filter Actions -->
+        <div class="flex items-end space-x-2">
+          <%= submit_tag "Filter", class: "px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" %>
+          <%= link_to "Clear", @reservation ? reservation_service_bookings_path(@reservation) : service_bookings_path, 
+              class: "px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50" %>
+        </div>
+      </div>
+    <% end %>
+  </div>
+
+  <% if (params[:view] || 'list') == 'calendar' %>
+    <!-- Calendar View -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <div class="px-6 py-4 border-b border-gray-200">
+        <h2 class="text-lg font-semibold text-gray-900">Booking Calendar</h2>
+      </div>
+      <div class="p-6">
+        <!-- Simple calendar grid -->
+        <div class="grid grid-cols-7 gap-px bg-gray-200">
+          <% ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].each do |day| %>
+            <div class="bg-gray-50 p-2 text-center text-xs font-medium text-gray-700">
+              <%= day %>
+            </div>
+          <% end %>
+          
+          <% start_date = Date.parse(params[:start_date] || Date.current.to_s).beginning_of_month %>
+          <% end_date = start_date.end_of_month %>
+          <% (start_date.beginning_of_week..end_date.end_of_week).each do |date| %>
+            <div class="bg-white p-2 min-h-[80px] <%= 'text-gray-400' if date.month != start_date.month %>">
+              <div class="text-sm font-medium mb-1"><%= date.day %></div>
+              <% day_bookings = @service_bookings.select { |b| b.booking_date == date } %>
+              <% day_bookings.first(2).each do |booking| %>
+                <div class="text-xs p-1 mb-1 rounded <%= booking.confirmed? ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800' %>">
+                  <%= booking.service.name.truncate(15) %>
+                </div>
+              <% end %>
+              <% if day_bookings.size > 2 %>
+                <div class="text-xs text-gray-500">+<%= day_bookings.size - 2 %> more</div>
+              <% end %>
+            </div>
+          <% end %>
+        </div>
+      </div>
+    </div>
+  <% else %>
+    <!-- List View -->
+    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+      <% if @service_bookings.any? %>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead class="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Service
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Guest
+                </th>
+                <% unless @reservation %>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Reservation
+                  </th>
+                <% end %>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Date & Time
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Quantity
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Status
+                </th>
+                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Total
+                </th>
+                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Actions
+                </th>
+              </tr>
+            </thead>
+            <tbody class="bg-white divide-y divide-gray-200">
+              <% @service_bookings.each do |booking| %>
+                <tr class="hover:bg-gray-50 transition-colors">
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-gray-900">
+                      <%= booking.service.name %>
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      <%= booking.service.category.humanize %>
+                    </div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-gray-900">
+                      <%= booking.guest.full_name %>
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      <%= booking.guest.email %>
+                    </div>
+                  </td>
+                  <% unless @reservation %>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <% if booking.reservation %>
+                        <%= link_to booking.reservation.confirmation_number, 
+                            reservation_path(booking.reservation),
+                            class: "text-sm text-blue-600 hover:text-blue-800" %>
+                      <% else %>
+                        <span class="text-sm text-gray-400">Walk-in</span>
+                      <% end %>
+                    </td>
+                  <% end %>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-gray-900">
+                      <%= booking.booking_date.strftime("%b %d, %Y") %>
+                    </div>
+                    <div class="text-xs text-gray-500">
+                      <% if booking.booking_time %>
+                        <%= booking.formatted_booking_time %>
+                        <% if booking.duration_minutes %>
+                          - <%= booking.end_time %>
+                        <% end %>
+                      <% else %>
+                        All day
+                      <% end %>
+                    </div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm text-gray-900">
+                      <%= booking.quantity %>
+                      <span class="text-xs text-gray-500">
+                        <%= booking.service.pricing_unit == 'per_person' ? 'guests' : booking.service.pricing_unit.split('_').last %>
+                      </span>
+                    </div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <%= render partial: "shared/status_badge", locals: { status: booking.status, type: "service_booking" } %>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-gray-900">
+                      $<%= number_with_delimiter(booking.total_price) %>
+                    </div>
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <div class="flex justify-end space-x-2">
+                      <% if @reservation %>
+                        <%= link_to reservation_service_booking_path(@reservation, booking),
+                            class: "text-blue-600 hover:text-blue-900",
+                            title: "View" do %>
+                          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                          </svg>
+                        <% end %>
+                      <% else %>
+                        <%= link_to service_booking_path(booking),
+                            class: "text-blue-600 hover:text-blue-900",
+                            title: "View" do %>
+                          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                          </svg>
+                        <% end %>
+                      <% end %>
+                      
+                      <% if booking.can_cancel? && policy(booking).destroy? %>
+                        <% if @reservation %>
+                          <%= link_to reservation_service_booking_path(@reservation, booking),
+                              method: :delete,
+                              data: { confirm: "Are you sure you want to cancel this booking?" },
+                              class: "text-red-600 hover:text-red-900",
+                              title: "Cancel" do %>
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                          <% end %>
+                        <% else %>
+                          <%= link_to service_booking_path(booking),
+                              method: :delete,
+                              data: { confirm: "Are you sure you want to cancel this booking?" },
+                              class: "text-red-600 hover:text-red-900",
+                              title: "Cancel" do %>
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                          <% end %>
+                        <% end %>
+                      <% end %>
+                    </div>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
+      <% else %>
+        <!-- Empty State -->
+        <div class="px-6 py-12 text-center">
+          <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+          </svg>
+          <h3 class="mt-2 text-sm font-medium text-gray-900">No service bookings found</h3>
+          <p class="mt-1 text-sm text-gray-500">
+            <% if params[:search].present? || params[:status].present? %>
+              Try adjusting your filters or search criteria.
+            <% else %>
+              Get started by creating a new service booking.
+            <% end %>
+          </p>
+          <div class="mt-6">
+            <% if policy(ServiceBooking).new? %>
+              <% if @reservation %>
+                <%= link_to new_reservation_service_booking_path(@reservation), class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" do %>
+                  <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                  </svg>
+                  Book Service
+                <% end %>
+              <% else %>
+                <%= link_to new_service_booking_path, class: "inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" do %>
+                  <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                  </svg>
+                  New Booking
+                <% end %>
+              <% end %>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
+    </div>
+  <% end %>
+</div>

@@ -1,0 +1,71 @@
+name: voice_agent
+label: Omni Code Voice
+description: "Voice-optimized coding agent"
+instructions_file: instructions.md
+realtime_mode: true
+# `realtime` (speech-to-speech via /v1/realtime) rather than `pipeline`
+# (STT -> LLM -> TTS). Chooses which service backs /ws/realtime in
+# omniagents' server app: RealtimeService vs VoicePipelineService.
+#
+# Realtime is what a ChatGPT subscription can actually authenticate — the
+# pipeline backend requires a plain `openai_api_key` and reports
+# `enabled: false` without one, so voice was unreachable for OAuth users.
+voice_backend: realtime
+welcome_text: |
+  Welcome to Omni Code Voice! I'm ready to help with your coding needs.
+
+additional_tools_dirs:
+  - ../../tools
+
+# Voice reads and delegates, and that is the whole surface: read-only
+# file inspection and delegation (`spawn_worker`,
+# `explore`). Everything that writes, runs commands, reaches the
+# network, or converts documents goes to a worker, which has the full
+# filesystem/shell surface behind a single approval.
+#
+# Why each pack is absent, so this doesn't get re-litigated:
+#   filesystem/shell   — write + exec; an approval card is the most
+#                        disruptive interruption in a spoken conversation
+#   web                — `download_file` writes into the workspace, and
+#                        the pack bundles it with `web_fetch`
+#   serpapi/markdown   — their instructions tell the model to reach for
+#                        `web_fetch`/`download_file`, which voice no
+#                        longer has; advertising absent tools invites
+#                        fabricated calls
+#   notebook/tasks     — voice latency favors a tight tool surface
+capabilities:
+  - tool_outputs # retained result range/search access
+  - filesystem_readonly
+  - workers
+  - exploration
+  - feedback      # /good /bad /note /notes (builtin, control-plane only)
+  - model_picker  # /models /model /voice-model* /reasoning (builtin, control-plane only)
+
+model_settings:
+  reasoning:
+    effort: high
+
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  # Every read-only tool voice has, so nothing that cannot change state
+  # ever raises an approval card mid-conversation. Ordered to mirror the
+  # same list in agents/omni/agent.yml so drift between the two reads as
+  # a plain diff. What stays gated is exactly the worker lifecycle:
+  # spawning one, steering it, cancelling it, cleaning up after it.
+  safe_tool_names:
+    - read_image
+    - read_file
+    - list_directory
+    - explore
+    - get_worker_status
+    - wait_for_workers
+
+# No server_functions: `/help` and the slash catalog are framework
+# builtins, registered on every AgentService.
+
+context: build_voice_context
+model_config_resolver: resolve_default_model
+realtime_settings_resolver: resolve_voice_realtime_settings
+variables: {}

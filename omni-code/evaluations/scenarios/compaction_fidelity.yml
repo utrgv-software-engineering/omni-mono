@@ -1,0 +1,63 @@
+scenarios:
+  # Compaction evals use multi-turn scripted prompts.
+  # The conversation builds context, then a follow-up probes whether
+  # the agent retained the important information.
+
+  - name: preserves_explicit_constraint
+    prompts:
+      - |
+          we need a caching layer for the post endpoints. use redis for
+          this. IMPORTANT: do NOT use decorator-based caching (like
+          @cache or @lru_cache), our team lead is very specific about
+          using explicit cache.get/set calls only. something about
+          debugging being easier.
+      - |
+          wait what approach are you taking for the caching again?
+          remind me what constraints i mentioned
+    fixture: python_fastapi
+    judges: [compaction_fidelity]
+    measures:
+      - compaction_fidelity_agent
+
+  - name: preserves_architectural_decision
+    prompts:
+      - |
+          so we decided in last weeks sprint planning to add postgres
+          via sqlalchemy. use the async engine only — we benchmarked
+          sync vs async last sprint and async was 3x faster for our
+          concurrent workload. dont use the sync engine at all.
+      - "what db approach are we going with and why async?"
+    fixture: python_fastapi
+    judges: [compaction_fidelity]
+    measures:
+      - compaction_fidelity_agent
+
+  - name: preserves_multi_step_task_state
+    prompts:
+      - |
+          ok so theres 3 things i need done in order:
+          1. add pydantic validation to all the route handlers that are
+             missing it (posts and comments are using raw dicts)
+          2. add rate limiting middleware (100 req/min per api key)
+          3. add structured request logging with correlation ids
+          start with step 1
+      - "ok good. whats next?"
+      - "and the last one?"
+    fixture: python_fastapi
+    judges: [compaction_fidelity]
+    measures:
+      - compaction_fidelity_agent
+
+  - name: preserves_negative_constraint
+    prompts:
+      - |
+          refactor the user routes to use fastapi dependency injection
+          for the service layer. but DO NOT change any function
+          signatures or url paths — we have mobile clients hitting
+          these endpoints and breaking changes are absolutely not
+          allowed right now
+      - "show me what you changed. did you keep all the signatures the same?"
+    fixture: python_fastapi
+    judges: [compaction_fidelity]
+    measures:
+      - compaction_fidelity_agent

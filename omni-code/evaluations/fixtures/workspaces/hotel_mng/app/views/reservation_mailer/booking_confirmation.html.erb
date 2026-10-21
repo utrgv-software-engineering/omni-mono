@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta content='text/html; charset=UTF-8' http-equiv='Content-Type' />
+    <style>
+      body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+      .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+      .header { background: linear-gradient(to right, #2563eb, #1d4ed8); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }
+      .content { background: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-radius: 0 0 8px 8px; }
+      .confirmation-box { background: #eff6ff; border: 2px solid #3b82f6; padding: 20px; border-radius: 8px; text-align: center; margin: 20px 0; }
+      .details-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+      .details-table td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
+      .details-table td:first-child { font-weight: bold; width: 40%; color: #6b7280; }
+      .button { display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 6px; margin: 10px 0; }
+      .footer { text-align: center; color: #6b7280; font-size: 14px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb; }
+      .warning { background: #fef3c7; border: 1px solid #fbbf24; padding: 15px; border-radius: 6px; margin: 20px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin: 0; font-size: 28px;">Booking Confirmed!</h1>
+        <p style="margin: 10px 0 0 0; opacity: 0.9;">Thank you for choosing <%= @hotel.name %></p>
+      </div>
+      
+      <div class="content">
+        <p>Dear <%= @guest.first_name %>,</p>
+        
+        <p>We're delighted to confirm your reservation at <%= @hotel.name %>. We look forward to welcoming you!</p>
+        
+        <div class="confirmation-box">
+          <p style="margin: 0; color: #6b7280; font-size: 14px;">CONFIRMATION NUMBER</p>
+          <h2 style="margin: 5px 0; color: #1e40af; font-size: 32px; letter-spacing: 2px;"><%= @reservation.confirmation_number %></h2>
+          <p style="margin: 5px 0 0 0; color: #6b7280; font-size: 12px;">Please save this number for your records</p>
+        </div>
+        
+        <h3 style="color: #1f2937; margin-top: 30px;">Reservation Details</h3>
+        <table class="details-table">
+          <tr>
+            <td>Guest Name:</td>
+            <td><%= @guest.full_name %></td>
+          </tr>
+          <tr>
+            <td>Check-in Date:</td>
+            <td><%= @reservation.check_in_date.strftime("%A, %B %d, %Y") %></td>
+          </tr>
+          <tr>
+            <td>Check-out Date:</td>
+            <td><%= @reservation.check_out_date.strftime("%A, %B %d, %Y") %></td>
+          </tr>
+          <tr>
+            <td>Number of Nights:</td>
+            <td><%= @reservation.nights %></td>
+          </tr>
+          <tr>
+            <td>Room Type:</td>
+            <td><%= @room_type.name %></td>
+          </tr>
+          <tr>
+            <td>Number of Guests:</td>
+            <td>
+              <%= pluralize(@reservation.adults, 'Adult') %>
+              <% if @reservation.children > 0 %>
+                , <%= pluralize(@reservation.children, 'Child', 'Children') %>
+              <% end %>
+            </td>
+          </tr>
+          <tr>
+            <td>Total Amount:</td>
+            <td style="font-size: 18px; font-weight: bold; color: #1f2937;">$<%= @reservation.total_amount.to_i %> <%= @reservation.currency %></td>
+          </tr>
+          <tr>
+            <td>Payment Status:</td>
+            <td><%= @reservation.payment_status.humanize %></td>
+          </tr>
+        </table>
+        
+        <% if @reservation.special_requests.present? %>
+          <h3 style="color: #1f2937;">Special Requests</h3>
+          <p style="background: #f9fafb; padding: 15px; border-radius: 6px; border-left: 4px solid #3b82f6;">
+            <%= @reservation.special_requests %>
+          </p>
+          <p style="font-size: 14px; color: #6b7280; font-style: italic;">
+            Note: Special requests are subject to availability and cannot be guaranteed.
+          </p>
+        <% end %>
+        
+        <h3 style="color: #1f2937;">Hotel Information</h3>
+        <table class="details-table">
+          <tr>
+            <td>Hotel:</td>
+            <td><%= @hotel.name %></td>
+          </tr>
+          <tr>
+            <td>Address:</td>
+            <td>
+              <%= @hotel.address %><br>
+              <%= @hotel.city %>, <%= @hotel.state %> <%= @hotel.postal_code %><br>
+              <%= @hotel.country %>
+            </td>
+          </tr>
+          <tr>
+            <td>Phone:</td>
+            <td><%= @hotel.phone %></td>
+          </tr>
+          <tr>
+            <td>Email:</td>
+            <td><%= @hotel.email %></td>
+          </tr>
+          <tr>
+            <td>Check-in Time:</td>
+            <td>After <%= @hotel.check_in_time.strftime("%l:%M %p") %></td>
+          </tr>
+          <tr>
+            <td>Check-out Time:</td>
+            <td>Before <%= @hotel.check_out_time.strftime("%l:%M %p") %></td>
+          </tr>
+        </table>
+        
+        <div class="warning">
+          <strong>Important Information:</strong>
+          <ul style="margin: 10px 0 0 0; padding-left: 20px;">
+            <li>Please present this confirmation and a valid photo ID at check-in</li>
+            <li>A credit card will be required at check-in for incidentals</li>
+            <li>Modifications can be made up to 24 hours before check-in</li>
+            <li>Cancellation policy: Free cancellation up to 7 days before check-in</li>
+          </ul>
+        </div>
+        
+        <div style="text-align: center; margin: 30px 0;">
+          <a href="<%= public_reservation_url(@reservation.confirmation_number, email: @guest.email) %>" class="button">
+            View Reservation Online
+          </a>
+        </div>
+        
+        <p>If you need to modify or cancel your reservation, you can do so online using the link above or by contacting the hotel directly.</p>
+        
+        <p>We look forward to making your stay memorable!</p>
+        
+        <p>
+          Best regards,<br>
+          <strong><%= @hotel.name %> Team</strong>
+        </p>
+      </div>
+      
+      <div class="footer">
+        <p>This is an automated confirmation email. Please do not reply to this message.</p>
+        <p>For assistance, please contact <%= @hotel.phone %> or <%= @hotel.email %></p>
+        <p>&copy; <%= Date.current.year %> <%= @hotel.name %>. All rights reserved.</p>
+      </div>
+    </div>
+  </body>
+</html>

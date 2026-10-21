@@ -1,0 +1,61 @@
+BOOKING CONFIRMATION
+====================
+
+Dear <%= @guest.first_name %>,
+
+We're delighted to confirm your reservation at <%= @hotel.name %>. We look forward to welcoming you!
+
+CONFIRMATION NUMBER: <%= @reservation.confirmation_number %>
+Please save this number for your records.
+
+RESERVATION DETAILS
+-------------------
+Guest Name: <%= @guest.full_name %>
+Check-in Date: <%= @reservation.check_in_date.strftime("%A, %B %d, %Y") %>
+Check-out Date: <%= @reservation.check_out_date.strftime("%A, %B %d, %Y") %>
+Number of Nights: <%= @reservation.nights %>
+Room Type: <%= @room_type.name %>
+Number of Guests: <%= pluralize(@reservation.adults, 'Adult') %><% if @reservation.children > 0 %>, <%= pluralize(@reservation.children, 'Child', 'Children') %><% end %>
+Total Amount: $<%= @reservation.total_amount.to_i %> <%= @reservation.currency %>
+Payment Status: <%= @reservation.payment_status.humanize %>
+
+<% if @reservation.special_requests.present? %>
+SPECIAL REQUESTS
+----------------
+<%= @reservation.special_requests %>
+Note: Special requests are subject to availability and cannot be guaranteed.
+
+<% end %>
+HOTEL INFORMATION
+-----------------
+<%= @hotel.name %>
+<%= @hotel.address %>
+<%= @hotel.city %>, <%= @hotel.state %> <%= @hotel.postal_code %>
+<%= @hotel.country %>
+
+Phone: <%= @hotel.phone %>
+Email: <%= @hotel.email %>
+
+Check-in Time: After <%= @hotel.check_in_time.strftime("%l:%M %p") %>
+Check-out Time: Before <%= @hotel.check_out_time.strftime("%l:%M %p") %>
+
+IMPORTANT INFORMATION
+---------------------
+• Please present this confirmation and a valid photo ID at check-in
+• A credit card will be required at check-in for incidentals
+• Modifications can be made up to 24 hours before check-in
+• Cancellation policy: Free cancellation up to 7 days before check-in
+
+To view or manage your reservation online, visit:
+<%= public_reservation_url(@reservation.confirmation_number, email: @guest.email) %>
+
+If you need to modify or cancel your reservation, you can do so online using the link above or by contacting the hotel directly.
+
+We look forward to making your stay memorable!
+
+Best regards,
+<%= @hotel.name %> Team
+
+---
+This is an automated confirmation email. Please do not reply to this message.
+For assistance, please contact <%= @hotel.phone %> or <%= @hotel.email %>

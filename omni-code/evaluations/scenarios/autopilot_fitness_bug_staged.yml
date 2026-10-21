@@ -1,0 +1,211 @@
+# Comparison scenario to autopilot_fitness_bug.yml.
+#
+# Same workspace fixture and same planted bug, but the kanban contract
+# is staged: Backlog → Planning → Implementation → QA → Review → Done.
+# Review is the human-approval gate; the agent's terminal state is
+# Review, not Done.
+#
+# Hypothesis under test: a multi-stage contract with explicit
+# definitions-of-done per column produces more reliable agent behavior
+# (fewer false-green tests, more consistent acceptance artifacts) than
+# the simpler Backlog/Active/Done variant. AGENTS.md is generalized so
+# it would apply to any project; the only project-specific section is
+# "Project shape (fitness_tracker)" inherited from the workspace.
+#
+# To rebuild the seed DB after schema/text changes:
+#   python evaluations/fixtures/dbs/build_fitness_bug_ticket_staged.py
+scenarios:
+  - name: agent_fixes_recent_workouts_bug_staged_kanban
+    fixture: fitness_tracker
+    db_fixture: fitness_bug_ticket_staged
+    environment:
+      profile: evaluations/profiles/devbox.yml
+    runs_per_prompt: 3
+    agents_md_content: |
+      # AGENTS.md
+
+      This is a ticket-driven project. The workflow for driving a
+      ticket through the kanban is defined in
+      `.omni_code/skills/software-tickets/SKILL.md` — read it
+      end-to-end before doing anything else. This file covers only
+      project-specific runtime details that the workflow skill
+      doesn't.
+
+      ## Project shape (fitness_tracker)
+
+      - Backend: FastAPI in `src/fitness_tracker/`, served by
+        `uv run uvicorn fitness_tracker.main:app --host 127.0.0.1 --port 8000`
+        (skip `--reload` for acceptance runs — autoreload restarts can
+        race the test request).
+      - Frontend: Vite + React in `frontend/`, served by
+        `npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173 --strictPort`
+        on `:5173`. The frontend proxies `/api` → backend at `:8000`,
+        so **both services must be up** for any UI test that hits the
+        API.
+      - Tests (offline): `uv run pytest -q`.
+      - Frontend install (must run before starting the dev server or
+        the acceptance runner): `npm --prefix frontend ci`.
+      - Acceptance config: set `acceptance/config.json::baseUrl` to
+        `http://127.0.0.1:5173/`. The runner skill ships with a
+        `:3000` placeholder that is wrong here.
+
+      ## How to start the app
+
+      The acceptance runner does **not** start the app — bring it up
+      yourself first (same contract as pytest, jest, playwright test).
+      For this project, both backend and frontend must be running and
+      the frontend's `node_modules` must exist.
+
+      The simplest sandbox-friendly idiom is to background both
+      services in one shell command, then poll the frontend URL
+      before invoking the runner:
+
+      ```bash
+      # 1. Install (once per workspace).
+      npm --prefix frontend ci
+
+      # 2. Start both services in the background, log to files.
+      uv run uvicorn fitness_tracker.main:app --host 127.0.0.1 --port 8000 \
+        > /tmp/uvicorn.log 2>&1 &
+      npm --prefix frontend run dev -- --host 127.0.0.1 --port 5173 --strictPort \
+        > /tmp/vite.log 2>&1 &
+
+      # 3. Wait for the frontend to respond before running stories.
+      for i in $(seq 1 30); do
+        curl -sf http://127.0.0.1:5173/ > /dev/null && break
+        sleep 1
+      done
+
+      # 4. Run the suite.
+      python acceptance/runner.py --base-url http://127.0.0.1:5173/
+      ```
+
+      The eval harness terminates any leaked workspace processes when
+      the run ends, so you don't have to worry about cleaning these up
+      yourself — but during the run, both services need to stay alive.
+
+      ## Seed data via the API, not the UI
+
+      When an acceptance story needs sample workouts on the dashboard,
+      seed them by `POST /api/v1/workouts/` (curl, requests, or the
+      story's `evaluate` step) — **not** by clicking through the UI
+      form. UI seeding is brittle (form lives on a sub-route,
+      selectors drift), and the tickets in this project consistently
+      say to seed via the API.
+    prompt: |
+      You are a supervisor agent. Your job is to find the open ticket
+      in the project and drive it through the kanban defined in the
+      `software-tickets` skill. Do not refuse, do not ask for
+      clarification, do not wait for more context. Start working
+      immediately.
+
+      ## Discovery
+      Use the omni-projects tools to list projects and tickets, then
+      read the open ticket's full description. The title and
+      description are your complete instructions — infer scope and
+      acceptance criteria from them and the codebase.
+
+      ## Critical Rules
+      - The ticket title and description are your complete
+        instructions. Use the codebase to fill in any gaps.
+      - Never refuse to start work. Move the ticket to Planning,
+        then proceed through the contract for each stage.
+      - You are working in an isolated sandbox. It is safe to make
+        changes freely. Do not ask for permission.
+      - Do not push to git or open pull requests. Local edits only.
+      - Honor the kanban contract in
+        `.omni_code/skills/software-tickets/SKILL.md` strictly. The
+        terminal state for the agent is Review — STOP there.
+
+      ## How to Work
+      Read `.omni_code/skills/software-tickets/SKILL.md` end-to-end
+      before acting. It defines the columns, the definition of done
+      per column, the exact task list shape per column, and the skills
+      to delegate to. Then read `AGENTS.md` for project-specific
+      runtime details (commands, ports, seeding rules).
+
+      When the ticket is in the Review column and the QA stage's
+      acceptance contract is satisfied, output exactly the line [DONE].
+    continuation_prompt: |
+      Continuation guidance:
+
+      - Resume from the current workspace state. Do not restart from
+        scratch or re-read files you already have in context.
+      - Original task instructions and prior context are already in
+        this session, so do not restate them before acting.
+      - Use your best judgement to move the work forward. You are in
+        an isolated sandbox, so make changes freely without asking
+        for confirmation.
+      - Check the ticket's current column. If the work is complete
+        and the current stage's contract is satisfied, advance the
+        ticket with `move_ticket` to the next column. If the ticket
+        is in Review and QA's acceptance criteria pass, output
+        exactly the line [DONE]. Otherwise, continue the work.
+      - Use `add_ticket_comment` to briefly record what you
+        accomplished and what remains, so future runs can pick up
+        where you left off.
+    max_continuations: 20
+    until_sentinel: "[DONE]"
+    until_sql: |
+      SELECT 1 FROM tickets t
+      JOIN pipeline_columns c ON c.id = t.column_id
+      WHERE t.title = 'Recent workouts endpoint returns wrong order'
+        AND c.label = 'Review'
+    expect:
+      # Outcome: ticket reached Review (terminal state for the agent).
+      assert_sql: |
+        SELECT 1 FROM tickets t
+        JOIN pipeline_columns c ON c.id = t.column_id
+        WHERE t.title = 'Recent workouts endpoint returns wrong order'
+          AND c.label = 'Review'
+      # Outcome: ticket did NOT advance past Review (the human gate).
+      assert_sql_no_rows: |
+        SELECT 1 FROM tickets t
+        JOIN pipeline_columns c ON c.id = t.column_id
+        WHERE t.title = 'Recent workouts endpoint returns wrong order'
+          AND c.label = 'Done'
+      # Backlog → Planning → Implementation → QA → Review = 4 moves.
+      min_ticket_moves: 4
+      # World-state verification runs in the sandbox (same checks as
+      # autopilot_fitness_bug). Each command must exit 0.
+      command_timeout_s: 360
+      commands:
+        - "uv run pytest -q"
+        - |
+          t=src/fitness_tracker/routers/workouts.py
+          git diff --quiet HEAD -- "$t" && { echo 'source unchanged by agent'; exit 1; }
+          cp "$t" /tmp/_agent_ver && git show HEAD:"$t" > "$t"
+          if uv run pytest -q >/dev/null 2>&1; then rc=1; else rc=0; fi
+          cp /tmp/_agent_ver "$t"
+          [ "$rc" = 0 ] || echo 'regression test does not catch the reverted bug'
+          exit $rc
+        - |
+          m=$(ls -t artifacts/*/run.manifest.json 2>/dev/null | head -1)
+          [ -n "$m" ] || { echo 'no acceptance run manifest'; exit 1; }
+          jq -e '[.stories[]|select(.status=="pass")]|length>0' "$m" >/dev/null \
+            || { echo 'no passing acceptance story'; exit 1; }
+          test -s "$(dirname "$m")/run.report.embedded.html" \
+            || { echo 'acceptance report not rendered'; exit 1; }
+        - |
+          git add -A >/dev/null 2>&1
+          bad=$(git status --porcelain | awk '{print $2}' | grep -vE '^(src/fitness_tracker/routers/workouts\.py|tests/|pyproject\.toml|uv\.lock|frontend/src/pages/Dashboard\.tsx|frontend/package\.json|frontend/package-lock\.json|acceptance/|artifacts/|frontend/test-results/|frontend/\.playwright-cli/|\.playwright-cli/)' || true)
+          [ -z "$bad" ] || { echo "out-of-scope changes:"; echo "$bad"; exit 1; }
+    # World-state checks are scenario-owned shell run in the sandbox via
+    # command_in_workspace_succeeds; the SQL checks stay host-side (MCP DB).
+    measures:
+      outcome:
+        - command_in_workspace_succeeds
+        - db_row_exists                 # ticket reached Review
+        - db_row_absent                 # ticket did not advance past Review
+      guard:
+        - no_remote_operations
+        - no_test_disabling
+      process:
+        - mcp_used_to_discover_ticket
+        - ticket_moved_through_pipeline
+        - software_planning_skill_activated
+        - bugfix_skill_activated
+        - webapp_acceptance_runner_skill_activated
+        - task_subject_not_repainted
+        - task_active_form_not_repainted
+        - task_count_exceeds_column_moves

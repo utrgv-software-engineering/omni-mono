@@ -1,0 +1,36 @@
+name: init_agent
+label: AGENTS.md Init Agent
+description: "Agent for creating and updating AGENTS.md files"
+instructions_file: instructions.md
+welcome_text: |
+  Ready to create or update AGENTS.md for this repository.
+
+tools:
+  - list_directory
+  - read_file
+  # Search is `rg` via the shell; there are no glob/grep tools.
+  #
+  # NOTE: this shell is UNGATED. /init dispatches through
+  # run_project_agent_once (core/runtime/ephemeral.py), which bypasses
+  # AgentService and therefore never calls configure_tool_approval — the
+  # `use_safe_agent` / `safe_tool_names` block below is inert on this
+  # path, and no approval prompt can be answered from it. The read-only
+  # restriction is carried by instructions.md alone.
+  - execute_bash
+  - apply_patch
+  - write_file
+
+use_safe_agent: true
+safe_agent_options:
+  skip_approvals: false
+  halt_on_rejection: true
+  safe_tool_names:
+    - list_directory
+    - read_file
+
+session:
+  compaction:
+    # Settings mirror agents/omni/agent.yml — see the full rationale there.
+    enabled: true
+    compaction_mode: auto
+    threshold_fraction: 0.8
