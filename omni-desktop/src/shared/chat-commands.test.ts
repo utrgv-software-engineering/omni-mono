@@ -25,23 +25,6 @@ it('applies two window creations to current state and commits selection with eac
   expect(state.activeCodeTabId).toBe(b.id);
 });
 
-it('commits removal and its retry job together and retries a lost command without duplicating the job', () => {
-  state.codeTabs = [tab('A'), tab('B')];
-  const first = dispatch({ method: 'removeTab', args: ['A'] });
-  expect(state.codeTabs.map((t) => t.id)).toEqual(['B']);
-  expect(state.chatCleanupJobs).toEqual([tab('A')]);
-  const restarted = JSON.parse(JSON.stringify(state));
-  state = restarted;
-  expect(dispatch({ method: 'removeTab', args: ['A'] })).toEqual(first);
-  expect(state.chatCleanupJobs).toEqual([tab('A')]);
-});
-
-it('rejects assigning a workspace that is pending destruction to a live tile', () => {
-  state.codeTabs = [{ ...tab('A'), snapshotRef: 'retiring-workspace' }, tab('B')];
-  dispatch({ method: 'removeTab', args: ['A'] });
-  expect(() => dispatch({ method: 'setTabSnapshotRef', args: ['B', 'retiring-workspace'] })).toThrow('being removed');
-  expect(state.codeTabs[0]?.snapshotRef).toBeUndefined();
-});
 it('ignores closed IDs in a stale reorder and retains current fields and new tabs', () => {
   state.codeTabs = [{ ...tab('B') }, tab('C')];
   dispatch({ method: 'reorderTabs', args: [['B', 'A', 'B']] });
@@ -119,18 +102,17 @@ it('routine tab creation checks current session identity at commit time', () => 
 });
 
 it('does not resurrect a retired routine tab identity from a stale window', () => {
-  const old = { ...tab('old'), snapshotRef: 'retired-workspace' };
+  const old = tab('old');
   state.codeTabs = [old];
   dispatch({ method: 'removeTab', args: [old.id] });
   const reopened = dispatch({ method: 'ensureRoutineTab', args: [old, true] }) as CodeTab;
   expect(reopened.id).not.toBe(old.id);
-  expect(reopened.snapshotRef).not.toBe(old.snapshotRef);
   expect(reopened.sessionId).toBe(old.sessionId);
 });
 
 it('normalizes cleared session identity consistently across JSON and Electron transports', () => {
-  state.codeTabs = [{ ...tab('A'), sessionId: undefined, snapshotRef: 'unchanged' }];
+  state.codeTabs = [{ ...tab('A'), sessionId: undefined, routineName: 'unchanged' }];
   const command: ChatCommand = { method: 'setTabSessionId', args: ['A', undefined] };
   dispatch(JSON.parse(JSON.stringify(command)) as ChatCommand);
-  expect(state.codeTabs[0]).toMatchObject({ sessionId: undefined, snapshotRef: 'unchanged' });
+  expect(state.codeTabs[0]).toMatchObject({ sessionId: undefined, routineName: 'unchanged' });
 });

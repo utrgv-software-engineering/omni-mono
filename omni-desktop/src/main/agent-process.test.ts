@@ -73,7 +73,6 @@ vi.mock('@/main/agent-host-control-client', () => ({
           workspaces: workspaceCalls.map((call) => ({
             workspace_id: call.params.workspace_id,
             owner_user_id: call.params.owner_user_id,
-            snapshot_ref: call.params.snapshot_ref,
             sources: call.params.sources,
           })),
           profiles: Object.fromEntries(
@@ -334,7 +333,6 @@ describe('AgentProcess (serve mode)', () => {
     expect(hoisted.controlCalls[1]!.params).toMatchObject({
       workspace_id: 'workspace-2',
       materialization_path: '/repos/second',
-      snapshot_ref: 'workspace-2',
       owner_user_id: 'token_user',
     });
     expect(hoisted.controlCalls[4]!.params).toMatchObject({
@@ -450,7 +448,6 @@ describe('AgentProcess (serve mode)', () => {
     };
     const runtime = await h.proc.configureConsumer('thread', 'workspace', {
       sources: [localSource('/ws')],
-      snapshotRef: 'snapshot-reconcile',
     });
     hoisted.controlFailureMethod = 'agent_host_stop_environment';
 
@@ -473,7 +470,6 @@ describe('AgentProcess (serve mode)', () => {
     };
     const runtime = await h.proc.configureConsumer('thread-stopping', 'workspace-stopping', {
       sources: [localSource('/ws')],
-      snapshotRef: 'snapshot-stopping',
     });
     const resources = (state: 'stopping' | 'stopped'): Record<string, unknown> => ({
       agent_host_id: 'agent-host-test',
@@ -539,7 +535,6 @@ describe('AgentProcess (serve mode)', () => {
     };
     await h.proc.configureConsumer('thread-forced', 'workspace-forced', {
       sources: [localSource('/ws')],
-      snapshotRef: 'snapshot-forced',
     });
 
     await expect(h.proc.stop()).resolves.toEqual({

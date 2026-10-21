@@ -13,7 +13,6 @@ import {
   type AgentProcessStartArg,
   type FetchFn,
 } from '@/main/agent-process';
-import { ChatRuntimeJournal } from '@/main/chat-runtime-journal';
 import { hasDurableHostCodexMutation, isDurableCodexAccountRequest } from '@/main/local-codex-account';
 import { hasDurableHostMcpMutation, isMcpManagementMethod } from '@/main/local-mcp';
 import { gitTokenEnvName, resolveCredentialForUrl } from '@/shared/git-credentials';
@@ -65,15 +64,6 @@ export class ProcessManager {
     { proc: AgentProcess; runtime?: AgentHostConsumerRuntime; lastConsumer: boolean }
   >();
   private retiredConsumers = new Set<string>();
-  private runtimeJournal?: ChatRuntimeJournal;
-  private claimChatRuntime?: (id: string) => void | Promise<void>;
-  private runtimeRecovery: Promise<void> = Promise.resolve();
-  recoverAbandonedRuntimes = (): Promise<void> => {
-    this.runtimeRecovery = this.runtimeRecovery
-      .catch(() => undefined)
-      .then(() => this.runtimeJournal?.recoverAbandoned());
-    return this.runtimeRecovery;
-  };
   private pendingManagementConnection: Promise<AgentRuntimeConnection> | null = null;
   /** Monotonic consumer intent; async results may publish only if their epoch still wins. */
   private consumerEpochs = new Map<string, number>();
@@ -110,15 +100,8 @@ export class ProcessManager {
     durableLocalCodexAccountMutations?: boolean;
     /** Permit canonical MCP CRUD/auth only in local single-user Electron. */
     durableLocalMcpMutations?: boolean;
-    runtimeJournalDir?: string;
-    claimChatRuntime?: (id: string) => void | Promise<void>;
   }) {
     this.sendToWindow = arg.sendToWindow;
-    if (arg.runtimeJournalDir) {
-      this.runtimeJournal = new ChatRuntimeJournal(arg.runtimeJournalDir);
-      this.runtimeRecovery = this.runtimeJournal.recoverAbandoned();
-    }
-    this.claimChatRuntime = arg.claimChatRuntime;
     this.fetchFn = arg.fetchFn ?? globalThis.fetch;
     this.getStoreData =
       arg.getStoreData ??
@@ -136,12 +119,6 @@ export class ProcessManager {
     let proc!: AgentProcess;
     const attachment = this.agentHosts.attach(processId, compatibilityKey, () => {
       proc = new AgentProcess({
-        recordConsumer: this.runtimeJournal
-          ? async (claim) => {
-              this.runtimeJournal!.record(claim);
-              await this.claimChatRuntime?.(claim.consumerId);
-            }
-          : undefined,
         ipcRawOutput: (data) => {
           for (const consumerId of this.agentHosts.consumersForHost(proc)) {
             this.sendToWindow('agent-process:raw-output', consumerId, data);
@@ -211,9 +188,6 @@ export class ProcessManager {
     }
     if (opts.sessionId) {
       startArg.sessionId = opts.sessionId;
-    }
-    if (opts.snapshotRef) {
-      startArg.snapshotRef = opts.snapshotRef;
     }
     // Resolve a stored credential for each private git-remote source, attach the
     // auth hint to the descriptor, and collect the token env (value off-disk).
@@ -404,24 +378,17 @@ export class ProcessManager {
    * The fields that decide whether two `start` calls mean "the same sandbox".
    */
   private static launchIdentity(opts: AgentProcessStartOptions): string {
-    return JSON.stringify([
-      opts.workspaceDir,
-      opts.projectId ?? null,
-      opts.sessionId ?? null,
-      opts.snapshotRef ?? null,
-    ]);
+    return JSON.stringify([opts.workspaceDir, opts.projectId ?? null, opts.sessionId ?? null]);
   }
 
   /**
    * Definition fields owned by a framework Workspace registration. A changed
-   * snapshot reference, source set, or materialization directory is a new
-   * Workspace; reusing its id would ask AgentHost to mutate an existing
+   * source set or materialization directory is a new Workspace; reusing its id would ask AgentHost to mutate an existing
    * catalog entry and is correctly rejected by the framework.
    */
   private static workspaceIdentity(arg: AgentProcessStartArg): string {
     return JSON.stringify({
       workspaceDir: arg.workspaceDir ?? null,
-      snapshotRef: arg.snapshotRef ?? null,
       sources: arg.sources,
     });
   }
@@ -635,11 +602,6 @@ export class ProcessManager {
   };
 
   private startConsumer = async (processId: string, opts: AgentProcessStartOptions, epoch: number): Promise<void> => {
-    await this.runtimeRecovery;
-    await this.claimChatRuntime?.(processId);
-    if (!this.processes.has(processId)) {
-      await this.runtimeJournal?.retire(processId);
-    }
     if (!this.isCurrentConsumerEpoch(processId, epoch)) {
       return;
     }
@@ -780,9 +742,7 @@ export class ProcessManager {
   retire = async (processId: string): Promise<AgentProcessStopResult> => {
     this.retiredConsumers.add(processId);
     try {
-      const result = await this.stop(processId);
-      await this.runtimeJournal?.retire(processId);
-      return result;
+      return await this.stop(processId);
     } finally {
       this.lastStartArgs.delete(processId);
     }
@@ -849,7 +809,6 @@ export class ProcessManager {
         if (!this.isCurrentConsumerEpoch(processId, epoch)) {
           throw new Error('Runtime operation was superseded');
         }
-        await this.claimChatRuntime?.(processId);
         return mutate();
       });
     const promise = task.then(() => undefined);
@@ -882,9 +841,6 @@ export class ProcessManager {
         : {}),
       ...((opts.sessionId ?? lastOpts?.sessionId)
         ? { sessionId: (opts.sessionId ?? lastOpts?.sessionId) as string }
-        : {}),
-      ...((opts.snapshotRef ?? lastOpts?.snapshotRef)
-        ? { snapshotRef: (opts.snapshotRef ?? lastOpts?.snapshotRef) as string }
         : {}),
     };
     const startArg = await this.buildStartArg(merged);
@@ -941,7 +897,6 @@ export class ProcessManager {
   };
 
   cleanup = async (): Promise<void> => {
-    await this.runtimeRecovery.catch(() => undefined);
     // Invalidate every materialization before awaiting it. Late results see a
     // stale epoch, retire their environment, and cannot repopulate the maps.
     for (const processId of this.pendingStarts.keys()) {
@@ -999,8 +954,6 @@ export const createProcessManager = (arg: {
   waitForRuntimeInstall?: () => Promise<void>;
   durableLocalCodexAccountMutations?: boolean;
   durableLocalMcpMutations?: boolean;
-  runtimeJournalDir?: string;
-  claimChatRuntime?: (id: string) => void | Promise<void>;
 }) => {
   const {
     ipc,
@@ -1015,8 +968,6 @@ export const createProcessManager = (arg: {
   } = arg;
 
   const processManager = new ProcessManager({
-    runtimeJournalDir: arg.runtimeJournalDir,
-    claimChatRuntime: arg.claimChatRuntime,
     sendToWindow,
     fetchFn,
     getStoreData,

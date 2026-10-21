@@ -58,7 +58,6 @@ const tab = (patch: Partial<CodeTab> = {}): CodeTab => ({
   id: 'tab-1',
   projectId: null,
   sessionId: 'session-1',
-  snapshotRef: 'snapshot-1',
   createdAt: 1,
   ...patch,
 });
@@ -69,7 +68,6 @@ const resetStore = (patch: Partial<StoreData> = {}) => {
     codeTabs: [],
     chatConversations: [],
     activeCodeTabId: null,
-    availableSandboxProfiles: undefined,
     ...patch,
   } as StoreData;
   invoke.mockClear();
@@ -141,11 +139,9 @@ describe('chat columns and conversation history', () => {
     expect(store.codeTabs.find((item) => item.id === 'routine-tab')).toMatchObject({ routineId: 'routine-1' });
   });
 
-  it('archiveTab archives the transcript and removes its column snapshot', async () => {
+  it('archiveTab archives the transcript and removes its column', async () => {
     resetStore({
-      codeTabs: [
-        tab({ id: 'chat-tab', projectId: null, sessionId: 'sess-1', snapshotRef: 'snapshot-chat', activatedAt: 5 }),
-      ],
+      codeTabs: [tab({ id: 'chat-tab', projectId: null, sessionId: 'sess-1', activatedAt: 5 })],
       chatConversations: [{ sessionId: 'sess-1', title: 'Plan my week', lastActiveAt: 1 }],
     });
     const { codeApi } = await import('./state');
@@ -153,9 +149,6 @@ describe('chat columns and conversation history', () => {
     await codeApi.archiveTab('chat-tab', 'Plan my week');
 
     expect(store.codeTabs).toHaveLength(0);
-    // Runtime and snapshot cleanup now happen before the authoritative RPC
-    // replies; the renderer must not issue a second deletion.
-    expect(invoke).not.toHaveBeenCalledWith('snapshot:delete', 'snapshot-chat');
     expect(store.chatConversations[0]).toMatchObject({
       sessionId: 'sess-1',
       title: 'Plan my week',
@@ -166,12 +159,11 @@ describe('chat columns and conversation history', () => {
   it('removeTab only removes technical columns and does not create session history', async () => {
     resetStore({
       codeTabs: [
-        tab({ id: 'fresh-chat', projectId: null, sessionId: 'sess-fresh', snapshotRef: 'snapshot-fresh' }),
+        tab({ id: 'fresh-chat', projectId: null, sessionId: 'sess-fresh' }),
         tab({
           id: 'proj-tab',
           projectId: 'p1',
           sessionId: 'sess-proj',
-          snapshotRef: 'snapshot-proj',
         }),
       ],
     });
@@ -180,8 +172,6 @@ describe('chat columns and conversation history', () => {
     await codeApi.removeTab('fresh-chat');
     await codeApi.removeTab('proj-tab');
 
-    expect(invoke).not.toHaveBeenCalledWith('snapshot:delete', 'snapshot-fresh');
-    expect(invoke).not.toHaveBeenCalledWith('snapshot:delete', 'snapshot-proj');
     expect(store.chatConversations).toEqual([]);
   });
 
@@ -196,16 +186,13 @@ describe('chat columns and conversation history', () => {
 
   it('setTabSessionId resets a chat column to the lazy state on a fresh conversation', async () => {
     resetStore({
-      codeTabs: [
-        tab({ id: 'chat-tab', projectId: null, sessionId: 'old', snapshotRef: 'old-snapshot', activatedAt: 5 }),
-      ],
+      codeTabs: [tab({ id: 'chat-tab', projectId: null, sessionId: 'old', activatedAt: 5 })],
     });
     const { codeApi } = await import('./state');
 
     await codeApi.setTabSessionId('chat-tab', 'new');
 
     expect(store.codeTabs[0]).toMatchObject({ sessionId: 'new' });
-    expect(store.codeTabs[0]?.snapshotRef).not.toBe('old-snapshot');
     expect(store.codeTabs[0]?.activatedAt).toBeUndefined();
   });
 

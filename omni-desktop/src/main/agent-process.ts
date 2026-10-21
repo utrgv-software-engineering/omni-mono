@@ -86,8 +86,6 @@ export type AgentProcessStartArg = {
   projectId?: string;
   /** Conversation Session identity — the AgentHost Thread id. */
   sessionId?: string;
-  /** Stable snapshot reference registered with the consumer Workspace. */
-  snapshotRef?: string;
   /**
    * Used in serve mode as the spawn ``cwd`` for resolving relative
    * paths in source-path. For git-remote sources, the launcher passes
@@ -151,7 +149,6 @@ type AgentHostResourceSnapshot = {
   workspaces: Array<{
     workspaceId: string;
     ownerUserId?: string;
-    snapshotRef?: string;
     sources: unknown[];
   }>;
   profiles: Record<string, Record<string, unknown>>;
@@ -162,7 +159,6 @@ type ConsumerRegistration = {
   consumerId: string;
   threadId: string;
   workspaceId: string;
-  snapshotRef: string;
   sources: Record<string, unknown>[];
   profileId: string;
   profileDefinition: Record<string, unknown>;
@@ -323,7 +319,6 @@ export const decodeAgentHostResources = (value: unknown): AgentHostResourceSnaps
       return {
         workspaceId: resourceString(workspace, 'workspace_id', `workspaces[${index}]`),
         ...(typeof workspace.owner_user_id === 'string' ? { ownerUserId: workspace.owner_user_id } : {}),
-        ...(typeof workspace.snapshot_ref === 'string' ? { snapshotRef: workspace.snapshot_ref } : {}),
         sources: workspace.sources,
       };
     }),
@@ -370,9 +365,6 @@ export class AgentProcess {
   private agentHostControlClient: AgentHostControlClient | null = null;
   /** Desired consumer bindings retained across renderer/control reconnects. */
   private consumerRegistrations = new Map<string, ConsumerRegistration>();
-  private recordConsumer?: (
-    claim: Omit<import('./chat-runtime-journal').ChatRuntimeClaim, 'machine'>
-  ) => void | Promise<void>;
   /**
    * Children we deliberately killed via {@link killProcess} (SIGTERM → SIGKILL).
    * Their late `close` events should NOT flip status to `error("signal SIGKILL")`
@@ -394,11 +386,7 @@ export class AgentProcess {
     /** Test/embedding overrides for observing an already-committed stop. */
     stopReconcilePollMs?: number;
     stopReconcileTimeoutMs?: number;
-    recordConsumer?: (
-      claim: Omit<import('./chat-runtime-journal').ChatRuntimeClaim, 'machine'>
-    ) => void | Promise<void>;
   }) {
-    this.recordConsumer = opts.recordConsumer;
     this.ipcRawOutput = opts.ipcRawOutput;
     this.onStatusChange = opts.onStatusChange;
     this.fetchFn = opts.fetchFn ?? globalThis.fetch;
@@ -487,7 +475,6 @@ export class AgentProcess {
     const control =
       this.agentHostControlClient ??
       (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
-    const snapshotRef = arg.snapshotRef ?? workspaceId;
     let materializedEnvironmentId: string | undefined;
     // The desktop always runs omni-code's default (host) profile.
     const definition: Record<string, unknown> = {
@@ -514,25 +501,9 @@ export class AgentProcess {
     const registeredWorkspace = resources.workspaces.find((item) => item.workspaceId === workspaceId);
     if (
       registeredWorkspace &&
-      (registeredWorkspace.ownerUserId !== 'token_user' ||
-        registeredWorkspace.snapshotRef !== snapshotRef ||
-        !isDeepStrictEqual(registeredWorkspace.sources, sources))
+      (registeredWorkspace.ownerUserId !== 'token_user' || !isDeepStrictEqual(registeredWorkspace.sources, sources))
     ) {
       throw new Error(`AgentHost workspace ${workspaceId} is registered with a different definition`);
-    }
-    if (this.recordConsumer) {
-      if (!this.childProcess?.pid) {
-        throw new Error('Runtime process identity unavailable');
-      }
-      await this.recordConsumer({
-        consumerId,
-        workspaceId,
-        snapshotRef,
-        hostId: resources.agentHostId,
-        wsUrl: data.wsUrl,
-        controlToken: this.agentHostControlToken,
-        pid: this.childProcess.pid,
-      });
     }
     const registeredProfile = resources.profiles[profileId];
     if (registeredProfile && !isDeepStrictEqual(registeredProfile, definition)) {
@@ -543,7 +514,6 @@ export class AgentProcess {
     const sameDesiredBinding =
       previous?.workspaceId === workspaceId &&
       previous.threadId === threadId &&
-      previous.snapshotRef === snapshotRef &&
       previous.profileId === profileId &&
       isDeepStrictEqual(previous.sources, sources) &&
       isDeepStrictEqual(previous.profileDefinition, definition);
@@ -566,7 +536,6 @@ export class AgentProcess {
         {
           workspace_id: workspaceId,
           materialization_path: serveWorkspaceDirectory(workspaceId, arg),
-          snapshot_ref: snapshotRef,
           sources,
           owner_user_id: 'token_user',
         },
@@ -639,7 +608,6 @@ export class AgentProcess {
       consumerId,
       threadId,
       workspaceId,
-      snapshotRef,
       sources,
       profileId,
       profileDefinition: definition,
@@ -860,6 +828,9 @@ export class AgentProcess {
       clientAuthToken,
       '--agent-host-control-token',
       this.agentHostControlToken,
+      // The stdin pipe stays open for the child's lifetime and is never
+      // written. If this process dies, EOF tells omni serve to shut down.
+      '--exit-on-stdin-close',
     ];
     // AgentHost startup is targetless. Workspace, source, profile, session,
     // and container placement data enters only through consumer materialization.
@@ -875,7 +846,7 @@ export class AgentProcess {
       const child = spawn(omniCli, args, {
         cwd: spawnCwd,
         env,
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       });
       this.childProcess = child;
       child.stdout.on('data', this.handleStdout);

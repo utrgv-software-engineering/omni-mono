@@ -26,8 +26,6 @@ type UseAutoLaunchOptions = {
   projectId?: string;
   /** Conversation identity used by delegated-compute backends. */
   sessionId?: string;
-  /** Durable Workspace snapshot identity, independent of the conversation. */
-  snapshotRef?: string;
   /** Logger tag. */
   logLabel?: string;
 };
@@ -52,8 +50,6 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
   projectIdRef.current = opts.projectId;
   const sessionIdRef = useRef(opts.sessionId);
   sessionIdRef.current = opts.sessionId;
-  const snapshotRefRef = useRef(opts.snapshotRef);
-  snapshotRefRef.current = opts.snapshotRef;
   const storeRef = useRef(store);
   storeRef.current = store;
 
@@ -165,7 +161,6 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
             workspaceDir: wd,
             ...(projectIdRef.current ? { projectId: projectIdRef.current } : {}),
             ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}),
-            ...(snapshotRefRef.current ? { snapshotRef: snapshotRefRef.current } : {}),
           })
           .catch((error: unknown) => {
             if (!cancelled) {

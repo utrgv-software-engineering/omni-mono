@@ -28,7 +28,6 @@ it('does not publish an in-memory removal when persistence fails', () => {
   mkdirSync(`${file}.tmp`); // force an actual failed write without touching user state
   expect(() => store.set(applyChatCommand(store.store, { method: 'removeTab', args: ['tab-a'] }).patch)).toThrow();
   expect(store.get('codeTabs')).toEqual([tab]);
-  expect(store.get('chatCleanupJobs')).toEqual([]);
   expect(new ServerStore(file).get('codeTabs')).toEqual([tab]);
   expect(notify).not.toHaveBeenCalled();
 });

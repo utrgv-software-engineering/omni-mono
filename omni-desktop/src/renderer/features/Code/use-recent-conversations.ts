@@ -87,8 +87,8 @@ export function useRecentConversations(tabs: CodeTab[]): {
         });
       }
     }
-    // The launcher index wins on conflicts — it carries resume metadata
-    // (profileName) the live listing doesn't know about.
+    // The launcher index wins on conflicts — it carries metadata (project,
+    // archive state) the live listing doesn't know about.
     for (const c of store.chatConversations ?? []) {
       bySession.set(c.sessionId, { ...bySession.get(c.sessionId), ...c });
     }

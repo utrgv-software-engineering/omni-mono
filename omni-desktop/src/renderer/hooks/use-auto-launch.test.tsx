@@ -15,7 +15,6 @@ const setKey = vi.hoisted(() => vi.fn());
 const clearStatus = vi.hoisted(() => vi.fn());
 const start = vi.hoisted(() => vi.fn());
 const stop = vi.hoisted(() => vi.fn());
-const switchSandbox = vi.hoisted(() => vi.fn());
 const successToast = vi.hoisted(() => vi.fn());
 const errorToast = vi.hoisted(() => vi.fn());
 const warningToast = vi.hoisted(() => vi.fn());
@@ -53,15 +52,10 @@ vi.mock('@/renderer/services/agent-process', async () => {
     agentProcessApi: {
       start,
       stop,
-      switchSandbox,
     },
     clearStatus,
   };
 });
-
-vi.mock('@/renderer/features/SandboxProfile/profile-list', () => ({
-  getProfileMenuLabel: (profileName: string) => profileName,
-}));
 
 vi.mock('@/renderer/features/Toast/state', () => ({
   toast: {
@@ -124,7 +118,6 @@ beforeEach(() => {
     }
     return Promise.resolve();
   });
-  switchSandbox.mockResolvedValue({ ok: true });
   stop.mockResolvedValue(undefined);
   start.mockResolvedValue(undefined);
   clearStatus.mockImplementation((id: string) => {
@@ -142,7 +135,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('useAutoLaunch sandbox profile override switching', () => {
+describe('useAutoLaunch', () => {
   it('does not let a delayed status seed overwrite a newer runtime endpoint', async () => {
     await renderHook({ processId: 'tile-a', workspaceDir: '/workspace/a' });
     let resolve!: (value: WithTimestamp<AgentProcessStatus>) => void;
@@ -173,7 +166,6 @@ describe('useAutoLaunch sandbox profile override switching', () => {
       processId: 'tile-a',
       workspaceDir: '/workspace/a',
       sessionId: 'session-a',
-      snapshotRef: 'snapshot-a',
     };
     await renderHook(props);
     await act(async () => {
@@ -189,7 +181,6 @@ describe('useAutoLaunch sandbox profile override switching', () => {
     expect(start).toHaveBeenCalledWith('tile-a', {
       workspaceDir: '/workspace/a',
       sessionId: 'session-a',
-      snapshotRef: 'snapshot-a',
     });
     expect(stop).not.toHaveBeenCalled();
   });

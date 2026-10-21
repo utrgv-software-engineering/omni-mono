@@ -28,7 +28,6 @@ export const DEFAULTS: StoreData = {
   remoteBackend: null,
   projects: [],
   codeTabs: [],
-  chatCleanupJobs: [],
   chatConversations: [],
   activeCodeTabId: null,
   codeLayoutMode: 'focus',

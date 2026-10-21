@@ -4,8 +4,7 @@ import { join } from 'path';
 import { emptyMcpConfig } from '@/lib/agent-config';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { buildBrowserContext, registerBrowserHandlers } from '@/main/browser-manager';
-import { ChatCleanupRunner, cleanupRemovedChat, completeChatRemoval } from '@/main/chat-removal';
-import { assertCleanupOwner, runtimeOwner } from '@/main/chat-runtime-journal';
+import { cleanupRemovedChat, completeChatRemoval } from '@/main/chat-removal';
 import {
   getStatus as codexStatus,
   loginWithDeviceFlow as codexDeviceLogin,
@@ -92,18 +91,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   };
 
   const processManager = new ProcessManager({
-    runtimeJournalDir: join(configDir, 'chat-runtime-journal'),
-    claimChatRuntime: async (id) => {
-      const tabs = store.get('codeTabs') ?? [];
-      if (!tabs.some((tab) => tab.id === id)) {
-        throw new Error('This chat tab has been closed');
-      }
-      assertCleanupOwner(tabs.find((tab) => tab.id === id)?.runtimeOwner);
-      store.set(
-        'codeTabs',
-        tabs.map((tab) => (tab.id === id ? { ...tab, runtimeOwner } : tab))
-      );
-    },
     sendToWindow: sendToAll,
     fetchFn: globalThis.fetch,
     getStoreData: () => ({
@@ -122,25 +109,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   scheduledTaskManager.start();
   const projectManager: ProjectManager = new ProjectManager({ store: store as any, onProjectsChanged: sendSnapshot });
   const browser = buildBrowserContext(store as any, sendToAll);
-  const chatCleanup = new ChatCleanupRunner({
-    read: async () => {
-      await processManager.recoverAbandonedRuntimes();
-      return store.get('chatCleanupJobs') ?? [];
-    },
-    cleanup: async (tab) => {
-      assertCleanupOwner(tab.runtimeOwner);
-      await cleanupRemovedChat(tab, {
-        stop: (id) => processManager.retire(id),
-      });
-    },
-    acknowledge: async (id) => {
-      store.set(
-        'chatCleanupJobs',
-        (store.get('chatCleanupJobs') ?? []).filter((job) => job.id !== id)
-      );
-    },
-  });
-  chatCleanup.start();
 
   /**
    * Write the agent config (mcp) to the shared config dir —
@@ -192,11 +160,13 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     const { patch, result } = applyChatCommand(getStoreSnapshot(), command);
     store.set(patch);
     sendSnapshot();
-    await completeChatRemoval(command, result, (tab) => chatCleanup.runOne(tab));
+    await completeChatRemoval(command, result, (tab) =>
+      cleanupRemovedChat(tab, { stop: (id) => processManager.retire(id) })
+    );
     return result;
   });
   ipc.handle('store:set-key', (_ctx, key, value) => {
-    if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId' || key === 'chatCleanupJobs') {
+    if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId') {
       throw new Error('Use store:chat-command for chat state mutations');
     }
     store.set(key as keyof StoreData, value as never);
@@ -204,7 +174,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   });
   ipc.handle('store:get', () => getStoreSnapshot());
   ipc.handle('store:set', (_ctx, data) => {
-    if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data || 'chatCleanupJobs' in data) {
+    if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data) {
       throw new Error('Use store:chat-command for chat state mutations');
     }
     store.store = data;
@@ -353,7 +323,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
 
   const cleanupGlobalManagers = async () => {
     const results = await Promise.allSettled([
-      chatCleanup.dispose(),
       Promise.resolve(scheduledTaskManager.stop()),
       Promise.resolve(routineBridge.disposeAll()),
       processManager.cleanup(),

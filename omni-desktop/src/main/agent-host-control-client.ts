@@ -28,7 +28,6 @@ type PendingCall = {
 
 type AgentHostControlCallContext = {
   consumerId?: string;
-  profileName?: string;
 };
 
 export const agentHostControlTimeoutMs = (method: keyof RpcMethodMap, overrideMs?: number): number => {
@@ -261,7 +260,6 @@ export class AgentHostControlClient {
       `id=${id}`,
       `method=${method}`,
       ...(context?.consumerId ? [`consumer=${context.consumerId}`] : []),
-      ...(context?.profileName ? [`profile=${context.profileName}`] : []),
       ...(elapsedMs !== undefined ? [`elapsed_ms=${elapsedMs}`] : []),
       `pending=${this.pending.size}`,
     ];

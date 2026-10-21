@@ -54,14 +54,14 @@ export class MainProcessManager {
       return result;
     });
     this.ipc.handle('store:set-key', (_, key, value) => {
-      if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId' || key === 'chatCleanupJobs') {
+      if (key === 'codeTabs' || key === 'chatConversations' || key === 'activeCodeTabId') {
         throw new Error('Use store:chat-command for chat state mutations');
       }
       this.store.set(key, value);
     });
     this.ipc.handle('store:get', (_) => this.store.store);
     this.ipc.handle('store:set', (_, data) => {
-      if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data || 'chatCleanupJobs' in data) {
+      if ('codeTabs' in data || 'chatConversations' in data || 'activeCodeTabId' in data) {
         throw new Error('Use store:chat-command for chat state mutations');
       }
       this.store.store = data;

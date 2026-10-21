@@ -93,7 +93,6 @@ export const codeApi = {
   reorderSidecarApps: (...args: Parameters<ChatOperations['reorderSidecarApps']>) => run('reorderSidecarApps', ...args),
   closeSidecarApp: (...args: Parameters<ChatOperations['closeSidecarApp']>) => run('closeSidecarApp', ...args),
   setTabSessionId: (...args: Parameters<ChatOperations['setTabSessionId']>) => run('setTabSessionId', ...args),
-  setTabSnapshotRef: (...args: Parameters<ChatOperations['setTabSnapshotRef']>) => run('setTabSnapshotRef', ...args),
 };
 const listen = () => {
   // Poll code tab statuses (chat polling is handled by agent-process service)

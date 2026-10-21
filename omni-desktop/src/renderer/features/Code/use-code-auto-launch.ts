@@ -18,7 +18,6 @@ export const useCodeAutoLaunch = (
   opts?: {
     projectId?: string;
     sessionId?: string;
-    snapshotRef?: string;
   }
 ) => {
   const { phase, retry, launch, actor } = useAutoLaunch({
@@ -26,7 +25,6 @@ export const useCodeAutoLaunch = (
     workspaceDir,
     ...(opts?.projectId ? { projectId: opts.projectId } : {}),
     ...(opts?.sessionId ? { sessionId: opts.sessionId } : {}),
-    ...(opts?.snapshotRef ? { snapshotRef: opts.snapshotRef } : {}),
     logLabel: 'autoLaunch:code',
   });
 

@@ -547,9 +547,7 @@ describe('ProcessManager', () => {
       });
       const opts = {
         workspaceDir: '/tmp/ws',
-        profileNameOverride: 'host',
         sessionId: 'session-1',
-        snapshotRef: 'snapshot-1',
       };
 
       const first = pm.start('proc-1', opts);

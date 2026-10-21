@@ -241,14 +241,6 @@ export const CodeTabContent = memo(
       }
     }, [chatMode, tab.sessionId, tab.id]);
 
-    // Older local state predates explicit Workspace snapshot identity. Mint it
-    // independently instead of reusing the conversation id.
-    useEffect(() => {
-      if (!tab.snapshotRef) {
-        void codeApi.setTabSnapshotRef(tab.id, uuidv4());
-      }
-    }, [tab.id, tab.snapshotRef]);
-
     // Chat is an ambient surface, not a project — each conversation gets an
     // isolated `<workspaceDir>/Sessions/<sessionId>` scratch dir. Switching
     // conversations changes the workspace, which useAutoLaunch's reset effect
@@ -323,10 +315,9 @@ export const CodeTabContent = memo(
       [store.workspaceDir, tab.activatedAt, tab.sessionId, tab.id]
     );
 
-    const { phase, retry } = useCodeAutoLaunch(tab.id, tab.snapshotRef ? workspaceDir : null, {
+    const { phase, retry } = useCodeAutoLaunch(tab.id, workspaceDir, {
       ...(tab.projectId ? { projectId: tab.projectId } : {}),
       ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
-      ...(tab.snapshotRef ? { snapshotRef: tab.snapshotRef } : {}),
     });
 
     // A launch failure is retried quietly on a capped backoff; the column

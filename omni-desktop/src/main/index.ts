@@ -13,8 +13,7 @@ import { winToWslPath } from '@/lib/wsl-path';
 import { createAppControlManager } from '@/main/app-control-manager';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { createBrowserManager } from '@/main/browser-manager';
-import { ChatCleanupRunner, cleanupRemovedChat } from '@/main/chat-removal';
-import { assertCleanupOwner, runtimeOwner } from '@/main/chat-runtime-journal';
+import { cleanupRemovedChat } from '@/main/chat-removal';
 import { createConsoleManager } from '@/main/console-manager';
 import { createDownloadsManager } from '@/main/downloads-manager';
 import {
@@ -166,18 +165,6 @@ const [omniInstall, cleanupOmniInstall] = createOmniInstallManager({
   sendToWindow: main.sendToWindow,
 });
 const [processManager, cleanupProcessManager] = createProcessManager({
-  runtimeJournalDir: join(getOmniConfigDir(), 'chat-runtime-journal'),
-  claimChatRuntime: (id) => {
-    const tabs = store.get('codeTabs') ?? [];
-    if (!tabs.some((tab) => tab.id === id)) {
-      throw new Error('This chat tab has been closed');
-    }
-    assertCleanupOwner(tabs.find((tab) => tab.id === id)?.runtimeOwner);
-    store.set(
-      'codeTabs',
-      tabs.map((tab) => (tab.id === id ? { ...tab, runtimeOwner } : tab))
-    );
-  },
   ipc: main.ipc,
   sendToWindow: main.sendToWindow,
   fetchFn: (input, init) => net.fetch(input as string, init),
@@ -229,26 +216,11 @@ const [consoleManager, cleanupConsole] = createConsoleManager({
   processManager,
 });
 
-const chatCleanup = new ChatCleanupRunner({
-  read: async () => {
-    await processManager.recoverAbandonedRuntimes();
-    return store.get('chatCleanupJobs') ?? [];
-  },
-  acknowledge: (id) =>
-    store.set(
-      'chatCleanupJobs',
-      (store.get('chatCleanupJobs') ?? []).filter((job) => job.id !== id)
-    ),
-  cleanup: async (tab) => {
-    assertCleanupOwner(tab.runtimeOwner);
-    await cleanupRemovedChat(tab, {
-      disposeTerminals: (id) => consoleManager.disposeAllForTab(id),
-      stop: (id) => processManager.retire(id),
-    });
-  },
-});
-main.cleanupRemovedChat = (tab) => chatCleanup.runOne(tab);
-chatCleanup.start();
+main.cleanupRemovedChat = (tab) =>
+  cleanupRemovedChat(tab, {
+    disposeTerminals: (id) => consoleManager.disposeAllForTab(id),
+    stop: (id) => processManager.retire(id),
+  });
 
 const [, cleanupProject] = createProjectManager({
   ipc: main.ipc,
@@ -329,7 +301,6 @@ async function cleanup() {
   cleanupWslBackend();
   const results = await Promise.allSettled([
     cleanupConsole(),
-    chatCleanup.dispose(),
     cleanupAppControl(),
     cleanupOmniInstall(),
     (async () => {

@@ -145,8 +145,6 @@ export type StoreData = {
   projects: Project[];
   scheduledTasks: ScheduledTask[];
   codeTabs: CodeTab[];
-  /** Authority-owned removal outbox. Never writable through generic renderer settings. */
-  chatCleanupJobs?: CodeTab[];
   /**
    * Indexed agent conversations, newest-first. Project identity is retained
    * so the sidebar can group sessions beneath their project. Archived entries
@@ -481,7 +479,6 @@ export const schema: Schema<StoreData> = {
         permissionMode: { type: 'string', enum: ['ask'], default: 'ask' },
         enabled: { type: 'boolean' },
         projectId: { type: 'string' },
-        profileName: { type: 'string' },
         createdAt: { type: 'number' },
         updatedAt: { type: 'number' },
         nextRunAt: { type: ['number', 'null'] },
@@ -525,14 +522,10 @@ export const schema: Schema<StoreData> = {
       properties: {
         id: { type: 'string' },
         projectId: { type: ['string', 'null'] },
-        ticketId: { type: 'string' },
         sessionId: { type: 'string' },
-        ticketTitle: { type: 'string' },
         routineId: { type: 'string' },
         routineName: { type: 'string' },
         routineSchedule: { type: 'string' },
-        workspaceDir: { type: 'string' },
-        profileName: { type: 'string' },
         sidecarOpen: { type: 'boolean' },
         sidecarAppIds: { type: 'array', items: { type: 'string' } },
         activeSidecarAppId: { type: 'string' },
@@ -546,11 +539,6 @@ export const schema: Schema<StoreData> = {
       required: ['id', 'createdAt'],
     },
   },
-  chatCleanupJobs: {
-    type: 'array',
-    default: [],
-    items: { type: 'object' },
-  },
   chatConversations: {
     type: 'array',
     default: [],
@@ -560,10 +548,7 @@ export const schema: Schema<StoreData> = {
         sessionId: { type: 'string' },
         title: { type: 'string' },
         lastActiveAt: { type: 'number' },
-        profileName: { type: 'string' },
         projectId: { type: 'string' },
-        ticketId: { type: 'string' },
-        ticketTitle: { type: 'string' },
         archivedAt: { type: 'number' },
       },
       required: ['sessionId', 'title', 'lastActiveAt'],
@@ -892,8 +877,6 @@ export type AgentProcessStartOptions = {
    * Local AgentHost Workspace identity is deliberately independent.
    */
   sessionId?: string;
-  /** Durable Workspace snapshot reference, independent of conversation id. */
-  snapshotRef?: string;
 };
 
 /**
@@ -934,13 +917,9 @@ export type CodeTabId = string;
 export type CodeLayoutMode = 'tile' | 'focus';
 
 export type CodeTab = {
-  /** Backend-owned runtime launcher identity; retained by removal jobs. */
-  runtimeOwner?: string;
   id: CodeTabId;
   projectId: ProjectId | null;
   sessionId?: string;
-  /** Durable Workspace snapshot identity; never used for chat/RPC routing. */
-  snapshotRef?: string;
   routineId?: string;
   routineName?: string;
   routineSchedule?: string;
@@ -1255,7 +1234,6 @@ type AgentProcessIpcEvents = Namespaced<
     start: (processId: string, arg: AgentProcessStartOptions) => void;
     stop: (processId: string) => AgentProcessStopResult;
     rebuild: (processId: string, arg: AgentProcessStartOptions) => void;
-    resize: (processId: string, cols: number, rows: number) => void;
     'get-status': (processId: string) => WithTimestamp<AgentProcessStatus>;
   }
 >;
@@ -1269,19 +1247,6 @@ type ManagementRuntimeIpcEvents = Namespaced<
     /** Closed main-process broker. The control/admin credential never appears
      * in this request or response and arbitrary RPC methods are rejected. */
     mutate: (request: ManagementAdminRequest) => ManagementAdminResult;
-  }
->;
-
-type SnapshotIpcEvents = Namespaced<
-  'snapshot',
-  {
-    /**
-     * Cascade-delete the snapshot tar for *snapshotRef*. Called by the
-     * renderer when a code tab is removed — the tab is gone for good,
-     * its workspace pickle is dead weight. Idempotent (missing file is
-     * not an error).
-     */
-    delete: (snapshotRef: string) => void;
   }
 >;
 
@@ -2008,7 +1973,6 @@ export type IpcEvents = MainProcessIpcEvents &
   VoiceIpcEvents &
   AgentProcessIpcEvents &
   ManagementRuntimeIpcEvents &
-  SnapshotIpcEvents &
   UtilIpcEvents &
   TerminalIpcEvents &
   StoreIpcEvents &

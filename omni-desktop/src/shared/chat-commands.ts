@@ -5,10 +5,7 @@ import { uuidv4 } from '@/lib/uuid';
 import type { ChatConversation, CodeLayoutMode, CodeTab, CodeTabId, ProjectId, StoreData } from '@/shared/types';
 import { isChatColumn } from '@/shared/types';
 
-type ChatState = Pick<
-  StoreData,
-  'codeTabs' | 'chatConversations' | 'activeCodeTabId' | 'codeLayoutMode' | 'chatCleanupJobs'
->;
+type ChatState = Pick<StoreData, 'codeTabs' | 'chatConversations' | 'activeCodeTabId' | 'codeLayoutMode'>;
 
 /** Synchronous, side-effect-free command reducer. Only the authority commits its patch. */
 function operations(initial: StoreData) {
@@ -33,8 +30,8 @@ function operations(initial: StoreData) {
             routineSchedule: candidate.routineSchedule,
           }
         : // A stale window can pass the former tab after another window closed
-          // it. Reopening must mint a new consumer/workspace ownership identity.
-          { ...candidate, id: nanoid(), snapshotRef: uuidv4(), runtimeOwner: undefined };
+          // it. Reopening must mint a new consumer identity.
+          { ...candidate, id: nanoid() };
       persistedStoreApi.setKey(
         'codeTabs',
         existing ? tabs.map((tab) => (tab.id === existing.id ? result : tab)) : [...tabs, result]
@@ -60,7 +57,6 @@ function operations(initial: StoreData) {
         id: nanoid(),
         projectId: null,
         sessionId: uuidv4(),
-        snapshotRef: uuidv4(),
         createdAt: Date.now(),
       };
       const tabs = [...existingTabs, tab];
@@ -71,16 +67,12 @@ function operations(initial: StoreData) {
     removeTab: (tabId: CodeTabId): CodeTab | undefined => {
       const all = persistedStoreApi.getKey('codeTabs') ?? [];
       const tab = all.find((t) => t.id === tabId);
-      const jobs = persistedStoreApi.getKey('chatCleanupJobs') ?? [];
-      if (tab && !jobs.some((job) => job.id === tab.id)) {
-        persistedStoreApi.setKey('chatCleanupJobs', [...jobs, tab]);
-      }
       const tabs = all.filter((t) => t.id !== tabId);
       persistedStoreApi.setKey('codeTabs', tabs);
       if (persistedStoreApi.getKey('activeCodeTabId') === tabId) {
         persistedStoreApi.setKey('activeCodeTabId', tabs.at(-1)?.id ?? null);
       }
-      return tab ?? jobs.find((job) => job.id === tabId);
+      return tab;
     },
     setActiveTab: (tabId: CodeTabId) => {
       if (tabId === '__launcher__' || (persistedStoreApi.getKey('codeTabs') ?? []).some((tab) => tab.id === tabId)) {
@@ -139,7 +131,7 @@ function operations(initial: StoreData) {
           return t;
         }
         // Attaching a project is intent — it activates a lazy chat column.
-        return { ...t, projectId, activatedAt: t.activatedAt ?? Date.now(), snapshotRef: uuidv4() };
+        return { ...t, projectId, activatedAt: t.activatedAt ?? Date.now() };
       });
       persistedStoreApi.setKey('codeTabs', tabs);
       const attached = tabs.find((tab) => tab.id === tabId);
@@ -174,7 +166,6 @@ function operations(initial: StoreData) {
         id: nanoid(),
         projectId: conversation.projectId ?? null,
         sessionId: conversation.sessionId,
-        snapshotRef: uuidv4(),
         createdAt: Date.now(),
         activatedAt: Date.now(),
       };
@@ -320,19 +311,10 @@ function operations(initial: StoreData) {
           // greeting up, no sandbox until the first message.
           const { activatedAt: _reset, ...lazy } = t;
           void _reset;
-          return { ...lazy, sessionId, snapshotRef: uuidv4() };
+          return { ...lazy, sessionId };
         }
         return { ...t, sessionId };
       });
-      persistedStoreApi.setKey('codeTabs', tabs);
-    },
-    setTabSnapshotRef: (tabId: CodeTabId, snapshotRef: string) => {
-      if ((persistedStoreApi.getKey('chatCleanupJobs') ?? []).some((job) => job.snapshotRef === snapshotRef)) {
-        throw new Error('This workspace is being removed');
-      }
-      const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) =>
-        t.id === tabId ? { ...t, snapshotRef } : t
-      );
       persistedStoreApi.setKey('codeTabs', tabs);
     },
   };
