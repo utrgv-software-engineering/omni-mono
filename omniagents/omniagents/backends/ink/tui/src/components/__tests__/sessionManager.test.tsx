@@ -1,12 +1,14 @@
 import { ConnectionClosedError } from "../../rpc/lifecycle.js";
 import React from "react";
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
 import type { RPCClient } from "../../rpc/client.js";
+import { cleanup, render } from "ink-testing-library";
+
+const plain = (frame?: string) => stripAnsi(frame ?? "");
 
 // ---------------------------------------------------------------------
 // Harness — a real Ink render over a fake stdout/stdin, matching
@@ -16,49 +18,6 @@ import type { RPCClient } from "../../rpc/client.js";
 // needed: assertions on a pure model cannot catch a key that never got
 // wired to its RPC.
 // ---------------------------------------------------------------------
-
-class TestStdout extends PassThrough {
-  frames: string[] = [];
-  isTTY = true;
-  columns = 120;
-  rows = 40;
-
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (chunk) => {
-      if (typeof chunk === "string") this.frames.push(chunk);
-    });
-  }
-
-  /** Last frame carrying content; Ink's trailing cursor escapes are not one. */
-  lastFrame(): string {
-    for (let index = this.frames.length - 1; index >= 0; index -= 1) {
-      const frame = stripAnsi(this.frames[index] ?? "");
-      if (frame.trim()) return frame;
-    }
-    return "";
-  }
-}
-
-class FakeStdin extends EventEmitter {
-  isTTY = true;
-  private queue: string[] = [];
-  setRawMode() {}
-  setEncoding() {}
-  resume() {}
-  pause() {}
-  read() {
-    return this.queue.shift() ?? null;
-  }
-  unref() {}
-  ref() {}
-  /** Ink 7 reads stdin paused — "readable" + read(), never "data". */
-  press(sequence: string) {
-    this.queue.push(sequence);
-    this.emit("readable");
-  }
-}
 
 const KEY = {
   down: "[B",
@@ -146,22 +105,14 @@ function asClient(stub: ClientStub): RPCClient {
   } as unknown as RPCClient;
 }
 
-type Render = (typeof import("ink"))["render"];
-const instances: Array<ReturnType<Render>> = [];
-let inkRender: Render;
 let SessionManager: (typeof import("../SessionManager.js"))["SessionManager"];
 
 beforeAll(async () => {
-  inkRender = (await import("ink")).render;
   ({ SessionManager } = await import("../SessionManager.js"));
 });
 
 afterEach(() => {
-  while (instances.length) {
-    const instance = instances.pop();
-    instance?.unmount();
-    instance?.cleanup();
-  }
+  cleanup();
 });
 
 async function mount(
@@ -173,9 +124,7 @@ async function mount(
     onExit?: () => void;
   } = {},
 ) {
-  const stdout = new TestStdout();
-  const stdin = new FakeStdin();
-  const instance = inkRender(
+  const instance = render(
     <KeypressProvider>
       <SessionManager
         client={asClient(stub)}
@@ -185,17 +134,9 @@ async function mount(
         onExit={handlers.onExit}
       />
     </KeypressProvider>,
-    {
-      stdout: stdout as unknown as NodeJS.WriteStream,
-      stdin: stdin as unknown as NodeJS.ReadStream,
-      debug: true,
-      exitOnCtrlC: false,
-      patchConsole: false,
-    },
   );
-  instances.push(instance);
   await settle();
-  return { stdout, stdin, instance };
+  return { ...instance, instance };
 }
 
 // ---------------------------------------------------------------------
@@ -203,20 +144,20 @@ async function mount(
 describe("SessionManager surface selection", () => {
   it("reads the organized surface when list_threads is granted", async () => {
     const stub = makeClient();
-    const { stdout } = await mount(stub);
+    const { lastFrame } = await mount(stub);
     expect(stub.listThreads).toHaveBeenCalled();
     expect(stub.listSessions).not.toHaveBeenCalled();
-    expect(stdout.lastFrame()).toContain("Thread a");
+    expect(plain(lastFrame())).toContain("Thread a");
   });
 
   it("falls back to list_sessions when the grant is absent", async () => {
     const stub = makeClient([]);
-    const { stdout } = await mount(stub);
+    const { lastFrame } = await mount(stub);
     expect(stub.listSessions).toHaveBeenCalled();
     expect(stub.listThreads).not.toHaveBeenCalled();
     // The degraded path must SAY it is degraded rather than silently
     // offering keys that cannot work.
-    expect(stdout.lastFrame()).toContain("predates conversation organizing");
+    expect(plain(lastFrame())).toContain("predates conversation organizing");
   });
 
   it("reports an empty first load so the caller can skip the screen", async () => {
@@ -237,8 +178,8 @@ describe("SessionManager surface selection", () => {
     const stub = makeClient();
     stub.listThreads.mockRejectedValueOnce(new Error("boom"));
     const onEmpty = vi.fn();
-    const { stdout } = await mount(stub, { onEmpty });
-    expect(stdout.lastFrame()).toContain("boom");
+    const { lastFrame } = await mount(stub, { onEmpty });
+    expect(plain(lastFrame())).toContain("boom");
     // An error is not an absence — routing away would hide it.
     expect(onEmpty).not.toHaveBeenCalled();
   });
@@ -248,7 +189,7 @@ describe("SessionManager keys", () => {
   it("opens the selected conversation on enter", async () => {
     const onOpen = vi.fn();
     const { stdin } = await mount(makeClient(), { onOpen });
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle();
     expect(onOpen).toHaveBeenCalledWith("a");
   });
@@ -256,9 +197,9 @@ describe("SessionManager keys", () => {
   it("moves the cursor before opening", async () => {
     const onOpen = vi.fn();
     const { stdin } = await mount(makeClient(), { onOpen });
-    stdin.press(KEY.down);
+    stdin.write(KEY.down);
     await settle();
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle();
     expect(onOpen).toHaveBeenCalledWith("b");
   });
@@ -266,7 +207,7 @@ describe("SessionManager keys", () => {
   it("starts a new conversation on tab", async () => {
     const onNew = vi.fn();
     const { stdin } = await mount(makeClient(), { onNew });
-    stdin.press(KEY.tab);
+    stdin.write(KEY.tab);
     await settle();
     expect(onNew).toHaveBeenCalled();
   });
@@ -274,24 +215,24 @@ describe("SessionManager keys", () => {
   it("goes back to the conversation on esc when opened from chat", async () => {
     const onExit = vi.fn();
     const onNew = vi.fn();
-    const { stdin, stdout } = await mount(makeClient(), { onExit, onNew });
-    await waitFor(() => expect(stdout.lastFrame()).toContain("esc back"));
-    stdin.press(KEY.escape);
+    const { stdin, lastFrame } = await mount(makeClient(), { onExit, onNew });
+    await waitFor(() => expect(plain(lastFrame())).toContain("esc back"));
+    stdin.write(KEY.escape);
     // A lone Esc waits out the parser's disambiguation window.
     await waitFor(() => expect(onExit).toHaveBeenCalledTimes(1));
     expect(onNew).not.toHaveBeenCalled();
   });
 
   it("has no esc hint at launch, where there is nothing to go back to", async () => {
-    const { stdout } = await mount(makeClient());
-    await waitFor(() => expect(stdout.lastFrame()).toContain("enter open"));
-    expect(stdout.lastFrame()).not.toContain("esc back");
+    const { lastFrame } = await mount(makeClient());
+    await waitFor(() => expect(plain(lastFrame())).toContain("enter open"));
+    expect(plain(lastFrame())).not.toContain("esc back");
   });
 
   it("pins through update_thread and refetches", async () => {
     const stub = makeClient();
     const { stdin } = await mount(stub);
-    stdin.press("p");
+    stdin.write("p");
     await settle();
     expect(stub.updateThread).toHaveBeenCalledWith("a", { pinned: true });
     expect(stub.listThreads).toHaveBeenCalledTimes(2);
@@ -300,7 +241,7 @@ describe("SessionManager keys", () => {
   it("archives through update_thread", async () => {
     const stub = makeClient();
     const { stdin } = await mount(stub);
-    stdin.press("a");
+    stdin.write("a");
     await settle();
     expect(stub.updateThread).toHaveBeenCalledWith("a", { status: "archived" });
   });
@@ -309,7 +250,7 @@ describe("SessionManager keys", () => {
     const stub = makeClient();
     const onOpen = vi.fn();
     const { stdin } = await mount(stub, { onOpen });
-    stdin.press("f");
+    stdin.write("f");
     await settle();
     expect(stub.forkSession).toHaveBeenCalledWith("a");
     expect(onOpen).toHaveBeenCalledWith("forked-1");
@@ -318,19 +259,19 @@ describe("SessionManager keys", () => {
   it("places a retention hold", async () => {
     const stub = makeClient();
     const { stdin } = await mount(stub);
-    stdin.press("h");
+    stdin.write("h");
     await settle();
     expect(stub.setSessionHold).toHaveBeenCalledWith("a", true);
   });
 
   it("requires a confirmation before deleting", async () => {
     const stub = makeClient();
-    const { stdin, stdout } = await mount(stub);
-    stdin.press("d");
+    const { stdin, lastFrame } = await mount(stub);
+    stdin.write("d");
     await settle();
     expect(stub.deleteSession).not.toHaveBeenCalled();
-    expect(stdout.lastFrame()).toContain("cannot be undone");
-    stdin.press("y");
+    expect(plain(lastFrame())).toContain("cannot be undone");
+    stdin.write("y");
     await settle();
     expect(stub.deleteSession).toHaveBeenCalledWith("a");
   });
@@ -338,45 +279,45 @@ describe("SessionManager keys", () => {
   it("abandons a delete on n", async () => {
     const stub = makeClient();
     const { stdin } = await mount(stub);
-    stdin.press("d");
+    stdin.write("d");
     await settle();
-    stdin.press("n");
+    stdin.write("n");
     await settle();
     expect(stub.deleteSession).not.toHaveBeenCalled();
   });
 
   it("declines organize keys on the degraded surface instead of calling", async () => {
     const stub = makeClient([]);
-    const { stdin, stdout } = await mount(stub);
-    stdin.press("p");
+    const { stdin, lastFrame } = await mount(stub);
+    stdin.write("p");
     await settle();
     expect(stub.updateThread).not.toHaveBeenCalled();
-    expect(stdout.lastFrame()).toContain("does not support organizing");
+    expect(plain(lastFrame())).toContain("does not support organizing");
   });
 });
 
 describe("SessionManager search", () => {
   it("delegates to search_threads when granted", async () => {
     const stub = makeClient();
-    const { stdin, stdout } = await mount(stub);
-    stdin.press("/");
+    const { stdin, lastFrame } = await mount(stub);
+    stdin.write("/");
     await settle();
-    for (const ch of "abc") stdin.press(ch);
+    for (const ch of "abc") stdin.write(ch);
     await settle();
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle();
     expect(stub.searchThreads).toHaveBeenCalledWith("abc", { limit: 100 });
-    expect(stdout.lastFrame()).toContain("match");
+    expect(plain(lastFrame())).toContain("match");
   });
 
   it("filters locally when search is not granted", async () => {
     const stub = makeClient([]);
     const { stdin } = await mount(stub);
-    stdin.press("/");
+    stdin.write("/");
     await settle();
-    stdin.press("z");
+    stdin.write("z");
     await settle();
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle();
     expect(stub.searchThreads).not.toHaveBeenCalled();
     // Re-read the stable surface, then narrow it in memory.
@@ -387,17 +328,17 @@ describe("SessionManager search", () => {
     const stub = makeClient();
     const onOpen = vi.fn();
     const { stdin } = await mount(stub, { onOpen });
-    stdin.press("/");
+    stdin.write("/");
     await settle();
-    stdin.press("q");
+    stdin.write("q");
     await settle();
-    stdin.press(KEY.escape);
+    stdin.write(KEY.escape);
     await new Promise((resolve) => setTimeout(resolve, 60));
     await settle();
     expect(stub.searchThreads).not.toHaveBeenCalled();
     // Proves escape actually left search mode rather than doing nothing:
     // Enter now opens the selection instead of submitting a query.
-    stdin.press(KEY.enter);
+    stdin.write(KEY.enter);
     await settle();
     expect(onOpen).toHaveBeenCalledWith("a");
     expect(stub.searchThreads).not.toHaveBeenCalled();
@@ -409,14 +350,14 @@ describe("SessionManager races", () => {
     const stub = makeClient();
     const onOpen = vi.fn();
     const { stdin } = await mount(stub, { onOpen });
-    stdin.press(KEY.down + KEY.enter);
+    stdin.write(KEY.down + KEY.enter);
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith("b"));
   });
   it("does not treat pasted commands as actions", async () => {
     const stub = makeClient();
     const { stdin } = await mount(stub);
     for (const command of ["p", "a", "f", "d"])
-      stdin.press(`\x1b[200~${command}\x1b[201~`);
+      stdin.write(`\x1b[200~${command}\x1b[201~`);
     await settle();
     expect(stub.updateThread).not.toHaveBeenCalled();
     expect(stub.forkSession).not.toHaveBeenCalled();
@@ -425,7 +366,7 @@ describe("SessionManager races", () => {
   it("reads a whole rename-and-submit burst without dropping characters", async () => {
     const stub = makeClient();
     const { stdin } = await mount(stub);
-    stdin.press("r!" + KEY.enter);
+    stdin.write("r!" + KEY.enter);
     await waitFor(() =>
       expect(stub.updateThread).toHaveBeenCalledWith("a", {
         title: "Thread a!",
@@ -443,7 +384,7 @@ describe("SessionManager races", () => {
     const onOpen = vi.fn(),
       onNew = vi.fn();
     const { stdin } = await mount(stub, { onOpen, onNew });
-    stdin.press("ff" + KEY.tab);
+    stdin.write("ff" + KEY.tab);
     await settle();
     expect(stub.forkSession).toHaveBeenCalledTimes(1);
     resolve({ new_session_id: "late" });
@@ -456,12 +397,12 @@ describe("SessionManager races", () => {
 it("keeps the rename target when a refresh removes it from the list", async () => {
   const stub = makeClient();
   const { stdin } = await mount(stub);
-  stdin.press("r");
+  stdin.write("r");
   await settle();
   stub.listThreads.mockResolvedValue({ threads: [thread("b")] });
   stub.events.emit("thread_updated", {});
   await settle();
-  stdin.press("!" + KEY.enter);
+  stdin.write("!" + KEY.enter);
   await waitFor(() =>
     expect(stub.updateThread).toHaveBeenCalledWith("a", { title: "Thread a!" }),
   );
@@ -475,54 +416,54 @@ it("ignores an earlier list response after a search finishes", async () => {
       resolve = r;
     }),
   );
-  const { stdin, stdout } = await mount(stub);
-  stdin.press("/match" + KEY.enter);
+  const { stdin, lastFrame } = await mount(stub);
+  stdin.write("/match" + KEY.enter);
   await settle();
   resolve({ threads: [thread("a")] });
   await settle();
-  expect(stdout.lastFrame()).toContain("Thread b");
-  expect(stdout.lastFrame()).not.toContain("Thread a");
+  expect(plain(lastFrame())).toContain("Thread b");
+  expect(plain(lastFrame())).not.toContain("Thread a");
 });
 
 it("does not reuse an old delete confirmation during a cancel/select/delete/yes burst", async () => {
   const stub = makeClient();
   const { stdin } = await mount(stub);
-  stdin.press("d");
+  stdin.write("d");
   await settle();
-  stdin.press("n" + KEY.down + "dy");
+  stdin.write("n" + KEY.down + "dy");
   await settle();
   expect(stub.deleteSession).not.toHaveBeenCalled();
-  stdin.press("y");
+  stdin.write("y");
   await waitFor(() => expect(stub.deleteSession).toHaveBeenCalledWith("b"));
 });
 
 it("re-reads the list after a lost fork reply instead of replaying or warning", async () => {
   const stub = makeClient();
   stub.forkSession.mockRejectedValue(new ConnectionClosedError("lost reply"));
-  const { stdin, stdout } = await mount(stub);
+  const { stdin, lastFrame } = await mount(stub);
   const listsBefore = stub.listThreads.mock.calls.length;
-  stdin.press("f");
+  stdin.write("f");
   await settle();
-  expect(stdout.lastFrame()).not.toContain("forking");
+  expect(plain(lastFrame())).not.toContain("forking");
   stub.events.emit("rpc_ready");
   await settle();
   expect(stub.forkSession).toHaveBeenCalledTimes(1);
   expect(stub.listThreads.mock.calls.length).toBeGreaterThan(listsBefore);
-  expect(stdout.lastFrame()).not.toContain("outcome unknown");
-  expect(stdout.lastFrame()).not.toContain("fork failed");
+  expect(plain(lastFrame())).not.toContain("outcome unknown");
+  expect(plain(lastFrame())).not.toContain("fork failed");
 });
 
 it("refetches immediately after a lost mutation reply when already reconnected", async () => {
   const stub = makeClient();
   (stub as { initializeResult?: unknown }).initializeResult = {};
   stub.updateThread.mockRejectedValueOnce(new ConnectionClosedError("lost"));
-  const { stdin, stdout } = await mount(stub);
+  const { stdin, lastFrame } = await mount(stub);
   const listsBefore = stub.listThreads.mock.calls.length;
-  stdin.press("a");
+  stdin.write("a");
   await waitFor(() =>
     expect(stub.listThreads.mock.calls.length).toBeGreaterThan(listsBefore),
   );
   await settle();
-  expect(stdout.lastFrame()).not.toContain("outcome unknown");
-  expect(stdout.lastFrame()).not.toContain("failed");
+  expect(plain(lastFrame())).not.toContain("outcome unknown");
+  expect(plain(lastFrame())).not.toContain("failed");
 });

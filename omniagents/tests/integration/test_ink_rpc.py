@@ -4,7 +4,6 @@ Only model generation is substituted. Session storage, approvals, snapshots,
 replay, capability negotiation, and transport all use production code.
 """
 
-import os
 import asyncio
 import inspect
 from pathlib import Path
@@ -255,14 +254,6 @@ def test_ink_reconnect(monkeypatch, tmp_path, scenario, reconnect):
                     reconnect,
                 ],
                 cwd=root,
-                # The fixtures drive an emulated interactive terminal. Ink
-                # only paints live frames outside CI (is-in-ci reads CI and
-                # CONTINUOUS_INTEGRATION), so CI runners must not leak them.
-                env={
-                    key: value
-                    for key, value in os.environ.items()
-                    if key not in {"CI", "CONTINUOUS_INTEGRATION"}
-                },
                 capture_output=True,
                 text=True,
                 timeout=30,

@@ -1,8 +1,7 @@
 import React from "react";
 import { EventEmitter } from "node:events";
-import { Writable } from "node:stream";
-import { render } from "ink";
-import xterm from "@xterm/headless";
+import { cleanup, render } from "ink-testing-library";
+import stripAnsi from "strip-ansi";
 import { afterEach, expect, it, vi } from "vitest";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
 import { ReviewScreen } from "../ReviewScreen.js";
@@ -13,6 +12,8 @@ import { ElicitationDialog } from "../ElicitationDialog.js";
 import { useAppStore, type SubagentSummary } from "../../store/appStore.js";
 import type { RPCClient } from "../../rpc/client.js";
 
+const plain = (frame?: string) => stripAnsi(frame ?? "");
+
 const settle = () => new Promise((r) => setTimeout(r, 60));
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -21,63 +22,15 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-class Input extends EventEmitter {
-  isTTY = true;
-  queue: string[] = [];
-  setRawMode() {}
-  setEncoding() {}
-  resume() {}
-  pause() {}
-  ref() {}
-  unref() {}
-  read() {
-    return this.queue.shift() ?? null;
-  }
-  press(value: string) {
-    this.queue.push(value);
-    this.emit("readable");
-  }
-}
-const cleanup: (() => void)[] = [];
-afterEach(() => {
-  for (const fn of cleanup.splice(0)) fn();
-});
+afterEach(cleanup);
 function mount(view: React.ReactNode) {
-  const terminal = new xterm.Terminal({
-    cols: 100,
-    rows: 40,
-    convertEol: true,
-    allowProposedApi: true,
-  });
-  const stdout = new Writable({
-    write(chunk, _encoding, done) {
-      terminal.write(chunk, done);
-    },
-  });
-  Object.assign(stdout, { columns: 100, rows: 40, isTTY: true });
-  const stdin = new Input();
   const wrap = (node: React.ReactNode) => (
     <KeypressProvider>{node}</KeypressProvider>
   );
-  const instance = render(wrap(view), {
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    stdin: stdin as unknown as NodeJS.ReadStream,
-    stderr: stdout as unknown as NodeJS.WriteStream,
-    exitOnCtrlC: false,
-  });
-  cleanup.push(() => {
-    instance.unmount();
-    terminal.dispose();
-  });
+  const instance = render(wrap(view));
   return {
-    stdin,
+    ...instance,
     rerender: (node: React.ReactNode) => instance.rerender(wrap(node)),
-    screen: () =>
-      Array.from(
-        { length: terminal.buffer.active.length },
-        (_, i) =>
-          terminal.buffer.active.getLine(i)?.translateToString(true) ?? "",
-      ).join("\n"),
   };
 }
 
@@ -115,7 +68,7 @@ it("Review stages the newly selected file exactly once during a key burst", asyn
   const api = reviewClient();
   const ui = mount(review(api));
   await settle();
-  ui.stdin.press("\x1b[B  ");
+  ui.stdin.write("\x1b[B  ");
   await settle();
   expect(api.gitStage).toHaveBeenCalledTimes(1);
   expect(api.gitStage).toHaveBeenCalledWith("env", "repo", {
@@ -127,11 +80,11 @@ it("Review treats pasted commands as text rather than actions", async () => {
   const api = reviewClient();
   const ui = mount(review(api));
   await settle();
-  for (const key of [" ", "x", "c"]) ui.stdin.press(`\x1b[200~${key}\x1b[201~`);
+  for (const key of [" ", "x", "c"]) ui.stdin.write(`\x1b[200~${key}\x1b[201~`);
   await settle();
   expect(api.gitStage).not.toHaveBeenCalled();
   expect(api.gitDiscard).not.toHaveBeenCalled();
-  expect(ui.screen()).not.toContain("commit: ");
+  expect(plain(ui.lastFrame())).not.toContain("commit: ");
 });
 
 it("Review ignores a listing that resolves after the screen closes", async () => {
@@ -151,16 +104,16 @@ it("Review keeps selection identity when refreshed files reorder", async () => {
   const api = reviewClient();
   const ui = mount(review(api));
   await settle();
-  ui.stdin.press("\x1b[B");
+  ui.stdin.write("\x1b[B");
   await settle();
   api.gitStatus.mockResolvedValue({
     entries: [],
     untracked: ["b.txt", "a.txt"],
     conflicted: [],
   });
-  ui.stdin.press("r");
+  ui.stdin.write("r");
   await settle();
-  ui.stdin.press(" ");
+  ui.stdin.write(" ");
   await settle();
   expect(api.gitStage).toHaveBeenCalledWith("env", "repo", {
     paths: ["b.txt"],
@@ -182,14 +135,14 @@ it("Agents keeps the selected worker when completion changes the sort order", as
     .actions.setSubagents([worker("a", "running"), worker("b", "running")]);
   const ui = mount(<AgentsScreen active height={30} onExit={() => {}} />);
   await settle();
-  ui.stdin.press("\x1b[B");
+  ui.stdin.write("\x1b[B");
   await settle();
   useAppStore
     .getState()
     .actions.setSubagents([worker("a", "completed"), worker("b", "running")]);
   await settle();
-  expect(ui.screen()).toContain("DETAIL_b");
-  expect(ui.screen()).not.toContain("DETAIL_a");
+  expect(plain(ui.lastFrame())).toContain("DETAIL_b");
+  expect(plain(ui.lastFrame())).not.toContain("DETAIL_a");
 });
 
 it.each(["tool", "mcp", "elicitation"])(
@@ -221,11 +174,11 @@ it.each(["tool", "mcp", "elicitation"])(
     await settle();
     ui.rerender(view(next));
     await settle();
-    ui.stdin.press("\x1b[200~1\x1b[201~");
+    ui.stdin.write("\x1b[200~1\x1b[201~");
     await settle();
     expect(old).not.toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
-    ui.stdin.press("1");
+    ui.stdin.write("1");
     await settle();
     expect(next).toHaveBeenCalledTimes(1);
     expect(old).not.toHaveBeenCalled();
@@ -247,7 +200,7 @@ it("can update an approval from plain arguments to rich metadata without violati
     />,
   );
   await settle();
-  expect(ui.screen()).toContain("New metadata");
+  expect(plain(ui.lastFrame())).toContain("New metadata");
 });
 
 it("keeps the selected elicitation value when refreshed options reorder", async () => {
@@ -265,11 +218,11 @@ it("keeps the selected elicitation value when refreshed options reorder", async 
   );
   const ui = mount(view(["alpha", "beta"]));
   await settle();
-  ui.stdin.press("\x1b[B");
+  ui.stdin.write("\x1b[B");
   await settle();
   ui.rerender(view(["beta", "alpha"]));
   await settle();
-  ui.stdin.press("\r");
+  ui.stdin.write("\r");
   await settle();
   expect(respond).toHaveBeenCalledWith({
     action: "accept",
@@ -300,23 +253,23 @@ it("Agents recovers once during key bursts and shows recovery failures", async (
     />,
   );
   await settle();
-  expect(ui.screen()).toContain("runtime stopped");
-  expect(ui.screen()).toContain("Parent notification: queued");
-  expect(ui.screen()).toContain("r recover");
-  ui.stdin.press("\x1b[200~r\x1b[201~");
+  expect(plain(ui.lastFrame())).toContain("runtime stopped");
+  expect(plain(ui.lastFrame())).toContain("Parent notification: queued");
+  expect(plain(ui.lastFrame())).toContain("r recover");
+  ui.stdin.write("\x1b[200~r\x1b[201~");
   await settle();
   expect(action).not.toHaveBeenCalled();
-  ui.stdin.press("r");
-  ui.stdin.press("r");
+  ui.stdin.write("r");
+  ui.stdin.write("r");
   await settle();
   expect(action).toHaveBeenCalledTimes(1);
   expect(action).toHaveBeenCalledWith("w", "resume");
   pending.resolve();
   await settle();
   action.mockRejectedValueOnce(new Error("workspace unavailable"));
-  ui.stdin.press("r");
+  ui.stdin.write("r");
   await settle();
-  expect(ui.screen()).toContain("workspace unavailable");
+  expect(plain(ui.lastFrame())).toContain("workspace unavailable");
 });
 
 it("Agents closes idle workers and offers no actions on closed workers", async () => {
@@ -338,17 +291,17 @@ it("Agents closes idle workers and offers no actions on closed workers", async (
     />,
   );
   await settle();
-  expect(ui.screen()).not.toContain("r recover");
-  ui.stdin.press("x");
+  expect(plain(ui.lastFrame())).not.toContain("r recover");
+  ui.stdin.write("x");
   await settle();
   expect(action).toHaveBeenCalledTimes(1);
   expect(action).toHaveBeenCalledWith("w", "close");
   useAppStore.getState().actions.setSubagents([{ ...entry, status: "closed" }]);
   await settle();
-  expect(ui.screen()).toContain("closed");
-  expect(ui.screen()).not.toContain("x close");
-  ui.stdin.press("r");
-  ui.stdin.press("x");
+  expect(plain(ui.lastFrame())).toContain("closed");
+  expect(plain(ui.lastFrame())).not.toContain("x close");
+  ui.stdin.write("r");
+  ui.stdin.write("x");
   await settle();
   expect(action).toHaveBeenCalledTimes(1);
 });
@@ -383,27 +336,27 @@ it("Ink opens providers from /model, cancels safely, and confirms one workspace 
     />,
   );
   await settle();
-  expect(ui.screen()).toContain("p provider");
-  ui.stdin.press("p");
+  expect(plain(ui.lastFrame())).toContain("p provider");
+  ui.stdin.write("p");
   await settle();
   expect(api.serverCall).toHaveBeenCalledWith("model_providers", {}, "parent");
-  expect(ui.screen()).toContain("Workspace provider");
-  ui.stdin.press("\x1b[B");
-  ui.stdin.press("\r");
+  expect(plain(ui.lastFrame())).toContain("Workspace provider");
+  ui.stdin.write("\x1b[B");
+  ui.stdin.write("\r");
   await settle();
-  expect(ui.screen()).toContain(
+  expect(plain(ui.lastFrame())).toContain(
     "Continuing conversations will send their history to personal",
   );
-  ui.stdin.press("n");
+  ui.stdin.write("n");
   await settle();
   expect(api.serverCall).toHaveBeenCalledTimes(1);
-  ui.stdin.press("\r");
+  ui.stdin.write("\r");
   await settle();
-  ui.stdin.press("\x1b[200~y\x1b[201~");
+  ui.stdin.write("\x1b[200~y\x1b[201~");
   await settle();
   expect(api.serverCall).toHaveBeenCalledTimes(1);
-  ui.stdin.press("y");
-  ui.stdin.press("y");
+  ui.stdin.write("y");
+  ui.stdin.write("y");
   await settle();
   expect(api.serverCall).toHaveBeenCalledTimes(2);
   expect(api.serverCall).toHaveBeenLastCalledWith(
@@ -413,7 +366,7 @@ it("Ink opens providers from /model, cancels safely, and confirms one workspace 
   );
   pending.resolve({ ok: true, provider: "personal", model: "personal/c" });
   await settle();
-  expect(ui.screen()).toContain("Models");
+  expect(plain(ui.lastFrame())).toContain("Models");
   expect(api.listModels).toHaveBeenCalledTimes(2);
 });
 
@@ -445,10 +398,10 @@ it("Ink displays provider switch rejection without treating it as success", asyn
     />,
   );
   await settle();
-  ui.stdin.press("\r");
+  ui.stdin.write("\r");
   await settle();
-  ui.stdin.press("y");
+  ui.stdin.write("y");
   await settle();
-  expect(ui.screen()).toContain("Refresh the list and confirm again");
+  expect(plain(ui.lastFrame())).toContain("Refresh the list and confirm again");
   expect(close).not.toHaveBeenCalled();
 });

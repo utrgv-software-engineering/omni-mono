@@ -8,6 +8,7 @@ recursive-include omniagents/core/project/templates *
 recursive-include omniagents/backends/ink/tui/dist *
 recursive-include omniagents/backends/ink/tui/src *.ts *.tsx
 include omniagents/backends/ink/tui/package.json
+recursive-include omniagents/backends/ink/tui/patches *.patch
 include omniagents/backends/ink/tui/tsconfig.json
 include omniagents/backends/ink/tui/tsconfig.tsx.json
 recursive-include omniagents/backends/web/ui/dist *

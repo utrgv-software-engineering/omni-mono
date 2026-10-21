@@ -14,49 +14,11 @@
  */
 
 import React from "react";
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { cleanup, render } from "ink-testing-library";
 
-class FakeStdin extends EventEmitter {
-  isTTY = true;
-  private queue: string[] = [];
-  setRawMode() {}
-  setEncoding() {}
-  resume() {}
-  pause() {}
-  read() {
-    return this.queue.shift() ?? null;
-  }
-  unref() {}
-  ref() {}
-  push(sequence: string) {
-    this.queue.push(sequence);
-    this.emit("readable");
-  }
-}
-
-class TestStdout extends PassThrough {
-  frames: string[] = [];
-  isTTY = true;
-  columns = 60;
-  rows = 30;
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (chunk) => {
-      if (typeof chunk === "string") this.frames.push(chunk);
-    });
-  }
-  lastFrame(): string {
-    for (let i = this.frames.length - 1; i >= 0; i -= 1) {
-      const frame = stripAnsi(this.frames[i] ?? "");
-      if (frame.trim()) return frame;
-    }
-    return "";
-  }
-}
+const plain = (frame?: string) => stripAnsi(frame ?? "");
 
 const settle = (ms = 300) => new Promise((resolve) => setTimeout(resolve, ms));
 const WHEEL_UP = "\u001b[<64;3;3M";
@@ -68,7 +30,6 @@ let ScrollProvider: (typeof import("../../contexts/ScrollProvider.js"))["ScrollP
 let MouseProvider: (typeof import("../../contexts/MouseContext.js"))["MouseProvider"];
 let MessageListOptimized: (typeof import("../MessageListOptimized.js"))["MessageListOptimized"];
 let store: typeof import("../../store/appStore.js");
-let instance: { unmount: () => void; cleanup: () => void } | null = null;
 
 beforeAll(async () => {
   ink = await import("ink");
@@ -80,9 +41,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-  instance?.unmount();
-  instance?.cleanup();
-  instance = null;
+  cleanup();
 });
 
 /** Eight turns, each a user line, four tool calls and a reply. */
@@ -113,9 +72,7 @@ async function mount() {
     messages: transcript() as never,
     transcriptDetail: false,
   });
-  const stdin = new FakeStdin();
-  const stdout = new TestStdout();
-  const { render, Box } = ink;
+  const { Box } = ink;
   const Host = () => {
     const detail = store.useTranscriptDetail();
     const Input = () => {
@@ -139,25 +96,17 @@ async function mount() {
       </>
     );
   };
-  instance = render(
+  const instance = render(
     <MouseProvider mouseEventsEnabled>
       <ScrollProvider>
         <Host />
       </ScrollProvider>
     </MouseProvider>,
-    {
-      stdout: stdout as unknown as NodeJS.WriteStream,
-      stdin: stdin as unknown as NodeJS.ReadStream,
-      debug: true,
-      exitOnCtrlC: false,
-      patchConsole: false,
-    },
   );
   await settle();
   /** The last conversation marker on screen. */
   const tail = () => {
-    const marks = stdout
-      .lastFrame()
+    const marks = plain(instance.lastFrame())
       .split("\n")
       .join(" ")
       .match(/(USER|REPLY)-\d/g);
@@ -167,7 +116,7 @@ async function mount() {
     store.useAppStore.getState().actions.toggleTranscriptDetail();
     await settle(400);
   };
-  return { stdin, tail, toggle };
+  return { stdin: instance.stdin, tail, toggle };
 }
 
 describe("ctrl+o and the scroll position", () => {
@@ -189,7 +138,7 @@ describe("ctrl+o and the scroll position", () => {
   it("lands at the bottom even when scrolled up", async () => {
     const { stdin, tail, toggle } = await mount();
     for (let i = 0; i < 4; i += 1) {
-      stdin.push(WHEEL_UP);
+      stdin.write(WHEEL_UP);
       await settle(60);
     }
     expect(tail()).not.toBe("REPLY-7");
@@ -202,7 +151,7 @@ describe("ctrl+o and the scroll position", () => {
     // away disarms it — otherwise reading history would be impossible.
     const { stdin, tail } = await mount();
     for (let i = 0; i < 4; i += 1) {
-      stdin.push(WHEEL_UP);
+      stdin.write(WHEEL_UP);
       await settle(60);
     }
     const parked = tail();

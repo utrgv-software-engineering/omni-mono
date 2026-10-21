@@ -1,14 +1,15 @@
 import React from "react";
 import { EventEmitter } from "node:events";
-import { Writable } from "node:stream";
 import { createHash } from "node:crypto";
-import { render } from "ink";
-import xterm from "@xterm/headless";
+import { cleanup, render } from "ink-testing-library";
+import stripAnsi from "strip-ansi";
 import { afterEach, expect, it, vi } from "vitest";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
 import { FilesScreen } from "../FilesScreen.js";
 import { GitPanel } from "../GitPanel.js";
 import type { RPCClient } from "../../rpc/client.js";
+
+const plain = (frame?: string) => stripAnsi(frame ?? "");
 
 const settle = () => new Promise((r) => setTimeout(r, 60));
 function deferred<T>() {
@@ -18,63 +19,15 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-class Input extends EventEmitter {
-  isTTY = true;
-  queue: string[] = [];
-  setRawMode() {}
-  setEncoding() {}
-  resume() {}
-  pause() {}
-  ref() {}
-  unref() {}
-  read() {
-    return this.queue.shift() ?? null;
-  }
-  press(value: string) {
-    this.queue.push(value);
-    this.emit("readable");
-  }
-}
-const cleanup: (() => void)[] = [];
-afterEach(() => {
-  for (const fn of cleanup.splice(0)) fn();
-});
+afterEach(cleanup);
 function mount(view: React.ReactNode) {
-  const terminal = new xterm.Terminal({
-    cols: 100,
-    rows: 40,
-    convertEol: true,
-    allowProposedApi: true,
-  });
-  const stdout = new Writable({
-    write(chunk, _encoding, done) {
-      terminal.write(chunk, done);
-    },
-  });
-  Object.assign(stdout, { columns: 100, rows: 40, isTTY: true });
-  const stdin = new Input();
   const wrap = (node: React.ReactNode) => (
     <KeypressProvider>{node}</KeypressProvider>
   );
-  const instance = render(wrap(view), {
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    stdin: stdin as unknown as NodeJS.ReadStream,
-    stderr: stdout as unknown as NodeJS.WriteStream,
-    exitOnCtrlC: false,
-  });
-  cleanup.push(() => {
-    instance.unmount();
-    terminal.dispose();
-  });
+  const instance = render(wrap(view));
   return {
-    stdin,
+    ...instance,
     rerender: (node: React.ReactNode) => instance.rerender(wrap(node)),
-    screen: () =>
-      Array.from(
-        { length: terminal.buffer.active.length },
-        (_, i) =>
-          terminal.buffer.active.getLine(i)?.translateToString(true) ?? "",
-      ).join("\n"),
   };
 }
 function client() {
@@ -146,8 +99,8 @@ it("does not paint an old client's file listing into a new environment", async (
     entries: [{ path: "old.txt", name: "old.txt", type: "file", size: 1 }],
   });
   await settle();
-  expect(ui.screen()).toContain("new.txt");
-  expect(ui.screen()).not.toContain("old.txt");
+  expect(plain(ui.lastFrame())).toContain("new.txt");
+  expect(plain(ui.lastFrame())).not.toContain("old.txt");
 });
 
 it("does not issue a follow-up Git status request after its view has closed", async () => {
@@ -195,22 +148,22 @@ it("preserves edits typed during an upload and protects them with the newly save
   });
   const ui = mount(files(api));
   await settle();
-  ui.stdin.press("e");
+  ui.stdin.write("e");
   await settle();
-  ui.stdin.press("a");
+  ui.stdin.write("a");
   await settle();
-  ui.stdin.press("\x13");
+  ui.stdin.write("\x13");
   await settle();
-  ui.stdin.press("b");
+  ui.stdin.write("b");
   await settle();
   commit.resolve({});
   await settle();
-  expect(ui.screen()).toContain("abold");
-  ui.stdin.press("\x1b");
+  expect(plain(ui.lastFrame())).toContain("abold");
+  ui.stdin.write("\x1b");
   await settle();
   // Dirty edits must require a second Escape to discard after the older save completes.
-  expect(ui.screen()).toContain("abold");
-  ui.stdin.press("\x13");
+  expect(plain(ui.lastFrame())).toContain("abold");
+  ui.stdin.write("\x13");
   await settle();
   const open = (api as unknown as { fsUploadOpen: ReturnType<typeof vi.fn> })
     .fsUploadOpen;
@@ -235,12 +188,12 @@ it("keeps the latest Git refresh when status responses arrive out of order", asy
   api.gitStatus.mockReturnValueOnce(old.promise).mockResolvedValue(status);
   const ui = mount(git(api));
   await settle();
-  ui.stdin.press("r");
+  ui.stdin.write("r");
   await settle();
   old.resolve({ ...status, untracked: ["old-result.txt"] });
   await settle();
-  expect(ui.screen()).toContain("new-result.txt");
-  expect(ui.screen()).not.toContain("old-result.txt");
+  expect(plain(ui.lastFrame())).toContain("new-result.txt");
+  expect(plain(ui.lastFrame())).not.toContain("old-result.txt");
 });
 
 it("starts a fresh repository listing when the environment changes on the same client", async () => {

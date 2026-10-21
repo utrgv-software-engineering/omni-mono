@@ -9,7 +9,8 @@ export function useTerminalInput(
   isActive = true,
 ): void {
   const { internal_eventEmitter: emitter, setRawMode } = useStdin();
-  const { stdout } = useStdout();
+  // Ink's write keeps its rendered output intact around the escape sequence.
+  const { write } = useStdout();
   const latest = useRef(handler);
   latest.current = handler;
   useEffect(() => {
@@ -20,12 +21,12 @@ export function useTerminalInput(
     const feed = (chunk: string) => parser.feed(chunk);
     emitter.on("input", feed);
     setRawMode(true);
-    stdout.write("\x1b[?2004h");
+    write("\x1b[?2004h");
     return () => {
       emitter.off("input", feed);
       parser.dispose();
-      stdout.write("\x1b[?2004l");
+      write("\x1b[?2004l");
       setRawMode(false);
     };
-  }, [emitter, setRawMode, stdout, isActive]);
+  }, [emitter, setRawMode, write, isActive]);
 }

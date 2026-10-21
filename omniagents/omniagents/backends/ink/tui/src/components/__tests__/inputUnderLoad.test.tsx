@@ -1,9 +1,8 @@
 import React from "react";
-import { EventEmitter } from "node:events";
-import { Writable } from "node:stream";
 import { performance } from "node:perf_hooks";
-import { Box, render } from "ink";
-import xterm from "@xterm/headless";
+import { Box } from "ink";
+import { render } from "ink-testing-library";
+import stripAnsi from "strip-ansi";
 import { expect, it, vi } from "vitest";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
 import { MouseProvider } from "../../contexts/MouseContext.js";
@@ -18,48 +17,14 @@ import { MessageListOptimized } from "../MessageListOptimized.js";
 import { MultiLineInputOptimized } from "../MultiLineInputOptimized.js";
 import { SessionComposer, ComposerDrafts } from "../SessionComposer.js";
 
-class Input extends EventEmitter {
-  isTTY = true;
-  queue: string[] = [];
-  setRawMode() {}
-  setEncoding() {}
-  resume() {}
-  pause() {}
-  ref() {}
-  unref() {}
-  read() {
-    return this.queue.shift() ?? null;
-  }
-  press(chunk: string) {
-    this.queue.push(chunk);
-    this.emit("readable");
-  }
-}
+const plain = (frame?: string) => stripAnsi(frame ?? "");
 
 it("keeps transcript content, drafts, and listeners consistent through repeated session and viewport changes", async () => {
-  const terminal = new xterm.Terminal({
-    cols: 100,
-    rows: 40,
-    allowProposedApi: true,
-    convertEol: true,
-  });
-  const stdout = new Writable({
-    write(chunk, _encoding, done) {
-      terminal.write(chunk, done);
-    },
-  });
-  Object.assign(stdout, { columns: 100, rows: 40, isTTY: true });
-  const stdin = new Input();
   const saved = useAppStore.getState();
   const drafts = new ComposerDrafts();
   const onSubmit = vi.fn();
   const expected = ["", "", "", ""];
-  const screen = () =>
-    Array.from(
-      { length: 40 },
-      (_, i) =>
-        terminal.buffer.active.getLine(i)?.translateToString(true) ?? "",
-    ).join("\n");
+  const screen = () => plain(instance.lastFrame());
   function View({ session }: { session: number }) {
     const messages = useMessages();
     return (
@@ -91,13 +56,8 @@ it("keeps transcript content, drafts, and listeners consistent through repeated 
     </KeypressProvider>
   );
   useAppStore.getState().actions.setMessages([]);
-  const instance = render(view(0), {
-    stdin: stdin as unknown as NodeJS.ReadStream,
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    stderr: stdout as unknown as NodeJS.WriteStream,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
+  const instance = render(view(0));
+  const { stdin, stdout } = instance;
   try {
     await vi.waitFor(() => expect(screen()).toContain(">"));
     const listeners = [
@@ -113,14 +73,18 @@ it("keeps transcript content, drafts, and listeners consistent through repeated 
       instance.rerender(view(session));
       if (cycle % 5 === 4) {
         const columns = cycle % 2 ? 80 : 100;
-        Object.assign(stdout, { columns });
-        terminal.resize(columns, 40);
+        // ink-testing-library's stdout is fixed at 100 columns; resize it
+        // as a terminal does: new width, then a "resize" event.
+        Object.defineProperty(stdout, "columns", {
+          value: columns,
+          configurable: true,
+        });
         stdout.emit("resize");
       }
       await vi.waitFor(() => expect(screen()).toContain(`RESULT_${cycle}`));
       const addition = `_${cycle}`;
       expected[session] += addition;
-      stdin.press(addition);
+      stdin.write(addition);
       await vi.waitFor(() =>
         expect(screen()).toContain("> " + expected[session]),
       );
@@ -134,7 +98,7 @@ it("keeps transcript content, drafts, and listeners consistent through repeated 
       await vi.waitFor(() =>
         expect(screen()).toContain("> " + expected[session]),
       );
-      stdin.press("\r");
+      stdin.write("\r");
       await vi.waitFor(() =>
         expect(onSubmit).toHaveBeenCalledWith(expected[session]),
       );
@@ -142,9 +106,6 @@ it("keeps transcript content, drafts, and listeners consistent through repeated 
     expect(onSubmit).toHaveBeenCalledTimes(4);
   } finally {
     instance.unmount();
-    instance.cleanup();
-    await new Promise<void>((resolve) => stdout.end(resolve));
-    terminal.dispose();
     useAppStore.setState(saved, true);
   }
   expect(stdin.listenerCount("readable")).toBe(0);
@@ -154,19 +115,6 @@ it("keeps transcript content, drafts, and listeners consistent through repeated 
 it.each([100, 2000])(
   "preserves typing and paste with %i historical messages and streaming updates",
   async (count) => {
-    const terminal = new xterm.Terminal({
-      cols: 100,
-      rows: 40,
-      allowProposedApi: true,
-      convertEol: true,
-    });
-    const stdout = new Writable({
-      write(chunk, _encoding, done) {
-        terminal.write(chunk, done);
-      },
-    });
-    Object.assign(stdout, { columns: 100, rows: 40, isTTY: true });
-    const stdin = new Input();
     const onSubmit = vi.fn();
     const saved = useAppStore.getState();
     const history: Message[] = Array.from({ length: count }, (_, index) => ({
@@ -199,20 +147,9 @@ it.each([100, 2000])(
           </ScrollProvider>
         </MouseProvider>
       </KeypressProvider>,
-      {
-        stdin: stdin as unknown as NodeJS.ReadStream,
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        stderr: stdout as unknown as NodeJS.WriteStream,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      },
     );
-    const screen = () =>
-      Array.from(
-        { length: 40 },
-        (_, i) =>
-          terminal.buffer.active.getLine(i)?.translateToString(true) ?? "",
-      ).join("\n");
+    const { stdin } = instance;
+    const screen = () => plain(instance.lastFrame());
     let updates = 0;
     let timer: ReturnType<typeof setInterval> | undefined;
     try {
@@ -249,7 +186,7 @@ it.each([100, 2000])(
         const keyStart = performance.now();
         const text = String.fromCharCode(97 + i);
         draft += text;
-        stdin.press(text);
+        stdin.write(text);
         await vi.waitFor(() => expect(screen()).toContain("> " + draft), {
           timeout: 2000,
           interval: 1,
@@ -259,22 +196,22 @@ it.each([100, 2000])(
       // Feed faster than the display frame rate without waiting for each paint.
       const rapid = "0123456789".repeat(12);
       for (const key of rapid) {
-        stdin.press(key);
+        stdin.write(key);
         await new Promise((resolve) => setTimeout(resolve, 2));
       }
       draft += rapid;
       const paste = "line one\n" + "x".repeat(32000) + "PASTE_END";
       const pasteStart = performance.now();
-      stdin.press("\x1b[200~" + paste.slice(0, 16000));
+      stdin.write("\x1b[200~" + paste.slice(0, 16000));
       await new Promise((resolve) => setTimeout(resolve, 10));
-      stdin.press(paste.slice(16000) + "\x1b[201~");
+      stdin.write(paste.slice(16000) + "\x1b[201~");
       await vi.waitFor(() => expect(screen()).toContain("PASTE_END"), {
         timeout: 2000,
         interval: 1,
       });
       const pasteMs = performance.now() - pasteStart;
       // Submit directly after edits, without a React commit between them.
-      stdin.press("\x1b[DZ\x7f\x1b[C!\r");
+      stdin.write("\x1b[DZ\x7f\x1b[C!\r");
       await vi.waitFor(() =>
         expect(onSubmit).toHaveBeenCalledWith(draft + paste + "!"),
       );
@@ -295,9 +232,6 @@ it.each([100, 2000])(
     } finally {
       clearInterval(timer);
       instance.unmount();
-      instance.cleanup();
-      await new Promise<void>((resolve) => stdout.end(resolve));
-      terminal.dispose();
       useAppStore.setState(saved, true);
     }
   },

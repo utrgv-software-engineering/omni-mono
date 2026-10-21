@@ -1,11 +1,10 @@
 /** Real Python RPC + real Ink screens, invoked by test_ink_rpc.py. */
 import React, { useEffect, useState } from "react";
 import assert from "node:assert/strict";
-import { Writable } from "node:stream";
-import { EventEmitter } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
-import { Box, Text, render } from "ink";
-import xterm from "@xterm/headless";
+import { Box, Text } from "ink";
+import { render } from "ink-testing-library";
+import stripAnsi from "strip-ansi";
 import { KeypressProvider } from "../../contexts/KeypressContext.js";
 import { MouseProvider } from "../../contexts/MouseContext.js";
 import { ScrollProvider } from "../../contexts/ScrollProvider.js";
@@ -23,23 +22,6 @@ import { useMessagesOptimized } from "../../hooks/useMessagesNew.js";
 import { useAppStore, useApproval, useMessages } from "../../store/appStore.js";
 import type { RPCClient } from "../client.js";
 
-class Input extends EventEmitter {
-  isTTY = true;
-  queue: string[] = [];
-  setRawMode() {}
-  setEncoding() {}
-  resume() {}
-  pause() {}
-  ref() {}
-  unref() {}
-  read() {
-    return this.queue.shift() ?? null;
-  }
-  press(text: string) {
-    this.queue.push(text);
-    this.emit("readable");
-  }
-}
 async function until(check: () => boolean, describe?: () => string) {
   const deadline = Date.now() + 10_000;
   while (!check()) {
@@ -55,27 +37,6 @@ export async function runScreenSoak(client: RPCClient, base: string) {
   const sessions = [first.session_id, second.session_id];
   const drafts = new ComposerDrafts();
   const typed = ["", ""];
-  const stdin = new Input();
-  const terminal = new xterm.Terminal({
-    cols: 100,
-    rows: 40,
-    allowProposedApi: true,
-    convertEol: true,
-  });
-  const stdout = new Writable({
-    write(chunk, _encoding, done) {
-      terminal.write(chunk, done);
-    },
-  });
-  Object.assign(stdout, { columns: 100, rows: 40, isTTY: true });
-  const screen = () =>
-    Array.from(
-      { length: terminal.rows },
-      (_, index) =>
-        terminal.buffer.active
-          .getLine(terminal.buffer.active.baseY + index)
-          ?.translateToString(true) ?? "",
-    ).join("\n");
   const listeners = () =>
     Object.fromEntries(
       client
@@ -164,13 +125,9 @@ export async function runScreenSoak(client: RPCClient, base: string) {
     </KeypressProvider>
   );
   useAppStore.getState().actions.setSessionId(first.session_id);
-  const instance = render(view("approval", first.session_id), {
-    stdin: stdin as unknown as NodeJS.ReadStream,
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    stderr: stdout as unknown as NodeJS.WriteStream,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
+  const instance = render(view("approval", first.session_id));
+  const { stdin, stdout } = instance;
+  const screen = () => stripAnsi(instance.lastFrame() ?? "");
   try {
     await until(() => !!useAppStore.getState().approval);
     const baseline = listeners();
@@ -180,24 +137,27 @@ export async function runScreenSoak(client: RPCClient, base: string) {
       const selected = Math.floor(i / tabs.length) % 2;
       const session = sessions[selected];
       useAppStore.getState().actions.setSessionId(session);
-      Object.assign(stdout, { columns: i % 2 ? 80 : 100 });
-      terminal.resize(i % 2 ? 80 : 100, 40);
+      // ink-testing-library's stdout is fixed at 100 columns; resize it as a
+      // terminal does: new width, then a "resize" event.
+      Object.defineProperty(stdout, "columns", {
+        value: i % 2 ? 80 : 100,
+        configurable: true,
+      });
       stdout.emit("resize");
       instance.rerender(view(tab, session));
       await until(
         () => screen().includes(`SCREEN_${tab} SESSION_${selected}`),
         () =>
           `round ${i} expected SCREEN_${tab} SESSION_${selected}; ` +
-          `viewport baseY=${terminal.buffer.active.baseY} length=${terminal.buffer.active.length} ` +
-          `cols=${terminal.cols}\n${screen()}`,
+          `cols=${stdout.columns}\n${screen()}`,
       );
       await delay(60);
       const pulse = fetch(base + "/test/pulse/" + i, { method: "POST" });
       if (tab === "chat") {
         const text = `draft${i} `;
         typed[selected] += text;
-        stdin.press(text);
-      } else stdin.press("\x1b[200~pfx1\x1b[201~");
+        stdin.write(text);
+      } else stdin.write("\x1b[200~pfx1\x1b[201~");
       assert.equal((await pulse).status, 200);
       if (selected === 0)
         await until(() =>
@@ -237,9 +197,9 @@ export async function runScreenSoak(client: RPCClient, base: string) {
       "panel/reconnect listeners return to baseline",
     );
     await fetch(base + "/test/lose/tool_approval_response", { method: "POST" });
-    stdin.press("11"); // A text chunk is not two numeric approval shortcuts.
-    stdin.press("1");
-    stdin.press("1");
+    stdin.write("11"); // A text chunk is not two numeric approval shortcuts.
+    stdin.write("1");
+    stdin.write("1");
     await until(() => !useAppStore.getState().approval);
     await delay(150);
     const state = (await (await fetch(base + "/test/state")).json()) as {
@@ -270,6 +230,5 @@ export async function runScreenSoak(client: RPCClient, base: string) {
       "all screen listeners released on unmount",
     );
     assert.equal(stdin.listenerCount("readable"), 0);
-    terminal.dispose();
   }
 }

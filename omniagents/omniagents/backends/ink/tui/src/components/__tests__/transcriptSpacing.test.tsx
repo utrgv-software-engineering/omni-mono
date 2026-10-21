@@ -20,29 +20,10 @@
 
 import React from "react";
 import stripAnsi from "strip-ansi";
-import { PassThrough } from "node:stream";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { cleanup, render } from "ink-testing-library";
 
-class TestStdout extends PassThrough {
-  frames: string[] = [];
-  isTTY = true;
-  columns = 100;
-  rows = 60;
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (c) => {
-      if (typeof c === "string") this.frames.push(c);
-    });
-  }
-  lastFrame(): string {
-    for (let i = this.frames.length - 1; i >= 0; i--) {
-      const f = stripAnsi(this.frames[i] ?? "");
-      if (f.trim()) return f;
-    }
-    return "";
-  }
-}
+const plain = (frame?: string) => stripAnsi(frame ?? "");
 
 /** Blank rows strictly between the line containing `a` and the next line
  *  containing `b`. */
@@ -56,52 +37,38 @@ function blanksBetween(frame: string, a: string, b: string): number {
 }
 
 describe("scroll-region rhythm", () => {
-  let render: (typeof import("ink"))["render"];
   let Box: (typeof import("ink"))["Box"];
   let Text: (typeof import("ink"))["Text"];
   let MessageListOptimized: React.ComponentType;
   let useAppStore: (typeof import("../../store/appStore.js"))["useAppStore"];
-  let instance: { unmount: () => void } | null = null;
 
   beforeAll(async () => {
     const ink = await import("ink");
-    render = ink.render;
     Box = ink.Box;
     Text = ink.Text;
     ({ MessageListOptimized } = await import("../MessageListOptimized.js"));
     ({ useAppStore } = await import("../../store/appStore.js"));
   });
 
-  afterEach(() => {
-    instance?.unmount();
-    instance = null;
-  });
+  afterEach(cleanup);
 
   const frame = async () => {
     useAppStore.getState().actions.setMessages([
       { role: "user", content: "hi" },
       { role: "assistant", content: "hello" },
     ] as never);
-
-    const stdout = new TestStdout();
     // Mirrors App's scroll region (ScrollableMessageList): the same
     // gap={1} paddingTop={1} column, with stand-ins for the live blocks.
-    instance = render(
+    const instance = render(
       <Box flexDirection="column" gap={1} paddingTop={1}>
         <MessageListOptimized />
         <Text>PREAMBLE-LINE</Text>
         <Text>STATUS-THINKING</Text>
         <Text>APPROVAL-DIALOG</Text>
       </Box>,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      },
     );
     await new Promise((r) => setTimeout(r, 60));
-    return stdout.lastFrame();
+    return plain(instance.lastFrame());
   };
 
   it("puts exactly one blank row between messages", async () => {
@@ -163,20 +130,13 @@ describe("scroll-region rhythm", () => {
       }),
       { role: "assistant", content: "AFTER" },
     ] as never);
-    const stdout = new TestStdout();
-    instance = render(
+    const instance = render(
       <Box flexDirection="column" gap={1} paddingTop={1}>
         <MessageListOptimized />
       </Box>,
-      {
-        stdout: stdout as unknown as NodeJS.WriteStream,
-        debug: true,
-        exitOnCtrlC: false,
-        patchConsole: false,
-      },
     );
     await new Promise((r) => setTimeout(r, 60));
-    return stdout.lastFrame();
+    return plain(instance.lastFrame());
   };
 
   it("folds a run's failures onto one activity row", async () => {

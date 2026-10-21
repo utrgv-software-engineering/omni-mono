@@ -1,6 +1,5 @@
 import React from "react";
 import stripAnsi from "strip-ansi";
-import { PassThrough } from "node:stream";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -11,6 +10,9 @@ import {
   taskCounts,
 } from "../task-model.js";
 import type { TaskSummary } from "../../store/appStore.js";
+import { cleanup, render } from "ink-testing-library";
+
+const plain = (frame?: string) => stripAnsi(frame ?? "");
 
 const task = (
   id: string,
@@ -86,53 +88,16 @@ describe("task dock counts and palette", () => {
 // Real Ink render — the dock must actually show the blocked row
 // ---------------------------------------------------------------------
 
-class TestStdout extends PassThrough {
-  frames: string[] = [];
-  isTTY = true;
-  columns = 120;
-  rows = 40;
-
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (chunk) => {
-      if (typeof chunk === "string") this.frames.push(chunk);
-    });
-  }
-
-  /** The last frame that actually carries rendered content.
-   *
-   * Ink writes bare cursor-control escapes after the paint, so the literal
-   * last chunk is usually `\u001b[?25l` and asserting on it would make
-   * every render test vacuous. */
-  lastFrame(): string {
-    for (let index = this.frames.length - 1; index >= 0; index -= 1) {
-      const frame = stripAnsi(this.frames[index] ?? "");
-      if (frame.trim()) return frame;
-    }
-    return "";
-  }
-}
-
-type InkRender = (typeof import("ink"))["render"];
-
-const instances: Array<ReturnType<InkRender>> = [];
-let inkRender: InkRender;
 let Tasks: React.ComponentType<{ focused: boolean }>;
 let useAppStore: (typeof import("../../store/appStore.js"))["useAppStore"];
 
 beforeAll(async () => {
-  inkRender = (await import("ink")).render;
   ({ Tasks } = await import("../Tasks.js"));
   ({ useAppStore } = await import("../../store/appStore.js"));
 });
 
 afterEach(() => {
-  while (instances.length) {
-    const instance = instances.pop();
-    instance?.unmount();
-    instance?.cleanup();
-  }
+  cleanup();
 });
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -140,16 +105,9 @@ const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const renderDock = async (tasks: TaskSummary[]) => {
   useAppStore.getState().actions.setTasks(tasks);
   useAppStore.setState({ thinking: true });
-  const stdout = new TestStdout();
-  const instance = inkRender(<Tasks focused={true} />, {
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    debug: true,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
-  instances.push(instance);
+  const instance = render(<Tasks focused={true} />);
   await flush();
-  return stdout.lastFrame();
+  return plain(instance.lastFrame());
 };
 
 describe("Tasks dock render", () => {

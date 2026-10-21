@@ -1,7 +1,6 @@
 import React from "react";
 import stripAnsi from "strip-ansi";
 import { describe, expect, it, vi, afterEach, beforeAll } from "vitest";
-import { PassThrough } from "node:stream";
 import {
   KeypressProvider,
   KeypressPriority,
@@ -12,6 +11,7 @@ import {
   BaseSelectionList,
   SelectionInputContext,
 } from "../shared/BaseSelectionList.js";
+import { cleanup, render } from "ink-testing-library";
 
 const inputHandlerStore = vi.hoisted(() => ({
   current: undefined as ((input: string, key: any) => void) | undefined,
@@ -68,105 +68,9 @@ const normalize = (frame: string | undefined) => {
     .map((line) => line.replace(/\s+$/u, ""));
 };
 
-class TestStdout extends PassThrough {
-  frames: string[] = [];
-  private last?: string;
-  isTTY = true;
-  columns = 120;
-  rows = 40;
-
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (chunk) => {
-      if (typeof chunk === "string") {
-        this.frames.push(chunk);
-        if (/[┌│>]/u.test(chunk)) {
-          this.last = chunk;
-        }
-      }
-    });
-  }
-
-  lastFrame() {
-    if (this.last) {
-      return this.last;
-    }
-    for (let index = this.frames.length - 1; index >= 0; index -= 1) {
-      const frame = this.frames[index];
-      if (/[┌│>]/u.test(frame)) {
-        return frame;
-      }
-    }
-    return undefined;
-  }
-
-  ref() {}
-
-  unref() {}
-}
-
-class TestStderr extends PassThrough {
-  frames: string[] = [];
-  private last?: string;
-  isTTY = true;
-
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-    this.on("data", (chunk) => {
-      if (typeof chunk === "string") {
-        this.frames.push(chunk);
-        this.last = chunk;
-      }
-    });
-  }
-
-  lastFrame() {
-    return this.last;
-  }
-
-  ref() {}
-
-  unref() {}
-}
-
-class TestStdin extends PassThrough {
-  isTTY = true;
-
-  constructor() {
-    super();
-    this.setEncoding("utf8");
-  }
-
-  setRawMode(_mode: boolean) {}
-
-  resume() {
-    super.resume();
-    return this;
-  }
-
-  pause() {
-    super.pause();
-    return this;
-  }
-
-  ref() {}
-
-  unref() {}
-}
-
-type InkModule = typeof import("ink");
-type InkRender = InkModule["render"];
-
-const instances: Array<ReturnType<InkRender>> = [];
-
 let MultiLineInputOptimized: React.ComponentType<any>;
-let inkRender: InkRender;
 
 beforeAll(async () => {
-  const inkModule = await import("ink");
-  inkRender = inkModule.render;
   ({ MultiLineInputOptimized } = await import("../MultiLineInputOptimized.js"));
 });
 
@@ -177,35 +81,12 @@ const renderInput = (
   if (!MultiLineInputOptimized) {
     throw new Error("MultiLineInputOptimized not loaded");
   }
-  if (!inkRender) {
-    throw new Error("Ink render not loaded");
-  }
-  const stdout = new TestStdout();
-  const stderr = new TestStderr();
-  const stdin = new TestStdin();
-  const instance = inkRender(wrap(<MultiLineInputOptimized {...props} />), {
-    stdout: stdout as unknown as NodeJS.WriteStream,
-    stderr: stderr as unknown as NodeJS.WriteStream,
-    stdin: stdin as unknown as NodeJS.ReadStream,
-    debug: true,
-    exitOnCtrlC: false,
-    patchConsole: false,
-  });
-  instances.push(instance);
-  return {
-    stdin,
-    stdout,
-    instance,
-    lastFrame: () => stdout.lastFrame(),
-  };
+  const instance = render(wrap(<MultiLineInputOptimized {...props} />));
+  return { ...instance, instance };
 };
 
 afterEach(() => {
-  while (instances.length) {
-    const instance = instances.pop();
-    instance?.unmount();
-    instance?.cleanup();
-  }
+  cleanup();
   inputHandlerStore.current = undefined;
 });
 
@@ -530,7 +411,9 @@ describe("MultiLineInputOptimized", () => {
     stdin.write("\x1b[H");
     await flush();
     expect(stripAnsi(lastFrame()!)).toContain("> ");
-    stdout.columns = 45;
+    // ink-testing-library's stdout is fixed at 100 columns; resize it as a
+    // terminal does: new width, then a "resize" event.
+    Object.defineProperty(stdout, "columns", { value: 45 });
     stdout.emit("resize");
     await flush();
     expect(normalize(lastFrame()).length).toBeLessThanOrEqual(3);
@@ -588,11 +471,12 @@ describe("MultiLineInputOptimized", () => {
       maxHeight: 3,
     });
     await flush();
-    // Width 120 minus border/padding/gutter gives 114 editable cells.
+    // ink-testing-library's 100 columns minus border/padding/gutter give 94
+    // editable cells: 120 characters wrap with 26 on the second row.
     stdin.write("a".repeat(120) + "\x1b[AX\r");
     await flush();
     expect(onSubmit).toHaveBeenCalledWith(
-      "a".repeat(6) + "X" + "a".repeat(114),
+      "a".repeat(26) + "X" + "a".repeat(94),
     );
   });
 

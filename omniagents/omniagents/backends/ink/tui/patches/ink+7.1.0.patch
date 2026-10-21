@@ -1,0 +1,20 @@
+diff --git a/node_modules/ink/build/ink.js b/node_modules/ink/build/ink.js
+index 00d2d9a..f579a90 100644
+--- a/node_modules/ink/build/ink.js
++++ b/node_modules/ink/build/ink.js
+@@ -472,10 +472,14 @@ export default class Ink {
+             await this.terminalBuffer.render();
+         }
+     }
+-    renderDebug({ output, staticOutput, hasStaticOutput, }) {
++    renderDebug({ output, outputHeight, staticOutput, hasStaticOutput, }) {
+         if (hasStaticOutput) {
+             this.fullStaticOutput += staticOutput;
+         }
++        // As upstream Ink: record the frame, so writeToStdout/writeToStderr
++        // (useStdout().write) re-emit it instead of an empty frame.
++        this.lastOutput = output;
++        this.lastOutputHeight = outputHeight;
+         this.options.stdout.write(this.fullStaticOutput + output);
+     }
+     renderCi({ output, outputHeight, staticOutput, hasStaticOutput, }) {
