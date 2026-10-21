@@ -70,12 +70,15 @@ def _isolated(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def client() -> TestClient:
+def client():
     # No auth token: the single-user (anonymous) topology in which
-    # credential mutations are permitted.
-    return TestClient(
+    # credential mutations are permitted. Entered as a context manager so
+    # every websocket shares one event loop, as connections do in a real
+    # server; separate portals made cross-client broadcasts hang at random.
+    with TestClient(
         server_app.build_app(spec=_spec(), default_host_workspace_root="/tmp")
-    )
+    ) as test_client:
+        yield test_client
 
 
 def _call(ws, call_id, method, params=None):
