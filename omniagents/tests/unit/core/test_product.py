@@ -429,7 +429,8 @@ def test_model_and_provider_cli_prog_defaults_from_identity(capsys):
     set_product_info(ACME_INFO)
 
     class _StoreStub:
-        pass
+        # The CLI only guards provider changes on a single-provider store.
+        single_provider = False
 
     with pytest.raises(SystemExit):
         run_model_command([], store=_StoreStub())
