@@ -74,14 +74,17 @@ async def test_emission_budget_and_error_after_call():
 
 @pytest.mark.asyncio
 async def test_approval_wait_does_not_consume_compute_watchdog():
+    # The tool wait outlasts the watchdog three times over. The watchdog still
+    # covers worker startup and its final reply, which a fully loaded machine
+    # (the parallel suite) can starve for well over half a second.
     async def dispatch(*args):
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(15.0)
         return "approved"
 
     result = await execute(
         'text(await tools.call("slow"))',
         dispatch,
-        watchdog_seconds=0.5,
+        watchdog_seconds=5.0,
         cpu_seconds=0.05,
     )
     assert result["output"] == "approved"

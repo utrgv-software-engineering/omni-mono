@@ -128,7 +128,10 @@ async def test_default_build_agent_merges_settings_and_configures_mcp(monkeypatc
         sys.modules["agents"], "set_default_openai_key", fake_set_default_openai_key
     )
     monkeypatch.setenv("API_KEY", "env-value")
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    # Record the variable before deleting it, so the builder's own write to
+    # os.environ is undone too; otherwise OPENAI_BASE_URL leaks into later tests.
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+    monkeypatch.delenv("OPENAI_BASE_URL")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     agent = await _default_build_agent(
