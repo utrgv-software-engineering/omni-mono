@@ -735,10 +735,15 @@ async def _default_build_agent(
             # capability's tools can be shared between builds: each guardrail
             # is added once)
             for _tool in cap_tools:
-                for attr, wanted in (("tool_input_guardrails", spec.tool_input_guardrails), ("tool_output_guardrails", spec.tool_output_guardrails)):
+                for attr, wanted in (
+                    ("tool_input_guardrails", spec.tool_input_guardrails),
+                    ("tool_output_guardrails", spec.tool_output_guardrails),
+                ):
                     if wanted and hasattr(_tool, attr):
                         have = list(getattr(_tool, attr) or [])
-                        setattr(_tool, attr, have + [g for g in wanted if g not in have])
+                        setattr(
+                            _tool, attr, have + [g for g in wanted if g not in have]
+                        )
             tools = list(tools) + cap_tools
 
     # Configure API key for the default client if provided.

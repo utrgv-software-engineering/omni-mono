@@ -100,6 +100,12 @@ class _RecordingWorkspace(Workspace):
         self._record("is_dir", path)
         return False
 
+    async def is_exec_dir(self, path: str) -> bool:
+        # execute_bash checks its working directory before running; the
+        # workspace root is the one directory this fake has.
+        self._record("is_exec_dir", path)
+        return path == self.root
+
     async def mkdir(self, path: str, **kwargs: Any) -> None:
         self._record("mkdir", path, **kwargs)
 

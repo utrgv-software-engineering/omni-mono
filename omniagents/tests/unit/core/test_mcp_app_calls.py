@@ -24,7 +24,9 @@ def build_service(**spec_changes) -> AgentService:
     spec = make_spec()
     for key, value in spec_changes.items():
         setattr(spec, key, value)
-    return AgentService(spec, AgentHostResources.create("test-unit-core-mcp-app-calls-host"))
+    return AgentService(
+        spec, AgentHostResources.create("test-unit-core-mcp-app-calls-host")
+    )
 
 
 def live_set(session):
@@ -98,7 +100,11 @@ class FakeTool:
 
 @pytest.mark.asyncio
 async def test_the_agent_is_offered_only_tools_visible_to_the_model():
-    tools = [FakeTool("show"), FakeTool("refresh", ["app"]), FakeTool("both", ["model", "app"])]
+    tools = [
+        FakeTool("show"),
+        FakeTool("refresh", ["app"]),
+        FakeTool("both", ["model", "app"]),
+    ]
 
     class Server:
         name = "vis-test"
@@ -132,7 +138,9 @@ class AppServer:
 
     async def call_tool(self, tool_name, arguments=None, *args, **kwargs):
         self.called.append((tool_name, arguments))
-        return types.SimpleNamespace(model_dump=lambda **_: {"content": [{"type": "text", "text": "done"}]})
+        return types.SimpleNamespace(
+            model_dump=lambda **_: {"content": [{"type": "text", "text": "done"}]}
+        )
 
 
 def app_service(server, **spec_changes):
@@ -153,23 +161,34 @@ async def test_an_app_cannot_call_a_tool_only_the_model_may():
     service, session = app_service(server)
 
     with pytest.raises(PermissionError):
-        await service._sf_mcp_call_tool(session, {"server_name": "app-test", "tool_name": "secret"})
+        await service._sf_mcp_call_tool(
+            session, {"server_name": "app-test", "tool_name": "secret"}
+        )
     assert server.called == []
 
 
 @pytest.mark.asyncio
 async def test_an_app_call_waits_for_approval_like_the_agents_own():
     server = AppServer([FakeTool("send", ["app"])])
-    opts = types.SimpleNamespace(skip_approvals=False, safe_tool_names=[], safe_tool_patterns=[])
+    opts = types.SimpleNamespace(
+        skip_approvals=False, safe_tool_names=[], safe_tool_patterns=[]
+    )
     service, session = app_service(server, use_safe_agent=True, safe_agent_options=opts)
     asked = []
 
     async def request_tool_approval(**kwargs):
         asked.append(kwargs["tool_name"])
-        return {"decision": "reject", "always_approve": False, "rejection_message": "Not now"}
+        return {
+            "decision": "reject",
+            "always_approve": False,
+            "rejection_message": "Not now",
+        }
 
     service.request_tool_approval = request_tool_approval
-    out = await service._sf_mcp_call_tool(session, {"server_name": "app-test", "tool_name": "send", "arguments": {"to": "x"}})
+    out = await service._sf_mcp_call_tool(
+        session,
+        {"server_name": "app-test", "tool_name": "send", "arguments": {"to": "x"}},
+    )
 
     assert asked == ["mcp_app-test__send"]
     assert out["result"]["isError"] is True
@@ -177,7 +196,9 @@ async def test_an_app_call_waits_for_approval_like_the_agents_own():
 
     # (granted always for this server's tool: no question, it runs)
     session.always_allow_mcp_tools = {("app-test", "send")}
-    out = await service._sf_mcp_call_tool(session, {"server_name": "app-test", "tool_name": "send"})
+    out = await service._sf_mcp_call_tool(
+        session, {"server_name": "app-test", "tool_name": "send"}
+    )
     assert asked == ["mcp_app-test__send"]
     assert server.called == [("send", {})]
 
@@ -189,10 +210,21 @@ async def test_an_app_call_passes_the_agents_tool_guardrails():
 
     def refuse(data):
         seen.append((data.context.tool_name, data.context.tool_arguments))
-        return ToolGuardrailFunctionOutput.reject_content("Not run: a project rule forbids it")
+        return ToolGuardrailFunctionOutput.reject_content(
+            "Not run: a project rule forbids it"
+        )
 
-    service, session = app_service(server, tool_input_guardrails=[ToolInputGuardrail(guardrail_function=refuse)])
-    out = await service._sf_mcp_call_tool(session, {"server_name": "app-test", "tool_name": "delete_all", "arguments": {"all": True}})
+    service, session = app_service(
+        server, tool_input_guardrails=[ToolInputGuardrail(guardrail_function=refuse)]
+    )
+    out = await service._sf_mcp_call_tool(
+        session,
+        {
+            "server_name": "app-test",
+            "tool_name": "delete_all",
+            "arguments": {"all": True},
+        },
+    )
 
     assert seen == [("mcp_app-test__delete_all", '{"all": true}')]
     assert out["result"]["content"][0]["text"] == "Not run: a project rule forbids it"
@@ -214,7 +246,9 @@ def test_a_runs_release_callbacks_run_once_even_when_the_store_fails():
                 raise RuntimeError("store unreachable")
 
     for fail in (False, True):
-        ownership = RunOwnership(store=Store(fail), thread_id="t", run_id="r", owner="o", generation=1)
+        ownership = RunOwnership(
+            store=Store(fail), thread_id="t", run_id="r", owner="o", generation=1
+        )
         released = []
         ownership.add_release_callback(lambda: released.append(1))
         if fail:

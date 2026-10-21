@@ -997,7 +997,10 @@ class AgentService(RpcMethodsBase):
                 # reading its page or calling a tool through mcp_read_resource
                 # / mcp_call_tool) has no environment of its own to ask for:
                 # it uses the session's live servers as they are.
-                if getattr(session, "_mcp_owner", None) == owner or environment_lease is None:
+                if (
+                    getattr(session, "_mcp_owner", None) == owner
+                    or environment_lease is None
+                ):
                     await self._wait_session_mcp_ready(session, task)
                     if hold is not None:
                         hold.append(self._mcp_hold(session, task))
@@ -1008,7 +1011,11 @@ class AgentService(RpcMethodsBase):
                 await self._retire_session_mcp(session)
             servers = await self._start_session_mcp_servers(session, environment_lease)
             if hold is not None:
-                hold.append(self._mcp_hold(session, getattr(session, "_mcp_lifecycle_task", None)))
+                hold.append(
+                    self._mcp_hold(
+                        session, getattr(session, "_mcp_lifecycle_task", None)
+                    )
+                )
             return servers
 
     # ------------------------------------------------------------------
@@ -2213,7 +2220,9 @@ class AgentService(RpcMethodsBase):
             for token in holds:
                 self._mcp_release(session, token)
 
-    def _mcp_public_name(self, session: Session, server_name: str, tool_name: str) -> str:
+    def _mcp_public_name(
+        self, session: Session, server_name: str, tool_name: str
+    ) -> str:
         """The tool's name as the agent knows it (``mcp_<server>__<tool>``):
         approvals and guardrails see an app's call as they'd see the agent's."""
         from omniagents.core.agents.mcp_identity import get_session_identities
@@ -2236,7 +2245,10 @@ class AgentService(RpcMethodsBase):
         opts = spec.safe_agent_options
         use_safe = spec.use_safe_agent
         skip = bool(getattr(opts, "skip_approvals", False))
-        if spec.security_config and spec.security_config.get("safety_mode") == "enforced":
+        if (
+            spec.security_config
+            and spec.security_config.get("safety_mode") == "enforced"
+        ):
             use_safe = True
             skip = False
         if not use_safe or skip:
@@ -2246,7 +2258,9 @@ class AgentService(RpcMethodsBase):
         names = set(getattr(opts, "safe_tool_names", None) or []) if opts else set()
         if public_name in names:
             return False
-        for pattern in (getattr(opts, "safe_tool_patterns", None) or []) if opts else []:
+        for pattern in (
+            (getattr(opts, "safe_tool_patterns", None) or []) if opts else []
+        ):
             if _re.compile(pattern).match(public_name):
                 return False
         return True
@@ -2284,9 +2298,17 @@ class AgentService(RpcMethodsBase):
                     # (a guardrail that can't decide doesn't let the call through)
                     return f"Not run: a guardrail couldn't check it ({e})"
                 behavior = output.behavior
-                kind = behavior.get("type") if isinstance(behavior, dict) else getattr(behavior, "type", None)
+                kind = (
+                    behavior.get("type")
+                    if isinstance(behavior, dict)
+                    else getattr(behavior, "type", None)
+                )
                 if kind == "reject_content":
-                    message = behavior.get("message") if isinstance(behavior, dict) else getattr(behavior, "message", None)
+                    message = (
+                        behavior.get("message")
+                        if isinstance(behavior, dict)
+                        else getattr(behavior, "message", None)
+                    )
                     return str(message or "Not run: a guardrail refused it")
                 if kind == "raise_exception":
                     return "Not run: a guardrail stopped it"
@@ -2302,7 +2324,9 @@ class AgentService(RpcMethodsBase):
                 arguments=args_json,
             )
             if response.get("decision") != "approve":
-                return str(response.get("rejection_message") or "Not run: it wasn't allowed")
+                return str(
+                    response.get("rejection_message") or "Not run: it wasn't allowed"
+                )
         return None
 
     async def _sf_mcp_list_resources(
@@ -2478,7 +2502,9 @@ class AgentService(RpcMethodsBase):
             if server is None:
                 raise ValueError(f"Unknown or inactive MCP server: {server_name}")
             if not hasattr(server, "call_tool"):
-                raise ValueError(f"MCP server '{server_name}' does not support call_tool")
+                raise ValueError(
+                    f"MCP server '{server_name}' does not support call_tool"
+                )
             # An app calls its server's tools out of band, outside any run: the
             # checks a run's tool call passes are made here instead. First, the
             # tool must be one its app may call (MCP Apps' visibility)
@@ -2492,7 +2518,9 @@ class AgentService(RpcMethodsBase):
                     logger.debug("list_tools for visibility failed", exc_info=True)
                 visible = tool_visibility(server_name, tool_name)
             if visible is None:
-                raise ValueError(f"MCP server '{server_name}' has no tool '{tool_name}'")
+                raise ValueError(
+                    f"MCP server '{server_name}' has no tool '{tool_name}'"
+                )
             if "app" not in visible:
                 raise PermissionError(
                     f"'{tool_name}' on '{server_name}' isn't one its app may call"
@@ -4317,7 +4345,11 @@ class AgentService(RpcMethodsBase):
         run_spec = self._spec_for_environment(environment_lease)
         mcp_holds: list = []
         agent = await self._build_agent_for_session(
-            sess, None, spec=run_spec, environment_lease=environment_lease, mcp_holds=mcp_holds
+            sess,
+            None,
+            spec=run_spec,
+            environment_lease=environment_lease,
+            mcp_holds=mcp_holds,
         )
         # The run holds the MCP servers its agent was built with until its
         # reservation is released (however it ends, started or not)

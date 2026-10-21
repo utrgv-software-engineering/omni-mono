@@ -493,7 +493,9 @@ async def create_impl(
         cron=cron,
         interval_seconds=interval_seconds,
         recurring=bool(recurring),
-        expires_at=time.time() + DEFAULT_EXPIRY_SECONDS if recurring and expires else None,
+        expires_at=(
+            time.time() + DEFAULT_EXPIRY_SECONDS if recurring and expires else None
+        ),
         next_fire_at=next_fire_at,
         jitter_seconds=_jitter_for_id(task_id, interval_seconds),
     )

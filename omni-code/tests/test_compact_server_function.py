@@ -71,8 +71,8 @@ def test_summarizer_runs_compactor_under_its_own_instructions(monkeypatch, tmp_p
     # The summarizer resolves through the framework's
     # resolve_service_model_runtime, which reads the store instance.
 
-    from omniagents.core.models import ModelConfigStore
     from omniagents.core import models as models_module
+    from omniagents.core.models import ModelConfigStore
 
     models = ModelConfigStore(config_dir=lambda: tmp_path, single_provider=True)
     models.save_config(

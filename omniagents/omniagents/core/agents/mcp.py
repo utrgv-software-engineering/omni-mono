@@ -88,8 +88,20 @@ def _visibility_of(tool: Any) -> Tuple[str, ...]:
     meta = getattr(tool, "meta", None)
     if meta is None and isinstance(tool, dict):
         meta = tool.get("meta") or tool.get("_meta")
-    ui = (meta.get("ui") if isinstance(meta, dict) else getattr(meta, "ui", None)) if meta else None
-    raw = (ui.get("visibility") if isinstance(ui, dict) else getattr(ui, "visibility", None)) if ui else None
+    ui = (
+        (meta.get("ui") if isinstance(meta, dict) else getattr(meta, "ui", None))
+        if meta
+        else None
+    )
+    raw = (
+        (
+            ui.get("visibility")
+            if isinstance(ui, dict)
+            else getattr(ui, "visibility", None)
+        )
+        if ui
+        else None
+    )
     if isinstance(raw, (list, tuple)) and raw:
         return tuple(str(v) for v in raw)
     return _DEFAULT_VISIBILITY
