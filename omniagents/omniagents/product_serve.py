@@ -151,14 +151,29 @@ def build_serve_parser(prog: Optional[str] = None) -> argparse.ArgumentParser:
 # ---------------------------------------------------------------------------
 
 
-def _watch_stdin_eof(on_eof: Any) -> None:
-    """Call *on_eof* once stdin reaches EOF (the launcher's end closed)."""
+def _watch_stdin_eof(on_eof: Any, fd: int = 0) -> None:
+    """Call *on_eof* once the launcher's stdin pipe reaches EOF.
+
+    The watcher reads a private duplicate of *fd*, and *fd* itself is pointed
+    at the null device, so subprocesses serve spawns without an explicit stdin
+    see an empty input instead of inheriting the never-written launcher pipe
+    (a child that reads stdin would otherwise block forever).
+    """
     import threading
 
+    watched = os.dup(fd)
+    null = os.open(os.devnull, os.O_RDONLY)
+    try:
+        os.dup2(null, fd)
+    finally:
+        os.close(null)
+
     def _read() -> None:
-        with contextlib.suppress(OSError, ValueError):
-            while sys.stdin.buffer.read(4096):
+        with contextlib.suppress(OSError):
+            while os.read(watched, 4096):
                 pass
+        with contextlib.suppress(OSError):
+            os.close(watched)
         try:
             on_eof()
         except RuntimeError:
