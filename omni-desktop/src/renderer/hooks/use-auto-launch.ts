@@ -31,7 +31,7 @@ type UseAutoLaunchOptions = {
 };
 
 /**
- * Unified auto-launch hook. Drives the sandbox lifecycle for any agent process.
+ * Unified auto-launch hook. Drives the lifecycle of any agent process.
  *
  * Side effects are driven by XState invoke actors — no phase-gated useEffects.
  */
@@ -152,7 +152,7 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
       startProcess: fromCallback<AutoLaunchEvent>(({ sendBack }) => {
         const wd = workspaceDirRef.current;
         if (!wd) {
-          sendBack({ type: 'SANDBOX_ERROR', error: 'Workspace is unavailable' });
+          sendBack({ type: 'AGENT_ERROR', error: 'Workspace is unavailable' });
           return;
         }
         let cancelled = false;
@@ -165,7 +165,7 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
           .catch((error: unknown) => {
             if (!cancelled) {
               sendBack({
-                type: 'SANDBOX_ERROR',
+                type: 'AGENT_ERROR',
                 error: error instanceof Error ? error.message : String(error),
               });
             }
@@ -207,16 +207,16 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
           }
           lastSentType = status.type;
           if (status.type === 'running' || status.type === 'connecting') {
-            sendBack({ type: 'SANDBOX_RUNNING' });
+            sendBack({ type: 'AGENT_RUNNING' });
           } else if (status.type === 'error') {
-            sendBack({ type: 'SANDBOX_ERROR', error: status.error.message });
+            sendBack({ type: 'AGENT_ERROR', error: status.error.message });
           } else if (status.type === 'exited') {
-            sendBack({ type: 'SANDBOX_EXITED' });
+            sendBack({ type: 'AGENT_EXITED' });
           } else if (status.type === 'uninitialized') {
             // Only authoritative reconnect reconciliation publishes this
             // status for a previously live process. Preserve the user's
             // launch intent, but discard the old runtime identity.
-            sendBack({ type: 'SANDBOX_LOST' });
+            sendBack({ type: 'AGENT_LOST' });
           }
         });
         return () => {

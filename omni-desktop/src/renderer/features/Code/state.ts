@@ -6,7 +6,6 @@ import { forgetTerminalsForTab } from '@/renderer/features/Console/state';
 import {
   $agentStatuses,
   $agentXTerms,
-  agentProcessApi,
   clearStatus,
   pollProcessStatus,
   teardownTerminal,
@@ -46,18 +45,6 @@ function run<K extends keyof ChatOperations>(
   >;
 }
 export const codeApi = {
-  startSandbox: (tabId: CodeTabId, arg: { workspaceDir: string }) => {
-    clearStatus(tabId);
-    agentProcessApi.start(tabId, arg);
-  },
-  stopSandbox: async (tabId: CodeTabId) => {
-    teardownTerminal(tabId);
-    await agentProcessApi.stop(tabId);
-  },
-  rebuildSandbox: (tabId: CodeTabId, fallbackArg: { workspaceDir: string }) => {
-    clearStatus(tabId);
-    agentProcessApi.rebuild(tabId, fallbackArg);
-  },
   openFreshChat: (...args: Parameters<ChatOperations['openFreshChat']>) => run('openFreshChat', ...args),
   addTab: (...args: Parameters<ChatOperations['addTab']>) => run('addTab', ...args),
   removeTab: async (...args: Parameters<ChatOperations['removeTab']>): Promise<void> => {

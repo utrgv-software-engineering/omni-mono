@@ -27,7 +27,6 @@ import {
   getCliSymlinkPath,
   getDefaultWorkspaceDir,
   getHomeDirectory,
-  getOmniCliPath,
   getOmniRuntimeInfo,
   getOperatingSystem,
   installCliToPath,
@@ -390,20 +389,6 @@ export function registerUtilHandlers(ipc: IIpcListener, opts: UtilHandlerOptions
   ipc.handle('util:test-model-connection', (_: unknown, modelRef?: string) => testModelConnection(modelRef));
   ipc.handle('util:list-models', () => listRuntimeModels());
   ipc.handle('util:validate-provider', (_: unknown, probe: ProviderProbe) => validateProvider(fetchFn, probe));
-
-  ipc.handle('util:rebuild-sandbox-image', async () => {
-    // Sandbox Dockerfiles now live in omni-code. Trigger rebuild via the CLI.
-    const omniPath = getOmniCliPath();
-    try {
-      const { execFile: execFileAsync } = await import('child_process');
-      const { promisify } = await import('util');
-      const execFilePromise = promisify(execFileAsync);
-      await execFilePromise(omniPath, ['sandbox', '--rebuild', '--output', 'json'], { timeout: 600_000 });
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: (e as Error).message };
-    }
-  });
 
   ipc.handle('util:check-url', async (_: unknown, url: string) => {
     try {

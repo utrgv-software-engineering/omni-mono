@@ -756,71 +756,11 @@ describe('ProcessManager', () => {
       expect(host.exit).toHaveBeenCalledTimes(1);
     });
 
-    it('rebuilds one tab environment without restarting its shared host', async () => {
-      const { pm } = makePm();
-      await pm.start('tab-a', { workspaceDir: '/tmp/a' });
-      const host = hoisted.agentProcessInstances[0]!;
-      const tabAWorkspaceId = host.configureConsumer.mock.calls[0]![1] as string;
-      host.getStatus.mockReturnValue({
-        type: 'running',
-        data: { wsUrl: 'ws://localhost:9000/ws', uiUrl: 'http://localhost:9000' },
-        timestamp: Date.now(),
-      } satisfies WithTimestamp<AgentProcessStatus>);
-      await pm.start('tab-b', { workspaceDir: '/tmp/b' });
-
-      let finishRebuild!: (runtime: { workspaceId: string; environmentId: string; containerId: string }) => void;
-      host.configureConsumer.mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            finishRebuild = resolve;
-          })
-      );
-      const rebuilding = pm.rebuild('tab-a', { workspaceDir: '/tmp/a' });
-      await vi.waitFor(() =>
-        expect(host.stopConsumerEnvironment).toHaveBeenCalledWith(
-          expect.objectContaining({
-            workspaceId: tabAWorkspaceId,
-            environmentId: `environment-${tabAWorkspaceId}`,
-            environmentGeneration: 3,
-          })
-        )
-      );
-      expect(pm.getStatus('tab-a')).toMatchObject({ type: 'starting' });
-      expect(pm.getStatus('tab-a')).not.toHaveProperty('data');
-      expect(pm.getStatus('tab-b')).toMatchObject({
-        type: 'running',
-        data: { environmentId: expect.stringMatching(/^environment-/) },
-      });
-      finishRebuild({
-        workspaceId: 'workspace-a',
-        environmentId: 'environment-rebuilt',
-        containerId: 'container-rebuilt',
-      });
-      await rebuilding;
-
-      expect(host.stopConsumerEnvironment).toHaveBeenCalledWith(
-        expect.objectContaining({
-          workspaceId: tabAWorkspaceId,
-          environmentId: `environment-${tabAWorkspaceId}`,
-          environmentGeneration: 3,
-        })
-      );
-      expect(host.configureConsumer).toHaveBeenLastCalledWith(
-        'tab-a',
-        expect.stringMatching(/^workspace_/),
-        expect.objectContaining({ workspaceDir: '/tmp/a' })
-      );
-      expect(host.stopConsumerEnvironment.mock.invocationCallOrder.at(-1)).toBeLessThan(
-        host.configureConsumer.mock.invocationCallOrder.at(-1)!
-      );
-    });
-
-    it('rejects delayed starts and rebuilds for a retired tab while allowing a new tab', async () => {
+    it('rejects delayed starts for a retired tab while allowing a new tab', async () => {
       const { pm } = makePm();
       await pm.start('closed-tab', { workspaceDir: '/tmp/ws', projectId: 'project-1' });
       await pm.retire('closed-tab');
       await expect(pm.start('closed-tab', { workspaceDir: '/tmp/ws' })).rejects.toThrow('closed');
-      await expect(pm.rebuild('closed-tab', { workspaceDir: '/tmp/ws' })).rejects.toThrow('closed');
       await expect(
         pm.start('reopened-tab', { workspaceDir: '/tmp/ws', projectId: 'project-1' })
       ).resolves.toBeUndefined();
@@ -833,7 +773,6 @@ describe('ProcessManager', () => {
       oldHost.stop.mockRejectedValueOnce(new Error('shutdown unavailable'));
       await expect(pm.stop('old-tab')).rejects.toThrow('shutdown unavailable');
       await expect(pm.start('old-tab', { workspaceDir: '/tmp/ws' })).rejects.toThrow('still stopping');
-      await expect(pm.rebuild('old-tab', { workspaceDir: '/tmp/ws' })).rejects.toThrow('still stopping');
       await pm.start('new-tab', { workspaceDir: '/tmp/new' });
       expect(hoisted.agentProcessInstances).toHaveLength(2);
       await expect(pm.stop('old-tab')).resolves.toMatchObject({ scope: 'host' });
@@ -871,30 +810,6 @@ describe('ProcessManager', () => {
       await expect(pm.stop('tab-a')).rejects.toThrow('stop failed');
       await pm.cleanup();
       expect(host.exit).toHaveBeenCalledTimes(1);
-    });
-
-    it('waits for an in-flight rebuild before retiring its final environment', async () => {
-      const { pm } = makePm();
-      await pm.start('tab-a', { workspaceDir: '/tmp/ws' });
-      const host = hoisted.agentProcessInstances[0]!;
-      let release!: () => void;
-      hoisted.configureConsumerGate = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const changing = pm.rebuild('tab-a', { workspaceDir: '/tmp/ws' });
-      await vi.waitFor(() => expect(host.configureConsumer).toHaveBeenCalledTimes(2));
-      let stopped = false;
-      const closing = pm.retire('tab-a').then(() => {
-        stopped = true;
-      });
-      await Promise.resolve();
-      expect(stopped).toBe(false);
-      release();
-      await changing;
-      await closing;
-      expect(pm.getStatus('tab-a').type).toBe('uninitialized');
-      expect(host.stop).toHaveBeenCalledTimes(1);
-      await expect(pm.start('tab-a', { workspaceDir: '/tmp/ws' })).rejects.toThrow('closed');
     });
 
     it('does not acknowledge an environment retry before its shared host finishes stopping', async () => {

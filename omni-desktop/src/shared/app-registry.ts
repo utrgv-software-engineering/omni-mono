@@ -109,10 +109,8 @@ export const BUILTIN_APPS: AppDescriptor[] = [
     label: 'Terminal',
     icon: 'SquareTerminal',
     kind: 'builtin-terminal',
-    // Terminals route through `omni serve`'s PTY backends, so a shell
-    // exists only once an environment reporting the `pty` capability is
-    // attached. The column dock enforces that (CodeWorkspaceLayout):
-    // no environment → no icon; wasm sandboxes (no PTY) → no icon.
+    // Terminals route through `omni serve`'s PTY backend, so the column
+    // only offers one once its agent is running.
     scope: 'always',
     builtin: true,
     order: 41,

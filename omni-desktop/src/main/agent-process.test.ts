@@ -36,19 +36,6 @@ vi.mock('@/main/util', () => ({
   pathExists: vi.fn(async () => true),
 }));
 
-vi.mock('@/main/profile-resolver', () => ({
-  HOST_PROFILE_NAME: 'host',
-  resolveProfile: vi.fn((name: string) => {
-    if (name === 'host') {
-      return { kind: 'builtin-default' };
-    }
-    if (name === 'missing') {
-      return { kind: 'missing', expected: '/fake/config/sandbox/missing.yml' };
-    }
-    return { kind: 'file', path: `/fake/config/sandbox/${name}.yml` };
-  }),
-}));
-
 vi.mock('@/main/product-runtime', () => ({
   assertServeProtocolSupported: vi.fn(async () => {}),
 }));

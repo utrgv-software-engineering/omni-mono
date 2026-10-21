@@ -108,7 +108,7 @@ describe('agentProcessApi stop warnings', () => {
     await expect(agentProcessApi.stop('code-tab-1')).resolves.toEqual(stopped);
 
     expect(hoisted.warning).toHaveBeenCalledWith(
-      'Sandbox host force-closed',
+      'Agent host force-closed',
       'The agent host could not finish a graceful shutdown.',
       { durationMs: 12_000 }
     );

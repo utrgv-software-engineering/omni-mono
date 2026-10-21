@@ -9,7 +9,7 @@
  *               inner bloom. Intentionally NOT animated; it should read as a
  *               held state, not activity.
  *   working   — the agent is mid-run: soft brand bloom breathing slowly.
- *   booting   — the sandbox is powering on: the same brand bloom, dimmer and
+ *   booting   — the agent is powering on: the same brand bloom, dimmer and
  *               slower — a warm-up that hands off to `working` at first token.
  *
  * Subscribes to the stores itself (per-key) so host columns don't re-render
@@ -27,7 +27,7 @@ import type { AutoLaunchPhase } from '@/shared/machines/auto-launch.machine';
 import { $codeTabPhases } from './state';
 import { VoiceGlow } from './VoiceGlow';
 
-/** Pre-chat sandbox lifecycle states that should read as "powering on". */
+/** Pre-chat agent lifecycle states that should read as "powering on". */
 const BOOT_PHASES: ReadonlySet<AutoLaunchPhase> = new Set(['checking', 'installing', 'configChecking', 'starting']);
 
 export function ColumnAura({ tabId }: { tabId: string }) {

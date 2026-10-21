@@ -89,11 +89,8 @@ export const hydrateTerminalsForTab = async (tabId: string): Promise<void> => {
  * hydrated), do nothing: if the user destroyed everything on purpose, leave
  * the panel empty until they click `+`.
  *
- * The renderer no longer chooses a cwd — terminals route through omni
- * serve's :class:`SessionPtyBackend` (sandbox profiles) or
- * :class:`HostPtyBackend` (host profile), and the cwd is the backend's
- * decision. The renderer's old host-path cwd would land sandbox shells
- * in a directory that doesn't exist inside the container.
+ * The renderer never chooses a cwd — terminals route through omni serve's
+ * PTY backend, and the cwd is the materialized environment's decision.
  */
 export const ensureTerminalForTab = async (tabId: string): Promise<void> => {
   const firstVisit = !hydratedTabs.has(tabId) && !pendingHydrations.has(tabId);

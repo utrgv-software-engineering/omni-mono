@@ -28,7 +28,7 @@ vi.mock('@/renderer/services/store', () => ({
 vi.mock('@/renderer/services/agent-process', () => ({
   $agentStatuses: { get: () => ({}), set: vi.fn() },
   $agentXTerms: { get: () => ({}), set: vi.fn() },
-  agentProcessApi: { start: vi.fn(), stop: vi.fn(), rebuild: vi.fn() },
+  agentProcessApi: { start: vi.fn(), stop: vi.fn() },
   clearStatus: vi.fn(),
   pollProcessStatus: vi.fn(),
   teardownTerminal: vi.fn(),

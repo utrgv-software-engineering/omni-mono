@@ -54,7 +54,7 @@ CodeErrorView.displayName = 'CodeErrorView';
 
 const CodeRunningView = memo(
   ({
-    sandboxUrls,
+    runtime,
     executionTarget,
     sessionId,
     onSessionChange,
@@ -81,11 +81,9 @@ const CodeRunningView = memo(
     pendingMessages,
     onPendingMessagesFlushed,
   }: {
-    sandboxUrls: {
+    runtime: {
       uiUrl: string;
       authToken?: string;
-      services?: Record<string, string>;
-      environmentCapabilities?: string[];
     };
     executionTarget?: ExecutionTarget;
     sessionId?: string;
@@ -126,15 +124,15 @@ const CodeRunningView = memo(
       // serverOrigin() returns the backend baseUrl in remote-linked Electron;
       // resolving the agent's relative /proxy/... against window.location
       // would (wrongly) anchor to localhost:5173 / file:// in that mode.
-      const url = new URL(sandboxUrls.uiUrl, serverOrigin());
+      const url = new URL(runtime.uiUrl, serverOrigin());
       if (theme !== 'default') {
         url.searchParams.set('theme', theme);
       }
       if (uiMinimal) {
         url.searchParams.set('minimal', 'true');
       }
-      return { baseUrl: url.toString(), authToken: sandboxUrls.authToken };
-    }, [sandboxUrls.authToken, sandboxUrls.uiUrl, theme, uiMinimal]);
+      return { baseUrl: url.toString(), authToken: runtime.authToken };
+    }, [runtime.authToken, runtime.uiUrl, theme, uiMinimal]);
 
     return (
       <div className="flex flex-col w-full h-full relative">
@@ -151,7 +149,6 @@ const CodeRunningView = memo(
             onReady={onReady}
             headerActionsTargetId={headerActionsTargetId}
             headerActionsCompact={headerActionsCompact}
-            environmentCapabilities={sandboxUrls.environmentCapabilities}
             composerExtras={composerExtras}
             onClientToolCall={onClientToolCall}
             pendingPlan={pendingPlan}
@@ -213,7 +210,7 @@ export const CodeTabContent = memo(
     );
     // Projects without a linked local source still have a managed directory on
     // disk (`Projects/<slug>/` or `~/Omni/Workspace/` for Personal). Resolve it
-    // lazily so the sandbox can start even when the user hasn't picked a
+    // lazily so the agent can start even when the user hasn't picked a
     // workspace.
     const projectSource = firstSource(project);
     const linkedWorkspaceDir = projectSource?.kind === 'local' ? projectSource.workspaceDir : null;
@@ -244,7 +241,7 @@ export const CodeTabContent = memo(
     // Chat is an ambient surface, not a project — each conversation gets an
     // isolated `<workspaceDir>/Sessions/<sessionId>` scratch dir. Switching
     // conversations changes the workspace, which useAutoLaunch's reset effect
-    // turns into a sandbox restart. Hook is called unconditionally (null base
+    // turns into an agent restart. Hook is called unconditionally (null base
     // for non-chat tabs) to keep hook order static.
     //
     // Lazy launch: the base dir is withheld until the column is ACTIVATED
@@ -287,7 +284,7 @@ export const CodeTabContent = memo(
     const [greeting] = useState(getGreeting);
     const allLaunchErrors = useStore($codeTabErrors);
 
-    // Messages typed before the sandbox is up. The first submit activates the
+    // Messages typed before the agent is up. The first submit activates the
     // column (which triggers the launch); OmniAgentsApp flushes the queue the
     // moment its RPC connects, so nothing typed during boot is lost.
     const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
@@ -305,7 +302,7 @@ export const CodeTabContent = memo(
         }
         setPendingMessages((prev) => [...prev, msg]);
         if (!tab.activatedAt) {
-          // First intent: title the conversation and boot the sandbox.
+          // First intent: title the conversation and boot the agent.
           if (tab.sessionId && msg.text.trim()) {
             void codeApi.recordConversation(tab.sessionId, { title: conversationTitle(msg.text) });
           }
@@ -323,9 +320,9 @@ export const CodeTabContent = memo(
     // A launch failure is retried quietly on a capped backoff; the column
     // keeps its launching look and only a long, continuous failure shows
     // the error surface (which keeps retrying behind it).
-    // A sandbox that fails to start usually fails the same way again
-    // (docker missing, image gone), so give it a couple of quiet retries and
-    // then ask, rather than the full minute a dropped connection gets.
+    // An agent that fails to start usually fails the same way again, so
+    // give it a couple of quiet retries and then ask, rather than the full
+    // minute a dropped connection gets.
     const launchRetry = useAutoRetry({
       failing: phase === 'error',
       healthy: phase === 'running' || phase === 'idle',
@@ -335,7 +332,7 @@ export const CodeTabContent = memo(
     const launchFailed = phase === 'error' && launchRetry.exhausted;
 
     const allStatuses = useStore($codeTabStatuses);
-    const sandboxStatus = allStatuses[tab.id];
+    const agentStatus = allStatuses[tab.id];
 
     // Only mount the iframe on ``running``. ``connecting`` arrives the
     // moment omni-serve emits its JSON readiness line — that's before
@@ -343,33 +340,33 @@ export const CodeTabContent = memo(
     // briefly shows ERR_CONNECTION_REFUSED / a uvicorn error before the
     // real UI loads. ``agent-process.ts`` already gates ``running`` on
     // an HTTP+WS health probe, so by then the port is truly serving.
-    const sandboxUrls = useMemo(() => {
-      if (!sandboxStatus || sandboxStatus.type !== 'running') {
+    const runtime = useMemo(() => {
+      if (!agentStatus || agentStatus.type !== 'running') {
         return null;
       }
-      return sandboxStatus.data;
-    }, [sandboxStatus]);
+      return agentStatus.data;
+    }, [agentStatus]);
     useEffect(() => {
       if (pendingMessages.length > 0) {
         console.info(
-          `[pending-intent] owner tab=${tab.id} session=${tab.sessionId ?? 'none'} count=${pendingMessages.length} runtime=${sandboxUrls ? 'running' : 'waiting'}`
+          `[pending-intent] owner tab=${tab.id} session=${tab.sessionId ?? 'none'} count=${pendingMessages.length} runtime=${runtime ? 'running' : 'waiting'}`
         );
       }
-    }, [pendingMessages, sandboxUrls, tab.id, tab.sessionId]);
+    }, [pendingMessages, runtime, tab.id, tab.sessionId]);
     const executionTarget = useMemo(
       () =>
-        sandboxUrls?.workspaceId && sandboxUrls.environmentId && sandboxUrls.environmentGeneration !== undefined
+        runtime?.workspaceId && runtime.environmentId && runtime.environmentGeneration !== undefined
           ? {
-              workspaceId: sandboxUrls.workspaceId,
-              environmentId: sandboxUrls.environmentId,
-              environmentGeneration: sandboxUrls.environmentGeneration,
+              workspaceId: runtime.workspaceId,
+              environmentId: runtime.environmentId,
+              environmentGeneration: runtime.environmentGeneration,
             }
           : undefined,
-      [sandboxUrls?.workspaceId, sandboxUrls?.environmentId, sandboxUrls?.environmentGeneration]
+      [runtime?.workspaceId, runtime?.environmentId, runtime?.environmentGeneration]
     );
     // The provisioned environment owns this value. Renderer guesses were the
     // source of Host/Devbox drift whenever source layouts differed.
-    const agentWorkspaceDir = sandboxUrls?.workspaceRoot;
+    const agentWorkspaceDir = runtime?.workspaceRoot;
 
     // Scope the Files/Git/Review surfaces from the environment's
     // authoritative mount table: a single mount that landed under the root
@@ -377,7 +374,7 @@ export const CodeTabContent = memo(
     // session id) collapses so paths read `index.html`, not
     // `<session-id>/index.html`. Multi-mount environments keep the
     // composite root — there the mount level is real information.
-    const workspaceRootPrefix = useMemo(() => workspaceScopeFromMounts(sandboxUrls?.mounts), [sandboxUrls?.mounts]);
+    const workspaceRootPrefix = useMemo(() => workspaceScopeFromMounts(runtime?.mounts), [runtime?.mounts]);
 
     const handleSessionChange = useCallback(
       (sessionId: string | undefined) => {
@@ -439,11 +436,11 @@ export const CodeTabContent = memo(
             onMouseEnter={onColumnMouseEnter}
             onMouseLeave={onColumnMouseLeave}
           >
-            <SessionStatusBanner status={sandboxStatus} />
-            {sandboxUrls ? (
+            <SessionStatusBanner status={agentStatus} />
+            {runtime ? (
               <VoiceScopeContext.Provider value={tab.id}>
                 <CodeRunningView
-                  sandboxUrls={sandboxUrls}
+                  runtime={runtime}
                   executionTarget={executionTarget}
                   sessionId={tab.sessionId}
                   onSessionChange={handleSessionChange}
@@ -460,7 +457,7 @@ export const CodeTabContent = memo(
                   tabId={tab.id}
                   agentWorkspaceDir={agentWorkspaceDir}
                   workspaceRootPrefix={workspaceRootPrefix}
-                  workspaceMounts={sandboxUrls?.mounts}
+                  workspaceMounts={runtime?.mounts}
                   filesHost={filesHost}
                   gitHost={gitHost}
                   reviewHost={reviewHost}
@@ -475,7 +472,7 @@ export const CodeTabContent = memo(
               /* Chat pre-launch / launching / error — the greeting shell. The
              composer is live the whole time: the first submit activates the
              column (lazy launch) and queues the message; queued messages
-             flush into the session once the sandbox connects. */
+             flush into the session once the agent connects. */
               <ChatShell
                 conversationId={tab.sessionId}
                 sessionControls={
@@ -500,8 +497,7 @@ export const CodeTabContent = memo(
               /* idle / checking / installing / ready / starting / connecting —
              at this point we already have a project or Routine session
              workspace (we passed the early return above), so auto-launch will
-             drive the machine to ``running`` shortly. The in-composer sandbox
-             picker handles profile changes; no pre-launch picker needed here. */
+             drive the machine to ``running`` shortly. */
               <div className="w-full h-full flex items-center justify-center">
                 <motion.div
                   className="inline-flex items-center gap-2 rounded-full bg-card pl-5 pr-5 pt-2 pb-2"
@@ -511,7 +507,7 @@ export const CodeTabContent = memo(
                 >
                   <Spinner className="text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">
-                    {phase === 'idle' ? 'Restarting sandbox…' : 'Connecting…'}
+                    {phase === 'idle' ? 'Restarting agent…' : 'Connecting…'}
                   </span>
                 </motion.div>
               </div>

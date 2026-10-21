@@ -24,9 +24,9 @@ export const warnForUncertainStop = (result: AgentProcessStopResult | null | und
   if (!result || result.shutdown !== 'forced') {
     return;
   }
-  // Workspaces live in the container's writable layer and survive a forced
-  // host kill — the warning is about the host process, not data loss.
-  toast.warning('Sandbox host force-closed', 'The agent host could not finish a graceful shutdown.', {
+  // Workspaces are host folders and survive a forced kill — the warning is
+  // about the agent process, not data loss.
+  toast.warning('Agent host force-closed', 'The agent host could not finish a graceful shutdown.', {
     durationMs: 12_000,
   });
 };
@@ -83,11 +83,6 @@ export const agentProcessApi = {
     warnForUncertainStop(result);
     teardownTerminal(processId);
     return result;
-  },
-
-  rebuild: (processId: string, arg: AgentProcessStartOptions) => {
-    initializeTerminal(processId);
-    emitter.invoke('agent-process:rebuild', processId, arg);
   },
 
   getStatus: (processId: string): WithTimestamp<AgentProcessStatus> => {

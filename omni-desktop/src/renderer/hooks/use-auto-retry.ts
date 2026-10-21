@@ -46,7 +46,7 @@ type StreakState = {
 const IDLE: StreakState = { active: false, exhausted: false, attempts: 0 };
 
 /**
- * Quiet automatic recovery for a failing dependency (RPC boot, sandbox
+ * Quiet automatic recovery for a failing dependency (RPC boot, agent
  * launch). While `failing` is true, `retry` is called on a capped backoff.
  * The streak starts on the first failure and ends only when `healthy`
  * turns true, so brief in-flight phases between attempts never reset the
