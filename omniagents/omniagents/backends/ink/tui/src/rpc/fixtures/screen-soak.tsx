@@ -40,12 +40,13 @@ class Input extends EventEmitter {
     this.emit("readable");
   }
 }
-async function until(check: () => boolean) {
+async function until(check: () => boolean, describe?: () => string) {
   // A hang guard, not a latency budget: loaded CI runners with coverage
   // instrumentation have taken over 10s for a single render.
   const deadline = Date.now() + 30_000;
   while (!check()) {
-    assert.ok(Date.now() < deadline, "screen soak timed out");
+    if (Date.now() >= deadline)
+      assert.fail(`screen soak timed out${describe ? `: ${describe()}` : ""}`);
     await delay(10);
   }
 }
@@ -185,7 +186,13 @@ export async function runScreenSoak(client: RPCClient, base: string) {
       terminal.resize(i % 2 ? 80 : 100, 40);
       stdout.emit("resize");
       instance.rerender(view(tab, session));
-      await until(() => screen().includes(`SCREEN_${tab} SESSION_${selected}`));
+      await until(
+        () => screen().includes(`SCREEN_${tab} SESSION_${selected}`),
+        () =>
+          `round ${i} expected SCREEN_${tab} SESSION_${selected}; ` +
+          `viewport baseY=${terminal.buffer.active.baseY} length=${terminal.buffer.active.length} ` +
+          `cols=${terminal.cols}\n${screen()}`,
+      );
       await delay(60);
       const pulse = fetch(base + "/test/pulse/" + i, { method: "POST" });
       if (tab === "chat") {

@@ -92,7 +92,10 @@ jobs:
       - name: Run Python tests
         # Shell-heavy tests that hang on Windows fail fast instead of
         # eating the job timeout.
-        run: pytest -n auto --dist loadfile -p no:cacheprovider --timeout 60
+        # --dist load + restarts: a worker killed by the timeout is replaced
+        # and its test reported by name. With loadfile, xdist's scheduler
+        # crashes (KeyError) on a lost worker and hides which test it was.
+        run: pytest -n auto --dist load --max-worker-restart 20 -rfE -p no:cacheprovider --timeout 60
 
   # The sandbox-substrate suites (tkt_k5Yk_JBkrIw6). Both modules skip unless
   # the image is already present locally, and nothing pulled it, so neither had
