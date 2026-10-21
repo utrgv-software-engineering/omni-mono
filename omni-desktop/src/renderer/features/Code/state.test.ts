@@ -59,15 +59,12 @@ const tab = (patch: Partial<CodeTab> = {}): CodeTab => ({
   projectId: null,
   sessionId: 'session-1',
   snapshotRef: 'snapshot-1',
-  profileName: 'host',
-  profileNameExplicit: false,
   createdAt: 1,
   ...patch,
 });
 
 const resetStore = (patch: Partial<StoreData> = {}) => {
   store = {
-    defaultProfileName: 'host',
     projects: [],
     codeTabs: [],
     chatConversations: [],
@@ -101,91 +98,6 @@ describe('code tab sandbox profile resolution', () => {
   beforeEach(() => {
     vi.resetModules();
     resetStore();
-  });
-
-  it('uses project sandbox over global default when no one-off override exists', async () => {
-    resetStore({
-      defaultProfileName: 'host',
-      projects: [project('project-1', 'devbox')],
-      codeTabs: [tab()],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'project-1');
-
-    expect(store.codeTabs[0]).toMatchObject({
-      projectId: 'project-1',
-      profileName: 'devbox',
-      profileNameExplicit: false,
-    });
-  });
-
-  it('preserves an explicit one-off override when selecting a project', async () => {
-    resetStore({
-      defaultProfileName: 'host',
-      availableSandboxProfiles: ['host', 'devbox', 'wasmbox'],
-      projects: [project('project-1', 'devbox')],
-      codeTabs: [tab({ profileName: 'wasmbox', profileNameExplicit: true })],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'project-1');
-
-    expect(store.codeTabs[0]).toMatchObject({
-      projectId: 'project-1',
-      profileName: 'wasmbox',
-      profileNameExplicit: true,
-    });
-  });
-
-  it('falls back to a safe available profile when inherited choice is unavailable', async () => {
-    resetStore({
-      defaultProfileName: 'wasmbox',
-      availableSandboxProfiles: ['remote'],
-      projects: [project('project-1', 'devbox')],
-      codeTabs: [tab()],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'project-1');
-
-    expect(store.codeTabs[0]).toMatchObject({ projectId: 'project-1', profileName: 'remote' });
-  });
-
-  it('falls back to a safe available profile when one-off choice is unavailable', async () => {
-    resetStore({
-      defaultProfileName: 'host',
-      availableSandboxProfiles: ['remote'],
-      projects: [project('project-1', 'devbox')],
-      codeTabs: [tab({ profileName: 'wasmbox', profileNameExplicit: true })],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'project-1');
-
-    expect(store.codeTabs[0]).toMatchObject({
-      projectId: 'project-1',
-      profileName: 'remote',
-      profileNameExplicit: true,
-    });
-  });
-
-  it('sets created projects on the setup tab without replacing a one-off sandbox', async () => {
-    resetStore({
-      defaultProfileName: 'host',
-      availableSandboxProfiles: ['host', 'devbox', 'wasmbox'],
-      projects: [project('created-project', 'devbox')],
-      codeTabs: [tab({ profileName: 'wasmbox', profileNameExplicit: true })],
-    });
-    const { codeApi } = await import('./state');
-
-    await codeApi.setTabProject('tab-1', 'created-project');
-
-    expect(store.codeTabs[0]).toMatchObject({
-      projectId: 'created-project',
-      profileName: 'wasmbox',
-      profileNameExplicit: true,
-    });
   });
 });
 
@@ -247,7 +159,6 @@ describe('chat columns and conversation history', () => {
     expect(store.chatConversations[0]).toMatchObject({
       sessionId: 'sess-1',
       title: 'Plan my week',
-      profileName: 'host',
       archivedAt: expect.any(Number),
     });
   });
@@ -317,14 +228,12 @@ describe('chat columns and conversation history', () => {
       sessionId: 'sess-1',
       title: 'x',
       lastActiveAt: 1,
-      profileName: 'devbox',
       projectId: 'project-1',
     });
 
     expect(opened).toMatchObject({
       projectId: 'project-1',
       sessionId: 'sess-1',
-      profileName: 'devbox',
     });
     expect(opened.activatedAt).toBeTypeOf('number');
   });

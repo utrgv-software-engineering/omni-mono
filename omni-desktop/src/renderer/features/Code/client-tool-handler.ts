@@ -60,24 +60,22 @@ async function handleUITools(
 
 /**
  * `launch_app` — mount a (lazily-rendered) dock app in a column so it becomes
- * drivable. Column callers may only target their own column; the superuser may
- * target any column and may pass a handleId as `app_id`.
+ * drivable. Callers may only target their own column.
  */
 function handleLaunchApp(toolArgs: Record<string, unknown>, filter: AppScopeFilter): ClientToolResult {
   const raw = String(toolArgs.app_id ?? '');
   if (!raw) {
     return err('Missing app_id');
   }
-  // Superuser callers may pass a full handleId (tab-<id>:terminal).
   const parsed = parseAppHandleId(raw);
   const appId = parsed?.appId ?? raw;
   let tabId = (typeof toolArgs.tab_id === 'string' && toolArgs.tab_id) || parsed?.tabId || filter.tabId;
 
-  if (!filter.allColumns && filter.tabId && tabId !== filter.tabId) {
+  if (filter.tabId && tabId !== filter.tabId) {
     return err('You can only launch apps in your own column.');
   }
   if (!tabId) {
-    return err('Missing tab_id — which column should the app open in? Call list_workspace for ids.');
+    return err('Missing tab_id — which column should the app open in?');
   }
   if (appId === 'chat') {
     return err('chat is the conversation surface, not a launchable app.');
@@ -111,9 +109,7 @@ async function handleAppControlTools(
 ): Promise<ClientToolResult | null> {
   if (toolName === 'list_apps') {
     const apps = listAppsForScope(filter).map((a) => ({
-      // Superuser callers address apps by handleId (the same id exists in many
-      // columns); column callers use the bare id. We return both.
-      id: filter.allColumns ? a.handleId : a.id,
+      id: a.id,
       app_id: a.id,
       handle_id: a.handleId,
       kind: a.kind,
@@ -124,7 +120,7 @@ async function handleAppControlTools(
       controllable: a.controllable,
       running: a.running,
       available: a.available,
-      ...(a.column ? { column: a.column } : a.tabId ? { tab_id: a.tabId } : {}),
+      ...(a.tabId ? { tab_id: a.tabId } : {}),
     }));
     return ok({ apps });
   }

@@ -1,20 +1,19 @@
 # Omni Code Launcher
 
-A desktop application for managing [Omni Code](https://github.com/utrgv-software-engineering/omni-mono/tree/main/omni-code) installations and sandboxes on Windows, macOS (Apple Silicon) and Linux.
+A desktop application for working with [Omni Code](https://github.com/utrgv-software-engineering/omni-mono/tree/main/omni-code) agents on Windows, macOS (Apple Silicon) and Linux.
 
-The launcher handles installing the Omni Code runtime, managing Python environments, and launching Docker-based sandboxes with optional code-server and noVNC desktop access.
+The launcher installs the Omni Code runtime, manages its Python environment, and runs agent chats against your projects' folders and repositories.
 
 ## Features
 
 - **One-click install** of the Omni Code runtime (Python + venv managed automatically via `uv`)
-- **Sandbox management** — launch Docker containers with workspace mounting, env file support, and configurable services
-- **Embedded webviews** — access the Omni UI, code-server, and noVNC desktop directly in the launcher with tab/split layouts
+- **Agent chats** — focus or tile layouts, with Files, Git, Review, Terminal, and Browser alongside each chat
+- **Projects** — group chats around local folders and git repositories
 - **Dev console** — built-in terminal with automatic venv activation
 - **Auto-updates** — the launcher checks for updates on startup
 
 ## Requirements
 
-- **Docker** must be installed and running on the host for sandbox functionality
 - Node **22+** for development
 
 ## Getting Started
@@ -28,16 +27,13 @@ Download the latest release from [GitHub Releases](https://github.com/ericmichae
 ### Usage
 
 1. Open the launcher and click **Install** to set up the Omni Code runtime
-2. Select a **workspace directory** for your project
-3. Optionally select an **env file** and toggle code-server / desktop / Dockerfile.work
-4. Click **Start Sandbox** to launch
+2. Start a chat, or create a project from a folder or repository and chat inside it
 
 ## Development
 
 ### Prerequisites
 
 - **Node 22+** and npm
-- **Docker** (for sandbox functionality)
 
 ### Quick Start
 

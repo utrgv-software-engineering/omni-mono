@@ -25,7 +25,6 @@ describe('local model ownership', () => {
     materializeAgentConfig({
       configDir: directory,
       mcp: { mcpServers: {} },
-      network: {} as never,
     });
     expect(JSON.parse(readFileSync(join(directory, 'models.json'), 'utf8')).default).toBe('cli/a');
     writeLocalModels(directory, config('desktop'));

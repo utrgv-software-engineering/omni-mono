@@ -12,13 +12,6 @@ import { Spinner } from '@/renderer/ds/ui/spinner';
 import { SessionStatusBanner } from '@/renderer/features/Banner/SessionStatusBanner';
 import { buildClientToolHandler } from '@/renderer/features/Code/client-tool-handler';
 import { $pendingPlan, resolvePlanApproval } from '@/renderer/features/Code/plan-approval-bridge';
-import { $sandboxProfiles, $substrateStatus } from '@/renderer/features/Sandboxes/state';
-import {
-  getAvailableProfileNames,
-  getProfileDescription,
-  getProfileMenuLabel,
-  getProfileTitle,
-} from '@/renderer/features/SandboxProfile/profile-list';
 import { openSettingsTab } from '@/renderer/features/SettingsModal/settings-nav';
 import { useAutoRetry } from '@/renderer/hooks/use-auto-retry';
 import { useSessionWorkspaceDir } from '@/renderer/hooks/use-session-workspace-dir';
@@ -27,7 +20,6 @@ import { ChatShell, type PendingMessage } from '@/renderer/omniagents-ui/ChatShe
 import { ConversationComposerProvider } from '@/renderer/omniagents-ui/components/ConversationComposer';
 import { DraftSessionControls } from '@/renderer/omniagents-ui/components/DraftSessionControls';
 import { getGreeting } from '@/renderer/omniagents-ui/greeting';
-import { buildProfileLabel } from '@/renderer/omniagents-ui/sandbox-label';
 import { emitter, serverOrigin } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { $hoveredVoiceScope, VoiceScopeContext } from '@/renderer/services/voice-recording';
@@ -74,10 +66,6 @@ const CodeRunningView = memo(
     uiMinimal,
     headerActionsTargetId,
     headerActionsCompact,
-    sandboxLabel,
-    sandboxOptions,
-    currentSandboxProfile,
-    onSandboxChange,
     composerExtras,
     onClientToolCall,
     tabId,
@@ -88,7 +76,6 @@ const CodeRunningView = memo(
     gitHost,
     reviewHost,
     routineId,
-    switching,
     greeting,
     suggestions,
     pendingMessages,
@@ -111,10 +98,6 @@ const CodeRunningView = memo(
     uiMinimal?: boolean;
     headerActionsTargetId?: string;
     headerActionsCompact?: boolean;
-    sandboxLabel?: string;
-    sandboxOptions?: { value: string; label: string; description?: string }[];
-    currentSandboxProfile?: string;
-    onSandboxChange?: (value: string) => void;
     composerExtras?: React.ReactNode;
     onClientToolCall?: ClientToolCallHandler;
     tabId?: string;
@@ -127,7 +110,6 @@ const CodeRunningView = memo(
     gitHost: HTMLDivElement;
     reviewHost: HTMLDivElement;
     routineId?: string;
-    switching?: boolean;
     /** Chat mode: time-of-day greeting shown on the empty conversation. */
     greeting?: string;
     /** One-tap example tasks shown on the empty conversation. */
@@ -153,8 +135,6 @@ const CodeRunningView = memo(
       }
       return { baseUrl: url.toString(), authToken: sandboxUrls.authToken };
     }, [sandboxUrls.authToken, sandboxUrls.uiUrl, theme, uiMinimal]);
-    const codeServerSrc = sandboxUrls.services?.['code_server'];
-    const vncSrc = sandboxUrls.services?.['vnc'];
 
     return (
       <div className="flex flex-col w-full h-full relative">
@@ -166,17 +146,11 @@ const CodeRunningView = memo(
             onSessionChange={onSessionChange}
             variables={variables}
             voiceVariables={voiceVariables}
-            codeServerSrc={codeServerSrc}
-            vncSrc={vncSrc}
             activeApp={activeApp}
             onActiveAppChange={onActiveAppChange}
             onReady={onReady}
             headerActionsTargetId={headerActionsTargetId}
             headerActionsCompact={headerActionsCompact}
-            sandboxLabel={sandboxLabel}
-            sandboxOptions={sandboxOptions}
-            currentSandboxProfile={currentSandboxProfile}
-            onSandboxChange={onSandboxChange}
             environmentCapabilities={sandboxUrls.environmentCapabilities}
             composerExtras={composerExtras}
             onClientToolCall={onClientToolCall}
@@ -196,17 +170,6 @@ const CodeRunningView = memo(
             onPendingMessagesFlushed={onPendingMessagesFlushed}
           />
         </div>
-        {switching && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-card">
-            <div className="flex max-w-80 flex-col items-center gap-2 rounded-2xl bg-card px-8 py-6 text-center shadow-xl">
-              <Spinner />
-              <span className="text-base font-semibold text-foreground">
-                Switching to {getProfileMenuLabel(currentSandboxProfile ?? 'host')}…
-              </span>
-              <span className="text-xs text-muted-foreground">Your conversation and files are preserved.</span>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -308,42 +271,7 @@ export const CodeTabContent = memo(
         ? tab.workspaceDir
         : undefined;
 
-    // Sticky profile binding persisted on the tab. The migration backfills
-    // existing installs; ``codeApi.addTab*`` seeds new tabs from the same
-    // resolution chain (per-project ``sandboxProfile`` → user default) so we
-    // don't drift if the user changes defaults later. The picker writes
-    // through ``codeApi.setTabProfile`` and the new value flows back via
-    // ``useStore``. The ``project?.sandboxProfile`` / ``store.defaultProfileName``
-    // fallbacks below only kick in for tabs predating the migration that
-    // somehow got loaded without a stored profileName (defensive).
-    const profileName = tab.profileName ?? project?.sandboxProfile ?? store.defaultProfileName ?? 'host';
-    const handleProfileChange = useCallback(
-      (value: string) => {
-        void codeApi.setTabProfile(tab.id, value);
-      },
-      [tab.id]
-    );
     const localVoice = store.localVoiceEnabled;
-    const sandboxLabel = useMemo(() => buildProfileLabel(profileName), [profileName]);
-
-    // Subscribe to the discovered catalog so the picker re-renders when the
-    // boot-time `sandbox:list-profiles` fetch lands (bundled + user YAMLs).
-    const discoveredProfiles = useStore($sandboxProfiles);
-    const substrate = useStore($substrateStatus);
-    const sandboxOptions = useMemo(
-      () =>
-        getAvailableProfileNames({
-          available: store.availableSandboxProfiles,
-          discovered: discoveredProfiles,
-          substrate,
-        }).map((name) => ({
-          value: name,
-          label: getProfileTitle(name),
-          description: getProfileDescription(name) ?? undefined,
-        })),
-      [store.availableSandboxProfiles, discoveredProfiles, substrate]
-    );
-
     // Attach-project chip for projectless chats, rendered in the composer chip
     // row pre- and post-launch (same node both places, so the composer never
     // changes shape when the session starts). Attaching mid-conversation is
@@ -404,7 +332,6 @@ export const CodeTabContent = memo(
     const { phase, retry } = useCodeAutoLaunch(tab.id, tab.snapshotRef ? workspaceDir : null, {
       ...(tab.projectId ? { projectId: tab.projectId } : {}),
       ...(sourceOverrideDir ? { sourceOverrideDir } : {}),
-      profileNameOverride: profileName,
       ...(tab.sessionId ? { sessionId: tab.sessionId } : {}),
       ...(tab.snapshotRef ? { snapshotRef: tab.snapshotRef } : {}),
     });
@@ -545,10 +472,6 @@ export const CodeTabContent = memo(
                   uiMinimal={uiMinimal}
                   headerActionsTargetId={headerActionsTargetId}
                   headerActionsCompact={headerActionsCompact}
-                  sandboxLabel={sandboxLabel}
-                  sandboxOptions={sandboxOptions}
-                  currentSandboxProfile={profileName}
-                  onSandboxChange={handleProfileChange}
                   composerExtras={composerExtras}
                   onClientToolCall={handleClientToolCall}
                   tabId={tab.id}
@@ -559,7 +482,6 @@ export const CodeTabContent = memo(
                   gitHost={gitHost}
                   reviewHost={reviewHost}
                   routineId={tab.routineId}
-                  switching={sandboxStatus?.type === 'running' && !!sandboxStatus.data.switching}
                   greeting={chatMode ? greeting : undefined}
                   suggestions={chatMode ? CHAT_SUGGESTIONS : COLUMN_SUGGESTIONS}
                   pendingMessages={chatMode ? pendingMessages : undefined}
@@ -585,10 +507,6 @@ export const CodeTabContent = memo(
                 onSubmit={handlePrelaunchSubmit}
                 pendingMessages={pendingMessages}
                 suggestions={!tab.activatedAt ? CHAT_SUGGESTIONS : undefined}
-                sandboxLabel={sandboxLabel}
-                sandboxOptions={!tab.activatedAt ? sandboxOptions : undefined}
-                currentSandboxProfile={profileName}
-                onSandboxChange={handleProfileChange}
                 composerExtras={composerExtras}
                 workspaceReady={Boolean(store.workspaceDir)}
                 onOpenWorkspaceSettings={() => openSettingsTab('Workspace')}

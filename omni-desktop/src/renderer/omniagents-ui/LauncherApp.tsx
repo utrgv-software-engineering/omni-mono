@@ -29,13 +29,6 @@ type OmniAgentsAppProps = {
   headerActionsCompact?: boolean;
   pendingMessages?: PendingMessage[];
   onPendingMessagesFlushed?: () => void;
-  sandboxLabel?: string;
-  /** Options shown in the in-composer sandbox picker. Omit to render a read-only chip. */
-  sandboxOptions?: { value: string; label: string }[];
-  /** Currently-selected profile name (used to mark the active entry in the menu). */
-  currentSandboxProfile?: string;
-  /** Called when the user picks a different profile from the in-composer menu. */
-  onSandboxChange?: (value: string) => void;
   /** Extra composer chips (e.g. attach-project) rendered after the sandbox chip. */
   composerExtras?: ReactNode;
   onClientToolCall?: ClientToolCallHandler;
@@ -77,10 +70,6 @@ export const OmniAgentsApp = ({
   headerActionsCompact,
   pendingMessages,
   onPendingMessagesFlushed,
-  sandboxLabel,
-  sandboxOptions,
-  currentSandboxProfile,
-  onSandboxChange,
   composerExtras,
   onClientToolCall,
   onController,
@@ -119,10 +108,6 @@ export const OmniAgentsApp = ({
           headerActionsCompact={headerActionsCompact}
           pendingMessages={pendingMessages}
           onPendingMessagesFlushed={onPendingMessagesFlushed}
-          sandboxLabel={sandboxLabel}
-          sandboxOptions={sandboxOptions}
-          currentSandboxProfile={currentSandboxProfile}
-          onSandboxChange={onSandboxChange}
           composerExtras={composerExtras}
           onClientToolCall={onClientToolCall}
           onController={onController}

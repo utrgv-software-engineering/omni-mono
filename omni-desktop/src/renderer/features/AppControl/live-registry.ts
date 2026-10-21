@@ -86,13 +86,10 @@ export function unregisterApp(handleId: AppHandleId): void {
 /**
  * Filter apps based on scope + tab context. Matches the rules used by the
  * client-tool handler: column-scoped callers see their own tab's apps, and
- * optionally the global dock. Superuser callers (`allColumns`) see everything.
+ * optionally the global dock.
  */
 export function listLiveApps(filter: AppScopeFilter): LiveAppSnapshot[] {
   const entries = Object.values($liveApps.get());
-  if (filter.allColumns) {
-    return entries;
-  }
   return entries.filter((entry) => {
     if (entry.scope === 'global') {
       return filter.allowGlobal;
@@ -106,24 +103,11 @@ export function listLiveApps(filter: AppScopeFilter): LiveAppSnapshot[] {
  * caller's scope. Returns null when no match exists (bad id, or the app isn't
  * mounted right now — call `launch_app` first).
  *
- * - Column / autopilot callers pass a bare `appId` ("browser"); column scope is
- *   preferred over global, since the same id can exist in both.
- * - Superuser callers (`allColumns`) pass a full `handleId`
- *   ("tab-<id>:terminal" / "global:browser") because a bare id is ambiguous
- *   across columns; a bare id is still accepted as a global-only fallback.
+ * Callers pass a bare `appId` ("browser"); column scope is preferred over
+ * global, since the same id can exist in both.
  */
 export function resolveAppHandle(appId: string, filter: AppScopeFilter): LiveAppSnapshot | null {
   const live = $liveApps.get();
-  if (filter.allColumns) {
-    // Primary path: the agent passes the exact handleId from list_apps.
-    const direct = live[appId];
-    if (direct) {
-      return direct;
-    }
-    // Fallback: a bare appId only resolves unambiguously against a global app.
-    const global = Object.values(live).find((e) => e.scope === 'global' && e.appId === appId);
-    return global ?? null;
-  }
   const entries = Object.values(live);
   if (filter.tabId) {
     const column = entries.find((e) => e.scope === 'column' && e.tabId === filter.tabId && e.appId === appId);

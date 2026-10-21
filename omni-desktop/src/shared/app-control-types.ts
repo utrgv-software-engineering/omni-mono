@@ -118,11 +118,7 @@ export type AppRegistrationPayload = {
  * Builtin kinds that are always considered controllable. Terminal + chat are
  * excluded because they have no web surface to snapshot or click on.
  */
-export const CONTROLLABLE_APP_KINDS: ReadonlySet<AppKind> = new Set<AppKind>([
-  'builtin-browser',
-  'builtin-code',
-  'builtin-desktop',
-]);
+export const CONTROLLABLE_APP_KINDS: ReadonlySet<AppKind> = new Set<AppKind>(['builtin-browser']);
 
 export function isControllableKind(kind: AppKind): boolean {
   return CONTROLLABLE_APP_KINDS.has(kind);
@@ -135,13 +131,6 @@ export type AppClickButton = 'left' | 'right' | 'middle';
 export type AppScopeFilter = {
   tabId?: string;
   allowGlobal: boolean;
-  /**
-   * Superuser scope — the headless global orchestrator. When true, the caller
-   * sees and can drive *every* column's apps (not just `tabId`'s), and apps are
-   * addressed by full `handleId` rather than bare `appId` (the same id exists in
-   * many columns). Implies cross-column visibility regardless of `tabId`.
-   */
-  allColumns?: boolean;
 };
 
 // Re-export so downstream files don't need a second import path.

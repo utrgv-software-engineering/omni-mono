@@ -69,7 +69,6 @@ export const AttachProjectMenu = memo(({ tabId, trigger }: { tabId: CodeTabId; t
       <ProjectCreateDialog
         open={showNewProject}
         onClose={handleCloseNewProject}
-        showSandboxProfile
         submitLabel="Create and attach"
         onCreated={handleCreated}
       />

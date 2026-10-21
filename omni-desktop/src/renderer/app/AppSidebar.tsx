@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react';
-import { Beaker, Box, CalendarClock, Columns3, Ellipsis, Puzzle, Search, Settings, SquarePen } from 'lucide-react';
+import { Beaker, CalendarClock, Columns3, Ellipsis, Puzzle, Search, Settings, SquarePen } from 'lucide-react';
 import { memo, useCallback, useEffect } from 'react';
 
 import { OmniLogo } from '@/renderer/common/AsciiLogo';
@@ -89,7 +89,6 @@ export const AppSidebar = memo(() => {
     closeDrawer();
   }, [closeDrawer]);
   const handlePlugins = useCallback(() => setMode('plugins'), [setMode]);
-  const handleSandboxes = useCallback(() => setMode('sandboxes'), [setMode]);
   const handleGallery = useCallback(() => setMode('gallery'), [setMode]);
   const handleSettings = useCallback(() => setMode('settings'), [setMode]);
   const handlePalette = useCallback(() => $commandPaletteOpen.set(true), []);
@@ -100,7 +99,7 @@ export const AppSidebar = memo(() => {
   const routinesSelected = mode === 'routines';
   // The More row owns every management surface — it paints selected when
   // any of them is frontmost, so "where am I" survives the collapse.
-  const moreSelected = routinesSelected || mode === 'plugins' || mode === 'sandboxes' || mode === 'gallery';
+  const moreSelected = routinesSelected || mode === 'plugins' || mode === 'gallery';
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -173,10 +172,6 @@ export const AppSidebar = memo(() => {
                   <DropdownMenuItem onClick={handlePlugins}>
                     <Puzzle />
                     Plugins
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleSandboxes}>
-                    <Box />
-                    Sandboxes
                   </DropdownMenuItem>
                   {import.meta.env.DEV && (
                     <DropdownMenuItem onClick={handleGallery}>

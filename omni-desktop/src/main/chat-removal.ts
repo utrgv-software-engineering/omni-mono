@@ -87,8 +87,6 @@ export async function cleanupRemovedChat(
   deps: {
     disposeTerminals?: (id: string) => Promise<void>;
     stop: (id: string) => Promise<unknown>;
-    deleteSnapshot: (ref: string) => Promise<unknown>;
-    isSnapshotProtected: (ref: string) => boolean;
   }
 ) {
   let terminalFailure: unknown;
@@ -97,12 +95,8 @@ export async function cleanupRemovedChat(
   } catch (error) {
     terminalFailure = error;
   }
-  // Terminal failure must not leave an invisible runtime running. Conversely,
-  // failed shutdown must not destroy a workspace the runtime still owns.
+  // Terminal failure must not leave an invisible runtime running.
   await deps.stop(tab.id);
-  if (tab.snapshotRef && !deps.isSnapshotProtected(tab.snapshotRef)) {
-    await deps.deleteSnapshot(tab.snapshotRef);
-  }
   if (terminalFailure) {
     throw terminalFailure;
   }

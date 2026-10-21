@@ -26,7 +26,6 @@ const TAB_TITLES: Record<LayoutMode, string> = {
   chat: 'Chat',
   routines: 'Routines',
   plugins: 'Plugins',
-  sandboxes: 'Sandboxes',
   settings: 'Settings',
   gallery: 'Gallery',
 };

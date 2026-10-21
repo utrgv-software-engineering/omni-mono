@@ -127,8 +127,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { isLauncherOwnedDir, ProcessManager, type ProcessManagerStoreData } from '@/main/process-manager';
-import { getDefaultWorkspaceDir } from '@/main/util';
+import { ProcessManager, type ProcessManagerStoreData } from '@/main/process-manager';
 import { gitTokenEnvName } from '@/shared/git-credentials';
 import type { AgentProcessStatus, GitCredential, Project, WithTimestamp } from '@/shared/types';
 
@@ -147,7 +146,6 @@ function makePm(opts?: {
   hoisted.agentProcessInstances = [];
   const sendCalls: Array<{ channel: string; args: unknown[] }> = [];
   const storeData: ProcessManagerStoreData = {
-    defaultProfileName: 'host',
     projects: [],
     ...opts?.storeData,
   };
@@ -168,21 +166,6 @@ function makePm(opts?: {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-
-describe('isLauncherOwnedDir', () => {
-  it('classifies per-conversation Sessions scratch dirs as launcher-owned', () => {
-    expect(isLauncherOwnedDir('/custom/root/Sessions/abc-123')).toBe(true);
-  });
-
-  it('classifies dirs under the default workspace tree as launcher-owned', () => {
-    expect(isLauncherOwnedDir(`${getDefaultWorkspaceDir()}/Projects/my-project`)).toBe(true);
-    expect(isLauncherOwnedDir(getDefaultWorkspaceDir())).toBe(true);
-  });
-
-  it('classifies arbitrary user folders as user-linked', () => {
-    expect(isLauncherOwnedDir('/home/someone/Documents/my-folder')).toBe(false);
-  });
-});
 
 describe('ProcessManager', () => {
   beforeEach(() => {
@@ -228,14 +211,13 @@ describe('ProcessManager', () => {
   });
 
   describe('start arg', () => {
-    it('forwards profileName + projectId in the start arg', async () => {
-      const { pm } = makePm({ storeData: { defaultProfileName: 'devbox' } });
+    it('forwards projectId in the start arg', async () => {
+      const { pm } = makePm();
       await pm.start('tab-1', { workspaceDir: '/tmp', projectId: 'proj_x' });
 
       expect(hoisted.agentProcessInstances[0]!.start).toHaveBeenCalledWith(
         expect.objectContaining({
           workspaceDir: '/tmp',
-          profileName: 'devbox',
           projectId: 'proj_x',
         })
       );
@@ -262,7 +244,7 @@ describe('ProcessManager', () => {
     });
 
     it('starts a targetless serve host without materializing an environment', async () => {
-      const { pm } = makePm({ storeData: { defaultProfileName: 'devbox' } });
+      const { pm } = makePm({ storeData: {} });
 
       await expect(pm.ensureManagementConnection()).resolves.toEqual({
         baseUrl: 'http://127.0.0.1:9000',
@@ -270,9 +252,7 @@ describe('ProcessManager', () => {
       });
 
       const host = hoisted.agentProcessInstances[0]!;
-      expect(host.start).toHaveBeenCalledWith(
-        expect.objectContaining({ profileName: 'host', workspaceDir: '', sources: [] })
-      );
+      expect(host.start).toHaveBeenCalledWith(expect.objectContaining({ workspaceDir: '', sources: [] }));
       expect(host.configureConsumer).not.toHaveBeenCalled();
       expect(host.getRuntimeConnection).toHaveBeenCalledOnce();
     });
@@ -426,7 +406,6 @@ describe('ProcessManager', () => {
       // A host-scoped credential gives the peer its own AgentHost.
       const { pm } = makePm({
         storeData: {
-          defaultProfileName: 'devbox',
           projects: [
             {
               id: 'proj_git',
@@ -619,47 +598,6 @@ describe('ProcessManager', () => {
     });
   });
 
-  describe('getRunningWsUrlForTicket', () => {
-    it('returns null when no code tabs match the ticketId', () => {
-      const { pm } = makePm();
-      const result = pm.getRunningWsUrlForTicket('ticket-1', [{ id: 'tab-1', ticketId: 'ticket-2' }, { id: 'tab-2' }]);
-      expect(result).toBeNull();
-    });
-
-    it('returns null when matching tab has no process', () => {
-      const { pm } = makePm();
-      const result = pm.getRunningWsUrlForTicket('ticket-1', [{ id: 'tab-1', ticketId: 'ticket-1' }]);
-      expect(result).toBeNull();
-    });
-
-    it('returns wsUrl when matching tab has a running process', async () => {
-      const { pm } = makePm();
-      await pm.start('tab-1', { workspaceDir: '/tmp' });
-
-      hoisted.agentProcessInstances[0]!.getStatus.mockReturnValue({
-        type: 'running',
-        timestamp: 1000,
-        data: { wsUrl: 'ws://localhost:9000/ws', uiUrl: 'http://localhost:9000' },
-      });
-
-      const result = pm.getRunningWsUrlForTicket('ticket-1', [{ id: 'tab-1', ticketId: 'ticket-1' }]);
-      expect(result).toBe('ws://localhost:9000/ws');
-    });
-
-    it('returns null when matching tab process is not running', async () => {
-      const { pm } = makePm();
-      await pm.start('tab-1', { workspaceDir: '/tmp' });
-
-      hoisted.agentProcessInstances[0]!.getStatus.mockReturnValue({
-        type: 'starting',
-        timestamp: 1000,
-      });
-
-      const result = pm.getRunningWsUrlForTicket('ticket-1', [{ id: 'tab-1', ticketId: 'ticket-1' }]);
-      expect(result).toBeNull();
-    });
-  });
-
   describe('lifecycle', () => {
     it('does not start a session AgentHost until the runtime install overlay finishes', async () => {
       let finishInstall!: () => void;
@@ -680,7 +618,7 @@ describe('ProcessManager', () => {
     });
 
     it('shares one in-flight start transaction for duplicate first intent', async () => {
-      const { pm } = makePm({ storeData: { defaultProfileName: 'devbox' } });
+      const { pm } = makePm({ storeData: {} });
       let release!: () => void;
       hoisted.configureConsumerGate = new Promise<void>((resolve) => {
         release = resolve;
@@ -931,10 +869,6 @@ describe('ProcessManager', () => {
         type: 'running',
         data: { workspaceId: 'workspace-b', environmentId: 'environment-b' },
       });
-      const tabAWorkspaceId = host.configureConsumer.mock.calls[0]![1] as string;
-      expect(pm.getProcessContainerId('tab-a')).toBe(`container-${tabAWorkspaceId}`);
-      expect(pm.getProcessContainerId('tab-b')).toBeNull();
-      expect(pm.getContainerOwners()).toEqual([{ processId: 'tab-a', containerId: `container-${tabAWorkspaceId}` }]);
     });
 
     it('stopping one compatible tab leaves the shared host running', async () => {
@@ -1082,7 +1016,6 @@ describe('ProcessManager', () => {
       await expect(pm.stop('old-tab')).rejects.toThrow('shutdown unavailable');
       await expect(pm.start('old-tab', { workspaceDir: '/tmp/ws' })).rejects.toThrow('still stopping');
       await expect(pm.rebuild('old-tab', { workspaceDir: '/tmp/ws' })).rejects.toThrow('still stopping');
-      await expect(pm.switchSandbox('old-tab', 'host')).resolves.toMatchObject({ ok: false });
       await pm.start('new-tab', { workspaceDir: '/tmp/new' });
       expect(hoisted.agentProcessInstances).toHaveLength(2);
       await expect(pm.stop('old-tab')).resolves.toMatchObject({ scope: 'host' });
@@ -1122,35 +1055,29 @@ describe('ProcessManager', () => {
       expect(host.exit).toHaveBeenCalledTimes(1);
     });
 
-    it.each(['rebuild', 'switch'] as const)(
-      'waits for an in-flight %s before retiring its final environment',
-      async (operation) => {
-        const { pm } = makePm();
-        await pm.start('tab-a', { workspaceDir: '/tmp/ws' });
-        const host = hoisted.agentProcessInstances[0]!;
-        let release!: () => void;
-        hoisted.configureConsumerGate = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        const changing =
-          operation === 'rebuild'
-            ? pm.rebuild('tab-a', { workspaceDir: '/tmp/ws' })
-            : pm.switchSandbox('tab-a', 'host');
-        await vi.waitFor(() => expect(host.configureConsumer).toHaveBeenCalledTimes(2));
-        let stopped = false;
-        const closing = pm.retire('tab-a').then(() => {
-          stopped = true;
-        });
-        await Promise.resolve();
-        expect(stopped).toBe(false);
-        release();
-        await changing;
-        await closing;
-        expect(pm.getStatus('tab-a').type).toBe('uninitialized');
-        expect(host.stop).toHaveBeenCalledTimes(1);
-        await expect(pm.start('tab-a', { workspaceDir: '/tmp/ws' })).rejects.toThrow('closed');
-      }
-    );
+    it('waits for an in-flight rebuild before retiring its final environment', async () => {
+      const { pm } = makePm();
+      await pm.start('tab-a', { workspaceDir: '/tmp/ws' });
+      const host = hoisted.agentProcessInstances[0]!;
+      let release!: () => void;
+      hoisted.configureConsumerGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const changing = pm.rebuild('tab-a', { workspaceDir: '/tmp/ws' });
+      await vi.waitFor(() => expect(host.configureConsumer).toHaveBeenCalledTimes(2));
+      let stopped = false;
+      const closing = pm.retire('tab-a').then(() => {
+        stopped = true;
+      });
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      release();
+      await changing;
+      await closing;
+      expect(pm.getStatus('tab-a').type).toBe('uninitialized');
+      expect(host.stop).toHaveBeenCalledTimes(1);
+      await expect(pm.start('tab-a', { workspaceDir: '/tmp/ws' })).rejects.toThrow('closed');
+    });
 
     it('does not acknowledge an environment retry before its shared host finishes stopping', async () => {
       const { pm } = makePm();
@@ -1187,39 +1114,7 @@ describe('ProcessManager', () => {
       expect(acknowledged).toBe(true);
     });
 
-    it('rebinds one tab profile without mutating a host shared by two tabs', async () => {
-      const { pm } = makePm();
-      await pm.start('tab-a', { workspaceDir: '/tmp/ws', projectId: 'project-1' });
-      const host = hoisted.agentProcessInstances[0]!;
-      host.getStatus.mockReturnValue({
-        type: 'running',
-        data: { wsUrl: 'ws://localhost:9000/ws', uiUrl: 'http://localhost:9000' },
-        timestamp: Date.now(),
-      } satisfies WithTimestamp<AgentProcessStatus>);
-      await pm.start('tab-b', { workspaceDir: '/tmp/ws', projectId: 'project-1' });
-      const tabAWorkspaceId = host.configureConsumer.mock.calls[0]![1] as string;
-      host.configureConsumer.mockImplementationOnce(async () => ({
-        workspaceId: tabAWorkspaceId,
-        environmentId: 'environment-rebound',
-        services: {},
-      }));
-
-      await expect(pm.switchSandbox('tab-a', 'devbox')).resolves.toMatchObject({ ok: true, profile: 'devbox' });
-      expect(host.configureConsumer).toHaveBeenCalledWith(
-        'tab-a',
-        expect.stringMatching(/^workspace_/),
-        expect.objectContaining({ profileName: 'devbox' })
-      );
-      expect(host.stopConsumerEnvironment).toHaveBeenCalledWith(
-        expect.objectContaining({
-          workspaceId: tabAWorkspaceId,
-          environmentId: `environment-${tabAWorkspaceId}`,
-          environmentGeneration: 3,
-        })
-      );
-    });
-
-    it('routes lifecycle calls and snapshot discard to the selected consumer environment', async () => {
+    it('routes snapshot discard to the selected consumer environment', async () => {
       const { pm } = makePm();
       await pm.start('tab-a', { workspaceDir: '/tmp/ws' });
       const host = hoisted.agentProcessInstances[0]!;
@@ -1231,43 +1126,11 @@ describe('ProcessManager', () => {
         timestamp: Date.now(),
       } satisfies WithTimestamp<AgentProcessStatus>);
 
-      await expect(pm.pause('tab-a')).resolves.toMatchObject({ ok: true, paused: true });
-      expect(host.pause).toHaveBeenCalledWith(expect.objectContaining({ environmentId, environmentGeneration: 3 }));
-      expect(pm.getStatus('tab-a')).toMatchObject({ data: { paused: true } });
-
-      await expect(pm.unpause('tab-a')).resolves.toMatchObject({ ok: true, paused: false });
-      expect(host.unpause).toHaveBeenCalledWith(expect.objectContaining({ environmentId, environmentGeneration: 3 }));
       await pm.stop('tab-a', { discardSnapshot: true });
       expect(host.discardConsumerSnapshot).toHaveBeenCalledWith(
         expect.objectContaining({ environmentId, environmentGeneration: 3 })
       );
       expect(host.stop).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps an exclusively attached host after a profile rebind', async () => {
-      const { pm } = makePm();
-      await pm.start('tab-a', { workspaceDir: '/tmp/ws', projectId: 'project-1' });
-      const host = hoisted.agentProcessInstances[0]!;
-      host.getStatus.mockReturnValue({
-        type: 'running',
-        data: { wsUrl: 'ws://localhost:9000/ws', uiUrl: 'http://localhost:9000' },
-        timestamp: Date.now(),
-      } satisfies WithTimestamp<AgentProcessStatus>);
-
-      await expect(pm.switchSandbox('tab-a', 'devbox')).resolves.toMatchObject({ ok: true });
-      await pm.start('tab-b', {
-        workspaceDir: '/tmp/ws',
-        projectId: 'project-1',
-        profileNameOverride: 'devbox',
-      });
-
-      expect(hoisted.agentProcessInstances).toHaveLength(1);
-      expect(host.configureConsumer).toHaveBeenCalledWith(
-        'tab-a',
-        expect.stringMatching(/^workspace_/),
-        expect.objectContaining({ profileName: 'devbox' })
-      );
-      expect(host.start).toHaveBeenCalledTimes(1);
     });
 
     it('start adopts a live process instead of restarting it', async () => {

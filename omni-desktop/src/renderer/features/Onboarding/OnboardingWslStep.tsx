@@ -190,7 +190,7 @@ export const OnboardingWslStep = memo(({ onSkip }: Props) => {
           <span className="flex flex-col gap-0.5 flex-auto min-w-0">
             <span className="text-sm font-semibold">Run the Omni backend in WSL (recommended)</span>
             <span className="text-xs text-muted-foreground">
-              Sandboxes run natively in Linux — uses your {defaultDistro.name} distro
+              Agents run natively in Linux — uses your {defaultDistro.name} distro
             </span>
           </span>
           <ChevronRight className="text-muted-foreground shrink-0" />

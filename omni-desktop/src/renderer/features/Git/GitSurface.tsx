@@ -1,4 +1,3 @@
-import { useStore } from '@nanostores/react';
 import { PanelLeftIcon, RefreshCwIcon, TriangleAlert } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -26,13 +25,11 @@ import {
   GitClient,
   type GitDiffResult,
   type GitListRepositoriesResult,
-  type GitRepository,
   type GitStatusResult,
   type WorkspaceRepo,
 } from '@/renderer/omniagents-ui/rpc/git';
 import { useRPCClient, useRPCConnected } from '@/renderer/omniagents-ui/rpc-context';
-import { persistedStoreApi } from '@/renderer/services/store';
-import type { CodeTabId, ExecutionTarget, ProjectSource } from '@/shared/types';
+import type { ExecutionTarget } from '@/shared/types';
 
 import { mergeUntracked, repositoryLabel } from './diff-model';
 import { GitDiffStream, type GitStreamMode } from './GitDiffStream';
@@ -41,7 +38,6 @@ import { type GitRepositoryCapabilities, type GitSyncOptions, GitToolsPanel } fr
 import { describeConfirmation, useGitMutations } from './use-git-mutations';
 
 export type GitSurfaceProps = {
-  tabId?: CodeTabId;
   executionTarget: ExecutionTarget;
   sessionId?: string;
   workspaceRoot?: string;
@@ -58,10 +54,8 @@ type RepositoryData = {
   status: GitStatusResult;
   diff: GitDiffResult;
 };
-type ApplyTarget = { source: Extract<ProjectSource, { kind: 'local' }>; localPath: string };
 
 const GIT_READ_OPERATIONS = ['git_list_repositories', 'git_status', 'git_diff'] as const;
-const SESSION_BASE_REF = 'refs/tags/omni/seed';
 
 /** Below this surface width the sidebar defaults to hidden (the toggle
  *  still overrides) — sidecar columns are usually this narrow. */
@@ -75,35 +69,8 @@ function dataKey(identityKey: string, repo: WorkspaceRepo, mode: GitStreamMode):
   return JSON.stringify([identityKey, repo, mode]);
 }
 
-function normalizeFsPath(value: string): string {
-  return value.replaceAll('\\', '/').replace(/\/+$/, '');
-}
-
-/** Match a typed Git repository to the project source that materialized it. */
-export function sourceForRepository(sources: ProjectSource[], repository: GitRepository): ProjectSource | null {
-  const absoluteRoot = normalizeFsPath(repository.absolute_root);
-  const repo = repository.repo;
-  const exact = sources.find((source) => {
-    const containerRoot = source.mountName === '.' ? '/workspace' : `/workspace/${source.mountName}`;
-    const hostRoot = source.kind === 'local' ? normalizeFsPath(source.workspaceDir) : null;
-    return (
-      absoluteRoot === containerRoot ||
-      absoluteRoot.startsWith(`${containerRoot}/`) ||
-      absoluteRoot === hostRoot ||
-      (hostRoot !== null && absoluteRoot.startsWith(`${hostRoot}/`)) ||
-      repo === source.mountName ||
-      repo.startsWith(`${source.mountName}/`)
-    );
-  });
-  if (exact) {
-    return exact;
-  }
-  return repo === '.' && sources.length === 1 ? sources[0]! : null;
-}
-
 export const GitSurface = memo((props: GitSurfaceProps) => {
-  const { tabId, executionTarget, sessionId, workspaceRoot, rootPrefix, active = true, onOpenFile } = props;
-  const store = useStore(persistedStoreApi.$atom);
+  const { executionTarget, sessionId, workspaceRoot, rootPrefix, active = true, onOpenFile } = props;
   const rpc = useRPCClient();
   const connected = useRPCConnected();
   const identityKey = sessionId && workspaceRoot ? JSON.stringify([sessionId, executionTarget, workspaceRoot]) : null;
@@ -144,20 +111,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
   const currentRepositories = repositories?.identityKey === identityKey ? repositories.value : null;
   const currentRepo = selectedRepository?.identityKey === identityKey ? selectedRepository.value : null;
   const currentMode = diffMode?.identityKey === identityKey ? diffMode.value : 'worktree';
-  const currentRepository =
-    currentRepositories?.repositories.find((repository) => repository.repo === currentRepo) ?? null;
-  const currentTab = tabId ? store.codeTabs.find((tab) => tab.id === tabId) : undefined;
-  const currentProject = currentTab?.projectId
-    ? store.projects.find((project) => project.id === currentTab.projectId)
-    : undefined;
-  const activeSource =
-    currentRepository && currentProject ? sourceForRepository(currentProject.sources, currentRepository) : null;
-  const profileName = currentTab?.profileName ?? currentProject?.sandboxProfile ?? store.defaultProfileName ?? 'host';
-  const currentApplyTarget: ApplyTarget | null =
-    activeSource?.kind === 'local' && !activeSource.readOnly && profileName !== 'host'
-      ? { source: activeSource, localPath: activeSource.workspaceDir }
-      : null;
-  const hasApplyTarget = currentApplyTarget !== null;
   const expectedDataKey = identityKey && currentRepo ? dataKey(identityKey, currentRepo, currentMode) : null;
   const currentData = repositoryData?.key === expectedDataKey ? repositoryData : null;
 
@@ -193,12 +146,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
     return () => observer.disconnect();
   }, []);
   const sidebarVisible = sidebarPref ?? wide;
-
-  useEffect(() => {
-    if (currentMode === 'session' && !hasApplyTarget) {
-      setDiffMode(identityKey ? { identityKey, value: 'worktree' } : null);
-    }
-  }, [currentMode, hasApplyTarget, identityKey]);
 
   useEffect(() => {
     let alive = true;
@@ -283,11 +230,7 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
       gitClient.status(currentRepo),
       gitClient.diff(
         currentRepo,
-        currentMode === 'session'
-          ? { mode: 'range', fromRev: SESSION_BASE_REF }
-          : currentMode === 'staged'
-            ? { mode: 'staged' }
-            : { mode: 'worktree', includeUntracked: true }
+        currentMode === 'staged' ? { mode: 'staged' } : { mode: 'worktree', includeUntracked: true }
       ),
     ])
       .then(([status, diff]) => {
@@ -617,11 +560,6 @@ export const GitSurface = memo((props: GitSurfaceProps) => {
           <ToggleGroupItem value="staged" className="h-7 px-2 text-xs">
             Staged
           </ToggleGroupItem>
-          {hasApplyTarget && (
-            <ToggleGroupItem value="session" className="h-7 px-2 text-xs">
-              Session changes
-            </ToggleGroupItem>
-          )}
         </ToggleGroup>
         <span className="flex-auto" />
         {mutations.busy ? <span className="text-xs text-muted-foreground">{mutations.busy}…</span> : null}
@@ -790,7 +728,6 @@ GitSurface.displayName = 'GitSurface';
 export function WorkspaceGitPortal({
   host,
   active,
-  tabId,
   executionTarget,
   sessionId,
   workspaceRoot,
@@ -800,7 +737,6 @@ export function WorkspaceGitPortal({
   return createPortal(
     <GitSurface
       active={active}
-      tabId={tabId}
       executionTarget={executionTarget}
       sessionId={sessionId}
       workspaceRoot={workspaceRoot}

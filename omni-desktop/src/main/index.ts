@@ -8,7 +8,7 @@ import { join, resolve } from 'path';
 import { assert } from 'tsafe';
 import { pathToFileURL } from 'url';
 
-import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig, parseEnvVars } from '@/lib/agent-config';
+import { emptyMcpConfig, emptyModelsConfig, parseEnvVars } from '@/lib/agent-config';
 import { winToWslPath } from '@/lib/wsl-path';
 import { createAppControlManager } from '@/main/app-control-manager';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
@@ -38,26 +38,11 @@ import { createOmniInstallManager } from '@/main/omni-install-manager';
 import { createPermissionsManager } from '@/main/permissions-manager';
 import { createProcessManager } from '@/main/process-manager';
 import { refreshProductRuntimeInfo } from '@/main/product-runtime';
-import { registerProfileCatalogHandlers } from '@/main/profile-catalog';
-import { getBundledProfilesDir } from '@/main/profile-resolver';
 import { createProjectManager } from '@/main/project-manager';
 import { importLegacyProjectsDb } from '@/main/projects-import';
 import { RoutineBridge } from '@/main/routine-bridge';
-import {
-  defaultSandboxInventoryDeps,
-  processOwnersFromState,
-  registerSandboxInventoryHandlers,
-  suspendedSessionOwners,
-} from '@/main/sandbox-inventory';
 import { registerScheduledTaskHandlers, ScheduledTaskManager } from '@/main/scheduled-task-manager';
 import { LocalSecretStore } from '@/main/secret-store';
-import {
-  DEFAULT_CHAT_SNAPSHOT_TTL_MS,
-  deleteSnapshot,
-  gcStaleSnapshots,
-  protectedSnapshotsFromTabs,
-  registerSnapshotHandlers,
-} from '@/main/snapshot-manager';
 import { getStore } from '@/main/store';
 import {
   ensureDirectory,
@@ -149,7 +134,7 @@ importLegacyProjectsDb(store);
 
 /**
  * Materialize the agent's on-disk config from the store (desktop = single user,
- * plaintext). Models/network/env remain Desktop-owned; mcp.json is a derived
+ * plaintext). Models/env remain Desktop-owned; mcp.json is a derived
  * copy only until the local MCP ownership marker transfers it to Omniagents.
  * Writes a real `.env`.
  * Runs at startup and after every `settings:*` write.
@@ -159,7 +144,6 @@ function materializeDesktopConfig(): void {
     materializeAgentConfig({
       configDir: OMNI_CONFIG_DIR,
       mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
-      network: store.get('networkConfig') ?? emptyNetworkConfig(),
       writeMcp: store.get('mcpConfigOwnership') !== 'omniagents',
     });
     writeFileSync(join(OMNI_CONFIG_DIR, '.env'), store.get('envVars') ?? '', 'utf-8');
@@ -220,7 +204,6 @@ const [processManager, cleanupProcessManager] = createProcessManager({
   sendToWindow: main.sendToWindow,
   fetchFn: (input, init) => net.fetch(input as string, init),
   getStoreData: () => ({
-    defaultProfileName: store.get('defaultProfileName') ?? 'host',
     projects: store.get('projects') ?? [],
     gitCredentials: store.get('gitCredentials') ?? [],
   }),
@@ -324,58 +307,12 @@ const chatCleanup = new ChatCleanupRunner({
     await cleanupRemovedChat(tab, {
       disposeTerminals: (id) => consoleManager.disposeAllForTab(id),
       stop: (id) => processManager.retire(id),
-      deleteSnapshot,
-      isSnapshotProtected: (ref) =>
-        protectedSnapshotsFromTabs(store.get('codeTabs') ?? []).some((claim) => claim.snapshotRef === ref),
     });
   },
 });
 main.cleanupRemovedChat = (tab) => chatCleanup.runOne(tab);
 chatCleanup.start();
 
-// Protected set = the same open-tab snapshots as the GC keep set below; the
-// tab-close cascade persists the pruned codeTabs before its snapshot:delete,
-// so the guard only ever blocks deletes of snapshots still open in the UI.
-registerSnapshotHandlers(main.ipc, {
-  getProtectedSnapshots: () => protectedSnapshotsFromTabs(store.get('codeTabs') ?? []),
-});
-
-// Sandboxes tab (docs/sandboxes-tab-plan.md Phase 2): profile discovery +
-// container inventory. Both modules are Electron-free; this shell injects
-// its paths and ownership providers.
-registerProfileCatalogHandlers(main.ipc, {
-  bundledDir: getBundledProfilesDir(),
-  userDir: join(OMNI_CONFIG_DIR, 'sandbox'),
-  getAvailableProfileNames: () => store.get('availableSandboxProfiles'),
-});
-registerSandboxInventoryHandlers(main.ipc, {
-  ...defaultSandboxInventoryDeps(),
-  getProcessOwners: () => [
-    ...processOwnersFromState(processManager.getContainerOwners(), store.get('codeTabs') ?? []),
-    ...suspendedSessionOwners(store.get('codeTabs') ?? []),
-  ],
-});
-
-// Startup environment GC. Code tabs cascade-delete on remove; this sweep
-// catches stale conversation workspaces older than 14 days (and anything
-// orphaned by a crashed cascade). Protected set = every code tab's
-// snapshotRef. Best-effort; failures don't block boot.
-void (async () => {
-  try {
-    const keep = new Set<string>();
-    for (const tab of store.get('codeTabs') ?? []) {
-      if (tab.snapshotRef) {
-        keep.add(tab.snapshotRef);
-      }
-    }
-    const deleted = await gcStaleSnapshots({ keep, ttlMs: DEFAULT_CHAT_SNAPSHOT_TTL_MS });
-    if (deleted.length > 0) {
-      console.log(`[snapshot-gc] deleted ${deleted.length} stale snapshot(s)`);
-    }
-  } catch (err) {
-    console.error('[snapshot-gc] failed:', err);
-  }
-})();
 const [, cleanupProject] = createProjectManager({
   ipc: main.ipc,
   store,
@@ -575,36 +512,6 @@ app.on('ready', () => {
   void ensureDirectory(getDefaultWorkspaceDir())
     .then(() => ensureDirectory(getProjectsDir()))
     .catch((err) => console.warn('Failed to create workspace directories:', err));
-
-  void (async () => {
-    const { cleanupOrphanedContainers, pruneDockerResources } = await import('@/main/docker-orphan-cleanup');
-    const { sandboxStateContainerIds } = await import('@/main/sandbox-state');
-    const cleaned = await cleanupOrphanedContainers({
-      // Environments already materialized by this launcher may overlap the
-      // startup sweep, so resolve the live protected set immediately before
-      // each removal pass. Durable container sessions (state records) are
-      // NOT orphans — they're reattached on the session's next open.
-      getProtectedContainerIds: () => [...processManager.getAllContainerIds(), ...sandboxStateContainerIds()],
-    });
-    if (cleaned && cleaned.length > 0) {
-      main.sendToWindow('toast:show', {
-        level: 'info',
-        title: 'Cleaned up orphaned containers',
-        description: `Removed ${cleaned.length} Docker container${cleaned.length === 1 ? '' : 's'} from a previous session.`,
-      });
-    }
-
-    const reclaimed = await pruneDockerResources();
-    if (reclaimed && reclaimed !== '0B') {
-      main.sendToWindow('toast:show', {
-        level: 'info',
-        title: 'Docker storage reclaimed',
-        description: `Pruned unused Docker resources, reclaimed ${reclaimed}.`,
-      });
-    }
-  })().catch((error) => {
-    console.warn('Failed to clean up Docker resources:', error);
-  });
 });
 
 /**
@@ -851,24 +758,6 @@ main.ipc.handle('wsl:set-persistent', async (_, persistent) => {
 // one-shot (UAC; completion unobservable), 'distro' registers Ubuntu without
 // elevation. The card re-runs `wsl:detect` afterwards — no store change here.
 main.ipc.handle('wsl:install', (_, mode) => wslBackend.install(mode === 'platform' ? 'platform' : 'distro'));
-
-// Docker bootstrap inside the linked distro (Sandboxes → Health). Both run
-// as root via `wsl -u root` and end by re-running the docker check, so the
-// `wsl:status-changed` broadcast refreshes `status.docker`. Require an
-// active WSL link — without one the manager has no distro to target.
-const requireWslLink = (): void => {
-  if (store.get('remoteBackend')?.kind !== 'wsl') {
-    throw new Error('No WSL backend is linked');
-  }
-};
-main.ipc.handle('wsl:install-docker', () => {
-  requireWslLink();
-  return wslBackend.installDocker();
-});
-main.ipc.handle('wsl:start-docker', () => {
-  requireWslLink();
-  return wslBackend.startDocker();
-});
 
 //#endregion
 

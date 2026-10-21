@@ -265,7 +265,6 @@ describe('AgentProcess (serve mode)', () => {
   it('spawns a targetless AgentHost without consumer placement flags', async () => {
     const h = makeHarness();
     await h.proc.start({
-      profileName: 'devbox',
       sources: [localGitSource('/test/workspace', 'launcher')],
     });
 
@@ -290,7 +289,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('spawns with distinct renderer and main-process control credentials', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
 
     const [, args] = spawnCall(0);
     const clientToken = args[args.indexOf('--auth-token') + 1];
@@ -303,7 +302,6 @@ describe('AgentProcess (serve mode)', () => {
   it('registers, materializes, and binds a second consumer through the control plane', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {
-      profileName: 'devbox',
       sources: [{ ...localGitSource('/repos/second', 'second'), id: 'source-second' }],
       projectId: 'project-2',
     };
@@ -363,7 +361,6 @@ describe('AgentProcess (serve mode)', () => {
   it('adopts an authoritative ready environment after a control/renderer reconnect', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {
-      profileName: 'host',
       sources: [localSource('/repos/reconnect', 'reconnect')],
       sessionId: 'conversation-reconnect',
     };
@@ -392,7 +389,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('fails closed when reconciliation reaches a different AgentHost', async () => {
     const h = makeHarness();
-    const arg: AgentProcessStartArg = { profileName: 'host', sources: [localSource('/repos/mismatch')] };
+    const arg: AgentProcessStartArg = { sources: [localSource('/repos/mismatch')] };
     await h.proc.start(arg);
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
@@ -417,7 +414,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('refuses to stop a newer environment generation through a stale target', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
       type: 'running',
@@ -425,7 +422,6 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     const runtime = await h.proc.configureConsumer('thread', 'workspace', {
-      profileName: 'host',
       sources: [localSource('/ws')],
     });
     hoisted.resourceSnapshot = {
@@ -448,7 +444,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('reconciles a lost stop response instead of retrying blindly', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
       type: 'running',
@@ -456,7 +452,6 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     const runtime = await h.proc.configureConsumer('thread', 'workspace', {
-      profileName: 'host',
       sources: [localSource('/ws')],
       snapshotRef: 'snapshot-reconcile',
     });
@@ -472,7 +467,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('waits for an already-committed stopping environment instead of retrying the mutation', async () => {
     const h = makeHarness({ stopReconcilePollMs: 1, stopReconcileTimeoutMs: 100 });
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
       type: 'running',
@@ -480,7 +475,6 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     const runtime = await h.proc.configureConsumer('thread-stopping', 'workspace-stopping', {
-      profileName: 'host',
       sources: [localSource('/ws')],
       snapshotRef: 'snapshot-stopping',
     });
@@ -511,7 +505,6 @@ describe('AgentProcess (serve mode)', () => {
   it('binds the conversation session rather than the launcher consumer', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {
-      profileName: 'host',
       sources: [localSource('/repos/second', 'second')],
       sessionId: 'conversation-session',
     };
@@ -540,7 +533,7 @@ describe('AgentProcess (serve mode)', () => {
       }
       return true;
     });
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
     mutable.status = {
       type: 'running',
@@ -548,7 +541,6 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     await h.proc.configureConsumer('thread-forced', 'workspace-forced', {
-      profileName: 'host',
       sources: [localSource('/ws')],
       snapshotRef: 'snapshot-forced',
     });
@@ -563,7 +555,7 @@ describe('AgentProcess (serve mode)', () => {
   it('retains an unconfirmed killed child for a real shutdown retry', async () => {
     const h = makeHarness({ processStopTimeoutMs: 5 });
     h.child.kill.mockImplementation(() => false);
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     await expect(h.proc.stop()).rejects.toThrow('exit was not confirmed');
     h.child.kill.mockImplementation((signal) => {
       setImmediate(() => h.child.emitClose(0, signal));
@@ -576,7 +568,6 @@ describe('AgentProcess (serve mode)', () => {
   it('stops a newly materialized environment when thread binding fails', async () => {
     const h = makeHarness();
     const arg: AgentProcessStartArg = {
-      profileName: 'devbox',
       sources: [localGitSource('/repos/second', 'second')],
     };
     await h.proc.start(arg);
@@ -604,7 +595,6 @@ describe('AgentProcess (serve mode)', () => {
   it('registers all project sources through the consumer workspace', async () => {
     const h = makeHarness();
     await h.proc.start({
-      profileName: 'host',
       sources: [
         localGitSource('/repos/launcher', 'launcher'),
         localGitSource('/repos/omni-code', 'omni-code'),
@@ -618,7 +608,6 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     await h.proc.configureConsumer('thread-1', 'workspace-1', {
-      profileName: 'host',
       sources: [
         localGitSource('/repos/launcher', 'launcher'),
         localGitSource('/repos/omni-code', 'omni-code'),
@@ -644,7 +633,6 @@ describe('AgentProcess (serve mode)', () => {
   it('keeps project selection off AgentHost argv', async () => {
     const h = makeHarness();
     await h.proc.start({
-      profileName: 'host',
       sources: [localSource('/ws')],
       projectId: 'proj_abc',
     });
@@ -658,7 +646,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('always passes --snapshot-dir but keeps session identity off AgentHost argv', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const [, args1] = spawnCall(0);
     expect(args1).toContain('--snapshot-dir');
     expect(args1).not.toContain('--session-id');
@@ -666,7 +654,6 @@ describe('AgentProcess (serve mode)', () => {
     await h.proc.stop();
     hoisted.spawnCalls.length = 0;
     await h.proc.start({
-      profileName: 'host',
       sources: [localSource('/ws')],
       sessionId: 'sess_xyz',
     });
@@ -675,26 +662,9 @@ describe('AgentProcess (serve mode)', () => {
     expect(args2).not.toContain('sess_xyz');
   });
 
-  it('resolves a consumer profile during materialization, not host startup', async () => {
-    const h = makeHarness();
-    const arg = { profileName: 'missing', sources: [localSource('/ws')] };
-    await h.proc.start(arg);
-    const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
-    mutable.status = {
-      type: 'running',
-      timestamp: Date.now(),
-      data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
-    };
-
-    expect(spawnCallCount()).toBe(1);
-    await expect(h.proc.configureConsumer('thread-1', 'workspace-1', arg)).rejects.toThrow(
-      'Profile "missing" is no longer available'
-    );
-  });
-
   it('parses targetless JSON readiness without consumer runtime data', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'devbox', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     h.child.emitStdout(`${SERVE_PAYLOAD}\n`);
 
     const connecting = h.statuses.find((s) => s.type === 'connecting');
@@ -710,25 +680,9 @@ describe('AgentProcess (serve mode)', () => {
     }
   });
 
-  it('does not issue sandbox lifecycle RPCs without an execution environment', async () => {
-    const h = makeHarness();
-    const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
-    mutable.status = {
-      type: 'running',
-      timestamp: Date.now(),
-      data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
-    };
-
-    await expect(h.proc.pause()).resolves.toMatchObject({
-      ok: false,
-      supported: false,
-      reason: expect.stringContaining('execution environment'),
-    });
-  });
-
   it('rejects readiness without an AgentHost identity', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     const payload = JSON.parse(SERVE_PAYLOAD) as Record<string, unknown>;
     delete payload.agent_host_id;
 
@@ -738,7 +692,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('handles split-buffer payloads (line not complete in first write)', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
 
     const mid = Math.floor(SERVE_PAYLOAD.length / 2);
     h.child.emitStdout(SERVE_PAYLOAD.slice(0, mid));
@@ -749,7 +703,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('ignores duplicate JSON payloads after the first', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
 
     h.child.emitStdout(`${SERVE_PAYLOAD}\n`);
     h.child.emitStdout(`${SERVE_PAYLOAD}\n`);
@@ -760,7 +714,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('transitions to error on non-zero exit when not stopping', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     h.child.emitStderr('boom\n');
     h.child.emitClose(2);
 
@@ -773,7 +727,7 @@ describe('AgentProcess (serve mode)', () => {
 
   it('transitions to exited on close after stop()', async () => {
     const h = makeHarness();
-    await h.proc.start({ profileName: 'host', sources: [localSource('/ws')] });
+    await h.proc.start({ sources: [localSource('/ws')] });
     await h.proc.stop();
 
     const last = h.statuses.at(-1);
@@ -785,7 +739,7 @@ describe('AgentProcess (serve mode)', () => {
     (utilMock.isDirectory as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false).mockResolvedValueOnce(false);
 
     const h = makeHarness();
-    const arg = { profileName: 'host', sources: [localSource('/missing')] };
+    const arg = { sources: [localSource('/missing')] };
     await h.proc.start(arg);
     await expect(h.proc.configureConsumer('thread-1', 'workspace-1', arg)).rejects.toThrow(
       'Workspace directory not found'
@@ -800,7 +754,6 @@ describe('AgentProcess (serve mode)', () => {
 
     const h = makeHarness();
     await h.proc.start({
-      profileName: 'host',
       sources: [remoteSource('https://github.com/foo/bar.git')],
     });
     const mutable = h.proc as unknown as { status: WithTimestamp<AgentProcessStatus> };
@@ -810,7 +763,6 @@ describe('AgentProcess (serve mode)', () => {
       data: { uiUrl: 'http://127.0.0.1:9000', wsUrl: 'ws://127.0.0.1:9000/ws' },
     };
     await h.proc.configureConsumer('thread-1', 'workspace-1', {
-      profileName: 'host',
       sources: [remoteSource('https://github.com/foo/bar.git')],
     });
     expect(isDirSpy).not.toHaveBeenCalled();

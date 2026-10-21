@@ -44,8 +44,6 @@ export async function ensureRoutineSessionTab(
     routineId: task.id,
     routineName: task.name,
     routineSchedule: formatSchedule(task),
-    profileName: task.profileName ?? store.defaultProfileName ?? 'host',
-    profileNameExplicit: Boolean(task.profileName),
     createdAt: Date.now(),
     ...(workspaceDir ? { workspaceDir } : {}),
   };

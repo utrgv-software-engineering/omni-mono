@@ -1,7 +1,6 @@
 /**
- * Hotkeys settings. Two voice bindings: one that toggles recording on the
- * hovered code-deck column / active chat, and a separate one that opens and
- * records to the superuser resident's DM. The recorder captures a key combo and
+ * Hotkeys settings. One voice binding toggles recording on the hovered
+ * code-deck column / active chat. The recorder captures a key combo and
  * stores it in react-hotkeys-hook format (e.g. `alt+v`).
  */
 

@@ -4,7 +4,6 @@ import {
   containsEnvRef,
   emptyMcpConfig,
   emptyModelsConfig,
-  emptyNetworkConfig,
   parseEnvVars,
   PROVIDER_CONNECTION_FIELDS,
   useProviderConnections,
@@ -39,7 +38,6 @@ describe('empty config factories', () => {
   it('produce schema-valid empties', () => {
     expect(emptyModelsConfig()).toEqual({ version: 3, default: null, voice_default: null, providers: {} });
     expect(emptyMcpConfig()).toEqual({ mcpServers: {} });
-    expect(emptyNetworkConfig().enabled).toBe(false);
   });
 });
 

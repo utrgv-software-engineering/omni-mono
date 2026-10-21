@@ -21,27 +21,6 @@ function operations(initial: StoreData) {
       Object.assign(patch, { [key]: value });
     },
   };
-  const seedProfileName = (projectId: ProjectId | null | undefined): string => {
-    const projects = persistedStoreApi.getKey('projects') ?? [];
-    const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
-    const inherited = project?.sandboxProfile;
-    if (typeof inherited === 'string' && inherited.length > 0) {
-      return inherited;
-    }
-    return persistedStoreApi.getKey('defaultProfileName') ?? 'host';
-  };
-
-  const resolveAvailableProfileName = (name: string): string => {
-    const available = persistedStoreApi.getKey('availableSandboxProfiles');
-    if (!available || available.length === 0 || available.includes(name)) {
-      return name;
-    }
-    return available[0] ?? 'host';
-  };
-
-  const resolveCodeTabProfileName = (projectId: ProjectId | null | undefined): string =>
-    resolveAvailableProfileName(seedProfileName(projectId));
-
   const codeApi = {
     ensureRoutineTab: (candidate: CodeTab, activate: boolean): CodeTab => {
       const tabs = persistedStoreApi.getKey('codeTabs') ?? [];
@@ -82,8 +61,6 @@ function operations(initial: StoreData) {
         projectId: null,
         sessionId: uuidv4(),
         snapshotRef: uuidv4(),
-        profileName: resolveCodeTabProfileName(null),
-        profileNameExplicit: false,
         createdAt: Date.now(),
       };
       const tabs = [...existingTabs, tab];
@@ -161,16 +138,8 @@ function operations(initial: StoreData) {
         if (t.id !== tabId) {
           return t;
         }
-        const profileName = t.profileNameExplicit
-          ? resolveAvailableProfileName(t.profileName ?? seedProfileName(projectId))
-          : resolveCodeTabProfileName(projectId);
         // Attaching a project is intent — it activates a lazy chat column.
-        const activated = { activatedAt: t.activatedAt ?? Date.now() };
-        const workspaceIdentity = { snapshotRef: uuidv4() };
-        if (profileName === t.profileName) {
-          return { ...t, projectId, profileName, ...activated, ...workspaceIdentity };
-        }
-        return { ...t, projectId, profileName, ...activated, ...workspaceIdentity };
+        return { ...t, projectId, activatedAt: t.activatedAt ?? Date.now(), snapshotRef: uuidv4() };
       });
       persistedStoreApi.setKey('codeTabs', tabs);
       const attached = tabs.find((tab) => tab.id === tabId);
@@ -206,8 +175,6 @@ function operations(initial: StoreData) {
         projectId: conversation.projectId ?? null,
         sessionId: conversation.sessionId,
         snapshotRef: uuidv4(),
-        profileName: conversation.profileName ?? resolveCodeTabProfileName(conversation.projectId),
-        profileNameExplicit: Boolean(conversation.profileName),
         createdAt: Date.now(),
         activatedAt: Date.now(),
       };
@@ -224,7 +191,6 @@ function operations(initial: StoreData) {
       const tab = (persistedStoreApi.getKey('codeTabs') ?? []).find((candidate) => candidate.sessionId === sessionId);
       const inferredContext: Partial<ChatConversation> = tab
         ? {
-            ...(tab.profileName ? { profileName: tab.profileName } : {}),
             ...(tab.projectId ? { projectId: tab.projectId } : {}),
           }
         : {};
@@ -251,7 +217,6 @@ function operations(initial: StoreData) {
         );
         codeApi.recordConversation(tab.sessionId, {
           title: title ?? indexed?.title ?? tab.routineName ?? 'New chat',
-          ...(tab.profileName ? { profileName: tab.profileName } : {}),
           ...(tab.projectId ? { projectId: tab.projectId } : {}),
         });
         const conversation = (persistedStoreApi.getKey('chatConversations') ?? []).find(
@@ -368,15 +333,6 @@ function operations(initial: StoreData) {
       const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) =>
         t.id === tabId ? { ...t, snapshotRef } : t
       );
-      persistedStoreApi.setKey('codeTabs', tabs);
-    },
-    setTabProfile: (tabId: CodeTabId, profileName: string) => {
-      const tabs = (persistedStoreApi.getKey('codeTabs') ?? []).map((t) => {
-        if (t.id !== tabId) {
-          return t;
-        }
-        return { ...t, profileName, profileNameExplicit: true };
-      });
       persistedStoreApi.setKey('codeTabs', tabs);
     },
   };

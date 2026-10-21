@@ -3,7 +3,7 @@
  * backend other than local Electron main. Two link kinds share the card:
  *
  * - **WSL** (Windows only) — the same server build running as a daemon inside
- *   a WSL distro, where Docker and the sandboxes are Linux-native.
+ *   a WSL distro.
  *   ``wsl:link`` provisions the payload into the chosen distro and persists
  *   the flag.
  * - **Self-hosted server** — a server-mode launcher the user runs themselves
@@ -41,7 +41,7 @@ import type { WslBackendStatus, WslDetectResult } from '@/shared/types';
 type WslStatusLine = { text: string; tone: 'ok' | 'warn' | 'error' | 'muted' };
 type BackendSetupMode = 'wsl' | 'server';
 
-/** Map the daemon + Docker state to a single friendly status line. */
+/** Map the daemon state to a single friendly status line. */
 const wslStatusLine = (status: WslBackendStatus | null): WslStatusLine => {
   if (!status) {
     return { text: 'Checking backend status…', tone: 'muted' };
@@ -55,17 +55,8 @@ const wslStatusLine = (status: WslBackendStatus | null): WslStatusLine => {
   if (status.state === 'starting') {
     return { text: 'Starting…', tone: 'muted' };
   }
-  if (status.docker === 'missing') {
-    return {
-      text: `Docker not found in ${status.distro ?? 'the distro'} — enable Docker Desktop's WSL integration for this distro, or install docker-ce`,
-      tone: 'warn',
-    };
-  }
-  if (status.docker === 'daemon-down') {
-    return { text: 'Docker is installed but not running', tone: 'warn' };
-  }
   if (status.state === 'running') {
-    return { text: 'Running — Docker available', tone: 'ok' };
+    return { text: 'Running', tone: 'ok' };
   }
   return { text: 'Checking backend status…', tone: 'muted' };
 };
@@ -82,7 +73,7 @@ export const RemoteBackendCard = memo(() => {
   const [error, setError] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
 
-  // ── WSL-linked: live daemon + Docker status, polled while visible ──
+  // ── WSL-linked: live daemon status, polled while visible ──
   const [wslStatus, setWslStatus] = useState<WslBackendStatus | null>(null);
   const refreshWslStatus = useCallback(() => {
     void localEmitter

@@ -67,43 +67,6 @@ const REMOTE_ROOT = '~/.omni/launcher';
  */
 const execArgs = (distro: string, script: string): string[] => ['-d', distro, '--exec', 'sh', '-c', script];
 
-/**
- * Root-context in-distro command — same `--exec sh -c` rule as
- * {@link execArgs} with `-u root` inserted. Docker install/start need root,
- * and `wsl.exe -u root` grants it with no password prompt.
- */
-const rootExecArgs = (distro: string, script: string): string[] => [
-  '-d',
-  distro,
-  '-u',
-  'root',
-  '--exec',
-  'sh',
-  '-c',
-  script,
-];
-
-/**
- * get.docker.com convenience installer, then the default (uid 1000) user into
- * the docker group. The script is fetched to a file first because `curl | sh`
- * hides curl failures (sh reads empty input and exits 0); the usermod is
- * grouped `{ … || true; }` so ONLY it is best-effort — a bare trailing
- * `|| true` would swallow install failures too.
- */
-const INSTALL_DOCKER_SCRIPT =
-  'export DEBIAN_FRONTEND=noninteractive; ' +
-  'curl -fsSL https://get.docker.com -o /tmp/omni-get-docker.sh && sh /tmp/omni-get-docker.sh && ' +
-  '{ usermod -aG docker "$(getent passwd 1000 | cut -d: -f1)" || true; }';
-
-/**
- * Start dockerd: the sysvinit/openrc service wrapper when one is registered
- * (Ubuntu/Debian get one from docker-ce), else a raw dockerd backgrounded in
- * a subshell with its output on /var/log/dockerd.log — WSL distros have no
- * systemd pid 1 by default, so `service` is the broadest first try. The
- * trailing sleep gives the daemon socket a moment before the status re-probe.
- */
-const START_DOCKER_SCRIPT = 'service docker start >/dev/null 2>&1 || (dockerd >/var/log/dockerd.log 2>&1 &); sleep 2';
-
 /** Stage-then-swap unpack: a torn stdin stream can only ever corrupt the tmp
  *  dir, never a live install. */
 const PROVISION_SCRIPT = `rm -rf ${REMOTE_ROOT}.tmp && mkdir -p ${REMOTE_ROOT}.tmp && tar xzf - -C ${REMOTE_ROOT}.tmp && rm -rf ${REMOTE_ROOT} && mv ${REMOTE_ROOT}.tmp ${REMOTE_ROOT}`;
@@ -325,7 +288,7 @@ export class WslBackendManager {
   private readonly pickFreePort: () => Promise<number>;
   private readonly supervisionIntervalMs: number;
 
-  private status: WslBackendStatus = { state: 'idle', docker: 'unknown', timestamp: Date.now() };
+  private status: WslBackendStatus = { state: 'idle', timestamp: Date.now() };
   private distro: string | null = null;
   private port: number | null = null;
   /** Token-signing secret. Per-boot random in tracked mode (memory only);
@@ -492,7 +455,7 @@ export class WslBackendManager {
    * Persistent-mode fast path: if the store points at a daemon left running by
    * a previous app session AND it is healthy AND it reports this exact
    * launcher version (renderer/daemon must never skew), adopt it — keep the
-   * stored secret + port, run the docker check, no respawn. Anything else
+   * stored secret + port, no respawn. Anything else
    * falls through to the normal reap + provision + fresh-spawn boot, whose
    * REAP_SCRIPT kills the stale daemon by pidfile.
    */
@@ -515,7 +478,6 @@ export class WslBackendManager {
     this.consecutiveFailures = 0;
     const gen = ++this.generation;
     this.setStatus({ state: 'running', distro: backend.distro, port: backend.port });
-    void this.checkDocker();
     void this.supervise(gen);
     return true;
   }
@@ -610,49 +572,6 @@ export class WslBackendManager {
     this.child?.kill();
     this.child = null;
     await this.reapStaleDaemon(distro);
-  }
-
-  /**
-   * `wsl:install-docker` — install docker-ce in the linked distro via the
-   * get.docker.com script, run as root ({@link rootExecArgs}). Long-running
-   * (the runWsl seam applies no timeout — apt downloads can take minutes);
-   * rejects with decoded stderr on failure. On success, {@link startDocker}
-   * brings the daemon up and re-runs the docker check so `status.docker`
-   * refreshes.
-   */
-  async installDocker(): Promise<void> {
-    if (this.platform !== 'win32') {
-      return;
-    }
-    const distro = this.distro;
-    if (!distro) {
-      throw new Error('WSL backend is not active');
-    }
-    const res = await this.runWsl(rootExecArgs(distro, INSTALL_DOCKER_SCRIPT));
-    if (res.code !== 0) {
-      throw new Error(`Docker install failed (exit ${res.code}): ${decodeWslOutput(res.stderr).trim()}`);
-    }
-    await this.startDocker();
-  }
-
-  /**
-   * `wsl:start-docker` — the daemon-down remedy: start dockerd as root
-   * ({@link START_DOCKER_SCRIPT}: service wrapper first, detached dockerd
-   * fallback), then re-run the docker check so `status.docker` refreshes.
-   */
-  async startDocker(): Promise<void> {
-    if (this.platform !== 'win32') {
-      return;
-    }
-    const distro = this.distro;
-    if (!distro) {
-      throw new Error('WSL backend is not active');
-    }
-    const res = await this.runWsl(rootExecArgs(distro, START_DOCKER_SCRIPT));
-    if (res.code !== 0) {
-      throw new Error(`Docker start failed (exit ${res.code}): ${decodeWslOutput(res.stderr).trim()}`);
-    }
-    await this.checkDocker();
   }
 
   /** Mint a WS auth token for the renderer (`wsl:get-ws-token`). */
@@ -803,7 +722,6 @@ export class WslBackendManager {
         // exits escalate to the error state.
         this.consecutiveFailures = 0;
         this.setStatus({ state: 'running' });
-        void this.checkDocker();
         if (this.persistent) {
           void this.supervise(gen);
         }
@@ -871,27 +789,6 @@ export class WslBackendManager {
       return body.ok === true ? { version: body.version ?? '' } : null;
     } catch {
       return null;
-    }
-  }
-
-  /** Non-fatal environment check, run async after the daemon is healthy. */
-  private async checkDocker(): Promise<void> {
-    const distro = this.distro;
-    if (!distro) {
-      return;
-    }
-    try {
-      const res = await this.runWsl(execArgs(distro, 'docker info'));
-      if (res.code === 0) {
-        this.setStatus({ docker: 'ok' });
-        return;
-      }
-      const output = decodeWslOutput(res.stderr) + decodeWslOutput(res.stdout);
-      // Shell "command not found" exits 127; anything else is an installed
-      // docker CLI that can't reach its daemon.
-      this.setStatus({ docker: res.code === 127 || /not found/i.test(output) ? 'missing' : 'daemon-down' });
-    } catch {
-      this.setStatus({ docker: 'daemon-down' });
     }
   }
 

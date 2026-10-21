@@ -29,12 +29,8 @@ type ChatShellProps = {
   onSubmit: (msg: PendingMessage) => void;
   pendingMessages?: PendingMessage[];
   suggestions?: ReadonlyArray<ChatShellSuggestion>;
-  sandboxLabel?: string;
   /** Sandbox choices for the composer chip — same control, same place as the
    *  live session, so the composer looks identical pre- and post-launch. */
-  sandboxOptions?: { value: string; label: string }[];
-  currentSandboxProfile?: string;
-  onSandboxChange?: (value: string) => void;
   /** Extra composer chips (e.g. attach-project), mirrored into the live app. */
   composerExtras?: ReactNode;
   workspaceReady?: boolean;
@@ -59,10 +55,6 @@ export const ChatShell = memo(
     onSubmit,
     pendingMessages,
     suggestions,
-    sandboxLabel = 'sandbox',
-    sandboxOptions,
-    currentSandboxProfile,
-    onSandboxChange,
     composerExtras,
     workspaceReady = true,
     onOpenWorkspaceSettings,
@@ -82,7 +74,7 @@ export const ChatShell = memo(
     const launchStatus =
       phase === 'error' ? (
         <Alert variant="destructive" className="text-left">
-          <AlertTitle>Couldn’t start {sandboxLabel}</AlertTitle>
+          <AlertTitle>Couldn’t start the session</AlertTitle>
           {error && <AlertDescription>{error}</AlertDescription>}
           {onRetry && (
             <Button type="button" onClick={onRetry} className="col-start-2 mt-2 justify-self-start rounded-full">
@@ -93,7 +85,7 @@ export const ChatShell = memo(
       ) : isConnecting ? (
         <Badge variant="secondary" role="status" aria-live="polite" className="gap-2 px-3 py-1.5 font-normal">
           <Spinner className="size-3" aria-hidden="true" />
-          Starting {sandboxLabel}…
+          Starting session…
         </Badge>
       ) : null;
 
@@ -148,7 +140,7 @@ export const ChatShell = memo(
                                   <>
                                     {!onLaunch && (
                                       <p className="text-sm text-muted-foreground">
-                                        Your first message starts a session in {sandboxLabel}.
+                                        Your first message starts a session.
                                       </p>
                                     )}
                                     {onLaunch && (
@@ -215,10 +207,6 @@ export const ChatShell = memo(
                   conversationId={conversationId}
                   onSubmit={handleSubmit}
                   disabled={!workspaceReady}
-                  sandboxLabel={sandboxLabel}
-                  sandboxOptions={sandboxOptions}
-                  currentSandboxProfile={currentSandboxProfile}
-                  onSandboxChange={onSandboxChange}
                   composerExtras={composerExtras}
                 />
               </div>

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Omni Code Launcher — an Electron + React desktop app for installing the Omni Code runtime and launching Docker-based sandboxes. Also ships a browser/server build (Fastify + WebSocket) that runs the same renderer without Electron.
+Omni Code Launcher — an Electron + React desktop app for installing the Omni Code runtime and running agent chats on the host (omni-code's default profile; the desktop has no sandbox/profile support of its own). Also ships a browser/server build (Fastify + WebSocket) that runs the same renderer without Electron.
 
 ## Commands
 
@@ -56,7 +56,7 @@ IPC goes through `TransportEmitter` / `TransportListener` interfaces (`src/share
 
 `src/renderer/services/ipc.ts` picks the transport at startup. All channel signatures live in `src/shared/types.ts` (`IpcEvents` renderer→main, `IpcRendererEvents` main→renderer).
 
-Server-side, `WsHandler` keeps a `persistentSessions` map keyed by `sessionId` from the client so managers and sandbox containers **survive WS reconnections and React remounts** — if you're adding a manager that holds long-lived state, wire it into `wireGlobalHandlers` (shared across clients) or `wireClientManagers` (per-session) in `src/server/managers.ts`.
+Server-side, `WsHandler` keeps a `persistentSessions` map keyed by `sessionId` from the client so managers and agent runtimes **survive WS reconnections and React remounts** — if you're adding a manager that holds long-lived state, wire it into `wireGlobalHandlers` (shared across clients) or `wireClientManagers` (per-session) in `src/server/managers.ts`.
 
 ### Shared IPC handlers
 
@@ -70,7 +70,7 @@ Lifecycle pattern: each manager is a factory returning `[instance, cleanup]`. Re
 - `ProcessManager` (`process-manager.ts`) — all agent processes (chat + code tabs) keyed by string ID, driven by `AgentProcess` (`agent-process.ts`)
 - `ProjectManager` (`project-manager.ts`) — projects (named sets of sources plus their chats), persisted as `StoreData.projects`; seeds the Personal project. `projects-import.ts` is the one-time import from the retired `projects.db`.
 - `OmniInstallManager` — Python + venv via bundled `uv` binary
-- `ConsoleManager` — proxies `terminal:*` IPC into `omni serve`'s WebSocket so terminals run inside the sandbox via `omniagents.rpc.terminal_backends.SessionPtyBackend`. The shell lives in the agent process (one PTY per `terminal_id`); main is a thin transport. See `src/main/terminal-proxy.ts` for the WS plumbing and `omni-code/server_functions/terminal.py` for the server-side entry points (`terminal.create`, `terminal.close`).
+- `ConsoleManager` — proxies `terminal:*` IPC into `omni serve`'s WebSocket so terminals run in the agent's environment via `omniagents.rpc.terminal_backends.SessionPtyBackend`. The shell lives in the agent process (one PTY per `terminal_id`); main is a thin transport. See `src/main/terminal-proxy.ts` for the WS plumbing and `omni-code/server_functions/terminal.py` for the server-side entry points (`terminal.create`, `terminal.close`).
 - `AppControlManager`
 
 Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWindow` (Electron) / `sendToAll` (server). Store changes fan out on the `store:changed` channel.
@@ -81,7 +81,7 @@ Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWin
 
 ### Renderer structure
 
-- `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `Agents`, `AppControl`, `Banner`, `Browser`, `Code`, `CommandPalette`, `Console`, `Files`, `Gallery`, `Git`, `Jobs`, `Omni`, `Onboarding`, `Plugins`, `Projects`, `Review`, `Sandboxes`, `SandboxProfile`, `ScheduledTasks`, `SettingsModal`, `Toast`, `Voice`, `XTermLogViewer`.
+- `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `Agents`, `AppControl`, `Banner`, `Browser`, `Code`, `CommandPalette`, `Console`, `Files`, `Gallery`, `Git`, `Jobs`, `Omni`, `Onboarding`, `Plugins`, `Projects`, `Review`, `ScheduledTasks`, `SettingsModal`, `Toast`, `Voice`, `XTermLogViewer`.
 - `src/renderer/ds/` — design system primitives (Fluent + Radix + custom)
 - `src/renderer/services/` — cross-cutting: `ipc`, `store` (mirrors main-process store into an atom), `status` (polls `main-process:get-status`), `navigation`, `agent-process`, `config`, `dev`
 - `src/renderer/common/` — shared UI (webview, layouts)

@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   Box,
   GitBranch,
-  Globe,
   Keyboard,
   Palette,
   Puzzle,
@@ -36,7 +35,6 @@ import { SettingsModalEnvironmentTab } from '@/renderer/features/SettingsModal/S
 import { SettingsModalGeneralTab } from '@/renderer/features/SettingsModal/SettingsModalGeneralTab';
 import { SettingsModalGitTab } from '@/renderer/features/SettingsModal/SettingsModalGitTab';
 import { SettingsModalHotkeysTab } from '@/renderer/features/SettingsModal/SettingsModalHotkeysTab';
-import { SettingsModalNetworkTab } from '@/renderer/features/SettingsModal/SettingsModalNetworkTab';
 import { SettingsModalResetButton } from '@/renderer/features/SettingsModal/SettingsModalResetButton';
 import { SettingsModalWorkspaceTab } from '@/renderer/features/SettingsModal/SettingsModalWorkspaceTab';
 
@@ -49,8 +47,7 @@ type SettingsTab =
   | 'Account'
   | 'Workspace'
   | 'Environment'
-  | 'Git'
-  | 'Network';
+  | 'Git';
 
 type TabDef = { value: SettingsTab; label: string; icon: React.JSX.Element };
 
@@ -77,7 +74,6 @@ const TAB_GROUPS: ReadonlyArray<{ label: string | null; tabs: ReadonlyArray<TabD
       { value: 'Workspace', label: 'Workspace & Sandbox', icon: <Box /> },
       { value: 'Environment', label: 'Environment', icon: <SquareTerminal /> },
       { value: 'Git', label: 'Git', icon: <GitBranch /> },
-      { value: 'Network', label: 'Network', icon: <Globe /> },
     ],
   },
 ];
@@ -201,7 +197,6 @@ export const SettingsPage = memo(() => {
           {shownTab === 'Workspace' && <SettingsModalWorkspaceTab />}
           {shownTab === 'Environment' && <SettingsModalEnvironmentTab />}
           {shownTab === 'Git' && <SettingsModalGitTab />}
-          {shownTab === 'Network' && <SettingsModalNetworkTab />}
           {shownTab === 'General' && (
             <div className="pt-4 border-t border-border">
               <SettingsModalResetButton />

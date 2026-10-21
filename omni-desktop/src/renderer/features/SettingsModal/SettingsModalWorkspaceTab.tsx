@@ -1,16 +1,12 @@
 import { useStore } from '@nanostores/react';
-import type { ChangeEvent } from 'react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 
 import { Alert, AlertDescription } from '@/renderer/ds/ui/alert';
 import { Button } from '@/renderer/ds/ui/button';
 import { Card, CardContent } from '@/renderer/ds/ui/card';
 import { Field, FieldLabel } from '@/renderer/ds/ui/field';
-import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
 import { $launcherVersion } from '@/renderer/features/Banner/state';
 import { $omniInstallProcessStatus, $omniRuntimeInfo, omniInstallApi } from '@/renderer/features/Omni/state';
-import { $sandboxProfiles, $substrateStatus } from '@/renderer/features/Sandboxes/state';
-import { getAvailableProfileNames, getProfileMenuLabel } from '@/renderer/features/SandboxProfile/profile-list';
 import { RemoteBackendCard } from '@/renderer/features/SettingsModal/RemoteBackendCard';
 import {
   settingsCardContentClassName,
@@ -22,7 +18,7 @@ import { persistedStoreApi, selectWorkspaceDir } from '@/renderer/services/store
 
 /**
  * Developer band: where sessions run and what runs them — workspace
- * directory, sandbox profile, the omni runtime, and the CLI symlink.
+ * directory, the omni runtime, and the CLI symlink.
  */
 export const SettingsModalWorkspaceTab = memo(() => {
   const store = useStore(persistedStoreApi.$atom);
@@ -59,25 +55,9 @@ export const SettingsModalWorkspaceTab = memo(() => {
     }
   }, [checkCliStatus]);
 
-  // Subscribing keeps the options current as discovery lands (and triggers
-  // the atom's fetch-on-first-subscribe).
-  const discovered = useStore($sandboxProfiles);
-  const substrate = useStore($substrateStatus);
-  const availableProfiles = useMemo<string[]>(
-    () => getAvailableProfileNames({ available: store.availableSandboxProfiles, discovered, substrate }),
-    [store.availableSandboxProfiles, discovered, substrate]
-  );
-
-  const onChangeProfile = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
-    persistedStoreApi.setKey('defaultProfileName', e.target.value);
-  }, []);
-
   const reinstallRuntime = useCallback(() => {
     omniInstallApi.startInstall(true);
   }, []);
-
-  const currentProfile = store.defaultProfileName ?? 'host';
-  const showSandboxSection = store.previewFeatures || import.meta.env.MODE === 'development';
 
   return (
     <SettingsPane>
@@ -102,27 +82,6 @@ export const SettingsModalWorkspaceTab = memo(() => {
                 <Button size="sm" variant="ghost" onClick={selectWorkspaceDir}>
                   Change
                 </Button>
-              </Field>
-            </CardContent>
-          </Card>
-        </SettingsSection>
-      )}
-
-      {showSandboxSection && (
-        <SettingsSection title="Sandbox">
-          <Card>
-            <CardContent>
-              <Field orientation="horizontal" className="justify-between gap-4">
-                <div className="min-w-0">
-                  <FieldLabel>Default sandbox profile</FieldLabel>
-                </div>
-                <Select value={currentProfile} onChange={onChangeProfile}>
-                  {availableProfiles.map((name) => (
-                    <option key={name} value={name}>
-                      {getProfileMenuLabel(name)}
-                    </option>
-                  ))}
-                </Select>
               </Field>
             </CardContent>
           </Card>
@@ -183,14 +142,6 @@ export const SettingsModalWorkspaceTab = memo(() => {
                 <FieldLabel>Launcher version</FieldLabel>
               </div>
               <span className="text-sm text-muted-foreground sm:text-xs">{launcherVersion ?? '—'}</span>
-            </Field>
-            <Field orientation="horizontal" className="justify-between gap-4">
-              <div className="min-w-0">
-                <FieldLabel>Compute</FieldLabel>
-              </div>
-              <span className="text-sm text-muted-foreground sm:text-xs">
-                {currentProfile === 'host' ? 'None' : 'Local'}
-              </span>
             </Field>
           </CardContent>
         </Card>

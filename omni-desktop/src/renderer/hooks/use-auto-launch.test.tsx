@@ -112,9 +112,7 @@ beforeEach(() => {
 
   ($initialized as { set: (value: boolean) => void }).set(true);
   ($omniRuntimeReadiness as { set: (value: { status: 'ready' }) => void }).set({ status: 'ready' });
-  (persistedStoreApi.$atom as unknown as { set: (value: Partial<StoreData>) => void }).set({
-    defaultProfileName: 'host',
-  });
+  (persistedStoreApi.$atom as unknown as { set: (value: Partial<StoreData>) => void }).set({});
   $agentStatuses.set({});
 
   invoke.mockImplementation((channel: string, processId?: string) => {
@@ -176,7 +174,6 @@ describe('useAutoLaunch sandbox profile override switching', () => {
       workspaceDir: '/workspace/a',
       sessionId: 'session-a',
       snapshotRef: 'snapshot-a',
-      profileNameOverride: 'host',
     };
     await renderHook(props);
     await act(async () => {
@@ -193,24 +190,8 @@ describe('useAutoLaunch sandbox profile override switching', () => {
       workspaceDir: '/workspace/a',
       sessionId: 'session-a',
       snapshotRef: 'snapshot-a',
-      profileNameOverride: 'host',
     });
     expect(stop).not.toHaveBeenCalled();
-  });
-  it('labels lifecycle logs with the tab-selected profile instead of the global default', async () => {
-    (persistedStoreApi.$atom as unknown as { set: (value: Partial<StoreData>) => void }).set({
-      defaultProfileName: 'devbox',
-    });
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: null,
-      profileNameOverride: 'host',
-    });
-
-    expect(createMachineLogger).toHaveBeenCalledWith('autoLaunch:code-tab-1', {
-      tags: { tab: 'code-tab-1', sandbox: 'host' },
-    });
   });
 
   it('surfaces a rejected process start through the launch state machine', async () => {
@@ -263,47 +244,11 @@ describe('useAutoLaunch sandbox profile override switching', () => {
     expect(value.phase).toBe('starting');
   });
 
-  it('does not switch sandboxes when the profile override changes before launch', async () => {
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: null,
-      profileNameOverride: 'host',
-    });
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: null,
-      profileNameOverride: 'devbox',
-    });
-
-    expect(agentProcessApi.switchSandbox).not.toHaveBeenCalled();
-  });
-
-  it('switches sandboxes when the profile override changes for a running session', async () => {
-    $agentStatuses.set({ 'code-tab-1': runningStatus() });
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: '/workspace/project',
-      profileNameOverride: 'host',
-    });
-    await flushEffects();
-
-    await renderHook({
-      processId: 'code-tab-1',
-      workspaceDir: '/workspace/project',
-      profileNameOverride: 'devbox',
-    });
-
-    expect(agentProcessApi.switchSandbox).toHaveBeenCalledWith('code-tab-1', 'devbox');
-  });
-
   it('relaunches when the registered source override changes', async () => {
     await renderHook({
       processId: 'code-tab-1',
       workspaceDir: '/workspace/project',
       sourceOverrideDir: '/workspace/worktree-a',
-      profileNameOverride: 'host',
     });
     await flushEffects();
     await act(async () => {
@@ -316,7 +261,6 @@ describe('useAutoLaunch sandbox profile override switching', () => {
       processId: 'code-tab-1',
       workspaceDir: '/workspace/project',
       sourceOverrideDir: '/workspace/worktree-b',
-      profileNameOverride: 'host',
     });
     await act(async () => {
       await flushEffects();

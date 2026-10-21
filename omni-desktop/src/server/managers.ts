@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig } from '@/lib/agent-config';
+import { emptyMcpConfig, emptyModelsConfig } from '@/lib/agent-config';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { buildBrowserContext, registerBrowserHandlers } from '@/main/browser-manager';
 import { ChatCleanupRunner, cleanupRemovedChat, completeChatRemoval } from '@/main/chat-removal';
@@ -22,19 +22,10 @@ import {
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
 import { ProcessManager, registerProcessHandlers } from '@/main/process-manager';
-import { registerProfileCatalogHandlers } from '@/main/profile-catalog';
-import { getBundledProfilesDir } from '@/main/profile-resolver';
 import { ProjectManager, registerProjectHandlers } from '@/main/project-manager';
 import { importLegacyProjectsDb } from '@/main/projects-import';
 import { RoutineBridge } from '@/main/routine-bridge';
-import {
-  defaultSandboxInventoryDeps,
-  processOwnersFromState,
-  registerSandboxInventoryHandlers,
-  suspendedSessionOwners,
-} from '@/main/sandbox-inventory';
 import { registerScheduledTaskHandlers, ScheduledTaskManager } from '@/main/scheduled-task-manager';
-import { deleteSnapshot, protectedSnapshotsFromTabs, registerSnapshotHandlers } from '@/main/snapshot-manager';
 import { getOmniConfigDir } from '@/main/util';
 import { ServerIpcAdapter } from '@/server/ipc-adapter';
 import { ServerSecretStore } from '@/server/secret-store';
@@ -117,7 +108,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     sendToWindow: sendToAll,
     fetchFn: globalThis.fetch,
     getStoreData: () => ({
-      defaultProfileName: store.get('defaultProfileName') ?? 'host',
       projects: store.get('projects') ?? [],
       gitCredentials: store.get('gitCredentials') ?? [],
     }),
@@ -142,9 +132,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
       assertCleanupOwner(tab.runtimeOwner);
       await cleanupRemovedChat(tab, {
         stop: (id) => processManager.retire(id),
-        deleteSnapshot,
-        isSnapshotProtected: (ref) =>
-          protectedSnapshotsFromTabs(store.get('codeTabs') ?? []).some((claim) => claim.snapshotRef === ref),
       });
     },
     acknowledge: async (id) => {
@@ -157,7 +144,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   chatCleanup.start();
 
   /**
-   * Write the agent config (mcp/network) to the shared config dir —
+   * Write the agent config (mcp) to the shared config dir —
    * the same dir omni serve's get_config_dir() resolves — plus a real `.env`
    * (omni serve reads it into the sandbox container's manifest.environment).
    */
@@ -166,7 +153,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
       materializeAgentConfig({
         configDir,
         mcp: store.get('mcpConfig') ?? emptyMcpConfig(),
-        network: store.get('networkConfig') ?? emptyNetworkConfig(),
       });
       writeFileSync(join(configDir, '.env'), store.get('envVars') ?? '', 'utf-8');
     } catch (err) {
@@ -184,7 +170,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   migrateAgentConfigFromFiles(store as unknown as SettingsConfigStore, configDir);
   removeRetiredProjectsMcpEntry(configDir);
   // Write the agent's on-disk config so the next omni-serve spawn reads
-  // fresh model/mcp/network files.
+  // fresh model/mcp files.
   materializeConfig();
 
   // Downloads are an Electron-only feature (Chromium session.will-download).
@@ -279,33 +265,6 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     () => secretStore,
     () => sendSnapshot()
   );
-  // Cascade-delete chat/code-tab snapshots when the renderer closes a tab,
-  // plus the Sandboxes-tab snapshot browser.
-  registerSnapshotHandlers(ipc, {
-    getProtectedSnapshots: () => protectedSnapshotsFromTabs(store.get('codeTabs') ?? []),
-  });
-
-  // Sandboxes tab (docs/sandboxes-tab-plan.md Phase 2). Profile discovery
-  // uses the same dirs as AgentHost profile registration: the launcher's
-  // bundled assets/profiles (resolved relative to out/server → repo checkout,
-  // exactly like agent-process's resolveProfile) plus the shared
-  // <config>/sandbox dir of user-editable profiles. The
-  // availableSandboxProfiles filter is resolved from the same snapshot the
-  // picker reads, so both surfaces always agree.
-  registerProfileCatalogHandlers(ipc, {
-    bundledDir: getBundledProfilesDir(),
-    userDir: join(configDir, 'sandbox'),
-    getAvailableProfileNames: () => getStoreSnapshot().availableSandboxProfiles,
-  });
-  registerSandboxInventoryHandlers(ipc, {
-    ...defaultSandboxInventoryDeps(),
-    getProcessOwners: () => [
-      ...processOwnersFromState(processManager.getContainerOwners(), store.get('codeTabs') ?? []),
-      // Durable container sessions with no live serve process.
-      ...suspendedSessionOwners(store.get('codeTabs') ?? []),
-    ],
-  });
-
   // GitHub / Azure DevOps discovery + GitHub status/unlink. All resolve their
   // token from the SecretStore (matching the Git-credential and GitHub OAuth
   // contract used by the Electron handlers).

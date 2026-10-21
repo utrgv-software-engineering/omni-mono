@@ -5,13 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { materializeAgentConfig } from '@/main/config-materializer';
-import type { McpConfig, NetworkConfig } from '@/shared/types';
-
-const NET: NetworkConfig = {
-  enabled: true,
-  presets: [],
-  allowlist: ['api.openai.com'],
-};
+import type { McpConfig } from '@/shared/types';
 
 const mcp = (): McpConfig => ({
   mcpServers: {
@@ -31,19 +25,17 @@ const read = (name: string) => JSON.parse(readFileSync(join(dir, name), 'utf-8')
 
 describe('materializeAgentConfig', () => {
   it('writes configs verbatim', () => {
-    materializeAgentConfig({ configDir: dir, mcp: mcp(), network: NET });
+    materializeAgentConfig({ configDir: dir, mcp: mcp() });
     expect(read('mcp.json')).toEqual(mcp());
-    expect(read('network.json')).toEqual(NET);
   });
 
-  it('can relinquish mcp.json while continuing to materialize the network config', () => {
-    materializeAgentConfig({ configDir: dir, mcp: mcp(), network: NET });
+  it('can relinquish mcp.json', () => {
+    materializeAgentConfig({ configDir: dir, mcp: mcp() });
     const canonical = { mcpServers: { canonical: { type: 'stdio', command: 'owned' } } };
     writeFileSync(join(dir, 'mcp.json'), `${JSON.stringify(canonical)}\n`);
 
-    materializeAgentConfig({ configDir: dir, mcp: mcp(), network: NET, writeMcp: false });
+    materializeAgentConfig({ configDir: dir, mcp: mcp(), writeMcp: false });
 
     expect(read('mcp.json')).toEqual(canonical);
-    expect(read('network.json')).toEqual(NET);
   });
 });

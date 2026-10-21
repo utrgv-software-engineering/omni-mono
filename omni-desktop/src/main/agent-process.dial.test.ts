@@ -175,7 +175,7 @@ describe('AgentProcess dial auth (serve mode)', () => {
       fetchFn: (async () => ({ status: 200 })) as unknown as typeof globalThis.fetch,
     });
 
-    await proc.start({ profileName: 'host', sources: [] });
+    await proc.start({ sources: [] });
     child.emitStdout(
       `${JSON.stringify({
         sandbox_url: `http://127.0.0.1:${serve.port}`,
@@ -206,14 +206,13 @@ describe('AgentProcess dial auth (serve mode)', () => {
     expect(serve.connections[0]!.authorization).toBe('Bearer serve-token-1');
     expect(serve.connections[0]!.query).toBe('');
 
-    // One-shot server_call dials (pause) carry the same header.
-    const result = await proc.pause({
+    // One-shot server_call dials (snapshot discard) carry the same header.
+    await proc.discardConsumerSnapshot({
       workspaceId: 'workspace-authenticated',
       environmentId: 'environment-authenticated',
       environmentGeneration: 3,
     });
-    expect(result.ok).toBe(true);
-    const callConn = serve.connections.find((c) => c.calls.includes('sandbox.pause'));
+    const callConn = serve.connections.find((c) => c.calls.includes('sandbox.discard_snapshot'));
     expect(callConn?.authorization).toBe('Bearer serve-token-1');
     expect(callConn?.query).toBe('');
     expect(callConn?.methods.slice(0, 3)).toEqual(['initialize', 'initialized', 'server_call']);
@@ -241,7 +240,7 @@ describe('AgentProcess dial auth (serve mode)', () => {
       fetchFn: (async () => ({ status: 200 })) as unknown as typeof globalThis.fetch,
     });
 
-    await proc.start({ profileName: 'host', sources: [] });
+    await proc.start({ sources: [] });
     child.emitStdout(
       `${JSON.stringify({
         sandbox_url: `http://127.0.0.1:${serve.port}`,

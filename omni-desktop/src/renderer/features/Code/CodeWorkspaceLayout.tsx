@@ -25,17 +25,11 @@ type CodeWorkspaceLayoutProps = {
   onSessionChange?: (sessionId: string | undefined) => void;
   variables?: Record<string, unknown>;
   voiceVariables?: Record<string, unknown>;
-  codeServerSrc?: string;
-  vncSrc?: string;
   activeApp?: AppId;
   onActiveAppChange?: (app: AppId) => void;
   onReady?: () => void;
   headerActionsTargetId?: string;
   headerActionsCompact?: boolean;
-  sandboxLabel?: string;
-  sandboxOptions?: { value: string; label: string }[];
-  currentSandboxProfile?: string;
-  onSandboxChange?: (value: string) => void;
   /**
    * Capability names of the attached execution environment. Gates
    * capability-dependent dock apps: Terminal hides when `pty` is absent
@@ -102,17 +96,11 @@ export const CodeWorkspaceLayout = memo(
     onSessionChange,
     variables,
     voiceVariables,
-    codeServerSrc,
-    vncSrc,
     activeApp = 'chat',
     onActiveAppChange,
     onReady,
     headerActionsTargetId,
     headerActionsCompact,
-    sandboxLabel,
-    sandboxOptions,
-    currentSandboxProfile,
-    onSandboxChange,
     environmentCapabilities,
     composerExtras,
     onClientToolCall,
@@ -196,8 +184,6 @@ export const CodeWorkspaceLayout = memo(
       [tabId]
     );
 
-    const sandboxUrls = useMemo(() => ({ codeServerUrl: codeServerSrc, noVncUrl: vncSrc }), [codeServerSrc, vncSrc]);
-
     const [filesActivated, setFilesActivated] = useState(activeApp === 'files');
     const [gitActivated, setGitActivated] = useState(activeApp === 'git');
     const [reviewActivated, setReviewActivated] = useState(activeApp === 'review');
@@ -270,10 +256,6 @@ export const CodeWorkspaceLayout = memo(
               onReady={handleUiReady}
               headerActionsTargetId={headerActionsTargetId}
               headerActionsCompact={headerActionsCompact}
-              sandboxLabel={sandboxLabel}
-              sandboxOptions={sandboxOptions}
-              currentSandboxProfile={currentSandboxProfile}
-              onSandboxChange={onSandboxChange}
               composerExtras={composerExtras}
               onClientToolCall={onClientToolCall}
               onController={handleController}
@@ -301,7 +283,6 @@ export const CodeWorkspaceLayout = memo(
                       <WorkspaceGitPortal
                         host={gitHost}
                         active={activeApp === 'git'}
-                        tabId={tabId}
                         executionTarget={executionTarget}
                         sessionId={sessionId}
                         workspaceRoot={agentWorkspaceDir}
@@ -326,12 +307,7 @@ export const CodeWorkspaceLayout = memo(
             />
           </div>
         </div>
-        <EnvironmentDock
-          apps={dockApps}
-          activeAppId={activeApp}
-          onSelect={handleDockSelect}
-          sandboxUrls={sandboxUrls}
-        />
+        <EnvironmentDock apps={dockApps} activeAppId={activeApp} onSelect={handleDockSelect} />
       </div>
     );
   }

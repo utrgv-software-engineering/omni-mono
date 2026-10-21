@@ -6,8 +6,6 @@ const tab = { id: 'old-tab', sessionId: 'session', snapshotRef: 'old-workspace',
 const deps = () => ({
   disposeTerminals: vi.fn(async (_id: string) => {}),
   stop: vi.fn(async (_id: string) => {}),
-  deleteSnapshot: vi.fn(async (_ref: string) => {}),
-  isSnapshotProtected: vi.fn(() => false),
 });
 
 it('finishes authoritative cleanup even if the renderer never receives the result', async () => {
@@ -16,10 +14,9 @@ it('finishes authoritative cleanup even if the renderer never receives the resul
     cleanupRemovedChat(removed, cleanup)
   );
   // The tab store commit precedes this operation; no renderer continuation
-  // participates in stopping the old runtime or disposing its snapshot.
+  // participates in stopping the old runtime.
   await completed;
   expect(cleanup.stop).toHaveBeenCalledExactlyOnceWith('old-tab');
-  expect(cleanup.deleteSnapshot).toHaveBeenCalledExactlyOnceWith('old-workspace');
 });
 
 it('still shuts down the runtime when terminal disposal rejects', async () => {
@@ -27,24 +24,6 @@ it('still shuts down the runtime when terminal disposal rejects', async () => {
   cleanup.disposeTerminals.mockRejectedValueOnce(new Error('terminal offline'));
   await expect(cleanupRemovedChat(tab, cleanup)).rejects.toThrow('terminal offline');
   expect(cleanup.stop).toHaveBeenCalledExactlyOnceWith('old-tab');
-  expect(cleanup.deleteSnapshot).toHaveBeenCalledExactlyOnceWith('old-workspace');
-});
-
-it('does not delete a workspace if runtime shutdown fails', async () => {
-  const cleanup = deps();
-  cleanup.stop.mockRejectedValueOnce(new Error('stop failed'));
-  await expect(cleanupRemovedChat(tab, cleanup)).rejects.toThrow('stop failed');
-  expect(cleanup.deleteSnapshot).not.toHaveBeenCalled();
-});
-
-it('rechecks snapshot ownership after shutdown while another window reopens', async () => {
-  const cleanup = deps();
-  cleanup.stop.mockImplementationOnce(async () => {
-    cleanup.isSnapshotProtected.mockReturnValue(true);
-  });
-  await cleanupRemovedChat(tab, cleanup);
-  expect(cleanup.deleteSnapshot).not.toHaveBeenCalled();
-  expect(cleanup.stop).not.toHaveBeenCalledWith('new-tab');
 });
 
 it('does not run cleanup for unrelated commands or an already removed tab', async () => {

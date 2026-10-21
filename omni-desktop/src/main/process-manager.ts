@@ -5,7 +5,6 @@ import path from 'node:path';
 
 import { ipcMain } from 'electron';
 
-import { mirrorContainerChangesToHost } from '@/lib/container-sync';
 import { AgentHostManager } from '@/main/agent-host-manager';
 import {
   type AgentHostConsumerRuntime,
@@ -17,7 +16,6 @@ import {
 import { ChatRuntimeJournal } from '@/main/chat-runtime-journal';
 import { hasDurableHostCodexMutation, isDurableCodexAccountRequest } from '@/main/local-codex-account-owner';
 import { hasDurableHostMcpMutation, isMcpManagementMethod } from '@/main/local-mcp-config-owner';
-import { getDefaultWorkspaceDir } from '@/main/util';
 import { gitTokenEnvName, resolveCredentialForUrl } from '@/shared/git-credentials';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import { assertManagementAdminRequest, type ManagementAdminResult } from '@/shared/management-admin';
@@ -30,41 +28,15 @@ import type {
   GitCredential,
   IpcRendererEvents,
   Project,
-  SandboxPauseResult,
-  SandboxSwitchResult,
   WithTimestamp,
 } from '@/shared/types';
 
 export type ProcessManagerStoreData = {
-  defaultProfileName: string;
   projects: Project[];
   /** Stored git credential metadata (host-scoped). Tokens are read lazily via
    *  `resolveGitToken`; this list only drives host matching. */
   gitCredentials?: GitCredential[];
 };
-
-/**
- * True for host directories the launcher itself manages: a per-conversation
- * scratch dir (`<workspace root>/Sessions/<sessionId>` — the root is
- * user-configurable, so the convention is the `Sessions` parent) or anything
- * under the default workspace tree (`~/Omni/Workspace`, which holds the
- * Personal root and managed `Projects/<slug>/` dirs). Container changes
- * auto-mirror into these without confirmation — the launcher created them, so
- * there is no foreign user data to clobber. This is only consulted for
- * synthesized sources; user-attached project sources never auto-mirror
- * regardless of where they live.
- */
-export const isLauncherOwnedDir = (dir: string): boolean => {
-  const resolved = path.resolve(dir);
-  if (path.basename(path.dirname(resolved)) === 'Sessions') {
-    return true;
-  }
-  const defaultRoot = path.resolve(getDefaultWorkspaceDir());
-  return resolved === defaultRoot || resolved.startsWith(defaultRoot + path.sep);
-};
-
-/** How often the auto-mirror sweep checks running launcher-owned sandboxes. */
-const AUTO_MIRROR_INTERVAL_MS = 15_000;
 
 /**
  * Unified process manager for all agent processes (chat + code tabs).
@@ -73,9 +45,8 @@ const AUTO_MIRROR_INTERVAL_MS = 15_000;
  *   - `"chat"` for the singleton chat process
  *   - A CodeTabId for code-tab processes
  *
- * Profile resolution: per-project override > user-default. Every profile
- * shares a compatible targetless ``omni serve`` AgentHost and materializes
- * per consumer.
+ * Every consumer shares a compatible targetless ``omni serve`` AgentHost and
+ * materializes its own environment on omni-code's default profile.
  */
 export class ProcessManager {
   /** Consumer id -> compatible long-lived AgentHost connection. */
@@ -131,12 +102,6 @@ export class ProcessManager {
    * channel is usable and never gates the legacy settings read. */
   private onManagementReady?: (proc: AgentProcess) => void | Promise<void>;
 
-  /** processId → launcher-owned local mounts whose container changes
-   *  auto-mirror back to the host (chat scratch dirs, managed project dirs). */
-  private mirrorSources = new Map<string, Array<{ mountName: string; workspaceDir: string }>>();
-  private mirrorTimer: ReturnType<typeof setInterval> | null = null;
-  private mirrorSweepRunning = false;
-
   constructor(arg: {
     sendToWindow: ProcessManager['sendToWindow'];
     fetchFn?: FetchFn;
@@ -168,7 +133,6 @@ export class ProcessManager {
     this.getStoreData =
       arg.getStoreData ??
       (() => ({
-        defaultProfileName: 'host',
         projects: [],
       }));
     this.getExtraEnv = arg.getExtraEnv;
@@ -178,26 +142,6 @@ export class ProcessManager {
     this.durableLocalMcpMutations = arg.durableLocalMcpMutations === true;
     this.prepareLocalMcpOwnership = arg.prepareLocalMcpOwnership;
     this.onManagementReady = arg.onManagementReady;
-  }
-
-  private resolveProfileName(projectId: string | undefined, override: string | undefined): string {
-    const { defaultProfileName, projects } = this.getStoreData();
-    return (
-      override ??
-      (projectId ? projects.find((p) => p.id === projectId)?.sandboxProfile : undefined) ??
-      defaultProfileName
-    );
-  }
-
-  getExecutionProfile(processId: string): string | undefined {
-    const opts = this.lastStartArgs.get(processId);
-    return opts ? this.resolveProfileName(opts.projectId, opts.profileNameOverride) : undefined;
-  }
-
-  validateProfileSelection(profileName: string): void {
-    if (!profileName || this.resolveProfileName(undefined, profileName) !== profileName) {
-      throw new Error('This execution environment is not available in this workspace');
-    }
   }
 
   /** Try to resolve the git remote URL and current branch from a workspace directory. */
@@ -296,19 +240,15 @@ export class ProcessManager {
         ...(runtime.mounts ? { mounts: runtime.mounts } : {}),
         ...(runtime.environmentCapabilities ? { environmentCapabilities: runtime.environmentCapabilities } : {}),
         services: runtime.services,
-        containerId: runtime.containerId,
-        ...(runtime.paused !== undefined ? { paused: runtime.paused } : {}),
       },
     };
   }
 
   private async buildStartArg(opts: AgentProcessStartOptions): Promise<AgentProcessStartArg> {
-    const profileName = this.resolveProfileName(opts.projectId, opts.profileNameOverride);
     // The project path additionally synthesizes a source from the bare
     // workspaceDir (chat scratch dirs, managed project dirs).
     const sources = this.resolveProjectSources(opts.workspaceDir, opts.projectId, opts.sourceOverrideDir);
     const startArg: AgentProcessStartArg = {
-      profileName,
       sources,
       workspaceDir: opts.workspaceDir,
     };
@@ -458,7 +398,6 @@ export class ProcessManager {
         workspaceDir,
         writable: true,
         ...(kind === 'local-git' ? this.resolveGitMetadata(workspaceDir) : {}),
-        ...(isLauncherOwnedDir(workspaceDir) ? { launcherOwned: true } : {}),
       },
     ];
   }
@@ -564,7 +503,6 @@ export class ProcessManager {
       opts.projectId ?? null,
       opts.sessionId ?? null,
       opts.snapshotRef ?? null,
-      opts.profileNameOverride ?? null,
     ]);
   }
 
@@ -697,9 +635,8 @@ export class ProcessManager {
 
   private ensureManagementConnectionImpl = async (): Promise<AgentRuntimeConnection> => {
     const processId = '__product_management__';
-    // Profile definitions are consumer-environment concerns; no sandbox is
-    // being created here.
-    const startArg = await this.buildStartArg({ workspaceDir: '', profileNameOverride: 'host' });
+    // No environment is materialized for the management connection.
+    const startArg = await this.buildStartArg({ workspaceDir: '' });
     await this.waitForRuntimeInstall?.();
     const compatibilityKey = this.agentHostCompatibilityKey(processId, startArg);
     const { proc, created } = this.getOrCreate(processId, compatibilityKey);
@@ -772,7 +709,6 @@ export class ProcessManager {
       this.consumerWorkspaceIds.delete(processId);
       this.consumerWorkspaceIdentities.delete(processId);
       this.lastStartArgs.delete(processId);
-      this.mirrorSources.delete(processId);
       this.agentHosts.detach(processId);
       if (processId === '__product_management__') {
         this.pendingManagementConnection = null;
@@ -910,7 +846,6 @@ export class ProcessManager {
         });
       }
       this.lastStartArgs.set(processId, opts);
-      this.trackMirrorSources(processId, startArg.sources);
     } catch (error) {
       if (preservedAttachment) {
         // Rebinding is transactional from the consumer's perspective. The
@@ -918,7 +853,6 @@ export class ProcessManager {
         // fails; keep the prior Workspace/runtime and launch identity live.
         throw error;
       }
-      this.mirrorSources.delete(processId);
       this.consumerRuntimes.delete(processId);
       this.consumerWorkspaceIds.delete(processId);
       this.consumerWorkspaceIdentities.delete(processId);
@@ -1001,7 +935,6 @@ export class ProcessManager {
       target = { proc, runtime: this.consumerRuntimes.get(processId), lastConsumer: detached?.lastConsumer ?? false };
       this.detachedStops.set(processId, target);
     }
-    this.mirrorSources.delete(processId);
     const { proc, runtime, lastConsumer } = target;
     if (!lastConsumer) {
       // A neighboring consumer may have started closing the entire host while
@@ -1084,9 +1017,6 @@ export class ProcessManager {
       ...((opts.projectId ?? lastOpts?.projectId)
         ? { projectId: (opts.projectId ?? lastOpts?.projectId) as string }
         : {}),
-      ...((opts.profileNameOverride ?? lastOpts?.profileNameOverride)
-        ? { profileNameOverride: (opts.profileNameOverride ?? lastOpts?.profileNameOverride) as string }
-        : {}),
       ...((opts.sessionId ?? lastOpts?.sessionId)
         ? { sessionId: (opts.sessionId ?? lastOpts?.sessionId) as string }
         : {}),
@@ -1124,7 +1054,6 @@ export class ProcessManager {
         this.consumerWorkspaceIds.set(processId, workspaceId);
         this.consumerWorkspaceIdentities.set(processId, workspaceIdentity);
         this.lastStartArgs.set(processId, merged);
-        this.trackMirrorSources(processId, startArg.sources);
         this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
         return;
       }
@@ -1152,168 +1081,6 @@ export class ProcessManager {
     this.processes.get(processId)?.resizePty(cols, rows);
   };
 
-  pause = async (processId: string): Promise<SandboxPauseResult> => {
-    const proc = this.processes.get(processId);
-    if (!proc) {
-      return { ok: false, supported: false, reason: 'process not found' };
-    }
-    const runtime = this.consumerRuntimes.get(processId);
-    const result = await proc.pause(runtime);
-    if (runtime && result.ok && result.supported) {
-      this.consumerRuntimes.set(processId, { ...runtime, paused: result.paused ?? true });
-      this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-    }
-    return result;
-  };
-
-  unpause = async (processId: string): Promise<SandboxPauseResult> => {
-    const proc = this.processes.get(processId);
-    if (!proc) {
-      return { ok: false, supported: false, reason: 'process not found' };
-    }
-    const runtime = this.consumerRuntimes.get(processId);
-    const result = await proc.unpause(runtime);
-    if (runtime && result.ok && result.supported) {
-      this.consumerRuntimes.set(processId, { ...runtime, paused: result.paused ?? false });
-      this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-    }
-    return result;
-  };
-
-  switchSandbox = async (processId: string, profileName: string): Promise<SandboxSwitchResult> => {
-    try {
-      return await this.mutateConsumer(processId, () => this.switchSandboxConsumer(processId, profileName));
-    } catch (error) {
-      return { ok: false, reason: (error as Error).message };
-    }
-  };
-
-  private switchSandboxConsumer = async (processId: string, profileName: string): Promise<SandboxSwitchResult> => {
-    if (this.retiredConsumers.has(processId) || this.pendingStops.has(processId) || this.detachedStops.has(processId)) {
-      return { ok: false, reason: 'This chat runtime is closed or still stopping' };
-    }
-    const proc = this.processes.get(processId);
-    if (!proc) {
-      return { ok: false, reason: 'process not found' };
-    }
-    const previousOpts = this.lastStartArgs.get(processId);
-    if (!previousOpts) {
-      return { ok: false, fallback: true, reason: 'launch binding not found' };
-    }
-    const nextOpts = { ...previousOpts, profileNameOverride: profileName };
-    const previousArg = await this.buildStartArg(previousOpts);
-    const nextArg = await this.buildStartArg(nextOpts);
-    const previousKey = this.agentHostCompatibilityKey(processId, previousArg);
-    const nextKey = this.agentHostCompatibilityKey(processId, nextArg);
-    if (nextKey !== previousKey) {
-      return {
-        ok: false,
-        fallback: true,
-        reason: 'profile change crosses an AgentHost security boundary',
-      };
-    }
-    const workspaceId = this.consumerWorkspaceIds.get(processId);
-    if (!workspaceId) {
-      return { ok: false, fallback: true, reason: 'workspace binding not found' };
-    }
-    try {
-      const currentRuntime = this.consumerRuntimes.get(processId);
-      const runtime = await proc.configureConsumer(processId, workspaceId, nextArg);
-      this.consumerRuntimes.set(processId, runtime);
-      if (currentRuntime && currentRuntime.environmentId !== runtime.environmentId) {
-        await proc.stopConsumerEnvironment(currentRuntime).catch((error) => {
-          console.warn(`[process-manager] old environment cleanup failed: ${(error as Error).message}`);
-        });
-      }
-      this.lastStartArgs.set(processId, nextOpts);
-      this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
-      return {
-        ok: true,
-        profile: profileName,
-        containerId: runtime.containerId,
-        services: runtime.services,
-      };
-    } catch (error) {
-      return { ok: false, reason: (error as Error).message };
-    }
-  };
-
-  /**
-   * Look up a running process's WebSocket URL for a code tab linked to the given ticketId.
-   * Used by ProjectManager to reuse an existing sandbox instead of creating a duplicate.
-   */
-  getRunningWsUrlForTicket(ticketId: string, codeTabs: Array<{ id: string; ticketId?: string }>): string | null {
-    for (const tab of codeTabs) {
-      if (tab.ticketId !== ticketId) {
-        continue;
-      }
-      const status = this.getStatus(tab.id);
-      if (status.type === 'running' && status.data.wsUrl) {
-        return status.data.wsUrl;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Find a running docker container id for the given project. Used by
-   * ProjectManager to ``docker exec`` against the agent's workspace for
-   * PR-diff and merge operations.
-   *
-   * Returns the first running process's container id (any process for
-   * the project is fine — they all share the per-project snapshot).
-   */
-  getProjectContainerId(projectId: string): string | null {
-    for (const [processId, opts] of this.lastStartArgs.entries()) {
-      if (opts.projectId !== projectId) {
-        continue;
-      }
-      const status = this.getStatus(processId);
-      // ``running`` is the post-connect state; ``connecting`` already has
-      // ``data.containerId`` because the readiness payload arrives before
-      // the WS handshake completes. Accept both so PR queries don't have
-      // to wait for the agent's WS to be fully open.
-      if ((status.type === 'running' || status.type === 'connecting') && status.data.containerId) {
-        return status.data.containerId;
-      }
-    }
-    return null;
-  }
-
-  getProcessContainerId(processId: string): string | null {
-    const status = this.getStatus(processId);
-    if ((status.type === 'running' || status.type === 'connecting') && status.data.containerId) {
-      return status.data.containerId;
-    }
-    return null;
-  }
-
-  /**
-   * Container ids of every live agent process (``connecting`` or
-   * ``running``). Feeds the startup orphan sweep's protected set so it
-   * never removes a container a session of this launcher instance is
-   * already attached to.
-   */
-  getAllContainerIds(): string[] {
-    return this.getContainerOwners().map((o) => o.containerId);
-  }
-
-  /**
-   * Same live-container set as {@link getAllContainerIds}, but keyed by the
-   * owning process id — the Sandboxes inventory joins these to tab/session
-   * titles for the "who owns this container" column.
-   */
-  getContainerOwners(): Array<{ processId: string; containerId: string }> {
-    const owners: Array<{ processId: string; containerId: string }> = [];
-    for (const processId of this.processes.keys()) {
-      const status = this.getStatus(processId);
-      if ((status.type === 'running' || status.type === 'connecting') && status.data.containerId) {
-        owners.push({ processId, containerId: status.data.containerId });
-      }
-    }
-    return owners;
-  }
-
   /**
    * The host workspace dir the given process was last started against (e.g.
    * the chat session's per-conversation scratch dir). Authoritative for
@@ -1324,71 +1091,8 @@ export class ProcessManager {
     return this.lastStartArgs.get(processId)?.workspaceDir || null;
   }
 
-  /**
-   * Remember which of a launch's mounts auto-mirror, and make sure the sweep
-   * timer is running when at least one process has any. Only docker-backed
-   * sessions ever mirror — the sweep keys off `getProcessContainerId`, which
-   * is null for host backends.
-   */
-  private trackMirrorSources(processId: string, sources: AgentProcessSource[]): void {
-    const owned = sources
-      .filter(
-        (s): s is Extract<AgentProcessSource, { workspaceDir: string }> =>
-          (s.kind === 'local' || s.kind === 'local-git') && s.launcherOwned === true
-      )
-      .map((s) => ({ mountName: s.mountName, workspaceDir: s.workspaceDir }));
-    if (owned.length === 0) {
-      this.mirrorSources.delete(processId);
-      return;
-    }
-    this.mirrorSources.set(processId, owned);
-    if (!this.mirrorTimer) {
-      this.mirrorTimer = setInterval(() => {
-        void this.sweepMirrors();
-      }, AUTO_MIRROR_INTERVAL_MS);
-      // Mirroring must never keep the process alive on its own.
-      this.mirrorTimer.unref?.();
-    }
-  }
-
-  /**
-   * One auto-mirror pass: for every running launcher-owned mount, mirror the
-   * container's changed-vs-seed set onto the host dir. The mirror is
-   * idempotent (it copies current files, not patches), so a no-change sweep
-   * is a cheap git-diff inside the container. Re-entrancy guarded — slow
-   * docker execs must not stack sweeps.
-   */
-  private sweepMirrors = async (): Promise<void> => {
-    if (this.mirrorSweepRunning) {
-      return;
-    }
-    this.mirrorSweepRunning = true;
-    try {
-      for (const [processId, mounts] of this.mirrorSources.entries()) {
-        const containerId = this.getProcessContainerId(processId);
-        if (!containerId) {
-          continue;
-        }
-        for (const mount of mounts) {
-          try {
-            await mirrorContainerChangesToHost(containerId, mount.mountName, mount.workspaceDir);
-          } catch {
-            // Transient (container mid-restart, docker hiccup) — next sweep retries.
-          }
-        }
-      }
-    } finally {
-      this.mirrorSweepRunning = false;
-    }
-  };
-
   cleanup = async (): Promise<void> => {
     await this.runtimeRecovery.catch(() => undefined);
-    if (this.mirrorTimer) {
-      clearInterval(this.mirrorTimer);
-      this.mirrorTimer = null;
-    }
-    this.mirrorSources.clear();
     // Invalidate every materialization before awaiting it. Late results see a
     // stale epoch, retire their environment, and cannot repopulate the maps.
     for (const processId of this.pendingStarts.keys()) {
@@ -1432,9 +1136,6 @@ export function registerProcessHandlers(ipc: IIpcListener, resolve: (event: unkn
   h('agent-process:get-status', (pm, processId) => pm.getStatus(processId));
   h('management-runtime:ensure', (pm) => pm.ensureManagementConnection());
   h('management-runtime:mutate', (pm, request) => pm.mutateManagement(request));
-  h('agent-process:pause', (pm, processId) => pm.pause(processId));
-  h('agent-process:unpause', (pm, processId) => pm.unpause(processId));
-  h('agent-process:switch-sandbox', (pm, processId, profileName) => pm.switchSandbox(processId, profileName));
 
   return channels;
 }

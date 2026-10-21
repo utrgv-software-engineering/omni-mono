@@ -13,7 +13,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { SettingsConfigStore } from '@/shared/ipc-handlers';
-import type { McpConfig, ModelsConfig, NetworkConfig } from '@/shared/types';
+import type { McpConfig, ModelsConfig } from '@/shared/types';
 
 function readJson(path: string): unknown | null {
   try {
@@ -71,12 +71,6 @@ export function migrateAgentConfigFromFiles(store: SettingsConfigStore, configDi
     const servers = { ...(mcp as McpConfig).mcpServers };
     delete servers[RETIRED_PROJECTS_MCP];
     store.set('mcpConfig', { mcpServers: servers });
-    imported = true;
-  }
-
-  const network = readJson(join(configDir, 'network.json'));
-  if (network && typeof network === 'object') {
-    store.set('networkConfig', network as NetworkConfig);
     imported = true;
   }
 

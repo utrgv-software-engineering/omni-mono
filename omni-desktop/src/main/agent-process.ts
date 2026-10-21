@@ -17,7 +17,6 @@ import { AgentHostControlClient } from '@/main/agent-host-control-client';
 import { getGitBashEnv } from '@/main/git-bash';
 import { initializeMainRpcConnection } from '@/main/omniagents-rpc-handshake';
 import { assertServeProtocolSupported } from '@/main/product-runtime';
-import { resolveProfile } from '@/main/profile-resolver';
 import { getOmniCliPath, getOmniConfigDir, isDirectory, pathExists } from '@/main/util';
 import type { ManagementAdminMethod } from '@/shared/management-admin';
 import type {
@@ -27,7 +26,7 @@ import type {
   AgentRuntimeConnection,
   ExecutionTarget,
   LogEntry,
-  SandboxPauseResult,
+  ServerCallResult,
   WithTimestamp,
   WorkspaceMountDescriptor,
 } from '@/shared/types';
@@ -52,24 +51,15 @@ import type {
  * container. A multi-source project gets N entries that materialize at
  * ``/workspace/<mountName>/`` each.
  */
-/**
- * ``launcherOwned`` marks a host directory the launcher itself manages (a
- * per-conversation ``Sessions/<id>`` scratch dir or a managed project dir):
- * container changes auto-mirror back to it without confirmation, since there
- * is no foreign user data to clobber. User-attached folders never carry it —
- * they keep the explicit "Apply to my folder" gate. Launcher-side only; the
- * ``--source`` descriptor sent to omni serve does not include it.
- */
 export type AgentProcessSource = { id?: string; mountName: string; writable?: boolean } & (
   | {
       kind: 'local-git';
       workspaceDir: string;
       ref?: string;
-      launcherOwned?: boolean;
       gitDir?: string;
       gitCommonDir?: string;
     }
-  | { kind: 'local'; workspaceDir: string; launcherOwned?: boolean }
+  | { kind: 'local'; workspaceDir: string }
   | {
       kind: 'git-remote';
       repoUrl: string;
@@ -87,8 +77,6 @@ export type AgentProcessSource = { id?: string; mountName: string; writable?: bo
 );
 
 export type AgentProcessStartArg = {
-  /** Profile name to resolve (``host``, ``devbox``, custom user profile, …). */
-  profileName: string;
   /**
    * Sources registered on the consumer Workspace. The selected environment
    * materializes them at ``/workspace/<mountName>``. Empty array = no seeding.
@@ -250,8 +238,6 @@ const servePayloadToData = (payload: ServeReadyPayload): AgentProcessData => {
     ...(payload.auth_token ? { authToken: payload.auth_token } : {}),
     sandboxUrl: payload.sandbox_url,
     services: payload.services ?? {},
-    containerId: payload.container_id ?? undefined,
-    containerName: payload.container_name ?? undefined,
     port: payload.ports.ui,
   };
 };
@@ -400,12 +386,12 @@ async function oneShotServerCall(
   args: Record<string, unknown> = {},
   timeoutMs: number = SERVER_CALL_TIMEOUT_MS,
   authToken?: string
-): Promise<SandboxPauseResult> {
-  return new Promise<SandboxPauseResult>((resolve) => {
+): Promise<ServerCallResult> {
+  return new Promise<ServerCallResult>((resolve) => {
     let settled = false;
     let nextId = 1;
     const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
-    const finish = (result: SandboxPauseResult) => {
+    const finish = (result: ServerCallResult) => {
       if (settled) {
         return;
       }
@@ -671,23 +657,17 @@ export class AgentProcess {
       (this.agentHostControlClient = new AgentHostControlClient(data.wsUrl, this.agentHostControlToken));
     const snapshotRef = arg.snapshotRef ?? workspaceId;
     let materializedEnvironmentId: string | undefined;
-    const resolved = resolveProfile(arg.profileName);
-    if (resolved.kind === 'missing') {
-      throw new Error(`Profile "${arg.profileName}" is no longer available`);
-    }
-    const definition: Record<string, unknown> =
-      resolved.kind === 'file'
-        ? { kind: 'path', path: resolved.path }
-        : {
-            kind: 'default',
-            ...(arg.projectId ? { project_id: arg.projectId } : {}),
-          };
+    // The desktop always runs omni-code's default (host) profile.
+    const definition: Record<string, unknown> = {
+      kind: 'default',
+      ...(arg.projectId ? { project_id: arg.projectId } : {}),
+    };
     const profileId = `profile_${createHash('sha256').update(JSON.stringify(definition)).digest('hex').slice(0, 24)}`;
     // AgentHost's Thread identity is the conversation Session identity. The
     // launcher consumer is a UI/process attachment and may outlive or switch
     // conversations, so it must never become the RPC resource identifier.
     const threadId = arg.sessionId ?? consumerId;
-    const controlContext = { consumerId, profileName: arg.profileName };
+    const controlContext = { consumerId };
     const sources = arg.sources.map(sourceDescriptor);
 
     // Every provisioning transaction begins with an authoritative inventory.
@@ -847,7 +827,7 @@ export class AgentProcess {
     control: AgentHostControlClient,
     threadId: string,
     runtime: ExecutionTarget,
-    context: { consumerId: string; profileName?: string }
+    context: { consumerId: string }
   ): Promise<void> => {
     await control.call(
       'agent_host_bind_thread',
@@ -1003,50 +983,6 @@ export class AgentProcess {
   exit = async (): Promise<AgentProcessStopResult> => {
     this.updateStatus({ type: 'exiting' });
     return this.stop();
-  };
-
-  /**
-   * Freeze every process in the sandbox container without releasing it.
-   * Returns the result the omni-code server function emitted: ``ok``,
-   * ``supported``, ``paused``, optional ``reason``. Callers should treat
-   * ``supported: false`` as "this backend doesn't pause — fall back to
-   * stop/shutdown if you want to free resources." The ProcessManager records
-   * the returned paused state on the selected consumer runtime.
-   */
-  pause = async (target?: ExecutionTarget): Promise<SandboxPauseResult> => {
-    return this.callSandboxLifecycle(target, 'sandbox.pause');
-  };
-
-  /**
-   * Thaw a paused sandbox container. Idempotent — calling on an
-   * already-running container is a no-op as far as the user is concerned
-   * (the server function returns supported=true, paused=false).
-   */
-  unpause = async (target?: ExecutionTarget): Promise<SandboxPauseResult> => {
-    return this.callSandboxLifecycle(target, 'sandbox.unpause');
-  };
-
-  private callSandboxLifecycle = async (
-    target: ExecutionTarget | undefined,
-    fn: 'sandbox.pause' | 'sandbox.unpause'
-  ): Promise<SandboxPauseResult> => {
-    if (this.status.type !== 'running' && this.status.type !== 'connecting') {
-      return { ok: false, supported: false, reason: 'sandbox is not running' };
-    }
-    const data = (this.status as Extract<AgentProcessStatus, { type: 'running' | 'connecting' }>).data;
-    const wsUrl = data.wsUrl;
-    if (!wsUrl) {
-      return { ok: false, supported: false, reason: 'no ws_url available' };
-    }
-    if (!target) {
-      return { ok: false, supported: false, reason: 'no execution environment is available' };
-    }
-    try {
-      return await oneShotServerCall(wsUrl, target, fn, {}, SERVER_CALL_TIMEOUT_MS, data.authToken);
-    } catch (err) {
-      const message = (err as Error).message ?? String(err);
-      return { ok: false, supported: true, reason: message };
-    }
   };
 
   resizePty = (_cols: number, _rows: number): void => {};

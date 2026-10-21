@@ -13,10 +13,9 @@ type EnvironmentDockProps = {
   apps: AppDescriptor[];
   activeAppId: AppId;
   onSelect: (id: AppId) => void;
-  sandboxUrls?: Record<string, string | undefined>;
 };
 
-export const EnvironmentDock = memo(({ apps, activeAppId, onSelect, sandboxUrls }: EnvironmentDockProps) => {
+export const EnvironmentDock = memo(({ apps, activeAppId, onSelect }: EnvironmentDockProps) => {
   const handleValueChange = useCallback(
     (id: string) => {
       if (id) {
@@ -41,12 +40,6 @@ export const EnvironmentDock = memo(({ apps, activeAppId, onSelect, sandboxUrls 
         className="mx-auto mb-2 mt-1.5 h-11 max-w-[calc(100%-1.5rem)] min-w-0 shrink-0 overflow-x-auto overflow-y-hidden rounded-xl border border-border bg-card p-1 shadow-sm [&::-webkit-scrollbar]:hidden"
       >
         {apps.map((app) => {
-          const isAvailable = app.scope === 'sandbox' ? !!sandboxUrls?.[app.sandboxUrlKey!] : true;
-
-          if (app.scope === 'sandbox' && !isAvailable) {
-            return null;
-          }
-
           return (
             <Tooltip key={app.id}>
               <TooltipTrigger asChild>

@@ -11,13 +11,7 @@ import { mkdir, readdir, readFile, writeFile } from 'fs/promises';
 import { basename, dirname, join } from 'path';
 import { WebSocket as WsWebSocket } from 'ws';
 
-import {
-  emptyMcpConfig,
-  emptyModelsConfig,
-  emptyNetworkConfig,
-  modelProvider,
-  validateModelsConfig,
-} from '@/lib/agent-config';
+import { emptyMcpConfig, emptyModelsConfig, modelProvider, validateModelsConfig } from '@/lib/agent-config';
 import { normalizeCompatibleBaseUrl } from '@/lib/provider-config';
 import type { SkillStore } from '@/main/skills';
 import { installSkillFromFile, listSkills, setSkillEnabled, uninstallSkill } from '@/main/skills';
@@ -54,7 +48,6 @@ import type {
   GitCredentialInput,
   McpConfig,
   ModelsConfig,
-  NetworkConfig,
   ProviderProbe,
   ProviderProbeResult,
   StoreData,
@@ -137,8 +130,8 @@ export interface SettingsConfigStore {
 
 /**
  * Register the typed `settings:*` agent-config channels. These replace the
- * path-based `config:*` file I/O for the four configs whose source of truth is
- * the store: model providers, MCP servers, network policy, and `.env`. The
+ * path-based `config:*` file I/O for the three configs whose source of truth is
+ * the store: model providers, MCP servers, and `.env`. The
  * store backend (electron-store / ServerStore) is resolved per-invoke; `afterWrite` is the transport's hook to broadcast
  * `store:changed` and re-materialize the agent's on-disk config.
  */
@@ -219,14 +212,6 @@ export function registerSettingsConfigHandlers(
   ipc.handle('settings:set-mcp-config', async (e: unknown, config: McpConfig) => {
     await hooks.beforeSetMcp?.(e, config);
     resolveStore(e).set('mcpConfig', config);
-    afterWrite(e);
-  });
-  ipc.handle(
-    'settings:get-network-config',
-    (e: unknown) => resolveStore(e).get('networkConfig') ?? emptyNetworkConfig()
-  );
-  ipc.handle('settings:set-network-config', (e: unknown, config: NetworkConfig) => {
-    resolveStore(e).set('networkConfig', config);
     afterWrite(e);
   });
   ipc.handle('settings:get-env', (e: unknown) => resolveStore(e).get('envVars') ?? '');

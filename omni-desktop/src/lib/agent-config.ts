@@ -1,12 +1,12 @@
 /**
- * Pure helpers for the agent's runtime config (models / MCP / network / env).
+ * Pure helpers for the agent's runtime config (models / MCP / env).
  *
  * No fs, Electron, or node:crypto imports — safe for the renderer, main, and
  * server bundles alike. The secret-rewrite logic that DOES need hashing lives
  * in `src/main/config-materializer.ts` (main/server only); this module holds
  * the default shapes, the `.env` parser, and the env-ref predicate they share.
  */
-import type { McpConfig, ModelsConfig, NetworkConfig } from '@/shared/types';
+import type { McpConfig, ModelsConfig } from '@/shared/types';
 
 /** Empty `models.json` (current schema version). */
 export function emptyModelsConfig(): ModelsConfig {
@@ -16,15 +16,6 @@ export function emptyModelsConfig(): ModelsConfig {
 /** Empty `mcp.json`. */
 export function emptyMcpConfig(): McpConfig {
   return { mcpServers: {} };
-}
-
-/** Empty `network.json` (isolation off, no rules). */
-export function emptyNetworkConfig(): NetworkConfig {
-  return {
-    enabled: false,
-    presets: [],
-    allowlist: [],
-  };
 }
 
 /**

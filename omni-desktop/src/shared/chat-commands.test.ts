@@ -16,7 +16,6 @@ beforeEach(() => {
     chatConversations: [],
     activeCodeTabId: null,
     projects: [],
-    defaultProfileName: 'host',
   } as unknown as StoreData;
 });
 it('applies two window creations to current state and commits selection with each tab', () => {
@@ -44,9 +43,9 @@ it('rejects assigning a workspace that is pending destruction to a live tile', (
   expect(state.codeTabs[0]?.snapshotRef).toBeUndefined();
 });
 it('ignores closed IDs in a stale reorder and retains current fields and new tabs', () => {
-  state.codeTabs = [{ ...tab('B'), profileName: 'new-profile' }, tab('C')];
+  state.codeTabs = [{ ...tab('B') }, tab('C')];
   dispatch({ method: 'reorderTabs', args: [['B', 'A', 'B']] });
-  expect(state.codeTabs).toEqual([tab('C'), { ...tab('B'), profileName: 'new-profile' }]);
+  expect(state.codeTabs).toEqual([tab('C'), { ...tab('B') }]);
 });
 it('merges history entries and patches without replacing other sessions', () => {
   dispatch({ method: 'recordConversation', args: ['A', { title: 'A title' }] });
@@ -64,13 +63,13 @@ it('stale archive data does not roll back a newer title', () => {
   expect(state.chatConversations[0]).toMatchObject({ title: 'new title', archivedAt: expect.any(Number) });
 });
 it('reopens from current metadata rather than a stale window history entry', () => {
-  const stale = { sessionId: 'A', title: 'old', projectId: 'old-project', profileName: 'old-profile', lastActiveAt: 1 };
+  const stale = { sessionId: 'A', title: 'old', projectId: 'old-project', lastActiveAt: 1 };
   dispatch({
     method: 'recordConversation',
-    args: ['A', { title: 'new', projectId: 'new-project', profileName: 'host' }],
+    args: ['A', { title: 'new', projectId: 'new-project' }],
   });
   const reopened = dispatch({ method: 'addTabForConversation', args: [stale] }) as CodeTab;
-  expect(reopened).toMatchObject({ projectId: 'new-project', profileName: 'host' });
+  expect(reopened).toMatchObject({ projectId: 'new-project' });
   expect(state.chatConversations[0]?.title).toBe('new');
 });
 it('late title updates do not unarchive or recreate a removed tile', () => {
@@ -95,7 +94,7 @@ it('does not activate a removed tab or recreate it through a late property patch
   state.codeTabs = [tab('B')];
   state.activeCodeTabId = 'B';
   dispatch({ method: 'setActiveTab', args: ['A'] });
-  dispatch({ method: 'setTabProfile', args: ['A', 'host'] });
+  dispatch({ method: 'setTabActivated', args: ['A'] });
   expect(state.activeCodeTabId).toBe('B');
   expect(state.codeTabs).toEqual([tab('B')]);
 });

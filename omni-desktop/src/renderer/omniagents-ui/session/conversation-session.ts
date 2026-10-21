@@ -339,9 +339,6 @@ export class ConversationSession {
         const items = adaptCanonicalConversationItems(snapshot.items);
         this.panels.set('queuedMessages', snapshot.queue);
         this.panels.set('escalation', null);
-        if (items.length || result.run_active || snapshot.queue.length) {
-          this.panels.set('workspaceLocked', true);
-        }
         this.snapshotCursor = { stream: snapshot.stream_id, seq: snapshot.last_seq };
         this.actor.send({
           type: 'HISTORY_LOADED',
@@ -459,7 +456,6 @@ export class ConversationSession {
       !panels.escalation &&
       !panels.queuedMessages.length &&
       !panels.modelMutating &&
-      !panels.networkMutating &&
       !panels.goalSnapshot &&
       !panels.wakeupSnapshot &&
       !panels.loopTasks.length
@@ -587,9 +583,6 @@ export class ConversationSession {
         throw new Error(result.reason ?? 'Message was not queued. Please retry.');
       }
       this.clearSentContext(staged);
-      if (options.workspaceSupported) {
-        this.panels.set('workspaceLocked', true);
-      }
       return { runId: '' };
     }
     this.receive({ type: 'SUBMIT', text, attachments, stagedContext: staged });
@@ -612,9 +605,6 @@ export class ConversationSession {
         )
       );
       this.clearSentContext(staged);
-      if (options.workspaceSupported) {
-        this.panels.set('workspaceLocked', true);
-      }
       return { runId: String(result?.run_id ?? '') };
     } catch (error) {
       this.receive({ type: 'SUBMIT_ERROR', error: error instanceof Error ? error.message : String(error) });

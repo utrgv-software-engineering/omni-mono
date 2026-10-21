@@ -35,7 +35,6 @@ import {
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import { Webview } from '@/renderer/common/Webview';
 import { ClosableTab, ClosableTabsList } from '@/renderer/ds/ClosableTabs';
 import { cn } from '@/renderer/ds/cn';
 import { Button } from '@/renderer/ds/ui/button';
@@ -61,8 +60,6 @@ import { OmniAgentsHeaderActionsSlot } from '@/renderer/omniagents-ui/header-act
 import { $columnActivity, activityStatusText } from '@/renderer/services/column-activity';
 import { persistedStoreApi } from '@/renderer/services/store';
 import { ENTER_ANIMATE, ENTER_INITIAL, FADE_DURATION_S, SPRING_GENTLE, SPRING_STANDARD } from '@/renderer/theme/motion';
-import type { AppHandleScope } from '@/shared/app-control-types';
-import { makeAppHandleId } from '@/shared/app-control-types';
 import type { AppDescriptor, AppId } from '@/shared/app-registry';
 import { APP_REGISTRY } from '@/shared/app-registry';
 import type { AutoLaunchPhase } from '@/shared/machines/auto-launch.machine';
@@ -602,18 +599,6 @@ const SidecarBody = memo(
     previewUrl,
     onPreviewUrlChange,
   }: SidecarBodyProps) => {
-    const registryProps = useMemo(
-      () => ({
-        handleId: makeAppHandleId('column', app.id, originTabId),
-        appId: app.id,
-        kind: app.kind,
-        scope: 'column' as AppHandleScope,
-        tabId: originTabId,
-        label: app.label,
-      }),
-      [app.id, app.label, app.kind, originTabId]
-    );
-
     let body: React.ReactNode = null;
     if (app.kind === 'builtin-browser') {
       body = (
@@ -675,22 +660,6 @@ const SidecarBody = memo(
             Jobs are available after the session starts.
           </div>
         );
-    } else if (app.kind === 'builtin-code') {
-      body = sandboxUrls?.services?.['code_server'] ? (
-        <Webview src={sandboxUrls.services['code_server']} showUnavailable={false} registry={registryProps} />
-      ) : (
-        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-          {app.label} is unavailable for this workspace.
-        </div>
-      );
-    } else if (app.kind === 'builtin-desktop') {
-      body = sandboxUrls?.services?.['vnc'] ? (
-        <Webview src={sandboxUrls.services['vnc']} showUnavailable={false} registry={registryProps} />
-      ) : (
-        <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-          {app.label} is unavailable for this workspace.
-        </div>
-      );
     }
 
     return <div className="absolute inset-0">{body}</div>;
@@ -1584,12 +1553,7 @@ export const CodeDeck = memo(() => {
       ) {
         return Boolean(sandboxUrls);
       }
-      if (app.scope !== 'sandbox') {
-        return true;
-      }
-      return app.sandboxUrlKey === 'codeServerUrl'
-        ? Boolean(sandboxUrls?.services?.['code_server'])
-        : Boolean(sandboxUrls?.services?.['vnc']);
+      return true;
     });
     const activeAppId =
       apps.length === 0

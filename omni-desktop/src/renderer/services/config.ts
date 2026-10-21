@@ -1,5 +1,5 @@
 import { emitter } from '@/renderer/services/ipc';
-import type { McpConfig, ModelsConfig, NetworkConfig } from '@/shared/types';
+import type { McpConfig, ModelsConfig } from '@/shared/types';
 
 export const configApi = {
   getOmniConfigDir: () => emitter.invoke('config:get-omni-config-dir'),
@@ -20,8 +20,6 @@ export const agentConfigApi = {
     emitter.invoke('settings:set-models-config', config, options),
   getMcp: () => emitter.invoke('settings:get-mcp-config'),
   setMcp: (config: McpConfig) => emitter.invoke('settings:set-mcp-config', config),
-  getNetwork: () => emitter.invoke('settings:get-network-config'),
-  setNetwork: (config: NetworkConfig) => emitter.invoke('settings:set-network-config', config),
   getEnv: () => emitter.invoke('settings:get-env'),
   setEnv: (content: string) => emitter.invoke('settings:set-env', content),
 };

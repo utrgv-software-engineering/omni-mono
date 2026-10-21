@@ -10,8 +10,6 @@ import type {
   AgentProcessStatus,
   AgentProcessStopOptions,
   AgentProcessStopResult,
-  SandboxPauseResult,
-  SandboxSwitchResult,
   WithTimestamp,
 } from '@/shared/types';
 
@@ -97,18 +95,6 @@ export const agentProcessApi = {
   rebuild: (processId: string, arg: AgentProcessStartOptions) => {
     initializeTerminal(processId);
     emitter.invoke('agent-process:rebuild', processId, arg);
-  },
-
-  pause: (processId: string): Promise<SandboxPauseResult> => {
-    return emitter.invoke('agent-process:pause', processId);
-  },
-
-  unpause: (processId: string): Promise<SandboxPauseResult> => {
-    return emitter.invoke('agent-process:unpause', processId);
-  },
-
-  switchSandbox: (processId: string, profileName: string): Promise<SandboxSwitchResult> => {
-    return emitter.invoke('agent-process:switch-sandbox', processId, profileName);
   },
 
   getStatus: (processId: string): WithTimestamp<AgentProcessStatus> => {

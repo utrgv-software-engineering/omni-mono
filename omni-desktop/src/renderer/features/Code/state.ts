@@ -14,34 +14,7 @@ import {
 import { emitter } from '@/renderer/services/ipc';
 import { persistedStoreApi } from '@/renderer/services/store';
 import type { ChatCommand, ChatOperations } from '@/shared/chat-commands';
-import type { AgentProcessStopOptions, CodeTab, CodeTabId, ProjectId } from '@/shared/types';
-
-/**
- * Resolve the profile a fresh tab should be bound to. Mirrors the chain in
- * ``ProcessManager.resolveProfileName`` so the value the renderer persists
- * matches what main would have picked at this moment — after that the tab's
- * ``profileName`` is sticky regardless of changes to defaults.
- */
-const seedProfileName = (projectId: ProjectId | null | undefined): string => {
-  const projects = persistedStoreApi.getKey('projects') ?? [];
-  const project = projectId ? projects.find((p) => p.id === projectId) : undefined;
-  const inherited = project?.sandboxProfile;
-  if (typeof inherited === 'string' && inherited.length > 0) {
-    return inherited;
-  }
-  return persistedStoreApi.getKey('defaultProfileName') ?? 'host';
-};
-
-const resolveAvailableProfileName = (name: string): string => {
-  const available = persistedStoreApi.getKey('availableSandboxProfiles');
-  if (!available || available.length === 0 || available.includes(name)) {
-    return name;
-  }
-  return available[0] ?? 'host';
-};
-
-export const resolveCodeTabProfileName = (projectId: ProjectId | null | undefined): string =>
-  resolveAvailableProfileName(seedProfileName(projectId));
+import type { AgentProcessStopOptions, CodeTab, CodeTabId } from '@/shared/types';
 
 // Re-export agent status/xterm maps so existing imports from Code/state still work.
 // Components can read per-tab status via $agentStatuses.get()[tabId].
@@ -121,7 +94,6 @@ export const codeApi = {
   closeSidecarApp: (...args: Parameters<ChatOperations['closeSidecarApp']>) => run('closeSidecarApp', ...args),
   setTabSessionId: (...args: Parameters<ChatOperations['setTabSessionId']>) => run('setTabSessionId', ...args),
   setTabSnapshotRef: (...args: Parameters<ChatOperations['setTabSnapshotRef']>) => run('setTabSnapshotRef', ...args),
-  setTabProfile: (...args: Parameters<ChatOperations['setTabProfile']>) => run('setTabProfile', ...args),
 };
 const listen = () => {
   // Poll code tab statuses (chat polling is handled by agent-process service)

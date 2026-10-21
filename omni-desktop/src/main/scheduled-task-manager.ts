@@ -152,7 +152,6 @@ export class ScheduledTaskManager {
       permissionMode: input.permissionMode ?? DEFAULT_PERMISSION_MODE,
       enabled: input.enabled ?? true,
       ...(input.projectId ? { projectId: input.projectId } : {}),
-      ...(input.profileName ? { profileName: input.profileName } : {}),
       createdAt: now,
       updatedAt: now,
       nextRunAt: input.enabled === false ? null : nextScheduledTaskRun(input.schedule, now),
@@ -194,9 +193,6 @@ export class ScheduledTaskManager {
     }
     if (patch.projectId !== undefined) {
       next.projectId = patch.projectId;
-    }
-    if (patch.profileName !== undefined) {
-      next.profileName = patch.profileName;
     }
     validateTask(next);
     next.nextRunAt = next.enabled ? nextScheduledTaskRun(next.schedule, this.now()) : null;

@@ -2,12 +2,9 @@ import { useStore } from '@nanostores/react';
 import {
   ArrowUpIcon,
   AudioLinesIcon,
-  CheckIcon,
   FolderIcon,
-  LockIcon,
   MicIcon,
   MicOffIcon,
-  MonitorIcon,
   PaperclipIcon,
   PhoneOffIcon,
   SquareIcon,
@@ -20,16 +17,7 @@ import React, { useCallback, useId, useMemo, useRef, useState } from 'react';
 import { uuidv4 } from '@/lib/uuid';
 import { configuredVoiceMode } from '@/lib/voice-mode';
 import { Button } from '@/renderer/ds/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from '@/renderer/ds/ui/dropdown-menu';
-import { Spinner } from '@/renderer/ds/ui/spinner';
 import { Toggle } from '@/renderer/ds/ui/toggle';
-import { getProfileIcon, isUnsandboxedProfile } from '@/renderer/features/SandboxProfile/profile-icons';
 import { toast } from '@/renderer/features/Toast/state';
 import {
   conversationDrafts,
@@ -74,12 +62,6 @@ export function Input({
   speakRepliesEnabled,
   onSpeakRepliesChange,
   workspacePath,
-  sandboxLabel,
-  sandboxLocked,
-  sandboxLoading,
-  sandboxOptions,
-  currentSandboxProfile,
-  onSandboxChange,
   composerExtras,
   onVoiceStart,
   onVoiceEnd,
@@ -97,13 +79,7 @@ export function Input({
   speakRepliesEnabled?: boolean;
   onSpeakRepliesChange?: (enabled: boolean) => void;
   workspacePath?: string | null;
-  sandboxLabel?: string;
-  sandboxLocked?: boolean;
-  sandboxLoading?: boolean;
-  sandboxOptions?: { value: string; label: string; description?: string }[];
-  currentSandboxProfile?: string;
-  onSandboxChange?: (value: string) => void;
-  /** Extra chips rendered after the sandbox chip (e.g. attach-project). The
+  /** Extra chips rendered in the chip row (e.g. attach-project). The
    *  chip row is the one home for column-context controls, pre- and
    *  post-launch, so callers pass the same node to ChatShell and the app. */
   composerExtras?: React.ReactNode;
@@ -147,22 +123,6 @@ export function Input({
   const speakerToggleLabel = speakRepliesEnabled ? 'Spoken replies on' : 'Spoken replies off';
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const sandboxInteractive = !!sandboxOptions && sandboxOptions.length > 0 && !!onSandboxChange && !sandboxLocked;
-  // Per-profile pill icon: glanceable "what kind of computer" state, with the
-  // warning tint doing the no-sandbox signaling. Falls back to the generic
-  // monitor when the profile is unknown (e.g. label-only cloud sessions).
-  const SandboxIcon = currentSandboxProfile ? getProfileIcon(currentSandboxProfile) : MonitorIcon;
-  const sandboxUnsandboxed = !!currentSandboxProfile && isUnsandboxedProfile(currentSandboxProfile);
-
-  const handleSandboxSelect = useCallback(
-    (value: string) => {
-      if (value !== currentSandboxProfile) {
-        onSandboxChange?.(value);
-      }
-    },
-    [currentSandboxProfile, onSandboxChange]
-  );
 
   const canSend = useMemo(
     () => !disabled && !submitting && (text.trim().length > 0 || files.length > 0),
@@ -419,72 +379,6 @@ export function Input({
                   <FolderIcon className="size-3.5 shrink-0" />
                   <span className="max-w-24 truncate sm:max-w-50">{basename(workspacePath)}</span>
                 </span>
-              )}
-
-              {sandboxLabel && (
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={!sandboxInteractive}
-                      title={
-                        sandboxLocked
-                          ? `Sandbox: ${sandboxLabel} (locked once a run starts)`
-                          : `Sandbox: ${sandboxLabel}`
-                      }
-                      className="h-7 min-w-0 gap-1.5 px-2 text-xs font-normal"
-                    >
-                      {sandboxLoading ? <Spinner className="size-3.5 shrink-0 text-muted-foreground" /> : null}
-                      <SandboxIcon
-                        className={`size-3.5 shrink-0 ${
-                          sandboxUnsandboxed
-                            ? 'text-warning'
-                            : sandboxInteractive
-                              ? 'text-primary'
-                              : 'text-secondary-foreground'
-                        }`}
-                      />
-                      <span className="max-w-24 truncate sm:max-w-50">{sandboxLabel}</span>
-                      {sandboxLocked && <LockIcon className="size-2.5 shrink-0 text-muted-foreground" />}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent side="top" align="start" className="min-w-45">
-                    <DropdownMenuRadioGroup value={currentSandboxProfile} onValueChange={handleSandboxSelect}>
-                      {sandboxOptions?.map((option) => {
-                        const OptionIcon = getProfileIcon(option.value);
-                        return (
-                          <DropdownMenuRadioItem
-                            key={option.value}
-                            value={option.value}
-                            indicator="none"
-                            className="text-xs"
-                          >
-                            <span className="flex min-w-0 flex-1 items-start gap-2">
-                              <OptionIcon
-                                className={`mt-0.5 size-3.5 shrink-0 ${
-                                  isUnsandboxedProfile(option.value) ? 'text-warning' : 'text-muted-foreground'
-                                }`}
-                              />
-                              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                                <span className="flex items-center gap-2">
-                                  <span className="flex-1">{option.label}</span>
-                                  {option.value === currentSandboxProfile && (
-                                    <CheckIcon className="size-3.5 shrink-0" />
-                                  )}
-                                </span>
-                                {option.description && (
-                                  <span className="max-w-56 text-xs text-muted-foreground">{option.description}</span>
-                                )}
-                              </span>
-                            </span>
-                          </DropdownMenuRadioItem>
-                        );
-                      })}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
               )}
 
               {composerExtras}

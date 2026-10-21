@@ -2,11 +2,10 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { GitDiffResult, GitRepository, GitStatusResult, WorkspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
+import type { GitDiffResult, GitStatusResult, WorkspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
 import { GitClient, workspaceRepo } from '@/renderer/omniagents-ui/rpc/git';
-import type { ProjectSource } from '@/shared/types';
 
-import { GitSurface, sourceForRepository } from './GitSurface';
+import { GitSurface } from './GitSurface';
 
 const mocks = vi.hoisted(() => ({
   connected: true,
@@ -530,65 +529,5 @@ describe('GitSurface', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toContain(
       'Configured Git sources were not materialized in this environment'
     );
-  });
-
-  it('reviews all tracked session changes for a sandboxed local source', async () => {
-    mocks.store = {
-      defaultProfileName: 'docker',
-      codeTabs: [{ id: 'tab-1', projectId: 'project-1', profileName: 'docker' }],
-      projects: [
-        {
-          id: 'project-1',
-          sources: [{ id: 'source-1', kind: 'local', mountName: 'work', workspaceDir: '/home/user/work' }],
-        },
-      ],
-    };
-    await act(async () =>
-      root.render(
-        <GitSurface
-          executionTarget={executionTarget}
-          tabId="tab-1"
-          sessionId="session-1"
-          workspaceRoot="/workspace/work"
-        />
-      )
-    );
-    await settle();
-    await settle();
-
-    await act(async () => button('Session changes').click());
-    await settle();
-    expect(mocks.git.diff).toHaveBeenLastCalledWith(repo, {
-      mode: 'range',
-      fromRev: 'refs/tags/omni/seed',
-    });
-  });
-});
-
-describe('sourceForRepository', () => {
-  const sources: ProjectSource[] = [
-    { id: 'launcher', kind: 'local', mountName: 'launcher', workspaceDir: '/home/user/launcher' },
-    { id: 'agents', kind: 'git-remote', mountName: 'omniagents', repoUrl: 'https://example.com/agents.git' },
-  ];
-
-  const repository = (repoPath: string, absoluteRoot: string): GitRepository => ({
-    repo: workspaceRepo(repoPath),
-    root: repoPath,
-    absolute_root: absoluteRoot,
-    branch: 'main',
-    detached: false,
-    bare: false,
-    git_common_dir: `${absoluteRoot}/.git`,
-    is_linked_worktree: false,
-    source: null,
-  });
-
-  it('matches repositories to container mount roots instead of tickets', () => {
-    expect(sourceForRepository(sources, repository('launcher', '/workspace/launcher'))?.id).toBe('launcher');
-    expect(sourceForRepository(sources, repository('omniagents', '/workspace/omniagents'))?.id).toBe('agents');
-  });
-
-  it('uses the only project source for a workspace-root repository', () => {
-    expect(sourceForRepository([sources[0]!], repository('.', '/workspace/launcher'))?.id).toBe('launcher');
   });
 });

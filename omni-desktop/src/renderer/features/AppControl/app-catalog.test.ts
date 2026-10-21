@@ -28,8 +28,6 @@ const base = (over: Partial<CatalogInput>): CatalogInput => ({
   live: {},
   registry: APP_REGISTRY,
   codeTabs: [tab('t1')],
-  servicesByTab: {},
-  columnInfo: () => ({}),
   ...over,
 });
 
@@ -60,21 +58,6 @@ describe('buildAppCatalog', () => {
     expect(cat.some((a) => a.id === 'chat')).toBe(false);
   });
 
-  it('hides sandbox apps until the sandbox exposes their service', () => {
-    const without = buildAppCatalog(base({ filter: { tabId: 't1', allowGlobal: true } }));
-    expect(without.some((a) => a.id === 'code')).toBe(false);
-    expect(without.some((a) => a.id === 'desktop')).toBe(false);
-
-    const withSvc = buildAppCatalog(
-      base({
-        filter: { tabId: 't1', allowGlobal: true },
-        servicesByTab: { t1: { code_server: 'http://cs', vnc: 'http://vnc' } },
-      })
-    );
-    expect(withSvc.some((a) => a.id === 'code')).toBe(true);
-    expect(withSvc.some((a) => a.id === 'desktop')).toBe(true);
-  });
-
   it('flags running apps from the live registry', () => {
     const cat = buildAppCatalog(
       base({
@@ -89,19 +72,5 @@ describe('buildAppCatalog', () => {
   it('column caller does not see other columns', () => {
     const cat = buildAppCatalog(base({ filter: { tabId: 't1', allowGlobal: true }, codeTabs: [tab('t1'), tab('t2')] }));
     expect(cat.some((a) => a.tabId === 't2')).toBe(false);
-  });
-
-  it('superuser sees every column, tagged with column context', () => {
-    const cat = buildAppCatalog(
-      base({
-        filter: { allowGlobal: true, allColumns: true },
-        codeTabs: [tab('t1', { sessionId: 's1' }), tab('t2', { sessionId: 's2' })],
-        columnInfo: (id) => ({ sessionId: id === 't1' ? 's1' : 's2', project: 'Proj' }),
-      })
-    );
-    const t1Term = cat.find((a) => a.handleId === 'tab-t1:terminal');
-    const t2Term = cat.find((a) => a.handleId === 'tab-t2:terminal');
-    expect(t1Term?.column).toEqual({ tabId: 't1', sessionId: 's1', project: 'Proj' });
-    expect(t2Term?.column).toEqual({ tabId: 't2', sessionId: 's2', project: 'Proj' });
   });
 });

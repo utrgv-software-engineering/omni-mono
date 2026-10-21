@@ -9,8 +9,6 @@ import {
   type OmniRuntimeReadiness,
   retryRuntimeCheck,
 } from '@/renderer/features/Omni/state';
-import { getProfileMenuLabel } from '@/renderer/features/SandboxProfile/profile-list';
-import { toast } from '@/renderer/features/Toast/state';
 import { $agentStatuses, agentProcessApi, clearStatus } from '@/renderer/services/agent-process';
 import { emitter } from '@/renderer/services/ipc';
 import { $initialized, persistedStoreApi } from '@/renderer/services/store';
@@ -26,13 +24,8 @@ type UseAutoLaunchOptions = {
   workspaceDir: string | null;
   /** Explicit replacement for the project's primary local source. */
   sourceOverrideDir?: string;
-  /** Project id, forwarded to ProcessManager for per-project profile lookup. */
+  /** Project id, forwarded to ProcessManager to resolve the project's sources. */
   projectId?: string;
-  /**
-   * Per-launch sandbox profile override. Wins over project + default
-   * resolution in ProcessManager. Set by the pre-launch SandboxPicker.
-   */
-  profileNameOverride?: string;
   /** Conversation identity used by delegated-compute backends. */
   sessionId?: string;
   /** Durable Workspace snapshot identity, independent of the conversation. */
@@ -62,8 +55,6 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
   const previousSourceOverrideDirRef = useRef(opts.sourceOverrideDir);
   const projectIdRef = useRef(opts.projectId);
   projectIdRef.current = opts.projectId;
-  const profileNameOverrideRef = useRef(opts.profileNameOverride);
-  profileNameOverrideRef.current = opts.profileNameOverride;
   const sessionIdRef = useRef(opts.sessionId);
   sessionIdRef.current = opts.sessionId;
   const snapshotRefRef = useRef(opts.snapshotRef);
@@ -179,7 +170,6 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
             workspaceDir: wd,
             ...(sourceOverrideDirRef.current ? { sourceOverrideDir: sourceOverrideDirRef.current } : {}),
             ...(projectIdRef.current ? { projectId: projectIdRef.current } : {}),
-            ...(profileNameOverrideRef.current ? { profileNameOverride: profileNameOverrideRef.current } : {}),
             ...(sessionIdRef.current ? { sessionId: sessionIdRef.current } : {}),
             ...(snapshotRefRef.current ? { snapshotRef: snapshotRefRef.current } : {}),
           })
@@ -252,30 +242,15 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
   const inspect = useMemo(
     () =>
       createMachineLogger(logLabel ?? `autoLaunch:${processId}`, {
-        tags: {
-          tab: processId,
-          sandbox: opts.profileNameOverride ?? store.defaultProfileName ?? 'none',
-        },
+        tags: { tab: processId },
       }),
-    [processId, logLabel, opts.profileNameOverride, store.defaultProfileName]
+    [processId, logLabel]
   );
 
   const machine = useMemo(() => autoLaunchMachine.provide({ actors }), [actors]);
   const actor = useActorRef(machine, { inspect });
   const phase = useSelector(actor, (snap) => snap.value as AutoLaunchPhase);
   const error = useSelector(actor, (snap) => snap.context.error);
-
-  // Reset when sandbox backend changes
-  const lastSandboxBackend = useRef(store.defaultProfileName);
-  useEffect(() => {
-    if (lastSandboxBackend.current !== store.defaultProfileName) {
-      lastSandboxBackend.current = store.defaultProfileName;
-      actor.send({ type: 'RESET' });
-      if (initialized) {
-        actor.send({ type: 'LAUNCH' });
-      }
-    }
-  }, [store.defaultProfileName, initialized, actor]);
 
   // Trigger: send LAUNCH when initialized + workspace available
   useEffect(() => {
@@ -322,61 +297,6 @@ export const useAutoLaunch = (opts: UseAutoLaunchOptions) => {
       cancelled = true;
     };
   }, [initialized, opts.sourceOverrideDir, opts.workspaceDir, actor]);
-
-  // React to a per-launch sandbox profile override change (written by the
-  // SandboxPicker). The main process materializes the selected profile as a
-  // separate environment and atomically rebinds this tab while the shared
-  // AgentHost and conversation stay alive. A security-boundary change that
-  // requires another AgentHost falls back to stop → RESET → LAUNCH.
-  const previousProfileOverrideRef = useRef(opts.profileNameOverride);
-  useEffect(() => {
-    const previous = previousProfileOverrideRef.current;
-    previousProfileOverrideRef.current = opts.profileNameOverride;
-    if (!initialized || previous === opts.profileNameOverride) {
-      return;
-    }
-    const nextProfile = opts.profileNameOverride;
-    const status = $agentStatuses.get()[processIdRef.current];
-    const isLiveSession = status?.type === 'running' || status?.type === 'connecting';
-
-    if (!isLiveSession) {
-      return;
-    }
-
-    let cancelled = false;
-    void (async () => {
-      if (nextProfile) {
-        const res = await agentProcessApi.switchSandbox(processIdRef.current, nextProfile);
-        if (cancelled) {
-          return;
-        }
-        const label = getProfileMenuLabel(nextProfile);
-        if (res.ok) {
-          // The new binding and environment status arrived atomically.
-          toast.success(`Now running on ${label}`);
-          return;
-        }
-        if (!res.fallback) {
-          // Materialization/rebind failed before replacing the prior binding.
-          toast.error(`Couldn't switch to ${label}`, res.reason);
-          return;
-        }
-      }
-      // Fallback: the selected profile requires another AgentHost security
-      // boundary, so tear down this attachment and relaunch there.
-      await agentProcessApi.stop(processIdRef.current);
-      if (cancelled) {
-        return;
-      }
-      actor.send({ type: 'RESET' });
-      if (workspaceDirRef.current) {
-        actor.send({ type: 'LAUNCH' });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [initialized, opts.profileNameOverride, actor]);
 
   const retry = useCallback(() => {
     actor.send({ type: 'RETRY' });

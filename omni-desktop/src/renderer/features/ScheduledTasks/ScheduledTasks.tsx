@@ -1,6 +1,5 @@
 import { useStore } from '@nanostores/react';
 import { Edit, Ellipsis, ExternalLink, Play, Plus, Trash2 } from 'lucide-react';
-import type { ComponentProps } from 'react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
 import { formatDuration, formatTimestamp } from '@/lib/format-time';
@@ -33,8 +32,6 @@ import { Input } from '@/renderer/ds/ui/input';
 import { NativeSelect as Select } from '@/renderer/ds/ui/native-select';
 import { Switch } from '@/renderer/ds/ui/switch';
 import { Textarea } from '@/renderer/ds/ui/textarea';
-import { getProfileMenuLabel } from '@/renderer/features/SandboxProfile/profile-list';
-import { SandboxPicker } from '@/renderer/features/SandboxProfile/SandboxPicker';
 import { toast } from '@/renderer/features/Toast/state';
 import { scheduledTaskApi } from '@/renderer/services/scheduled-tasks';
 import { persistedStoreApi } from '@/renderer/services/store';
@@ -135,19 +132,17 @@ type RoutineFormState = {
   time: string;
   dayOfWeek: string;
   projectId: string;
-  profileName: string;
   permissionMode: ScheduledTaskPermissionMode;
   enabled: boolean;
 };
 
-const createEmptyFormState = (defaultProfileName: string | undefined): RoutineFormState => ({
+const createEmptyFormState = (): RoutineFormState => ({
   name: '',
   instructions: '',
   scheduleKind: 'daily',
   time: DEFAULT_TIME,
   dayOfWeek: '1',
   projectId: '',
-  profileName: defaultProfileName ?? 'host',
   permissionMode: 'ask',
   enabled: true,
 });
@@ -170,7 +165,7 @@ export const ScheduledTasks = memo(() => {
   const store = useStore(persistedStoreApi.$atom);
   const isDesktop = useIsDesktop();
 
-  const [createForm, setCreateForm] = useState<RoutineFormState>(() => createEmptyFormState(store.defaultProfileName));
+  const [createForm, setCreateForm] = useState<RoutineFormState>(() => createEmptyFormState());
   // Selection lives in `$routinesView` (like the Inbox tab's `$inboxView`),
   // so cross-tab jumps can land on a specific routine.
   const view = useStore($routinesView);
@@ -199,10 +194,6 @@ export const ScheduledTasks = memo(() => {
     [selectedTaskId, sorted]
   );
   const isEditing = selectedTask !== null && editingTaskId === selectedTask.id && editForm !== null;
-
-  const sandboxContext: ComponentProps<typeof SandboxPicker>['context'] = {
-    available: store.availableSandboxProfiles,
-  };
 
   // ----- handlers -----
 
@@ -243,9 +234,8 @@ export const ScheduledTasks = memo(() => {
     try {
       const task = await scheduledTaskApi.create(toScheduledTaskInput(createForm));
       setCreateForm((current) => ({
-        ...createEmptyFormState(store.defaultProfileName),
+        ...createEmptyFormState(),
         projectId: current.projectId,
-        profileName: current.profileName,
       }));
       setCreating(false);
       $routinesView.set({ selectedTaskId: task.id });
@@ -254,16 +244,13 @@ export const ScheduledTasks = memo(() => {
     }
   };
 
-  const startEdit = useCallback(
-    (task: ScheduledTask) => {
-      setEditError(null);
-      setCreating(false);
-      $routinesView.set({ selectedTaskId: task.id });
-      setEditingTaskId(task.id);
-      setEditForm(toFormState(task, store.defaultProfileName));
-    },
-    [store.defaultProfileName]
-  );
+  const startEdit = useCallback((task: ScheduledTask) => {
+    setEditError(null);
+    setCreating(false);
+    $routinesView.set({ selectedTaskId: task.id });
+    setEditingTaskId(task.id);
+    setEditForm(toFormState(task));
+  }, []);
 
   const saveEdit = async (task: ScheduledTask) => {
     if (!editForm) {
@@ -382,7 +369,6 @@ export const ScheduledTasks = memo(() => {
           <RoutineForm
             value={createForm}
             projects={store.projects}
-            sandboxContext={sandboxContext}
             submitLabel="Create routine"
             error={error}
             onChange={setCreateForm}
@@ -408,7 +394,6 @@ export const ScheduledTasks = memo(() => {
           <RoutineForm
             value={editForm}
             projects={store.projects}
-            sandboxContext={sandboxContext}
             submitLabel="Save changes"
             error={editError}
             showEnabled
@@ -595,7 +580,6 @@ const RoutineDetail = ({
   onOpenSession,
 }: RoutineDetailProps) => {
   const project = projectLabel(task, projects);
-  const sandbox = task.profileName ? getProfileMenuLabel(task.profileName) : 'Default sandbox';
   const allowedToolNames = task.allowedToolNames ?? [];
   const allowedMcpTools = task.allowedMcpTools ?? [];
   const runs = (task.history ?? []).slice(0, 5);
@@ -683,13 +667,6 @@ const RoutineDetail = ({
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Project</span>
                 <div className="flex flex-col gap-y-0.5 text-xs text-muted-foreground">
                   <span>{project ?? 'No project'}</span>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Sandbox</span>
-                <div className="flex flex-col gap-y-0.5 text-xs text-muted-foreground">
-                  <span>{sandbox}</span>
                 </div>
               </div>
 
@@ -814,7 +791,6 @@ RunItem.displayName = 'RunItem';
 type RoutineFormProps = {
   value: RoutineFormState;
   projects: Project[];
-  sandboxContext: ComponentProps<typeof SandboxPicker>['context'];
   submitLabel: string;
   error?: string | null;
   showEnabled?: boolean;
@@ -827,7 +803,6 @@ type RoutineFormProps = {
 const RoutineForm = ({
   value,
   projects,
-  sandboxContext,
   submitLabel,
   error,
   showEnabled = false,
@@ -870,18 +845,6 @@ const RoutineForm = ({
           ))}
         </Select>
         <FieldDescription>Without a project, each run gets a fresh session workspace.</FieldDescription>
-      </Field>
-      <Field>
-        <FieldLabel>Sandbox</FieldLabel>
-        <div className="flex items-center justify-between gap-4">
-          <SandboxPicker
-            value={value.profileName}
-            onChange={(profileName) => setField('profileName', profileName)}
-            context={sandboxContext}
-          />
-
-          <span className="text-muted-foreground text-xs leading-5">{getProfileMenuLabel(value.profileName)}</span>
-        </div>
       </Field>
       <Field>
         <FieldLabel>Schedule</FieldLabel>
@@ -974,7 +937,6 @@ function toScheduledTaskInput(form: RoutineFormState): ScheduledTaskInput {
     permissionMode: form.permissionMode,
     enabled: form.enabled,
     ...(form.projectId ? { projectId: form.projectId } : {}),
-    ...(form.profileName ? { profileName: form.profileName } : {}),
   };
 }
 
@@ -987,13 +949,12 @@ function toScheduledTaskUpdate(form: RoutineFormState): ScheduledTaskInput {
     permissionMode: form.permissionMode,
     enabled: form.enabled,
     projectId: form.projectId,
-    profileName: form.profileName,
   };
 }
 
-function toFormState(task: ScheduledTask, defaultProfileName: string | undefined): RoutineFormState {
+function toFormState(task: ScheduledTask): RoutineFormState {
   const schedule = task.schedule;
-  const fallback = createEmptyFormState(defaultProfileName);
+  const fallback = createEmptyFormState();
   if (schedule.kind === 'manual') {
     return { ...fallback, ...baseFormState(task), scheduleKind: 'manual' };
   }
@@ -1019,12 +980,11 @@ function toFormState(task: ScheduledTask, defaultProfileName: string | undefined
 
 function baseFormState(
   task: ScheduledTask
-): Pick<RoutineFormState, 'name' | 'instructions' | 'projectId' | 'profileName' | 'permissionMode' | 'enabled'> {
+): Pick<RoutineFormState, 'name' | 'instructions' | 'projectId' | 'permissionMode' | 'enabled'> {
   return {
     name: task.name,
     instructions: task.instructions,
     projectId: task.projectId ?? '',
-    profileName: task.profileName ?? 'host',
     permissionMode: task.permissionMode ?? 'ask',
     enabled: task.enabled,
   };

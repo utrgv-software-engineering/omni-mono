@@ -48,7 +48,7 @@ export type WindowProps = {
 /**
  * Data stored in the electron store.
  */
-export type LayoutMode = 'work' | 'chat' | 'routines' | 'plugins' | 'sandboxes' | 'settings' | 'gallery';
+export type LayoutMode = 'work' | 'chat' | 'routines' | 'plugins' | 'settings' | 'gallery';
 export type OmniTheme =
   | 'omni'
   | 'teams-light'
@@ -58,49 +58,6 @@ export type OmniTheme =
   | 'vscode-dark'
   | 'vscode-light'
   | 'utrgv';
-
-/**
- * Summary of a sandbox profile available to the launcher. Discovered at
- * runtime by the main process from disk (`<config>/sandbox/*.yml`) plus
- * bundled built-ins. Not persisted to the store — re-derived each boot.
- */
-export type ProfileSummary = {
-  /** Profile name; matches the YAML filename without extension. */
-  name: string;
-  /** Human-readable label for UI. */
-  label: string;
-  /** Sandbox client type from the profile (`unix_local`, `docker`, ...). */
-  clientType: string;
-  /** True for profiles shipped with the launcher (not user-created). */
-  builtin: boolean;
-  /** Absolute path of the YAML backing this profile; null for the implicit host profile. */
-  path: string | null;
-  origin: 'builtin' | 'user-override' | 'implicit';
-  /** Parsed highlights for the detail pane; absent fields simply unknown. */
-  details?: { image?: string; services?: string[]; runAs?: string; confine?: boolean };
-};
-
-/**
- * One Docker container carrying the omni-code label, as shown in the
- * Sandboxes → Running pane. Ownership is joined main-side against live
- * AgentHost consumer environments.
- */
-export type SandboxContainerSummary = {
-  id: string;
-  name: string;
-  image: string;
-  createdAt: string;
-  state: string;
-  ownerKind: 'process' | 'orphan';
-  /** Human label for the owner (session/tab title); null for orphans. */
-  ownerLabel: string | null;
-};
-
-/** Result of the Docker substrate probe (Sandboxes → Health pane). */
-export type SandboxSubstrateStatus = {
-  docker: 'ok' | 'missing' | 'daemon-down';
-  dockerVersion?: string;
-};
 
 export type AudioSettings = {
   /** mediaDevices deviceId for the input mic. Null = OS default. */
@@ -142,19 +99,6 @@ export type RemoteBackendBootstrap = (WslBackend & { url: string }) | ServerBack
 
 export type StoreData = {
   workspaceDir?: string;
-  /**
-   * Name of the default sandbox profile. Resolved at launch time against
-   * the launcher's profile chain (built-in → user-default → per-project).
-   * Built-in profiles always present: `host` (no isolation, unix_local) and
-   * `devbox` (docker with code-server + VNC).
-   */
-  defaultProfileName: string;
-  /**
-   * Sandbox profiles the UI picker should offer. When set by the backend,
-   * the picker shows exactly these. Unset → the renderer falls back to the
-   * built-in list (`host`/`devbox`).
-   */
-  availableSandboxProfiles?: string[];
   launcherWindowProps?: WindowProps;
   appWindowProps?: WindowProps;
   optInToLauncherPrereleases: boolean;
@@ -256,8 +200,6 @@ export type StoreData = {
   modelsConfig: ModelsConfig;
   /** Agent MCP servers (`mcp.json`). Same materialization as `modelsConfig`. */
   mcpConfig: McpConfig;
-  /** Sandbox network egress policy (`network.json`). Non-secret; materialized verbatim. */
-  networkConfig: NetworkConfig;
   /**
    * Raw `.env` contents for the agent, materialized to a real `.env` file.
    */
@@ -346,7 +288,6 @@ export type ScheduledTask = {
   permissionMode: ScheduledTaskPermissionMode;
   enabled: boolean;
   projectId?: ProjectId;
-  profileName?: string;
   createdAt: number;
   updatedAt: number;
   nextRunAt: number | null;
@@ -366,7 +307,6 @@ export type ScheduledTaskInput = {
   permissionMode?: ScheduledTaskPermissionMode;
   enabled?: boolean;
   projectId?: ProjectId;
-  profileName?: string;
 };
 
 export type ScheduledTaskUpdate = Partial<ScheduledTaskInput> & { enabled?: boolean };
@@ -475,10 +415,6 @@ const winSizePropsSchema = {
 export const schema: Schema<StoreData> = {
   workspaceDir: {
     type: 'string',
-  },
-  defaultProfileName: {
-    type: 'string',
-    default: 'host',
   },
   launcherWindowProps: winSizePropsSchema,
   appWindowProps: winSizePropsSchema,
@@ -721,7 +657,6 @@ export const schema: Schema<StoreData> = {
         isPersonal: { type: 'boolean' },
         sources: { type: 'array', default: [] },
         createdAt: { type: 'number' },
-        sandboxProfile: { type: ['string', 'null'] },
         pinnedAt: { type: ['number', 'null'] },
       },
       required: ['id', 'label', 'slug', 'createdAt'],
@@ -758,14 +693,6 @@ export const schema: Schema<StoreData> = {
     default: { version: 3, default: null, voice_default: null, providers: {} },
   },
   mcpConfig: { type: 'object', default: { mcpServers: {} } },
-  networkConfig: {
-    type: 'object',
-    default: {
-      enabled: false,
-      presets: [],
-      allowlist: [],
-    },
-  },
   envVars: { type: 'string', default: '' },
   agentConfigMigratedFromFiles: { type: 'boolean', default: false },
   mcpConfigOwnership: { type: 'string', enum: ['omniagents'] },
@@ -1024,25 +951,8 @@ export type AgentProcessData = {
    * renderer can iframe directly. Empty when the profile defines no services.
    */
   services?: Record<string, string>;
-  /** Container id when the backend is docker; absent for unix_local/platform. */
-  containerId?: string;
-  /** Container name when the backend is docker. */
-  containerName?: string;
   /** Host port the agent's WS/HTTP server is bound to. */
   port?: number;
-  /**
-   * True when the sandbox container is currently frozen via docker pause
-   * (cgroup freezer). RAM is held; CPU is zero; tool calls into the
-   * container hang until unpause. The renderer uses this to show a
-   * "paused" badge and to trigger ``sandbox.unpause`` on activity.
-   * Unset / false when the backend doesn't support pause or when we
-   * never asked.
-   */
-  paused?: boolean;
-  /**
-   * Transitional UI state while a profile replacement is being prepared.
-   */
-  switching?: boolean;
 };
 
 export type AgentProcessStatus =
@@ -1066,13 +976,6 @@ export type AgentProcessStartOptions = {
    * while registering the consumer's default profile definition.
    */
   projectId?: string;
-  /**
-   * Per-launch profile override. Wins over per-project ``sandboxProfile``
-   * and the user's ``defaultProfileName``. Set by the pre-launch sandbox
-   * picker; not persisted — a follow-up launch without this set falls
-   * back through the normal resolution chain.
-   */
-  profileNameOverride?: string;
   /**
    * Conversation session id used for delegated-compute session ownership.
    * Local AgentHost Workspace identity is deliberately independent.
@@ -1145,14 +1048,6 @@ export type CodeTab = {
   spacesSidecarWidth?: number;
   /** Whether this session's sidecar uses the expanded Spaces width preset. */
   spacesSidecarExpanded?: boolean;
-  /**
-   * Sticky profile binding for this tab. Snapshotted from the resolution chain
-   * (per-project ``sandboxProfile`` → user default) when the tab is created,
-   * then persisted so a later default change doesn't silently drift the
-   * workspace into another sandbox.
-   */
-  profileName?: string;
-  profileNameExplicit?: boolean;
   createdAt: number;
   /**
    * When the user first expressed intent in this column (first message sent
@@ -1180,8 +1075,6 @@ export type ChatConversation = {
   /** First user message (truncated) — display label in the sidebar. */
   title: string;
   lastActiveAt: number;
-  /** Sticky profile of the column that owned it, for faithful resume. */
-  profileName?: string;
   /** Project grouping retained independently of an active column. */
   projectId?: ProjectId;
   /** Hidden from normal history until restored. */
@@ -1349,11 +1242,6 @@ export type Project = {
    */
   sources: ProjectSource[];
   createdAt: number;
-  /**
-   * Per-project sandbox profile name. Overrides ``defaultProfileName`` for
-   * this project. ``null``/missing inherits the user-default.
-   */
-  sandboxProfile?: string | null;
   /** Timestamp of the most recent pin action. Set = pinned to Home; undefined = not pinned. */
   /** Pinned to This Week. `null` = explicit unpin (undefined doesn't survive the WS JSON transport). */
   pinnedAt?: number | null;
@@ -1474,21 +1362,6 @@ type AgentProcessIpcEvents = Namespaced<
     rebuild: (processId: string, arg: AgentProcessStartOptions) => void;
     resize: (processId: string, cols: number, rows: number) => void;
     'get-status': (processId: string) => WithTimestamp<AgentProcessStatus>;
-    /**
-     * Freeze the sandbox container via ``docker pause``. Returns an
-     * envelope that distinguishes "ok" from "backend doesn't support
-     * pause" so callers can decide between updating UI state, falling
-     * through to stop/shutdown, or surfacing an error.
-     */
-    pause: (processId: string) => SandboxPauseResult;
-    /** Thaw a previously-paused container. Same envelope shape as ``pause``. */
-    unpause: (processId: string) => SandboxPauseResult;
-    /**
-     * Materialize the selected profile as an environment and atomically rebind
-     * this tab. The shared AgentHost and conversation remain alive when the
-     * profile stays within the same security domain.
-     */
-    'switch-sandbox': (processId: string, profileName: string) => SandboxSwitchResult;
   }
 >;
 
@@ -1504,35 +1377,13 @@ type ManagementRuntimeIpcEvents = Namespaced<
   }
 >;
 
-/** Result envelope returned by ``agent-process:pause`` / ``:unpause``.
- *  Mirrors the omni-code server-function schema. */
-export type SandboxPauseResult = {
+/** Result envelope of a one-shot omni-code server-function call. */
+export type ServerCallResult = {
   ok: boolean;
   supported: boolean;
-  paused?: boolean;
   reason?: string;
   /** Raw server-function result, when a caller needs fields beyond the envelope. */
   data?: Record<string, unknown>;
-};
-
-/** Result of an AgentHost environment profile rebind. */
-export type SandboxSwitchResult = {
-  ok: boolean;
-  /** New profile name once switched (display label). */
-  profile?: string;
-  /** New backend client type (`docker` / `unix_local` / …). */
-  backend?: string;
-  /** New container id (docker); absent for unix_local. */
-  containerId?: string;
-  /** New in-sandbox service URLs (code_server / vnc / …). */
-  services?: Record<string, string>;
-  /** Failure detail; present when `ok` is false. */
-  reason?: string;
-  /**
-   * When `ok` is false: whether the selected profile crosses an AgentHost
-   * security boundary and therefore requires a full stop+relaunch.
-   */
-  fallback?: boolean;
 };
 
 type SnapshotIpcEvents = Namespaced<
@@ -1666,7 +1517,6 @@ export type WslBackendStatus = {
   state: 'idle' | 'provisioning' | 'starting' | 'running' | 'error';
   distro?: string;
   port?: number;
-  docker: 'ok' | 'missing' | 'daemon-down' | 'unknown';
   /** Mirrors WslBackend.persistent so the settings card renders the toggle
    *  from status alone. */
   persistent?: boolean;
@@ -1699,16 +1549,6 @@ type WslIpcEvents = Namespaced<
     status: () => WslBackendStatus;
     'set-persistent': (persistent: boolean) => void;
     install: (mode: 'platform' | 'distro') => void;
-    /**
-     * Install docker-ce inside the linked distro (get.docker.com script run
-     * as root via `wsl -u root` — no sudo password needed) and add the
-     * default user to the docker group. Long-running; rejects with decoded
-     * stderr on failure.
-     */
-    'install-docker': () => void;
-    /** Start dockerd in the linked distro (`service docker start` as root) —
-     *  the daemon-down remedy on distros where it isn't auto-started. */
-    'start-docker': () => void;
   }
 >;
 
@@ -1751,8 +1591,6 @@ type SettingsConfigIpcEvents = Namespaced<
     ) => void;
     'get-mcp-config': () => McpConfig;
     'set-mcp-config': (config: McpConfig) => void;
-    'get-network-config': () => NetworkConfig;
-    'set-network-config': (config: NetworkConfig) => void;
     'get-env': () => string;
     'set-env': (content: string) => void;
   }
@@ -2265,69 +2103,6 @@ export type BrowserDownloadEntry = {
 };
 
 /**
- * Sandbox management IPC (Sandboxes tab). Profile discovery reads bundled +
- * user YAMLs from disk; container channels shell out to docker with the same
- * env resolution as the orphan sweep. Registered in both shells
- * (`src/main/index.ts` and `src/server/managers.ts` wireGlobalHandlers).
- */
-type SandboxIpcEvents = Namespaced<
-  'sandbox',
-  {
-    'list-profiles': () => ProfileSummary[];
-    /** Raw YAML for the read-only detail view; null for the implicit host profile (no file). */
-    'read-profile': (name: string) => { yaml: string } | null;
-    /** Copy the resolved bundled YAML to `<config>/sandbox/<name>.yml`. Throws if the override exists or the profile is implicit. */
-    'create-override': (name: string) => { path: string };
-    'list-containers': () => SandboxContainerSummary[];
-    /** Force-remove a container. Throws (with the owner label) when the id is protected. */
-    'remove-container': (id: string) => void;
-    /** Run the orphan cleanup pass on demand. */
-    'sweep-orphans': () => { removed: string[] };
-    'substrate-status': () => SandboxSubstrateStatus;
-    /**
-     * Overwrite a profile YAML. Only file-backed profiles are writable
-     * (`origin: 'user-override'` or user-created — never the implicit host);
-     * builtin-origin profiles must go through `create-override` first. The
-     * YAML is parse-validated (and must contain a `client.type` string)
-     * before the write; invalid input throws without touching the file.
-     */
-    'write-profile': (name: string, yaml: string) => void;
-    /** Workspace snapshot tars (`<config>/snapshots/*.tar`) for the browser UI. */
-    'list-snapshots': () => SandboxSnapshotSummary[];
-    /** Tail of `docker logs` for one labeled container (both streams, capped). */
-    'container-logs': (id: string, tailLines: number) => { logs: string };
-    /** Presence/size of the devbox (or given) image on the backend's dockerd. */
-    'image-status': (image: string) => SandboxImageStatus;
-    /** `docker pull <image>` — resolves when the pull completes (may take minutes). */
-    'pull-image': (image: string) => void;
-    /** `docker image prune -f` (dangling only). Returns reclaimed byte count when docker reports it. */
-    'prune-images': () => { reclaimedBytes: number | null };
-  }
->;
-
-/** One workspace snapshot tar under `<config>/snapshots/`. */
-export type SandboxSnapshotSummary = {
-  /** Workspace snapshot reference — the tar's filename stem. */
-  snapshotRef: string;
-  sizeBytes: number;
-  /** mtime, epoch ms. */
-  modifiedAt: number;
-  /** True when an open code tab still claims this Workspace snapshot. */
-  inUse: boolean;
-  /** Human label when the owning tab (or an archived conversation's title)
-   *  is known; else null. */
-  label: string | null;
-};
-
-export type SandboxImageStatus = {
-  /** Image reference that was queried (as passed in). */
-  image: string;
-  present: boolean;
-  /** Local image size in bytes when present. */
-  sizeBytes: number | null;
-};
-
-/**
  * Intersection of all the events that the renderer can invoke and main process can handle.
  */
 type ScheduledTaskIpcEvents = Namespaced<
@@ -2368,8 +2143,7 @@ export type IpcEvents = MainProcessIpcEvents &
   ProjectIpcEvents &
   AppControlIpcEvents &
   BrowserIpcEvents &
-  RoutineIpcEvents &
-  SandboxIpcEvents;
+  RoutineIpcEvents;
 
 /**
  * Store events. Main process emits these events, renderer process listens to them.
@@ -2602,18 +2376,6 @@ export type McpServerEntry = {
 
 export type McpConfig = {
   mcpServers: Record<string, McpServerEntry>;
-};
-
-/**
- * Sandbox egress policy (`network.json`). `enabled` turns the iptables
- * allowlist on; `allowlist` is the host/CIDR list (presets expand into it).
- * Enforced by omni serve at container bring-up — these two fields are the
- * entire consumed surface.
- */
-export type NetworkConfig = {
-  enabled: boolean;
-  presets: string[];
-  allowlist: string[];
 };
 
 // #endregion

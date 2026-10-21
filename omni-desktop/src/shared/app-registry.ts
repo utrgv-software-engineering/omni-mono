@@ -2,8 +2,6 @@ export type AppId = string;
 
 export type AppKind =
   | 'builtin-chat'
-  | 'builtin-code'
-  | 'builtin-desktop'
   | 'builtin-browser'
   | 'builtin-files'
   | 'builtin-git'
@@ -12,8 +10,7 @@ export type AppKind =
   | 'builtin-jobs'
   | 'builtin-terminal';
 
-export type AppScope = 'always' | 'sandbox';
-export type SandboxUrlKey = 'codeServerUrl' | 'noVncUrl';
+export type AppScope = 'always';
 
 export type AppDescriptor = {
   id: AppId;
@@ -22,7 +19,6 @@ export type AppDescriptor = {
   kind: AppKind;
   url?: string;
   scope: AppScope;
-  sandboxUrlKey?: SandboxUrlKey;
   builtin: boolean;
   order: number;
   /** When true, the app appears in a code session's `EnvironmentDock`. */
@@ -38,28 +34,6 @@ export const BUILTIN_APPS: AppDescriptor[] = [
     scope: 'always',
     builtin: true,
     order: 0,
-    columnScoped: true,
-  },
-  {
-    id: 'code',
-    label: 'Code',
-    icon: 'Code',
-    kind: 'builtin-code',
-    scope: 'sandbox',
-    builtin: true,
-    order: 10,
-    sandboxUrlKey: 'codeServerUrl',
-    columnScoped: true,
-  },
-  {
-    id: 'desktop',
-    label: 'Desktop',
-    icon: 'Monitor',
-    kind: 'builtin-desktop',
-    scope: 'sandbox',
-    builtin: true,
-    order: 20,
-    sandboxUrlKey: 'noVncUrl',
     columnScoped: true,
   },
   {

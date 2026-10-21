@@ -1,14 +1,12 @@
 import type { ReadableAtom } from 'nanostores';
 import { atom } from 'nanostores';
 
-import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig } from '@/lib/agent-config';
+import { emptyMcpConfig, emptyModelsConfig } from '@/lib/agent-config';
 import { migrateLayoutMode } from '@/lib/store-init';
-import { refreshSandboxProfiles } from '@/renderer/features/Sandboxes/state';
 import { emitter, ipc } from '@/renderer/services/ipc';
 import type { OperatingSystem, StoreData } from '@/shared/types';
 
 const getDefaults = (): StoreData => ({
-  defaultProfileName: 'host',
   optInToLauncherPrereleases: false,
   previewFeatures: false,
   notifyOnAgentAttention: false,
@@ -41,7 +39,6 @@ const getDefaults = (): StoreData => ({
   gitCredentials: [],
   modelsConfig: emptyModelsConfig(),
   mcpConfig: emptyMcpConfig(),
-  networkConfig: emptyNetworkConfig(),
   envVars: '',
   browserProfiles: [],
   browserTabsets: {},
@@ -166,13 +163,6 @@ const init = async () => {
       // If we can't read the config, just leave onboardingComplete as false
     }
   }
-
-  // Sandbox profile discovery (bundled + user YAMLs on disk). The pickers
-  // (chat composer, project settings, scheduled tasks) all read
-  // `$sandboxProfiles`; without this boot fetch the catalog stayed empty
-  // until the user happened to open Sandboxes → Profiles, and every picker
-  // fell back to the hardcoded host/devbox pair.
-  void refreshSandboxProfiles();
 
   $initialized.set(true);
 };

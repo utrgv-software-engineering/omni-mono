@@ -36,12 +36,10 @@ describe('upsertConversation', () => {
     const list = upsertConversation([conv('a', 10, { title: 'Plan my week' })], {
       sessionId: 'a',
       lastActiveAt: 50,
-      profileName: 'devbox',
     });
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({
       title: 'Plan my week',
-      profileName: 'devbox',
       lastActiveAt: 50,
     });
   });

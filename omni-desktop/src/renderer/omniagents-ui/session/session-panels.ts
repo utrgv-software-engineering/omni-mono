@@ -19,10 +19,7 @@ export type SessionPanels = {
   modelLoading: boolean;
   modelMutating: boolean;
   modelError: string | null;
-  networkEnabled: boolean | null;
-  networkMutating: boolean;
   workspacePath: string | null;
-  workspaceLocked: boolean;
   liveBashJobs: BashJobSummary[] | null;
   goalSnapshot: GoalSnapshot | null;
   wakeupSnapshot: WakeupSnapshot | null;
@@ -49,10 +46,7 @@ export class SessionPanelStore {
     modelLoading: true,
     modelMutating: false,
     modelError: null,
-    networkEnabled: null,
-    networkMutating: false,
     workspacePath: null,
-    workspaceLocked: false,
     liveBashJobs: null,
     goalSnapshot: null,
     wakeupSnapshot: null,

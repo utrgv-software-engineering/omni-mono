@@ -33,7 +33,6 @@ const renderShell = async (
         phase="idle"
         onSubmit={onSubmit}
         suggestions={CHAT_SUGGESTIONS}
-        sandboxLabel="Devbox"
         workspaceReady
         onOpenWorkspaceSettings={vi.fn()}
         composerExtras={<button type="button">Attach project</button>}
@@ -57,7 +56,7 @@ describe('ChatShell lazy launch guidance', () => {
   it('renders helper copy, suggestions, extras, and an enabled composer', async () => {
     await renderShell();
 
-    expect(container.textContent).toContain('Your first message starts a session in Devbox.');
+    expect(container.textContent).toContain('Your first message starts a session.');
     expect(buttonNamed('Plan my week')).toBeTruthy();
     expect(buttonNamed('Show me around')).toBeTruthy();
     expect(buttonNamed('Attach project')).toBeTruthy();
@@ -90,7 +89,7 @@ describe('ChatShell lazy launch guidance', () => {
 
     expect(container.textContent).toContain('Help me plan');
     const status = container.querySelector('[role="status"]');
-    expect(status?.textContent).toContain('Starting Devbox…');
+    expect(status?.textContent).toContain('Starting session…');
   });
 
   it('keeps pending intent beside an actionable launch error', async () => {
@@ -103,7 +102,7 @@ describe('ChatShell lazy launch guidance', () => {
     });
 
     expect(container.textContent).toContain('Help me plan');
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Couldn’t start Devbox');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Couldn’t start the session');
 
     act(() => buttonNamed('Retry').click());
     expect(onRetry).toHaveBeenCalledOnce();
@@ -113,6 +112,6 @@ describe('ChatShell lazy launch guidance', () => {
   it('uses the same error treatment when no message is pending', async () => {
     await renderShell({ phase: 'error', error: 'Sandbox unavailable', onRetry: vi.fn() });
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Couldn’t start Devbox');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('Couldn’t start the session');
   });
 });

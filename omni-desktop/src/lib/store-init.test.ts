@@ -74,7 +74,7 @@ describe('migrateLayoutMode', () => {
     expect(migrateLayoutMode('plugins')).toBeNull();
   });
 
-  it('returns null for valid "sandboxes" mode', () => {
-    expect(migrateLayoutMode('sandboxes')).toBeNull();
+  it('migrates the retired "sandboxes" mode to chat', () => {
+    expect(migrateLayoutMode('sandboxes')).toBe('chat');
   });
 });

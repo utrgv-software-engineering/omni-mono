@@ -7,7 +7,7 @@
 
 import type { LayoutMode } from '@/shared/types';
 
-const VALID_LAYOUT_MODES: LayoutMode[] = ['work', 'chat', 'routines', 'plugins', 'sandboxes', 'settings'];
+const VALID_LAYOUT_MODES: LayoutMode[] = ['work', 'chat', 'routines', 'plugins', 'settings'];
 
 /**
  * Migrate legacy layout modes to current valid modes.
@@ -42,6 +42,10 @@ export function migrateLayoutMode(mode: string): LayoutMode | null {
   // 'spaces' merged into 'chat' (the deck now lives behind the Chat tab);
   // 'code' and 'os' were its earlier names.
   if (mode === 'code' || mode === 'os' || mode === 'spaces' || mode === 'desktop') {
+    return 'chat';
+  }
+  // The Sandboxes tab went with the desktop's sandbox support.
+  if (mode === 'sandboxes') {
     return 'chat';
   }
   // The mobile "More" page was retired — its only destination was Settings.

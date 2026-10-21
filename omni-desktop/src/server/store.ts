@@ -2,13 +2,12 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { homedir } from 'os';
 import { dirname, join } from 'path';
 
-import { emptyMcpConfig, emptyModelsConfig, emptyNetworkConfig } from '@/lib/agent-config';
+import { emptyMcpConfig, emptyModelsConfig } from '@/lib/agent-config';
 import type { StoreData } from '@/shared/types';
 
 const STORE_PATH = join(homedir(), '.config', 'Omni Code', 'config.json');
 
 export const DEFAULTS: StoreData = {
-  defaultProfileName: 'host',
   optInToLauncherPrereleases: false,
   previewFeatures: false,
   notifyOnAgentAttention: false,
@@ -41,7 +40,6 @@ export const DEFAULTS: StoreData = {
   gitCredentials: [],
   modelsConfig: emptyModelsConfig(),
   mcpConfig: emptyMcpConfig(),
-  networkConfig: emptyNetworkConfig(),
   envVars: '',
   browserProfiles: [],
   browserTabsets: {},

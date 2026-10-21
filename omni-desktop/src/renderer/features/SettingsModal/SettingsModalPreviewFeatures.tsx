@@ -10,10 +10,6 @@ export const SettingsModalPreviewFeatures = memo(() => {
   const { previewFeatures } = useStore(persistedStoreApi.$atom);
   const onChange = useCallback((checked: boolean) => {
     persistedStoreApi.setKey('previewFeatures', checked);
-    // GA users (no preview features) fall back to the no-isolation `host` profile.
-    if (!checked) {
-      persistedStoreApi.setKey('defaultProfileName', 'host');
-    }
   }, []);
 
   return (

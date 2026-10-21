@@ -9,7 +9,6 @@ import { Gallery } from '@/renderer/features/Gallery/Gallery';
 import { OnboardingWizard } from '@/renderer/features/Onboarding/OnboardingWizard';
 import { PluginsView } from '@/renderer/features/Plugins/PluginsView';
 import { ProjectsSurface } from '@/renderer/features/Projects/ProjectsSurface';
-import { SandboxesTabContent } from '@/renderer/features/Sandboxes/SandboxesTabContent';
 import { ScheduledTasks } from '@/renderer/features/ScheduledTasks/ScheduledTasks';
 import { SettingsPage } from '@/renderer/features/SettingsModal/SettingsPage';
 import { persistedStoreApi } from '@/renderer/services/store';
@@ -77,7 +76,6 @@ export const MainContent = memo(() => {
     { key: 'chat', Component: Code },
     { key: 'routines', Component: ScheduledTasks },
     { key: 'plugins', Component: PluginsView },
-    { key: 'sandboxes', Component: SandboxesTabContent },
     { key: 'settings', Component: SettingsPage },
     ...(import.meta.env.DEV ? [{ key: 'gallery' as const, Component: Gallery }] : []),
   ];

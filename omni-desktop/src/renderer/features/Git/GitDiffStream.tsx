@@ -21,7 +21,7 @@ import { DiffLines, DiffSection, useDiffTokens } from './DiffView';
  * state live with the surface; this component only renders and calls back.
  */
 
-export type GitStreamMode = 'worktree' | 'staged' | 'session';
+export type GitStreamMode = 'worktree' | 'staged';
 
 export type GitDiffStreamProps = {
   files: GitDiffFile[];
@@ -206,7 +206,6 @@ const FileStreamSection = ({
     [file.path, onSectionOpenChange]
   );
   const canOpen = file.change !== 'deleted';
-  const showMutations = mode !== 'session';
   return (
     <DiffSection
       path={file.path}
@@ -218,45 +217,43 @@ const FileStreamSection = ({
       onOpenChange={handleOpenChange}
       onOpenFile={onOpenFile && canOpen ? openFile : undefined}
       headerActions={
-        showMutations ? (
-          <ButtonGroup className="shrink-0">
-            {mode === 'staged' && onUnstage ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                className="text-muted-foreground"
-                disabled={actionsDisabled}
-                aria-label={`Unstage ${file.path}`}
-                onClick={() => onUnstage({ paths: [file.path], contextLines })}
-              >
-                Unstage
-              </Button>
-            ) : mode === 'worktree' && onStage ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                className="text-muted-foreground"
-                disabled={actionsDisabled}
-                aria-label={`Stage ${file.path}`}
-                onClick={() => onStage({ paths: [file.path], contextLines, mode: 'worktree' })}
-              >
-                Stage
-              </Button>
-            ) : null}
-            {mode === 'worktree' && onDiscard ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                className="text-muted-foreground"
-                disabled={actionsDisabled}
-                aria-label={`Discard ${file.path}`}
-                onClick={() => onDiscard({ paths: [file.path], contextLines })}
-              >
-                Discard
-              </Button>
-            ) : null}
-          </ButtonGroup>
-        ) : undefined
+        <ButtonGroup className="shrink-0">
+          {mode === 'staged' && onUnstage ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground"
+              disabled={actionsDisabled}
+              aria-label={`Unstage ${file.path}`}
+              onClick={() => onUnstage({ paths: [file.path], contextLines })}
+            >
+              Unstage
+            </Button>
+          ) : mode === 'worktree' && onStage ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground"
+              disabled={actionsDisabled}
+              aria-label={`Stage ${file.path}`}
+              onClick={() => onStage({ paths: [file.path], contextLines, mode: 'worktree' })}
+            >
+              Stage
+            </Button>
+          ) : null}
+          {mode === 'worktree' && onDiscard ? (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-muted-foreground"
+              disabled={actionsDisabled}
+              aria-label={`Discard ${file.path}`}
+              onClick={() => onDiscard({ paths: [file.path], contextLines })}
+            >
+              Discard
+            </Button>
+          ) : null}
+        </ButtonGroup>
       }
     >
       {file.unmerged ? (
@@ -276,7 +273,7 @@ const FileStreamSection = ({
             onUnstage={onUnstage}
             onDiscard={onDiscard}
             actionsDisabled={actionsDisabled}
-            showActions={showMutations && file.hunk_selectable}
+            showActions={file.hunk_selectable}
           />
         ))
       ) : (
@@ -311,9 +308,7 @@ export const GitDiffStream = memo(
       return (
         <Empty className="h-full rounded-none border-0" role="status">
           <EmptyHeader>
-            <EmptyTitle>
-              {mode === 'staged' ? 'Nothing staged' : mode === 'session' ? 'No session changes' : 'Working tree clean'}
-            </EmptyTitle>
+            <EmptyTitle>{mode === 'staged' ? 'Nothing staged' : 'Working tree clean'}</EmptyTitle>
             <EmptyDescription>
               {mode === 'staged'
                 ? 'Stage files or hunks from the Working tree view to build a commit.'
