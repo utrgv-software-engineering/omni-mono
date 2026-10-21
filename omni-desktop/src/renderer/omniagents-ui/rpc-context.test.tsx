@@ -4,8 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RPCClient, RPCConnectionState } from './rpc/client';
-import type { ManagementRepository } from './rpc/management-repository';
-import { RPCClientProvider, useManagementRepository, useManagementSnapshot, useRPCClient } from './rpc-context';
+import { RPCClientProvider, useRPCClient } from './rpc-context';
 import { getSessionRegistry } from './session/session-registry';
 
 const config = vi.hoisted(() => ({ wsBaseUrl: 'ws://runtime.test/gui', token: 'ticket-secret' }));
@@ -53,7 +52,7 @@ class ContextClient {
   }
 }
 
-describe('RPCClientProvider management boundary', () => {
+describe('RPCClientProvider', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -69,17 +68,14 @@ describe('RPCClientProvider management boundary', () => {
     container.remove();
   });
 
-  it('exposes one connection-scoped repository and reactive management snapshot', () => {
+  it('exposes the connection-scoped client', () => {
     const fake = new ContextClient();
     const factory = vi.fn(() => fake as unknown as RPCClient);
-    let repository: ManagementRepository | undefined;
     let contextClient: RPCClient | undefined;
 
     const Harness = () => {
-      repository = useManagementRepository();
       contextClient = useRPCClient();
-      const snapshot = useManagementSnapshot();
-      return <span>{snapshot.status}</span>;
+      return null;
     };
 
     act(() => {
@@ -92,12 +88,6 @@ describe('RPCClientProvider management boundary', () => {
 
     expect(factory).toHaveBeenCalledWith('ws://runtime.test/gui', 'ticket-secret');
     expect(contextClient).toBe(fake);
-    expect(repository).toBeDefined();
-    expect(repository?.getSnapshot().connection).toBe('disconnected');
-    expect(container.textContent).toBe('disconnected');
-    expect(fake.eventHandlers.get('account_changed')?.size).toBe(1);
-    expect(fake.eventHandlers.get('mcp_server_status_changed')?.size).toBe(1);
-    expect(fake.connectionHandlers.size).toBe(1);
   });
 
   it('shares the socket and session owner across separate providers and survives one view closing', async () => {
@@ -154,10 +144,8 @@ describe('RPCClientProvider management boundary', () => {
     );
     expect(factory).toHaveBeenCalledTimes(1);
     expect(fake.disconnect).not.toHaveBeenCalled();
-    expect(fake.connectionHandlers.size).toBe(1);
     await act(async () => root.render(null));
     expect(fake.disconnect).toHaveBeenCalledTimes(1);
-    expect(fake.connectionHandlers.size).toBe(0);
   });
 
   it('never pools connections across authentication identities', async () => {

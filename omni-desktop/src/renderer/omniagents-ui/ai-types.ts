@@ -16,8 +16,6 @@ export type ToolState =
 
 // ── Chat status ─────────────────────────────────────────────────────
 
-export type ChatStatus = 'submitted' | 'streaming' | 'ready' | 'error';
-
 // ── Message parts ───────────────────────────────────────────────────
 
 export interface TextUIPart {
@@ -104,14 +102,6 @@ export interface UIMessage {
 }
 
 // ── Usage ───────────────────────────────────────────────────────────
-
-export interface LanguageModelUsage {
-  inputTokens?: number;
-  outputTokens?: number;
-  reasoningTokens?: number;
-  cachedInputTokens?: number;
-  totalTokens?: number;
-}
 
 // ── Tool definition ─────────────────────────────────────────────────
 

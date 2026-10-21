@@ -427,19 +427,6 @@ export function getSessionController(tabId: string): SessionController | undefin
   return registry.get(tabId);
 }
 
-/** Snapshot every registered column's run state (for `list_workspace`). */
-export function listSessionRunStates(): Record<string, ColumnRunState> {
-  const out: Record<string, ColumnRunState> = {};
-  for (const [tabId, controller] of registry.entries()) {
-    try {
-      out[tabId] = controller.getState();
-    } catch {
-      out[tabId] = { running: false, awaitingApproval: [], transcript: { total: 0, latestCursor: null } };
-    }
-  }
-  return out;
-}
-
 // ─── Column run-end events ──────────────────────────────────────────────────
 // A push channel so consumers (the orchestrator watcher) can react the moment a
 // column's run finishes, instead of polling `list_workspace`. The column's App
@@ -470,14 +457,6 @@ export function emitColumnRunEnd(tabId: string, info: ColumnRunEndInfo): void {
       /* a misbehaving listener must not break the emit */
     }
   }
-}
-
-/** Subscribe to column run-started events. Returns an unsubscribe fn. */
-export function onColumnRunStarted(listener: RunStartedListener): () => void {
-  runStartedListeners.add(listener);
-  return () => {
-    runStartedListeners.delete(listener);
-  };
 }
 
 /** Emit a column run-started event to all listeners (best-effort; never throws). */

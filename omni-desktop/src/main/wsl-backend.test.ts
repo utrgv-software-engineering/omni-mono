@@ -147,7 +147,6 @@ function makeManager(opts: {
       : () => Promise.reject(new Error('connection refused')))) as unknown as typeof globalThis.fetch;
   const [manager, cleanup] = createWslBackendManager({
     store: { set: storeSet },
-    sendToWindow: vi.fn(),
     launcherVersion: '1.2.3',
     secrets,
     platform: opts.platform ?? 'win32',

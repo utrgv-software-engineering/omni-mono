@@ -25,24 +25,6 @@ export const MAX_RECONNECT_DELAY_MS = DEFAULT_LIFECYCLE_POLICY.reconnectMaxDelay
 // Types
 // ---------------------------------------------------------------------------
 
-export type RPCCallId = number;
-
-export type PendingCall = {
-  id: RPCCallId;
-  method: string;
-  resolve: (value: unknown) => void;
-  reject: (reason: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-};
-
-type JSONRPCNotification = {
-  jsonrpc: '2.0';
-  method: string;
-  params?: Record<string, unknown>;
-};
-
-export type ServerEvent = JSONRPCNotification;
-
 // ---------------------------------------------------------------------------
 // Machine input & context
 // ---------------------------------------------------------------------------

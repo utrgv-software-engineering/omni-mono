@@ -4,38 +4,6 @@ import type { Schema } from 'electron-store';
 import type { ManagementAdminRequest, ManagementAdminResult } from '@/shared/management-admin';
 import type { VoicePersona } from '@/shared/voice-personas';
 
-// Normally we'd use SWR or some query library, but I had some issues with react render cycles and the easiest fix
-// was to just move all the fetching outside react. Also SWR doesn't narrow its data field when the request is
-// successful, which is suuuuper annoying. This type provides a similar API, but better types. Just have to implement
-// the fetching logic yourself.
-export type AsyncRequest<T, E> =
-  | {
-      isUninitialized: true;
-      isLoading: false;
-      isError: false;
-      isSuccess: false;
-    }
-  | {
-      isUninitialized: false;
-      isLoading: true;
-      isError: false;
-      isSuccess: false;
-    }
-  | {
-      isUninitialized: false;
-      isLoading: false;
-      isError: true;
-      isSuccess: false;
-      error: E;
-    }
-  | {
-      isUninitialized: false;
-      isLoading: false;
-      isError: false;
-      isSuccess: true;
-      data: T;
-    };
-
 /**
  * Window size and position properties, used to save and restore window state.
  */
@@ -703,23 +671,6 @@ export const schema: Schema<StoreData> = {
 };
 
 /**
- * The type of GPU in the system. This and the operating system are used to determine:
- * - Whether to install xformers - torch's own SDP is faster for 30xx + series GPUs, otherwise xformers is faster.
- * - Which pypi indices to use for torch.
- */
-export type GpuType = 'nvidia<30xx' | 'nvidia>=30xx' | 'amd' | 'nogpu';
-
-/**
- * A map of GPU types to human-readable names.
- */
-export const GPU_TYPE_MAP: Record<GpuType, string> = {
-  'nvidia<30xx': 'Nvidia (20xx and below)',
-  'nvidia>=30xx': 'Nvidia (30xx and above)',
-  amd: 'AMD',
-  nogpu: 'No dedicated GPU',
-};
-
-/**
  * Supported operating systems.
  */
 export type OperatingSystem = 'Windows' | 'macOS' | 'Linux';
@@ -964,20 +915,6 @@ export type ChatConversation = {
 
 export type ProjectId = string;
 
-/**
- * Minimal pointer the launcher persists so it knows where each project's
- * file-backed data lives. All other project attributes are loaded from
- * `<dir>/.omni/project.yml` at runtime.
- */
-export type ProjectIndexEntry = { id: ProjectId; dir: string };
-
-/** Accumulated token usage for a session. */
-export type TokenUsage = {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-};
-
 // --- Core entities ---
 
 /**
@@ -1095,14 +1032,6 @@ export const firstSource = (project: { sources?: ProjectSource[] } | undefined |
 export const isRepoSource = (s: ProjectSource): boolean =>
   s.kind === 'git-remote' || (s.kind === 'local' && s.gitDetected === true);
 
-/**
- * True when any of the project's sources is version-controlled. Gates the
- * developer-only output surfaces (Artifacts panel, PR affordances) — plain
- * folder projects have exactly one output concept: the folder itself.
- */
-export const projectHasRepoSource = (project: { sources?: ProjectSource[] } | undefined | null): boolean =>
-  (project?.sources ?? []).some(isRepoSource);
-
 export type Project = {
   id: ProjectId;
   label: string;
@@ -1119,22 +1048,6 @@ export type Project = {
   /** Timestamp of the most recent pin action. Set = pinned to Home; undefined = not pinned. */
   /** Pinned to This Week. `null` = explicit unpin (undefined doesn't survive the WS JSON transport). */
   pinnedAt?: number | null;
-};
-
-export type ArtifactFileEntry = {
-  relativePath: string;
-  name: string;
-  isDirectory: boolean;
-  size: number;
-  modifiedAt: number;
-};
-
-export type SessionMessage = {
-  id: number;
-  role: 'user' | 'assistant' | 'tool_call' | 'tool_result';
-  content: string;
-  toolName?: string;
-  createdAt: string;
 };
 
 export type GitRepoInfo = { isGitRepo: true; branches: string[]; currentBranch: string } | { isGitRepo: false };
@@ -1163,7 +1076,6 @@ type MainProcessIpcEvents = Namespaced<
   'main-process',
   {
     'get-status': () => WithTimestamp<MainProcessStatus>;
-    exit: () => void;
   }
 >;
 
@@ -1244,10 +1156,7 @@ type UtilIpcEvents = Namespaced<
     'select-file': (path?: string, filters?: Array<{ name: string; extensions: string[] }>) => string | null;
     'get-home-directory': () => string;
     'get-is-directory': (path: string) => boolean;
-    'get-is-file': (path: string) => boolean;
-    'get-path-exists': (path: string) => boolean;
     'get-os': () => OperatingSystem;
-    'get-default-install-dir': () => string;
     'get-default-workspace-dir': () => string;
     'ensure-directory': (path: string) => boolean;
     /**
@@ -1262,11 +1171,8 @@ type UtilIpcEvents = Namespaced<
     'open-external': (url: string) => void;
     'get-launcher-version': () => string;
     'get-omni-runtime-info': () => OmniRuntimeInfo;
-    'check-url': (url: string) => boolean;
-    'check-ws': (url: string) => boolean;
     'install-cli-to-path': () => { success: true; symlinkPath: string } | { success: false; error: string };
     'get-cli-in-path-status': () => { installed: boolean; symlinkPath: string };
-    'check-models-configured': () => boolean;
     'test-model-connection': (modelRef?: string) => { success: boolean; output: string };
     /** Validate provider credentials with a free GET against the provider's
      *  model-listing endpoint. Runtime-independent (works before the omni
@@ -1445,7 +1351,6 @@ export type GitCredentialInput = {
 type GitCredentialIpcEvents = Namespaced<
   'git-cred',
   {
-    list: () => GitCredential[];
     set: (input: GitCredentialInput) => GitCredential[];
     delete: (id: string) => GitCredential[];
   }
@@ -1636,8 +1541,6 @@ type ProjectIpcEvents = Namespaced<
     'get-dir': (projectId: ProjectId) => string | null;
     'check-git-repo': (workspaceDir: string) => GitRepoInfo;
     // Project file listing
-    'list-project-files': (projectId: ProjectId) => ArtifactFileEntry[];
-    'open-project-file': (projectId: ProjectId, relativePath: string) => void;
   }
 >;
 
@@ -1744,7 +1647,6 @@ type AppControlIpcEvents = Namespaced<
       patch: Partial<import('@/shared/app-control-types').AppRegistrationPayload>
     ) => void;
     unregister: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
-    list: () => import('@/shared/app-control-types').LiveAppSnapshot[];
     navigate: (handleId: import('@/shared/app-control-types').AppHandleId, url: string) => void;
     reload: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
     back: (handleId: import('@/shared/app-control-types').AppHandleId) => void;
@@ -1780,7 +1682,6 @@ type AppControlIpcEvents = Namespaced<
       query: string,
       options?: { caseSensitive?: boolean; forward?: boolean; findNext?: boolean }
     ) => { matches: number; activeOrdinal: number };
-    'stop-find': (handleId: import('@/shared/app-control-types').AppHandleId) => void;
     'wait-for': (
       handleId: import('@/shared/app-control-types').AppHandleId,
       options: { selector?: string; urlIncludes?: string; networkIdle?: boolean; timeoutMs?: number }
@@ -2008,7 +1909,6 @@ type OmniInstallProcessIpcRendererEvents = Namespaced<
   'omni-install-process',
   {
     status: [WithTimestamp<OmniInstallProcessStatus>];
-    log: [WithTimestamp<LogEntry>];
     'raw-output': [string];
   }
 >;
@@ -2032,16 +1932,6 @@ type AgentProcessIpcRendererEvents = Namespaced<
   {
     status: [string, WithTimestamp<AgentProcessStatus>];
     'raw-output': [string, string];
-  }
->;
-
-/**
- * Dev events. Main process emits these events, renderer process listens to them.
- */
-type DevIpcRendererEvents = Namespaced<
-  'dev',
-  {
-    'console-log': [unknown];
   }
 >;
 
@@ -2106,19 +1996,13 @@ type GithubIpcRendererEvents = Namespaced<'github', { 'device-code': [GithubDevi
 /** Main→renderer: the device-flow user code to display while `codex:link` polls. */
 type CodexIpcRendererEvents = Namespaced<'codex', { 'device-code': [CodexDeviceCode] }>;
 
-/** Main→renderer: WslBackendManager status pushes (Windows only). Broadcast
- *  on every state transition so the settings card tracks the daemon live. */
-type WslIpcRendererEvents = Namespaced<'wsl', { 'status-changed': [WslBackendStatus] }>;
-
 export type IpcRendererEvents = TerminalIpcRendererEvents &
   GithubIpcRendererEvents &
   CodexIpcRendererEvents &
-  WslIpcRendererEvents &
   MainProcessIpcRendererEvents &
   OmniInstallProcessIpcRendererEvents &
   VoiceIpcRendererEvents &
   AgentProcessIpcRendererEvents &
-  DevIpcRendererEvents &
   StoreIpcRendererEvents &
   ToastIpcRendererEvents &
   BrowserIpcRendererEvents &

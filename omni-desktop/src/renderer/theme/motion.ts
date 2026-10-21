@@ -31,13 +31,3 @@ export const ENTER_ANIMATE = { opacity: 1, scale: 1, y: 0 } as const;
 
 /** Plain fades (status rows, scrims) — short enough to never feel animated. */
 export const FADE_DURATION_S = 0.18;
-
-/**
- * dnd-kit sortable settle (CSS transition, not framer): an ease-out quint
- * that approximates SPRING_STANDARD's release without the overshoot — dnd
- * transforms snap to exact slots, so overshoot would look like jitter.
- */
-export const SORTABLE_TRANSITION = {
-  duration: 220,
-  easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
-} as const;

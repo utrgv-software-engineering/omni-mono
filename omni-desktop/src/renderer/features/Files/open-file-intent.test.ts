@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  dispatchOpenFileIntent,
-  type OpenFileResult,
-  registerOpenFileTarget,
-  subscribeOpenFileResults,
-} from './open-file-intent';
+import { dispatchOpenFileIntent, type OpenFileResult, registerOpenFileTarget } from './open-file-intent';
 
 describe('open-file intents', () => {
   it('routes an exact session, path, and range to the registered Files target', async () => {
@@ -79,21 +74,13 @@ describe('open-file intents', () => {
     unregister();
   });
 
-  it('fails clearly for an unknown or unmounted session and publishes the result event', async () => {
-    const listener = vi.fn();
-    const unsubscribe = subscribeOpenFileResults(listener);
-
+  it('fails clearly for an unknown or unmounted session', async () => {
     const result = await dispatchOpenFileIntent(
       { sessionId: 'unknown-session', path: 'src/app.ts', source: 'tool-result' },
       { waitForTargetMs: 0 }
     );
 
     expect(result).toMatchObject({ status: 'failed', reason: 'unknown-session' });
-    expect(listener).toHaveBeenCalledWith({
-      intent: expect.objectContaining({ source: 'tool-result' }),
-      result,
-    });
-    unsubscribe();
   });
 
   it('restores the previous target when a newer surface for the same session unmounts', async () => {

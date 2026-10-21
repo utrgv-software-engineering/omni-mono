@@ -62,12 +62,6 @@ export const bootstrapPlatform: string | null = bootstrap.platform;
  */
 export const serverOrigin = (): string => bootstrap.remoteBackend?.url ?? location.origin;
 
-/** WebSocket-protocol counterpart of {@link serverOrigin}. */
-export const serverWsOrigin = (): string => {
-  const origin = serverOrigin();
-  return origin.replace(/^http(s?):/i, 'ws$1:');
-};
-
 /**
  * Bundled transport surface returned by {@link createTransport}.
  *

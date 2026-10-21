@@ -45,11 +45,6 @@ export type OpenFileResult =
       message: string;
     }>;
 
-export type OpenFileResultEvent = Readonly<{
-  intent: OpenFileIntent;
-  result: OpenFileResult;
-}>;
-
 export type OpenFileDispatchOptions = Readonly<{
   /** Allows callers to activate the Files surface immediately before dispatch. */
   waitForTargetMs?: number;
@@ -65,7 +60,6 @@ export type OpenFileTarget = (request: OpenFileTargetRequest) => Promise<OpenFil
 
 const targets = new Map<string, OpenFileTarget[]>();
 const targetWaiters = new Map<string, Set<(target: OpenFileTarget | null) => void>>();
-const resultListeners = new Set<(event: OpenFileResultEvent) => void>();
 let nextRequestId = 1;
 
 function activeTarget(sessionId: string): OpenFileTarget | null {
@@ -108,14 +102,6 @@ function validateLocation(location: OpenFileLocation | undefined): void {
   ) {
     throw new RangeError('location.endColumn must not precede location.column');
   }
-}
-
-function emitResult(intent: OpenFileIntent, result: OpenFileResult): OpenFileResult {
-  const event = { intent, result };
-  for (const listener of resultListeners) {
-    listener(event);
-  }
-  return result;
 }
 
 async function waitForTarget(
@@ -184,12 +170,6 @@ export function registerOpenFileTarget(sessionId: string, target: OpenFileTarget
   };
 }
 
-/** Subscribe to both successful and failed requests for telemetry or UI feedback. */
-export function subscribeOpenFileResults(listener: (event: OpenFileResultEvent) => void): () => void {
-  resultListeners.add(listener);
-  return () => resultListeners.delete(listener);
-}
-
 /**
  * Dispatch an open-file request from Git diffs, tool results, code blocks, or
  * artifacts. A short target wait makes "activate Files, then dispatch" safe.
@@ -200,52 +180,49 @@ export async function dispatchOpenFileIntent(
 ): Promise<OpenFileResult> {
   const requestId = `open-file-${nextRequestId++}`;
   if (!intent.sessionId) {
-    return emitResult(intent, failure(requestId, intent, 'invalid-intent', 'A session id is required to open a file.'));
+    return failure(requestId, intent, 'invalid-intent', 'A session id is required to open a file.');
   }
   try {
     validateFsPath(intent.path);
   } catch (error) {
-    return emitResult(
+    return failure(
+      requestId,
       intent,
-      failure(requestId, intent, 'invalid-path', error instanceof Error ? error.message : 'The file path is invalid.')
+      'invalid-path',
+      error instanceof Error ? error.message : 'The file path is invalid.'
     );
   }
   if (intent.path === '.') {
-    return emitResult(
-      intent,
-      failure(requestId, intent, 'invalid-path', 'A file path is required; the workspace root cannot be opened.')
-    );
+    return failure(requestId, intent, 'invalid-path', 'A file path is required; the workspace root cannot be opened.');
   }
   try {
     validateLocation(intent.location);
   } catch (error) {
-    return emitResult(
+    return failure(
+      requestId,
       intent,
-      failure(requestId, intent, 'invalid-intent', error instanceof Error ? error.message : 'The location is invalid.')
+      'invalid-intent',
+      error instanceof Error ? error.message : 'The location is invalid.'
     );
   }
 
   const target = await waitForTarget(intent.sessionId, options.waitForTargetMs ?? 1_500, options.signal);
   if (!target) {
-    return emitResult(
+    return failure(
+      requestId,
       intent,
-      failure(requestId, intent, 'unknown-session', `No Files surface is available for session ${intent.sessionId}.`)
+      'unknown-session',
+      `No Files surface is available for session ${intent.sessionId}.`
     );
   }
   try {
-    return emitResult(intent, await target({ requestId, intent }));
+    return await target({ requestId, intent });
   } catch (error) {
-    return emitResult(
+    return failure(
+      requestId,
       intent,
-      failure(
-        requestId,
-        intent,
-        'open-failed',
-        error instanceof Error ? error.message : `Could not open ${intent.path}.`
-      )
+      'open-failed',
+      error instanceof Error ? error.message : `Could not open ${intent.path}.`
     );
   }
 }
-
-/** Semantic alias for event-producing callers that do not own the Files surface. */
-export const emitOpenFileIntent = dispatchOpenFileIntent;

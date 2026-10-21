@@ -95,8 +95,6 @@ describe('ProjectManager', () => {
       'project:remove-project',
       'project:get-dir',
       'project:check-git-repo',
-      'project:list-project-files',
-      'project:open-project-file',
     ]);
   });
 });

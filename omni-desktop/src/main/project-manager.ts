@@ -1,24 +1,15 @@
 import { execFile } from 'child_process';
-import { ipcMain, shell } from 'electron';
+import { ipcMain } from 'electron';
 import type Store from 'electron-store';
 import { mkdirSync } from 'fs';
-import fs from 'fs/promises';
 import { nanoid } from 'nanoid';
-import path from 'path';
 import { promisify } from 'util';
 
 import { slugifyUnique } from '@/lib/slugify-unique';
 import { getDefaultWorkspaceDir, getProjectDir } from '@/main/util';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import { validateProjectSources } from '@/shared/project-source';
-import {
-  type ArtifactFileEntry,
-  firstSource,
-  type GitRepoInfo,
-  type Project,
-  type ProjectId,
-  type StoreData,
-} from '@/shared/types';
+import { firstSource, type GitRepoInfo, type Project, type ProjectId, type StoreData } from '@/shared/types';
 
 const execFileAsync = promisify(execFile);
 
@@ -121,58 +112,6 @@ export class ProjectManager {
     return getProjectDir(project.slug);
   };
 
-  /** List the top level of the project's working directory, folders first. */
-  listProjectFiles = async (projectId: ProjectId): Promise<ArtifactFileEntry[]> => {
-    const project = this.getProjects().find((p) => p.id === projectId);
-    if (!project) {
-      return [];
-    }
-    const dir = this.getProjectDirPath(project);
-    try {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
-      const results: ArtifactFileEntry[] = [];
-      for (const entry of entries) {
-        try {
-          const stat = await fs.stat(path.join(dir, entry.name));
-          results.push({
-            relativePath: entry.name,
-            name: entry.name,
-            isDirectory: entry.isDirectory(),
-            size: stat.size,
-            modifiedAt: stat.mtimeMs,
-          });
-        } catch {
-          // Skip entries we can't stat
-        }
-      }
-      results.sort((a, b) => {
-        if (a.isDirectory !== b.isDirectory) {
-          return a.isDirectory ? -1 : 1;
-        }
-        return a.name.localeCompare(b.name);
-      });
-      return results;
-    } catch {
-      return [];
-    }
-  };
-
-  /** Open a file from the project folder in the OS default application. */
-  openProjectFile = async (projectId: ProjectId, relativePath: string): Promise<void> => {
-    const project = this.getProjects().find((p) => p.id === projectId);
-    if (!project) {
-      return;
-    }
-    const dir = this.getProjectDirPath(project);
-    const fullPath = path.resolve(dir, relativePath);
-    // Separator-terminated prefix so dir="/tmp/proj" can't match "/tmp/proj-evil/secret".
-    const normalizedDir = dir.endsWith(path.sep) ? dir : dir + path.sep;
-    if (!fullPath.startsWith(normalizedDir) && fullPath !== dir) {
-      throw new Error('Path traversal not allowed');
-    }
-    await shell.openPath(fullPath);
-  };
-
   // #endregion
 }
 
@@ -222,8 +161,6 @@ export function registerProjectHandlers(ipc: IIpcListener, resolve: (event: unkn
   h('project:remove-project', (pm, id) => pm.removeProject(id));
   h('project:get-dir', (pm, id) => pm.getProjectDir(id));
   h('project:check-git-repo', (_pm, workspaceDir) => checkGitRepo(workspaceDir));
-  h('project:list-project-files', (pm, projectId) => pm.listProjectFiles(projectId));
-  h('project:open-project-file', (pm, projectId, relativePath) => pm.openProjectFile(projectId, relativePath));
 
   return channels;
 }

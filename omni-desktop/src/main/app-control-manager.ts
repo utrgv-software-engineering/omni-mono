@@ -41,7 +41,6 @@ import type {
   AppHandleId,
   AppRegistrationPayload,
   AxNode,
-  LiveAppSnapshot,
 } from '@/shared/app-control-types';
 import { isControllableKind } from '@/shared/app-control-types';
 import type { IIpcListener } from '@/shared/ipc-listener';
@@ -129,20 +128,6 @@ export class AppControlManager {
     }
     entry.detachConsole?.();
     this.entries.delete(handleId);
-  }
-
-  list(): LiveAppSnapshot[] {
-    return [...this.entries.values()].map((e) => ({
-      handleId: e.handleId,
-      appId: e.registration.appId,
-      kind: e.registration.kind,
-      scope: e.registration.scope,
-      tabId: e.registration.tabId,
-      label: e.registration.label,
-      url: e.registration.url,
-      title: e.registration.title,
-      controllable: e.registration.controllable,
-    }));
   }
 
   // -- resolution ---------------------------------------------------------
@@ -471,11 +456,6 @@ export class AppControlManager {
     });
   }
 
-  async stopFindInPage(handleId: AppHandleId): Promise<void> {
-    const { wc } = this.requireWebContents(handleId);
-    wc.stopFindInPage('clearSelection');
-  }
-
   /**
    * Wait for a condition. Supports (in priority order):
    *   - `selector`: poll `document.querySelector(selector)` every 100ms.
@@ -739,7 +719,6 @@ export const createAppControlManager = (arg: {
   ipc.handle('app:register', (_, payload) => manager.register(payload));
   ipc.handle('app:update', (_, handleId, patch) => manager.update(handleId, patch));
   ipc.handle('app:unregister', (_, handleId) => manager.unregister(handleId));
-  ipc.handle('app:list', () => manager.list());
 
   ipc.handle('app:navigate', (_, handleId, url) => manager.navigate(handleId, url));
   ipc.handle('app:reload', (_, handleId) => manager.reload(handleId));
@@ -760,7 +739,6 @@ export const createAppControlManager = (arg: {
   ipc.handle('app:inject-css', (_, handleId, css) => manager.injectCss(handleId, css));
   ipc.handle('app:remove-inserted-css', (_, handleId, key) => manager.removeInsertedCss(handleId, key));
   ipc.handle('app:find', (_, handleId, query, options) => manager.findInPage(handleId, query, options));
-  ipc.handle('app:stop-find', (_, handleId) => manager.stopFindInPage(handleId));
   ipc.handle('app:wait-for', (_, handleId, options) => manager.waitFor(handleId, options));
   ipc.handle('app:pdf', (_, handleId, options) => manager.pdf(handleId, options));
   ipc.handle('app:full-screenshot', (_, handleId) => manager.fullPageScreenshot(handleId));
@@ -781,7 +759,6 @@ export const createAppControlManager = (arg: {
       'app:register',
       'app:update',
       'app:unregister',
-      'app:list',
       'app:navigate',
       'app:reload',
       'app:back',
@@ -801,7 +778,6 @@ export const createAppControlManager = (arg: {
       'app:inject-css',
       'app:remove-inserted-css',
       'app:find',
-      'app:stop-find',
       'app:wait-for',
       'app:pdf',
       'app:full-screenshot',

@@ -11,13 +11,13 @@ const LAUNCH_APP_TOOL = {
   name: 'launch_app',
   safe: true,
   description:
-    'Open (mount) an app in a workspace column so it becomes drivable. Apps mount lazily — an app `list_apps` reports with `running: false` has no live surface until you launch it. For column-scoped apps (`code`, `desktop`/VNC, `terminal`, `browser`) pass the target column via `tab_id`; omit it to use your own column. Returns `{ handle_id }` — pass that as `app_id` to the `app_*` tools. Note: a column shows one non-chat app at a time, so launching one replaces whatever was mounted in that column.',
+    'Open (mount) an app in a workspace column so it becomes drivable. Apps mount lazily — an app `list_apps` reports with `running: false` has no live surface until you launch it. For column-scoped apps (`browser`, `terminal`, `files`, `git`) pass the target column via `tab_id`; omit it to use your own column. Returns `{ handle_id }` — pass that as `app_id` to the `app_*` tools. Note: a column shows one non-chat app at a time, so launching one replaces whatever was mounted in that column.',
   parameters: {
     type: 'object',
     properties: {
       app_id: {
         type: 'string',
-        description: 'App id from `list_apps` (e.g. "terminal", "code", "desktop", "browser").',
+        description: 'App id from `list_apps` (e.g. "browser", "terminal", "files").',
       },
       tab_id: {
         type: 'string',
@@ -47,9 +47,8 @@ export const CODE_UI_TOOLS = [
 ] as const;
 
 /**
- * App-control tools — drive webviews (built-in browser, code-server, VNC
- * desktop, and user-installed webview apps) via Playwright-flavoured
- * commands. Every action takes an `app_id` from `list_apps`.
+ * App-control tools — drive the built-in browser webviews via
+ * Playwright-flavoured commands. Every action takes an `app_id` from `list_apps`.
  *
  * Covers three layers of capability, all keyed by `app_id`:
  * - Generic (any controllable app): navigate, snapshot, click, fill, type,
@@ -62,8 +61,7 @@ export const CODE_UI_TOOLS = [
  * tabset) see {@link BROWSER_CLIENT_TOOLS}.
  *
  * Scoping rules (enforced by the handler, not the schema):
- * - Autopilot agents can only reach column-scoped apps in their own tab.
- * - Interactive agents reach global dock apps + their column.
+ * - Agents reach global dock apps + their own column.
  * - Non-controllable apps (chat, terminal) show up in `list_apps` but all
  *   action tools reject with a clear error.
  */
@@ -72,7 +70,7 @@ export const APP_CONTROL_TOOLS = [
     name: 'list_apps',
     safe: true,
     description:
-      'List the web apps currently available in your workspace — the built-in browser, VS Code, VNC desktop, and any custom webview apps the user has installed. Returns `[{ id, kind, scope, url, title, controllable }]`. `controllable: false` means the app (e.g. terminal) is visible in the dock but cannot be driven via snapshot/click. Call this first before any other app_* tool to learn what ids exist.',
+      'List the apps currently available in your workspace — the built-in browser, files, git, terminal and other workspace panels. Returns `[{ id, kind, scope, url, title, controllable }]`. `controllable: false` means the app (e.g. terminal) is visible in the dock but cannot be driven via snapshot/click. Call this first before any other app_* tool to learn what ids exist.',
     parameters: { type: 'object', properties: {} },
   },
   {

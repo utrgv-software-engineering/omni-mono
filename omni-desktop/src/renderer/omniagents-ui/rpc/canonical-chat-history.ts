@@ -1,4 +1,3 @@
-import { rehydrateHistory } from '@/lib/rehydrate-history';
 import type {
   ArtifactMcpUi,
   CanonicalItemEnvelope,
@@ -9,26 +8,8 @@ import type {
 } from '@/shared/chat-types';
 import { OmniagentsRpcError } from '@/shared/omniagents-rpc';
 
-import {
-  ConversationClient,
-  type ConversationItem,
-  ConversationProtocolError,
-  type ConversationRpcTransport,
-} from './conversation';
+import type { ConversationItem } from './conversation';
 import { mcpArtifact } from './mcp-artifact';
-
-const PAGE_SIZE = 500;
-const MAX_PAGES = 10_000;
-
-export interface CanonicalHistoryTransport extends ConversationRpcTransport {
-  getSessionHistory(sessionId: string): Promise<unknown[]>;
-}
-
-export type SessionTranscriptLoad = {
-  items: MessageItem[];
-  source: 'canonical' | 'legacy';
-  rawItemCount: number;
-};
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
@@ -389,62 +370,6 @@ export function adaptCanonicalConversationItem(item: ConversationItem): MessageI
   }
 }
 
-/**
- * Merge page overlaps by canonical identity. The highest revision wins and
- * thread-monotonic `seq` is the sole display order. A sequence collision
- * between different identities is a protocol error, not something to hide.
- */
-export function mergeCanonicalConversationItems(pages: readonly (readonly ConversationItem[])[]): ConversationItem[] {
-  const byId = new Map<string, ConversationItem>();
-  for (const page of pages) {
-    for (const item of page) {
-      const previous = byId.get(item.item_id);
-      if (
-        !previous ||
-        item.revision > previous.revision ||
-        (item.revision === previous.revision && item.updated_at > previous.updated_at)
-      ) {
-        byId.set(item.item_id, item);
-      }
-    }
-  }
-  const merged = [...byId.values()].sort(
-    (left, right) => left.seq - right.seq || left.item_id.localeCompare(right.item_id)
-  );
-  for (let index = 1; index < merged.length; index += 1) {
-    if (merged[index - 1]!.seq === merged[index]!.seq) {
-      throw new ConversationProtocolError(
-        `list_items returned duplicate seq ${merged[index]!.seq} for different canonical item ids`
-      );
-    }
-  }
-  return merged;
-}
-
-export async function listAllCanonicalConversationItems(
-  transport: ConversationRpcTransport,
-  threadId: string
-): Promise<ConversationItem[]> {
-  const client = new ConversationClient(transport);
-  const pages: ConversationItem[][] = [];
-  const seenCursors = new Set<string>();
-  let cursor: string | undefined;
-
-  for (let pageNumber = 0; pageNumber < MAX_PAGES; pageNumber += 1) {
-    const page = await client.listItems(threadId, { limit: PAGE_SIZE, order: 'asc', ...(cursor ? { cursor } : {}) });
-    pages.push(page.items);
-    if (!page.has_more) {
-      return mergeCanonicalConversationItems(pages);
-    }
-    if (!page.next_cursor || seenCursors.has(page.next_cursor)) {
-      throw new ConversationProtocolError('list_items pagination cursor did not advance');
-    }
-    seenCursors.add(page.next_cursor);
-    cursor = page.next_cursor;
-  }
-  throw new ConversationProtocolError(`list_items exceeded ${MAX_PAGES} pages`);
-}
-
 export function isCanonicalConversationUnsupported(error: unknown): boolean {
   if (!(error instanceof OmniagentsRpcError)) {
     return false;
@@ -457,22 +382,6 @@ export function isCanonicalConversationUnsupported(error: unknown): boolean {
   }
   const data = error.data as Record<string, unknown>;
   return data.kind === 'capability_not_negotiated' || data.kind === 'operation_unsupported';
-}
-
-/**
- * Launcher-created sessions have an identity before their first message. The
- * runtime can therefore have a live Session while the conversation recorder
- * has not created its canonical Thread yet. That precise not-found is an
- * authoritative empty transcript, not a boot failure.
- */
-function isUnrecordedCanonicalThread(error: unknown): boolean {
-  if (!(error instanceof OmniagentsRpcError) || error.code !== -32080) {
-    return false;
-  }
-  if (!error.data || typeof error.data !== 'object') {
-    return false;
-  }
-  return (error.data as Record<string, unknown>).kind === 'thread_not_found';
 }
 
 /** Tool-backed MCP surfaces are derived views of durable tool metadata. */
@@ -492,32 +401,4 @@ export function adaptCanonicalConversationItems(items: ConversationItem[]): Mess
         : undefined;
     return artifact ? [adapted, artifact] : [adapted];
   });
-}
-
-/** Canonical items are authoritative; legacy history is old-runtime fallback only. */
-export async function loadSessionTranscript(
-  transport: CanonicalHistoryTransport,
-  sessionId: string
-): Promise<SessionTranscriptLoad> {
-  try {
-    const canonical = await listAllCanonicalConversationItems(transport, sessionId);
-    return {
-      items: adaptCanonicalConversationItems(canonical),
-      source: 'canonical',
-      rawItemCount: canonical.length,
-    };
-  } catch (error) {
-    if (isUnrecordedCanonicalThread(error)) {
-      return { items: [], source: 'canonical', rawItemCount: 0 };
-    }
-    if (!isCanonicalConversationUnsupported(error)) {
-      throw error;
-    }
-    const raw = await transport.getSessionHistory(sessionId);
-    return {
-      items: rehydrateHistory(raw as Record<string, unknown>[]) as MessageItem[],
-      source: 'legacy',
-      rawItemCount: raw.length,
-    };
-  }
 }

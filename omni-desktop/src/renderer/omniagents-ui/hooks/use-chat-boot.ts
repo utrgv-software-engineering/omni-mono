@@ -322,5 +322,3 @@ export function useChatBoot(opts: UseChatBootOptions) {
     retry,
   };
 }
-
-export type UseChatBootReturn = ReturnType<typeof useChatBoot>;

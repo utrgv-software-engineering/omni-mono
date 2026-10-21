@@ -1,5 +1,4 @@
 import type { LucideIcon } from 'lucide-react';
-import { XIcon } from 'lucide-react';
 import type { ComponentProps, HTMLAttributes } from 'react';
 
 import { cn } from '@/renderer/ds/cn';
@@ -24,27 +23,6 @@ export const ArtifactHeader = ({ className, ...props }: ArtifactHeaderProps) => 
     className={cn('flex items-center justify-between border-b bg-muted/50 px-4 py-3', className)}
     {...props}
   />
-);
-
-export type ArtifactCloseProps = ComponentProps<typeof Button>;
-
-export const ArtifactClose = ({
-  className,
-  children,
-  size = 'sm',
-  variant = 'ghost',
-  ...props
-}: ArtifactCloseProps) => (
-  <Button
-    className={cn('size-8 p-0 text-muted-foreground hover:text-foreground', className)}
-    size={size}
-    type="button"
-    variant={variant}
-    {...props}
-  >
-    {children ?? <XIcon className="size-4" />}
-    <span className="sr-only">Close</span>
-  </Button>
 );
 
 export type ArtifactTitleProps = HTMLAttributes<HTMLParagraphElement>;

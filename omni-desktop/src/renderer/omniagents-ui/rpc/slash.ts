@@ -89,14 +89,6 @@ export function parseSlashArgs(rule: SlashArgsRule, rest: string): SlashArgsResu
   }
 }
 
-export const takesArgs = (command: SlashCommand): boolean => command.args.kind !== 'none';
-
-/** The composer text for a chosen command: a trailing space when it
- * expects arguments, so the cursor lands where they go. */
-export function completionFor(command: SlashCommand): string {
-  return takesArgs(command) ? `/${command.name} ` : `/${command.name}`;
-}
-
 export function unknownCommandMessage(name: string): string {
   return `Unrecognized command '/${name}'. Type / for a list of commands.`;
 }

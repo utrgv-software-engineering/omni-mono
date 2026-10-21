@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   mostRecentMissedScheduledTaskRun,
   nextScheduledTaskRun,
-  normalizeScheduledTaskTime,
   shouldCatchUpScheduledTask,
 } from '@/lib/scheduled-task-schedule';
 
@@ -55,9 +54,5 @@ describe('scheduled task schedule helpers', () => {
     const now = Date.now();
 
     expect(mostRecentMissedScheduledTaskRun({ kind: 'manual' }, now - 1_000, now)).toBe(null);
-  });
-
-  it('normalizes HH:MM times', () => {
-    expect(normalizeScheduledTaskTime('9:05')).toBe('09:05');
   });
 });

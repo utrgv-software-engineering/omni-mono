@@ -72,7 +72,6 @@ export function fakeSessionClient() {
     registerSession: vi.fn(async () => {}),
     unregisterSession: vi.fn(),
     completeSessionResync: vi.fn(async () => {}),
-    getSessionHistory: vi.fn(async () => []),
     request: vi.fn(async (method: string, params: any): Promise<any> => {
       if (method === 'list_items') {
         return historyPage(params.thread_id, '');

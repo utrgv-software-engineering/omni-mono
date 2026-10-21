@@ -27,7 +27,7 @@ import {
   pathExists,
 } from '@/main/util';
 import type { IIpcListener } from '@/shared/ipc-listener';
-import type { IpcRendererEvents, LogEntry, OmniInstallProcessStatus, WithTimestamp } from '@/shared/types';
+import type { IpcRendererEvents, OmniInstallProcessStatus, WithTimestamp } from '@/shared/types';
 
 const PYTHON_VERSION = '3.11';
 const MAX_INSTALL_LOGS = 5;
@@ -40,7 +40,6 @@ const stripAnsi = (s: string): string => s.replace(ANSI_CSI_RE, '');
 
 export class OmniInstallManager {
   private status: WithTimestamp<OmniInstallProcessStatus>;
-  private ipcLogger: (entry: WithTimestamp<LogEntry>) => void;
   private ipcRawOutput: (data: string) => void;
   private onStatusChange: (status: WithTimestamp<OmniInstallProcessStatus>) => void;
   private log: SimpleLogger;
@@ -53,11 +52,9 @@ export class OmniInstallManager {
   private installInProgress: Promise<void> | null = null;
 
   constructor(arg: {
-    ipcLogger: OmniInstallManager['ipcLogger'];
     ipcRawOutput: OmniInstallManager['ipcRawOutput'];
     onStatusChange: OmniInstallManager['onStatusChange'];
   }) {
-    this.ipcLogger = arg.ipcLogger;
     this.ipcRawOutput = arg.ipcRawOutput;
     this.onStatusChange = arg.onStatusChange;
     this.commandRunner = new CommandRunner();
@@ -913,9 +910,6 @@ export const createOmniInstallManager = (arg: {
   const { ipc, sendToWindow } = arg;
 
   const omniInstallManager = new OmniInstallManager({
-    ipcLogger: (entry) => {
-      sendToWindow('omni-install-process:log', entry);
-    },
     ipcRawOutput: (data) => {
       sendToWindow('omni-install-process:raw-output', data);
     },
