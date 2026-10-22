@@ -5,12 +5,12 @@ import asyncio
 import logging
 import sys
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import TYPE_CHECKING, AsyncGenerator, Optional, Any
+from typing import TYPE_CHECKING, Optional, Any
 
 if TYPE_CHECKING:
     from omniagents.execution import EnvironmentLease
 
-from agents import RunConfig, ItemHelpers
+from agents import ItemHelpers
 from agents.run_state import RunState
 from openai.types.responses import ResponseCompletedEvent
 from omniagents.core.agents import mcp_ui

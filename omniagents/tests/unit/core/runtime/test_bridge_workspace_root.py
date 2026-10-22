@@ -69,7 +69,6 @@ async def test_stream_agent_installs_workspace_from_environment_lease(
 
     monkeypatch.setattr("agents.Runner", FakeRunner)
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     agent = types.SimpleNamespace(
         name="Agent",
@@ -148,7 +147,6 @@ async def test_targetless_stream_clears_inherited_workspace_for_the_run(
 
     monkeypatch.setattr("agents.Runner", FakeRunner)
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     agent = types.SimpleNamespace(
         name="Agent",
@@ -207,7 +205,6 @@ async def test_stream_agent_preserves_unconfined_host_workspace(monkeypatch, tmp
 
     monkeypatch.setattr("agents.Runner", FakeRunner)
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     agent = types.SimpleNamespace(
         name="Agent",

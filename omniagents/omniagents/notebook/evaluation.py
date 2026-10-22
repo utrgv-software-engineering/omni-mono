@@ -7,7 +7,6 @@ DataFrame-native, visually rich interface.
 
 from __future__ import annotations
 
-import asyncio
 import html
 from dataclasses import dataclass, field
 from typing import Tuple, Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
@@ -36,7 +35,6 @@ from omniagents.core.evaluation.context import (
 from omniagents.core.evaluation.registry import (
     evaluation_measure,
     run_measures as _run_measures,
-    get_measure,
     _MEASURES,
 )
 from omniagents.core.eval.environment import (

@@ -166,7 +166,6 @@ async def test_stream_agent_emits_usage_and_running_summary(monkeypatch):
             configs.append(kwargs)
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     run_id_holder = {}
 
@@ -317,7 +316,6 @@ async def test_stream_agent_handles_cancelled_tool_calls(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     broadcasts = []
 
@@ -385,7 +383,6 @@ async def test_stream_agent_without_user_message(monkeypatch):
             configs.append(kwargs)
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     captured_inputs = []
 
@@ -466,7 +463,6 @@ async def test_stream_agent_context_error_hook_fires_for_resume_from_history(
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     attempts = []
 
@@ -541,7 +537,6 @@ async def test_stream_agent_reraises_cancelled_error(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     class FakeRunner:
         @classmethod
@@ -575,7 +570,6 @@ async def test_stream_agent_skips_unknown_event_type(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     class FakeRunResult:
         async def stream_events(self):
@@ -623,7 +617,6 @@ async def test_stream_agent_ignores_tool_lookup_errors(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     tool_call_item = types.SimpleNamespace(
         type="tool_call_item",
@@ -690,7 +683,6 @@ async def test_buffering_orders_message_before_tool_calls(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     broadcasts = []
 
@@ -786,7 +778,6 @@ async def test_buffering_orders_message_before_tool_result(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     calls = []
 
@@ -885,7 +876,6 @@ async def test_buffering_synth_preamble_on_cancel(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     seen = []
 
@@ -974,7 +964,6 @@ async def test_no_buffering_without_reasoning(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     calls = []
 
@@ -1062,7 +1051,6 @@ async def test_running_summary_rides_tool_called_through_buffering(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     calls = []
 
@@ -1160,7 +1148,6 @@ async def test_always_approve_covers_parallel_interruptions(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     def make_interruption(call_id):
         return types.SimpleNamespace(
@@ -1348,7 +1335,6 @@ async def test_always_approve_mcp_batch_is_tuple_scoped(monkeypatch):
             pass
 
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
     def make_interruption(call_id, public_name):
         return types.SimpleNamespace(

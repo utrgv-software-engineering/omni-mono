@@ -1004,18 +1004,6 @@ class StorageManager:
                 logger.info("Created Studio database for project '%s'", project)
         return self.storages[project]
 
-    def get_all_storages(self) -> Dict[str, SQLiteStorage]:
-        """Load all available project storages"""
-        if not self.storage_dir.exists():
-            return {}
-
-        for db_file in self.storage_dir.glob("*.db"):
-            project = db_file.stem
-            if project not in self.storages:
-                self.storages[project] = SQLiteStorage(str(db_file))
-
-        return self.storages
-
 
 class ConnectionManager:
     def __init__(self):
@@ -2356,11 +2344,6 @@ class ScenarioRunStatusModel(BaseModel):
     error: Optional[str] = None
 
 
-class ScenarioRunResponseModel(BaseModel):
-    job_id: str
-    status: ScenarioRunStatusModel
-
-
 class ScenarioGenerationRequest(BaseModel):
     name: Optional[str] = None
     output_path: Optional[str] = None
@@ -2392,11 +2375,6 @@ class ScenarioGenerationStatusModel(BaseModel):
     scenarios_path: Optional[str] = None
     workflow_name: Optional[str] = None
     error: Optional[str] = None
-
-
-class ScenarioGenerationResponseModel(BaseModel):
-    job_id: str
-    status: Optional[ScenarioGenerationStatusModel]
 
 
 SuiteRunStateLiteral = Literal["pending", "running", "completed", "failed", "cancelled"]

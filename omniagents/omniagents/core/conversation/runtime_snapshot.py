@@ -30,7 +30,6 @@ def snapshot_state_events(session: Any) -> list[dict]:
 
 def snapshot_queue(inbox: dict, session: Any) -> list[dict]:
     """Project the exact inbox read with the items, without starting/claiming work."""
-    active = session.current_task is not None and not session.current_task.done()
     draining = session.drainer_task is not None and not session.drainer_task.done()
     result = []
     for entry in inbox.get("items", []):

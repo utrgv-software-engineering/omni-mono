@@ -61,16 +61,6 @@ def _reason(code: str, message: str, action: Optional[str] = None) -> Dict[str, 
     return entry
 
 
-def _no_store_reason() -> Dict[str, Any]:
-    from . import model_setup_hint
-
-    return _reason(
-        "no_model_store",
-        "No model registry is configured for this product.",
-        model_setup_hint(),
-    )
-
-
 def _string_list(value: Any) -> List[str]:
     if not isinstance(value, (list, tuple)):
         return []

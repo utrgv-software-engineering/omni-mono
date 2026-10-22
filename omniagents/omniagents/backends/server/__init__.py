@@ -1,6 +1,5 @@
 """Server backend for OmniAgents."""
 
-from omniagents.core.interfaces.backend import Backend
 from omniagents.core.agents.specs import AgentSpec
 
 

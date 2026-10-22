@@ -106,7 +106,6 @@ def _build_docker_client(client_kwargs: Dict[str, Any]) -> Any:
         raise ImportError(_missing_extra_message("docker", "sandbox-docker")) from e
 
     from omniagents.core.sandbox.docker_extended import (
-        BindSpec,
         ExtendedDockerSandboxClient,
     )
 

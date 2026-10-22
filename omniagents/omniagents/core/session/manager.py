@@ -973,25 +973,6 @@ class Session:  # noqa: D101
                 )
 
     # ------------------------------------------------------------------
-    # Session variables — mutable, persisted, broadcast-on-change dict
-    # accessible to tools, prompts, and server functions. The free-form
-    # contextvars store for the session. Tools read via
-    # ``omniagents.core.session.helpers.session_variables(ctx)`` and
-    # server functions read directly via ``session.variables``.
-    # ------------------------------------------------------------------
-
-    def get_variable(self, key: str, default: Any = None) -> Any:
-        """Return ``session.variables[key]`` or ``default`` if missing."""
-        vars_dict = self.variables if isinstance(self.variables, dict) else None
-        if not vars_dict:
-            return default
-        return vars_dict.get(key, default)
-
-    def set_variable(self, key: str, value: Any, *, persist: bool = True) -> None:
-        """Set a single variable. Persists by default."""
-        self.update_variables({key: value}, persist=persist)
-
-    # ------------------------------------------------------------------
     # Periodic tick — fires an ``enqueue_notification`` on the running
     # AgentService every ``interval`` seconds. Used by autopilot loops
     # to drive wake-ups instead of "continue after every turn." Opt-in;

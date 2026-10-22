@@ -919,7 +919,3 @@ class Item:
             "source": self.source,
             "schema_version": self.schema_version,
         }
-
-
-def items_to_dicts(items: List[Item]) -> List[Dict[str, Any]]:
-    return [item.to_dict() for item in items]

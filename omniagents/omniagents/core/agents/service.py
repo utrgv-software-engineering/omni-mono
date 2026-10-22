@@ -93,7 +93,6 @@ from omniagents.core.session.event_log import (
     stamp_session_event,
 )
 from omniagents.core.session.manager import QueuedItem
-from omniagents.core.session.history_db import get_user_messages
 from omniagents.core.runtime.bridge import stream_agent
 from omniagents.core.agents.builder import _default_build_agent
 from omniagents.core.agents.mcp import (
@@ -706,9 +705,6 @@ class AgentService(RpcMethodsBase):
         except Exception:
             pass
 
-        # Note: we intentionally do NOT register built-in example functions
-        # like "session.get_history" so they won't surface in UIs that
-        # dynamically list server functions (e.g., Bubble Tea /help).
         self._default_settings: Dict[str, Any] = {}
         for field in getattr(self.spec, "settings_fields", []) or []:
             key = getattr(field, "key", None)
@@ -1893,18 +1889,6 @@ class AgentService(RpcMethodsBase):
         if asyncio.iscoroutinefunction(fn):
             return await fn(*call_args)
         return fn(*call_args)
-
-    # --- Built-in server functions -------------------------------------
-    def _sf_session_get_history(
-        self, session: Session | None, args: dict | None = None
-    ) -> list[dict]:
-        """Return the current history for the given session.
-        If no session was supplied, return an empty list.
-        """
-        try:
-            return list(session.history) if session else []
-        except Exception:
-            return []
 
     def _apply_session_metadata(
         self,
@@ -4384,8 +4368,6 @@ class AgentService(RpcMethodsBase):
                 runtime_context = self.spec.context
 
             # Retry policy (env configurable)
-            import math
-
             max_retries = int(os.getenv("OMNIAGENTS_RETRY_MAX", "3"))
             base_delay = float(os.getenv("OMNIAGENTS_RETRY_BASE", "1.5"))
 

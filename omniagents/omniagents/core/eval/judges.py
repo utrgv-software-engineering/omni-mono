@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-import re
 from typing import Any, Dict, List, Optional, Callable
 
 import yaml
@@ -206,7 +205,6 @@ async def evaluate_split(
             return instructions
 
         nm = agent_cfg.get("name") or "Judge"
-        lbl = agent_cfg.get("label") or nm
         spec = AgentSpec(
             name=nm,
             welcome_text="",

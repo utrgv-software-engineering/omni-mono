@@ -391,7 +391,6 @@ async def scratch_dir(purpose: str) -> str:
     ``exec`` can write anywhere the shell can. The host backend evaluates
     the same shell command locally, so behavior is consistent.
     """
-    import os as _os
     import shlex as _shlex
 
     path = current_workspace().path_module.join(scratch_root(), purpose)

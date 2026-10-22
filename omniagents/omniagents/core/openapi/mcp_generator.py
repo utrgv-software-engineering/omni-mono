@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .parser import Operation, Parameter, get_security_scheme, parse_openapi_spec
+from .parser import Operation, get_security_scheme, parse_openapi_spec
 from .type_mapper import get_required_imports, openapi_type_to_python
 
 

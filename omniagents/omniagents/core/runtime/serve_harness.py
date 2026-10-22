@@ -869,17 +869,6 @@ def _is_host_profile(profile_raw: Dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _profile_display_name(
-    explicit_path: Optional[Any], profile: ResolvedProfile
-) -> str:
-    """Short label for a profile: the file stem when selected by path
-    (``devbox.yml`` → ``devbox``), else the client backend type, else 'default'."""
-    if explicit_path:
-        return Path(str(explicit_path)).stem
-    backend = (profile.raw.get("client") or {}).get("type")
-    return backend if isinstance(backend, str) and backend else "default"
-
-
 async def _cancel_active_runs(service: Any) -> None:
     """Cancel any in-flight run so the session swap lands between runs (the
     in-flight run holds its own per-run SandboxRuntime bound to the old

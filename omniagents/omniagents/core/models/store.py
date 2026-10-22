@@ -1077,25 +1077,6 @@ class ModelConfigStore:
 
         return settings
 
-    def apply_api_keys_to_env(self) -> None:
-        """Export the default model's API key into the environment (no clobber)."""
-        default_config = self.resolve_model_for_runtime()
-        if not default_config:
-            return
-
-        api_key = default_config.get("api_key")
-        provider = default_config.get("provider", "openai")
-
-        if api_key:
-            if provider == "azure":
-                env_key = "AZURE_OPENAI_API_KEY"
-            elif provider == "litellm":
-                env_key = litellm_api_key_env(default_config.get("model"))
-            else:
-                env_key = "OPENAI_API_KEY"
-            if env_key not in os.environ:
-                os.environ[env_key] = api_key
-
     def has_models_configured(self) -> bool:
         """Whether a usable default model is configured."""
         resolved = self.resolve_model_for_runtime()

@@ -204,7 +204,7 @@ def serve(
                 for db in db_files:
                     try:
                         temp_storage = SQLiteStorage(str(db))
-                        trace_count = len(temp_storage.get_traces(limit=1))
+                        temp_storage.get_traces(limit=1)
                         temp_storage.close()
                         size_kb = db.stat().st_size / 1024
                         print(f"  • {db.stem:<20} ({size_kb:.1f} KB)")

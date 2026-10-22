@@ -12,7 +12,6 @@ from omniagents.core.utils.logging import get_logger
 from omniagents.core.agents.mcp import build_mcp_servers
 
 if TYPE_CHECKING:
-    from agents.mcp import MCPServer
     from omniagents.core.agents.specs import (
         AgentSpec,
         AgentLike,

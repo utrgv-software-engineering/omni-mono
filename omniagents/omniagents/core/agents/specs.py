@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .app_base import AgentApp  # Import only for type hinting
     from agents.mcp import MCPServerSse  # Add the import here
-    from agents.guardrail import InputGuardrail, OutputGuardrail
 
 
 # --- Add SettingField definition here ---

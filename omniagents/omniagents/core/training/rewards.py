@@ -12,10 +12,10 @@ For agent training with tools, completions may be:
 """
 
 from typing import Any, Callable, Dict, List, Optional, Union
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from omniagents.core.evaluation.context import EvalContext, build_eval_context, Message
-from omniagents.core.evaluation.registry import get_measure, _MEASURES
+from omniagents.core.evaluation.context import EvalContext, build_eval_context
+from omniagents.core.evaluation.registry import get_measure
 
 
 def _normalize_completion_to_history(
@@ -132,21 +132,6 @@ def _flatten_message(msg: Dict) -> List[Dict]:
                 result.append(flattened)
 
     return result
-
-
-def _extract_final_text(history: List[Dict]) -> str:
-    """Extract the final assistant text from a message history.
-
-    For agent training, the completion may include tool calls and results.
-    We want the final text response from the assistant.
-    """
-    for msg in reversed(history):
-        role = msg.get("role", "")
-        if role == "assistant":
-            content = msg.get("content")
-            if content and isinstance(content, str):
-                return content
-    return ""
 
 
 @dataclass

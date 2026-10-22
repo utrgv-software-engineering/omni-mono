@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 import subprocess
 
-from .rewards import measure_to_reward, MeasureRewardAdapter, combine_rewards
+from .rewards import measure_to_reward, combine_rewards
 from .dataset import eval_suite_to_hf_dataset
 
 # Response schema for Qwen2.5 models (similar to TRL's qwen3_schema but without <think> blocks)
@@ -57,10 +57,7 @@ QWEN25_RESPONSE_SCHEMA = {
 
 
 if TYPE_CHECKING:
-    from datasets import Dataset
-    from transformers import PreTrainedModel, PreTrainedTokenizer
     from trl import GRPOConfig
-    from trl import GRPOTrainer as TRLGRPOTrainer
     from omniagents.notebook.evaluation import EvalSuite
     from agents import Agent
 
@@ -411,7 +408,6 @@ class GRPOTrainingResult:
             # Now use with omniagents
             agent.model = f"litellm/ollama_chat/{ollama_name}"
         """
-        import json
 
         path = model_path or self.model_path
         if path is None:
@@ -443,7 +439,7 @@ class GRPOTrainingResult:
                 str(gguf_path),
             ]
 
-            result = subprocess.run(
+            subprocess.run(
                 convert_cmd,
                 check=True,
                 capture_output=True,
@@ -457,8 +453,6 @@ class GRPOTrainingResult:
             # Step 3: Create Modelfile with template
             modelfile_content = f"FROM {gguf_path}\n\n"
             if template:
-                # Escape for Python string
-                escaped_template = template.replace("\\", "\\\\").replace('"', '\\"')
                 modelfile_content += f'TEMPLATE """{template}"""\n\n'
             for stop in stop_tokens:
                 modelfile_content += f'PARAMETER stop "{stop}"\n'
@@ -469,7 +463,7 @@ class GRPOTrainingResult:
             print("  Registering with Ollama...")
             ollama_cmd = ["ollama", "create", model_name, "-f", str(modelfile_path)]
 
-            result = subprocess.run(
+            subprocess.run(
                 ollama_cmd,
                 check=True,
                 capture_output=True,

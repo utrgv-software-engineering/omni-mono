@@ -1,7 +1,7 @@
 import base64
 import mimetypes
 import os
-from typing import Any, Optional
+from typing import Any
 
 from agents.run_context import RunContextWrapper
 from omniagents.core.tools.artifacts import emit_artifact

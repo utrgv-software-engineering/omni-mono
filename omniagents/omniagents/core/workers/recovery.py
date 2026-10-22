@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import time
-from .durable import ACTIVE, TERMINAL, LEASE_SECONDS
+from .durable import ACTIVE, LEASE_SECONDS
 
 
 def reconcile(journal):

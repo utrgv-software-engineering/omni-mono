@@ -11,7 +11,6 @@ import hashlib
 import json
 import time
 import uuid
-from typing import Any
 
 LEASE_SECONDS = 30.0
 TERMINAL = {"completed", "error", "cancelled", "closed"}

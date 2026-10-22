@@ -16,7 +16,6 @@ import socket
 import time
 from pathlib import Path
 import platform
-import errno
 import shutil
 from threading import Thread
 from typing import Callable, Optional
@@ -405,7 +404,7 @@ class InkBackend:
         try:
             if debug:
                 print("[DEBUG] Running " + " ".join(install_cmd))
-            proc = subprocess.run(
+            subprocess.run(
                 install_cmd,
                 cwd=str(cache_dir),
                 check=True,
@@ -432,7 +431,7 @@ class InkBackend:
         try:
             if debug:
                 print("[DEBUG] Running npm run build...")
-            proc2 = subprocess.run(
+            subprocess.run(
                 ["npm", "run", "build"],
                 cwd=str(cache_dir),
                 check=True,

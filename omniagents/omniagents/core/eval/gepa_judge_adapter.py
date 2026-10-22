@@ -335,7 +335,6 @@ class OmniAgentsJudgeAdapter:
                     tools_list.append(registry[nm])
 
         nm = self._judge_cfg.get("agent", {}).get("name") or f"Judge:{self.judge_key}"
-        lbl = self._judge_cfg.get("agent", {}).get("label") or nm
         try:
             instructions = render_template(
                 instructions,
@@ -1180,8 +1179,6 @@ class OmniAgentsJudgeAdapter:
         for comp in components_to_update:
             items: List[Dict[str, Any]] = []
             for t in selected:
-                label = bool(t.get("label"))
-                pred = t.get("pred")
                 k = t.get("kind")
                 prompt = t.get("prompt")
                 jout = t.get("judge_output") or {}

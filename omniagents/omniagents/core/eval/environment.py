@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 __all__ = ["EvalEnvironment", "EnvironmentContext", "NoOpEnvironment"]
 
@@ -225,20 +225,6 @@ class EvalEnvironment(ABC):
         except subprocess.TimeoutExpired:
             return (124, "", f"command timed out after {timeout}s")
         return (result.returncode, result.stdout or "", result.stderr or "")
-
-    def get_tool_context(self, context: EnvironmentContext) -> Dict[str, Any]:
-        """Get context values to inject into tool calls.
-
-        Override this if tools need values from the environment context
-        (e.g., resource IDs, session tokens, etc.)
-
-        Args:
-            context: The context returned by setup().
-
-        Returns:
-            Dict of values to merge into tool call arguments.
-        """
-        return dict(context.data)
 
     def get_env_vars(self, context: EnvironmentContext) -> Dict[str, str]:
         """Get environment variables to set during scenario execution.

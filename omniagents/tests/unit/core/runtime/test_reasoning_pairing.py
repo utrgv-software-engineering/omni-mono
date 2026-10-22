@@ -57,7 +57,6 @@ class TestReasoningMessagePairing:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         reasoning_item = types.SimpleNamespace(
             type="reasoning_item",
@@ -134,7 +133,6 @@ class TestReasoningMessagePairing:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         message_item = types.SimpleNamespace(
             type="message_output_item",
@@ -204,7 +202,6 @@ class TestReasoningToolCallPairing:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         reasoning_item = types.SimpleNamespace(
             type="reasoning_item",
@@ -320,7 +317,6 @@ class TestReasoningToolCallPairing:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         reasoning_item = types.SimpleNamespace(
             type="reasoning_item",
@@ -402,7 +398,6 @@ class TestReasoningToolCallPairing:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         reasoning_item = types.SimpleNamespace(
             type="reasoning_item",
@@ -494,7 +489,6 @@ class TestOrphanedReasoningHandling:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         reasoning_item = types.SimpleNamespace(
             type="reasoning_item",
@@ -568,7 +562,6 @@ class TestOrphanedReasoningHandling:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         reasoning_item = types.SimpleNamespace(
             type="reasoning_item",
@@ -638,7 +631,6 @@ class TestMultipleReasoningItems:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         events = []
 
@@ -760,7 +752,6 @@ class TestEdgeCases:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         class BadReasoningItem:
             def __init__(self):
@@ -834,7 +825,6 @@ class TestEdgeCases:
                 pass
 
         monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-        monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
         function_call_item = types.SimpleNamespace(
             type="tool_call_item",

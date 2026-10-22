@@ -5,7 +5,7 @@ Discovery of context factory functions and model config resolvers from agent dir
 import importlib.util
 import sys
 from pathlib import Path
-from typing import Dict, Callable, Any, Optional
+from typing import Dict, Callable
 
 from omniagents.core.debug import Debug
 

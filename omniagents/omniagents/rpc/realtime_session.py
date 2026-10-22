@@ -11,13 +11,12 @@ import base64
 import logging
 import os
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from typing import Optional, Dict, Any, AsyncIterator, Callable, Tuple
+from typing import Optional, Dict, Any, AsyncIterator, Tuple
 from contextlib import asynccontextmanager
 from contextlib import AsyncExitStack
 
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.core.session.audio_storage import (
-    AudioStorage,
     AudioStorageBackend,
     build_audio_storage,
 )
@@ -377,7 +376,7 @@ class RealtimeSession:
             spec: Agent specification with realtime settings
             settings: API keys and other settings
             session_id: Optional session ID (generated if not provided)
-            audio_storage: Optional AudioStorage instance (created if not provided)
+            audio_storage: Optional AudioStorageBackend instance (created if not provided)
             owner_user_id: Authenticated principal that owns this session
             extra_tools: Additional SDK tools appended to the spec's tools —
                 the client-tool proxies bridged from a GUI session sharing
