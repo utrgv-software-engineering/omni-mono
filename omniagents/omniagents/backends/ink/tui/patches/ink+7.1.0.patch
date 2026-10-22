@@ -1,8 +1,28 @@
+diff --git a/node_modules/ink/build/ink.d.ts b/node_modules/ink/build/ink.d.ts
+index 49e732d..9efa1a5 100644
+--- a/node_modules/ink/build/ink.d.ts
++++ b/node_modules/ink/build/ink.d.ts
+@@ -37,6 +37,7 @@ export type Options = {
+     isAlternateBufferEnabled?: boolean;
+     stickyHeadersInBackbuffer?: boolean;
+     incrementalRendering?: boolean;
++    synchronizedOutput?: boolean;
+     debugRainbow?: boolean;
+     animatedScroll?: boolean;
+     animationInterval?: number;
 diff --git a/node_modules/ink/build/ink.js b/node_modules/ink/build/ink.js
-index 00d2d9a..f579a90 100644
+index 00d2d9a..d48ee99 100644
 --- a/node_modules/ink/build/ink.js
 +++ b/node_modules/ink/build/ink.js
-@@ -472,10 +472,14 @@ export default class Ink {
+@@ -138,6 +138,7 @@ export default class Ink {
+             getRows: () => options.stdout.rows,
+             getColumns: () => options.stdout.columns,
+             incremental: options.incrementalRendering,
++            synchronizedOutput: options.synchronizedOutput,
+         });
+         this.throttledLog = unthrottled
+             ? this.log
+@@ -472,10 +473,14 @@ export default class Ink {
              await this.terminalBuffer.render();
          }
      }
@@ -18,3 +38,159 @@ index 00d2d9a..f579a90 100644
          this.options.stdout.write(this.fullStaticOutput + output);
      }
      renderCi({ output, outputHeight, staticOutput, hasStaticOutput, }) {
+diff --git a/node_modules/ink/build/log-update.d.ts b/node_modules/ink/build/log-update.d.ts
+index 3734bf6..5a82990 100644
+--- a/node_modules/ink/build/log-update.d.ts
++++ b/node_modules/ink/build/log-update.d.ts
+@@ -16,11 +16,12 @@ export type LogUpdate = {
+     (str: string, styledOutput: StyledLine[], debugRainbowColor?: string, cursorPosition?: CursorPosition): void;
+ };
+ declare const logUpdate: {
+-    create: (stream: Writable, { showCursor, alternateBuffer, alternateBufferAlreadyActive, incremental, getRows, getColumns, }?: {
++    create: (stream: Writable, { showCursor, alternateBuffer, alternateBufferAlreadyActive, incremental, synchronizedOutput, getRows, getColumns, }?: {
+         showCursor?: boolean;
+         alternateBuffer?: boolean;
+         alternateBufferAlreadyActive?: boolean;
+         incremental?: boolean;
++        synchronizedOutput?: boolean;
+         getRows?: () => number;
+         getColumns?: () => number;
+     }) => LogUpdate;
+diff --git a/node_modules/ink/build/log-update.js b/node_modules/ink/build/log-update.js
+index c6cbb3a..c7178fa 100644
+--- a/node_modules/ink/build/log-update.js
++++ b/node_modules/ink/build/log-update.js
+@@ -2,8 +2,6 @@ import process from 'node:process';
+ import ansiEscapes from 'ansi-escapes';
+ import cliCursor from 'cli-cursor';
+ import colorize from './colorize.js';
+-// Debugging option to simulate flicker if for terminals that do not support enableSynchronizedOutput.
+-const enableSynchronizedOutput = true;
+ const enterSynchronizedOutput = '\u001B[?2026h';
+ const exitSynchronizedOutput = '\u001B[?2026l';
+ /**
+@@ -111,7 +109,7 @@ const getLineLength = (styledChars) => {
+     }
+     return 0;
+ };
+-const createStandard = (stream, { showCursor = false, alternateBuffer = false, alternateBufferAlreadyActive = false, getRows = () => 0, getColumns = () => 0, } = {}) => {
++const createStandard = (stream, { showCursor = false, alternateBuffer = false, alternateBufferAlreadyActive = false, synchronizedOutput = true, getRows = () => 0, getColumns = () => 0, } = {}) => {
+     let previousLineCount = 0;
+     let previousOutput = '';
+     // Keep track of the actual previous output rendered to the alternate buffer
+@@ -162,12 +160,12 @@ const createStandard = (stream, { showCursor = false, alternateBuffer = false, a
+                     ? colorize(outputToWrite, debugRainbowColor, 'background')
+                     : outputToWrite;
+                 const cursorSequence = getAlternateBufferCursorSequence(cursorPosition);
+-                stream.write((enableSynchronizedOutput ? enterSynchronizedOutput : '') +
++                stream.write((synchronizedOutput ? enterSynchronizedOutput : '') +
+                     ansiEscapes.cursorTo(0, 0) +
+                     eraseOperation +
+                     outputToWrite +
+                     cursorSequence +
+-                    (enableSynchronizedOutput ? exitSynchronizedOutput : ''));
++                    (synchronizedOutput ? exitSynchronizedOutput : ''));
+                 previousOutputAlternateBuffer = alternateBufferOutput;
+                 previousRows = rows;
+                 previousColumns = columns;
+@@ -255,7 +253,7 @@ const createStandard = (stream, { showCursor = false, alternateBuffer = false, a
+     };
+     return render;
+ };
+-const createIncremental = (stream, { showCursor = false, alternateBuffer = false, alternateBufferAlreadyActive = false, getRows = () => 0, getColumns = () => 0, } = {}) => {
++const createIncremental = (stream, { showCursor = false, alternateBuffer = false, alternateBufferAlreadyActive = false, synchronizedOutput = true, getRows = () => 0, getColumns = () => 0, } = {}) => {
+     let previousLines = [];
+     let previousOutput = '';
+     let previousOutputAlternateBuffer = '';
+@@ -303,7 +301,7 @@ const createIncremental = (stream, { showCursor = false, alternateBuffer = false
+                 const cursorSequence = getAlternateBufferCursorSequence(cursorPosition);
+                 if (rows === previousRows && columns === previousColumns) {
+                     const buffer = [];
+-                    if (enableSynchronizedOutput) {
++                    if (synchronizedOutput) {
+                         buffer.push(enterSynchronizedOutput);
+                     }
+                     buffer.push(ansiEscapes.cursorTo(0, 0));
+@@ -333,14 +331,16 @@ const createIncremental = (stream, { showCursor = false, alternateBuffer = false
+                         }
+                     }
+                     skippedLines = moveCursorDown(buffer, skippedLines);
+-                    if (previousLines.length > nextLines.length) {
+-                        const linesToClear = previousLines.length - nextLines.length;
+-                        for (let i = 0; i < linesToClear; i++) {
+-                            buffer.push(ansiEscapes.eraseLine + ansiEscapes.cursorNextLine);
+-                        }
++                    // Clear the rows the shorter frame no longer covers by
++                    // absolute position: after the loop the cursor sits on
++                    // the last row when that row was rewritten but one row
++                    // below it when it was skipped, so a relative erase
++                    // wiped the new last row and left a stale one under it.
++                    for (let i = nextLines.length; i < previousLines.length; i++) {
++                        buffer.push(ansiEscapes.cursorTo(0, i) + ansiEscapes.eraseLine);
+                     }
+                     buffer.push(cursorSequence);
+-                    if (enableSynchronizedOutput) {
++                    if (synchronizedOutput) {
+                         buffer.push(exitSynchronizedOutput);
+                     }
+                     stream.write(buffer.join(''));
+@@ -355,12 +355,12 @@ const createIncremental = (stream, { showCursor = false, alternateBuffer = false
+                     outputToWrite = debugRainbowColor
+                         ? colorize(outputToWrite, debugRainbowColor, 'background')
+                         : outputToWrite;
+-                    stream.write((enableSynchronizedOutput ? enterSynchronizedOutput : '') +
++                    stream.write((synchronizedOutput ? enterSynchronizedOutput : '') +
+                         ansiEscapes.cursorTo(0, 0) +
+                         eraseOperation +
+                         outputToWrite +
+                         cursorSequence +
+-                        (enableSynchronizedOutput ? exitSynchronizedOutput : ''));
++                        (synchronizedOutput ? exitSynchronizedOutput : ''));
+                     previousRows = rows;
+                     previousColumns = columns;
+                 }
+@@ -506,12 +506,16 @@ const createIncremental = (stream, { showCursor = false, alternateBuffer = false
+     };
+     return render;
+ };
+-const create = (stream, { showCursor = false, alternateBuffer = false, alternateBufferAlreadyActive = false, incremental = false, getRows, getColumns, } = {}) => {
++// synchronizedOutput: wrap each frame in DEC 2026 begin/end. Multiplexers
++// such as tmux repaint the whole pane at every end, so callers turn it off
++// there.
++const create = (stream, { showCursor = false, alternateBuffer = false, alternateBufferAlreadyActive = false, incremental = false, synchronizedOutput = true, getRows, getColumns, } = {}) => {
+     if (incremental) {
+         return createIncremental(stream, {
+             showCursor,
+             alternateBuffer,
+             alternateBufferAlreadyActive,
++            synchronizedOutput,
+             getRows,
+             getColumns,
+         });
+@@ -520,6 +524,7 @@ const create = (stream, { showCursor = false, alternateBuffer = false, alternate
+         showCursor,
+         alternateBuffer,
+         alternateBufferAlreadyActive,
++        synchronizedOutput,
+         getRows,
+         getColumns,
+     });
+diff --git a/node_modules/ink/build/render.d.ts b/node_modules/ink/build/render.d.ts
+index 2783d63..fa1b41f 100644
+--- a/node_modules/ink/build/render.d.ts
++++ b/node_modules/ink/build/render.d.ts
+@@ -78,6 +78,14 @@ export type RenderOptions = {
+     */
+     incrementalRendering?: boolean;
+     /**
++    Wrap each frame in synchronized output (DEC mode 2026) so the terminal
++    paints it atomically. tmux repaints the whole pane when a synchronized
++    update ends, so turn this off under a multiplexer.
++
++    @default true
++    */
++    synchronizedOutput?: boolean;
++    /**
+     If true, all content for the current frame will be rendered with background colors that alternate through a rainbow of options.
+     This is useful for debugging to see what content was actually updated on each frame.
+     Only content that was re-rendered gets a new rainbow color.
