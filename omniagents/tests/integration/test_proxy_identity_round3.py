@@ -10,10 +10,8 @@ aggregation, token provider × the proxy's startup guard).
 import asyncio
 import json
 import os
-import socket
 
 import pytest
-import uvicorn
 from agents import Agent
 from fastapi.testclient import TestClient
 
@@ -24,6 +22,7 @@ from omniagents.core.providers.auth.composite import CompositeAuthProvider
 from omniagents.core.providers.auth.proxy_assertion import ProxyAssertionAuthProvider
 from omniagents.core.providers.auth.token import TokenAuthProvider
 from omniagents.rpc.identity_assertion import mint_identity_assertion
+from tests.fixtures.servers import start_server
 
 SECRET_ENV = "OMNIAGENTS_TEST_R3_IDENTITY_SECRET"
 SECRET = "round-three-identity-signing-secret-0123456789"
@@ -33,19 +32,8 @@ async def _build_agent(settings, mcp, app):
     return Agent(name="r3", tools=[], instructions="", model="gpt-3.5-turbo")
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
 
 
-async def _serve(app, port):
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
-    return server, task
 
 
 def _spec(**kwargs):
@@ -362,8 +350,7 @@ def test_retryable_refusal_closes_the_socket_with_try_again_later(monkeypatch):
         monkeypatch.setattr(
             type(provider), "_consume", lambda self, *a, **k: "capacity"
         )
-        port = _free_port()
-        server, task = await _serve(app, port)
+        server, task, port = await start_server(app)
         try:
             assertion = mint_identity_assertion(
                 UserIdentity(user_id="alice"), secret=SECRET
@@ -439,8 +426,7 @@ def test_non_ascii_bearer_does_not_crash_a_token_authenticated_server():
             ),
             default_host_workspace_root="/tmp",
         )
-        port = _free_port()
-        server, task = await _serve(app, port)
+        server, task, port = await start_server(app)
         try:
             upgrade = (
                 b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -677,8 +663,7 @@ def test_composite_capacity_refusal_reaches_the_client_as_retryable(monkeypatch)
         monkeypatch.setattr(
             type(assertion_member), "_consume", lambda self, *a, **k: "capacity"
         )
-        port = _free_port()
-        server, task = await _serve(app, port)
+        server, task, port = await start_server(app)
         try:
             assertion = mint_identity_assertion(
                 UserIdentity(user_id="alice"), secret=SECRET

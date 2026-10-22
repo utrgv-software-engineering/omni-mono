@@ -12,12 +12,9 @@ Environment variables:
 import os
 import sys
 import subprocess
-import socket
-import time
 from pathlib import Path
 import platform
 import shutil
-from threading import Thread
 from typing import Callable, Optional
 import logging
 
@@ -101,6 +98,7 @@ class InkBackend:
         # Import server dependencies
         try:
             from omniagents.backends.server.app import build_app
+            from omniagents.core.utils.serving import BackgroundServer, bind_socket
             import uvicorn
         except ImportError as e:
             print(
@@ -108,11 +106,6 @@ class InkBackend:
             )
             print(f"Details: {e}")
             sys.exit(1)
-
-        # Find an available port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            port = s.getsockname()[1]
 
         args = kwargs.get("args")
         apply_cli_overrides(spec, args)
@@ -146,59 +139,37 @@ class InkBackend:
             default_host_workspace_root=os.getcwd(),
         )
 
-        # Start server in background thread
-        def run_server():
-            """Run the FastAPI server in a background thread."""
-            # Silence noisy third-party loggers
-            for name in (
-                "agents",
-                "openai",
-                "httpx",
-                "urllib3",
-                "anthropic",
-                "litellm",
-            ):
-                try:
-                    lg = logging.getLogger(name)
-                    lg.handlers.clear()
-                    lg.addHandler(logging.NullHandler())
-                    lg.setLevel(logging.CRITICAL)
-                    lg.propagate = False
-                except Exception:
-                    pass
-            uvicorn.run(
-                app,
-                host="127.0.0.1",
-                port=port,
-                log_level="error",
-                access_log=False,
-            )
-
-        server_thread = Thread(target=run_server, daemon=True)
-        server_thread.start()
-
-        # Give server time to start up and verify it's running
-        max_retries = 10
-        for i in range(max_retries):
-            time.sleep(0.5)
+        # Silence noisy third-party loggers
+        for name in (
+            "agents",
+            "openai",
+            "httpx",
+            "urllib3",
+            "anthropic",
+            "litellm",
+        ):
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(1)
-                    s.connect(("127.0.0.1", port))
-                    s.close()
-                    if debug:
-                        print(f"[DEBUG] Server started successfully on port {port}")
-                    break
-            except (socket.timeout, ConnectionRefusedError):
-                if i == max_retries - 1:
-                    print(
-                        f"Error: Failed to start server on port {port} after {max_retries} attempts"
-                    )
-                    sys.exit(1)
-                if debug:
-                    print(
-                        f"[DEBUG] Waiting for server to start... attempt {i+1}/{max_retries}"
-                    )
+                lg = logging.getLogger(name)
+                lg.handlers.clear()
+                lg.addHandler(logging.NullHandler())
+                lg.setLevel(logging.CRITICAL)
+                lg.propagate = False
+            except Exception:
+                pass
+
+        # The server binds its own port-0 socket; the TUI is pointed at the
+        # port it actually listens on once startup has finished.
+        try:
+            server = BackgroundServer(
+                uvicorn.Config(app, log_level="error", access_log=False),
+                bind_socket("127.0.0.1", 0),
+            ).start()
+        except (OSError, RuntimeError) as e:
+            print(f"Error: Failed to start server: {e}")
+            sys.exit(1)
+        port = server.port
+        if debug:
+            print(f"[DEBUG] Server started successfully on port {port}")
 
         env_override = os.environ.get("OMNI_INK_TUI_PATH")
         binary_path = self._find_binary(env_override=env_override)

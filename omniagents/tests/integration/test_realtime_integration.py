@@ -5,36 +5,22 @@ tool execution, handoffs, and guardrails in a real server environment.
 """
 
 import asyncio
-import socket
 import base64
 import pytest
 import pytest_asyncio
 from unittest.mock import patch, AsyncMock, MagicMock
 from types import SimpleNamespace
 
-import uvicorn
 from fastapi import FastAPI
 
 from omniagents.core.agents.specs import AgentSpec, RealtimeSettings
 from omniagents.rpc import JsonRpcEndpoint, JsonRpcClient
 from omniagents.rpc.realtime_service import RealtimeService
+from tests.fixtures.servers import start_server
 
 
-def _get_free_port():
-    """Get an available port for testing."""
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
-async def _run_server(app, port):
-    """Run a test server."""
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
-    return server, task
 
 
 @pytest.fixture
@@ -68,8 +54,6 @@ def settings_with_key():
 @pytest_asyncio.fixture
 async def test_server(realtime_spec, settings_with_key):
     """Create a test server with realtime service."""
-    port = _get_free_port()
-
     # Mock the OpenAI SDK
     with (
         patch("agents.realtime.RealtimeAgent", create=True),
@@ -103,7 +87,7 @@ async def test_server(realtime_spec, settings_with_key):
         endpoint.register_route(app, "/ws/realtime")
 
         # Start server
-        server, task = await _run_server(app, port)
+        server, task, port = await start_server(app)
 
         yield port, service
 

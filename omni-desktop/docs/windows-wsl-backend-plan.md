@@ -69,10 +69,13 @@ provision → spawn → health check **before** creating the BrowserWindow.
   stdin, staged in a temp dir and swapped in, only when the in-distro `VERSION`
   differs from the launcher version. That is also the whole update story:
   electron-updater updates the Windows app and the next boot re-provisions.
-- **Spawn** picks a free port, reaps any stale daemon via
-  `~/.omni/launcher/daemon.pid`, and runs the bundled Node with the per-boot
-  secret in `OMNI_WS_TOKEN_SECRET`. The daemon is a child of `wsl.exe` and dies
-  with the app.
+- **Spawn** reaps any stale daemon via `~/.omni/launcher/daemon.pid` and runs
+  the bundled Node with the per-boot secret in `OMNI_WS_TOKEN_SECRET` and
+  `PORT=0`: the daemon binds its own port and writes it to
+  `~/.omni/launcher/daemon.port` once listening, and main reads it back
+  through `wsl.exe` and persists it into `remoteBackend`. Respawns within a
+  boot ask for that same port so the renderer's URL stays valid. The daemon is
+  a child of `wsl.exe` and dies with the app.
 - **Health** polls `GET /api/health` (`{ ok, version }`), restarting with capped
   backoff; after repeated failures status turns `error` with the stderr tail.
 - **Persistent mode** (`WslBackend.persistent`, toggled in Settings): the daemon

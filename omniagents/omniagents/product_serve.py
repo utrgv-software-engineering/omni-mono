@@ -29,7 +29,6 @@ import contextlib
 import json
 import os
 import signal
-import socket
 import sys
 import uuid
 from pathlib import Path
@@ -182,14 +181,6 @@ def _watch_stdin_eof(on_eof: Any, fd: int = 0) -> None:
     threading.Thread(target=_read, name="stdin-eof-watch", daemon=True).start()
 
 
-def _pick_port(host: str, requested: int) -> int:
-    if requested:
-        return requested
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind((host, 0))
-        return s.getsockname()[1]
-
-
 def _resolve_agent_project_path(explicit: Optional[Path]) -> Path:
     """The project manifest serving the agent: --agent-project, else the
     installed product's packaged manifest."""
@@ -331,6 +322,22 @@ async def _serve(args: argparse.Namespace) -> int:
     import uvicorn
 
     from omniagents.backends.server.app import build_app
+    from omniagents.core.utils.serving import ReadyServer, bind_socket
+
+    # The listening socket is bound first (port 0 → the kernel picks) and
+    # handed to uvicorn, so the port in the readiness payload is the one the
+    # server holds — and a taken port fails here, before anything needs
+    # tearing down. The payload is printed once uvicorn has started, so a
+    # client that dials on reading it finds the server accepting.
+    try:
+        sock = bind_socket(args.host, args.port or 0)
+    except OSError as e:
+        print(
+            json.dumps({"error": f"bind {args.host}:{args.port}: {e}"}),
+            file=sys.stderr,
+        )
+        return 1
+    port = sock.getsockname()[1]
     from omniagents.core.runtime.environment_provisioner import (
         ServeEnvironmentProvisioner,
     )
@@ -389,15 +396,11 @@ async def _serve(args: argparse.Namespace) -> int:
     app.state.recap_scheduler = recap_scheduler
     await recap_scheduler.start()
 
-    port = _pick_port(args.host, args.port)
     config = uvicorn.Config(
         app,
-        host=args.host,
-        port=port,
         log_level="info",
         access_log=False,
     )
-    server = uvicorn.Server(config)
 
     # --- Readiness payload ---
     payload = build_readiness_payload(
@@ -406,23 +409,27 @@ async def _serve(args: argparse.Namespace) -> int:
         auth_token=args.auth_token,
         agent_host_id=agent_host_id,
     )
-    if args.output == "json":
-        # ``default=str`` coerces any stray non-JSON value (e.g. a PosixPath —
-        # manifest.root can arrive as one via pydantic ``model_copy(update=)``,
-        # which skips the ``str`` field coercion) to its string form. The
-        # readiness payload is the launcher's handshake; it must never fail to
-        # serialize and crash serve. str(PosixPath("/workspace")) == "/workspace",
-        # so the launcher still receives the value it expects.
-        print(json.dumps(payload, default=str), flush=True)
-    else:
-        label = None
-        try:
-            from omniagents.core.product import product_info
 
-            label = product_info().label
-        except Exception:
-            pass
-        print(f"{label or 'Agent server'}: {payload['ui_url']}", flush=True)
+    def _announce_ready(_server: ReadyServer) -> None:
+        if args.output == "json":
+            # ``default=str`` coerces any stray non-JSON value (e.g. a PosixPath —
+            # manifest.root can arrive as one via pydantic ``model_copy(update=)``,
+            # which skips the ``str`` field coercion) to its string form. The
+            # readiness payload is the launcher's handshake; it must never fail to
+            # serialize and crash serve. str(PosixPath("/workspace")) == "/workspace",
+            # so the launcher still receives the value it expects.
+            print(json.dumps(payload, default=str), flush=True)
+        else:
+            label = None
+            try:
+                from omniagents.core.product import product_info
+
+                label = product_info().label
+            except Exception:
+                pass
+            print(f"{label or 'Agent server'}: {payload['ui_url']}", flush=True)
+
+    server = ReadyServer(config, on_started=_announce_ready)
 
     # --- Run server + fast signal shutdown ---
     # Any exit signal skips uvicorn's graceful drain (``force_exit``): the
@@ -461,7 +468,7 @@ async def _serve(args: argparse.Namespace) -> int:
         _watch_stdin_eof(lambda: loop.call_soon_threadsafe(_request_stop))
 
     try:
-        await server.serve()
+        await server.serve(sockets=[sock])
     finally:
         # Quiesce before teardown: with the drain skipped (force_exit), an
         # in-flight run would otherwise keep mutating the workspace while

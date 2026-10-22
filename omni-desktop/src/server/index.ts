@@ -5,7 +5,7 @@ import { BlockList, isIPv4, isIPv6 } from 'node:net';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 
 // Server mode always runs as "development" so util.ts resolves paths from project root
@@ -266,7 +266,17 @@ const main = async () => {
 
   // Start
   await fastify.listen({ port: PORT, host: HOST });
-  fastify.log.info(`Server listening on http://${HOST}:${PORT}`);
+  const address = fastify.server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : PORT;
+  fastify.log.info(`Server listening on http://${HOST}:${port}`);
+  // A supervisor that starts the server on PORT=0 reads the bound port back
+  // from here (the WSL backend, through wsl.exe). Written once listening, and
+  // renamed into place so a reader never sees a partial number.
+  const portFile = process.env['OMNI_PORT_FILE'];
+  if (portFile) {
+    writeFileSync(`${portFile}.tmp`, `${port}\n`);
+    renameSync(`${portFile}.tmp`, portFile);
+  }
 };
 
 main().catch((err) => {

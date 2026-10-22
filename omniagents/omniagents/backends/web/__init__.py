@@ -1,6 +1,5 @@
 import os
 import sys
-import socket
 import time
 import platform
 import shutil
@@ -8,7 +7,6 @@ import subprocess
 import webbrowser
 import logging
 from pathlib import Path
-from threading import Thread
 from typing import Optional
 
 from omniagents.core.agents.specs import AgentSpec
@@ -20,6 +18,11 @@ class WebBackend:
     def run(self, spec: AgentSpec, **kwargs) -> None:
         try:
             from omniagents.backends.server.app import build_app
+            from omniagents.core.utils.serving import (
+                BackgroundServer,
+                bind_first_free,
+                bind_socket,
+            )
             import uvicorn
             from fastapi.staticfiles import StaticFiles
         except ImportError as e:
@@ -50,10 +53,17 @@ class WebBackend:
             host = host_arg
         else:
             host = "0.0.0.0" if codespaces_env else "127.0.0.1"
-        if port_arg is not None:
-            port = int(port_arg)
-        else:
-            port = self._find_available_port(8080)
+        # Bind now and keep the socket for uvicorn: the port printed and
+        # opened below is then the one the server listens on.
+        try:
+            if port_arg is not None:
+                sock = bind_socket(host, int(port_arg))
+            else:
+                sock = bind_first_free(host, 8080)
+        except (OSError, RuntimeError) as e:
+            print(f"Error: Failed to bind {host}: {e}")
+            sys.exit(1)
+        port = sock.getsockname()[1]
 
         apply_cli_overrides(spec, args)
 
@@ -156,55 +166,37 @@ class WebBackend:
         # Determine if SSL is enabled
         use_ssl = bool(ssl_cert and ssl_key)
 
-        def run_server():
-            for name in (
-                "agents",
-                "openai",
-                "httpx",
-                "urllib3",
-                "anthropic",
-                "litellm",
-            ):
-                try:
-                    lg = logging.getLogger(name)
-                    lg.handlers.clear()
-                    lg.addHandler(logging.NullHandler())
-                    lg.setLevel(logging.CRITICAL)
-                    lg.propagate = False
-                except Exception:
-                    pass
-            uvicorn_kwargs = {
-                "app": app,
-                "host": host,
-                "port": port,
-                "log_level": "error",
-                "access_log": False,
-                "proxy_headers": True,
-                "forwarded_allow_ips": "*",
-            }
-            if use_ssl:
-                uvicorn_kwargs["ssl_certfile"] = ssl_cert
-                uvicorn_kwargs["ssl_keyfile"] = ssl_key
-            uvicorn.run(**uvicorn_kwargs)
-
-        server_thread = Thread(target=run_server, daemon=True)
-        server_thread.start()
-
-        health_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
-
-        max_retries = 10
-        for i in range(max_retries):
-            time.sleep(0.5)
+        for name in (
+            "agents",
+            "openai",
+            "httpx",
+            "urllib3",
+            "anthropic",
+            "litellm",
+        ):
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(1)
-                    s.connect((health_host, port))
-                    s.close()
-                    break
-            except (socket.timeout, ConnectionRefusedError):
-                if i == max_retries - 1:
-                    print(f"Error: Failed to start server on port {port}")
-                    sys.exit(1)
+                lg = logging.getLogger(name)
+                lg.handlers.clear()
+                lg.addHandler(logging.NullHandler())
+                lg.setLevel(logging.CRITICAL)
+                lg.propagate = False
+            except Exception:
+                pass
+        config_kwargs = {
+            "log_level": "error",
+            "access_log": False,
+            "proxy_headers": True,
+            "forwarded_allow_ips": "*",
+        }
+        if use_ssl:
+            config_kwargs["ssl_certfile"] = ssl_cert
+            config_kwargs["ssl_keyfile"] = ssl_key
+        try:
+            server = BackgroundServer(uvicorn.Config(app, **config_kwargs), sock).start()
+        except RuntimeError as e:
+            print(f"Error: Failed to start server on port {port}: {e}")
+            sys.exit(1)
+        server_thread = server.thread
 
         # Build URL with optional query params
         qp = []
@@ -311,25 +303,6 @@ class WebBackend:
             _serve_shell,
             methods=["GET"],
             include_in_schema=False,
-        )
-
-    @staticmethod
-    def _find_available_port(start_port: int, max_attempts: int = 20) -> int:
-        """Find an available port starting from start_port.
-
-        Tries ports sequentially (start_port, start_port+1, ...) until
-        an available one is found or max_attempts is reached.
-        """
-        for offset in range(max_attempts):
-            port = start_port + offset
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(("127.0.0.1", port))
-                    return port
-            except OSError:
-                continue
-        raise RuntimeError(
-            f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}"
         )
 
     @staticmethod

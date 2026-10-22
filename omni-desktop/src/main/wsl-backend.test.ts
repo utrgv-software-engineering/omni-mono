@@ -69,6 +69,11 @@ describe('backoffDelayMs', () => {
 // Manager harness — injected exec/spawn/net/fetch seams.
 // ---------------------------------------------------------------------------
 
+/** The port the fake daemon binds and reports through its port file. */
+const REPORTED_PORT = 43_210;
+// The port-file read runs as `--exec sh -c 'cat ~/.omni/launcher/daemon.port'`.
+const isPortReadArgs = (args: string[]): boolean => args.some((a) => a === 'cat ~/.omni/launcher/daemon.port');
+
 class FakeChild extends EventEmitter implements WslDaemonChild {
   stderr = new EventEmitter();
   killed = false;
@@ -104,10 +109,18 @@ function makeManager(opts: {
   /** Result of the elevated-launch seam (`install('platform')`). */
   elevatedResult?: RunWslResult;
   platform?: NodeJS.Platform;
+  /** What the daemon wrote to its port file; null = not written yet. */
+  reportedPort?: number | string | null;
 }) {
+  const portFile: { value: number | string | null } = {
+    value: opts.reportedPort === undefined ? REPORTED_PORT : opts.reportedPort,
+  };
   const runCalls: RunCall[] = [];
   const runWsl: RunWsl = (args, o) => {
     runCalls.push({ args, ...(o?.stdinFile ? { stdinFile: o.stdinFile } : {}) });
+    if (isPortReadArgs(args)) {
+      return Promise.resolve(portFile.value === null ? fail(1, 'cat: no such file') : ok(`${portFile.value}\n`));
+    }
     return Promise.resolve(opts.respond(args));
   };
   const elevatedCalls: { exe: string; args: string[] }[] = [];
@@ -155,14 +168,13 @@ function makeManager(opts: {
     runElevated,
     fetchFn,
     payloadPath: () => payloadFile,
-    pickFreePort: () => Promise.resolve(43_210),
   });
-  return { manager, cleanup, runCalls, elevatedCalls, spawns, storeSet, secretState };
+  return { manager, cleanup, runCalls, elevatedCalls, spawns, storeSet, secretState, portFile };
 }
 
 const isProvisionCall = (call: RunCall): boolean => call.args.some((a) => a.includes('tar xzf -'));
 // The VERSION read runs as `--exec sh -c 'cat …'` — the script is one argv element.
-const hasCatScript = (args: string[]): boolean => args.some((a) => a.startsWith('cat '));
+const hasCatScript = (args: string[]): boolean => args.some((a) => a.startsWith('cat ') && !a.includes('daemon.port'));
 const isVersionCall = (call: RunCall): boolean => hasCatScript(call.args);
 // Persistent-mode daemon start runs as a one-shot `nohup … &` script.
 const isDetachedSpawnCall = (call: RunCall): boolean => call.args.some((a) => a.includes('nohup'));
@@ -362,20 +374,23 @@ describe('daemon restart backoff', () => {
     });
     try {
       await manager.start('Ubuntu-22.04');
-      // Port persisted into the store BEFORE any window could exist.
-      expect(storeSet).toHaveBeenCalledWith('remoteBackend', {
-        kind: 'wsl',
-        distro: 'Ubuntu-22.04',
-        port: 43_210,
-      });
       expect(spawns).toHaveLength(1);
+      expect(spawns[0]?.args).toContain('PORT=0');
 
       // Failure 1 → 1s delay.
       await vi.advanceTimersByTimeAsync(0);
+      // The port the daemon reported is persisted for the window to dial.
+      expect(storeSet).toHaveBeenCalledWith('remoteBackend', {
+        kind: 'wsl',
+        distro: 'Ubuntu-22.04',
+        port: REPORTED_PORT,
+      });
       await vi.advanceTimersByTimeAsync(999);
       expect(spawns).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(spawns).toHaveLength(2);
+      // A respawn asks for the port the renderer already dials.
+      expect(spawns[1]?.args).toContain(`PORT=${REPORTED_PORT}`);
 
       // Failure 2 → 2s delay.
       await vi.advanceTimersByTimeAsync(1_999);
@@ -407,6 +422,67 @@ describe('daemon restart backoff', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       expect(manager.getStatus().state).toBe('running');
       expect(spawns).toHaveLength(1);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('daemon port', () => {
+  it('lets the daemon bind its own port and adopts the one it reports', async () => {
+    vi.useFakeTimers();
+    let dialed: string | null = null;
+    const fetchImpl = (url: string) => {
+      dialed = url;
+      return Promise.resolve(new Response(JSON.stringify({ ok: true, version: '1.2.3' }), { status: 200 }));
+    };
+    const { manager, cleanup, spawns, storeSet, portFile } = makeManager({
+      respond: () => ok(),
+      fetchImpl: fetchImpl as unknown as () => Promise<Response>,
+      reportedPort: null,
+    });
+    try {
+      await manager.start('Ubuntu-22.04');
+      const args = spawns[0]?.args ?? [];
+      expect(args).toContain('PORT=0');
+      // The script clears a previous daemon's port file and tells the new one
+      // where to write (with $HOME, since env does no tilde expansion).
+      const script = args.at(-1) ?? '';
+      expect(script).toMatch(/^rm -f ~\/\.omni\/launcher\/daemon\.port;/);
+      expect(script).toContain('exec env OMNI_PORT_FILE=$HOME/.omni/launcher/daemon.port ');
+
+      // Not listening yet: no port, nothing persisted, not running.
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(storeSet).not.toHaveBeenCalled();
+      expect(dialed).toBeNull();
+      expect(manager.getStatus().state).toBe('starting');
+
+      portFile.value = 51_234;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(storeSet).toHaveBeenCalledWith('remoteBackend', { kind: 'wsl', distro: 'Ubuntu-22.04', port: 51_234 });
+      expect(dialed).toBe('http://127.0.0.1:51234/api/health');
+      expect(manager.getStatus()).toMatchObject({ state: 'running', port: 51_234 });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('ignores a port file that does not hold a port', async () => {
+    vi.useFakeTimers();
+    const { manager, cleanup, storeSet, portFile } = makeManager({
+      respond: () => ok(),
+      fetchOk: true,
+      reportedPort: null,
+    });
+    try {
+      await manager.start('Ubuntu-22.04');
+      // A bogus number must never become the renderer's URL.
+      for (const junk of ['', '0', '70000', 'abc', '-1']) {
+        portFile.value = junk;
+        await vi.advanceTimersByTimeAsync(600);
+        expect(storeSet).not.toHaveBeenCalled();
+        expect(manager.getStatus().state).toBe('starting');
+      }
     } finally {
       cleanup();
     }
@@ -470,6 +546,26 @@ const STORED_SECRET = 'ab'.repeat(32);
 const persistentBackend: WslBackend = { kind: 'wsl', distro: 'Ubuntu-22.04', port: 43_210, persistent: true };
 
 describe('persistent daemon mode', () => {
+  it('starts a detached daemon on port 0 with the port file cleared', async () => {
+    vi.useFakeTimers();
+    const { manager, cleanup, runCalls } = makeManager({
+      respond: (args) => (hasCatScript(args) ? ok('1.2.3\n') : ok()),
+      fetchOk: true,
+    });
+    try {
+      // No stored secret, so nothing to adopt: a fresh detached spawn.
+      const boot = manager.boot({ ...persistentBackend });
+      await vi.advanceTimersByTimeAsync(1_000);
+      await boot;
+      const script = runCalls.find(isDetachedSpawnCall)?.args.at(-1) ?? '';
+      expect(script).toContain('rm -f ~/.omni/launcher/daemon.port; ');
+      expect(script).toContain(' PORT=0 ');
+      expect(script).toContain(' OMNI_PORT_FILE=$HOME/.omni/launcher/daemon.port ');
+    } finally {
+      cleanup();
+    }
+  });
+
   it('adopts a healthy version-matched daemon: no respawn, stored secret mints valid tokens', async () => {
     vi.useFakeTimers();
     const { manager, cleanup, runCalls, spawns } = makeManager({
@@ -517,7 +613,7 @@ describe('persistent daemon mode', () => {
       expect(storeSet).toHaveBeenLastCalledWith('remoteBackend', {
         kind: 'wsl',
         distro: 'Ubuntu-22.04',
-        port: 43_210,
+        port: REPORTED_PORT,
         persistent: true,
       });
     } finally {
@@ -589,13 +685,13 @@ describe('persistent daemon mode', () => {
       const detached = runCalls.find(isDetachedSpawnCall);
       expect(detached?.args.join(' ')).toContain(`OMNI_WS_TOKEN_SECRET=${secretState.value}`);
       expect(spawns).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_000);
       expect(storeSet).toHaveBeenLastCalledWith('remoteBackend', {
         kind: 'wsl',
         distro: 'Ubuntu-22.04',
-        port: 43_210,
+        port: REPORTED_PORT,
         persistent: true,
       });
-      await vi.advanceTimersByTimeAsync(1_000);
       expect(manager.getStatus().state).toBe('running');
       expect(manager.getStatus().persistent).toBe(true);
     } finally {
@@ -619,12 +715,12 @@ describe('persistent daemon mode', () => {
       expect(runCalls.some(isReapCall)).toBe(true);
       expect(runCalls.some(isDetachedSpawnCall)).toBe(false);
       expect(spawns).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1_000);
       expect(storeSet).toHaveBeenLastCalledWith('remoteBackend', {
         kind: 'wsl',
         distro: 'Ubuntu-22.04',
-        port: 43_210,
+        port: REPORTED_PORT,
       });
-      await vi.advanceTimersByTimeAsync(1_000);
       expect(manager.getStatus().state).toBe('running');
       expect(manager.getStatus().persistent).toBe(false);
     } finally {
