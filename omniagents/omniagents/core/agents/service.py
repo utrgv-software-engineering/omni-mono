@@ -468,6 +468,12 @@ def reset_current_service(token: contextvars.Token) -> None:
     _current_service.reset(token)
 
 
+
+#: How long run_end waits for a stopped run's session release (deferred by a
+#: still-running fenced operation) before telling clients anyway.
+RUN_RELEASE_WAIT_SECONDS = 30.0
+
+
 def _binds(signature: inspect.Signature, args: tuple) -> bool:
     """Whether *args* fit *signature* positionally."""
     try:
@@ -4687,6 +4693,21 @@ class AgentService(RpcMethodsBase):
                 if sess.current_task is task:
                     ownership.release()
                     sess.current_task = None
+                    # A fenced operation still in flight (retiring a stopped
+                    # command tree) defers the release to its own end. run_end
+                    # tells clients they may send again, so wait for it.
+                    if not ownership.released:
+                        released = asyncio.Event()
+                        ownership.add_release_callback(released.set)
+                        try:
+                            await asyncio.wait_for(
+                                released.wait(), timeout=RUN_RELEASE_WAIT_SECONDS
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "run_end sent before run %s released its session",
+                                run_name,
+                            )
 
                 # Debug log the payload for visibility when debugging (single source)
                 _debug_rpc("run_end", payload)
