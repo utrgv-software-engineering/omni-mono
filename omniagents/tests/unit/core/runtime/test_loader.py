@@ -71,28 +71,6 @@ def test_load_backend_returns_none_when_missing(monkeypatch):
     assert load_backend("nonexistent") is None
 
 
-def test_load_backend_legacy_entry_points(monkeypatch):
-    backend = object()
-
-    class DummyEntryPoint:
-        def __init__(self, name, value):
-            self.name = name
-            self._value = value
-
-        def load(self):
-            return self._value
-
-    entry_points = {"omniagents.backends": [DummyEntryPoint("server", backend)]}
-
-    monkeypatch.setattr(loader.importlib.metadata, "entry_points", lambda: entry_points)
-    monkeypatch.setattr(
-        loader.importlib, "import_module", lambda name: pytest.fail("should not import")
-    )
-
-    result = load_backend("server")
-    assert result is backend
-
-
 def test_is_backend_available(monkeypatch):
     monkeypatch.setattr(
         "omniagents.core.runtime.loader.load_backend", lambda name: object()

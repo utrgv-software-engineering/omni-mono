@@ -5,10 +5,6 @@
 filesystem. Other backends implement :class:`AudioStorageBackend` and are
 injected into the realtime session directly.
 
-``AudioStorage`` is kept as a name alias for ``LocalAudioStorage`` so
-existing callers (and the SDK-style constructor ``AudioStorage(base_path=...)``)
-keep working unchanged.
-
 The ``save_audio_chunk`` method returns the *relative path* it wrote — for
 the local backend that's a real filesystem-relative path; for another
 backend it's whatever key it uses. Either is opaque to ``history_db.save_audio_metadata``
@@ -137,10 +133,6 @@ class LocalAudioStorage(AudioStorageBackend):
 
         return await asyncio.to_thread(_calculate_size)
 
-    def get_audio_file_path(self, relative_path: str) -> Path:
-        """Backwards-compat accessor for code that needs a Path."""
-        return self.base_path / relative_path
-
 
 def build_audio_storage(
     project_slug: str | None, agent_slug: str | None
@@ -152,7 +144,3 @@ def build_audio_storage(
 
     return LocalAudioStorage(base_path=get_audio_storage_path(project_slug, agent_slug))
 
-
-# Backwards-compatible alias for legacy ``AudioStorage(base_path=...)`` callers
-# (notably realtime_session.py before this refactor).
-AudioStorage = LocalAudioStorage

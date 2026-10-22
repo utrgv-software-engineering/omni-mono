@@ -16,7 +16,7 @@ def test_stratified_sampler_balances_classes_with_seed():
         seed=123,
     )
 
-    batch = sampler.next_minibatch_indices(len(dataset), 0)
+    batch = sampler.next_minibatch_ids(None, None)
     assert len(batch) == 6
     positives = [idx for idx in batch if dataset[idx]["label"] is True]
     negatives = [idx for idx in batch if dataset[idx]["label"] is False]
@@ -42,6 +42,6 @@ def test_stratified_sampler_handles_single_class_and_callable_label():
         seed=42,
     )
 
-    batch = sampler.next_minibatch_indices(len(dataset), 0)
+    batch = sampler.next_minibatch_ids(None, None)
     assert len(batch) == 3
     assert all(0 <= idx < len(dataset) for idx in batch)

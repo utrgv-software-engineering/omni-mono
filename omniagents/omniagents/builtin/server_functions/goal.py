@@ -17,28 +17,13 @@ from typing import Optional
 from omniagents import server_function
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
 
-from omniagents.core.autonomy.goal import (  # noqa: F401  (re-exported surface)
-    DEFAULT_MAX_TURNS,
-    DEFAULT_TICK_INTERVAL_S,
-    VAR_KEY,
-    GoalState,
-    _goals,
-    goal_snapshot_dict,
-    maybe_rehydrate,
+from omniagents.core.autonomy.goal import (
     pause_impl,
     resume_impl,
     start_impl,
     status_impl,
     stop_impl,
 )
-
-# Backwards-compatible handler aliases (tests and older callers import
-# these names from this module).
-_goal_start_on_invoke = start_impl
-_goal_stop_on_invoke = stop_impl
-_goal_status_on_invoke = status_impl
-_goal_pause_on_invoke = pause_impl
-_goal_resume_on_invoke = resume_impl
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +45,7 @@ async def goal_stop(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
 
 
-setattr(goal_stop, "_server_function_on_invoke", _goal_stop_on_invoke)
+setattr(goal_stop, "_server_function_on_invoke", stop_impl)
 
 
 @server_function(
@@ -74,7 +59,7 @@ async def goal_status(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
 
 
-setattr(goal_status, "_server_function_on_invoke", _goal_status_on_invoke)
+setattr(goal_status, "_server_function_on_invoke", status_impl)
 
 
 @server_function(
@@ -88,7 +73,7 @@ async def goal_pause(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
 
 
-setattr(goal_pause, "_server_function_on_invoke", _goal_pause_on_invoke)
+setattr(goal_pause, "_server_function_on_invoke", pause_impl)
 
 
 @server_function(
@@ -102,7 +87,7 @@ async def goal_resume(_session_id: Optional[str] = None) -> dict:
     return {"ok": False, "error": "use on_invoke handler"}
 
 
-setattr(goal_resume, "_server_function_on_invoke", _goal_resume_on_invoke)
+setattr(goal_resume, "_server_function_on_invoke", resume_impl)
 
 
 # ---------------------------------------------------------------------------

@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Installing Dependencies
 ```bash
-pip install -r requirements.txt
-# Or for development with all optional dependencies:
-make dev
+make dev   # pip install -e .[dev]
+# Or, from the omni-mono root, sync the shared workspace venv:
+uv sync
 ```
 
 ### Running Tests

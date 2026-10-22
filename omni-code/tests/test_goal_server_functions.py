@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from omniagents.builtin.server_functions import goal as goal_mod
+from omniagents.core.autonomy import goal as goal_mod
 
 
 class FakeSession:
@@ -86,7 +86,7 @@ def test_goal_start_forwards_safe_tool_overrides_to_initial_run_and_tick():
     safe_tool_overrides = {"safe_tool_patterns": [".*"]}
 
     result = asyncio.run(
-        goal_mod._goal_start_on_invoke(
+        goal_mod.start_impl(
             service,
             session,
             {
