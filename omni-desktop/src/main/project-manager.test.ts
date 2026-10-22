@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
-import { existsSync, mkdtempSync, rmSync } from 'fs';
+import { execFileSync } from 'child_process';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +12,7 @@ vi.mock('@/main/util', () => ({
   getDefaultWorkspaceDir: () => path.join(dirs.root, 'Workspace'),
   getProjectDir: (slug: string) => path.join(dirs.root, 'Workspace', 'Projects', slug),
   getOmniConfigDir: () => dirs.root,
+  projectCheckoutPath: (projectId: string, sourceId: string) => path.join(dirs.root, 'checkouts', projectId, sourceId),
 }));
 
 import { ProjectManager, registerProjectHandlers } from '@/main/project-manager';
@@ -96,6 +98,46 @@ describe('ProjectManager', () => {
       'project:get-dir',
       'project:check-git-repo',
     ]);
+  });
+});
+
+describe('project git checkouts', () => {
+  const cloneInto = (dest: string) => {
+    const seed = path.join(dirs.root, `seed-${path.basename(dest)}`);
+    mkdirSync(seed);
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=T', '-C', cwd, ...args], { stdio: 'pipe' });
+    git(seed, 'init', '-b', 'main');
+    writeFileSync(path.join(seed, 'a.txt'), 'a\n');
+    git(seed, 'add', '.');
+    git(seed, 'commit', '-m', 'init');
+    mkdirSync(path.dirname(dest), { recursive: true });
+    execFileSync('git', ['clone', seed, dest], { stdio: 'pipe' });
+  };
+  const remote = (id: string) => ({ id, mountName: id, kind: 'git-remote' as const, repoUrl: `https://x/${id}.git` });
+
+  it('deletes a removed source clone unless it holds work', async () => {
+    const store = makeStore();
+    const pm = newManager(store);
+    const project = pm.addProject({ label: 'P', slug: 'p', sources: [remote('clean'), remote('edited')] });
+    const checkouts = path.join(dirs.root, 'checkouts', project.id);
+    cloneInto(path.join(checkouts, 'clean'));
+    cloneInto(path.join(checkouts, 'edited'));
+    writeFileSync(path.join(checkouts, 'edited', 'a.txt'), 'changed\n');
+
+    pm.updateProject(project.id, { sources: [] });
+    await vi.waitFor(() => expect(existsSync(path.join(checkouts, 'clean'))).toBe(false));
+    expect(existsSync(path.join(checkouts, 'edited', 'a.txt'))).toBe(true);
+  });
+
+  it('deletes a removed project and its clean clones', async () => {
+    const store = makeStore();
+    const pm = newManager(store);
+    const project = pm.addProject({ label: 'P', slug: 'p', sources: [remote('lib')] });
+    cloneInto(path.join(dirs.root, 'checkouts', project.id, 'lib'));
+
+    pm.removeProject(project.id);
+    await vi.waitFor(() => expect(existsSync(path.join(dirs.root, 'checkouts', project.id))).toBe(false));
   });
 });
 

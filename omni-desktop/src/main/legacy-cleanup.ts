@@ -12,31 +12,12 @@
  *   remote, stashes) moves to `retired-clones/<workspace>/<mount>`: left in
  *   place it would block its chat from linking the shared checkout there.
  */
-import { execFile } from 'node:child_process';
 import { lstat, mkdir, readdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { promisify } from 'node:util';
 
-const execFileAsync = promisify(execFile);
+import { holdsWork } from '@/main/checkouts';
 
 const RETIRED_DIRS = ['sandbox', 'snapshots'];
-
-const git = async (cwd: string, args: string[]): Promise<string> =>
-  (await execFileAsync('git', ['-C', cwd, ...args], { maxBuffer: 1024 * 1024 })).stdout.trim();
-
-const holdsWork = async (checkout: string): Promise<boolean> => {
-  try {
-    const [status, unpushed, stashes] = await Promise.all([
-      git(checkout, ['status', '--porcelain']),
-      git(checkout, ['log', '--branches', '--not', '--remotes', '--oneline', '-1']),
-      git(checkout, ['stash', 'list', '-1']),
-    ]);
-    return Boolean(status || unpushed || stashes);
-  } catch {
-    // Unreadable means unknown, and unknown is kept.
-    return true;
-  }
-};
 
 const isDir = async (target: string): Promise<boolean> => {
   try {

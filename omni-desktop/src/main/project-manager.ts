@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid';
 import { promisify } from 'util';
 
 import { slugifyUnique } from '@/lib/slugify-unique';
+import { discardProjectCheckouts } from '@/main/checkouts';
 import { getDefaultWorkspaceDir, getProjectDir } from '@/main/util';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import { validateProjectSources } from '@/shared/project-source';
@@ -92,12 +93,31 @@ export class ProjectManager {
     if (patch.sources) {
       validateProjectSources(patch.sources);
     }
-    projects[index] = { ...projects[index]!, ...patch };
+    const previous = projects[index]!;
+    projects[index] = { ...previous, ...patch };
     this.setProjects(projects);
+    if (patch.sources) {
+      const kept = new Set(patch.sources.map((source) => source.id));
+      this.discardCheckouts(
+        id,
+        previous.sources.filter((source) => !kept.has(source.id))
+      );
+    }
   };
 
   removeProject = (id: ProjectId): void => {
+    const project = this.getProjects().find((p) => p.id === id);
     this.setProjects(this.getProjects().filter((p) => p.id !== id));
+    if (project) {
+      this.discardCheckouts(id, project.sources);
+    }
+  };
+
+  /** A removed git source's clone goes with it, unless it holds work. */
+  private discardCheckouts = (id: ProjectId, removed: Project['sources']): void => {
+    void discardProjectCheckouts(id, removed).catch((error) => {
+      console.warn(`[project-manager] checkout cleanup for ${id} failed:`, error);
+    });
   };
 
   // #endregion
