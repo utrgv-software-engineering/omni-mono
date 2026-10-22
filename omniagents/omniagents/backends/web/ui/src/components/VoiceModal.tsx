@@ -87,6 +87,21 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
     }
   }, [isOpen])
 
+  // SPEAKING follows actual playback: enter it when audio starts playing,
+  // and once playback drains return to LISTENING (or IDLE when muted). A
+  // response that started meanwhile (THINKING) is left alone.
+  useEffect(() => {
+    if (isActuallyPlayingAudio) {
+      setOrbState(OrbState.SPEAKING)
+      return
+    }
+    setOrbState(prev =>
+      prev === OrbState.SPEAKING
+        ? (isMutedRef.current ? OrbState.IDLE : OrbState.LISTENING)
+        : prev
+    )
+  }, [isActuallyPlayingAudio])
+
   // Animation loop for breathing pulse effects
   useEffect(() => {
     if (!isOpen) return
@@ -652,9 +667,9 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
   // The useEffect will automatically turn it off after 1.8s linger period
   const toolOverlayActive = isUsingTool
 
-  // Determine base state by combining agent state with actual playback
-  // Priority: actual audio playback > agent execution state
-  let effectiveState = orbState
+  // Actual audio playback wins over the stored state, so SPEAKING shows on
+  // the very render playback starts (the effect above then stores it).
+  const effectiveState = isActuallyPlayingAudio ? OrbState.SPEAKING : orbState
 
   if (debugEnabled) {
     console.log('[VoiceModal State]', {
@@ -664,22 +679,6 @@ export function VoiceModal({ isOpen, onClose, sessionId, onSessionCreated }: { i
       toolOverlayActive,
       toolUseEndTime: toolUseEndTimeRef.current,
     })
-  }
-
-  // Handle SPEAKING state (audio playback)
-  if (isActuallyPlayingAudio) {
-    // Override to SPEAKING when audio is actually playing
-    effectiveState = OrbState.SPEAKING
-    if (debugEnabled) console.log('[VoiceModal] → SPEAKING (audio playing)')
-  } else if (orbState === OrbState.SPEAKING) {
-    // Audio finished but state hasn't updated yet - transition back
-    const shouldBeIdle = isMutedRef.current
-    effectiveState = shouldBeIdle ? OrbState.IDLE : OrbState.LISTENING
-    // Update the actual state to match
-    if (orbState !== effectiveState) {
-      if (debugEnabled) console.log('[VoiceModal] SPEAKING finished, transition to', effectiveState)
-      setOrbState(effectiveState)
-    }
   }
 
   if (debugEnabled) {
