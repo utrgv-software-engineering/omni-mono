@@ -132,7 +132,9 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
       }
       return clientRef.current.startRun(
         content,
-        clientRef.current.defaultEnvironmentSelection(),
+        // The server binds a new thread to its default environment, so
+        // the TUI never picks one per run.
+        { mode: "inherit" },
         sessionId,
       );
     },

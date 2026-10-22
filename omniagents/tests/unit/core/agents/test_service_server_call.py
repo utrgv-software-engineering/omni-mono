@@ -1,4 +1,4 @@
-"""server_call: one invocation per call, and an environment when it names none."""
+"""server_call: one invocation per call, and the thread's environment when it names none."""
 
 import pytest
 
@@ -20,9 +20,9 @@ def _service(tmp_path, *, with_default: bool) -> AgentService:
         resources,
     )
     if with_default:
-        service.default_environment_id = register_host_environment(
-            resources, str(tmp_path), owner_user_id=None
-        ).environment_id
+        resources.thread_bindings.set_initial_default(
+            register_host_environment(resources, str(tmp_path), owner_user_id=None)
+        )
     return service
 
 
@@ -48,7 +48,9 @@ async def test_a_type_error_inside_a_function_is_raised_once(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("with_default", [True, False])
-async def test_environment_functions_fall_back_to_the_default(tmp_path, with_default):
+async def test_environment_functions_route_through_the_thread_binding(
+    tmp_path, with_default
+):
     service = _service(tmp_path, with_default=with_default)
     service.register_server_function(
         "needs_workspace",
@@ -59,7 +61,8 @@ async def test_environment_functions_fall_back_to_the_default(tmp_path, with_def
     params = {"function": "needs_workspace", "session_id": "s-1"}
     if with_default:
         context = await service.prepare_rpc_context(None, "server_call", params)
-        assert context.environment.environment_id == service.default_environment_id
+        binding = await service.thread_bindings.get("s-1")
+        assert context.environment.environment_id == binding.environment_id
     else:
         with pytest.raises(Exception, match="requires an execution environment"):
             await service.prepare_rpc_context(None, "server_call", params)

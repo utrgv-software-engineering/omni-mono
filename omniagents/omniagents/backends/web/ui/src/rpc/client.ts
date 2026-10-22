@@ -616,13 +616,6 @@ export class RPCClient {
   }
 
   // RPC methods
-  defaultEnvironmentSelection(): EnvironmentSelection {
-    const environmentId = this.negotiatedInitialization?.agent_host.default_environment_id
-    return environmentId
-      ? { mode: 'explicit', environment_id: environmentId }
-      : { mode: 'none' }
-  }
-
   async startRun(prompt: string, environmentSelection: EnvironmentSelection, sessionId?: string, variables?: Record<string, unknown>, content?: unknown): Promise<{ run_id: string; session_id: string }> {
     const params: Record<string, unknown> = { prompt, environment_selection: environmentSelection }
     if (sessionId) params.session_id = sessionId

@@ -433,11 +433,18 @@ def build_app(
             trusted host controller. It resolves to an admin-role principal and
             is never returned in protocol initialization or readiness payloads.
         default_host_workspace_root: Optional explicit host environment composed at
-            startup and advertised as the AgentHost's default binding.
+            startup and installed as the AgentHost's default Thread binding.
         default_environment: An environment the caller already composed into
-            ``agent_host_resources`` (``register_initial``), advertised as the
-            default binding in place of a host one — e.g. a sandbox session
-            opened before the server starts.
+            ``agent_host_resources`` (``register_initial``), installed as the
+            default Thread binding in place of a host one — e.g. a sandbox
+            session opened before the server starts.
+
+    A default environment is data, not a code path: every Thread first seen
+    by this AgentHost is bound to it — the same binding a targetless host's
+    controller makes explicitly with ``agent_host_bind_thread`` — and every
+    operation routes through the Thread's binding alone. The handshake also
+    advertises it so clients can address the workspace outside any session
+    (file and git panels).
     """
 
     # ------------------------------------------------------------------
@@ -550,13 +557,13 @@ def build_app(
             default_host_workspace_root,
             owner_user_id="token_user" if auth_token else None,
         )
-        app.state.default_workspace_id = default_environment.workspace_id
-        app.state.default_environment_id = default_environment.environment_id
-    elif default_environment is not None:
+    app.state.default_workspace_id = None
+    app.state.default_environment_id = None
+    if default_environment is not None:
+        agent_host_resources.thread_bindings.set_initial_default(default_environment)
         app.state.default_workspace_id = default_environment.workspace_id
         app.state.default_environment_id = default_environment.environment_id
     service = AgentService(spec, agent_host_resources)
-    service.default_environment_id = getattr(app.state, "default_environment_id", None)
     app.state.agent_service = service
     # The service authorizes every request against the mode implied by the
     # configured provider: enforced (ownership + global-effect rules) when
@@ -601,8 +608,8 @@ def build_app(
         service,
         allowed_methods=GUI_RPC_METHODS,
         gui_handshake=True,
-        default_workspace_id=getattr(app.state, "default_workspace_id", None),
-        default_environment_id=getattr(app.state, "default_environment_id", None),
+        default_workspace_id=app.state.default_workspace_id,
+        default_environment_id=app.state.default_environment_id,
         server_capabilities={
             "realtime": realtime_spec is not None,
             "mcp_apps": True,
@@ -661,14 +668,6 @@ def build_app(
                 ),
                 agent_service=service,
             )
-        # Same server default the GUI handshake advertises — lets a voice
-        # session started before any text run fall back to it for its
-        # execution environment. Both backends need it: the pipeline path
-        # runs `inherit` through start_run, which resolves to nothing on a
-        # session whose thread binding is still targetless.
-        realtime_service.default_environment_id = getattr(
-            app.state, "default_environment_id", None
-        )
         realtime_service.authorization_policy = authenticator.authorization_policy
         app.state.realtime_service = realtime_service
         try:

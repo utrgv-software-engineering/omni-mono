@@ -223,14 +223,22 @@ class OperationRouter:
                 )
                 environment = lease.descriptor
         elif requirements & _LEASE_REQUIREMENTS:
+            expected_generation = params.get("environment_generation")
             if environment_id is None:
-                raise EnvironmentRequiredError(operation.name)
+                # An operation that needs an environment but names none runs
+                # where its Thread is bound — the same binding an inherit Run
+                # resolves through, so every client and every operation kind
+                # agree on where a session executes.
+                environment_id, expected_generation = (
+                    await self._thread_environment(params)
+                )
+                if environment_id is None:
+                    raise EnvironmentRequiredError(operation.name)
             required_capabilities = frozenset(
                 capability
                 for requirement, capability in _CAPABILITY_BY_REQUIREMENT.items()
                 if requirements & requirement
             )
-            expected_generation = params.get("environment_generation")
             if expected_generation is not None and (
                 not isinstance(expected_generation, int)
                 or isinstance(expected_generation, bool)
@@ -338,6 +346,21 @@ class OperationRouter:
             environment_lease=lease,
             automatic_environment=None,
         )
+
+    async def _thread_environment(
+        self, params: Mapping[str, Any]
+    ) -> tuple[str | None, int | None]:
+        thread_id = self._identifier(params, "thread_id") or self._identifier(
+            params, "session_id"
+        )
+        if thread_id is None:
+            return None, None
+        selected = (
+            await self._thread_binding_registry.ensure(thread_id)
+        ).environment_selection
+        if isinstance(selected, ExistingEnvironment):
+            return selected.environment_id, selected.environment_generation
+        return None, None
 
     async def _resolve_run_plan(
         self, operation_name: str, params: Mapping[str, Any]

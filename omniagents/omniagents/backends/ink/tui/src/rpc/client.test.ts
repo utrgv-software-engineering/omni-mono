@@ -608,10 +608,6 @@ describe("RPCClient", () => {
     ]);
     expect(ready).toHaveBeenCalledTimes(1);
     expect(client.initializeResult?.protocol_version).toBe("2.0.0");
-    expect(client.defaultEnvironmentSelection()).toEqual({
-      mode: "explicit",
-      environment_id: "environment-1",
-    });
 
     mockSockets[0]!.emit("close");
     await vi.advanceTimersByTimeAsync(1000);

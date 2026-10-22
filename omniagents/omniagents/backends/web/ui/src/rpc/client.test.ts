@@ -192,10 +192,6 @@ describe('RPCClient initialization', () => {
       { jsonrpc: '2.0', method: 'initialized', params: {} },
     ])
     expect(client.initializeResult).toEqual(initializeResult)
-    expect(client.defaultEnvironmentSelection()).toEqual({
-      mode: 'explicit',
-      environment_id: 'environment-1',
-    })
   })
 
   it('preserves structured initialization errors', async () => {

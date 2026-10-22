@@ -680,13 +680,6 @@ export class RPCClient extends EventEmitter {
     }
   }
 
-  defaultEnvironmentSelection(): EnvironmentSelection {
-    const environmentId = this.defaultEnvironmentId();
-    return environmentId
-      ? { mode: "explicit", environment_id: environmentId }
-      : { mode: "none" };
-  }
-
   /**
    * The AgentHost's default execution environment, from the handshake.
    * The id to route environment-scoped operations (fs_*, git_*,

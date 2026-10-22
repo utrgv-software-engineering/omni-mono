@@ -970,7 +970,8 @@ export function App() {
       setItems(prev => [...prev, { type: 'chat', role: 'user', content: text, attachments }])
       await client.startRun(
         text,
-        client.defaultEnvironmentSelection(),
+        // The server binds a new thread to its default environment.
+        { mode: 'inherit' },
         sessionId,
         variables,
         content,

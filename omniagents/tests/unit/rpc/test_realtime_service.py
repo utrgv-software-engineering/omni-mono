@@ -140,11 +140,10 @@ async def test_start_session_acquires_environment(realtime_spec, settings_with_k
         service = RealtimeService(
             realtime_spec, settings_with_key, agent_service=agent_service
         )
-        service.default_environment_id = "env-default"
         await service.start_session("test-session-123")
 
         agent_service.prepare_environment_context_for_session.assert_awaited_once_with(
-            "test-session-123", principal=None, default_environment_id="env-default"
+            "test-session-123", principal=None
         )
         started = service._sessions["test-session-123"]
         assert started.request_context is request_context
