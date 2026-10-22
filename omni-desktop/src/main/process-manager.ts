@@ -65,6 +65,8 @@ export class ProcessManager {
   >();
   private retiredConsumers = new Set<string>();
   private pendingManagementConnection: Promise<AgentRuntimeConnection> | null = null;
+  /** The MCP reload in flight; each committed mutation queues behind it. */
+  private mcpReload: Promise<void> = Promise.resolve();
   /** Monotonic consumer intent; async results may publish only if their epoch still wins. */
   private consumerEpochs = new Map<string, number>();
   private sendToWindow: <T extends keyof IpcRendererEvents>(channel: T, ...args: IpcRendererEvents[T]) => void;
@@ -503,7 +505,7 @@ export class ProcessManager {
       // mcp_auth_cancel only discards process-local pending state. Every other
       // allowed MCP mutation can change config, credentials, or live instances.
       if (request.method !== 'mcp_auth_cancel') {
-        await this.invalidateLocalMcpAgentHosts(request.method === 'mcp_reload_server' ? proc : undefined);
+        this.reloadMcpInBackground(request.method === 'mcp_reload_server' ? proc : undefined);
       }
       return result;
     }
@@ -527,7 +529,29 @@ export class ProcessManager {
     if (!alreadyStopped) {
       await proc.stop().catch(() => undefined);
     }
+    for (const processId of consumers) {
+      this.sendToWindow('agent-process:status', processId, this.getStatus(processId));
+    }
     return consumers;
+  };
+
+  /**
+   * Bring every other live AgentHost onto a committed MCP change without
+   * holding up the mutation. Reloading restarts each host's MCP servers,
+   * which can take minutes with several chats open, so the change is
+   * acknowledged once it is stored. A host that cannot reload is stopped
+   * and the user is told.
+   */
+  private reloadMcpInBackground = (alreadyReloaded?: AgentProcess): void => {
+    this.mcpReload = this.mcpReload
+      .then(() => this.invalidateLocalMcpAgentHosts(alreadyReloaded))
+      .catch((error: unknown) => {
+        this.sendToWindow('toast:show', {
+          level: 'error',
+          title: 'Some chats were stopped to apply the MCP change',
+          description: (error as Error).message,
+        });
+      });
   };
 
   /** Reload every distinct live local AgentHost after the shared file/token
@@ -549,9 +573,7 @@ export class ProcessManager {
       })
     );
     if (failures.length > 0) {
-      throw new Error(
-        `MCP mutation committed, but stale AgentHost invalidation failed; affected hosts were stopped: ${failures.join('; ')}`
-      );
+      throw new Error(`They could not reload their MCP servers: ${failures.join('; ')}`);
     }
   };
 

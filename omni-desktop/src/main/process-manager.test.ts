@@ -254,7 +254,7 @@ describe('ProcessManager', () => {
       expect(host.callManagementAdmin).not.toHaveBeenCalled();
     });
 
-    it('reloads MCP after a committed mutation', async () => {
+    it('reloads MCP in the background after a committed mutation', async () => {
       const { pm } = makePm();
       await pm.ensureManagementConnection();
       const host = hoisted.agentProcessInstances[0]!;
@@ -272,12 +272,33 @@ describe('ProcessManager', () => {
         type: 'http',
         params: { url: 'https://mcp.test' },
       });
-      expect(host.callManagementAdmin).toHaveBeenNthCalledWith(2, 'mcp_reload_server', {});
+      await vi.waitFor(() => expect(host.callManagementAdmin).toHaveBeenNthCalledWith(2, 'mcp_reload_server', {}));
     });
 
-    it('stops and evicts a distinct live host when post-commit reload fails', async () => {
+    it('acknowledges the mutation before slow hosts finish reloading', async () => {
+      const { pm } = makePm();
+      await pm.ensureManagementConnection();
+      const host = hoisted.agentProcessInstances[0]!;
+      host.getStatus.mockReturnValue({ type: 'running', timestamp: Date.now() });
+      let finishReload!: () => void;
+      host.callManagementAdmin.mockImplementation((method: string) =>
+        method === 'mcp_reload_server'
+          ? new Promise((resolve) => {
+              finishReload = () => resolve({ ok: true, method });
+            })
+          : Promise.resolve({ ok: true, method })
+      );
+
+      await expect(
+        pm.mutateManagement({ method: 'mcp_delete_server', params: { server_name: 'github' } })
+      ).resolves.toEqual({ ok: true, method: 'mcp_delete_server' });
+      await vi.waitFor(() => expect(finishReload).toBeTypeOf('function'));
+      finishReload();
+    });
+
+    it('stops a distinct live host whose reload fails and tells the user', async () => {
       // A host-scoped credential gives the peer its own AgentHost.
-      const { pm } = makePm({
+      const { pm, sendCalls } = makePm({
         storeData: {
           projects: [
             {
@@ -314,8 +335,15 @@ describe('ProcessManager', () => {
           method: 'mcp_update_server',
           params: { server_name: 'github', params: { url: 'https://new.test' } },
         })
-      ).rejects.toThrow('mutation committed, but stale AgentHost invalidation failed');
+      ).resolves.toEqual({ ok: true, method: 'mcp_update_server' });
 
+      await vi.waitFor(() => expect(sendCalls.some((c) => c.channel === 'toast:show')).toBe(true));
+      const toast = sendCalls.find((c) => c.channel === 'toast:show')!.args[0] as { description: string };
+      expect(toast.description).toContain('mcp-peer: peer control channel lost');
+      expect(sendCalls).toContainEqual({
+        channel: 'agent-process:status',
+        args: ['mcp-peer', expect.objectContaining({ type: 'uninitialized' })],
+      });
       expect(peer!.stop).toHaveBeenCalledOnce();
       expect(management!.stop).not.toHaveBeenCalled();
       expect(pm.getStatus('mcp-peer').type).toBe('uninitialized');
