@@ -88,7 +88,6 @@ export function App() {
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [statusSpinner, setStatusSpinner] = useState<boolean>(false)
   const [statusItalic, setStatusItalic] = useState<boolean>(false)
-  const [preamble, setPreamble] = useState<string | undefined>(undefined)
   const [toolStatus, setToolStatus] = useState<string | undefined>(undefined)
   const [runId, setRunId] = useState<string | undefined>(undefined)
   const [sessionId, setSessionId] = useState<string | undefined>(undefined)
@@ -114,7 +113,6 @@ export function App() {
     []
   )
   const [initialSent, setInitialSent] = useState(false)
-  const preambleBufferRef = useRef<Array<{ content: string; timestamp: Date; superseded: boolean }>>([])
   const pendingApprovalsRef = useRef(new Map<string, ApprovalItem>())
   const pendingMcpApprovalsRef = useRef(new Map<string, McpApprovalItem>())
   const pendingElicitationsRef = useRef(new Map<string, ElicitationItem>())
@@ -276,9 +274,10 @@ export function App() {
         if (!sessionIdRef.current && !startingRunRef.current) return
       }
       const content = String(p?.content ?? '')
-      if (!content) return
-      preambleBufferRef.current.push({ content, timestamp: new Date(), superseded: false })
-      setPreamble(content)
+      if (!content.trim()) return
+      // The model's commentary joins the transcript as it arrives, so the
+      // text between tool calls stays visible.
+      setItems(prev => [...prev, { type: 'chat', role: 'assistant', content } as MessageItem])
       setStatus(undefined)
       setStatusItalic(false)
     })
@@ -300,8 +299,6 @@ export function App() {
       setRunId(String(p?.run_id ?? ''))
       if (eventSessionId) setSessionId(eventSessionId)
       setThinking(true)
-      preambleBufferRef.current = []
-      setPreamble(undefined)
       setStatus(undefined)
       setToolStatus(undefined)
       setStatusSpinner(false)
@@ -335,15 +332,6 @@ export function App() {
       const eventSessionId = typeof p?.session_id === 'string' ? p.session_id : undefined
       if (eventSessionId && sessionIdRef.current && sessionIdRef.current !== eventSessionId) return
       setThinking(false)
-      const nonSuperseded = preambleBufferRef.current.filter(m => !m.superseded)
-      if (nonSuperseded.length) {
-        setItems(prev => [
-          ...prev,
-          ...nonSuperseded.map(m => ({ type: 'chat', role: 'assistant', content: m.content } as MessageItem)),
-        ])
-      }
-      preambleBufferRef.current = []
-      setPreamble(undefined)
       setToolStatus(undefined)
       try {
         const usage = p?.usage || {}
@@ -392,7 +380,6 @@ export function App() {
       if (HIDDEN_TOOLS.has(tool)) return
       const input = typeof p?.input === 'string' ? p?.input : JSON.stringify(p?.input)
       const call_id = String(p?.call_id ?? '')
-      preambleBufferRef.current.forEach(m => { m.superseded = true })
       setItems(prev => [...prev, { type: 'tool', tool, input, call_id, status: 'called', runId: runIdRef.current }])
     })
     const offToolResult = client.on('tool_result', (p) => {
@@ -406,7 +393,6 @@ export function App() {
       const output = typeof p?.output === 'string' ? p?.output : JSON.stringify(p?.output)
       const call_id = String(p?.call_id ?? '')
       const metadata = p?.metadata
-      preambleBufferRef.current.forEach(m => { m.superseded = true })
       // Side-channel: any tool can attach a tasks_snapshot to its
       // ui_metadata to refresh the docked task panel above the input.
       // Today only the task_* tools do.
@@ -986,14 +972,10 @@ export function App() {
 
   const handleStop = useCallback(() => {
     if (!runId) return
-    try {
-      preambleBufferRef.current.forEach(m => { m.superseded = true })
-    } catch {}
     setThinking(false)
     setStatusSpinner(false)
     setStatusItalic(true)
     setStatus('Cancelled by user')
-    setPreamble(undefined)
     client.stopRun(runId).catch(() => {})
   }, [client, runId])
 
@@ -1070,8 +1052,6 @@ export function App() {
 
   const handleSelectSession = useCallback(async (id?: string) => {
     setSessionId(id)
-    setPreamble(undefined)
-    preambleBufferRef.current = []
     // Reset UI state to prevent stale state from previous conversation
     setThinking(false)
     setStatus(undefined)
@@ -1380,7 +1360,7 @@ export function App() {
         )}
         <div className="flex-1 flex flex-row min-h-0 min-w-0">
           <div className="flex-1 flex flex-col min-h-0 min-w-0">
-            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} preambleText={preamble} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} onMcpApprovalDecision={handleMcpApprovalDecision} onElicitationRespond={handleElicitationRespond} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
+            <MessageList items={items} statusText={status} thinking={thinking} statusSpinner={statusSpinner} welcomeText={welcomeText} onApprovalDecision={handleApprovalDecision} onMcpApprovalDecision={handleMcpApprovalDecision} onElicitationRespond={handleElicitationRespond} statusItalic={statusItalic} onReaction={handleReaction} currentRunId={runId} toolStatusText={toolStatus} />
             <Tasks tasks={(() => {
               const live = tasks.filter(t => !(t.status === 'completed' && dismissedTaskIds.has(t.id)))
               return thinking ? live : live.filter(t => t.status !== 'completed')

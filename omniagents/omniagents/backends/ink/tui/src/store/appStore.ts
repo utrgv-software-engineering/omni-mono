@@ -353,7 +353,6 @@ interface AppState {
   notifications: NotificationInfo[];
   artifacts: ArtifactEntry[];
   currentRunId: string | null;
-  preamble: string | null;
   tasks: TaskSummary[];
   bashJobs: BashJobSummary[];
   subagents: SubagentSummary[];
@@ -428,7 +427,6 @@ interface AppState {
     // minted; returns false otherwise. Idempotent / single-shot per id.
     consumeMintedSession: (id: string) => boolean;
     setCurrentRunId: (runId: string | null) => void;
-    setPreamble: (preamble: string | null) => void;
     cancelRun: (runId: string) => void;
     removeApprovalMessage: () => void;
     clearMessages: () => void;
@@ -475,7 +473,6 @@ export const useAppStore = create<AppState>()(
     notifications: [],
     artifacts: [],
     currentRunId: null,
-    preamble: null,
     tasks: [],
     bashJobs: [],
     subagents: [],
@@ -760,7 +757,6 @@ export const useAppStore = create<AppState>()(
           state.statusType = null;
           state.statusSpinner = false;
           state.currentRunId = null;
-          state.preamble = null;
 
           // Add cancellation message
           state.messages.push({
@@ -777,20 +773,6 @@ export const useAppStore = create<AppState>()(
           );
         }),
 
-      setPreamble: (preamble) =>
-        set((state) => {
-          if (state.preamble !== preamble) {
-            state.preamble = preamble;
-            if (preamble) {
-              debugLog(
-                `setPreamble: updated with content (${preamble.length} chars)`,
-              );
-            } else {
-              debugLog(`setPreamble: cleared`);
-            }
-          }
-        }),
-
       clearMessages: () =>
         set((state) => {
           debugLog(`clearMessages: turning thinking OFF (messages cleared)`);
@@ -802,7 +784,6 @@ export const useAppStore = create<AppState>()(
           state.approval = null;
           state.mcpApproval = null;
           state.elicitation = null;
-          state.preamble = null;
           state.tasks = [];
           state.bashJobs = [];
           state.conversationItems = [];
@@ -901,7 +882,6 @@ export const useSessionReasoningEffort = () =>
   useAppStore((s) => s.sessionReasoningEffort);
 export const useSessionId = () => useAppStore((s) => s.sessionId);
 export const useCurrentRunId = () => useAppStore((s) => s.currentRunId);
-export const usePreamble = () => useAppStore((s) => s.preamble);
 export const useTasks = () => useAppStore((s) => s.tasks);
 export const useBashJobs = () => useAppStore((s) => s.bashJobs);
 export const useSubagents = () => useAppStore((s) => s.subagents);

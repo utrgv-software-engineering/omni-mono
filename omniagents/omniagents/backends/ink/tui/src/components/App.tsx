@@ -34,7 +34,6 @@ import {
   useElicitation,
   useSessionId,
   useCurrentRunId,
-  usePreamble,
   useBashJobs,
   useSubagents,
   useTranscriptDetail,
@@ -55,7 +54,6 @@ import { SessionComposer, ComposerDrafts } from "./SessionComposer.js";
 import { SelectionInputContext } from "./shared/BaseSelectionList.js";
 import { ApprovalDialog } from "./ApprovalDialog.js";
 import { McpApprovalDialog } from "./McpApprovalDialog.js";
-import { Preamble } from "./Preamble.js";
 import { SessionManager } from "./SessionManager.js";
 import { Scrollable } from "./Scrollable.js";
 import { Tasks } from "./Tasks.js";
@@ -197,7 +195,7 @@ const InlineStatusIndicator = themedMemo(() => {
   if (!thinking && !statusObj?.status) return null;
   // No margins: the parent column owns spacing via gap={1}. This
   // applies to every element in the scroll region — messages, status,
-  // preamble, dock panels, approval surfaces.
+  // dock panels, approval surfaces.
   return <StatusIndicator />;
 });
 
@@ -205,16 +203,10 @@ const InlineStatusIndicator = themedMemo(() => {
  * Scrollable message list with keyboard and mouse support.
  *
  * Layout inside the scroll region (top-to-bottom):
- *   1. MessageListOptimized — full transcript
- *   2. Preamble — animated streaming agent text, only while streaming
- *   3. InlineStatusIndicator — "⠋ Thinking…" / status line, only when active
- *   4. Approval / MCP approval / elicitation dialog, when present
- *
- * Prose before chrome. The Preamble is the newest agent text — the
- * transcript's continuation — so it reads directly on from the last
- * message instead of having a status line wedged in between. Keeping
- * "Thinking…" below it also holds the spinner still: it stays the last
- * line above the composer rather than drifting up as prose streams in.
+ *   1. MessageListOptimized — full transcript, including the model's
+ *      commentary between tool calls
+ *   2. InlineStatusIndicator — "⠋ Thinking…" / status line, only when active
+ *   3. Approval / MCP approval / elicitation dialog, when present
  *
  * The dock panels (Tasks/QueuedMessages/Notifications/BashJobs/
  * Escalation) are NOT here — they are fixed chrome in the footer next to
@@ -238,7 +230,6 @@ const ScrollableMessageList: React.FC<{
   const approval = useApproval();
   const mcpApproval = useMcpApproval();
   const elicitation = useElicitation();
-  const preamble = usePreamble();
   const contentVersion = messages.length;
   // ctrl+o re-projects the transcript into a different row set, so the
   // scroll offset it was holding points somewhere unrelated afterwards —
@@ -255,16 +246,14 @@ const ScrollableMessageList: React.FC<{
       contentVersion={contentVersion}
       pinToBottomToken={detail ? 1 : 0}
     >
-      {/* Outer gap={1}: 1-row rhythm between transcript, Thinking…,
-          Preamble and approvals — and it is the ONLY thing that spaces
+      {/* Outer gap={1}: 1-row rhythm between transcript, Thinking…
+          and approvals — and it is the ONLY thing that spaces
           them. Children must not carry their own marginTop /
           marginBottom or trailing padding, or the rhythm doubles at
           that seam (see TranscriptRowItem's isLast).
           paddingTop separates the first message from the tab bar. */}
       <Box flexDirection="column" gap={1} paddingTop={1}>
         <MessageListOptimized />
-
-        {preamble && <Preamble content={preamble} />}
 
         <InlineStatusIndicator />
 

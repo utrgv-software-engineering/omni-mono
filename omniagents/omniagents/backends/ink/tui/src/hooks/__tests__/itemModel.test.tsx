@@ -439,6 +439,43 @@ describe("run_end diff fetch", () => {
   });
 });
 
+describe("live commentary", () => {
+  it("keeps the model's commentary between tool calls in the transcript", async () => {
+    const client = new FakeClient();
+    mount(client, "sess");
+    await flush();
+    client.emit("run_started", { session_id: "sess", run_id: "run" });
+    client.emit("message_output", {
+      session_id: "sess",
+      content: "Reading the config first.",
+    });
+    client.emit("tool_called", {
+      session_id: "sess",
+      tool: "read_file",
+      input: "{}",
+      call_id: "c1",
+    });
+    client.emit("message_output", { session_id: "sess", content: "" });
+    client.emit("message_output", {
+      session_id: "sess",
+      content: "The config is fine.",
+    });
+    client.emit("run_end", {
+      session_id: "sess",
+      run_id: "run",
+      end_reason: "completed",
+    });
+    await flush();
+    expect(
+      useAppStore.getState().messages.map((m) => [m.role, m.content]),
+    ).toEqual([
+      ["assistant", "Reading the config first."],
+      ["tool_call", ""],
+      ["assistant", "The config is fine."],
+    ]);
+  });
+});
+
 describe("client_request_resolved", () => {
   it("dismisses an escalation banner another client answered", async () => {
     const client = new FakeClient();

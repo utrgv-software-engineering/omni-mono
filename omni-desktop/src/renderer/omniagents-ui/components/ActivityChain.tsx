@@ -10,7 +10,6 @@ import {
   CircleXIcon,
   FilePenLineIcon,
   FileTextIcon,
-  MessageSquareTextIcon,
   SearchIcon,
   ShieldCheckIcon,
   ShieldQuestionIcon,
@@ -21,7 +20,7 @@ import {
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Streamdown } from 'streamdown';
 
-import type { ChatMessage, GuardianReviewItem, ReasoningItem, ToolItem, WorkflowReviewItem } from '@/shared/chat-types';
+import type { GuardianReviewItem, ReasoningItem, ToolItem, WorkflowReviewItem } from '@/shared/chat-types';
 
 import type { ActivityGroupData, ToolKind } from './activity-group';
 import {
@@ -190,9 +189,6 @@ export function ActivityChain({ group, statusText, renderTool, pendingApprovalId
           if (item.type === 'reasoning') {
             return <ReasoningStep key={item.canonical.item_id} item={item} />;
           }
-          if (item.type === 'chat') {
-            return <MessageStep key={item.canonical?.item_id ?? `chat-${i}`} item={item} />;
-          }
           if (item.type === 'guardian_review') {
             return <GuardianReviewStep key={`${item.request_id}-review`} item={item} />;
           }
@@ -240,37 +236,6 @@ function ReasoningStep({ item }: { item: ReasoningItem }) {
       {summary ? (
         <div className="min-w-0 max-w-full overflow-hidden text-sm text-muted-foreground">
           <Streamdown plugins={streamdownPlugins}>{summary}</Streamdown>
-        </div>
-      ) : null}
-    </ChainOfThoughtStep>
-  );
-}
-
-/**
- * A preamble message — the model narrating between tool calls. Rendered in
- * the chain's quiet register: the first line as the step label, the full
- * markdown as the body only when truncation would lose content. The run's
- * final message never lands here (grouping keeps it a standalone bubble).
- */
-function MessageStep({ item }: { item: ChatMessage }) {
-  const text = item.content.trim();
-  const newline = text.indexOf('\n');
-  const firstLine = newline === -1 ? text : text.slice(0, newline);
-  const clipped = newline !== -1 || firstLine.length > 120;
-  return (
-    <ChainOfThoughtStep
-      icon={MessageSquareTextIcon}
-      status="complete"
-      data-testid="message-step"
-      label={
-        <span className="block min-w-0 truncate" title={clipped ? undefined : firstLine}>
-          {firstLine}
-        </span>
-      }
-    >
-      {clipped ? (
-        <div className="min-w-0 max-w-full overflow-hidden text-sm text-muted-foreground">
-          <Streamdown plugins={streamdownPlugins}>{text}</Streamdown>
         </div>
       ) : null}
     </ChainOfThoughtStep>

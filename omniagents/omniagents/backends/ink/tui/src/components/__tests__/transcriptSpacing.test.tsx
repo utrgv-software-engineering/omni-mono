@@ -2,7 +2,7 @@
  * The scroll region's vertical rhythm.
  *
  * App's scroll region declares one rule — `gap={1}` between the
- * transcript, the Preamble, "Thinking…" and the approval surfaces — and
+ * transcript, "Thinking…" and the approval surfaces — and
  * that container is meant to be the only thing spacing them. Two
  * separate things quietly broke it:
  *
@@ -62,7 +62,6 @@ describe("scroll-region rhythm", () => {
     const instance = render(
       <Box flexDirection="column" gap={1} paddingTop={1}>
         <MessageListOptimized />
-        <Text>PREAMBLE-LINE</Text>
         <Text>STATUS-THINKING</Text>
         <Text>APPROVAL-DIALOG</Text>
       </Box>,
@@ -77,14 +76,11 @@ describe("scroll-region rhythm", () => {
 
   it("does not double the gap where the transcript meets what follows", async () => {
     // Was 2: the last row's own paddingBottom plus the container's gap.
-    // The Preamble is the transcript's continuation, so it is what sits
-    // here — "Thinking…" moved below it.
-    expect(blanksBetween(await frame(), "hello", "PREAMBLE-LINE")).toBe(1);
+    expect(blanksBetween(await frame(), "hello", "STATUS-THINKING")).toBe(1);
   });
 
   it("holds the same rhythm across every following seam", async () => {
     const painted = await frame();
-    expect(blanksBetween(painted, "PREAMBLE-LINE", "STATUS-THINKING")).toBe(1);
     // Was 2 whenever the empty dock-panel wrapper sat in between.
     expect(blanksBetween(painted, "STATUS-THINKING", "APPROVAL-DIALOG")).toBe(
       1,

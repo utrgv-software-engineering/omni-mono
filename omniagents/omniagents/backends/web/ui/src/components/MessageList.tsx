@@ -1,5 +1,4 @@
 import React, { useMemo, useState } from 'react'
-import { Markdown } from './promptkit/markdown'
 import { Message, MessageContent, MessageActions, MessageAction } from './promptkit/Message'
 import { ChatContainerContent, ChatContainerRoot, ChatContainerScrollAnchor } from './ChatContainer'
 import { formatArgsPreview, groupItems } from './activityGroup'
@@ -70,8 +69,8 @@ export type McpApprovalItem = {
 export type MessageItem = ChatMessage | ToolItem | ApprovalItem | McpApprovalItem | ElicitationItem
 export type { ElicitationItem }
 
-export function MessageList({ items, statusText, thinking, statusSpinner, preambleText, welcomeText, onApprovalDecision, onMcpApprovalDecision, onElicitationRespond, statusItalic, onReaction, currentRunId, toolStatusText }:
-  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; preambleText?: string; welcomeText?: string; onApprovalDecision?: (call_id: string, value: 'yes' | 'always' | 'no') => void; onMcpApprovalDecision?: (request_id: string, value: 'yes' | 'no') => void; onElicitationRespond?: ElicitationRespond; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
+export function MessageList({ items, statusText, thinking, statusSpinner, welcomeText, onApprovalDecision, onMcpApprovalDecision, onElicitationRespond, statusItalic, onReaction, currentRunId, toolStatusText }:
+  { items: MessageItem[]; statusText?: string; thinking?: boolean; statusSpinner?: boolean; welcomeText?: string; onApprovalDecision?: (call_id: string, value: 'yes' | 'always' | 'no') => void; onMcpApprovalDecision?: (request_id: string, value: 'yes' | 'no') => void; onElicitationRespond?: ElicitationRespond; statusItalic?: boolean; onReaction?: (type: 'like' | 'dislike', text?: string) => void; currentRunId?: string; toolStatusText?: string }) {
   const [reactions, setReactions] = useState<Record<number, 'like' | 'dislike' | undefined>>({})
   const [feedbackIndex, setFeedbackIndex] = useState<number | undefined>(undefined)
   const handleReaction = React.useCallback((index: number, type: 'like' | 'dislike') => {
@@ -134,7 +133,6 @@ export function MessageList({ items, statusText, thinking, statusSpinner, preamb
             return null
           })
         )}
-        {preambleText ? <PreambleRow text={preambleText} /> : null}
         {(thinking || statusRowText) ? (
           <StatusRow text={statusRowText || fallbackStatus} spinner={!!statusSpinner || !!thinking} italic={!!statusItalic && !thinking} />
         ) : null}
@@ -298,16 +296,6 @@ function AttachmentChip({ attachment }: { attachment: Attachment }) {
       <span className="max-w-[180px] truncate text-white" title={attachment.filename || 'file'}>
         {attachment.filename || 'file'}
       </span>
-    </div>
-  )
-}
-
-function PreambleRow({ text }: { text?: string }) {
-  if (!text) return null
-  return (
-    <div className="flex items-start gap-2">
-      <span className="text-warningOrange animate-pulse mt-[2px]">✶</span>
-      <Markdown className="prose-sm prose-warning" highlight={false} inheritTextColor>{text}</Markdown>
     </div>
   )
 }

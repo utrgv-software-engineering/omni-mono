@@ -149,176 +149,71 @@ describe('computeGroupSummary', () => {
   });
 });
 
-describe('preamble folding', () => {
-  const preamble = (id: string, content: string, turnId: string): MessageItem => ({
+describe('commentary between activity', () => {
+  const message = (id: string, content: string, turnId: string): MessageItem => ({
     type: 'chat',
     role: 'assistant',
     content,
     canonical: envelope(id, { kind: 'agent_message', turn_id: turnId }),
   });
+  const shape = (groups: ReturnType<typeof groupItems>) =>
+    groups.map((g) => (g.type === 'activity_group' ? g.items.map((i) => i.type).join('+') : g.type));
 
-  it('folds an assistant message into the chain when machinery of the same run follows', () => {
+  it('an assistant message between tool calls splits the run into two groups', () => {
     const groups = groupItems(
       [
         tool('read_file', { runId: 'run-1' }),
-        preamble('m1', 'Now let me check the config.', 'run-1'),
+        message('m1', 'Now let me check the config.', 'run-1'),
+        tool('read_file', { runId: 'run-1', call_id: 'c2' }),
+        message('m2', 'All done.', 'run-1'),
+      ],
+      undefined,
+      false
+    );
+    expect(shape(groups)).toEqual(['tool', 'chat', 'tool', 'chat']);
+  });
+
+  it('reasoning before commentary joins the activity the commentary introduces', () => {
+    const groups = groupItems(
+      [
+        reasoning('r1', 'read the schema first'),
+        message('m1', "I'll start by reading the schema.", 'run-1'),
+        tool('read_file', { runId: 'run-1' }),
+        reasoning('r2', 'looks fine'),
+        message('m2', 'The schema is fine.', 'run-1'),
+      ],
+      undefined,
+      false
+    );
+    expect(shape(groups)).toEqual(['chat', 'reasoning+tool+reasoning', 'chat']);
+  });
+
+  it('reasoning already grouped with tools stays with them', () => {
+    const groups = groupItems(
+      [
+        tool('read_file', { runId: 'run-1' }),
+        reasoning('r1', 'next the config'),
+        message('m1', 'Checking the config.', 'run-1'),
         tool('read_file', { runId: 'run-1', call_id: 'c2' }),
       ],
       undefined,
       false
     );
-    expect(groups).toHaveLength(1);
-    const group = groups[0] as ActivityGroupData;
-    expect(group.items.map((i) => i.type)).toEqual(['tool', 'chat', 'tool']);
+    expect(shape(groups)).toEqual(['tool+reasoning', 'chat', 'tool']);
   });
 
-  it("keeps the run's final message a standalone bubble", () => {
-    const groups = groupItems(
-      [tool('read_file', { runId: 'run-1' }), preamble('m1', 'Here is what I found: everything passes.', 'run-1')],
-      undefined,
-      false
-    );
-    expect(groups).toHaveLength(2);
-    expect((groups[0] as ActivityGroupData).items.map((i) => i.type)).toEqual(['tool']);
-    expect((groups[1] as MessageItem).type).toBe('chat');
-  });
-
-  it('an opening preamble (before the first tool) joins the run it narrates', () => {
-    const groups = groupItems(
-      [preamble('m1', "I'll start by reading the schema.", 'run-1'), tool('read_file', { runId: 'run-1' })],
-      undefined,
-      false
-    );
-    expect(groups).toHaveLength(1);
-    expect((groups[0] as ActivityGroupData).items.map((i) => i.type)).toEqual(['chat', 'tool']);
-  });
-
-  it('folds a live-stamped preamble — machine runId, no canonical envelope', () => {
-    // Live flushes stamp ChatMessage.runId (chat-session machine); the
-    // canonical turn_id only exists after a reload. Same fold either way.
-    const live: MessageItem = { type: 'chat', role: 'assistant', content: 'Checking the config next.', runId: 'run-1' };
-    const final: MessageItem = { type: 'chat', role: 'assistant', content: 'All done.', runId: 'run-1' };
-    const groups = groupItems(
-      [tool('read_file', { runId: 'run-1' }), live, tool('read_file', { runId: 'run-1', call_id: 'c2' }), final],
-      undefined,
-      false
-    );
-    expect(groups).toHaveLength(2);
-    expect((groups[0] as ActivityGroupData).items.map((i) => i.type)).toEqual(['tool', 'chat', 'tool']);
-    // The run's final message keeps its bubble even with the stamp.
-    expect((groups[1] as MessageItem).type).toBe('chat');
-  });
-
-  it('a message without a canonical turn id stays a bubble — it cannot be placed', () => {
-    const groups = groupItems(
-      [tool('read_file', { runId: 'run-1' }), chat('untethered'), tool('read_file', { runId: 'run-1', call_id: 'c2' })],
-      undefined,
-      false
-    );
-    expect(groups).toHaveLength(3);
-    expect((groups[1] as MessageItem).type).toBe('chat');
-  });
-
-  it("a message from a DIFFERENT run never folds into this run's chain", () => {
+  it('user messages and approvals break the group', () => {
+    const userMsg: MessageItem = { type: 'chat', role: 'user', content: 'stop' };
     const groups = groupItems(
       [
         tool('read_file', { runId: 'run-1' }),
-        preamble('m1', 'narration for run 2', 'run-2'),
-        tool('read_file', { runId: 'run-2', call_id: 'c2' }),
+        userMsg,
+        tool('read_file', { runId: 'run-1', call_id: 'c2' }),
+        { type: 'approval', request_id: 'a1', tool: 'bash' },
       ],
       undefined,
       false
     );
-    // The run-2 preamble breaks run-1's group and starts run-2's.
-    expect(groups).toHaveLength(2);
-    expect((groups[0] as ActivityGroupData).items.map((i) => i.type)).toEqual(['tool']);
-    expect((groups[1] as ActivityGroupData).items.map((i) => i.type)).toEqual(['chat', 'tool']);
-  });
-
-  it('user messages always break the group, canonical or not', () => {
-    const userMsg: MessageItem = {
-      type: 'chat',
-      role: 'user',
-      content: 'stop',
-      canonical: envelope('u1', { kind: 'user_message', turn_id: 'run-1' }),
-    };
-    const groups = groupItems(
-      [tool('read_file', { runId: 'run-1' }), userMsg, tool('read_file', { runId: 'run-1', call_id: 'c2' })],
-      undefined,
-      false
-    );
-    expect(groups).toHaveLength(3);
-  });
-});
-
-describe('preamble folding around approval-gated tools (session 39a9b6a8 shape)', () => {
-  const preamble = (id: string, content: string, turnId: string): MessageItem => ({
-    type: 'chat',
-    role: 'assistant',
-    content,
-    canonical: envelope(id, { kind: 'agent_message', turn_id: turnId }),
-  });
-
-  it('narration before an approval resolution folds — a later same-run message betrays it', () => {
-    // Approval-gated tools record their item at EMISSION time; execution
-    // revises it in place. So the narration has no later tool row — only
-    // the approval record, the run diff, and the final answer follow.
-    const approvalHistory: MessageItem = {
-      type: 'structured',
-      kind: 'approval',
-      title: 'Approval',
-      canonical: envelope('a1', { kind: 'approval', turn_id: 'run-1' }),
-    };
-    const runDiff: MessageItem = {
-      type: 'run_diff',
-      id: 'd1',
-      diff: 'diff --git a b',
-      files: [],
-      stats: { filesChanged: 1, additions: 1, deletions: 0 },
-      truncated: false,
-      filesTruncated: false,
-      status: 'completed',
-      canonical: envelope('d1', { kind: 'run_diff', turn_id: 'run-1' }),
-    } as MessageItem;
-    const groups = groupItems(
-      [
-        tool('apply_patch', { runId: 'run-1' }),
-        reasoning('r1', 'planning the file'),
-        preamble('m1', "The workspace is empty, so I'm adding index.html.", 'run-1'),
-        approvalHistory,
-        runDiff,
-        preamble('m2', 'Created the page at index.html.', 'run-1'),
-      ],
-      undefined,
-      false
-    );
-    // ONE chain (tool, reasoning, folded narration), then the approval and
-    // diff cards, then ONE final bubble — never two bubbles at the end.
-    expect(groups).toHaveLength(4);
-    expect((groups[0] as ActivityGroupData).items.map((i) => i.type)).toEqual(['tool', 'reasoning', 'chat']);
-    expect((groups[1] as MessageItem).type).toBe('structured');
-    expect((groups[2] as MessageItem).type).toBe('run_diff');
-    expect((groups[3] as MessageItem).type).toBe('chat');
-  });
-
-  it('a run_diff AFTER the final answer never folds the answer into the chain', () => {
-    const runDiff: MessageItem = {
-      type: 'run_diff',
-      id: 'd1',
-      diff: 'diff --git a b',
-      files: [],
-      stats: { filesChanged: 1, additions: 1, deletions: 0 },
-      truncated: false,
-      filesTruncated: false,
-      status: 'completed',
-      canonical: envelope('d1', { kind: 'run_diff', turn_id: 'run-1' }),
-    } as MessageItem;
-    const groups = groupItems(
-      [tool('apply_patch', { runId: 'run-1' }), preamble('m1', 'Done — created the page.', 'run-1'), runDiff],
-      undefined,
-      false
-    );
-    expect(groups).toHaveLength(3);
-    expect((groups[1] as MessageItem).type).toBe('chat');
+    expect(shape(groups)).toEqual(['tool', 'chat', 'tool', 'approval']);
   });
 });

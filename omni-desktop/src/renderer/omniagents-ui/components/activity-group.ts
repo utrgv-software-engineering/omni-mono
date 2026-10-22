@@ -1,23 +1,16 @@
 import { oneLine } from '@/lib/text';
-import type {
-  ChatMessage,
-  GuardianReviewItem,
-  MessageItem,
-  ReasoningItem,
-  ToolItem,
-  WorkflowReviewItem,
-} from '@/shared/chat-types';
+import type { GuardianReviewItem, MessageItem, ReasoningItem, ToolItem, WorkflowReviewItem } from '@/shared/chat-types';
 
 /**
- * Transcript "machinery" — everything that folds into one chain-of-thought
- * block per run: reasoning, tool calls, the guardian/workflow review
- * records that annotate them, and PREAMBLE assistant messages (narration
- * between tool calls — semantically machinery, the prose twin of a
- * reasoning summary). A run's FINAL message is the answer and stays a
- * standalone bubble, as do user/system messages, approvals, plans, run
- * diffs, artifacts and structured cards — all of those break the group.
+ * Transcript "machinery" — everything that folds into an activity group:
+ * reasoning, tool calls, and the guardian/workflow review records that
+ * annotate them. Every assistant message stays a bubble, so a run reads as
+ * commentary, activity, commentary, activity: what the model says between
+ * tool calls often carries information the user needs. User/system
+ * messages, approvals, plans, run diffs, artifacts and structured cards
+ * break the group too.
  */
-export type MachineryItem = ToolItem | ReasoningItem | GuardianReviewItem | WorkflowReviewItem | ChatMessage;
+export type MachineryItem = ToolItem | ReasoningItem | GuardianReviewItem | WorkflowReviewItem;
 
 export type ActivityGroupData = {
   type: 'activity_group';
@@ -51,65 +44,24 @@ export function isRenderableReasoning(item: ReasoningItem): boolean {
   return item.status === 'started' || item.summary.trim().length > 0;
 }
 
-/** The run id a transcript item belongs to, when it declares one. */
-const itemRunId = (item: MessageItem): string | undefined => {
-  if (item.type === 'tool') {
-    return item.runId;
-  }
-  if (item.type === 'chat') {
-    // Live-appended messages carry the machine's runId stamp; reloaded
-    // canonical items carry turn_id. Same identity, two sources.
-    return item.runId ?? item.canonical?.turn_id ?? undefined;
-  }
-  if (item.type === 'reasoning') {
-    return item.canonical?.turn_id ?? undefined;
-  }
-  return undefined;
-};
-
 /**
- * An assistant message is a PREAMBLE — narration between tool calls — iff
- * more machinery from the SAME run follows it. The run's last message has
- * nothing after it and stays a standalone bubble (the answer). Detection
- * is structural (run ids), never a reading of the message's wording; a
- * message without a canonical turn id can't be placed and stays a bubble.
+ * Whether the activity after the message at ``index`` continues with a tool
+ * call. Reasoning and reviews may sit in between; anything else ends it.
  */
-function preambleIndices(items: MessageItem[]): Set<number> {
-  // What counts as "the run continues after this message": later tools,
-  // reasoning, or ANOTHER assistant message of the same run — a message
-  // followed by more of the model's own output cannot be the answer. An
-  // approval-gated tool records its item at EMISSION time and execution
-  // only revises it in place, so narration around the approval has no
-  // later tool row; the run's final message is what betrays it.
-  // Deliberately NOT markers: approval and run_diff items — a run diff
-  // can land after the true final answer, and counting it would fold the
-  // answer itself into the chain.
-  const lastMachineryIndexByRun = new Map<string, number>();
-  for (let i = 0; i < items.length; i++) {
+function toolCallFollows(items: MessageItem[], index: number): boolean {
+  for (let i = index + 1; i < items.length; i++) {
     const item = items[i]!;
-    if (item.type === 'tool' || item.type === 'reasoning' || (item.type === 'chat' && item.role === 'assistant')) {
-      const rid = itemRunId(item);
-      if (rid) {
-        lastMachineryIndexByRun.set(rid, i);
-      }
+    if (item.type === 'tool') {
+      return true;
+    }
+    if (item.type !== 'reasoning' && item.type !== 'guardian_review' && item.type !== 'workflow_review') {
+      return false;
     }
   }
-  const preambles = new Set<number>();
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]!;
-    if (item.type !== 'chat' || item.role !== 'assistant') {
-      continue;
-    }
-    const rid = itemRunId(item);
-    if (rid && (lastMachineryIndexByRun.get(rid) ?? -1) > i) {
-      preambles.add(i);
-    }
-  }
-  return preambles;
+  return false;
 }
 
 export function groupItems(items: MessageItem[], currentRunId: string | undefined, thinking: boolean): DisplayItem[] {
-  const preambles = preambleIndices(items);
   const result: DisplayItem[] = [];
   let acc: MachineryItem[] = [];
   let accRunId: string | undefined = undefined;
@@ -139,7 +91,7 @@ export function groupItems(items: MessageItem[], currentRunId: string | undefine
     if (item.type === 'tool') {
       const rid = item.runId;
       if (rid && accRunId && rid !== accRunId) {
-        // One chain block per run.
+        // One group per run.
         flush();
       }
       acc.push(item);
@@ -150,17 +102,18 @@ export function groupItems(items: MessageItem[], currentRunId: string | undefine
       acc.push(item);
       continue;
     }
-    if (item.type === 'chat' && preambles.has(i)) {
-      const rid = itemRunId(item);
-      if (rid && accRunId && rid !== accRunId) {
-        flush();
-      }
-      acc.push(item);
-      accRunId = accRunId ?? rid;
+    if (
+      item.type === 'chat' &&
+      item.role === 'assistant' &&
+      acc.every((step) => step.type === 'reasoning') &&
+      toolCallFollows(items, i)
+    ) {
+      // The model reasons, comments, then calls tools. The reasoning
+      // joins the activity the commentary introduces rather than standing
+      // alone above it.
+      result.push(item);
       continue;
     }
-    // Final answers, user/system chat, approvals, plans, run diffs,
-    // artifacts, structured — standalone.
     flush();
     result.push(item);
   }
@@ -206,9 +159,6 @@ export function computeGroupSummary(items: ReadonlyArray<MachineryItem>): GroupS
   for (const item of items) {
     if (item.type === 'reasoning') {
       s.thoughts++;
-    } else if (item.type === 'chat') {
-      // Preamble narration counts toward the step total (it IS a step of
-      // the run) but has no category of its own in the summary detail.
     } else if (item.type === 'guardian_review') {
       if (item.outcome === 'deny') {
         s.rejections++;

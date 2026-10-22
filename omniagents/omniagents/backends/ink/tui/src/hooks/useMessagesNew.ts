@@ -67,15 +67,6 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
   const elicitationQueueRef = useRef<ElicitationInfo[]>([]);
   const currentElicitationIdRef = useRef<string | null>(null);
 
-  // Buffer for messages with superseded tracking
-  const messageBufferRef = useRef<
-    Array<{
-      content: string;
-      timestamp: Date;
-      superseded: boolean;
-    }>
-  >([]);
-
   useEffect(() => {
     if (!client || !rpcReady) return;
     client.setActiveSession?.(sessionId);
@@ -126,8 +117,6 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       actions.setMcpApproval(null);
       actions.setElicitation(null);
       actions.setEscalation(null);
-      messageBufferRef.current = [];
-      actions.setPreamble(null);
     };
     const hasSnapshot =
       !!sessionId && typeof client.synchronizeSession === "function";
@@ -318,43 +307,19 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       actions.setTasks(tasks);
     };
 
-    // Helper to mark buffered messages as superseded (don't add to conversation)
-    const markBufferAsSuperseded = () => {
-      for (const msg of messageBufferRef.current) {
-        msg.superseded = true;
-      }
-      if (messageBufferRef.current.length > 0) {
-        debugLog(
-          `Marked ${messageBufferRef.current.length} buffered messages as superseded`,
-        );
-      }
-    };
-
-    // MESSAGE OUTPUT - buffer and show in preamble
+    // MESSAGE OUTPUT - the model's commentary joins the transcript as it
+    // arrives, so the text between tool calls stays visible.
     const handleMessageOutput = (params: { content: string }) => {
-      const timestamp = Date.now();
-      debugLog(`message_output received at ${timestamp}, updating preamble`);
       batcher.add(() => {
-        debugLog(
-          `message_output batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`,
-        );
-
-        // Buffer this message as "not superseded yet"
-        messageBufferRef.current.push({
-          content: params.content,
-          timestamp: new Date(),
-          superseded: false,
-        });
-
-        // Show/update preamble
-        actions.setPreamble(params.content);
-
+        if (params.content.trim()) {
+          actions.addMessage({
+            role: "assistant",
+            content: params.content,
+            timestamp: new Date(),
+          });
+        }
         // Clear any retry/error status once we see forward progress
         actions.setThinking(true, null);
-
-        debugLog(
-          `Preamble updated, ${messageBufferRef.current.length} messages buffered`,
-        );
       });
     };
 
@@ -374,7 +339,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     const isHiddenTool = (toolName: string) =>
       HIDDEN_TOOLS.has(toolName) || client.hasClientFunction(toolName);
 
-    // TOOL CALLED - marks buffer as superseded but KEEPS preamble visible
+    // TOOL CALLED
     const handleToolCalled = (params: {
       tool: string;
       input: string;
@@ -386,9 +351,6 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         return;
       }
       batcher.add(() => {
-        // Previous message(s) were intermediate thinking - mark as superseded
-        markBufferAsSuperseded();
-
         actions.addMessage({
           role: "tool_call",
           content: "",
@@ -401,13 +363,12 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           },
         });
 
-        // Preamble stays visible! Don't call setPreamble(null)
         // Clear any retry/error status once we see forward progress
         actions.setThinking(true, null);
       });
     };
 
-    // TOOL RESULT - marks buffer as superseded but keeps preamble
+    // TOOL RESULT
     const handleToolResult = (params: {
       tool: string;
       output: string;
@@ -424,9 +385,6 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         return;
       }
       batcher.add(() => {
-        // Mark previous messages as superseded
-        markBufferAsSuperseded();
-
         actions.updateToolResult(
           params.call_id,
           params.output,
@@ -446,12 +404,10 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
         if (Array.isArray(jobsSnapshot)) {
           actions.setBashJobs(jobsSnapshot as any);
         }
-
-        // Preamble stays visible!
       });
     };
 
-    // RUN STARTED - clear buffer and preamble
+    // RUN STARTED
     const handleRunStarted = (params: {
       run_id: string;
       session_id: string;
@@ -459,17 +415,12 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       prompt_role?: string;
     }) => {
       const timestamp = Date.now();
-      debugLog(
-        `run_started received at ${timestamp}, clearing preamble and buffer`,
-      );
+      debugLog(`run_started received at ${timestamp}`);
       batcher.add(() => {
         debugLog(
           `run_started batch executing at ${Date.now()}, delay: ${Date.now() - timestamp}ms`,
         );
 
-        // Clear buffer and preamble for new run
-        messageBufferRef.current = [];
-        actions.setPreamble(null);
         actions.setCurrentRunId(params.run_id);
         actions.setThinking(true, null);
         // The previous run's aggregated diff is stale once a new run
@@ -618,7 +569,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
       }
     };
 
-    // RUN END - flush non-superseded messages and hide preamble
+    // RUN END
     const handleRunEnd = (params: {
       run_id: string;
       end_reason: string;
@@ -630,7 +581,7 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
     }) => {
       const timestamp = Date.now();
       debugLog(
-        `run_end received at ${timestamp}, end_reason=${params.end_reason}, processing ${messageBufferRef.current.length} buffered messages`,
+        `run_end received at ${timestamp}, end_reason=${params.end_reason}`,
       );
       batcher.add(() => {
         debugLog(
@@ -644,26 +595,6 @@ export function useMessagesOptimized(options: UseMessagesOptions) {
           );
           return;
         }
-
-        // Only add non-superseded messages to conversation
-        const nonSuperseded = messageBufferRef.current.filter(
-          (msg) => !msg.superseded,
-        );
-        debugLog(
-          `Adding ${nonSuperseded.length} non-superseded messages to conversation (${messageBufferRef.current.length - nonSuperseded.length} were superseded)`,
-        );
-
-        for (const bufferedMsg of nonSuperseded) {
-          actions.addMessage({
-            role: "assistant",
-            content: bufferedMsg.content,
-            timestamp: bufferedMsg.timestamp,
-          });
-        }
-
-        // Clear buffer and hide preamble
-        messageBufferRef.current = [];
-        actions.setPreamble(null);
 
         // Check if run ended with an error
         if (params.end_reason.toLowerCase() === "error" && params.error) {

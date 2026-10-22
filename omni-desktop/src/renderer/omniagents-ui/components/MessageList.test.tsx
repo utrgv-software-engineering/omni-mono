@@ -269,8 +269,8 @@ describe('MessageList machinery chain', () => {
     expect(chain!.querySelector('[data-testid="tool-step-detail"]')).toBeNull();
   });
 
-  it('folds preamble narration into the chain and keeps the final answer a bubble', async () => {
-    const preamble: MessageItem = {
+  it('keeps commentary between tool calls as bubbles between activity groups', async () => {
+    const commentary: MessageItem = {
       type: 'chat',
       role: 'assistant',
       content: 'Now let me check the config.',
@@ -284,54 +284,18 @@ describe('MessageList machinery chain', () => {
     };
     await renderList([
       tool({ call_id: 'c1', runId: 'run-1' }),
-      preamble,
+      commentary,
       tool({ call_id: 'c2', runId: 'run-1' }),
       answer,
     ]);
-    expect(chains()).toHaveLength(1);
-    const [chain] = chains();
-    await openChain(chain!);
-    const step = chain!.querySelector('[data-testid="message-step"]');
-    expect(step).not.toBeNull();
-    expect(step!.textContent).toContain('Now let me check the config.');
-    // The final message is the answer — outside the chain, as a bubble.
-    expect(chain!.textContent).not.toContain('All done');
-    expect(container.textContent).toContain('All done — everything passes.');
-  });
-
-  it('renders live mid-run narration as a bubble, then folds it once a same-run tool follows', async () => {
-    // The live shape: MESSAGE_OUTPUT appended by the machine mid-run — a
-    // plain chat item stamped with runId, no canonical envelope yet.
-    const narration: MessageItem = {
-      type: 'chat',
-      role: 'assistant',
-      content: 'Now let me check the config.',
-      runId: 'run-1',
-    };
-    const before: MessageItem[] = [
-      { type: 'chat', role: 'user', content: 'go' },
-      tool({ call_id: 'c1', runId: 'run-1' }),
-      narration,
-    ];
-    await renderList(before, { currentRunId: 'run-1', thinking: true });
-    // Nothing follows it yet — it streams in as the frontier bubble.
-    expect(chains()).toHaveLength(1);
-    expect(chains()[0]!.textContent).not.toContain('Now let me check the config.');
-    expect(container.textContent).toContain('Now let me check the config.');
-
-    // A same-run tool arrives — the narration folds into the chain.
-    await renderList([...before, tool({ call_id: 'c2', runId: 'run-1', status: 'called', output: undefined })], {
-      currentRunId: 'run-1',
-      thinking: true,
-    });
-    expect(chains()).toHaveLength(1);
-    const [chain] = chains();
-    // The chain is running, so it is already auto-open.
-    const step = chain!.querySelector('[data-testid="message-step"]');
-    expect(step).not.toBeNull();
-    expect(step!.textContent).toContain('Now let me check the config.');
-    // …and it left the bubble: the text now lives only inside the chain.
-    expect(container.querySelectorAll('[data-testid="message-step"]')).toHaveLength(1);
+    const [first, second] = chains();
+    expect(chains()).toHaveLength(2);
+    for (const chain of [first!, second!]) {
+      expect(chain.textContent).not.toContain('Now let me check the config.');
+    }
+    const text = container.textContent ?? '';
+    expect(text).toContain('Now let me check the config.');
+    expect(text.indexOf('Now let me check the config.')).toBeLessThan(text.indexOf('All done — everything passes.'));
   });
 
   it('renders a pending-approval tool step as awaiting, not running', async () => {
