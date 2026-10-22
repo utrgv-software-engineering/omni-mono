@@ -1463,6 +1463,22 @@ class TestReasoning:
         assert reasoning.turn_id == RUN
         assert reasoning.status is ItemStatus.COMPLETED
 
+    def test_chat_completions_reasoning_records_its_raw_text(self, store, recorder):
+        """Chat-completions providers return reasoning as ``reasoning_text``
+        content with no summary; that text is the record."""
+        feed(recorder, ("run_started", {"run_id": RUN, "prompt": "hi"}))
+        recorder.record_reasoning(
+            THREAD,
+            run_id=RUN,
+            item={
+                "type": "reasoning",
+                "summary": [],
+                "content": [{"type": "reasoning_text", "text": "read the file"}],
+            },
+        )
+        [reasoning] = only(store, ItemKind.REASONING)
+        assert reasoning.content["summary"] == "read the file"
+
     def test_reasoning_is_idempotent_on_its_model_id(self, store, recorder):
         item = {"type": "reasoning", "id": "rs_1", "summary": []}
         recorder.record_reasoning(THREAD, run_id=RUN, item=item)

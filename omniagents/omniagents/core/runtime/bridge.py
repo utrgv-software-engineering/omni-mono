@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import asyncio
 import logging
@@ -351,6 +352,10 @@ def stream_event_payload(
         return "tool_result", payload
     elif item.type == "message_output_item":
         text = ItemHelpers.text_message_output(item)
+        if not text.strip():
+            # Chat-completions providers send an empty assistant message
+            # beside each tool call; it says nothing, so nothing is shown.
+            return None, None
         # The model's own message id, when the provider minted one. Clients
         # use it to correlate this event with the canonical conversation
         # item without inventing an ordinal the server would have to agree
@@ -552,8 +557,6 @@ async def stream_agent(
 
     # Log item sequence (all fields, truncate content for readability)
     if logger.isEnabledFor(logging.DEBUG):
-        import json
-
         item_sequence = []
         for idx, item in enumerate(agent_input):
             # Truncate content fields to keep log readable
@@ -1168,7 +1171,6 @@ async def stream_agent(
 
         # Log full item sequence on error (all fields, not just known ones)
         if logger.isEnabledFor(logging.ERROR):
-            import json
 
             error_sequence = []
             for idx, item in enumerate(agent_input):
@@ -1228,8 +1230,9 @@ async def stream_agent(
             # never is), the provider's id for messages and reasoning. A
             # message without a real id (user prompts; replies from
             # providers without Responses ids) matches on role and text,
-            # counted against this run's rows only, so a repeated prompt
-            # from an earlier turn is not mistaken for this one.
+            # and any other id-less item on type and content, counted
+            # against this run's rows only, so a repeated prompt from an
+            # earlier turn is not mistaken for this one.
             from collections import Counter
 
             from omniagents.core.agents.transcript_compaction import content_text
@@ -1237,9 +1240,18 @@ async def stream_agent(
 
             def _signature(item: dict) -> tuple | None:
                 role = item.get("role")
-                if role not in ("user", "assistant"):
-                    return None
-                return (role, content_text(item.get("content")))
+                if role in ("user", "assistant"):
+                    return (role, content_text(item.get("content")))
+                # Other id-less items without a call_id (reasoning from
+                # chat-completions providers) match on type and content.
+                itype = item.get("type")
+                if isinstance(itype, str) and not item.get("call_id"):
+                    return (
+                        itype,
+                        json.dumps(item.get("summary"), sort_keys=True, default=str),
+                        json.dumps(item.get("content"), sort_keys=True, default=str),
+                    )
+                return None
 
             existing_ids: set[str] = set()
             existing_calls: set[tuple[str, str]] = set()

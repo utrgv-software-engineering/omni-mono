@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 from agents import Agent, function_tool
-from openai.types.responses import ResponseFunctionToolCall
+from openai.types.responses import (
+    ResponseFunctionToolCall,
+    ResponseOutputMessage,
+    ResponseOutputText,
+    ResponseReasoningItem,
+)
+from openai.types.responses.response_reasoning_item import Content
 
 from omniagents.core.conversation.store import get_conversation_store
 from omniagents.core.runtime.bridge import stream_agent
@@ -25,12 +31,35 @@ class _Service:
 
 
 class _ChatCompletionsModel(FakeModel):
-    """Replies carry the SDK placeholder id; tool calls carry no id."""
+    """Replies carry the SDK placeholder id; tool calls carry no id and come
+    with raw reasoning and an empty assistant message, as live
+    chat-completions providers send."""
 
     def _decide(self, system_instructions, input):
         out = []
         for item in super()._decide(system_instructions, input):
             if isinstance(item, ResponseFunctionToolCall):
+                out.append(
+                    ResponseReasoningItem(
+                        id="__fake_id__",
+                        type="reasoning",
+                        summary=[],
+                        content=[Content(type="reasoning_text", text="check the weather")],
+                    )
+                )
+                out.append(
+                    ResponseOutputMessage(
+                        id="__fake_id__",
+                        type="message",
+                        role="assistant",
+                        status="completed",
+                        content=[
+                            ResponseOutputText(
+                                type="output_text", text="", annotations=[]
+                            )
+                        ],
+                    )
+                )
                 item = ResponseFunctionToolCall(
                     type="function_call",
                     name=item.name,
@@ -60,7 +89,8 @@ async def test_each_reply_and_tool_call_is_kept_once(tmp_path, monkeypatch):
     calls = [row for row in session.history if row.get("type") == "function_call"]
     replies = [row for row in session.history if row.get("role") == "assistant"]
     assert len(calls) == 1
-    assert len(replies) == 2
+    # The model context keeps the empty message the provider sent.
+    assert len(replies) == 3
     assert all("id" not in row for row in replies)
 
     snapshot = get_conversation_store("ids", "chat-completions").read_snapshot(
@@ -72,3 +102,10 @@ async def test_each_reply_and_tool_call_is_kept_once(tmp_path, monkeypatch):
         if item.kind.value == "agent_message"
     ]
     assert texts == ["It is sunny in Paris.", "You said: second question"]
+    # One reasoning item: the end-of-run flush must not re-append it.
+    assert sum(1 for row in session.history if row.get("type") == "reasoning") == 1
+    assert [
+        item.content.get("summary")
+        for item in snapshot["items"]
+        if item.kind.value == "reasoning"
+    ] == ["check the weather"]

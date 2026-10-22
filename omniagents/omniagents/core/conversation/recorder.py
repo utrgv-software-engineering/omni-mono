@@ -737,7 +737,9 @@ class ConversationRecorder:
     ) -> Optional[Item]:
         run_id = payload.get("run_id")
         content = payload.get("content")
-        if not isinstance(content, str):
+        # An empty assistant message (chat-completions providers send one
+        # beside each tool call) carries nothing to record.
+        if not isinstance(content, str) or not content.strip():
             return None
         turn_id = run_id if isinstance(run_id, str) else None
         message_id = payload.get("message_id")
@@ -1556,15 +1558,19 @@ class ConversationRecorder:
         compaction checkpoints are: the fact never reaches the broadcast
         chokepoint.
         """
-        summary = item.get("summary")
-        parts: list[str] = []
-        if isinstance(summary, list):
-            for entry in summary:
-                if isinstance(entry, str):
-                    parts.append(entry)
-                elif isinstance(entry, dict) and isinstance(entry.get("text"), str):
-                    parts.append(entry["text"])
-        text = "\n".join(parts)
+        def joined(entries: Any) -> str:
+            parts: list[str] = []
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, str):
+                        parts.append(entry)
+                    elif isinstance(entry, dict) and isinstance(entry.get("text"), str):
+                        parts.append(entry["text"])
+            return "\n".join(parts)
+
+        # The Responses API summarizes reasoning; chat-completions providers
+        # return it raw, as ``reasoning_text`` content with no summary.
+        text = joined(item.get("summary")) or joined(item.get("content"))
         reasoning_id = item.get("id")
         key = (
             f"reasoning:{reasoning_id}"
