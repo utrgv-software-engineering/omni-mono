@@ -41,7 +41,7 @@ def test_project_resolution_matches_historical_declarations():
     assert ctx.voice_entrypoint == "voice_agent"
     # Tracing derives entirely from the product slug.
     assert ctx.tracing_defaults == {
-        "provider": "studio",
+        "provider": "none",
         "project": "omni_code",
         "name": "omni_code",
     }

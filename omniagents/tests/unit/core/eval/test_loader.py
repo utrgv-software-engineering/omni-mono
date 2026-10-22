@@ -533,3 +533,17 @@ def test_inline_scenarios_are_selected_like_scenario_files(tmp_path):
     cfg = load_eval_config(str(root / "project.yml"), select="tag:smoke")
     assert [sc["name"] for sc in cfg.config["scenarios"]] == ["keep"]
     assert cfg.select == "tag:smoke" and cfg.exclude is None
+
+
+def test_evaluations_record_traces_unless_the_manifest_names_a_provider(tmp_path):
+    root = _create_project(tmp_path, scenarios=[{"name": "only", "description": "d"}])
+    manifest = root / "project.yml"
+    data = yaml.safe_load(manifest.read_text())
+
+    del data["tracing"]
+    _write_yaml(manifest, data)
+    assert load_eval_config(str(manifest)).tracing_config["provider"] == "studio"
+
+    data["tracing"] = {"provider": "none"}
+    _write_yaml(manifest, data)
+    assert load_eval_config(str(manifest)).tracing_config["provider"] == "none"

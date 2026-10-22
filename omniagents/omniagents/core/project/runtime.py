@@ -378,10 +378,10 @@ def load_project(
 
     core_root = Path(__file__).resolve().parents[2]
 
-    # Tracing derives from the product identity: provider `studio`,
-    # project and trace name both the product slug. A declared `tracing:`
-    # block deep-merges over those defaults, so a project states only
-    # what deviates.
+    # Tracing is off unless a project turns it on: an always-on local
+    # recorder grew trace databases without bound. Project and trace name
+    # derive from the product slug; a declared `tracing:` block (e.g.
+    # `provider: studio`) deep-merges over these defaults.
     from omniagents.core.utils.merge import deep_merge
 
     tracing_block = proj.get("tracing")
@@ -389,7 +389,7 @@ def load_project(
         tracing_block = {}
     tracing_defaults = deep_merge(
         {
-            "provider": "studio",
+            "provider": "none",
             "project": product.slug,
             "name": product.slug,
         },

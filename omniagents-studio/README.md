@@ -6,8 +6,9 @@ evaluation workflows (dimensions, scenario sets, measures, judges, suites,
 optimization).
 
 Studio only reads and writes what OmniAgents already keeps on disk. Traces are
-recorded by `omniagents` itself (`tracing: {provider: studio}`, the default)
-into `~/.omniagents/traces/<project>.db`, so nothing has to be installed in an
+recorded by `omniagents` itself when a project turns them on
+(`tracing: {provider: studio}`; tracing is off by default, evaluations record
+unless the manifest names a provider) into `~/.omniagents/traces/<project>.db`, so nothing has to be installed in an
 agent's environment for its traces to show up here.
 
 ## Run

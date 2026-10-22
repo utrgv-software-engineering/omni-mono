@@ -1,6 +1,6 @@
 # Tracing Configuration in OmniAgents
 
-OmniAgents supports configurable tracing providers to help you monitor and debug your agents. **By default, OmniAgents uses Studio tracing** which stores traces locally and never sends data to external servers. Users must explicitly opt-in to OpenAI tracing via `provider: openai`.
+OmniAgents supports configurable tracing providers to help you monitor and debug your agents. **Tracing is off by default.** The `studio` provider stores traces locally and never sends data to external servers. Users must explicitly opt-in to OpenAI tracing via `provider: openai`.
 
 ## Configuration
 
@@ -8,7 +8,7 @@ Add a `tracing` section to your agent's YAML configuration:
 
 ```yaml
 tracing:
-  provider: studio  # Options: default, studio, none
+  provider: studio  # Options: none (default), studio, openai
   project: my_project
   name: my_trace
   settings:

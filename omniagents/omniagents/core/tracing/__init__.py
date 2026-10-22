@@ -1,8 +1,8 @@
 """Tracing configuration for omniagents.
 
-The ``studio`` provider (the default) records traces locally through
-:mod:`omniagents.core.tracing.local`; OmniAgents Studio (the separate
-``omniagents-studio`` package) is the viewer for those databases.
+Tracing is off by default. The ``studio`` provider records traces locally
+through :mod:`omniagents.core.tracing.local`; OmniAgents Studio (the
+separate ``omniagents-studio`` package) is the viewer for those databases.
 """
 
 import logging
@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
     """Setup tracing based on configuration.
 
-    Defaults to local trace recording (no data sent externally).
-    Users must explicitly opt-in to OpenAI tracing via provider: openai.
+    Defaults to no tracing. Local recording is opt-in via provider: studio,
+    and sending traces to OpenAI is opt-in via provider: openai.
 
     Args:
         tracing_config: Tracing configuration from YAML or None for defaults.
             Expected keys include:
             {
-                'provider': 'studio' | 'openai' | 'none' | 'default',
+                'provider': 'none' | 'studio' | 'openai',
                 'project': 'project_name',
                 'name': 'trace_name',
                 'settings': {
@@ -31,21 +31,12 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
             }
 
             Providers:
-            - studio (default): Local SQLite trace storage, viewable in
-              OmniAgents Studio
-            - default: Same as studio
+            - none (default): Disable all tracing
+            - studio: Local SQLite trace storage, viewable in OmniAgents Studio
             - openai: Opt-in to send traces to OpenAI servers
-            - none: Disable all tracing
     """
-    # Default to studio tracing if no config provided
-    if not tracing_config:
-        tracing_config = {"provider": "studio"}
-
-    provider = (tracing_config.get("provider") or "studio").lower()
-
-    # Map "default" to "studio"
-    if provider == "default":
-        provider = "studio"
+    tracing_config = tracing_config or {}
+    provider = (tracing_config.get("provider") or "none").lower()
 
     if provider == "openai":
         # User explicitly opted in to OpenAI tracing
@@ -89,7 +80,6 @@ def setup_tracing(tracing_config: Optional[Dict[str, Any]]) -> None:
 
             set_trace_processors([])
             logger.info("Tracing disabled")
-            print("🔇 Tracing disabled")
         except ImportError as e:
             logger.error(f"Failed to disable tracing: {e}", exc_info=True)
             print(f"❌ Error disabling tracing: {e}")

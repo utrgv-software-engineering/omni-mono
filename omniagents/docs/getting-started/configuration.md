@@ -116,7 +116,7 @@ agents:
 #     agent: init_agent
 
 tracing:
-  provider: studio        # Options: default, studio, none
+  provider: studio        # Options: none (default), studio, openai
   project: myproject
   name: trace_name
   settings:
@@ -324,7 +324,7 @@ In web mode, use the session management UI to browse and resume sessions.
 
 ## Tracing Configuration
 
-OmniAgents supports multiple tracing providers for monitoring and debugging agent execution. **By default, OmniAgents records traces locally** (the `studio` provider) and never sends data to external servers.
+OmniAgents supports multiple tracing providers for monitoring and debugging agent execution. **Tracing is off by default.** Turn on local recording with the `studio` provider; nothing is sent to external servers unless you choose `openai`. Evaluation runs record locally unless `project.yml` names a provider, because Studio's review screens read those traces.
 
 ### Tracing Providers
 
@@ -332,7 +332,7 @@ Optionally configure tracing in your `project.yml`:
 
 ```yaml
 tracing:
-  provider: studio        # Options: studio, openai, none
+  provider: studio        # Options: none (default), studio, openai
   project: myproject      # Project name for trace organization
   name: trace_name        # Optional trace name
   settings:
@@ -341,11 +341,11 @@ tracing:
 
 **Provider Options:**
 
-- **studio** (default): Records traces into local SQLite databases, the store
+- **none** (default): Disables all tracing
+- **studio**: Records traces into local SQLite databases, the store
   OmniAgents Studio reads. Built into `omniagents`; viewing them needs the
   separate `omniagents-studio` package.
 - **openai**: Opt-in to OpenAI SDK's default tracing (sends traces to OpenAI)
-- **none**: Disables all tracing
 
 ### Trace Storage
 

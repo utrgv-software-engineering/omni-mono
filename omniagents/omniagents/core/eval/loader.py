@@ -601,8 +601,14 @@ def load_eval_config(
     agent_cfg = _read_yaml(agent_path) or {}
 
     # Tracing config — the loader's product-derived defaults with the
-    # manifest's declared `tracing:` block merged over them.
+    # manifest's declared `tracing:` block merged over them. Agent runs
+    # default to no tracing, but an evaluation records traces locally
+    # unless the manifest names a provider: Studio's review screens read
+    # them.
     tracing_config: Dict[str, Any] = dict(prj.tracing_defaults or {})
+    declared_tracing = proj.get("tracing") if isinstance(proj, dict) else None
+    if not (isinstance(declared_tracing, dict) and declared_tracing.get("provider")):
+        tracing_config["provider"] = "studio"
 
     return EvalConfig(
         config=compiled_eval,

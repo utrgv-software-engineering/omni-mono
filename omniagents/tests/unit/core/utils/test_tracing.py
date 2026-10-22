@@ -14,20 +14,17 @@ def init_calls(monkeypatch):
     return calls
 
 
-def test_setup_tracing_default_provider_records_locally(init_calls, caplog):
-    """The ``default`` provider maps to local (``studio``) recording."""
-    caplog.set_level(logging.INFO)
-    setup_tracing({"provider": "default"})
-    assert init_calls
-    assert "Local tracing enabled" in caplog.text
-
-
-def test_setup_tracing_no_config_records_locally(init_calls, caplog):
-    """No tracing config defaults to local recording."""
+def test_setup_tracing_no_config_disables(init_calls, monkeypatch, caplog):
+    """No tracing config means no tracing: nothing recorded, nothing exported."""
+    calls = []
+    stub_agents = types.ModuleType("agents")
+    stub_agents.set_trace_processors = calls.append
+    monkeypatch.setitem(sys.modules, "agents", stub_agents)
     caplog.set_level(logging.INFO)
     setup_tracing(None)
-    assert init_calls
-    assert "Local tracing enabled" in caplog.text
+    setup_tracing({"project": "proj", "name": "trace"})
+    assert init_calls == []
+    assert calls == [[], []]
 
 
 def test_setup_tracing_openai_provider_enables(monkeypatch, caplog):
@@ -87,7 +84,7 @@ def test_setup_tracing_none_provider_disables(monkeypatch, caplog, capsys):
     captured = capsys.readouterr()
     assert calls == [[]]
     assert "Tracing disabled" in caplog.text
-    assert "Tracing disabled" in captured.out
+    assert captured.out == ""
 
 
 def test_setup_tracing_unknown_provider_warns(caplog, capsys):

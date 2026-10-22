@@ -81,8 +81,9 @@ Use `--session-id <id>` to resume a previous conversation stored in `sessions.db
 
 ### Traces
 
-Runs record traces locally by default (`tracing: {provider: studio}`) into
-`~/.omniagents/traces/<project>.db`. OmniAgents Studio, a separate package in
+Tracing is off by default. Set `tracing: {provider: studio}` in `project.yml`
+to record runs into `~/.omniagents/traces/<project>.db`; evaluations record
+there unless the manifest names a provider. OmniAgents Studio, a separate package in
 this monorepo (`omniagents-studio/`), is the web UI for browsing them:
 
 ```bash
