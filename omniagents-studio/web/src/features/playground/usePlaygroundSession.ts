@@ -674,6 +674,10 @@ export function usePlaygroundSession(sessionId: string | null | undefined, wsBas
           method: 'start_run',
           params: {
             prompt: trimmed,
+            // Protocol v2 requires an explicit environment choice. The
+            // playground skips the GUI handshake that would advertise a
+            // default environment, so it runs without one.
+            environment_selection: { mode: 'none' },
             session_id: serverSessionRef.current || undefined,
           },
         })
