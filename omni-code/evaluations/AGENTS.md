@@ -92,22 +92,24 @@ the workspace filesystem).
 Two omniagents-framework-specific rules about *operating* the eval
 pipeline (not designing within it).
 
-## Don't narrow-scope omniagents framework changes
+## One engine runs every scenario
 
-If you're modifying behavior in the eval pipeline (e.g. adding a field
-to result dicts, changing how something is loaded), there are **four
-scenario runners** that all do similar work and almost always need the
-same change:
+Every evaluation - `eval suite run`, `eval scenarios run`, Studio jobs and
+the notebook API (`omniagents.notebook.EvalSuite`) - runs through
+`omniagents/core/eval/engine.py`: `run_scenario` (single prompt, scripted
+`prompts`/continuations, synthetic) and `run_suite` (repeats, metrics,
+manifest). Only the agent target differs (`core/eval/targets.py`: the
+project agent, or an `agents.Agent` from a notebook). A change to what a
+run records or how it is scored goes there, once.
 
-1. `omniagents/core/eval/pipeline.py::_run_scenario` — basic single-turn
-2. `omniagents/core/eval/multi_turn.py::_run_scripted_single_turn`
-3. `omniagents/core/eval/multi_turn.py::_run_scripted_multi_turn`
-4. `omniagents/core/eval/multi_turn.py::_run_synthetic_scenario`
+The notebook can run this folder as-is:
 
-Before changing one, grep the eval module for the affected primitive
-(`load_history`, `consume_stream_events`, `final_assistant_text`,
-`run_measures`, etc.) and treat the change as "factor a helper or apply
-to all four," not "edit the runner I happen to be looking at."
+```python
+from omniagents.notebook import EvalSuite
+
+suite = EvalSuite.from_project("omni_code/project.yml", select="name:<scenario_name>")
+results = await suite.run()          # the project agent, same as `eval suite run`
+```
 
 ## Don't reinvent — read omniagents source first
 
