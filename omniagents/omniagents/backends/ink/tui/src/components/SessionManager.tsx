@@ -10,7 +10,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import Spinner from "ink-spinner";
 import { useKeypress, type Key } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
@@ -90,9 +91,7 @@ const SessionManagerContent = themedMemo<Props>(
     const operationPending = useRef(false);
     const leaving = useRef(false);
     const renameTarget = useRef<string | null>(null);
-    const { stdout } = useStdout();
-    const terminalHeight = stdout?.rows || 24;
-    const terminalWidth = stdout?.columns || 80;
+    const { rows: terminalHeight, columns: terminalWidth } = useTerminalSize();
     const windowSize = Math.max(4, terminalHeight - CHROME_ROWS);
 
     const [rows, setRows] = useState<SessionRow[]>([]);

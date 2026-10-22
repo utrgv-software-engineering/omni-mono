@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import {
   useApproval,
   useElicitation,
@@ -30,8 +31,7 @@ export const TopTabs = themedMemo<{
     !!approval || !!mcpApproval || !!escalation || !!elicitation;
   const runningWorkers = workers.filter((w) => w.status === "running").length;
 
-  const { stdout } = useStdout();
-  const width = stdout?.columns ?? 80;
+  const { columns: width } = useTerminalSize();
 
   const star = (id: Screen) => (unread[id] && screen !== id ? "*" : "");
   const labels: Array<{ id: Screen; text: string }> = [

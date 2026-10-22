@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import {
   useAppStore,
   useBashJobs,
@@ -37,8 +38,7 @@ const TONE_FG: Record<StripTone, string> = roleMap({
 export const StatusBar = themedMemo<{
   waitingForSecondCtrlC: boolean;
 }>(({ waitingForSecondCtrlC }) => {
-  const { stdout } = useStdout();
-  const width = stdout?.columns ?? 80;
+  const { columns: width } = useTerminalSize();
 
   const tasks = useTasks();
   const workers = useSubagents();

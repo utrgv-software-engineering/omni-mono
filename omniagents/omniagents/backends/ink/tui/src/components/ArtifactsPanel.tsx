@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { useKeypress } from "../hooks/useKeypress.js";
@@ -59,8 +60,7 @@ type Props = {
 export const ArtifactsPanel = themedMemo<Props>(
   ({ focused, onUnfocus, saveDir }) => {
     const artifacts = useArtifacts();
-    const { stdout } = useStdout();
-    const width = stdout?.columns ?? 80;
+    const { columns: width } = useTerminalSize();
 
     const [index, setIndex] = useState(0);
     const [previewing, setPreviewing] = useState(false);
