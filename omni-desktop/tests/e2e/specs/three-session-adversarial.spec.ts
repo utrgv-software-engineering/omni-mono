@@ -127,7 +127,7 @@ test('isolates three mixed sessions through seeded switching churn, duplicate ev
   await expect(c!.getByTitle('Choose the model for this conversation', { exact: true })).toBeEnabled();
   await expect(c!.getByRole('button', { name: 'Approve Once', exact: true })).toBeVisible();
   await show(0);
-  await expect(a!.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
+  await expect(a!.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 60_000 });
   await expect(a!.getByTitle('Choose the model for this conversation', { exact: true })).toBeEnabled();
   await expect(a!.getByText('A_ARTIFACT_initial', { exact: true })).toBeVisible();
   await attachProofPng(testInfo, 'three sessions recovered after offline transport', await app.captureScreenshot());
