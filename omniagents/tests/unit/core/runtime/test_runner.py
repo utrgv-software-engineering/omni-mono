@@ -1,6 +1,11 @@
 import argparse
 import asyncio
+import socket
+import sys
+import threading
 import types
+import urllib.parse
+import urllib.request
 
 import pytest
 
@@ -154,100 +159,90 @@ def test_from_agent_without_build_context_uses_variables_as_context(monkeypatch)
     assert spec.build_context is None
 
 
-@pytest.mark.parametrize("explicit_workspace", [False, True])
-def test_run_notebook_configures_environment_and_voice(
-    monkeypatch, tmp_path, explicit_workspace
-):
+@pytest.fixture
+def notebook(monkeypatch, tmp_path):
+    """run_notebook against a real uvicorn server, with IPython faked.
+
+    The app answers ``GET /whoami`` with the spec's name, so a test can
+    tell which runner's server a displayed URL actually reaches.
+    """
+    from fastapi import FastAPI
+    from fastapi.responses import PlainTextResponse
+
     monkeypatch.chdir(tmp_path)
-    workspace_root = tmp_path / "project" if explicit_workspace else tmp_path
-    workspace_root.mkdir(exist_ok=True)
-    app_options = {}
+    displayed = []
+    app_options = []
+    lock = threading.Lock()
 
-    class DummyIFrame:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
+    class IFrame:
+        def __init__(self, url, **kwargs):
+            self.url = url
 
-    class DummyHTML:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
+    shown_by_thread = {}
 
-    display_calls = []
+    def display(obj):
+        with lock:
+            displayed.append(obj)
+            if isinstance(obj, IFrame):
+                shown_by_thread[threading.get_ident()] = obj.url
 
-    ipy_display = types.SimpleNamespace(
-        IFrame=DummyIFrame,
-        HTML=DummyHTML,
-        display=lambda x: display_calls.append(x),
-    )
     monkeypatch.setitem(
-        __import__("sys").modules,
+        sys.modules,
         "IPython.display",
-        ipy_display,
+        types.SimpleNamespace(IFrame=IFrame, HTML=lambda html: html, display=display),
     )
-
-    class DummyStaticFiles:
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
-
-    monkeypatch.setitem(
-        __import__("sys").modules,
-        "fastapi.staticfiles",
-        types.SimpleNamespace(StaticFiles=DummyStaticFiles),
-    )
-    monkeypatch.setitem(
-        __import__("sys").modules,
-        "uvicorn",
-        types.SimpleNamespace(run=lambda **kwargs: None),
-    )
-
-    class DummyApp:
-        def add_middleware(self, *args, **kwargs):
-            return None
-
-        def mount(self, *args, **kwargs):
-            return None
 
     def build_app(**kwargs):
-        app_options.update(kwargs)
-        return DummyApp()
+        with lock:
+            app_options.append(kwargs)
+        app = FastAPI()
+        name = kwargs["spec"].name
+
+        @app.get("/whoami")
+        async def whoami():
+            return PlainTextResponse(name)
+
+        return app
 
     monkeypatch.setattr("omniagents.backends.server.app.build_app", build_app)
     monkeypatch.setattr(Runner, "_resolve_web_ui_dist", lambda self: None)
-    monkeypatch.setattr(Runner, "_find_available_port", lambda *args, **kwargs: 8123)
 
-    class DummySocket:
-        def __init__(self, *args, **kwargs):
-            self
+    runners = []
 
-        def __enter__(self):
-            return self
+    def run(runner, **options):
+        """Run ``runner`` in notebook mode; returns the base URL it displayed."""
+        with lock:
+            runners.append(runner)
+            shown_by_thread.pop(threading.get_ident(), None)
+        runner.run_notebook(**options)
+        with lock:
+            return shown_by_thread[threading.get_ident()].split("?")[0]
 
-        def __exit__(self, exc_type, exc, tb):
-            return False
+    ns = types.SimpleNamespace(
+        run=run, displayed=displayed, app_options=app_options, IFrame=IFrame
+    )
+    yield ns
+    for runner in runners:
+        runner.stop_notebook()
 
-        def settimeout(self, *args, **kwargs):
-            return None
 
-        def connect(self, *args, **kwargs):
-            return None
+def _whoami(base_url):
+    with urllib.request.urlopen(base_url + "whoami", timeout=5) as resp:
+        return resp.read().decode()
 
-        def bind(self, *args, **kwargs):
-            return None
 
-    monkeypatch.setattr("socket.socket", lambda *args, **kwargs: DummySocket())
-    monkeypatch.setattr("time.sleep", lambda *args, **kwargs: None)
+def _port_is_closed(port):
+    with socket.socket() as s:
+        s.settimeout(1)
+        return s.connect_ex(("127.0.0.1", port)) != 0
 
-    class DummyThread:
-        def __init__(self, target=None, daemon=None):
-            self._target = target
 
-        def start(self):
-            if self._target:
-                self._target()
-
-    monkeypatch.setattr("omniagents.core.runtime.runner.Thread", DummyThread)
+@pytest.mark.parametrize("explicit_workspace", [False, True])
+def test_run_notebook_configures_environment_and_voice(
+    notebook, tmp_path, explicit_workspace
+):
+    workspace_root = tmp_path / "project" if explicit_workspace else tmp_path
+    workspace_root.mkdir(exist_ok=True)
 
     spec = make_spec()
     spec.voice_spec = make_spec(name="Voice")
@@ -259,14 +254,94 @@ def test_run_notebook_configures_environment_and_voice(
         if explicit_workspace
         else {}
     )
-    runner.run_notebook(**notebook_options)
+    url = notebook.run(runner, **notebook_options)
 
+    (app_options,) = notebook.app_options
     assert app_options["default_host_workspace_root"] == str(workspace_root)
     assert app_options["spec"] is spec
     assert runner.spec.voice_spec.realtime_mode is True
     assert runner.spec.voice_spec.realtime_settings is not None
     assert "audio" in (runner.spec.voice_spec.realtime_settings.modalities or [])
-    assert len(display_calls) == 2
+    assert len(notebook.displayed) == 2
+    # The server is up by the time the iframe is shown.
+    assert _whoami(url) == "Agent"
+
+
+def test_run_notebook_rerun_many_times_replaces_the_server(notebook):
+    runner = Runner(spec=make_spec(name="rerun"))
+    previous_port = None
+    for _ in range(30):
+        url = notebook.run(runner)
+        assert _whoami(url) == "rerun"
+        if previous_port is not None:
+            assert _port_is_closed(previous_port)
+        previous_port = urllib.parse.urlsplit(url).port
+
+
+def test_run_notebook_many_runners_sequentially(notebook):
+    # More runs than the old 8080-8099 probe range had ports for.
+    for i in range(30):
+        runner = Runner(spec=make_spec(name=f"seq-{i}"))
+        assert _whoami(notebook.run(runner)) == f"seq-{i}"
+
+
+def test_run_notebook_many_runners_concurrently(notebook):
+    count = 16
+    barrier = threading.Barrier(count)
+    urls = {}
+    errors = []
+
+    def worker(i):
+        runner = Runner(spec=make_spec(name=f"conc-{i}"))
+        try:
+            barrier.wait()
+            urls[i] = notebook.run(runner)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(count)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(60)
+
+    assert errors == []
+    assert len(urls) == count
+    assert len(set(urls.values())) == count
+    # Every iframe reaches its own runner's server, never a neighbour's.
+    for i, url in urls.items():
+        assert _whoami(url) == f"conc-{i}"
+
+
+def test_run_notebook_explicit_busy_port_fails_loudly(notebook):
+    with socket.socket() as squatter:
+        squatter.bind(("127.0.0.1", 0))
+        squatter.listen()
+        port = squatter.getsockname()[1]
+        runner = Runner(spec=make_spec())
+        with pytest.raises(OSError):
+            runner.run_notebook(port=port)
+    assert notebook.displayed == []
+
+
+def test_run_notebook_startup_failure_raises(notebook, monkeypatch):
+    from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    @asynccontextmanager
+    async def failing_lifespan(app):
+        raise RuntimeError("boom")
+        yield
+
+    monkeypatch.setattr(
+        "omniagents.backends.server.app.build_app",
+        lambda **kwargs: FastAPI(lifespan=failing_lifespan),
+    )
+    runner = Runner(spec=make_spec())
+    with pytest.raises(RuntimeError, match="failed to start"):
+        runner.run_notebook()
+    assert notebook.displayed == []
 
 
 def test_from_remote_uses_env_token(monkeypatch):

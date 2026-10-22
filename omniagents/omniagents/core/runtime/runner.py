@@ -1,9 +1,7 @@
 """Core runner for executing agents in different modes."""
 
-import socket
 import time
 import os
-from threading import Thread
 from typing import Optional, List, Any, Dict, TYPE_CHECKING
 
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions, MCPServerConfig
@@ -30,6 +28,7 @@ class Runner:
             self.spec = load_agent_spec_from_yaml(config_path)
         else:
             raise ValueError("Either spec or config_path must be provided")
+        self._notebook_server: Optional[Any] = None
 
         # Setup tracing - disabled by default unless explicitly configured
         from omniagents.core.tracing import setup_tracing
@@ -426,7 +425,7 @@ class Runner:
         Args:
             height: Height of the embedded UI in pixels (default: 600)
             width: Width of the embedded UI (default: "100%")
-            port: Specific port to use (default: auto-select starting at 8080)
+            port: Specific port to use (default: a free port chosen by the OS)
             auth_token: Optional authentication token
             minimal_ui: If True, hide the sidebar (default: True)
             input: Optional message to send immediately on load
@@ -452,15 +451,12 @@ class Runner:
             from omniagents.backends.server.app import build_app
             import uvicorn
             from fastapi.staticfiles import StaticFiles
+            from omniagents.core.utils.serving import BackgroundServer, bind_socket
         except ImportError:
             raise ImportError(
                 "Server dependencies not installed. "
                 "Install with: pip install omniagents[server]"
             )
-
-        # Find available port
-        if port is None:
-            port = self._find_available_port(8080)
 
         try:
             from omniagents.core.agents.specs import RealtimeSettings
@@ -537,48 +533,40 @@ class Runner:
                 "/", StaticFiles(directory=str(dist_dir), html=True), name="webui"
             )
 
-        # Start server in background thread
-        def run_server():
-            import logging
+        # Silence noisy third-party loggers
+        import logging
 
-            for name in (
-                "agents",
-                "openai",
-                "httpx",
-                "urllib3",
-                "anthropic",
-                "litellm",
-            ):
-                try:
-                    lg = logging.getLogger(name)
-                    lg.handlers.clear()
-                    lg.addHandler(logging.NullHandler())
-                    lg.setLevel(logging.CRITICAL)
-                    lg.propagate = False
-                except Exception:
-                    pass
-            uvicorn.run(
-                app=app,
-                host="127.0.0.1",
-                port=port,
-                log_level="error",
-                access_log=False,
-            )
-
-        server_thread = Thread(target=run_server, daemon=True)
-        server_thread.start()
-
-        # Wait for server to be ready
-        for i in range(20):
-            time.sleep(0.25)
+        for name in (
+            "agents",
+            "openai",
+            "httpx",
+            "urllib3",
+            "anthropic",
+            "litellm",
+        ):
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.settimeout(1)
-                    s.connect(("127.0.0.1", port))
-                    break
-            except (socket.timeout, ConnectionRefusedError):
-                if i == 19:
-                    raise RuntimeError(f"Failed to start server on port {port}")
+                lg = logging.getLogger(name)
+                lg.handlers.clear()
+                lg.addHandler(logging.NullHandler())
+                lg.setLevel(logging.CRITICAL)
+                lg.propagate = False
+            except Exception:
+                pass
+
+        # Re-running the cell replaces this runner's previous server instead
+        # of leaving it running beside the new one.
+        self.stop_notebook()
+
+        # Bind the socket here (port 0 unless one was asked for) and hand it
+        # to uvicorn, so the port the iframe points at is the one this server
+        # listens on — never one another kernel grabbed in the meantime.
+        server = BackgroundServer(
+            uvicorn.Config(app=app, log_level="error", access_log=False),
+            bind_socket("127.0.0.1", port or 0),
+        )
+        server.start()
+        self._notebook_server = server
+        port = server.port
 
         # Build URL with query params
         from urllib.parse import urlencode
@@ -607,20 +595,12 @@ class Runner:
             )
         )
 
-    @staticmethod
-    def _find_available_port(start_port: int, max_attempts: int = 20) -> int:
-        """Find an available port starting from start_port."""
-        for offset in range(max_attempts):
-            port = start_port + offset
-            try:
-                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                    s.bind(("127.0.0.1", port))
-                    return port
-            except OSError:
-                continue
-        raise RuntimeError(
-            f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}"
-        )
+    def stop_notebook(self) -> None:
+        """Stop the server started by :meth:`run_notebook`, if one is running."""
+        server = self._notebook_server
+        if server is not None:
+            self._notebook_server = None
+            server.stop()
 
     def _resolve_web_ui_dist(self) -> Optional[Any]:
         """Resolve the web UI dist directory."""
