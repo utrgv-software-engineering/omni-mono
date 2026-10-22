@@ -38,6 +38,29 @@ it('resends a lost answer to the same question and clears the banner once it is 
   expect(fake.request.mock.calls.filter(([, params]) => params?.submission_id)).toHaveLength(0);
 });
 
+it('resends a lost answer to its question even after the server has consumed it', async () => {
+  const { fake, session } = setup('question-consumed');
+  await session.load();
+  session.dispatch('client_request', {
+    session_id: session.id,
+    request_id: 'asked',
+    function: 'escalate',
+    args: { message: 'Attach the image' },
+  });
+  fake.clientResponse.mockRejectedValueOnce(new ConnectionClosedError('ack lost'));
+  await expect(session.send('here it is')).rejects.toThrow('ack lost');
+  // The answer landed: the server resolves the question and the client
+  // drops it. The user's resend must still be that answer, not a new turn.
+  session.panels.set('escalation', null);
+  await session.send('here it is');
+  expect(fake.clientResponse).toHaveBeenCalledTimes(2);
+  expect(fake.clientResponse.mock.calls[1]?.[0]).toBe('asked');
+  expect(fake.startRun).not.toHaveBeenCalled();
+  // Anything else typed afterwards is a new message again.
+  await session.send('a new question');
+  expect(fake.clientResponse).toHaveBeenCalledTimes(2);
+});
+
 it('surfaces a cancelled question as a rejected answer rather than successful delivery', async () => {
   const { fake, session } = setup('cancelled-question');
   await session.load();

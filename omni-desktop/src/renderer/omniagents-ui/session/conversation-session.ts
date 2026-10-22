@@ -60,6 +60,10 @@ export class ConversationSession {
   private listeners = new Map<string, Set<Listener>>();
   private transcript: ReturnType<typeof wireSessionTranscript>;
   private loading?: Promise<string>;
+  /** An answer whose delivery the transport could not confirm. The server
+   * may have consumed it (clearing the question), so an identical resend
+   * must still go back as that answer, never as a new message. */
+  private unconfirmedAnswer: { requestId: string; text: string } | null = null;
   private registered = false;
   private workersRevision = 0;
   private submission: Promise<unknown> = Promise.resolve();
@@ -474,10 +478,11 @@ export class ConversationSession {
   private async sendNow(text: string, files: File[] | undefined, options: SendOptions) {
     this.assertReady();
     const escalation = this.panels.state.get().escalation;
-    if (escalation && !text.startsWith('/')) {
+    const resend = this.unconfirmedAnswer?.text === text ? this.unconfirmedAnswer : null;
+    const requestId = escalation?.request_id ?? resend?.requestId;
+    if (requestId && !text.startsWith('/')) {
       const { content } = await encodeMessage(text, files);
       this.assertReady();
-      const requestId = escalation.request_id;
       // The question id is the answer's identity: the server keeps a receipt
       // per request, so an exact resend of the same answer is acknowledged
       // without being consumed twice. A transport failure is reported as is;
@@ -488,6 +493,11 @@ export class ConversationSession {
           ...(content ? { input_content: content } : {}),
         });
       } catch (error) {
+        if (error instanceof ConnectionClosedError || error instanceof RpcTimeoutError) {
+          this.unconfirmedAnswer = { requestId, text };
+        } else {
+          this.unconfirmedAnswer = null;
+        }
         if (
           error instanceof ClientRequestNotPendingError &&
           this.panels.state.get().escalation?.request_id === requestId
@@ -496,6 +506,7 @@ export class ConversationSession {
         }
         throw error;
       }
+      this.unconfirmedAnswer = null;
       if (this.panels.state.get().escalation?.request_id === requestId) {
         this.panels.set('escalation', null);
       }
