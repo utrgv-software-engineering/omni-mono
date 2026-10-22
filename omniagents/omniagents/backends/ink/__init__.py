@@ -501,6 +501,12 @@ class InkBackend:
                 for n in names:
                     if n.endswith(".ts") or n.endswith(".tsx"):
                         files.append(str(Path(root) / n))
+            # The patch-package patches change what the bundle contains
+            # (Ink's renderer itself), so a changed patch must rebuild too.
+            for root, _dirs, names in os.walk(src_base / "patches"):
+                for n in names:
+                    if n.endswith(".patch"):
+                        files.append(str(Path(root) / n))
             files.append(str(src_base / "package.json"))
             files.append(str(src_base / "tsconfig.json"))
             tsx_cfg = src_base / "tsconfig.tsx.json"
