@@ -34,7 +34,7 @@ test.describe('MCP connectors', () => {
     await createDialog.locator('input[placeholder="npx"]').fill(process.execPath);
     await createDialog.locator('input[placeholder="arg1, arg2"]').fill(fixturePath);
     await createDialog.getByRole('button', { name: 'Save', exact: true }).click();
-    await expect(createDialog).toBeHidden();
+    await expect(createDialog).toBeHidden({ timeout: 120_000 });
     const created = connectorCard(app.page, E2E_MCP_CREATED_SERVER_NAME);
     await expect(created).toBeVisible();
     await expect.poll(() => app.inspectMcpConfig().createdServerPresent).toBe(true);

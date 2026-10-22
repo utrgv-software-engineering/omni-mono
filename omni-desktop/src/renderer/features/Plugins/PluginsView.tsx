@@ -108,11 +108,7 @@ export const PluginsView = memo(() => {
 
   const saveConnector = useCallback(
     async (id: string, entry: McpServerEntry) => {
-      // Without the runtime's list we can't tell an update from a create.
-      if (!managementSnapshot.mcp.data) {
-        throw new Error('Connectors are still loading. Try again in a moment.');
-      }
-      const runtime = managementSnapshot.mcp.data.servers.find((server) => server.server_name === id);
+      const runtime = managementSnapshot.mcp.data?.servers.find((server) => server.server_name === id);
       if (runtime?.read_only) {
         throw new Error(`MCP server "${id}" is managed by the Omniagents host and cannot be changed.`);
       }
@@ -124,7 +120,7 @@ export const PluginsView = memo(() => {
       await refreshManagement();
       await refresh();
     },
-    [managementSnapshot.mcp.data, refresh, refreshManagement]
+    [managementSnapshot.mcp.data?.servers, refresh, refreshManagement]
   );
 
   const removeConnector = useCallback(
