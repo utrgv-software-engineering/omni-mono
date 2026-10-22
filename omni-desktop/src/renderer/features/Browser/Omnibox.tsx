@@ -171,15 +171,13 @@ export const Omnibox = forwardRef<
             onOpenAutoFocus={(event) => event.preventDefault()}
             onCloseAutoFocus={(event) => event.preventDefault()}
           >
+            {/* Selection is driven only by our arrow keys and hover. cmdk
+                auto-selects its first item and reports it via onValueChange;
+                feeding that back would make Enter commit a suggestion instead
+                of the typed address. */}
             <Command
               shouldFilter={false}
               value={highlight >= 0 ? `${suggestions[highlight]?.kind}:${suggestions[highlight]?.url}` : ''}
-              onValueChange={(nextValue) => {
-                const index = suggestions.findIndex(
-                  (suggestion) => `${suggestion.kind}:${suggestion.url}` === nextValue
-                );
-                setHighlight(index);
-              }}
             >
               <CommandList id={suggestionListId} className="max-h-90">
                 {suggestions.map((suggestion, index) => {

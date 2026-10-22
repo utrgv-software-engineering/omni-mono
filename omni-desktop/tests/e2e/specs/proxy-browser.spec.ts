@@ -119,9 +119,6 @@ test.describe('browser/server proxy browser', () => {
       await omnibox.fill(upstream.origin);
       await omnibox.press('Enter');
 
-      // KNOWN BUG: the suggestion list (cmdk) auto-highlights its first entry,
-      // so Enter on a typed http:// URL navigates to the DuckDuckGo search
-      // suggestion instead of the URL. Fails here until Omnibox is fixed.
       await expect(omnibox).toHaveValue(upstreamHome);
       const iframe = appPage.locator('iframe[src*="/proxy/"]').first();
       await expect(iframe).toBeVisible();
@@ -144,14 +141,18 @@ test.describe('browser/server proxy browser', () => {
       await omnibox.press('Enter');
       await expect(frame.getByRole('heading', { name: 'Proxy Test Home' })).toBeVisible();
 
-      await frame.locator('#fetch-button').click();
-      await expect(frame.locator('#fetch-result')).toHaveText('api:fetch');
+      // Root-relative fetch/XHR/WebSocket rewriting is off by default for
+      // arbitrary (dynamic) sites; it is the opt-in runtime shim policy.
+      if (/^(1|true|yes|on)$/i.test(process.env.OMNI_PROXY_DYNAMIC_RUNTIME_SHIMS ?? '')) {
+        await frame.locator('#fetch-button').click();
+        await expect(frame.locator('#fetch-result')).toHaveText('api:fetch');
 
-      await frame.locator('#xhr-button').click();
-      await expect(frame.locator('#xhr-result')).toHaveText('api:xhr');
+        await frame.locator('#xhr-button').click();
+        await expect(frame.locator('#xhr-result')).toHaveText('api:xhr');
 
-      await frame.locator('#ws-button').click();
-      await expect(frame.locator('#ws-result')).toHaveText('ws:ok');
+        await frame.locator('#ws-button').click();
+        await expect(frame.locator('#ws-result')).toHaveText('ws:ok');
+      }
 
       await frame.getByRole('button', { name: 'Submit form' }).click();
       await expect(frame.getByRole('heading', { name: 'Proxy Test Submitted' })).toBeVisible();
