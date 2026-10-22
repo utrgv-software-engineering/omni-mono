@@ -45,6 +45,7 @@ from .model import (
     content_key,
     derive_item_id,
     derive_title,
+    provider_item_id,
     terminal_status_for_end_reason,
 )
 from .store import ConversationStore, get_conversation_store
@@ -684,7 +685,8 @@ class ConversationRecorder:
         the ``message_output`` payloads it received; neither is a
         server-side position the client could not reproduce.
         """
-        if isinstance(message_id, str) and message_id:
+        message_id = provider_item_id(message_id)
+        if message_id:
             return f"message:{message_id}"
         return f"message:{turn_id}:{content_key(content)}:{occurrence}"
 

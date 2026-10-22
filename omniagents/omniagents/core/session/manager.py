@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Any
 
+from omniagents.core.conversation.model import provider_item_id
 from omniagents.core.debug import Debug
 from .event_log import MemoryEventLogStore, SessionEventLog
 from .history_db import (
@@ -906,6 +907,10 @@ class Session:  # noqa: D101
         # was clear the guard belongs HERE, at the single point every
         # history write passes through, rather than at each call site.
         recorder = _materialize_conversation_thread(self)
+        if "id" in message and provider_item_id(message.get("id")) is None:
+            # The SDK's placeholder for providers without Responses ids
+            # names nothing; stored, it made every reply look like the first.
+            message = {key: value for key, value in message.items() if key != "id"}
         if message.get("type") in ("function_call", "function_call_output"):
             run_id = getattr(self, "active_run_id", None)
             if isinstance(run_id, str) and run_id:

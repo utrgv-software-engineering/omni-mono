@@ -355,14 +355,16 @@ def stream_event_payload(
         # use it to correlate this event with the canonical conversation
         # item without inventing an ordinal the server would have to agree
         # with (see protocol.md § Conversation Domain Objects).
-        message_id = getattr(getattr(item, "raw_item", None), "id", None)
+        from omniagents.core.conversation.model import provider_item_id
+
+        message_id = provider_item_id(getattr(getattr(item, "raw_item", None), "id", None))
         payload = {
             "run_id": run_id,
             "session_id": session_id,
             "content": text,
             "is_final": False,
         }
-        if isinstance(message_id, str) and message_id:
+        if message_id:
             payload["message_id"] = message_id
         return "message_output", payload
     return None, None
@@ -584,6 +586,9 @@ async def stream_agent(
     streamed_items_buffer: list[dict] = []
     if user_msg is not None:
         streamed_items_buffer.append(user_msg)
+    # History rows from this run start here; the flush below matches
+    # id-less messages only against them.
+    history_mark = len(session.history)
 
     # Track usage across turns
     last_usage_totals = {
@@ -1217,52 +1222,62 @@ async def stream_agent(
         # The buffer's real job is to cover the cancellation/exception
         # window where the SDK never reached its turn-boundary save.
         if streamed_items_buffer:
-            # Best-effort dedupe: skip any item whose stable identity
-            # (call_id for tool calls/outputs, id for messages /
-            # reasoning) is already represented in session.history.
-            # User messages have neither, so we match on (role,
-            # content) instead.
+            # Best-effort dedupe: skip any item whose stable identity is
+            # already represented in session.history: (type, call_id) for
+            # tool calls and outputs (a call's id is optional, its call_id
+            # never is), the provider's id for messages and reasoning. A
+            # message without a real id (user prompts; replies from
+            # providers without Responses ids) matches on role and text,
+            # counted against this run's rows only, so a repeated prompt
+            # from an earlier turn is not mistaken for this one.
+            from collections import Counter
+
+            from omniagents.core.agents.transcript_compaction import content_text
+            from omniagents.core.conversation.model import provider_item_id
+
+            def _signature(item: dict) -> tuple | None:
+                role = item.get("role")
+                if role not in ("user", "assistant"):
+                    return None
+                return (role, content_text(item.get("content")))
+
             existing_ids: set[str] = set()
-            existing_call_ids: set[str] = set()
-            existing_user_signatures: set[tuple] = set()
+            existing_calls: set[tuple[str, str]] = set()
             for h in session.history:
                 if not isinstance(h, dict):
                     continue
-                iid = h.get("id")
-                if isinstance(iid, str) and iid:
+                iid = provider_item_id(h.get("id"))
+                if iid:
                     existing_ids.add(iid)
                 cid = h.get("call_id")
-                if isinstance(cid, str) and cid:
-                    existing_call_ids.add(cid)
-                if h.get("role") == "user":
-                    try:
-                        existing_user_signatures.add(("user", repr(h.get("content"))))
-                    except Exception:
-                        pass
+                htype = h.get("type")
+                if isinstance(cid, str) and cid and isinstance(htype, str):
+                    existing_calls.add((htype, cid))
+            run_signatures = Counter(
+                sig
+                for h in session.history[history_mark:]
+                if isinstance(h, dict)
+                and not provider_item_id(h.get("id"))
+                and (sig := _signature(h)) is not None
+            )
             for buffered in streamed_items_buffer:
                 if not isinstance(buffered, dict):
                     continue
-                iid = buffered.get("id")
-                if isinstance(iid, str) and iid and iid in existing_ids:
+                iid = provider_item_id(buffered.get("id"))
+                if iid and iid in existing_ids:
                     continue
                 cid = buffered.get("call_id")
-                btype = buffered.get("type", "")
-                # function_call_output is keyed only by call_id; for the
-                # call itself we already check id above.
+                btype = buffered.get("type")
                 if (
                     isinstance(btype, str)
-                    and btype.endswith("_call_output")
                     and isinstance(cid, str)
-                    and cid in existing_call_ids
+                    and (btype, cid) in existing_calls
                 ):
                     continue
-                if buffered.get("role") == "user":
-                    try:
-                        sig = ("user", repr(buffered.get("content")))
-                    except Exception:
-                        sig = None
-                    if sig is not None and sig in existing_user_signatures:
-                        continue
+                sig = None if iid else _signature(buffered)
+                if sig is not None and run_signatures[sig] > 0:
+                    run_signatures[sig] -= 1
+                    continue
                 try:
                     session.append_message(buffered)
                 except Exception:

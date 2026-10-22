@@ -291,6 +291,20 @@ def terminal_status_for_end_reason(end_reason: str | None) -> TurnStatus:
     return _END_REASON_STATUS.get((end_reason or "").strip(), TurnStatus.COMPLETED)
 
 
+def provider_item_id(value: Any) -> Optional[str]:
+    """An item id the provider minted, or ``None``.
+
+    Providers without Responses ids (chat completions, most
+    OpenAI-compatible endpoints) get the agents SDK's placeholder on every
+    item, so it identifies nothing and must never key an item.
+    """
+    from agents.models.fake_id import FAKE_RESPONSES_ID
+
+    if isinstance(value, str) and value and value != FAKE_RESPONSES_ID:
+        return value
+    return None
+
+
 def derive_item_id(thread_id: str, natural_key: str) -> str:
     """Canonical, deterministic item id.
 
