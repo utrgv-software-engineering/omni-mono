@@ -14,7 +14,6 @@ dependencies = [
     # with the openai-agents 0.17+ bump that handles the new field.
     "openai<2.45",
     "python-dotenv",
-    "pydantic-core==2.41.4",
     "pydantic==2.12.3",
     "PyYAML",
     "Jinja2",

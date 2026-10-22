@@ -4274,10 +4274,7 @@ name = "omni-code"
 version = "0.6.34"
 source = { editable = "omni-code" }
 dependencies = [
-    { name = "litellm" },
-    { name = "markitdown", extra = ["all", "docx", "pdf"] },
     { name = "omniagents", extra = ["all"] },
-    { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
@@ -4292,12 +4289,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "litellm", specifier = ">=1.0.0" },
-    { name = "markitdown", extras = ["all", "docx", "pdf"], specifier = ">=0.1.1" },
-    { name = "omniagents", extras = ["all"], editable = "omniagents" },
-    { name = "python-dotenv" },
-]
+requires-dist = [{ name = "omniagents", extras = ["all"], editable = "omniagents" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4321,7 +4313,6 @@ dependencies = [
     { name = "openai-agents", extra = ["realtime"] },
     { name = "pathspec" },
     { name = "pydantic" },
-    { name = "pydantic-core" },
     { name = "pygit2" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -4522,7 +4513,6 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], marker = "extra == 'session-postgres'", specifier = ">=3.2" },
     { name = "psycopg-pool", marker = "extra == 'session-postgres'", specifier = ">=3.2" },
     { name = "pydantic", specifier = "==2.12.3" },
-    { name = "pydantic-core", specifier = "==2.41.4" },
     { name = "pygit2" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'oidc'", specifier = ">=2.8.0" },
     { name = "pysqlcipher3", marker = "extra == 'sqlcipher'", specifier = ">=1.2.0" },
