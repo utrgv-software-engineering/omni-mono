@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { Archive, Ellipsis, PanelRight, Plus, RefreshCw } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import type { PanelImperativeHandle, PanelSize } from 'react-resizable-panels';
 
 import { ClosableTab, ClosableTabsList } from '@/renderer/ds/ClosableTabs';
 import { cn } from '@/renderer/ds/cn';
@@ -687,6 +688,23 @@ export const CodeDeck = memo(() => {
   const activeTabId = store.activeCodeTabId ?? tabs[0]?.id ?? null;
   const [previewUrls, setPreviewUrls] = useState<Record<CodeTabId, string>>({});
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const orientation = viewportWidth <= PHONE_WIDTH ? 'vertical' : 'horizontal';
+  const sidecarPanelRef = useRef<PanelImperativeHandle | null>(null);
+  // The sidecar's last open size, restored when it opens again.
+  const sidecarSizeRef = useRef<string>('50%');
+  // Read by handleSidecarResize, which outlives the render it was made in.
+  const sidecarShownRef = useRef<{ tabId: CodeTabId | null; shown: boolean }>({ tabId: null, shown: false });
+  const handleSidecarResize = useCallback((size: PanelSize) => {
+    if (size.asPercentage > 0) {
+      sidecarSizeRef.current = `${size.asPercentage}%`;
+      return;
+    }
+    // Dragged below its minimum, the panel collapses: that closes it.
+    const { tabId, shown } = sidecarShownRef.current;
+    if (shown && tabId) {
+      void codeApi.setSidecarOpen(tabId, false);
+    }
+  }, []);
   useEffect(() => {
     const handler = () => setViewportWidth(window.innerWidth);
     window.addEventListener('resize', handler);
@@ -885,6 +903,19 @@ export const CodeDeck = memo(() => {
     }
   }
   const activeSidecar = activeTab ? visibleSidecarsByTab.get(activeTab.id) : undefined;
+  const showSidecar = Boolean(activeSidecar);
+  sidecarShownRef.current = { tabId: activeTab?.id ?? null, shown: showSidecar };
+  useEffect(() => {
+    const panel = sidecarPanelRef.current;
+    if (!panel) {
+      return;
+    }
+    if (!showSidecar) {
+      panel.collapse();
+    } else if (panel.isCollapsed()) {
+      panel.resize(sidecarSizeRef.current);
+    }
+  }, [showSidecar, activeTab?.id]);
   return (
     <div className="flex flex-col w-full h-full min-h-0 overflow-hidden bg-background">
       <CodeDeckHeader onNewSession={handleNewSession} />
@@ -909,17 +940,8 @@ export const CodeDeck = memo(() => {
       )}
       {tabs.length > 0 && (
         <div className="flex-1 min-h-0 flex flex-col [@media(min-width:541px)]:flex-row">
-          <ResizablePanelGroup
-            key={`focus:${activeTab?.id ?? 'none'}:${activeSidecar ? 'split' : 'chat'}`}
-            orientation={viewportWidth <= PHONE_WIDTH ? 'vertical' : 'horizontal'}
-            className="flex-1 min-w-0 min-h-0"
-          >
-            <ResizablePanel
-              id={`focus:${activeTab?.id ?? 'none'}`}
-              defaultSize={activeSidecar ? '50%' : '100%'}
-              minSize={activeSidecar ? '30%' : undefined}
-              className="relative flex-1 min-w-0 min-h-0 overflow-hidden"
-            >
+          <ResizablePanelGroup key={orientation} orientation={orientation} className="flex-1 min-w-0 min-h-0">
+            <ResizablePanel id="focus" minSize="30%" className="relative flex-1 min-w-0 min-h-0 overflow-hidden">
               {tabs.map((tab) => {
                 return (
                   <CodeSessionPane
@@ -941,28 +963,48 @@ export const CodeDeck = memo(() => {
                 );
               })}
             </ResizablePanel>
-            {activeTab && activeSidecar && (
-              <>
-                <ResizableHandle withHandle />
-                <ResizablePanel
-                  id={`focus-sidecar:${activeTab.id}`}
-                  defaultSize="50%"
-                  minSize="30%"
-                  className="flex-1 min-w-0 min-h-0"
-                >
-                  <SidecarColumn
-                    apps={activeSidecar.apps}
-                    activeAppId={activeSidecar.activeAppId}
-                    availableApps={activeSidecar.availableApps}
-                    getAppHost={(appId) => getSidecarHost(activeTab.id, appId)}
-                    onActivate={(appId) => handleActivateSidecarApp(activeTab.id, appId)}
-                    onCloseApp={(appId) => handleCloseSidecarApp(activeTab.id, appId)}
-                    onOpenApp={(appId) => handleOpenSidecarApp(activeTab.id, appId)}
-                    onReorderApps={(appIds) => handleReorderSidecarApps(activeTab.id, appIds)}
-                  />
-                </ResizablePanel>
-              </>
-            )}
+            <ResizableHandle withHandle disabled={!activeSidecar} className={cn(!activeSidecar && 'hidden')} />
+            {/* Always mounted, collapsed while the shown session has no
+                sidecar: every session's apps stay attached where they are, so
+                a webview never reparents (which reloads it) and a background
+                session's browser still loads and stays drivable. */}
+            <ResizablePanel
+              id="focus-sidecar"
+              panelRef={sidecarPanelRef}
+              collapsible
+              collapsedSize="0%"
+              defaultSize={activeSidecar ? '50%' : '0%'}
+              minSize="30%"
+              onResize={handleSidecarResize}
+              className="relative flex-1 min-w-0 min-h-0"
+            >
+              {sessionTabs.map((tab) => {
+                const sidecar = sidecarStateByTab.get(tab.id);
+                if (!sidecar || (sidecar.apps.length === 0 && !sidecar.visible)) {
+                  return null;
+                }
+                const shown = tab.id === activeTab?.id && sidecar.visible;
+                return (
+                  <div
+                    key={tab.id}
+                    className={cn('absolute inset-0', !shown && 'invisible pointer-events-none')}
+                    inert={!shown}
+                    aria-hidden={!shown}
+                  >
+                    <SidecarColumn
+                      apps={sidecar.apps}
+                      activeAppId={sidecar.activeAppId}
+                      availableApps={sidecar.availableApps}
+                      getAppHost={(appId) => getSidecarHost(tab.id, appId)}
+                      onActivate={(appId) => handleActivateSidecarApp(tab.id, appId)}
+                      onCloseApp={(appId) => handleCloseSidecarApp(tab.id, appId)}
+                      onOpenApp={(appId) => handleOpenSidecarApp(tab.id, appId)}
+                      onReorderApps={(appIds) => handleReorderSidecarApps(tab.id, appIds)}
+                    />
+                  </div>
+                );
+              })}
+            </ResizablePanel>
           </ResizablePanelGroup>
         </div>
       )}
