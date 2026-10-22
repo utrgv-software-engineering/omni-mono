@@ -20,7 +20,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { join } from 'node:path';
 
 import { app } from 'electron';
@@ -75,9 +74,23 @@ const PROVISION_SCRIPT = `rm -rf ${REMOTE_ROOT}.tmp && mkdir -p ${REMOTE_ROOT}.t
  *  the pidfile's port — always replace it before spawning. */
 const REAP_SCRIPT = `test -f ${REMOTE_ROOT}/daemon.pid && kill $(cat ${REMOTE_ROOT}/daemon.pid) 2>/dev/null; true`;
 
-/** `exec` keeps the pidfile pointing at the node process itself, so REAP_SCRIPT
- *  kills the daemon and not a wrapper shell. */
-const DAEMON_SCRIPT = `echo $$ > ${REMOTE_ROOT}/daemon.pid && exec ${REMOTE_ROOT}/node/bin/node ${REMOTE_ROOT}/server/index.mjs`;
+/**
+ * The daemon binds its own port inside the distro (PORT=0 on a fresh start)
+ * and writes the bound port here once it is listening; main reads it back
+ * through wsl.exe. Probing a free port on the Windows side and handing the
+ * number over left a window in which anything could take it before the
+ * daemon bound. Removed before every spawn so a previous daemon's port is
+ * never read back.
+ */
+const PORT_FILE = `${REMOTE_ROOT}/daemon.port`;
+/** For `env`, which does no tilde expansion: spelled with `$HOME`, which the
+ *  enclosing `sh -c` expands. */
+const PORT_FILE_ENV = `OMNI_PORT_FILE=${PORT_FILE.replace(/^~/, '$HOME')}`;
+const READ_PORT_SCRIPT = `cat ${PORT_FILE}`;
+
+/** `exec env` keeps the pidfile pointing at the node process itself (env
+ *  execs node), so REAP_SCRIPT kills the daemon and not a wrapper shell. */
+const DAEMON_SCRIPT = `rm -f ${PORT_FILE}; echo $$ > ${REMOTE_ROOT}/daemon.pid && exec env ${PORT_FILE_ENV} ${REMOTE_ROOT}/node/bin/node ${REMOTE_ROOT}/server/index.mjs`;
 
 const DAEMON_LOG = `${REMOTE_ROOT}/daemon.log`;
 
@@ -91,7 +104,8 @@ const DAEMON_LOG = `${REMOTE_ROOT}/daemon.log`;
 const detachedDaemonScript = (secret: string, port: number, launcherVersion: string): string =>
   `mkdir -p ${REMOTE_ROOT}; ` +
   `[ -f ${DAEMON_LOG} ] && [ "$(wc -c < ${DAEMON_LOG})" -gt ${MAX_DAEMON_LOG_BYTES} ] && : > ${DAEMON_LOG}; ` +
-  `nohup env OMNI_WS_TOKEN_SECRET=${secret} PORT=${port} HOST=127.0.0.1 OMNI_LAUNCHER_VERSION=${launcherVersion} ` +
+  `rm -f ${PORT_FILE}; ` +
+  `nohup env OMNI_WS_TOKEN_SECRET=${secret} PORT=${port} HOST=127.0.0.1 OMNI_LAUNCHER_VERSION=${launcherVersion} ${PORT_FILE_ENV} ` +
   `${REMOTE_ROOT}/node/bin/node ${REMOTE_ROOT}/server/index.mjs >> ${DAEMON_LOG} 2>&1 & ` +
   `echo $! > ${REMOTE_ROOT}/daemon.pid`;
 
@@ -222,27 +236,6 @@ const defaultRunElevated: RunElevated = (exe, args) =>
     child.stdin.end();
   });
 
-/**
- * Bind-probe a free port on the Windows loopback. WSL2 NAT maps localhost
- * ports 1:1 (Windows→distro), so a port free here is the daemon's usable
- * listen port.
- */
-const defaultPickFreePort = (): Promise<number> =>
-  new Promise((resolve, reject) => {
-    const server = createServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      server.close(() => {
-        if (address && typeof address === 'object') {
-          resolve(address.port);
-        } else {
-          reject(new Error('port bind probe returned no address'));
-        }
-      });
-    });
-  });
-
 /** Packaged: `extraResources`. Dev: the payload assembled into out/wsl-payload. */
 const defaultPayloadPath = (): string =>
   app.isPackaged
@@ -269,7 +262,6 @@ type WslBackendManagerArgs = {
   fetchFn?: typeof globalThis.fetch;
   platform?: NodeJS.Platform;
   payloadPath?: () => string;
-  pickFreePort?: () => Promise<number>;
   supervisionIntervalMs?: number;
 };
 
@@ -283,11 +275,12 @@ export class WslBackendManager {
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly platform: NodeJS.Platform;
   private readonly payloadPath: () => string;
-  private readonly pickFreePort: () => Promise<number>;
   private readonly supervisionIntervalMs: number;
 
   private status: WslBackendStatus = { state: 'idle', timestamp: Date.now() };
   private distro: string | null = null;
+  /** The daemon's bound port: null from start() until the daemon reports it
+   *  (PORT_FILE), then kept for respawns so the renderer's URL stays valid. */
   private port: number | null = null;
   /** Token-signing secret. Per-boot random in tracked mode (memory only);
    *  the durable stored secret in persistent mode. */
@@ -315,7 +308,6 @@ export class WslBackendManager {
     this.fetchFn = arg.fetchFn ?? globalThis.fetch;
     this.platform = arg.platform ?? process.platform;
     this.payloadPath = arg.payloadPath ?? defaultPayloadPath;
-    this.pickFreePort = arg.pickFreePort ?? defaultPickFreePort;
     this.supervisionIntervalMs = arg.supervisionIntervalMs ?? SUPERVISION_INTERVAL_MS;
   }
 
@@ -480,24 +472,19 @@ export class WslBackendManager {
   }
 
   /**
-   * Pick a port, persist it into `store.remoteBackend` (the bootstrap URL in
-   * main-process-manager derives from this, so it must land BEFORE window
-   * creation), resolve the secret (per-boot random, or the durable stored one
-   * in persistent mode), and spawn the daemon.
+   * Resolve the secret (per-boot random, or the durable stored one in
+   * persistent mode) and spawn the daemon on a port it binds itself. The port
+   * is persisted into `store.remoteBackend` as soon as the daemon reports it —
+   * before the manager reaches `running`, which boot() waits for, because the
+   * bootstrap URL in main-process-manager derives from it at window creation.
    */
   async start(distro: string): Promise<void> {
     if (this.platform !== 'win32') {
       return;
     }
     this.distro = distro;
-    this.port = await this.pickFreePort();
+    this.port = null;
     this.secret = this.persistent ? await this.ensureDurableSecret() : randomBytes(32).toString('hex');
-    this.store.set('remoteBackend', {
-      kind: 'wsl',
-      distro,
-      port: this.port,
-      ...(this.persistent ? { persistent: true } : {}),
-    });
     this.enabled = true;
     this.consecutiveFailures = 0;
     this.spawnDaemon();
@@ -600,14 +587,17 @@ export class WslBackendManager {
   }
 
   private spawnDaemon(): void {
-    const { distro, port, secret } = this;
-    if (!distro || port === null || !secret) {
+    const { distro, secret } = this;
+    if (!distro || !secret) {
       return;
     }
+    // A fresh start lets the daemon pick (0); a respawn asks for the port the
+    // renderer already dials.
+    const port = this.port ?? 0;
     const gen = ++this.generation;
     this.stderrTail = '';
     if (this.persistent) {
-      this.setStatus({ state: 'starting', distro, port });
+      this.setStatus({ state: 'starting', distro, port: this.port ?? undefined });
       void this.spawnDetached(gen, distro, port, secret);
       return;
     }
@@ -631,7 +621,7 @@ export class WslBackendManager {
     });
     child.once('exit', (code) => this.onDaemonDied(gen, code));
     this.child = child;
-    this.setStatus({ state: 'starting', distro, port });
+    this.setStatus({ state: 'starting', distro, port: this.port ?? undefined });
     void this.pollUntilHealthy(gen);
   }
 
@@ -711,7 +701,10 @@ export class WslBackendManager {
     // event drives failure detection).
     let attempts = 0;
     while (gen === this.generation && this.enabled) {
-      if (await this.probeHealth()) {
+      if (this.port === null) {
+        await this.readReportedPort(gen);
+      }
+      if (this.port !== null && (await this.probeHealth())) {
         if (gen !== this.generation || !this.enabled) {
           return;
         }
@@ -731,6 +724,40 @@ export class WslBackendManager {
       }
       await sleep(HEALTH_POLL_INTERVAL_MS);
     }
+  }
+
+  /**
+   * Adopt the port the daemon wrote to PORT_FILE once listening, and persist
+   * it into `store.remoteBackend`. Leaves `port` null while the file is
+   * absent (daemon still starting); the caller polls.
+   */
+  private async readReportedPort(gen: number): Promise<void> {
+    const { distro } = this;
+    if (!distro) {
+      return;
+    }
+    let res: RunWslResult;
+    try {
+      res = await this.runWsl(execArgs(distro, READ_PORT_SCRIPT));
+    } catch {
+      return;
+    }
+    if (gen !== this.generation || !this.enabled || res.code !== 0) {
+      return;
+    }
+    const text = decodeWslOutput(res.stdout).trim();
+    const port = /^\d+$/.test(text) ? Number(text) : 0;
+    if (port <= 0 || port > 65_535) {
+      return;
+    }
+    this.port = port;
+    this.store.set('remoteBackend', {
+      kind: 'wsl',
+      distro,
+      port,
+      ...(this.persistent ? { persistent: true } : {}),
+    });
+    this.setStatus({ port });
   }
 
   /**
