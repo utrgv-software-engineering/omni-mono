@@ -81,7 +81,3 @@ class StratifiedBatchSampler:
         ordered universe). The loader and state args are unused — sampling
         operates on the positives/negatives indexed at construction time."""
         return self._build_minibatch()
-
-    def next_minibatch_indices(self, trainset_size: int, iteration: int) -> list[int]:
-        """Legacy gepa < 0.1.x API. Kept as an alias for backwards compat."""
-        return self._build_minibatch()

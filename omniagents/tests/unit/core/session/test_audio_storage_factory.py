@@ -5,16 +5,9 @@ from __future__ import annotations
 import pytest
 
 from omniagents.core.session.audio_storage import (
-    AudioStorage,
     LocalAudioStorage,
     build_audio_storage,
 )
-
-
-def test_audio_storage_alias_matches_local():
-    """``AudioStorage`` stays as a name alias so ``AudioStorage(base_path=...)``
-    constructors in pre-refactor consumer code keep working."""
-    assert AudioStorage is LocalAudioStorage
 
 
 def test_build_audio_storage_defaults_to_local(tmp_path, monkeypatch):

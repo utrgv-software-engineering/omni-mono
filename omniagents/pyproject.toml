@@ -16,7 +16,6 @@ dependencies = [
     "python-dotenv",
     # Transcript thumbnails for attached images.
     "pillow>=11",
-    "pydantic-core==2.41.4",
     "pydantic==2.12.3",
     "PyYAML",
     "Jinja2",

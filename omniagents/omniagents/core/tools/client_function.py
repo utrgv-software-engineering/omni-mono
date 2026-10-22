@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import functools
 import inspect
-from typing import Any, Callable, Optional
+from typing import Callable
 
 from .discovery import function_tool
 

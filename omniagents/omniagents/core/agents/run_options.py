@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import importlib
 import os
-from typing import Any, Callable, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Optional
 
 from omniagents.core.utils.logging import get_logger
 
@@ -127,18 +127,6 @@ def resolve_error_handlers(
             continue
         handlers[kind] = _resolve_dotted(str(target))
     return handlers or None
-
-
-def resolve_tool_execution_config(config: Optional[Dict[str, Any]]) -> Optional[Any]:
-    """Coerce a YAML ``tool_execution`` block to ``ToolExecutionConfig``."""
-    if not config:
-        return None
-    try:
-        from agents.run_config import ToolExecutionConfig
-    except Exception:  # pragma: no cover
-        return None
-    allowed: Iterable[str] = ("max_function_tool_concurrency",)
-    return ToolExecutionConfig(**{k: config[k] for k in allowed if k in config})
 
 
 def _expand_env(value: Any) -> Any:

@@ -28,14 +28,6 @@ class TestJsonRpcChannel:
         channel = JsonRpcChannel(transport)
         assert channel.transport is transport
 
-    def test_websocket_backward_compatibility(self):
-        """Test backward compatibility property."""
-        ws = Mock()
-        transport = Mock()
-        transport.websocket = ws
-        channel = JsonRpcChannel(transport)
-        assert channel.websocket is ws
-
     @pytest.mark.asyncio
     async def test_async_call_sends_notification(self):
         transport = AsyncMock()

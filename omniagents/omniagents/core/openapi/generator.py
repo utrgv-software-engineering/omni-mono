@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .parser import Operation, Parameter, get_security_scheme, parse_openapi_spec
+from .parser import Operation, get_security_scheme, parse_openapi_spec
 from .type_mapper import get_required_imports, openapi_type_to_python
 
 
@@ -19,14 +19,6 @@ def _camel_to_snake(name: str) -> str:
     s1 = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
     # Insert underscore before uppercase letters following lowercase
     return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
-
-
-def _sanitize_param_name(name: str) -> str:
-    """Sanitize a parameter name to be a valid Python identifier.
-
-    Replaces hyphens with underscores and removes other invalid chars.
-    """
-    return name.replace("-", "_")
 
 
 def _flatten_object_properties(
@@ -367,12 +359,7 @@ def _generate_docstring(
             if prop_schema.get("type") == "object" and prop_schema.get("properties"):
                 # Document each flattened property with its constraints
                 flattened = _flatten_object_properties(prop_name, prop_schema)
-                nested_required = set(prop_schema.get("required", []))
                 for flat_name, flat_schema, nested_req in flattened:
-                    # Extract the leaf name to check if it's in nested required
-                    leaf_name = (
-                        flat_name.split("_")[-1] if "_" in flat_name else flat_name
-                    )
                     param_required = is_required and nested_req
                     desc = _build_param_description(
                         flat_schema,

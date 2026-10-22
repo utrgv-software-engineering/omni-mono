@@ -7,7 +7,6 @@ via WebSocket.
 """
 
 from typing import Protocol, Any, List, Dict, Optional, runtime_checkable
-from abc import abstractmethod
 
 
 @runtime_checkable

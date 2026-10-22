@@ -406,12 +406,6 @@ class _UserMcpFileStore:
             return []
         return [str(name) for name in servers]
 
-    def get_entry(self, name: str) -> Dict[str, Any] | None:
-        servers = self.read_raw().get("mcpServers")
-        if isinstance(servers, dict) and isinstance(servers.get(name), dict):
-            return dict(servers[name])
-        return None
-
     def upsert(self, name: str, entry: Dict[str, Any]) -> None:
         doc = self.read_raw()
         servers = doc.get("mcpServers")

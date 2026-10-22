@@ -4,7 +4,6 @@ from typing import Any, AsyncGenerator, List, Dict, Optional
 
 from agents import RunConfig, StreamEvent
 import asyncio
-import os
 from importlib.metadata import version
 from pydantic import ValidationError
 

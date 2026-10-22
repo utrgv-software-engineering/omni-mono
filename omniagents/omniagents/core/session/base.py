@@ -1,7 +1,7 @@
 """Base classes and interfaces for session management."""
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Any
 import uuid
 
 

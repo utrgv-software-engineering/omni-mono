@@ -6,9 +6,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "omniagents[all]==0.7.40",
-    "python-dotenv",
-    "markitdown[all,docx,pdf]>=0.1.1",
-    "litellm>=1.0.0",  # For non-OpenAI model support
 ]
 
 [tool.pytest.ini_options]
@@ -82,7 +79,6 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["main"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
@@ -114,6 +110,3 @@ exclude = [
     "prompts/*.md",
     "capabilities/*.yml",
 ]
-"omni_agents.omni" = ["*.yml", "*.md"]
-"omni_agents.voice_agent" = ["*.yml", "*.md"]
-"omni_agents.init_agent" = ["*.yml", "*.md"]

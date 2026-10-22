@@ -128,7 +128,7 @@ session = RealtimeSession(
     spec=agent_spec,
     settings={"openai_api_key": "sk-..."},
     session_id="optional-session-id",
-    audio_storage=None  # Optional custom AudioStorage
+    audio_storage=None  # Optional custom AudioStorageBackend
 )
 ```
 
@@ -136,7 +136,7 @@ session = RealtimeSession(
 - `spec` (AgentSpec): Agent spec with `realtime_mode=True`
 - `settings` (Optional[Dict[str, Any]]): API keys and settings
 - `session_id` (Optional[str]): Session ID (generated if not provided)
-- `audio_storage` (Optional[AudioStorage]): Custom audio storage
+- `audio_storage` (Optional[AudioStorageBackend]): Custom audio storage
 
 #### Methods
 
@@ -259,7 +259,7 @@ async with session.managed():
 - `session_id` (str): Unique session identifier
 - `spec` (AgentSpec): Agent specification
 - `settings` (Dict[str, Any]): Settings dictionary
-- `audio_storage` (AudioStorage): Audio storage instance
+- `audio_storage` (AudioStorageBackend): Audio storage instance
 
 ### RealtimeService
 
@@ -561,14 +561,14 @@ class RealtimeErrorEvent(RealtimeEventBase):
 
 ## Audio Storage
 
-### AudioStorage
+### LocalAudioStorage
 
 Handles audio file storage and retrieval.
 
 ```python
-from omniagents.core.session.audio_storage import AudioStorage
+from omniagents.core.session.audio_storage import LocalAudioStorage
 
-storage = AudioStorage(base_path="/path/to/audio")
+storage = LocalAudioStorage(base_path="/path/to/audio")
 ```
 
 #### Methods

@@ -15,7 +15,6 @@ Job state lives in the process-wide registry in ``_bash_jobs``.
 
 from __future__ import annotations
 
-import os
 import shlex
 import time
 from typing import Any, Dict, Optional

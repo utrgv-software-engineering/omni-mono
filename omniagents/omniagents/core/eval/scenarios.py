@@ -9,7 +9,7 @@ import random
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple
 
 import yaml
 
@@ -21,28 +21,6 @@ from omniagents.core.utils.jinja import render_template, read_text_file
 
 def _read_yaml(p: Path) -> Dict[str, Any]:
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-
-
-def _choose_value(dimension: Dict[str, Any]) -> Dict[str, Any]:
-    vals = list(dimension.get("values") or [])
-    if not vals:
-        return {"name": "unknown", "description": ""}
-    return random.choice(vals)
-
-
-def _build_persona_tuple(dimensions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for d in dimensions:
-        chosen = _choose_value(d)
-        out.append(
-            {
-                "dimension": d.get("name") or "dimension",
-                "value": chosen.get("name") or "value",
-                "description": chosen.get("description") or "",
-                "examples": chosen.get("examples") or [],
-            }
-        )
-    return out
 
 
 def _summarize_persona(selected: List[Dict[str, Any]]) -> str:
@@ -122,7 +100,6 @@ async def _build_generator_agent(
     raw_dims: List[Dict[str, Any]] | None = None,
 ):
     try:
-        from agents import Runner as AgentsRunner
         from omniagents.core.agents.specs import AgentSpec
         from omniagents.core.agents.builder import _default_build_agent
     except Exception as e:

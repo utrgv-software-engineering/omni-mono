@@ -286,17 +286,6 @@ def jobs_snapshot(
     ]
 
 
-def session_ids_with_jobs() -> List[Optional[str]]:
-    """Distinct session_ids that own at least one job in the registry,
-    plus ``None`` if any uncategorized jobs exist. Used by the sweeper to
-    decide which sessions need a refresh broadcast.
-    """
-    seen: Dict[Optional[str], None] = {}
-    for j in get_registry().list_all():
-        seen.setdefault(j.session_id, None)
-    return list(seen.keys())
-
-
 SignalSent = Literal["none", "SIGTERM", "SIGKILL"]
 
 

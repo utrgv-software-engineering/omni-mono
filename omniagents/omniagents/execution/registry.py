@@ -554,27 +554,6 @@ class ExecutionEnvironmentManager:
             del self._environments[environment_id]
             return record.descriptor
 
-    async def set_lifecycle_controller(
-        self, environment_id: str, controller: object | None
-    ) -> None:
-        """Attach environment-scoped control-plane behavior.
-
-        The controller is deliberately carried by leases rather than stored on
-        a process-global serve singleton. Replacing the environment preserves
-        it because it represents the logical environment, not one backend
-        generation.
-        """
-
-        async with self._lock:
-            current = self._record(environment_id)
-            self._environments[environment_id] = _EnvironmentRecord(
-                current.descriptor,
-                current.workspace,
-                controller,
-                current.sandbox_runtime,
-                current.terminal_defaults,
-            )
-
     async def replace(
         self,
         environment_id: str,

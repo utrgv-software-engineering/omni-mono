@@ -4,9 +4,8 @@ import json
 import os
 from pathlib import Path
 import yaml
-import re
 from dotenv import load_dotenv
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
@@ -61,7 +60,6 @@ def run_codex_auth_command(
     or by installing product identity via ``bootstrap_product``).
     Returns a process exit status.
     """
-    import sys
 
     from omniagents.core.product import product_info
     from omniagents.core.providers import codex
@@ -95,7 +93,6 @@ def run_codex_auth_command(
 
 def _run_auth_command(args) -> None:
     """Handle ``omniagents auth codex {login,logout,status}``."""
-    import sys
 
     auth_command = getattr(args, "auth_command", None)
 
@@ -112,7 +109,6 @@ def _run_auth_command(args) -> None:
 def main():
     """Entry point for the omniagents CLI."""
     # Parse args first to get config path if available
-    import sys
 
     project_path = None
     for i, arg in enumerate(sys.argv):
@@ -123,7 +119,6 @@ def main():
     # Load .env for CLI runs: when a YAML config is provided, ALWAYS search
     # upward from the YAML's directory so the correct .env is used regardless
     # of the shell's current working directory.
-    env_loaded = False
     if project_path:
         base_ref = project_path
         config_dir = Path(base_ref).resolve().parent
@@ -135,7 +130,6 @@ def main():
                     # Do not override explicit env variables that may be set by the user
                     if load_dotenv(env_file, override=False):
                         print(f"Loaded .env file from {env_file}")
-                        env_loaded = True
                 except Exception as e:
                     print(f"Warning: Could not load .env file {env_file}: {e}")
                 break
@@ -161,7 +155,6 @@ def main():
                 try:
                     if load_dotenv(env_file, override=False):
                         print(f"Loaded .env file from {env_file}")
-                        env_loaded = True
                 except Exception as e:
                     print(f"Warning: Could not load .env file {env_file}: {e}")
         except Exception as e:
@@ -2518,7 +2511,6 @@ def main():
                     if ev.get("event") == "progress":
                         did_stream_line = True
                         pred = ev.get("pred")
-                        label = ev.get("label")
                         agree = ev.get("agree")
                         if pred is None:
                             ch = _c_pre("s", "yellow")
@@ -3049,7 +3041,6 @@ def main():
                     if ev.get("event") == "progress":
                         did_stream_line = True
                         pred = ev.get("pred")
-                        label = ev.get("label")
                         agree = ev.get("agree")
                         if pred is None:
                             ch = _c_pre("s", "yellow")

@@ -1,3 +1,0 @@
-# Compatibility alias: all sessions use the same worker lifecycle.
-name: swarms
-extends: workers

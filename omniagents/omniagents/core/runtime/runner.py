@@ -4,7 +4,7 @@ import socket
 import time
 import os
 from threading import Thread
-from typing import Optional, List, Any, Dict, TYPE_CHECKING
+from typing import Optional, List, Any, Dict
 
 from omniagents.core.agents.specs import AgentSpec, SafeAgentOptions, MCPServerConfig
 from omniagents.core.config.loader import (
@@ -13,9 +13,6 @@ from omniagents.core.config.loader import (
 )
 from omniagents.core.runtime.loader import load_backend
 from omniagents.core.debug import Debug
-
-if TYPE_CHECKING:
-    from IPython.display import IFrame
 
 
 class Runner:

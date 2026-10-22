@@ -1,7 +1,6 @@
 """OmniAgents - A wrapper around OpenAI's agents library."""
 
 import importlib
-import sys
 
 try:
     from ._version import __version__, __version_info__

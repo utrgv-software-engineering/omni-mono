@@ -1,9 +1,7 @@
 import yaml
 import os
 import re
-import importlib
 import fnmatch
-import sys
 import warnings
 
 from pathlib import Path
@@ -50,7 +48,6 @@ def _emit_safe_agent_deprecations(safe_options_config: Any, *, source: str) -> N
 # Core imports
 from omniagents.core.agents.specs import (
     AgentSpec,
-    AgentLike,
     SafeAgentOptions,
     HandoffConfig,
     AgentToolConfig,
@@ -1030,7 +1027,6 @@ def load_agent_spec_from_yaml(
         blocked_names = set(sec.get("blocked_tools") or [])
         blocked_patterns = sec.get("blocked_tool_patterns") or []
         if blocked_names or blocked_patterns:
-            before_count = len(selected_tool_functions)
             filtered = []
             for tool_func in selected_tool_functions:
                 tool_name = getattr(tool_func, "name", "")

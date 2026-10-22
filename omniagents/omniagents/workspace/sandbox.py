@@ -25,7 +25,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import PurePosixPath
-from typing import Any, Dict, List, Literal, Optional, Sequence, Union
+from typing import Any, Dict, List, Literal, Optional
 
 from ._entries import entry_basename, log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace

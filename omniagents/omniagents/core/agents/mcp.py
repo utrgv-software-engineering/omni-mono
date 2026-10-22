@@ -14,7 +14,7 @@ from agents.mcp import (
     MCPServerStdio,
     MCPServerStreamableHttp,
 )
-from mcp import StdioServerParameters, stdio_client
+from mcp import stdio_client
 
 from . import mcp_ui
 from .specs import AgentSpec, MCPServerConfig

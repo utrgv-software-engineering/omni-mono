@@ -103,7 +103,6 @@ def _fake_sdk(monkeypatch, during_run):
 
     monkeypatch.setattr("agents.Runner", FakeRunner)
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
 
 def _agent():
@@ -494,7 +493,6 @@ def _fake_sdk_streaming(monkeypatch, events, *, raise_at_end=None):
 
     monkeypatch.setattr("agents.Runner", FakeRunner)
     monkeypatch.setattr("agents.RunConfig", FakeRunConfig)
-    monkeypatch.setattr(bridge, "RunConfig", FakeRunConfig)
 
 
 def _break_cancelled_broadcast(monkeypatch, exc):

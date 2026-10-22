@@ -17,7 +17,6 @@ from omniagents.core.tracing import local as tracing
 from omniagents.core.server_functions.slash import (
     slash_command,
     text as slash_text,
-    words as slash_words,
 )
 
 

@@ -11,14 +11,12 @@ import asyncio
 import os
 import re
 import shlex
-import signal
-import subprocess
 import time
 import uuid
 from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Sequence, Union
+from typing import Dict, List, Literal, Optional
 
 from ._entries import log_skipped_entry, make_entry, sort_entries
 from .base import CommandLike, ProcessHandle, Workspace

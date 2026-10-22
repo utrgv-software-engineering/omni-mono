@@ -5,7 +5,7 @@ import json
 import importlib.util
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Callable, cast
+from typing import Any, Dict, List, Optional, Callable, cast
 
 import yaml
 
@@ -16,9 +16,6 @@ from omniagents.core.evaluation import (
     build_eval_context,
     run_measures,
     final_assistant_text,
-    parse_tool_calls,
-    parse_tool_outputs,
-    link_outputs,
 )
 from omniagents.core.eval.metrics import compute_metrics
 from omniagents.core.eval.telemetry import (
@@ -861,14 +858,10 @@ def run_evaluation(
         cfg_path = eval_config.agent_path
         eval_cfg = eval_config.config
         tracing_cfg = tracing_cfg or eval_config.tracing_config
-        eval_dir = eval_config.eval_dir
-        project_root = eval_config.project_root
     else:
         cfg_path = Path(compiled_yaml).resolve()
         raw_cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
         eval_cfg = raw_cfg.get("evaluation") or {}
-        eval_dir = None
-        project_root = None
 
     # Initialize tracing if configured (applies to all paths)
     workflow_name = None

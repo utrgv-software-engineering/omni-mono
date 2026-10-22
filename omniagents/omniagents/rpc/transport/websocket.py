@@ -38,7 +38,7 @@ class ClientWebSocketTransport(BaseTransport):
         if token:
             self._headers.setdefault("Authorization", f"Bearer {token}")
         self._policy = policy
-        self._ws: Optional["websockets.WebSocketClientProtocol"] = None
+        self._ws: Optional["websockets.ClientConnection"] = None
 
     async def connect(self) -> None:
         """Establish WebSocket connection."""

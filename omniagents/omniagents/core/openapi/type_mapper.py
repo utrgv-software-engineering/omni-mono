@@ -53,35 +53,6 @@ def openapi_type_to_python(schema: Dict[str, Any]) -> Tuple[str, str]:
     return python_type, ""
 
 
-def schema_to_python_default(schema: Dict[str, Any]) -> str:
-    """Get a Python default value representation for a schema type.
-
-    Args:
-        schema: OpenAPI schema object
-
-    Returns:
-        String representation of the default value (e.g., "None", "[]", "{}")
-    """
-    if not schema:
-        return "None"
-
-    default = schema.get("default")
-    if default is not None:
-        if isinstance(default, str):
-            return repr(default)
-        elif isinstance(default, bool):
-            return str(default)
-        elif isinstance(default, (int, float)):
-            return str(default)
-        elif isinstance(default, list):
-            return "[]"
-        elif isinstance(default, dict):
-            return "{}"
-        return repr(default)
-
-    return "None"
-
-
 def get_required_imports(operations: list) -> set:
     """Determine which typing imports are needed for a set of operations.
 

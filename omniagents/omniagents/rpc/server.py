@@ -215,15 +215,6 @@ class JsonRpcChannel:
         )
         await self.transport.send_json(payload)
 
-    # Backward compatibility property
-    @property
-    def websocket(self) -> Any:
-        """Backward compatibility for code that accesses channel.websocket."""
-        # Return the underlying websocket if it's a ServerWebSocketTransport
-        if hasattr(self.transport, "websocket"):
-            return self.transport.websocket
-        return None
-
 
 class JsonRpcEndpoint:
     """Minimal JSON-RPC 2.0 WebSocket endpoint."""

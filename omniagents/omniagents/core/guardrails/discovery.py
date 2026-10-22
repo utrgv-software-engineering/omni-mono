@@ -5,7 +5,7 @@ import importlib
 import inspect
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, Optional, Tuple, Any
 import traceback
 
 from agents.guardrail import InputGuardrail, OutputGuardrail
