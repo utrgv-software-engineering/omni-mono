@@ -30,8 +30,10 @@ import {
   type E2eCodexCredentialState,
   type E2eMcpConfigState,
   type E2eState,
+  electronOmniagentsHome,
   inspectElectronCodexCredential,
   inspectElectronMcpConfig,
+  MODEL_SERVER_SEEDS,
   seedElectronState,
   seedServerState,
   type SeedState,
@@ -123,7 +125,7 @@ async function launchServerLocal(
 ): Promise<LaunchedApp> {
   let serverProcess: ManagedProcess | null = null;
   let context: BrowserContext | null = null;
-  const responseText = seedState === 'lazy-host-first-message' ? 'HOST_FIRST_MESSAGE_READY' : null;
+  const responseText = MODEL_SERVER_SEEDS.includes(seedState) ? 'HOST_FIRST_MESSAGE_READY' : null;
   const modelServer =
     responseText && !process.env.E2E_REAL_MODELS_FILE && !process.env.E2E_SERVER_URL
       ? await startDeterministicModelServer(responseText)
@@ -235,7 +237,7 @@ async function launchElectronLocal(
   // variable to select a dev renderer, which would make the child Electron
   // window display the host application instead of this built test app.
   const { ELECTRON_RENDERER_URL: _hostRendererUrl, ...electronEnv } = process.env;
-  const firstMessageResponse = seedState === 'lazy-host-first-message' ? 'HOST_FIRST_MESSAGE_READY' : null;
+  const firstMessageResponse = MODEL_SERVER_SEEDS.includes(seedState) ? 'HOST_FIRST_MESSAGE_READY' : null;
   const modelServer =
     firstMessageResponse && !process.env.E2E_REAL_MODELS_FILE
       ? await startDeterministicModelServer(firstMessageResponse)
@@ -254,7 +256,7 @@ async function launchElectronLocal(
     env: {
       ...electronEnv,
       XDG_CONFIG_HOME: state.xdgConfigHome,
-      OMNIAGENTS_HOME: path.join(state.rootDir, 'omniagents'),
+      OMNIAGENTS_HOME: electronOmniagentsHome(state),
       OPENAI_BASE_URL:
         modelServer?.baseUrl ??
         process.env.OPENAI_BASE_URL ??

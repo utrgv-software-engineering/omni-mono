@@ -32,7 +32,19 @@ export type SeedState =
   | 'workspace-git'
   | 'pooled-workspaces'
   | 'lazy-ready'
-  | 'lazy-host-first-message';
+  | 'lazy-host-first-message'
+  | 'large-history';
+
+/** Seeds that need the deterministic model endpoint (and its first reply). */
+export const MODEL_SERVER_SEEDS: readonly SeedState[] = ['lazy-host-first-message', 'large-history'];
+
+/** The two persisted chats `large-history` boots onto, in sidebar title order. */
+export const LARGE_HISTORY_SESSIONS = [0, 1].map((index) => ({
+  tabId: `chat-e2e-large-history-${index}`,
+  sessionId: `session-e2e-large-history-${index}`,
+  title: `LARGE_HISTORY_${index}`,
+  prefix: `HISTORY_${index}`,
+}));
 
 export type E2eCodexCredentialState = {
   exists: boolean;
@@ -428,6 +440,24 @@ function launcherConfig(seedState: SeedState, workspaceDir: string) {
           activeCodeTabId: firstMessage ? firstMessageTabId : 'chat-e2e-lazy',
         }
       : {}),
+    ...(seedState === 'large-history'
+      ? {
+          workspaceDir,
+          codeTabs: LARGE_HISTORY_SESSIONS.map(({ tabId, sessionId }) => ({
+            id: tabId,
+            projectId: null,
+            createdAt: seededAt,
+            activatedAt: seededAt,
+            sessionId,
+          })),
+          activeCodeTabId: LARGE_HISTORY_SESSIONS[0]!.tabId,
+          chatConversations: LARGE_HISTORY_SESSIONS.map(({ sessionId, title }) => ({
+            sessionId,
+            title,
+            lastActiveAt: seededAt,
+          })),
+        }
+      : {}),
     ...(seedState === 'seeded-project' ? seededProject : {}),
     ...(seedState === 'workspace-files' ? workspaceFilesSeed(workspaceDir) : {}),
     ...(seedState === 'workspace-git' ? workspaceGitSeed(workspaceDir) : {}),
@@ -454,8 +484,31 @@ function productModelsConfig(seedState: SeedState) {
   };
 }
 
+/**
+ * Persist the large-history chats through omniagents' own recorder (the
+ * monorepo venv runs the same checkout dev installs use), so the app boots
+ * onto long saved conversations without a model turn per message.
+ */
+function seedLargeHistory(omniagentsHome: string): void {
+  const python = path.resolve(process.cwd(), '..', '.venv', 'bin', 'python');
+  if (!existsSync(python)) {
+    throw new Error(`large-history seeding needs the monorepo venv (${python}); run \`uv sync\` at the repo root`);
+  }
+  execFileSync(
+    python,
+    [
+      path.join(process.cwd(), 'tests', 'e2e', 'support', 'seed-history.py'),
+      ...LARGE_HISTORY_SESSIONS.map(({ sessionId, title, prefix }) => `${sessionId}:${title}:${prefix}`),
+    ],
+    { env: { ...process.env, OMNIAGENTS_HOME: omniagentsHome }, stdio: 'inherit' }
+  );
+}
+
 /** Workspace fixtures plus the runtime-owned models.json, shared by both modes. */
-function seedCommonState(state: E2eState, seedState: SeedState): void {
+function seedCommonState(state: E2eState, seedState: SeedState, omniagentsHome: string): void {
+  if (seedState === 'large-history') {
+    seedLargeHistory(omniagentsHome);
+  }
   if (seedState === 'mcp-fixture') {
     seedMcpFixture(state.workspaceDir);
   }
@@ -476,6 +529,9 @@ function seedCommonState(state: E2eState, seedState: SeedState): void {
   );
 }
 
+/** Electron launches pin OMNIAGENTS_HOME here; server mode uses ~/.omniagents. */
+export const electronOmniagentsHome = (state: E2eState): string => path.join(state.rootDir, 'omniagents');
+
 export function createE2eState(label: string): E2eState {
   const rootDir = mkdtempSync(path.join(tmpdir(), `omni-desktop-e2e-${label}-`));
   const homeDir = path.join(rootDir, 'home');
@@ -495,7 +551,7 @@ export function createE2eState(label: string): E2eState {
 }
 
 export function seedServerState(state: E2eState, seedState: SeedState): void {
-  seedCommonState(state, seedState);
+  seedCommonState(state, seedState, path.join(state.homeDir, '.omniagents'));
   const configDir = path.join(state.homeDir, '.config', 'Omni Code');
   mkdirSync(configDir, { recursive: true });
   writeFileSync(
@@ -506,7 +562,7 @@ export function seedServerState(state: E2eState, seedState: SeedState): void {
 }
 
 export function seedElectronState(state: E2eState, seedState: SeedState): void {
-  seedCommonState(state, seedState);
+  seedCommonState(state, seedState, electronOmniagentsHome(state));
   const configDir = path.join(state.xdgConfigHome, 'Omni Code');
   mkdirSync(configDir, { recursive: true });
   writeFileSync(
