@@ -1,6 +1,7 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessByStdio } from 'node:child_process';
 import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import type { Readable } from 'node:stream';
 
 const delay = (ms: number) =>
   new Promise((resolve) => {
@@ -9,7 +10,7 @@ const delay = (ms: number) =>
 
 const tail = (value: string, lineCount = 120) => value.split('\n').slice(-lineCount).join('\n');
 
-function signalProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+function signalProcessTree(child: ChildProcessByStdio<null, Readable, Readable>, signal: NodeJS.Signals): void {
   try {
     if (process.platform === 'win32' || child.pid === undefined) {
       child.kill(signal);
@@ -33,7 +34,7 @@ export function crashProcessTree(pid: number): void {
   const parents = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' })
     .trim()
     .split('\n')
-    .map((line) => line.trim().split(/\s+/).map(Number));
+    .map((line) => line.trim().split(/\s+/).map(Number) as [number, number]);
   const targets = new Set([pid]);
   let changed = true;
   while (changed) {
@@ -120,7 +121,7 @@ export function startProcess(input: {
     detached: process.platform !== 'win32',
     shell: process.platform === 'win32',
     stdio: ['ignore', 'pipe', 'pipe'],
-  }) as ChildProcessWithoutNullStreams;
+  });
   let output = '';
 
   child.stdout.on('data', (chunk: Buffer) => {

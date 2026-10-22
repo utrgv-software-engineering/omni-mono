@@ -15,7 +15,7 @@ test('retains an aborted attachment across reload and sends its bytes once on re
     const read = FileReader.prototype.readAsArrayBuffer;
     FileReader.prototype.readAsArrayBuffer = function () {
       FileReader.prototype.readAsArrayBuffer = read;
-      queueMicrotask(() => this.onabort?.call(this, new ProgressEvent('abort')));
+      queueMicrotask(() => this.onabort?.call(this, new ProgressEvent('abort') as ProgressEvent<FileReader>));
     };
   });
   await input.fill('ATTACHMENT_RETRY');

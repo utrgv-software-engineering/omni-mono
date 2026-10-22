@@ -34,6 +34,7 @@
     "shadcn:registry:self-test": "node scripts/check-shadcn-registry.mjs --self-test",
     "shadcn:registry:summary": "node scripts/check-shadcn-registry.mjs --summary",
     "lint:tsc": "tsc --noEmit",
+    "lint:tsc-e2e": "tsc -p tsconfig.e2e.json",
     "lint": "concurrently -g -c red,green,yellow,blue,magenta npm:lint:*",
     "fix": "eslint --fix . && prettier --log-level warn --write .",
     "test": "npm rebuild node-pty && vitest",

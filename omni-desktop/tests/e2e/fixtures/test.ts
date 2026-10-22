@@ -93,7 +93,6 @@ type E2eApp = {
 
 const serverUrl = process.env.E2E_SERVER_URL ?? 'http://127.0.0.1:3001/';
 const proofViewport = { width: 1920, height: 1080 };
-const proofSlowMo = Number(process.env.VISUAL_PROOF_SLOW_MO_MS ?? '120');
 
 function videoOptions(testInfo: TestInfo, launchIndex: number) {
   return visualProofEnabled
@@ -242,7 +241,8 @@ async function launchElectronLocal(
       ? await startDeterministicModelServer(firstMessageResponse)
       : null;
   const electronApp: ElectronApplication = await electron.launch({
-    executablePath: electronExecutablePath,
+    // Under Node the `electron` package exports its binary path, not the API.
+    executablePath: electronExecutablePath as unknown as string,
     // E2E_ELECTRON_OZONE=wayland targets a headless compositor (set
     // WAYLAND_DISPLAY/XDG_RUNTIME_DIR to it) instead of the live desktop.
     args: [
@@ -264,7 +264,6 @@ async function launchElectronLocal(
       ...(process.env.DISPLAY ? { DISPLAY: process.env.DISPLAY } : {}),
     },
     recordVideo: videoOptions(testInfo, launchIndex),
-    slowMo: visualProofEnabled ? proofSlowMo : undefined,
   });
   if (process.env.E2E_FORWARD_ELECTRON_LOGS === '1') {
     electronApp.process().stdout?.pipe(process.stdout);
