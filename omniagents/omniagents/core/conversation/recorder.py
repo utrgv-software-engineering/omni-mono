@@ -1548,15 +1548,13 @@ class ConversationRecorder:
     def record_reasoning(
         self, thread_id: str, *, run_id: str | None, item: Dict[str, Any]
     ) -> Optional[Item]:
-        """A model reasoning block, from the history-append path.
+        """A model reasoning block, recorded when the run streams it.
 
-        Reasoning has no notification — it is persisted straight to history
-        by the SDK — so without this hook the recorded model would hold no
-        reasoning at all while the legacy projection does, and the two
-        producers of one surface would disagree about the same conversation.
-        Recorded from ``Session.append_message`` for the same reason
-        compaction checkpoints are: the fact never reaches the broadcast
-        chokepoint.
+        Reasoning has no notification, so the bridge records it directly
+        from the SDK's stream event. That event arrives before the tool
+        calls the reasoning led to, which keeps the transcript in the order
+        the model produced it. The SDK writes the same block to history
+        only after those tools ran; see :meth:`record_persisted_reasoning`.
         """
         def joined(entries: Any) -> str:
             parts: list[str] = []
@@ -1571,15 +1569,15 @@ class ConversationRecorder:
         # The Responses API summarizes reasoning; chat-completions providers
         # return it raw, as ``reasoning_text`` content with no summary.
         text = joined(item.get("summary")) or joined(item.get("content"))
-        reasoning_id = item.get("id")
+        reasoning_id = provider_item_id(item.get("id"))
         key = (
             f"reasoning:{reasoning_id}"
-            if isinstance(reasoning_id, str) and reasoning_id
+            if reasoning_id
             else self._next_occurrence_key(
                 thread_id, f"reasoning:{run_id}:{content_key(text)}"
             )
         )
-        return self._append_item(
+        recorded = self._append_item(
             thread_id,
             natural_key=key,
             kind=ItemKind.REASONING,
@@ -1588,14 +1586,26 @@ class ConversationRecorder:
             role="assistant",
             content={
                 "summary": text,
-                **(
-                    {"reasoning_id": reasoning_id}
-                    if isinstance(reasoning_id, str)
-                    else {}
-                ),
+                **({"reasoning_id": reasoning_id} if reasoning_id else {}),
             },
-            source_ref={"event": "history_append", "run_id": run_id},
+            source_ref={"event": "reasoning", "run_id": run_id},
         )
+        self._settled(recorded)
+        return recorded
+
+    def record_persisted_reasoning(
+        self, thread_id: str, *, run_id: str | None, item: Dict[str, Any]
+    ) -> Optional[Item]:
+        """Record reasoning from the history write, when it is identifiable.
+
+        Covers a block whose stream event was never delivered. Only a
+        provider-minted id lets the two paths converge on one item; an
+        id-less block (chat-completions providers) is recorded by the
+        stream path alone, as id-less assistant messages are.
+        """
+        if not provider_item_id(item.get("id")):
+            return None
+        return self.record_reasoning(thread_id, run_id=run_id, item=item)
 
     @staticmethod
     def user_message_natural_key(

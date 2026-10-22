@@ -375,6 +375,28 @@ def stream_event_payload(
     return None, None
 
 
+def _record_streamed_reasoning(session, item) -> None:
+    """Record a reasoning block as the run streams it.
+
+    The SDK emits reasoning before the tool calls it led to, but writes it
+    to history only after those tools ran. Recording it here keeps it ahead
+    of them in the transcript.
+    """
+    from omniagents.core.conversation.recorder import ensure_conversation_thread
+
+    try:
+        raw = item.to_input_item()
+        recorder = ensure_conversation_thread(session)
+        if recorder is not None and isinstance(raw, dict):
+            recorder.record_reasoning(
+                session.id, run_id=asyncio.current_task().get_name(), item=raw
+            )
+    except Exception:
+        logger.exception(
+            "reasoning not recorded", extra={"session": getattr(session, "id", None)}
+        )
+
+
 def _strip_phase_from_model_input(data):
     """RunConfig.call_model_input_filter that strips ``phase`` from all input items.
 
@@ -845,6 +867,8 @@ async def stream_agent(
                     continue
 
                 item = event.item
+                if item.type == "reasoning_item":
+                    _record_streamed_reasoning(session, item)
                 method, payload = stream_event_payload(
                     item,
                     run_id=asyncio.current_task().get_name(),

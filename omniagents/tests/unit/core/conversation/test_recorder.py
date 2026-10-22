@@ -1446,7 +1446,7 @@ class TestReasoning:
     conversation. The adapter projects reasoning from history, so the
     recorder has to record it too."""
 
-    def test_reasoning_is_recorded_from_the_history_append_path(self, store, recorder):
+    def test_reasoning_is_recorded_when_streamed(self, store, recorder):
         feed(recorder, ("run_started", {"run_id": RUN, "prompt": "hi"}))
         recorder.record_reasoning(
             THREAD,
@@ -1482,8 +1482,28 @@ class TestReasoning:
     def test_reasoning_is_idempotent_on_its_model_id(self, store, recorder):
         item = {"type": "reasoning", "id": "rs_1", "summary": []}
         recorder.record_reasoning(THREAD, run_id=RUN, item=item)
-        recorder.record_reasoning(THREAD, run_id=RUN, item=item)
+        recorder.record_persisted_reasoning(THREAD, run_id=RUN, item=item)
         assert len(only(store, ItemKind.REASONING)) == 1
+
+    def test_history_write_records_only_identifiable_reasoning(self, store, recorder):
+        """An id-less block is the stream path's alone: the history write
+        cannot tell it from a second block with the same text."""
+        feed(recorder, ("run_started", {"run_id": RUN, "prompt": "hi"}))
+        raw = {
+            "type": "reasoning",
+            "id": "__fake_id__",
+            "summary": [],
+            "content": [{"type": "reasoning_text", "text": "look"}],
+        }
+        recorder.record_reasoning(THREAD, run_id=RUN, item=raw)
+        recorder.record_persisted_reasoning(THREAD, run_id=RUN, item=raw)
+        recorder.record_persisted_reasoning(
+            THREAD, run_id=RUN, item={"type": "reasoning", "id": "rs_2", "summary": []}
+        )
+        assert [r.content.get("reasoning_id") for r in only(store, ItemKind.REASONING)] == [
+            None,
+            "rs_2",
+        ]
 
 
 class TestReservedKinds:

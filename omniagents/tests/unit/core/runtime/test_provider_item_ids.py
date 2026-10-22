@@ -10,6 +10,7 @@ import pytest
 from agents import Agent, function_tool
 from openai.types.responses import (
     ResponseFunctionToolCall,
+    ResponseOutputItemDoneEvent,
     ResponseOutputMessage,
     ResponseOutputText,
     ResponseReasoningItem,
@@ -71,6 +72,22 @@ class _ChatCompletionsModel(FakeModel):
             out.append(item)
         return out
 
+    async def stream_response(self, system_instructions, input, *args, **kwargs):
+        """Each item completes before the response does, as providers stream."""
+        output = []
+        async for event in super().stream_response(
+            system_instructions, input, *args, **kwargs
+        ):
+            output = event.response.output
+            for index, item in enumerate(output):
+                yield ResponseOutputItemDoneEvent(
+                    type="response.output_item.done",
+                    item=item,
+                    output_index=index,
+                    sequence_number=index,
+                )
+            yield event
+
 
 @function_tool
 def get_weather(city: str) -> str:
@@ -109,3 +126,6 @@ async def test_each_reply_and_tool_call_is_kept_once(tmp_path, monkeypatch):
         for item in snapshot["items"]
         if item.kind.value == "reasoning"
     ] == ["check the weather"]
+    # Reasoning sits before the tool call it led to.
+    kinds = [item.kind.value for item in snapshot["items"]]
+    assert kinds.index("reasoning") < kinds.index("tool_call")

@@ -691,17 +691,13 @@ def _materialize_conversation_thread(session: Any) -> Any:
 def _record_reasoning_item(session: Any, recorder: Any, message: dict) -> None:
     """Promote a persisted reasoning block into a canonical Item.
 
-    Reasoning is the one conversation element with no notification: the SDK
-    writes it straight to history, so it never reaches the broadcast
-    chokepoint the domain recorder listens on. Without this hook a recorded
-    thread would carry no reasoning while a projected one does — the two
-    producers of the same read surface disagreeing about the same
-    conversation.
+    The bridge records reasoning as it streams; this covers a block whose
+    stream event never arrived (see ``record_persisted_reasoning``).
     """
     if recorder is None or not _is_reasoning(message):
         return
     try:
-        recorder.record_reasoning(
+        recorder.record_persisted_reasoning(
             session.id,
             run_id=getattr(session, "active_run_id", None),
             item=message,
