@@ -392,8 +392,6 @@ class WebBackend:
             cmd,
             cwd=str(ui_dir),
             env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
         )
         # Poll for readiness
         url = f"http://{dev_host}:{dev_port}/"

@@ -2377,7 +2377,6 @@ class AgentService(RpcMethodsBase):
     ) -> dict:
         payload = args or {}
         server_name = str(payload.get("server_name") or "")
-        cursor = payload.get("cursor")
         if not server_name:
             raise ValueError("server_name is required")
 
@@ -2388,6 +2387,7 @@ class AgentService(RpcMethodsBase):
             raise ValueError(f"MCP server '{server_name}' does not support list_tools")
 
         # No run context or agent on this out-of-band path: list every tool.
+        # The SDK pages through the server itself, so there is no cursor.
         result = await server.list_tools()
 
         # ``MCPServer.list_tools`` returns ``list[mcp.types.Tool]`` directly.

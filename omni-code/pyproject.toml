@@ -3,7 +3,7 @@ name = "omni-code"
 version = "0.6.34"
 description = "Omni Code: a full‑stack coding agent built with OmniAgents"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "omniagents[all]==0.7.40",
 ]
@@ -35,7 +35,7 @@ dev = [
 line-length = 88
 # Explicit floor from requires-python; without this black infers every
 # version through py315 and warns when run under an older interpreter.
-target-version = ["py310", "py311", "py312", "py313"]
+target-version = ["py311", "py312", "py313"]
 extend-exclude = "/evaluations/fixtures/"
 
 [tool.ruff]
