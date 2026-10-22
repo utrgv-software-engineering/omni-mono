@@ -1,14 +1,13 @@
 import asyncio
 import os
-import socket
 import pytest
 from unittest.mock import patch, AsyncMock
 
-import uvicorn
 from omniagents.backends.server import app as server_app
 from omniagents.core.agents.specs import AgentSpec
 from omniagents.rpc.agents.remote import RemoteAgent
 from agents import Agent
+from tests.fixtures.servers import start_server
 
 
 async def dummy_build_agent(settings, mcp, app):
@@ -101,19 +100,8 @@ async def fake_stream_agent(
     # Don't send run_end here - it's sent by AgentService._worker()
 
 
-def _get_free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
 
 
-async def _run_server(app, port):
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
-    return server, task
 
 
 @patch("omniagents.core.agents.service.stream_agent", new=fake_stream_agent)
@@ -127,8 +115,7 @@ async def _integration_flow():
 
     app = server_app.build_app(spec=spec, default_host_workspace_root="/tmp")
 
-    port = _get_free_port()
-    server, task = await _run_server(app, port)
+    server, task, port = await start_server(app)
 
     try:
         proxy = RemoteAgent(f"ws://127.0.0.1:{port}/ws")
@@ -219,8 +206,7 @@ async def _proxy_flow():
         auth_token=remote_token_value,
         default_host_workspace_root="/tmp",
     )
-    remote_port = _get_free_port()
-    remote_server, remote_task = await _run_server(remote_app, remote_port)
+    remote_server, remote_task, remote_port = await start_server(remote_app)
 
     proxy = None
     gateway_port = None
@@ -240,8 +226,7 @@ async def _proxy_flow():
         gateway_app = server_app.build_app(
             spec=gateway_spec, default_host_workspace_root="/tmp"
         )
-        gateway_port = _get_free_port()
-        gateway_server, gateway_task = await _run_server(gateway_app, gateway_port)
+        gateway_server, gateway_task, gateway_port = await start_server(gateway_app)
 
         proxy = RemoteAgent(f"ws://127.0.0.1:{gateway_port}/ws")
         events = {"msg": [], "tool_call": [], "tool_out": []}

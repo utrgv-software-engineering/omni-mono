@@ -1,28 +1,21 @@
 import asyncio
 import os
-import socket
 import json
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
-import uvicorn
 import vcr
 
 from omniagents.backends.server import app as server_app
 from omniagents.rpc import JsonRpcClient, RpcMethodsBase
+from tests.fixtures.servers import start_server
 
 CASSETTE_DIR = Path(__file__).parent / "cassettes"
 CASSETTE_PATH = CASSETTE_DIR / "server_mode_openai.yaml"
 CLIENT_STATUS_CASSETTE = CASSETTE_DIR / "server_mode_client_status.yaml"
 SAFE_AGENT_CASSETTE = CASSETTE_DIR / "server_mode_tool_approval.yaml"
 _PROMPT_TEXT = "Please add 5 and 7 for me."
-
-
-def _get_free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
 
 
 def _determine_vcr_mode(target: Path | None = None) -> str | None:
@@ -86,12 +79,7 @@ async def rpc_server_url(server_rpc_agent_spec):
     app = server_app.build_app(
         spec=server_rpc_agent_spec, default_host_workspace_root="/tmp"
     )
-    port = _get_free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
+    server, task, port = await start_server(app)
     try:
         yield f"ws://127.0.0.1:{port}/ws"
     finally:
@@ -104,12 +92,7 @@ async def safe_rpc_server_url(safe_server_rpc_agent_spec):
     app = server_app.build_app(
         spec=safe_server_rpc_agent_spec, default_host_workspace_root="/tmp"
     )
-    port = _get_free_port()
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:
-        await asyncio.sleep(0.01)
+    server, task, port = await start_server(app)
     try:
         yield f"ws://127.0.0.1:{port}/ws"
     finally:
