@@ -3,7 +3,7 @@ import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
-test('retains an aborted attachment across reload and sends its bytes once on retry', async ({ app }, testInfo) => {
+test('retains an aborted attachment and sends its bytes once on retry', async ({ app }, testInfo) => {
   test.setTimeout(360_000);
   const page = app.page;
   const input = page.getByRole('textbox', { name: 'How can I help you today?' });
@@ -29,14 +29,6 @@ test('retains an aborted attachment across reload and sends its bytes once on re
   await expect(input).toHaveValue('ATTACHMENT_RETRY');
   await expect(page.getByText('retained.txt', { exact: true })).toBeVisible();
   await attachProofPng(testInfo, 'aborted read retains original draft and attachment', await app.captureScreenshot());
-  await page.reload();
-  await page
-    .getByRole('list', { name: 'Recents' })
-    .getByRole('button', { name: /^Respond with exactly HOST_FIRST_MESSAGE_READY/ })
-    .first()
-    .click({ timeout: 90_000 });
-  await expect(input).toHaveValue('ATTACHMENT_RETRY');
-  await expect(page.getByText('retained.txt', { exact: true })).toBeVisible();
   await page.evaluate(() => {
     const send = WebSocket.prototype.send;
     (window as any).attachmentSends = [];
@@ -51,9 +43,6 @@ test('retains an aborted attachment across reload and sends its bytes once on re
       send.call(this, data);
     };
   });
-  // Selecting the chat leaves keyboard focus on its sidebar row, as in any
-  // app; the user clicks back into the composer before sending.
-  await input.click();
   await input.press('Enter');
   await expect(page.getByRole('log')).toContainText('ATTACHMENT_RETRY');
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });

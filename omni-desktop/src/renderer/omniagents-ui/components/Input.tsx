@@ -21,8 +21,6 @@ import { Toggle } from '@/renderer/ds/ui/toggle';
 import { toast } from '@/renderer/features/Toast/state';
 import {
   conversationDrafts,
-  draftStorageState,
-  flushConversationDrafts,
   getConversationDraft,
   updateConversationDraft,
 } from '@/renderer/omniagents-ui/conversation-drafts';
@@ -54,7 +52,7 @@ function isSessionScratchPath(p: string): boolean {
 
 export function Input({
   conversationId,
-  disabled: externallyDisabled,
+  disabled,
   thinking,
   onStop,
   onSubmit,
@@ -97,8 +95,6 @@ export function Input({
 }) {
   const localId = useId();
   const draftId = conversationId ?? localId;
-  const storageState = useStore(draftStorageState);
-  const disabled = externallyDisabled || storageState === 'loading';
   const drafts = useStore(conversationDrafts);
   const { text, files } = drafts[draftId] ?? getConversationDraft(draftId);
   const setText = useCallback((text: string) => updateConversationDraft(draftId, { text }), [draftId]);
@@ -164,7 +160,6 @@ export function Input({
     const inputId = uuidv4();
     updateConversationDraft(draftId, { text: '', files: [] });
     void Promise.resolve()
-      .then(() => flushConversationDrafts(draftId))
       .then(() => onSubmit(t, files, inputId))
       .catch((cause: unknown) => {
         // The message did not go out: put it back in the box, ahead of

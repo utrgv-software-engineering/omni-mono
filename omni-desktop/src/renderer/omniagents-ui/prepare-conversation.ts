@@ -1,11 +1,10 @@
-import { draftsReady, getConversationDraft, updateConversationDraft } from './conversation-drafts';
+import { getConversationDraft, updateConversationDraft } from './conversation-drafts';
 import type { RPCClient } from './rpc/client';
 import { ModelCatalogClient } from './rpc/model-catalog';
 
 /** Apply pre-launch choices before accepting a prompt. Session setters create
  * the server session themselves; session.ensure is not a readiness probe. */
 export async function prepareConversation(client: RPCClient, sessionId: string) {
-  await draftsReady;
   const draft = getConversationDraft(sessionId);
   const catalog = new ModelCatalogClient(client);
   const requireOk = (result: { ok?: boolean; reason?: string }) => {

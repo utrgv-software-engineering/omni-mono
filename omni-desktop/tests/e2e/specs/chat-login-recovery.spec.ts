@@ -4,7 +4,7 @@ import { attachProofPng } from 'tests/e2e/support/proof';
 
 test.use({ seedState: 'lazy-host-first-message' });
 
-test('explicit browser credential expiry preserves a draft and attachment through authenticated reload', async ({
+test('explicit browser credential expiry keeps the draft until an authenticated reload recovers', async ({
   app,
   mode,
 }, info) => {
@@ -79,13 +79,13 @@ test('explicit browser credential expiry preserves a draft and attachment throug
     .getByRole('list', { name: 'Recents' })
     .getByRole('button', { name: 'LOGIN_RECOVERY_SETUP', exact: true })
     .click();
-  await expect(input).toHaveValue('LOGIN_RECOVERED_DRAFT');
-  await expect(page.getByText('login-draft.txt', { exact: true })).toBeVisible();
+  // Drafts live in memory: the reload starts the composer empty.
+  await expect(input).toHaveValue('');
+  await input.fill('LOGIN_RECOVERED_DRAFT');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await expect(page.getByRole('log').getByText('LOGIN_RECOVERED_DRAFT', { exact: true })).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
   const sends = await page.evaluate(() => (window as any).loginRecoverySends);
   expect(sends).toHaveLength(1);
-  expect(JSON.stringify(sends)).toContain(Buffer.from('bytes retained through login expiry').toString('base64'));
-  await attachProofPng(info, 'authenticated reload sends original attachment once', await page.screenshot());
+  await attachProofPng(info, 'authenticated reload sends once', await page.screenshot());
 });

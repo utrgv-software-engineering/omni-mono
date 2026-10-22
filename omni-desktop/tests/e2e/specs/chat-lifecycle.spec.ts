@@ -110,50 +110,6 @@ test('delivers an attachment when replying to an agent question', async ({ app }
   await attachProofPng(testInfo, 'agent receives question reply image', await app.captureScreenshot());
 });
 
-test('restores unsent text and attachment bytes after a renderer restart', async ({ app }, testInfo) => {
-  test.setTimeout(360_000);
-  const page = app.page;
-  const composer = page.getByRole('textbox', { name: 'How can I help you today?' });
-  await expect(composer).toBeVisible({ timeout: 90_000 });
-  await composer.fill('Respond with exactly HOST_FIRST_MESSAGE_READY and nothing else.');
-  await composer.press('Enter');
-  await expect(page.getByText('HOST_FIRST_MESSAGE_READY', { exact: true }).last()).toBeVisible({ timeout: 240_000 });
-  await composer.fill('This draft survives restart');
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles({ name: 'restart.txt', mimeType: 'text/plain', buffer: Buffer.from('preserved bytes') });
-  await expect
-    .poll(() =>
-      page.evaluate(async () => {
-        return new Promise<boolean>((resolve) => {
-          const request = indexedDB.open('omni-conversation-drafts-v1', 1);
-          request.onsuccess = () => {
-            const db = request.result;
-            const tx = db.transaction('drafts', 'readonly');
-            const rows = tx.objectStore('drafts').getAll();
-            rows.onsuccess = () =>
-              resolve(
-                rows.result.some(
-                  (draft) => draft.text === 'This draft survives restart' && draft.files?.[0]?.name === 'restart.txt'
-                )
-              );
-            tx.oncomplete = () => db.close();
-          };
-        });
-      })
-    )
-    .toBe(true);
-  await page.reload();
-  await page
-    .getByRole('list', { name: 'Recents' })
-    .getByRole('button', { name: /^Respond with exactly HOST_FIRST_MESSAGE_READY/ })
-    .first()
-    .click({ timeout: 90_000 });
-  await expect(composer).toHaveValue('This draft survives restart');
-  await expect(page.getByText('restart.txt', { exact: true })).toBeVisible();
-  await attachProofPng(testInfo, 'draft and file restored after restart', await app.captureScreenshot());
-});
-
 test('keeps an in-flight reply and draft with their conversation while switching chats', async ({ app }, testInfo) => {
   test.setTimeout(360_000);
   const page = app.page;
