@@ -4,7 +4,7 @@ import { join } from 'path';
 import { listRepos as azureListRepos } from '@/main/azure-repos';
 import { buildBrowserContext, registerBrowserHandlers } from '@/main/browser-manager';
 import { cleanupRemovedChat, completeChatRemoval } from '@/main/chat-removal';
-import { createConsoleManager } from '@/main/console-manager';
+import { type ConsoleManager, createConsoleManager } from '@/main/console-manager';
 import {
   linkWithDeviceFlow as githubLink,
   listOrgs as githubListOrgs,
@@ -84,6 +84,11 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     sendToAll(channel, ...args);
   };
 
+  // Each browser client owns its terminal proxies (see wireClientManagers);
+  // removing a chat must close its shells in all of them, because the shared
+  // agent host they run in outlives any one chat.
+  const clientConsoles = new Set<ConsoleManager>();
+
   const processManager = new ProcessManager({
     sendToWindow: sendToAll,
     fetchFn: globalThis.fetch,
@@ -151,7 +156,12 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     store.set(patch);
     sendSnapshot();
     await completeChatRemoval(command, result, (tab) =>
-      cleanupRemovedChat(tab, { stop: (id) => processManager.retire(id) })
+      cleanupRemovedChat(tab, {
+        disposeTerminals: async (id) => {
+          await Promise.all([...clientConsoles].map((manager) => manager.disposeAllForTab(id)));
+        },
+        stop: (id) => processManager.retire(id),
+      })
     );
     return result;
   });
@@ -327,7 +337,7 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
     }
   };
 
-  return { cleanupGlobalManagers, processManager };
+  return { cleanupGlobalManagers, processManager, clientConsoles };
 };
 
 /**
@@ -345,8 +355,9 @@ export const wireClientManagers = (arg: {
   sendToWindow: SendToWindow;
   store: ServerStore;
   processManager: ProcessManager;
+  clientConsoles: Set<ConsoleManager>;
 }): (() => Promise<void>) => {
-  const { handle, sendToWindow, processManager } = arg;
+  const { handle, sendToWindow, processManager, clientConsoles } = arg;
   const ipc = new ServerIpcAdapter(handle);
 
   // Console proxies terminal:* IPC through omni serve's WS so the shell
@@ -354,14 +365,16 @@ export const wireClientManagers = (arg: {
   // WebSocket client; the underlying PTYs live in `omni serve` and survive
   // a WS reconnect (the renderer can reissue terminal:create on a fresh
   // process).
-  const [, cleanupConsole] = createConsoleManager({
+  const [consoleManager, cleanupConsole] = createConsoleManager({
     ipc,
     sendToWindow,
     processManager,
   });
+  clientConsoles.add(consoleManager);
 
   // Cleanup function — only per-session resources (console PTY)
   const cleanup = async () => {
+    clientConsoles.delete(consoleManager);
     const results = await Promise.allSettled([cleanupConsole()]);
     const errors = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map((r) => r.reason);
     if (errors.length > 0) {

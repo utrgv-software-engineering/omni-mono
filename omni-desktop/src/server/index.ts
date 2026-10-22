@@ -141,7 +141,7 @@ const main = async () => {
   const store = new ServerStore();
 
   // Wire global (shared) IPC handlers — store, util, config, project, code, chat, sandbox, install
-  const { cleanupGlobalManagers, processManager } = await wireGlobalHandlers({
+  const { cleanupGlobalManagers, processManager, clientConsoles } = await wireGlobalHandlers({
     wsHandler,
     store,
   });
@@ -175,6 +175,7 @@ const main = async () => {
             sendToWindow: session.sendToWindow,
             store,
             processManager,
+            clientConsoles,
           });
           session.setCleanup(cleanup);
         },
