@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
-PROJECT = PACKAGE_ROOT / "tests/fixtures/projects/studio_playground/project.yml"
+PROJECT = PACKAGE_ROOT / "tests/fixtures/projects/minimal/project.yml"
 
 SERVE = (
     "import sys; from omniagents.product_serve import serve_main; "

@@ -1,0 +1,4 @@
+product:
+  name: minimal_project
+agents:
+  entrypoint: primary

@@ -1,0 +1,4 @@
+name: primary
+model: gpt-4o-mini
+instructions_file: instructions.md
+welcome_text: Minimal project for tests that need a real manifest.
