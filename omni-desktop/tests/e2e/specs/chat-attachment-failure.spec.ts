@@ -51,6 +51,9 @@ test('retains an aborted attachment across reload and sends its bytes once on re
       send.call(this, data);
     };
   });
+  // Selecting the chat leaves keyboard focus on its sidebar row, as in any
+  // app; the user clicks back into the composer before sending.
+  await input.click();
   await input.press('Enter');
   await expect(page.getByRole('log')).toContainText('ATTACHMENT_RETRY');
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, { timeout: 90_000 });
