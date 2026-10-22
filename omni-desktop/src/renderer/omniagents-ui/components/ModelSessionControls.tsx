@@ -168,6 +168,21 @@ export function ModelSessionControls({
   const activeDescriptor = models.find((model) => (activeModel ? model.id === activeModel : model.is_default)) ?? null;
   const reasoningOptions = (activeDescriptor?.reasoning.options ?? []).filter(isReasoningEffort);
   const locked = disabled || !connected || loading || mutating;
+  // The server broadcasts every settings change to all windows on the
+  // session. A reply that lands after another window's newer change must not
+  // overwrite it, so a reply applies only if nothing wrote the field while the
+  // request was in flight.
+  const revisions = (): Record<
+    'activeModel' | 'reasoningEffort' | 'approvalsReviewer' | 'workflowReviewer',
+    number
+  > => ({
+    activeModel: state.revisionOf('activeModel'),
+    reasoningEffort: state.revisionOf('reasoningEffort'),
+    approvalsReviewer: state.revisionOf('approvalsReviewer'),
+    workflowReviewer: state.revisionOf('workflowReviewer'),
+  });
+  const unchangedSince = (key: keyof ReturnType<typeof revisions>, before: ReturnType<typeof revisions>) =>
+    state.revisionOf(key) === before[key];
 
   const chooseModel = async (model: string) => {
     if (model === (activeModel ?? activeDescriptor?.id) || locked) {
@@ -181,14 +196,19 @@ export function ModelSessionControls({
     }
     setMutating(true);
     setError(null);
+    const before = revisions();
     try {
       const result = await catalog.setSessionModel(sessionId, model);
       if (!result.ok || !result.model) {
         setError(reasonMessage(result.reasons, 'Omniagents refused the model change.'));
         return;
       }
-      setActiveModel(result.model);
-      setReasoningEffort(result.reasoning_effort ?? null);
+      if (unchangedSince('activeModel', before)) {
+        setActiveModel(result.model);
+      }
+      if (unchangedSince('reasoningEffort', before)) {
+        setReasoningEffort(result.reasoning_effort ?? null);
+      }
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -207,14 +227,17 @@ export function ModelSessionControls({
     }
     setMutating(true);
     setError(null);
+    const before = revisions();
     try {
       const result = await catalog.setSessionReasoning(sessionId, effort);
       if (!result.ok || !result.reasoning_effort) {
         setError(reasonMessage(result.reasons, 'Omniagents refused the reasoning change.'));
         return;
       }
-      setReasoningEffort(result.reasoning_effort);
-      if (result.model) {
+      if (unchangedSince('reasoningEffort', before)) {
+        setReasoningEffort(result.reasoning_effort);
+      }
+      if (result.model && unchangedSince('activeModel', before)) {
         setActiveModel(result.model);
       }
     } catch (cause: unknown) {
@@ -231,9 +254,12 @@ export function ModelSessionControls({
     }
     setMutating(true);
     setError(null);
+    const before = revisions();
     try {
       await onSetApprovalsReviewer(reviewer);
-      setApprovalsReviewer(reviewer);
+      if (unchangedSince('approvalsReviewer', before)) {
+        setApprovalsReviewer(reviewer);
+      }
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -247,9 +273,12 @@ export function ModelSessionControls({
     }
     setMutating(true);
     setError(null);
+    const before = revisions();
     try {
       await onSetWorkflowReviewer(value);
-      setWorkflowReviewer(value);
+      if (unchangedSince('workflowReviewer', before)) {
+        setWorkflowReviewer(value);
+      }
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {

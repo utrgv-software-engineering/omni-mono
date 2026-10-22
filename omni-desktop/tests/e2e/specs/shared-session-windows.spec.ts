@@ -135,8 +135,6 @@ test('two windows converge on model and reviewer settings for the same live sess
     await b.getByRole('menuitemradio', { name: /GPT 5.2 Mini E2E/ }).click();
     await expect(a.getByRole('button', { name: 'GPT 5.2 Mini E2E', exact: true })).toBeVisible();
     await a.evaluate(() => (window as any).releaseSettingsReply());
-    // KNOWN BUG: A applies its own late set_session_model reply over B's newer
-    // change, so A reverts to "GPT 5.2 E2E" while the server holds Mini.
     await expect(a.getByRole('button', { name: 'GPT 5.2 Mini E2E', exact: true })).toBeEnabled();
 
     for (const scenario of [

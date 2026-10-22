@@ -37,6 +37,7 @@ export type SessionPanels = {
  * whatever the server answered last. */
 export class SessionPanelStore {
   private disposed = false;
+  private readonly revisions = new Map<keyof SessionPanels, number>();
   readonly state = atom<SessionPanels>({
     models: [],
     activeModel: null,
@@ -68,8 +69,13 @@ export class SessionPanelStore {
     }
     const previous = this.state.get();
     const value = typeof update === 'function' ? update(previous[key]) : update;
+    this.revisions.set(key, this.revisionOf(key) + 1);
     this.state.set({ ...previous, [key]: value });
   };
+  /** Count of writes to *key*; lets a late reply detect a newer write. */
+  revisionOf(key: keyof SessionPanels): number {
+    return this.revisions.get(key) ?? 0;
+  }
   async refresh<K extends keyof SessionPanels>(key: K, read: () => Promise<SessionPanels[K]>) {
     this.set(key, await read());
   }
