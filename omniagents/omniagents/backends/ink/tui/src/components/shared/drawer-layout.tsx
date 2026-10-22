@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, useStdout } from "ink";
+import { Box } from "ink";
+import { useTerminalSize } from "../../hooks/useTerminalSize.js";
 
 /**
  * Layout rules every footer drawer shares.
@@ -23,8 +24,7 @@ export function drawerBudget(terminalRows: number): number {
 
 /** `drawerBudget` for the live terminal; 24 rows when there is none (tests). */
 export function useDrawerBudget(): number {
-  const { stdout } = useStdout();
-  return drawerBudget(stdout?.rows || 24);
+  return drawerBudget(useTerminalSize().rows);
 }
 
 /** Text as one line: newlines and runs of whitespace collapse to a space. */

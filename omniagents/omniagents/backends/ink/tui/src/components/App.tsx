@@ -19,6 +19,7 @@ import {
   ResizeObserver,
 } from "ink";
 import { useKeypress } from "../hooks/useKeypress.js";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { useRPC } from "../hooks/useRPC.js";
 import { useMessagesOptimized } from "../hooks/useMessagesNew.js";
@@ -340,7 +341,7 @@ export const App: React.FC<AppProps> = ({
 
   // Get terminal dimensions for scrolling calculations
   const { stdout } = useStdout();
-  const terminalHeight = stdout?.rows || 24;
+  const { rows: terminalHeight } = useTerminalSize();
 
   // RPC connection
   const { client, connected, rpcReady, error, sendMessage } = useRPC({

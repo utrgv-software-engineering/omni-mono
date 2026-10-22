@@ -19,7 +19,8 @@
  */
 
 import React, { useCallback, useMemo } from "react";
-import { Box, Text, StaticRender, useStdout } from "ink";
+import { Box, Text, StaticRender } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import Spinner from "ink-spinner";
 import {
   useMessages,
@@ -59,8 +60,7 @@ export const MessageListOptimized = themedMemo(() => {
   const messages = useMessages();
   const themeVersion = useThemeVersion();
   const detail = useTranscriptDetail();
-  const { stdout } = useStdout();
-  const terminalWidth = stdout?.columns ?? 80;
+  const { columns: terminalWidth } = useTerminalSize();
   const viewport = useScrollViewport();
 
   // The beat projection is a pure single pass; detail mode bypasses it

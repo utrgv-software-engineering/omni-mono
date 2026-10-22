@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
 import { helpSections, type HelpSection } from "./help-model.js";
@@ -48,7 +49,7 @@ export function splitColumns(
  * the screen is what corrupts Ink's redraw.
  */
 export const HelpPanel = themedMemo<Props>(({ open, screen, onClose }) => {
-  const { stdout } = useStdout();
+  const { rows } = useTerminalSize();
   useKeypress(
     (_input, key) => {
       if (key.ctrl || (key.meta && !key.escape)) return false;
@@ -98,7 +99,7 @@ export const HelpPanel = themedMemo<Props>(({ open, screen, onClose }) => {
     left.reduce((n, s) => n + sectionRows(s), 0),
     right.reduce((n, s) => n + sectionRows(s), 0),
   );
-  const height = Math.min(tallest + 3, Math.max(8, (stdout?.rows ?? 24) - 9));
+  const height = Math.min(tallest + 3, Math.max(8, rows - 9));
 
   return (
     <Box

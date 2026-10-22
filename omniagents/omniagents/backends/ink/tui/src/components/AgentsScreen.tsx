@@ -1,6 +1,7 @@
 import { useKeyedSelection } from "../hooks/useKeyedSelection.js";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Text, useStdout } from "ink";
+import { Box, Text } from "ink";
+import { useTerminalSize } from "../hooks/useTerminalSize.js";
 import Spinner from "ink-spinner";
 import { useKeypress } from "../hooks/useKeypress.js";
 import { KeypressPriority } from "../contexts/KeypressContext.js";
@@ -72,8 +73,7 @@ export const AgentsScreen = ({
   onExit,
   onWorkerAction,
 }: Props) => {
-  const { stdout } = useStdout();
-  const width = stdout?.columns ?? 80;
+  const { columns: width } = useTerminalSize();
   const wide = width >= WIDE_BREAKPOINT;
   const workers = useSubagents();
   const subagentEvents = useSubagentEvents();
