@@ -205,7 +205,7 @@ Upgrade the pinned `openai-agents` dependency from `0.4.2` to `0.16.0` (12 minor
 - `omniagents/backends/ink/tui/src/types/protocol.ts:164-174`: remove the `ui.request_tool_approval` `client_request` shape; add `ToolApprovalRequestedEvent` and `ToolApprovalResponseRequest` types
 - `omniagents/backends/ink/tui/src/rpc/client.ts:241-407`: replace approval response handling
 - `omniagents/backends/ink/tui/src/hooks/useMessagesNew.ts:445-461`: drop `registerClientFunction("ui.request_tool_approval", ...)`; handle `tool_approval_requested` events instead
-- Studio: search for `ui.request_tool_approval` in `omniagents/studio/server/web/` and update (if any references)
+- Studio: search for `ui.request_tool_approval` in `omniagents-studio/web/` and update (if any references)
 
 ### 5d. Test updates
 

@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import sys
 import types
 from pathlib import Path
 
@@ -118,9 +117,6 @@ def _configure_execution(monkeypatch, responses):
         )
         yield
 
-    studio_tracing_mod = types.ModuleType("omniagents.studio.tracing")
-    studio_tracing_mod.trace = fake_trace
-
     monkeypatch.setattr(multi_turn, "create_unified_agent", fake_create_agent)
     monkeypatch.setattr(multi_turn, "load_history", fake_load_history)
     monkeypatch.setattr(multi_turn, "final_assistant_text", fake_final_assistant_text)
@@ -130,7 +126,7 @@ def _configure_execution(monkeypatch, responses):
     monkeypatch.setattr(
         "omniagents.core.session.history_db.load_history", fake_load_history
     )
-    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", studio_tracing_mod)
+    monkeypatch.setattr("omniagents.core.tracing.local.trace", fake_trace)
 
     return progress_events, trace_calls, setup_calls
 

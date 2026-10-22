@@ -402,8 +402,7 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
         trace_calls.append({"name": name, "group_id": group_id, "metadata": metadata})
         yield
 
-    tracing_mod = types.SimpleNamespace(trace=fake_trace)
-    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", tracing_mod)
+    monkeypatch.setattr("omniagents.core.tracing.local.trace", fake_trace)
 
     scenario = {
         "id": "scenario-id",

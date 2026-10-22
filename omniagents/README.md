@@ -79,18 +79,17 @@ omniagents run -P path/to/project.yml --mode server --host 0.0.0.0 --port 8000
 
 Use `--session-id <id>` to resume a previous conversation stored in `sessions.db`.
 
-### Studio
+### Traces
 
-Serve the Studio web UI for viewing and managing traces:
+Runs record traces locally by default (`tracing: {provider: studio}`) into
+`~/.omniagents/traces/<project>.db`. OmniAgents Studio, a separate package in
+this monorepo (`omniagents-studio/`), is the web UI for browsing them:
 
 ```bash
-omniagents studio serve --project <name>
+omniagents-studio serve --project <name>
 ```
 
-Production builds serve packaged static assets; use `--dev` to run the web dev
-server (requires Node/npm).
-
-This launches a FastAPI app exposing a WebSocket endpoint at `/ws`.  The protocol is described in [`docs/remote_agent_protocol.md`](docs/remote_agent_protocol.md).  A client can connect using `RemoteAgentProxy` from this package or any JSON‑RPC library.
+The `server` mode above launches a FastAPI app exposing a WebSocket endpoint at `/ws`.  The protocol is described in [`docs/remote_agent_protocol.md`](docs/remote_agent_protocol.md).  A client can connect using `RemoteAgentProxy` from this package or any JSON‑RPC library.
 
 ## Examples
 
@@ -110,10 +109,5 @@ pytest -q
 Run coverage locally with:
 
 ```bash
-make coverage-all
+make coverage-python
 ```
-
-Individual coverage targets:
-
-- `make coverage-python` – Python agents, FastAPI server, and backends
-- `make coverage-web` – React Studio UI via Vitest

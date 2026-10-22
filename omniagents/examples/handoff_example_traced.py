@@ -3,7 +3,7 @@ from __future__ import annotations
 from dotenv import load_dotenv
 from agents import Agent, handoff, set_default_openai_api
 from omniagents import Runner, function_tool
-import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
+from omniagents.core.tracing import local as studio_tracing
 
 # Load environment variables from .env file
 load_dotenv()

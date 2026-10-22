@@ -1265,16 +1265,10 @@ def test_optimize_agent_tracing_studio_init(
     env = configure_optimize_env(compiled_path)
 
     tracing_calls = []
-    studio_module = types.ModuleType("omniagents.studio")
-    studio_tracing = types.ModuleType("omniagents.studio.tracing")
-
-    def tracing_init(**kwargs):
-        tracing_calls.append(kwargs)
-
-    studio_tracing.init = tracing_init
-    studio_module.tracing = studio_tracing
-    monkeypatch.setitem(sys.modules, "omniagents.studio", studio_module)
-    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", studio_tracing)
+    monkeypatch.setattr(
+        "omniagents.core.tracing.local.init",
+        lambda **kwargs: tracing_calls.append(kwargs),
+    )
 
     scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
     scenario_dir.mkdir(parents=True)
@@ -1331,10 +1325,10 @@ def test_optimize_agent_tracing_studio_init(
     assert result["instructions"] == env.instructions
 
 
-def test_optimize_agent_tracing_unavailable_continues(
+def test_optimize_agent_tracing_failure_continues(
     monkeypatch, tmp_path, configure_optimize_env
 ):
-    """Test that optimization continues when omniagents.studio.tracing is unavailable."""
+    """Test that optimization continues when local tracing fails to start."""
     project_dir = tmp_path / "proj"
     project_dir.mkdir()
 
@@ -1364,20 +1358,10 @@ def test_optimize_agent_tracing_unavailable_continues(
 
     env = configure_optimize_env(compiled_path)
 
-    original_import = builtins.__import__
+    def failing_init(**kwargs):
+        raise RuntimeError("forced")
 
-    def failing_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "omniagents.studio" and fromlist and "tracing" in fromlist:
-            raise ImportError("forced")
-        if name == "omniagents.studio.tracing":
-            raise ImportError("forced")
-        return original_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", failing_import)
-
-    studio_module = types.ModuleType("omniagents.studio")
-    studio_module.__path__ = []
-    monkeypatch.setitem(sys.modules, "omniagents.studio", studio_module)
+    monkeypatch.setattr("omniagents.core.tracing.local.init", failing_init)
 
     scenario_dir = project_dir / "artifacts" / "eval" / "scenario" / "splits" / "safety"
     scenario_dir.mkdir(parents=True)

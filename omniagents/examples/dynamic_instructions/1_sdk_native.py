@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from agents import Agent
 from agents.run_context import RunContextWrapper
 from omniagents import Runner
-import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
+from omniagents.core.tracing import local as studio_tracing
 
 # Load environment variables from .env file
 load_dotenv()

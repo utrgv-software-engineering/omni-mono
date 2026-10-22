@@ -20,6 +20,7 @@ resolution-markers = [
 members = [
     "omni-code",
     "omniagents",
+    "omniagents-studio",
 ]
 
 [[package]]
@@ -4333,7 +4334,6 @@ dependencies = [
 all = [
     { name = "bashkit" },
     { name = "fastapi", extra = ["all"] },
-    { name = "httpx" },
     { name = "markitdown", extra = ["all", "docx", "pdf"] },
     { name = "openai-agents", extra = ["blaxel", "cloudflare", "daytona", "docker", "e2b", "encrypt", "litellm", "modal", "mongodb", "redis", "runloop", "sqlalchemy", "vercel", "voice"] },
     { name = "presidio-analyzer" },
@@ -4429,13 +4429,6 @@ session-sqlalchemy = [
 sqlcipher = [
     { name = "pysqlcipher3" },
 ]
-studio = [
-    { name = "httpx" },
-]
-studio-server = [
-    { name = "fastapi", extra = ["all"] },
-    { name = "uvicorn" },
-]
 training = [
     { name = "accelerate" },
     { name = "bitsandbytes" },
@@ -4487,9 +4480,7 @@ requires-dist = [
     { name = "datasets", marker = "extra == 'training'", specifier = ">=2.0" },
     { name = "fastapi", extras = ["all"], marker = "extra == 'dev'", specifier = ">=0.115.12" },
     { name = "fastapi", extras = ["all"], marker = "extra == 'server'", specifier = ">=0.115.12" },
-    { name = "fastapi", extras = ["all"], marker = "extra == 'studio-server'", specifier = ">=0.115.12" },
     { name = "fastapi", extras = ["all"], marker = "extra == 'web'", specifier = ">=0.115.12" },
-    { name = "httpx", marker = "extra == 'studio'", specifier = ">=0.27.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.142.4" },
     { name = "jinja2" },
     { name = "jmespath", marker = "extra == 'training'", specifier = ">=1.0" },
@@ -4498,7 +4489,7 @@ requires-dist = [
     { name = "mkdocs-material", marker = "extra == 'dev'", specifier = ">=9.5.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==2.4.0" },
-    { name = "omniagents", extras = ["litellm", "markdown", "oidc", "presidio", "sandbox-bashkit", "sandbox-blaxel", "sandbox-cloudflare", "sandbox-daytona", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-vercel", "server", "session-encrypted", "session-mongodb", "session-postgres", "session-redis", "session-sqlalchemy", "studio", "studio-server", "voice", "web"], marker = "extra == 'all'", editable = "omniagents" },
+    { name = "omniagents", extras = ["litellm", "markdown", "oidc", "presidio", "sandbox-bashkit", "sandbox-blaxel", "sandbox-cloudflare", "sandbox-daytona", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-vercel", "server", "session-encrypted", "session-mongodb", "session-postgres", "session-redis", "session-sqlalchemy", "voice", "web"], marker = "extra == 'all'", editable = "omniagents" },
     { name = "openai", specifier = "<2.45" },
     { name = "openai-agents", extras = ["blaxel"], marker = "extra == 'sandbox-blaxel'", specifier = ">=0.16.0,<0.17" },
     { name = "openai-agents", extras = ["cloudflare"], marker = "extra == 'sandbox-cloudflare'", specifier = ">=0.16.0,<0.17" },
@@ -4542,11 +4533,10 @@ requires-dist = [
     { name = "trl", marker = "extra == 'training'", specifier = ">=0.28,<0.30" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.34.1" },
-    { name = "uvicorn", marker = "extra == 'studio-server'", specifier = ">=0.34.1" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.1" },
     { name = "vcrpy", marker = "extra == 'dev'", specifier = ">=5.1.0" },
 ]
-provides-extras = ["voice", "litellm", "studio", "server", "web", "studio-server", "docs", "markdown", "oidc", "sqlcipher", "session-sqlalchemy", "session-redis", "session-mongodb", "session-encrypted", "session-postgres", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-daytona", "sandbox-blaxel", "sandbox-vercel", "sandbox-cloudflare", "sandbox-bashkit", "presidio", "all", "training", "dev"]
+provides-extras = ["voice", "litellm", "server", "web", "docs", "markdown", "oidc", "sqlcipher", "session-sqlalchemy", "session-redis", "session-mongodb", "session-encrypted", "session-postgres", "sandbox-docker", "sandbox-e2b", "sandbox-modal", "sandbox-runloop", "sandbox-daytona", "sandbox-blaxel", "sandbox-vercel", "sandbox-cloudflare", "sandbox-bashkit", "presidio", "all", "training", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4566,6 +4556,41 @@ dev = [
     { name = "setuptools", specifier = ">=70.1" },
     { name = "types-pyyaml", specifier = ">=6.0" },
     { name = "vcrpy", specifier = ">=5.1.0" },
+]
+
+[[package]]
+name = "omniagents-studio"
+version = "0.1.0"
+source = { editable = "omniagents-studio" }
+dependencies = [
+    { name = "fastapi", extra = ["all"] },
+    { name = "omniagents" },
+    { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "black" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", extras = ["all"], specifier = ">=0.115.12" },
+    { name = "omniagents", editable = "omniagents" },
+    { name = "uvicorn", specifier = ">=0.34.1" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "black", specifier = "==26.5.1" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-timeout" },
+    { name = "pytest-xdist" },
 ]
 
 [[package]]

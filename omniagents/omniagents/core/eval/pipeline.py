@@ -436,7 +436,7 @@ async def _run_scenario(
         with scenario_timer() as elapsed_fn:
             if workflow_name:
                 try:
-                    from omniagents.studio.tracing import trace as studio_trace
+                    from omniagents.core.tracing.local import trace as studio_trace
 
                     try:
                         import omniagents as _oa
@@ -874,7 +874,7 @@ def run_evaluation(
     workflow_name = None
     try:
         if tracing_cfg and str(tracing_cfg.get("provider", "")).lower() == "studio":
-            import omniagents.studio.tracing as studio_tracing
+            from omniagents.core.tracing import local as studio_tracing
             from datetime import datetime
 
             base_name = workflow_base_name or tracing_cfg.get("name") or cfg_path.stem

@@ -3,7 +3,6 @@ recursive-include omniagents/backends/bubbletea/cmd/omni-tui *.go go.mod go.sum
 recursive-include omniagents/backends/bubbletea/cmd/omni-tui/themes *
 include omniagents/backends/bubbletea/README.md
 recursive-include omniagents/backends/bubbletea/vendor *
-recursive-include omniagents/studio/server/static *
 recursive-include omniagents/core/project/templates *
 recursive-include omniagents/backends/ink/tui/dist *
 recursive-include omniagents/backends/ink/tui/src *.ts *.tsx

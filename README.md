@@ -7,6 +7,7 @@ One repository for the Omni agent stack and related projects.
 | `omniagents/` | Agent framework: runtime, RPC protocol, web and Ink UIs | `omniagents` on PyPI |
 | `omni-code/` | The Omni Code product built on omniagents | `omni-code` on PyPI |
 | `omni-desktop/` | Electron + browser app that installs and runs Omni Code | GitHub releases |
+| `omniagents-studio/` | OmniAgents Studio: web UI for traces, playground and evals | Not published |
 
 Each directory keeps its own build, tests and `CLAUDE.md`; see the README in
 each one. Tags are prefixed by package, e.g. `omniagents-v0.7.40`,

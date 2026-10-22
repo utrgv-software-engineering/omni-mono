@@ -37,9 +37,7 @@ entries when you touch those modules; never add new ones.
 
 ### Coverage
 ```bash
-make coverage-all          # All coverage (Python, web)
 make coverage-python       # Python agents, FastAPI server, backends
-make coverage-web          # React Studio UI via Vitest
 ```
 
 ### Running the Application
@@ -95,9 +93,6 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
      - `project/`: Project scaffolding templates
   - `/omniagents/backends/`: UI/interface implementations (server, web, ink)
    - `/omniagents/rpc/`: JSON-RPC protocol implementation for remote agent communication
-   - `/omniagents/studio/`: Web-based UIs:
-     - `tracing/`: Trace visualization UI
-     - `server/`: Studio server with React frontend
    - `/examples/`: Various example implementations showcasing different features
    - `/tests/`: Test suite with fixtures in `conftest.py`
 
@@ -129,11 +124,11 @@ OmniAgents is a wrapper around OpenAI's agents library (`openai-agents==0.4.2`) 
 5. **Configuration**:
    - API keys via environment variables (e.g., `OPENAI_API_KEY`)
    - Agent-specific settings in YAML files (name, instructions_file, tools, use_safe_agent, layout)
-  - Optional dependencies controlled via `pyproject.toml` extras: `[server]`, `[web]`, `[studio]`, `[studio-server]`, `[all]`, `[dev]`
+  - Optional dependencies controlled via `pyproject.toml` extras: `[server]`, `[web]`, `[all]`, `[dev]`
 
 6. **Multi-Language Components**:
    - **Python**: Core framework, backends, RPC implementation
-   - **JavaScript/React**: Web UIs in `omniagents/backends/web/`, `omniagents/backends/ink/`, and `omniagents/studio/server/web/`
+   - **JavaScript/React**: Web UIs in `omniagents/backends/web/` and `omniagents/backends/ink/`
 
 ### Testing
 

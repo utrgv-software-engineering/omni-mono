@@ -16,6 +16,6 @@ The OmniAgents Studio UI cannot launch agent optimization jobs even though the e
 
 ## Relevant Code
 - `omniagents/cli.py` — CLI command definition and call to `optimize_agent_from_project`.
-- `omniagents/studio/server/api.py` — FastAPI handler `start_agent_optimization`, job machinery, and progress streaming.
-- `omniagents/studio/server/web/src/features/agents/AgentsView.tsx` — UI form logic and progress display for optimization.
-- `omniagents/studio/server/web/src/lib/api.ts` — REST client helper defining the fetch call for agent optimization.
+- `omniagents-studio/omniagents_studio/api.py` — FastAPI handler `start_agent_optimization`, job machinery, and progress streaming.
+- `omniagents-studio/web/src/features/agents/AgentsView.tsx` — UI form logic and progress display for optimization.
+- `omniagents-studio/web/src/lib/api.ts` — REST client helper defining the fetch call for agent optimization.

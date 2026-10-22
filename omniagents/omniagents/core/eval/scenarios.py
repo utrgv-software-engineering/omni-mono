@@ -444,7 +444,7 @@ async def generate_scenarios(
         rendered = render_template(prompt_str, **ctx)
         if workflow_name:
             try:
-                from omniagents.studio.tracing import trace as studio_trace
+                from omniagents.core.tracing.local import trace as studio_trace
 
                 try:
                     import omniagents as _oa

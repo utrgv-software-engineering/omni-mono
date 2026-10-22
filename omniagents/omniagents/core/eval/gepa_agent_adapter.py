@@ -329,7 +329,9 @@ class OmniAgentsAgentAdapter:
                 try:
                     if self.workflow_name:
                         try:
-                            from omniagents.studio.tracing import trace as studio_trace  # type: ignore
+                            from omniagents.core.tracing.local import (
+                                trace as studio_trace,
+                            )
                             import uuid as _uuid
 
                             run_uid = _uuid.uuid4().hex[:8]
@@ -919,7 +921,7 @@ class OmniAgentsAgentAdapter:
                 prompt = self._render_optimizer_prompt(name, base_text, ds_items)
                 if self.workflow_name:
                     try:
-                        from omniagents.studio.tracing import trace as studio_trace  # type: ignore
+                        from omniagents.core.tracing.local import trace as studio_trace
                         import uuid as _uuid
 
                         run_uid = _uuid.uuid4().hex[:8]

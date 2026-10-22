@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 import re
 from dotenv import load_dotenv
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 # --- Core Framework Imports --- #
 # Note: All OpenAI client configuration (API key, base URL, tracing) should be done by the user script or environment.
@@ -36,7 +36,6 @@ CODESPACES_ENV = any(
         "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN",
     )
 )
-DEFAULT_STUDIO_DEV_HOST = "0.0.0.0" if CODESPACES_ENV else "127.0.0.1"
 DEFAULT_BIND_HOST = "0.0.0.0" if CODESPACES_ENV else "127.0.0.1"
 
 
@@ -45,61 +44,6 @@ def _merge_prompt_words(words: Optional[List[str]] | None) -> Optional[str]:
         return None
     text = " ".join(words).strip()
     return text or None
-
-
-def _resolve_studio_project_value(
-    value: Optional[str],
-) -> Tuple[Optional[str], Optional[Path], bool]:
-    manifest_path: Optional[Path] = None
-    project_value = value
-    derived = False
-
-    def load_from_manifest(manifest: Path) -> Optional[str]:
-        try:
-            data = yaml.safe_load(manifest.read_text(encoding="utf-8")) or {}
-        except Exception:
-            return None
-        tracing_cfg = data.get("tracing") or {}
-        tracing_project = tracing_cfg.get("project")
-        if isinstance(tracing_project, str) and tracing_project.strip():
-            return tracing_project.strip()
-        # Convention: the tracing project is the product slug.
-        product_section = data.get("product")
-        if product_section is not None:
-            try:
-                from omniagents.core.product import product_info_from_mapping
-
-                return product_info_from_mapping(product_section).slug
-            except Exception:
-                return None
-        return None
-
-    if value:
-        lower_val = value.lower()
-        looks_like_path = any(
-            sep in value for sep in ("/", "\\")
-        ) or lower_val.endswith((".yml", ".yaml"))
-        if looks_like_path:
-            candidate = Path(value).expanduser()
-            if candidate.is_dir():
-                candidate = candidate / "project.yml"
-            if candidate.is_file():
-                guess = load_from_manifest(candidate)
-                if guess:
-                    manifest_path = candidate
-                    project_value = guess
-                    derived = True
-                    return project_value, manifest_path, derived
-        return project_value, manifest_path, derived
-
-    candidate = Path.cwd() / "project.yml"
-    if candidate.is_file():
-        guess = load_from_manifest(candidate)
-        if guess:
-            manifest_path = candidate
-            project_value = guess
-            derived = True
-    return project_value, manifest_path, derived
 
 
 def run_codex_auth_command(
@@ -787,76 +731,6 @@ def main():
         help="Exclude specific operationIds",
     )
 
-    studio_parser = subparsers.add_parser("studio", help="OmniAgents Studio utilities")
-    studio_sub = studio_parser.add_subparsers(dest="studio_cmd")
-
-    studio_serve = studio_sub.add_parser(
-        "serve", help="Run the OmniAgents Studio web UI"
-    )
-    studio_serve.add_argument(
-        "--host",
-        default=None,
-        help="Host interface to bind (default: 127.0.0.1)",
-    )
-    studio_serve.add_argument(
-        "--port", type=int, default=7860, help="Port to bind (default: 7860)"
-    )
-    studio_serve.add_argument(
-        "--db-path",
-        dest="db_path",
-        default=None,
-        help="Path to a specific SQLite database (optional)",
-    )
-    studio_serve.add_argument(
-        "--project",
-        default=None,
-        help="Project name under ~/.omniagents/traces (or OMNIAGENTS_HOME) to serve (optional)",
-    )
-    studio_serve.add_argument(
-        "--token", dest="auth_token", default=None, help="Bearer token for API access"
-    )
-    studio_serve.add_argument(
-        "--dev",
-        action="store_true",
-        help="Run with the Studio web dev server (auto rebuild UI)",
-    )
-    studio_serve.add_argument(
-        "--dev-host",
-        default=None,
-        help="Host for the Studio web dev server (default: match --host)",
-    )
-    studio_serve.add_argument(
-        "--dev-port",
-        type=int,
-        default=5173,
-        help="Port for the Studio web dev server (default: 5173)",
-    )
-
-    studio_export = studio_sub.add_parser(
-        "export", help="Export traces from OmniAgents Studio"
-    )
-    studio_export.add_argument("output", help="Output file path")
-    studio_export.add_argument(
-        "--format",
-        choices=["json", "csv", "parquet"],
-        default="json",
-        help="Export format (default: json)",
-    )
-    studio_export.add_argument(
-        "--project",
-        default=None,
-        help="Project name to export (defaults to active project)",
-    )
-
-    studio_show = studio_sub.add_parser(
-        "show", help="Display Studio project information"
-    )
-    studio_show.add_argument(
-        "--project",
-        default=None,
-        help="Project name to show (defaults to active project)",
-    )
-
     add_sessions_subparser(subparsers)
 
     agent_parser = subparsers.add_parser("agent", help="Agent-level operations")
@@ -1471,85 +1345,6 @@ def main():
             import traceback
 
             traceback.print_exc()
-            sys.exit(1)
-    elif args.command == "studio":
-        if not getattr(args, "studio_cmd", None):
-            studio_parser.print_help()
-            sys.exit(1)
-        try:
-            from omniagents.studio import tracing as studio_mod
-        except ImportError as e:
-            print(f"Error importing Studio module: {e}")
-            print("Install optional dependencies with: pip install omniagents[studio]")
-            sys.exit(1)
-
-        project_hint, _manifest_path, derived_from_manifest = (
-            _resolve_studio_project_value(getattr(args, "project", None))
-        )
-        inferred_project = getattr(args, "project", None)
-        if derived_from_manifest:
-            inferred_project = project_hint
-        elif inferred_project is None and project_hint:
-            inferred_project = project_hint
-
-        if args.studio_cmd == "serve":
-            try:
-                host_value = args.host or DEFAULT_BIND_HOST
-                dev_host_value = getattr(args, "dev_host", None)
-                if dev_host_value is None:
-                    dev_host_value = host_value
-                studio_mod.serve(
-                    host=host_value,
-                    port=args.port,
-                    db_path=getattr(args, "db_path", None),
-                    project=inferred_project,
-                    auth_token=getattr(args, "auth_token", None),
-                    dev=getattr(args, "dev", False),
-                    dev_host=dev_host_value,
-                    dev_port=getattr(args, "dev_port", 5173),
-                    manifest_path=str(_manifest_path) if _manifest_path else None,
-                )
-            except ImportError as e:
-                print(f"Error starting Studio server: {e}")
-                print(
-                    "Install server dependencies with: pip install omniagents[studio-server]"
-                )
-                sys.exit(1)
-            except Exception as e:
-                print(f"Error starting Studio server: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif args.studio_cmd == "export":
-            try:
-                if not inferred_project:
-                    print(
-                        "Error: Provide --project <name> or run from a directory containing project.yml with tracing.project."
-                    )
-                    sys.exit(2)
-                studio_mod.export(
-                    args.output,
-                    format=getattr(args, "format", "json"),
-                    project=inferred_project,
-                )
-            except Exception as e:
-                print(f"Error exporting traces: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        elif args.studio_cmd == "show":
-            try:
-                studio_mod.show(project=inferred_project)
-            except Exception as e:
-                print(f"Error displaying Studio information: {e}")
-                import traceback
-
-                traceback.print_exc()
-                sys.exit(1)
-        else:
-            studio_parser.print_help()
             sys.exit(1)
     elif args.command == "sessions":
         sys.exit(handle_sessions_command(args))
@@ -2359,7 +2154,7 @@ def main():
                     provider = str(tracing.get("provider", "")).lower()
                     if provider == "studio":
                         from datetime import datetime
-                        from omniagents.studio import tracing as tracing_module
+                        from omniagents.core.tracing import local as tracing_module
 
                         base_name = tracing.get("name") or _P(compiled_cfg_path).stem
                         if name_arg:
