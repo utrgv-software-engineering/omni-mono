@@ -74,6 +74,28 @@ class TestThreadAndTurns:
         assert [p.content["text"] for p in prompts] == ["hi"]
         assert prompts[0].status is ItemStatus.COMPLETED
 
+    def test_the_prompt_keeps_what_it_was_sent_with(self, store, recorder):
+        sent = [
+            {
+                "type": "image",
+                "url": "data:image/jpeg;base64,AAAA",
+                "mime": "image/png",
+            },
+            {"type": "file", "filename": "notes.pdf"},
+        ]
+        feed(
+            recorder,
+            (
+                "run_started",
+                {"run_id": RUN, "prompt": "what is this?", "attachments": sent},
+            ),
+        )
+        [prompt] = only(store, ItemKind.USER_MESSAGE)
+        assert prompt.content["attachments"] == sent
+        from omniagents.core.conversation.model import derive_search_text
+
+        assert "AAAA" not in derive_search_text(prompt.kind, prompt.content)
+
     def test_assistant_role_prompt_records_as_an_agent_message(self, store, recorder):
         """Notification-batch wakeups arrive with prompt_role='assistant' so
         the transcript reads as the agent observing its own background work,

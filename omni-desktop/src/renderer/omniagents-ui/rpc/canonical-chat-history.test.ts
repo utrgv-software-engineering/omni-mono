@@ -43,6 +43,32 @@ describe('canonical conversation item adapters', () => {
     });
   });
 
+  it('keeps the attachments a user message was sent with', () => {
+    const adapted = adaptCanonicalConversationItem(
+      item({
+        kind: 'user_message',
+        role: 'user',
+        content: {
+          text: 'what is this?',
+          attachments: [
+            { type: 'image', url: 'data:image/jpeg;base64,AAAA', mime: 'image/png' },
+            { type: 'file', filename: 'notes.pdf' },
+            { type: 'unknown' },
+          ],
+        },
+      })
+    );
+    expect(adapted).toMatchObject({
+      type: 'chat',
+      role: 'user',
+      content: 'what is this?',
+      attachments: [
+        { type: 'image', url: 'data:image/jpeg;base64,AAAA', mime: 'image/png' },
+        { type: 'file', filename: 'notes.pdf' },
+      ],
+    });
+  });
+
   it('preserves MCP tool structure', () => {
     const adapted = adaptCanonicalConversationItem(
       item({

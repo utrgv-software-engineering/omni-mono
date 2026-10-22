@@ -1,5 +1,6 @@
 import type {
   ArtifactMcpUi,
+  Attachment,
   CanonicalItemEnvelope,
   ChatItemMetadata,
   MessageItem,
@@ -12,6 +13,31 @@ import { mcpArtifact } from './mcp-artifact';
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+/** A user message's recorded attachments (image thumbnails, file names). */
+function attachments(value: unknown): Attachment[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const out = value.flatMap((entry): Attachment[] => {
+    if (!entry || typeof entry !== 'object') {
+      return [];
+    }
+    const { type, url, filename, mime } = entry as Record<string, unknown>;
+    if (type !== 'image' && type !== 'file') {
+      return [];
+    }
+    return [
+      {
+        type,
+        ...(typeof url === 'string' ? { url } : {}),
+        ...(typeof filename === 'string' ? { filename } : {}),
+        ...(typeof mime === 'string' ? { mime } : {}),
+      },
+    ];
+  });
+  return out.length ? out : undefined;
 }
 
 function planStepStatus(value: unknown): PlanStep['status'] {
@@ -126,13 +152,16 @@ export function adaptCanonicalConversationItem(item: ConversationItem): MessageI
   const canonical = envelope(item);
 
   switch (item.kind) {
-    case 'user_message':
+    case 'user_message': {
+      const sent = attachments(content.attachments);
       return {
         type: 'chat',
         role: role(item.role, 'user'),
         content: stringValue(content.text) ?? '',
+        ...(sent ? { attachments: sent } : {}),
         canonical,
       };
+    }
     case 'agent_message':
       return {
         type: 'chat',

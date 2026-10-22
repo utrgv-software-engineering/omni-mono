@@ -31,6 +31,23 @@ function item(
 }
 
 describe("normalizeItems", () => {
+  it("marks what a user message was sent with", () => {
+    const [message] = normalizeItems([
+      item({
+        seq: 1,
+        kind: "user_message",
+        content: {
+          text: "what is this?",
+          attachments: [
+            { type: "image", url: "data:image/jpeg;base64,AAAA" },
+            { type: "file", filename: "notes.pdf" },
+          ],
+        },
+      }),
+    ]);
+    expect(message?.content).toBe("[image] [file: notes.pdf]\nwhat is this?");
+  });
+
   it("reconstructs a completed conversation from persisted items alone", () => {
     const messages = normalizeItems([
       item({ seq: 1, kind: "user_message", content: { text: "ship it" } }),

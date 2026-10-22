@@ -474,6 +474,7 @@ class ConversationRecorder:
         prompt: str | None,
         prompt_role: str | None,
         user_id: str | None = None,
+        attachments: list | None = None,
     ) -> Turn:
         self.ensure_thread(thread_id, user_id=user_id)
         now = _now()
@@ -512,7 +513,11 @@ class ConversationRecorder:
                 turn_id=turn_id,
                 status=ItemStatus.COMPLETED,
                 role=role,
-                content={"text": prompt, "origin": "prompt"},
+                content={
+                    "text": prompt,
+                    "origin": "prompt",
+                    **({"attachments": attachments} if attachments else {}),
+                },
                 source_ref={"event": "run_started", "run_id": turn_id},
             )
         turn = self._store.mutate_turn(
@@ -634,6 +639,7 @@ class ConversationRecorder:
         if not isinstance(run_id, str) or not run_id:
             return
         prompt = payload.get("prompt")
+        attachments = payload.get("attachments")
         self.open_turn(
             thread_id,
             run_id,
@@ -643,6 +649,7 @@ class ConversationRecorder:
                 if isinstance(payload.get("prompt_role"), str)
                 else None
             ),
+            attachments=attachments if isinstance(attachments, list) else None,
         )
 
     def _on_run_status(self, thread_id: str, payload: Dict[str, Any]) -> None:

@@ -15,7 +15,7 @@
  */
 
 import type { ConversationItem, ConversationToolKind } from '../rpc/client'
-import type { MessageItem, ToolMetadata } from './MessageList'
+import type { Attachment, MessageItem, ToolMetadata } from './MessageList'
 
 /** Narrow an open `content` field to a string. */
 function text(value: unknown): string {
@@ -54,14 +54,36 @@ export function toolKind(item: ConversationItem): ConversationToolKind {
   return typeof kind === 'string' ? (kind as ConversationToolKind) : 'other'
 }
 
+/** A user message's recorded attachments (image thumbnails, file names). */
+function attachments(value: unknown): Attachment[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out = value.flatMap((entry): Attachment[] => {
+    if (!entry || typeof entry !== 'object') return []
+    const { type, url, filename, mime } = entry as Record<string, unknown>
+    if (type !== 'image' && type !== 'file') return []
+    return [
+      {
+        type,
+        ...(typeof url === 'string' ? { url } : {}),
+        ...(typeof filename === 'string' ? { filename } : {}),
+        ...(typeof mime === 'string' ? { mime } : {}),
+      },
+    ]
+  })
+  return out.length ? out : undefined
+}
+
 function normalizeOne(item: ConversationItem): MessageItem | null {
   switch (item.kind) {
-    case 'user_message':
+    case 'user_message': {
+      const sent = attachments(item.content.attachments)
       return {
         type: 'chat',
         role: 'user',
         content: text(item.content.text),
+        ...(sent ? { attachments: sent } : {}),
       }
+    }
     case 'agent_message':
       return {
         type: 'chat',

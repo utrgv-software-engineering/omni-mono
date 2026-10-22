@@ -34,6 +34,24 @@ function text(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+/** A terminal shows what a user message carried as markers: "[image]",
+ * "[file: notes.pdf]". */
+function attachmentMarkers(value: unknown): string {
+  if (!Array.isArray(value)) return "";
+  return value
+    .flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const { type, filename } = entry as Record<string, unknown>;
+      if (type === "image") return ["[image]"];
+      if (type === "file")
+        return [
+          typeof filename === "string" ? `[file: ${filename}]` : "[file]",
+        ];
+      return [];
+    })
+    .join(" ");
+}
+
 function asText(value: unknown): string {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
@@ -133,8 +151,14 @@ function workflowReviewFromItem(item: ConversationItem): ReviewInfo | null {
 
 function normalizeOne(item: ConversationItem): Message | null {
   switch (item.kind) {
-    case "user_message":
-      return { role: "user", content: text(item.content.text) };
+    case "user_message": {
+      const markers = attachmentMarkers(item.content.attachments);
+      const body = text(item.content.text);
+      return {
+        role: "user",
+        content: markers ? (body ? `${markers}\n${body}` : markers) : body,
+      };
+    }
     case "agent_message":
       return {
         role: item.role === "system" ? "system" : "assistant",

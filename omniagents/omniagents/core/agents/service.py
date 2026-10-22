@@ -4802,6 +4802,11 @@ class AgentService(RpcMethodsBase):
         # with the right role: notification batches arrive as "assistant"
         # so the wakeup reads as the agent observing its own background
         # activity, not as fake user input.
+        from omniagents.core.conversation.attachments import describe_attachments
+
+        # What the prompt carried besides text (image thumbnails, file
+        # names), so the transcript shows what was sent.
+        attachments = describe_attachments(content)
         await self._broadcast_session(
             sess,
             "run_started",
@@ -4810,6 +4815,7 @@ class AgentService(RpcMethodsBase):
                 "session_id": sess.id,
                 "prompt": prompt,
                 "prompt_role": prompt_role,
+                **({"attachments": attachments} if attachments else {}),
             },
             track_live=True,
         )
