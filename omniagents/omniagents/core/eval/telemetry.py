@@ -24,8 +24,13 @@ def _empty_usage() -> Dict[str, Any]:
 async def consume_stream_events(stream: AsyncIterator) -> Dict[str, Any]:
     """Consume stream events and accumulate token usage.
 
-    Mirrors the usage-tracking logic in ``runtime/bridge.py`` but returns
-    the totals instead of broadcasting them.
+    Two shapes carry usage: the SDK's own stream (``raw_response_event``
+    with a ``ResponseCompletedEvent``, what ``Runner.run_streamed`` yields)
+    and a project agent's RPC stream, where the runtime bridge has already
+    turned each completed response into a ``token_usage`` item. The bridge's
+    ``totals`` there are that response's own ``usage`` (it treats them as a
+    running context figure, so its ``delta`` is context growth, not spend);
+    summing ``totals`` per response gives the same count as the SDK stream.
 
     Returns a dict with ``usage`` (token counters).
     """
@@ -34,7 +39,18 @@ async def consume_stream_events(stream: AsyncIterator) -> Dict[str, Any]:
     usage = _empty_usage()
 
     async for event in stream:
-        if getattr(event, "type", None) != "raw_response_event":
+        etype = getattr(event, "type", None)
+        if etype == "run_item_stream_event" and getattr(event, "name", None) == (
+            "token_usage"
+        ):
+            item = getattr(event, "item", None)
+            totals = item.get("totals") if isinstance(item, dict) else None
+            if isinstance(totals, dict):
+                usage["requests"] += 1
+                for key in ("input_tokens", "output_tokens", "total_tokens"):
+                    usage[key] += int(totals.get(key) or 0)
+            continue
+        if etype != "raw_response_event":
             continue
         data = getattr(event, "data", None)
         if not isinstance(data, ResponseCompletedEvent):

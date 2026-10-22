@@ -1675,14 +1675,7 @@ def main():
                     progress_cb=_progress_cb,
                     eval_config=eval_cfg,
                 )
-                # The manifest says what was run; the CLI knows the selection.
                 run_manifest = data.get("manifest") if isinstance(data, dict) else None
-                if isinstance(run_manifest, dict):
-                    run_manifest["select"] = str(args.select or "") or None
-                    run_manifest["exclude"] = str(args.exclude or "") or None
-                    run_manifest["split"] = (
-                        str(getattr(args, "split", "") or "") or None
-                    )
                 # Determine output location
                 out_arg = str(getattr(args, "output", "") or "").strip()
                 yaml_output = (eval_cfg.config or {}).get("output") or ""

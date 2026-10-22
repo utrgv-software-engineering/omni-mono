@@ -43,13 +43,18 @@ def _apply_target(
     return None
 
 
-def _slice_keys(run: Dict[str, Any], field: str) -> List[str]:
-    """Group keys for a run under ``field`` (a dotted path into its scenario).
+def slice_keys(scenario: Dict[str, Any], field: str) -> List[str]:
+    """Group keys for a scenario under ``field``, a dotted path.
 
-    A list-valued field (``tags``) contributes one key per element, so a run
-    tagged ``[dev, tone_34]`` lands in both groups.
+    The path is looked up in the scenario's ``metadata`` block first (where
+    the notebook's ``EvalSuite.add(metadata=...)`` puts slicing fields), then
+    in the scenario itself (``expect.skin_tone``, ``tags``). A list-valued
+    field contributes one key per element, so a run tagged ``[dev, tone_34]``
+    lands in both groups.
     """
-    value = _deep_get(run.get("scenario_config") or {}, field)
+    value = _deep_get(scenario.get("metadata") or {}, field)
+    if value is None:
+        value = _deep_get(scenario, field)
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
@@ -65,6 +70,17 @@ def _answered(run: Dict[str, Any]) -> bool:
     return True if text is None else bool(str(text).strip())
 
 
+def run_passed(run: Dict[str, Any]) -> bool:
+    """A run passes when every measure on it passed; a run with no measures passes.
+
+    The one pass rule: run records carry it as ``passed``, results storage
+    counts it, and the notebook's ``EvalResult.passed`` is it. A run that
+    failed to execute carries a failing ``_run_error`` measure, so it fails.
+    """
+    measures = run.get("measures") or []
+    return all(bool(m.get("passed")) for m in measures)
+
+
 def _rate_block(pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]]) -> Dict[str, Any]:
     total = len(pairs)
     passed = sum(1 for _, m in pairs if bool(m.get("passed")) is True)
@@ -78,6 +94,13 @@ def _rate_block(pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]]) -> Dict[str,
     }
 
 
+def summarize_runs(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Whole-run pass rate (:func:`run_passed`) with its interval, plus answered count."""
+    block = _rate_block([(r, {"passed": run_passed(r)}) for r in runs])
+    block["answered"] = sum(1 for r in runs if _answered(r))
+    return block
+
+
 def _slices(
     pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]], slice_by: List[str]
 ) -> Dict[str, Dict[str, Dict[str, Any]]]:
@@ -85,10 +108,21 @@ def _slices(
     for field in slice_by:
         groups: Dict[str, List[Tuple[Dict[str, Any], Dict[str, Any]]]] = {}
         for run, m in pairs:
-            for key in _slice_keys(run, field):
+            for key in slice_keys(run.get("scenario_config") or {}, field):
                 groups.setdefault(key, []).append((run, m))
         out[str(field)] = {key: _rate_block(g) for key, g in sorted(groups.items())}
     return out
+
+
+def group_runs(
+    runs: List[Dict[str, Any]], field: str
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Runs grouped by :func:`slice_keys` of their scenario, keys sorted."""
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    for run in runs:
+        for key in slice_keys(run.get("scenario_config") or {}, field):
+            groups.setdefault(key, []).append(run)
+    return dict(sorted(groups.items()))
 
 
 def _as_list(value: Any) -> List[str]:

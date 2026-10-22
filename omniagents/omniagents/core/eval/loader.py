@@ -52,6 +52,12 @@ class EvalConfig:
     the YAML the merge picked the judge up from (last-write-wins, mirroring
     merge order)."""
 
+    select: Optional[str] = None
+    """Scenario selector the config was loaded with (``name:foo*,tag:smoke``), if any."""
+
+    exclude: Optional[str] = None
+    """Scenario exclusion the config was loaded with, if any."""
+
     split: Optional[str] = None
     """Holdout split the scenarios were restricted to (``train``/``dev``/``test``), if any."""
 
@@ -559,6 +565,12 @@ def load_eval_config(
     optimizers = _collect_optimizers([s for s in optimizers_sources if s.exists()])
     metrics = _collect_metrics([s for s in metrics_sources if s.exists()])
 
+    # Scenarios written inline in evaluation.yml are used when there are no
+    # scenario files, and are selected and split like any others.
+    inline_scenarios = base_eval.pop("scenarios", None)
+    if not scenarios and isinstance(inline_scenarios, list):
+        scenarios = [sc for sc in inline_scenarios if isinstance(sc, dict)]
+
     # Filter
     if select or exclude:
         scenarios = filter_scenarios(scenarios, select, exclude)
@@ -601,6 +613,8 @@ def load_eval_config(
         tracing_config=tracing_config,
         project_config=proj,
         judge_sources=judge_sources,
+        select=(str(select) if select else None),
+        exclude=(str(exclude) if exclude else None),
         split=(str(split) if split else None),
         holdout_manifest=holdout_manifest,
     )

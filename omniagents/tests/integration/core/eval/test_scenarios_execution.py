@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from omniagents.core.eval import multi_turn
+from omniagents.core.eval import engine, targets
 
 
 def _prepare_agent_yaml(tmp_path: Path) -> Path:
@@ -117,15 +117,11 @@ def _configure_execution(monkeypatch, responses):
         )
         yield
 
-    monkeypatch.setattr(multi_turn, "create_unified_agent", fake_create_agent)
-    monkeypatch.setattr(multi_turn, "load_history", fake_load_history)
-    monkeypatch.setattr(multi_turn, "final_assistant_text", fake_final_assistant_text)
+    monkeypatch.setattr(targets, "create_unified_agent", fake_create_agent)
+    monkeypatch.setattr(targets, "load_history", fake_load_history)
+    monkeypatch.setattr(engine, "final_assistant_text", fake_final_assistant_text)
     monkeypatch.setattr("omniagents.core.tracing.setup_tracing", fake_setup_tracing)
-    monkeypatch.setattr(multi_turn, "load_agent_spec_from_yaml", fake_load_spec)
-    # Also patch the history_db module since run_scenarios_against_agent imports it locally
-    monkeypatch.setattr(
-        "omniagents.core.session.history_db.load_history", fake_load_history
-    )
+    monkeypatch.setattr(targets, "load_agent_spec_from_yaml", fake_load_spec)
     monkeypatch.setattr("omniagents.core.tracing.local.trace", fake_trace)
 
     return progress_events, trace_calls, setup_calls
@@ -167,7 +163,7 @@ def test_run_scenarios_against_agent_tracks_traces_and_history(tmp_path, monkeyp
         },
     ]
     result = asyncio.run(
-        multi_turn.run_scenarios_against_agent(
+        engine.run_scenarios_against_agent(
             agent_yaml,
             scenario_list,
             include_history=True,
@@ -232,7 +228,7 @@ def test_run_scenarios_against_agent_records_partial_failures(tmp_path, monkeypa
         },
     ]
     result = asyncio.run(
-        multi_turn.run_scenarios_against_agent(
+        engine.run_scenarios_against_agent(
             agent_yaml,
             scenario_list,
             include_history=True,

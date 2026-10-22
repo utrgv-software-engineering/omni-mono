@@ -33,3 +33,33 @@ def tool_hallucination(ctx) -> Dict[str, Any]:
         outcome = fail_reason("unknown_tool_calls")
     outcome.update(result)
     return outcome
+
+
+@evaluation_measure
+async def expectations(ctx) -> Dict[str, Any]:
+    """The scenario's ``expect`` checks (``tool_called``, ``response_contains``, ``verify``, ...).
+
+    See :mod:`omniagents.core.evaluation.expectations`. Passes when every
+    check passes; ``checks`` lists each one.
+    """
+    from .expectations import check_expectations_async
+
+    checks = await check_expectations_async(ctx, ctx.expect or {})
+    failed = [c for c in checks if not c["passed"]]
+    if failed:
+        outcome = fail_reason("; ".join(f"{c['name']}: {c['reason']}" for c in failed))
+    else:
+        outcome = pass_reason(f"{len(checks)} expectation(s) met")
+    outcome["checks"] = checks
+    return outcome
+
+
+@evaluation_measure
+def user_goal_achieved(ctx) -> Dict[str, Any]:
+    """A synthetic scenario's simulated user said its goal was achieved (``[DONE]``)."""
+    reason = ctx.metadata.get("user_completion_reason")
+    if reason == "done":
+        return pass_reason("simulated user reached its goal")
+    return fail_reason(
+        f"simulated user did not reach its goal ({reason or 'max_exchanges'})"
+    )

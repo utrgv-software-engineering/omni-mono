@@ -486,7 +486,7 @@ def agents_md_in_instructions(ctx: EvalContext) -> dict:
         return fail_reason("no workspace_root in environment context")
 
     try:
-        from agents.omni.context import build_coding_context
+        from omni_code.agents.omni.context import build_coding_context
 
         result = build_coding_context({"workspace_root": workspace})
         block = result.get("agents_md_block", "")
@@ -520,7 +520,7 @@ def expected_skills_in_instructions(ctx: EvalContext) -> dict:
         return fail_reason("no workspace_root in environment context")
 
     try:
-        from agents.omni.context import build_coding_context
+        from omni_code.agents.omni.context import build_coding_context
 
         result = build_coding_context({"workspace_root": workspace})
         block = result.get("available_skills_block", "")

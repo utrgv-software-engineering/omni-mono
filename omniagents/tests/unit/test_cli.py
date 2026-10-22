@@ -1337,4 +1337,5 @@ def test_eval_suite_run_accepts_split_and_stores_manifest(monkeypatch, tmp_path)
     except SystemExit as exc:  # a passing suite returns; a failing one exits non-zero
         assert exc.code in (0, None)
     assert seen.get("split") == "test"
-    assert saved["manifest"]["split"] == "test" and saved["manifest"]["model"] == "m"
+    # The engine records the selection in the manifest; the CLI stores it as is.
+    assert saved["manifest"] == {"agent": "alpha", "model": "m"}
