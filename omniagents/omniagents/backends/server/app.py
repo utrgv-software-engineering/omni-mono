@@ -298,13 +298,9 @@ def _resolve_upstream_credential(
 
 
 async def _connect_remote(url: str, headers: Dict[str, str]):
-    """``websockets.connect`` across library versions (header kwarg renamed)."""
     import websockets
 
-    try:
-        return await websockets.connect(url, additional_headers=headers or None)
-    except TypeError:
-        return await websockets.connect(url, extra_headers=headers or None)
+    return await websockets.connect(url, additional_headers=headers or None)
 
 
 def _upstream_handshake_close_code(exc: BaseException) -> int:
@@ -560,6 +556,7 @@ def build_app(
         app.state.default_workspace_id = default_environment.workspace_id
         app.state.default_environment_id = default_environment.environment_id
     service = AgentService(spec, agent_host_resources)
+    service.default_environment_id = getattr(app.state, "default_environment_id", None)
     app.state.agent_service = service
     # The service authorizes every request against the mode implied by the
     # configured provider: enforced (ownership + global-effect rules) when

@@ -129,7 +129,9 @@ async def test_sdk_compacts_after_tool_save_and_sends_replacement(native, approv
 @pytest.mark.parametrize("guard", ["native", "pending", "disabled"])
 async def test_boundary_does_not_compact_with_native_wrapper_or_pending_tool(guard):
     session = SimpleNamespace(
-        history=[], variables={"test": {"auto_compact": guard != "disabled"}}
+        history=[],
+        variables={"test": {"auto_compact": guard != "disabled"}},
+        get_items=AsyncMock(return_value=[]),
     )
     if guard == "native":
         session._sdk_compaction_session = object()
@@ -214,3 +216,78 @@ async def test_real_bridge_overflow_recovery_uses_native_once(fails_again):
     assert len(requests) == 2
     assert requests[1] == [{"role": "user", "content": "compact state"}]
     assert sum(row.get("content") == "user request" for row in session.history) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_compaction_before_the_first_call_keeps_the_new_message(native):
+    # Saved context is already over the threshold (a large image does this),
+    # so compaction runs before the turn's first model call — when the new
+    # message is not saved yet. It must still reach the model.
+    from .test_persisted_response import CompletedResponseModel
+
+    session = Session("compaction", "first-call")
+    session.append_message({"role": "user", "content": "earlier " + "x" * 8000})
+    session.append_message({"role": "assistant", "content": "earlier answer"})
+    requests = []
+
+    class RecordingModel(CompletedResponseModel):
+        async def stream_response(self, *args, **kwargs):
+            requests.append(kwargs.get("input", args[1] if len(args) > 1 else None))
+            async for event in super().stream_response(*args, **kwargs):
+                yield event
+
+    async def server_call(*args, **kwargs):
+        session.append_message(
+            {
+                "role": "assistant",
+                "content": "checkpoint",
+                "omniagents": {"kind": "context_summary", "version": 1},
+            }
+        )
+
+    service = SimpleNamespace(
+        _runtime_hooks={"token": [make_auto_compact_token_hook(state_key="test")]},
+        server_call=server_call,
+    )
+    sdk_session = session
+    if native:
+        from omniagents.core.session.compaction import wrap_with_compaction
+
+        async def endpoint(**kwargs):
+            return SimpleNamespace(
+                output=[{"role": "assistant", "content": "checkpoint"}]
+            )
+
+        sdk_session = wrap_with_compaction(
+            session,
+            {
+                "enabled": True,
+                "model": "gpt-6-astra",
+                "threshold_tokens": 900,
+                "client": SimpleNamespace(responses=SimpleNamespace(compact=endpoint)),
+            },
+        )
+        session._sdk_compaction_session = sdk_session
+    result = Runner.run_streamed(
+        Agent(name="first-call", model=RecordingModel()),
+        "the new question",
+        session=sdk_session,
+        run_config=RunConfig(
+            tracing_disabled=True,
+            call_model_input_filter=compaction_input_filter(
+                session, service, 1000, _strip_phase_from_model_input
+            ),
+        ),
+    )
+    async for _ in result.stream_events():
+        pass
+    assert "checkpoint" in str(requests[0])
+    assert requests[0][-1]["content"] == "the new question"
+    assert (
+        sum(
+            row.get("content") == "the new question"
+            for row in await session.get_items()
+        )
+        == 1
+    )

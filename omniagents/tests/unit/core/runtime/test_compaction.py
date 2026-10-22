@@ -472,3 +472,25 @@ def test_conventional_summarizer_runs_compactor_under_its_own_instructions(
         assert compaction_summarizer() is explicit
     finally:
         reset_product_info()
+
+
+def test_summarizer_prompt_omits_inline_image_and_file_data():
+    from omniagents.core.runtime.compaction import build_checkpoint_prompt
+
+    photo = "data:image/jpeg;base64," + "A" * 2_000_000
+    history = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "what is in this photo?"},
+                {"type": "input_image", "image_url": photo},
+                {"type": "input_file", "filename": "a.pdf", "file_data": "B" * 500_000},
+            ],
+        },
+        {"role": "assistant", "content": "a cat"},
+    ]
+    prompt = build_checkpoint_prompt(history, history)
+    assert len(prompt) < 2_000
+    assert "what is in this photo?" in prompt
+    assert "[inline image/jpeg omitted]" in prompt
+    assert "[file data omitted]" in prompt

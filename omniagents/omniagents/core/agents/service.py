@@ -78,6 +78,7 @@ from omniagents.execution import (
     current_request_context,
     reset_request_context,
 )
+from omniagents.execution.routing import _LEASE_REQUIREMENTS
 from omniagents.workspace.base import Workspace
 from omniagents.workspace.host import HostWorkspace
 from omniagents.core.providers.accounts import AccountManager
@@ -468,6 +469,15 @@ def reset_current_service(token: contextvars.Token) -> None:
     _current_service.reset(token)
 
 
+def _binds(signature: inspect.Signature, args: tuple) -> bool:
+    """Whether *args* fit *signature* positionally."""
+    try:
+        signature.bind(*args)
+    except TypeError:
+        return False
+    return True
+
+
 class AgentService(RpcMethodsBase):
     """JSON-RPC methods for agent operations.
 
@@ -500,6 +510,11 @@ class AgentService(RpcMethodsBase):
         self.environment_manager = agent_host_resources.environments
         self.thread_bindings = agent_host_resources.thread_bindings
         self.operation_router = agent_host_resources.router
+        # The host environment a client gets when it names none (the GUI
+        # handshake's ``agent_host.default_environment_id``). ``build_app``
+        # sets it for a standalone server rooted at a workspace; a targetless
+        # AgentHost has none and every environment is chosen explicitly.
+        self.default_environment_id: str | None = None
         # One AgentHost-level terminal registry authorizes socket attachment
         # and owns descriptor lifecycle. Per-terminal placement/defaults come
         # from EnvironmentLease, never from mutable service configuration.
@@ -1855,41 +1870,29 @@ class AgentService(RpcMethodsBase):
                 return await on_invoke(self, sess, args or {})
             return on_invoke(self, sess, args or {})
 
-        # Try common calling conventions in order
-        to_call = None
+        # Server functions take (service, session, args), (session, args),
+        # (args) or nothing. Pick the convention by signature and call once:
+        # retrying on TypeError would also swallow a TypeError raised inside
+        # the function and re-run it with different arguments.
         is_bound = getattr(fn, "__self__", None) is not None
-        candidates_async = []
-        candidates_sync = []
-        if is_bound:
-            candidates_sync = [
-                (sess, args or {}),
-                (args or {},),
-                tuple(),
-            ]
-        else:
-            candidates_sync = [
-                (self, sess, args or {}),
-                (sess, args or {}),
-                (args or {},),
-                tuple(),
-            ]
-        candidates_async = candidates_sync
-
+        candidates = [(sess, args or {}), (args or {},), ()]
+        if not is_bound:
+            candidates.insert(0, (self, sess, args or {}))
+        try:
+            signature = inspect.signature(fn)
+        except (TypeError, ValueError):
+            signature = None
+        call_args = next(
+            (
+                cand
+                for cand in candidates
+                if signature is None or _binds(signature, cand)
+            ),
+            (),
+        )
         if asyncio.iscoroutinefunction(fn):
-            for cand in candidates_async:
-                try:
-                    return await fn(*cand)
-                except TypeError:
-                    continue
-            # Last resort: call with no args
-            return await fn()
-        else:
-            for cand in candidates_sync:
-                try:
-                    return fn(*cand)
-                except TypeError:
-                    continue
-            return fn()
+            return await fn(*call_args)
+        return fn(*call_args)
 
     # --- Built-in server functions -------------------------------------
     def _sf_session_get_history(
@@ -2096,8 +2099,11 @@ class AgentService(RpcMethodsBase):
             self.register_server_function(
                 command_name,
                 handler,
-                resource_scope=ResourceScope.AGENT_HOST,
-                execution_requirements=ExecutionRequirement.NONE,
+                # The bound agent reads and edits the session's workspace and
+                # runs its shell, so the command is routed to that environment.
+                resource_scope=ResourceScope.THREAD,
+                execution_requirements=ExecutionRequirement.WORKSPACE_WRITE
+                | ExecutionRequirement.PROCESS,
                 description=str(binding.get("description") or ""),
                 params_schema={
                     "type": "object",
@@ -2397,14 +2403,8 @@ class AgentService(RpcMethodsBase):
         if not hasattr(server, "list_tools"):
             raise ValueError(f"MCP server '{server_name}' does not support list_tools")
 
-        # ``list_tools`` on the agents SDK MCPServer subclasses takes an
-        # optional ``run_context``/``agent`` kwargs depending on SDK version.
-        # We don't have either in this OOB path, so call positionally without
-        # arguments — the SDK falls back to listing all tools.
-        try:
-            result = await server.list_tools()
-        except TypeError:
-            result = await server.list_tools(run_context=None, agent=None)
+        # No run context or agent on this out-of-band path: list every tool.
+        result = await server.list_tools()
 
         # ``MCPServer.list_tools`` returns ``list[mcp.types.Tool]`` directly.
         # Some transports wrap it as ``ListToolsResult`` (with .tools).
@@ -6016,7 +6016,9 @@ class AgentService(RpcMethodsBase):
                 execution_requirements=entry["execution_requirements"],
             )
             return await self.operation_router.prepare(
-                descriptor, params, principal=principal
+                descriptor,
+                await self._with_implicit_environment(descriptor, params),
+                principal=principal,
             )
         operation = OPERATION_BY_NAME.get(method)
         if operation is None:
@@ -6024,6 +6026,38 @@ class AgentService(RpcMethodsBase):
         return await self.operation_router.prepare_protocol(
             operation, params, principal=principal
         )
+
+    async def _with_implicit_environment(
+        self, descriptor: OperationExecutionDescriptor, params: dict
+    ) -> dict:
+        """Route a server function that needs an environment but names none.
+
+        It runs where its session does: the session's bound environment, else
+        the host default. A slash command is often the first thing typed in a
+        new session, and every client sends it the same way, so the server
+        decides here instead of each client remembering to.
+        """
+        if params.get("environment_id") is not None or not (
+            descriptor.execution_requirements & _LEASE_REQUIREMENTS
+        ):
+            return params
+        session_id = params.get("session_id")
+        if isinstance(session_id, str) and session_id:
+            try:
+                selected = (
+                    await self.thread_bindings.get(session_id)
+                ).environment_selection
+            except KeyError:
+                selected = None
+            if isinstance(selected, ExistingEnvironment):
+                return {
+                    **params,
+                    "environment_id": selected.environment_id,
+                    "environment_generation": selected.environment_generation,
+                }
+        if self.default_environment_id:
+            return {**params, "environment_id": self.default_environment_id}
+        return params
 
     async def authorize_rpc(
         self, principal: "UserIdentity | None", method: str, params: dict

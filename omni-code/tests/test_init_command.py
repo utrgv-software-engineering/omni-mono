@@ -4,6 +4,9 @@ import pytest
 from omniagents.core.models import install_model_catalog
 from omniagents.core.product import product_info
 from omniagents.core.runtime import slash_agents
+from omniagents.execution import bind_request_context, reset_request_context
+from omniagents.testing import _direct_invocation_context
+from omniagents.workspace.host import HostWorkspace
 
 # The catalog store, installed from the discovered product manifest —
 # what product bootstrap does before any CLI run; these tests patch the
@@ -11,13 +14,26 @@ from omniagents.core.runtime import slash_agents
 install_model_catalog(product_info().manifest_path)
 
 
-async def run_init_agent(max_turns: int = 1000) -> str:
+async def run_init_agent(max_turns: int = 1000, routed_to=None) -> str:
     """The /init flow under test: the manifest's declared `slash_commands`
     binding executed by the framework's generic slash-agent runner
-    (which is what the default slash registry dispatches to)."""
+    (which is what the default slash registry dispatches to).
+
+    Standalone (a CLI run, no routed request) unless *routed_to* names the
+    session environment's workspace root the command was routed to.
+    """
     binding = dict(slash_agents.manifest_slash_bindings()["init"])
     binding["max_turns"] = max_turns
-    return await slash_agents.run_slash_agent("init", binding)
+    context = (
+        _direct_invocation_context(HostWorkspace(root=str(routed_to)))
+        if routed_to is not None
+        else None
+    )
+    token = bind_request_context(context)
+    try:
+        return await slash_agents.run_slash_agent("init", binding)
+    finally:
+        reset_request_context(token)
 
 
 @pytest.mark.asyncio
@@ -121,8 +137,9 @@ async def test_run_init_agent_uses_model_provider_and_restores_env(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("routed", [False, True], ids=["standalone", "routed"])
 async def test_run_init_agent_passes_workspace_root_via_run_context(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, routed
 ):
     """The init agent's tools (apply_patch / write_file / read_file)
     resolve relative paths against ctx.context["workspace_root"]. Under
@@ -191,14 +208,15 @@ async def test_run_init_agent_passes_workspace_root_via_run_context(
     # Asymmetric: PWD points at tmp_path, NOT the test runner cwd. If the
     # slash command silently picked up some other path (e.g. the server
     # process's cwd), captured["context"] would not match tmp_path.
-    monkeypatch.setenv("PWD", str(tmp_path))
+    # Routed, the session's workspace wins over the server's $PWD.
+    monkeypatch.setenv("PWD", str(tmp_path / "elsewhere") if routed else str(tmp_path))
     (tmp_path / "AGENTS.md").write_text("# Repository Guidelines\n", encoding="utf-8")
 
-    await run_init_agent(max_turns=5)
+    await run_init_agent(max_turns=5, routed_to=tmp_path if routed else None)
 
-    assert (
-        captured["context"] is not None
-    ), "Runner.run was called without context= — workspace_root not propagated"
+    assert captured["context"] is not None, (
+        "Runner.run was called without context= — workspace_root not propagated"
+    )
     assert isinstance(captured["context"], dict)
     assert captured["context"].get("workspace_root") == str(tmp_path), (
         f"workspace_root mismatch: got {captured['context'].get('workspace_root')!r}, "

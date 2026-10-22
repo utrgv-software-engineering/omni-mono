@@ -33,10 +33,11 @@ Runner semantics (:func:`run_slash_agent`), generalized from omni-code's
   runtime's raw model id (historical behavior for agent runs that need
   the provider-prefixed id). The runtime's ``model_settings`` are
   stamped on the spec when non-empty.
-- Workspace: the invoking shell's directory (``$PWD``, falling back to
-  the process cwd) — the agent's file tools resolve relative paths
-  against it, and ``attach_file.path`` is read back from the same
-  anchor.
+- Workspace: the invoking session's environment — the command is routed
+  to it like any workspace operation, and the run binds its workspace. A
+  standalone CLI run uses the invoking shell's directory (``$PWD``, falling
+  back to the process cwd). ``attach_file.path`` is read back from the
+  same anchor.
 - Run: multi-turn, through
   :func:`omniagents.core.runtime.run_project_agent_once` (outside the
   session lifecycle).
@@ -45,7 +46,7 @@ Runner semantics (:func:`run_slash_agent`), generalized from omni-code's
   ``when_status`` is omitted) and the file exists, the response becomes
   ``"<status>\\n\\n<path>:\\n\\n```<language>\\n<body>\\n```"``. Any
   exception from the run returns ``failure_message`` (or a generic
-  ``Failed to run /<name>.``). The final-line protocol itself — which
+  ``Failed to run /<name>.``) followed by the error. The final-line protocol itself — which
   exact strings the agent may end with — is the agent's instructions'
   business, not the runner's.
 
@@ -55,9 +56,12 @@ handlers these bindings replace; bind arg-sensitive commands in Python.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_SLASH_AGENT_MAX_TURNS",
@@ -149,12 +153,24 @@ async def run_slash_agent(
     else:
         model, model_runtime = resolve_model_runtime(normalize=normalize)
 
-    # Anchor the run to the invoking shell's directory ($PWD, falling
-    # back to process cwd) — the agent's file tools resolve relative
+    # Anchor the run to the session's environment when the command was routed
+    # to one; a standalone CLI run uses the invoking shell's directory ($PWD,
+    # falling back to process cwd). The agent's file tools resolve relative
     # paths against it, and attach_file reads back from the same anchor.
-    workspace_root = os.environ.get("PWD")
-    base_dir = Path(workspace_root).expanduser() if workspace_root else Path.cwd()
+    from omniagents.execution import current_request_context
 
+    lease = getattr(current_request_context(), "environment_lease", None)
+    if lease is not None:
+        base_dir = Path(lease.workspace.root)
+    else:
+        workspace_root = os.environ.get("PWD")
+        base_dir = Path(workspace_root).expanduser() if workspace_root else Path.cwd()
+
+    # The agent's file and shell tools act on the current workspace, which a
+    # run outside the session lifecycle must bind itself.
+    from omniagents.workspace import reset_workspace, set_workspace
+
+    workspace_token = set_workspace(lease.workspace) if lease is not None else None
     try:
         status = await run_project_agent_once(
             agent_key,
@@ -168,11 +184,15 @@ async def run_slash_agent(
             workspace_root=str(base_dir),
             max_turns=max_turns,
         )
-    except Exception:
+    except Exception as exc:
+        logger.exception("slash agent /%s failed", _normalize(name))
         failure = binding.get("failure_message")
-        if isinstance(failure, str) and failure.strip():
-            return failure
-        return f"Failed to run /{_normalize(name)}."
+        if not (isinstance(failure, str) and failure.strip()):
+            failure = f"Failed to run /{_normalize(name)}."
+        return f"{failure} ({exc})"
+    finally:
+        if workspace_token is not None:
+            reset_workspace(workspace_token)
 
     attach = binding.get("attach_file")
     if isinstance(attach, dict):
