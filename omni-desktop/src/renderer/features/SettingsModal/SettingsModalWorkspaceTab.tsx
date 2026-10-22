@@ -55,6 +55,12 @@ export const SettingsModalWorkspaceTab = memo(() => {
     }
   }, [checkCliStatus]);
 
+  const restoreDefaultWorkspaceDir = useCallback(async () => {
+    const defaultDir = await emitter.invoke('util:get-default-workspace-dir');
+    await emitter.invoke('util:ensure-directory', defaultDir);
+    await persistedStoreApi.setKey('workspaceDir', defaultDir);
+  }, []);
+
   const reinstallRuntime = useCallback(() => {
     omniInstallApi.startInstall(true);
   }, []);
@@ -67,26 +73,33 @@ export const SettingsModalWorkspaceTab = memo(() => {
         </SettingsSection>
       )}
 
-      {/* Host-filesystem concept. */}
-      {isElectron && (
-        <SettingsSection title="Workspace">
-          <Card>
-            <CardContent>
-              <Field orientation="horizontal" className="justify-between gap-4">
-                <div className="min-w-0">
-                  <FieldLabel>Workspace directory</FieldLabel>
-                </div>
-                <span className="text-sm text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap max-w-50 sm:text-xs">
-                  {store.workspaceDir ?? 'Default'}
-                </span>
+      <SettingsSection title="Workspace">
+        <Card>
+          <CardContent>
+            <Field orientation="horizontal" className="justify-between gap-4">
+              <div className="min-w-0">
+                <FieldLabel>Workspace directory</FieldLabel>
+              </div>
+              <span className="text-sm text-muted-foreground overflow-hidden text-ellipsis whitespace-nowrap max-w-50 sm:text-xs">
+                {store.workspaceDir ?? 'Default'}
+              </span>
+              {/* Picking a folder needs the native dialog; the browser build
+                    can only restore the backend's default. */}
+              {isElectron ? (
                 <Button size="sm" variant="ghost" onClick={selectWorkspaceDir}>
                   Change
                 </Button>
-              </Field>
-            </CardContent>
-          </Card>
-        </SettingsSection>
-      )}
+              ) : (
+                !store.workspaceDir && (
+                  <Button size="sm" variant="ghost" onClick={restoreDefaultWorkspaceDir}>
+                    Use default
+                  </Button>
+                )
+              )}
+            </Field>
+          </CardContent>
+        </Card>
+      </SettingsSection>
 
       {/* Runtime install + CLI-in-PATH are host operations; server mode manages its own runtime. */}
       {isElectron && (

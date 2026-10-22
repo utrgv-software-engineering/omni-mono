@@ -19,7 +19,7 @@ test.describe('lazy session launch guidance', () => {
   test.describe('without a workspace', () => {
     test.use({ seedState: 'no-workspace' });
 
-    test('explains the prerequisite inline and links to workspace settings', async ({ app }, testInfo) => {
+    test('explains the prerequisite inline and links to workspace settings', async ({ app, mode }, testInfo) => {
       await waitForChat(app.page);
       await invokeApp(app.page, 'store:set-key', 'workspaceDir', '');
       await expect(app.page.getByText('Choose a workspace folder to start chatting', { exact: true })).toBeVisible();
@@ -27,11 +27,13 @@ test.describe('lazy session launch guidance', () => {
       await captureState(app.page, testInfo, '01-workspace-required');
 
       await app.page.getByRole('button', { name: 'Open workspace settings' }).click();
-      // KNOWN BUG (server mode): the Workspace settings tab only renders the
-      // workspace-directory control under Electron, so this link dead-ends in
-      // the browser build. Fails in server-local until that is fixed.
       await expect(app.page.getByText('Workspace directory', { exact: true })).toBeVisible();
       await captureState(app.page, testInfo, '02-workspace-settings');
+      if (mode === 'server-local') {
+        // The browser build has no folder picker; it restores the default.
+        await app.page.getByRole('button', { name: 'Use default' }).click();
+        await expect(app.page.getByRole('button', { name: 'Use default' })).toBeHidden();
+      }
     });
   });
 
