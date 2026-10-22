@@ -211,7 +211,6 @@ module = [
     "omniagents.core.sandbox.docker_extended", # 20 errors
     "omniagents.core.runtime.serve_harness",   # 16 errors
     "omniagents.builtin.tools.file_tools",     # 16 errors
-    "omniagents.notebook.evaluation",          # 15 errors
     "omniagents.core.eval.optimize",           # 15 errors
     "omniagents.rpc.agents.remote",            # 13 errors
     "omniagents.core.training.sft",            # 11 errors
