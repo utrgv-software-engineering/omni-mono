@@ -78,7 +78,6 @@ from omniagents.execution import (
     current_request_context,
     reset_request_context,
 )
-from omniagents.execution.routing import _LEASE_REQUIREMENTS
 from omniagents.workspace.base import Workspace
 from omniagents.workspace.host import HostWorkspace
 from omniagents.core.providers.accounts import AccountManager
@@ -515,11 +514,6 @@ class AgentService(RpcMethodsBase):
         self.environment_manager = agent_host_resources.environments
         self.thread_bindings = agent_host_resources.thread_bindings
         self.operation_router = agent_host_resources.router
-        # The host environment a client gets when it names none (the GUI
-        # handshake's ``agent_host.default_environment_id``). ``build_app``
-        # sets it for a standalone server rooted at a workspace; a targetless
-        # AgentHost has none and every environment is chosen explicitly.
-        self.default_environment_id: str | None = None
         # One AgentHost-level terminal registry authorizes socket attachment
         # and owns descriptor lifecycle. Per-terminal placement/defaults come
         # from EnvironmentLease, never from mutable service configuration.
@@ -1359,7 +1353,6 @@ class AgentService(RpcMethodsBase):
         self,
         session_id: str,
         principal=None,
-        default_environment_id: Optional[str] = None,
     ) -> "RequestContext | None":
         """Resolve a routed request context for out-of-band execution paired
         to a GUI session — the realtime (voice) pipeline, which runs outside
@@ -1369,19 +1362,16 @@ class AgentService(RpcMethodsBase):
         selects the environment (existing or automatic) and ``materialize``
         provisions an automatic selection into a ready lease.
 
-        A session that has never run a text turn has a targetless binding, so
-        inherit resolves to no environment. ``default_environment_id`` covers
-        that: it is the same server default the GUI handshake advertises
-        (``agent_host.default_environment_id``) and is applied here as an
-        explicit selection, exactly as the GUI client would on its first
-        ``start_run``.
+        A session never seen before gets the AgentHost's default binding
+        (``ThreadRuntimeBindingRegistry.set_initial_default``), so a
+        voice-first session routes exactly like a text-first one.
 
         The WHOLE context is returned, not just its ``environment_lease``:
         the caller binds it for its task tree (``bind_request_context``) so
         lease-routed helpers — ``require_environment_lease``, worker
         isolation sources — resolve there exactly as they do inside a Run.
-        Returns ``None`` when neither the binding nor the default names an
-        environment; a targetless context would only mask that.
+        Returns ``None`` when the binding names no environment; a targetless
+        context would only mask that.
         """
         request_context = await self.operation_router.prepare_protocol(
             OPERATION_BY_NAME["start_run"],
@@ -1392,18 +1382,6 @@ class AgentService(RpcMethodsBase):
             principal=principal,
         )
         request_context = await self.operation_router.materialize(request_context)
-        if request_context.environment_lease is None and default_environment_id:
-            request_context = await self.operation_router.prepare_protocol(
-                OPERATION_BY_NAME["start_run"],
-                {
-                    "session_id": session_id,
-                    "environment_selection": {
-                        "mode": "explicit",
-                        "environment_id": default_environment_id,
-                    },
-                },
-                principal=principal,
-            )
         return request_context if request_context.environment_lease else None
 
     def build_realtime_client_tools(self, session_id: str, principal=None) -> list:
@@ -6025,9 +6003,7 @@ class AgentService(RpcMethodsBase):
                 execution_requirements=entry["execution_requirements"],
             )
             return await self.operation_router.prepare(
-                descriptor,
-                await self._with_implicit_environment(descriptor, params),
-                principal=principal,
+                descriptor, params, principal=principal
             )
         operation = OPERATION_BY_NAME.get(method)
         if operation is None:
@@ -6035,38 +6011,6 @@ class AgentService(RpcMethodsBase):
         return await self.operation_router.prepare_protocol(
             operation, params, principal=principal
         )
-
-    async def _with_implicit_environment(
-        self, descriptor: OperationExecutionDescriptor, params: dict
-    ) -> dict:
-        """Route a server function that needs an environment but names none.
-
-        It runs where its session does: the session's bound environment, else
-        the host default. A slash command is often the first thing typed in a
-        new session, and every client sends it the same way, so the server
-        decides here instead of each client remembering to.
-        """
-        if params.get("environment_id") is not None or not (
-            descriptor.execution_requirements & _LEASE_REQUIREMENTS
-        ):
-            return params
-        session_id = params.get("session_id")
-        if isinstance(session_id, str) and session_id:
-            try:
-                selected = (
-                    await self.thread_bindings.get(session_id)
-                ).environment_selection
-            except KeyError:
-                selected = None
-            if isinstance(selected, ExistingEnvironment):
-                return {
-                    **params,
-                    "environment_id": selected.environment_id,
-                    "environment_generation": selected.environment_generation,
-                }
-        if self.default_environment_id:
-            return {**params, "environment_id": self.default_environment_id}
-        return params
 
     async def authorize_rpc(
         self, principal: "UserIdentity | None", method: str, params: dict

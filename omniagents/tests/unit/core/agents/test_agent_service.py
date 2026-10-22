@@ -361,13 +361,13 @@ async def test_get_session_history_replays_live_state():
 
 
 @pytest.mark.asyncio
-async def test_prepare_environment_context_for_session_default_fallback(
+async def test_prepare_environment_context_for_session_uses_default_binding(
     temp_history_db, tmp_path
 ):
-    """A session with no thread binding inherits nothing; the server-default
-    environment (the one the GUI handshake advertises) is applied as an
-    explicit fallback — the voice-before-first-text-run path. The whole
-    routed context comes back so the caller can bind it for its task tree."""
+    """A session first seen out of band (voice before any text run) gets the
+    AgentHost's default thread binding, exactly like a text-first session.
+    The whole routed context comes back so the caller can bind it for its
+    task tree."""
     from pathlib import Path
 
     from omniagents.execution import register_host_environment
@@ -384,13 +384,11 @@ async def test_prepare_environment_context_for_session_default_fallback(
     )
     service = AgentService(spec, resources)
 
-    # Unbound session, no default: inherit resolves to no environment.
-    assert await service.prepare_environment_context_for_session("voice-sess-1") is None
+    # Targetless host: a new thread is targetless, inherit resolves nothing.
+    assert await service.prepare_environment_context_for_session("voice-sess-0") is None
 
-    # Unbound session with the server default: explicit fallback lease.
-    context = await service.prepare_environment_context_for_session(
-        "voice-sess-1", default_environment_id=default_env.environment_id
-    )
+    resources.thread_bindings.set_initial_default(default_env)
+    context = await service.prepare_environment_context_for_session("voice-sess-1")
     assert context is not None
     lease = context.environment_lease
     assert lease is not None

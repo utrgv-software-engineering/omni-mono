@@ -44,6 +44,42 @@ async def test_ensure_atomically_initializes_targetless_binding():
 
 
 @pytest.mark.asyncio
+async def test_ensure_initializes_the_composed_default_binding(tmp_path):
+    resources = AgentHostResources.create("host-1")
+    environment = register_host_environment(
+        resources,
+        str(tmp_path),
+        owner_user_id=None,
+        workspace_id="workspace-1",
+        environment_id="environment-1",
+    )
+    resources.thread_bindings.set_initial_default(environment)
+
+    binding = await resources.thread_bindings.ensure("thread-new")
+
+    assert binding == ThreadRuntimeBinding(
+        workspace_id="workspace-1",
+        environment_selection=ExistingEnvironment("environment-1"),
+    )
+    # An explicit binding still wins and is never reset by ensure.
+    await resources.thread_bindings.bind("thread-none", ThreadRuntimeBinding())
+    assert await resources.thread_bindings.ensure("thread-none") == (
+        ThreadRuntimeBinding()
+    )
+
+
+def test_default_binding_requires_a_registered_environment(tmp_path):
+    resources = AgentHostResources.create("host-1")
+    other = AgentHostResources.create("host-2")
+    environment = register_host_environment(
+        other, str(tmp_path), owner_user_id=None
+    )
+
+    with pytest.raises(WorkspaceNotFoundError):
+        resources.thread_bindings.set_initial_default(environment)
+
+
+@pytest.mark.asyncio
 async def test_failed_rebind_preserves_atomic_workspace_environment_pair(tmp_path):
     resources = AgentHostResources.create("host-1")
     first = register_host_environment(

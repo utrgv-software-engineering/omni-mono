@@ -69,6 +69,12 @@ class ThreadRuntimeBindingRegistry:
     registries used by operation routing. A failed rebind leaves the prior
     binding untouched; callers never observe a partially updated pair of
     independent workspace and environment fields.
+
+    A Thread first seen without an explicit binding gets the AgentHost's
+    default binding: targetless unless composition named a default
+    environment (:meth:`set_initial_default`). That is the only place a
+    server-wide default exists — every routing site reads the Thread's
+    binding and nothing else.
     """
 
     def __init__(
@@ -79,7 +85,26 @@ class ThreadRuntimeBindingRegistry:
         self._workspace_registry = workspace_registry
         self._environment_manager = environment_manager
         self._bindings: dict[str, ThreadRuntimeBinding] = {}
+        self._default = ThreadRuntimeBinding()
         self._lock = asyncio.Lock()
+
+    def set_initial_default(self, environment: ExecutionEnvironmentDescriptor) -> None:
+        """Bind every Thread first seen from now on to ``environment``.
+
+        Composition-time only, like ``register_initial``: the environment and
+        its workspace must already be registered. The binding names the
+        environment without pinning a generation, so new Threads follow it
+        across rebuilds exactly as an unpinned client selection would.
+        """
+
+        self._workspace_registry.get(environment.workspace_id)
+        self._environment_manager.require_registered(
+            environment.environment_id, environment.workspace_id
+        )
+        self._default = ThreadRuntimeBinding(
+            workspace_id=environment.workspace_id,
+            environment_selection=ExistingEnvironment(environment.environment_id),
+        )
 
     async def register(
         self, thread_id: str, binding: ThreadRuntimeBinding
@@ -123,11 +148,11 @@ class ThreadRuntimeBindingRegistry:
                 raise KeyError(f"thread {thread_id!r} has no runtime binding") from None
 
     async def ensure(self, thread_id: str) -> ThreadRuntimeBinding:
-        """Return the binding, atomically creating a targetless one if absent."""
+        """Return the binding, atomically creating the default one if absent."""
 
         self._require_thread_id(thread_id)
         async with self._lock:
-            return self._bindings.setdefault(thread_id, ThreadRuntimeBinding())
+            return self._bindings.setdefault(thread_id, self._default)
 
     async def remove(self, thread_id: str) -> ThreadRuntimeBinding | None:
         self._require_thread_id(thread_id)
@@ -783,6 +808,15 @@ class ExecutionEnvironmentManager:
                 raise WorkspaceEnvironmentMismatchError(
                     workspace_id, environment_id, descriptor.workspace_id
                 )
+
+    def require_registered(self, environment_id: str, workspace_id: str) -> None:
+        """Composition-time check that ``environment_id`` exists in ``workspace_id``."""
+
+        descriptor = self._record(environment_id).descriptor
+        if descriptor.workspace_id != workspace_id:
+            raise WorkspaceEnvironmentMismatchError(
+                workspace_id, environment_id, descriptor.workspace_id
+            )
 
     def _record(self, environment_id: str) -> _EnvironmentRecord:
         try:
