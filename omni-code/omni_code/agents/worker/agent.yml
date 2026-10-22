@@ -10,9 +10,6 @@ description: "Autonomous coding worker for parallel subtasks"
 # forwarded by build_worker_context.
 instructions_file: instructions.md
 
-additional_tools_dirs:
-  - ../../tools
-
 # Worker is a focused coding subagent — it gets the file/shell/notebook
 # surface it needs to execute a task, plus task tracking and skills, but
 # no nested workers, no exploration subagent (workers

@@ -20,9 +20,6 @@ label: Eval Subagent Test
 description: "Test-only agent used to verify subagent workspace_root propagation"
 instructions_file: instructions.md
 
-additional_tools_dirs:
-  - ../../tools
-
 tools:
   - list_directory
   - read_file
