@@ -512,3 +512,24 @@ def test_load_eval_config_without_split_is_unchanged(tmp_path):
     cfg = load_eval_config(str(root / "project.yml"))
     assert cfg.split is None and cfg.holdout_manifest == {}
     assert [sc["name"] for sc in cfg.config["scenarios"]] == ["only"]
+
+
+def test_inline_scenarios_are_selected_like_scenario_files(tmp_path):
+    """Scenarios written in evaluation.yml used to bypass --select/--exclude."""
+    root = _create_project(tmp_path)
+    eval_dir = root / "evaluations"
+    (eval_dir / "scenarios.yml").unlink()
+    _write_yaml(
+        eval_dir / "evaluation.yml",
+        {
+            "evaluation": {
+                "scenarios": [
+                    {"name": "keep", "tags": ["smoke"]},
+                    {"name": "drop", "tags": ["slow"]},
+                ]
+            }
+        },
+    )
+    cfg = load_eval_config(str(root / "project.yml"), select="tag:smoke")
+    assert [sc["name"] for sc in cfg.config["scenarios"]] == ["keep"]
+    assert cfg.select == "tag:smoke" and cfg.exclude is None

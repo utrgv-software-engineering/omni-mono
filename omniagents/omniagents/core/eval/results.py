@@ -5,6 +5,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from omniagents.core.eval.metrics import run_passed
+
 
 def generate_run_id() -> str:
     """Generate timestamped run ID."""
@@ -85,17 +87,8 @@ def save_evaluation_run(
     results_dir = get_results_directory(scenario_path)
     runs = data.get("runs", [])
 
-    # Calculate summary stats. A run "passes" iff every measure on it passed
-    # (mirrors the rule used by the Studio detail endpoint). Runs with no
-    # measures are treated as passes so empty scenarios don't poison the count.
-    def _run_passed(r: Dict[str, Any]) -> bool:
-        measures = r.get("measures", [])
-        if not measures:
-            return True
-        return all(m.get("passed", False) for m in measures)
-
     total = len(runs)
-    passed = sum(1 for r in runs if _run_passed(r))
+    passed = sum(1 for r in runs if run_passed(r))
     failed = total - passed
 
     # Per-measure aggregates: { measure_name: {passed, failed, total} }. Lets

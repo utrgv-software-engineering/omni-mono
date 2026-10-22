@@ -39,43 +39,85 @@ def _tool_names(tools: Any) -> List[str]:
     return sorted(names)
 
 
-def build_run_manifest(
-    eval_config: Any,
-    *,
-    select: Optional[str] = None,
-    exclude: Optional[str] = None,
-    split: Optional[str] = None,
-    repeats: int = 1,
-) -> Dict[str, Any]:
-    """Describe the agent and selection an evaluation run used."""
-    agent_cfg: Dict[str, Any] = dict(getattr(eval_config, "agent_config", None) or {})
-    agent_path = Path(getattr(eval_config, "agent_path", "") or "")
+def describe_agent_config(agent_cfg: Dict[str, Any], agent_path: Any) -> Dict[str, Any]:
+    """The manifest's agent fields for a project agent (its ``agent.yml``)."""
+    agent_cfg = dict(agent_cfg or {})
+    path = Path(agent_path or "")
     instructions_sha: Optional[str] = None
     instructions_file = agent_cfg.get("instructions_file")
-    if instructions_file and agent_path.name:
-        instructions_sha = _file_sha(agent_path.parent / str(instructions_file))
+    if instructions_file and path.name:
+        instructions_sha = _file_sha(path.parent / str(instructions_file))
     elif isinstance(agent_cfg.get("instructions"), str):
         instructions_sha = _sha(agent_cfg["instructions"].encode("utf-8"))
-    try:
-        from omniagents._version import __version__ as version
-    except Exception:  # pragma: no cover - version module always present in a checkout
-        version = "unknown"
-    cfg = getattr(eval_config, "config", None) or {}
     return {
-        "agent": agent_cfg.get("name") or agent_path.parent.name or None,
-        "agent_yml": str(agent_path) if agent_path.name else None,
-        "agent_yml_sha": _file_sha(agent_path) if agent_path.name else None,
+        "agent": agent_cfg.get("name") or path.parent.name or None,
+        "agent_yml": str(path) if path.name else None,
+        "agent_yml_sha": _file_sha(path) if path.name else None,
         "instructions_sha": instructions_sha,
         "model": agent_cfg.get("model"),
         "tools": _tool_names(agent_cfg.get("tools")),
         "capabilities": _tool_names(agent_cfg.get("capabilities")),
         "max_turns": agent_cfg.get("max_turns"),
+    }
+
+
+def describe_sdk_agent(agent: Any, max_turns: Optional[int]) -> Dict[str, Any]:
+    """The manifest's agent fields for an ``agents.Agent`` passed in directly."""
+    instructions = getattr(agent, "instructions", None)
+    model = getattr(agent, "model", None)
+    return {
+        "agent": getattr(agent, "name", None),
+        "agent_yml": None,
+        "agent_yml_sha": None,
+        "instructions_sha": (
+            _sha(instructions.encode("utf-8"))
+            if isinstance(instructions, str)
+            else None
+        ),
+        "model": (
+            model if isinstance(model, str) or model is None else type(model).__name__
+        ),
+        "tools": _tool_names(
+            getattr(t, "name", None) or str(t)
+            for t in (getattr(agent, "tools", None) or [])
+        ),
+        "capabilities": [],
+        "max_turns": max_turns,
+    }
+
+
+def build_run_manifest(
+    agent: Dict[str, Any],
+    *,
+    defaults: Optional[Dict[str, Any]] = None,
+    select: Optional[str] = None,
+    exclude: Optional[str] = None,
+    split: Optional[str] = None,
+    holdout: Optional[Dict[str, Any]] = None,
+    repeats: int = 1,
+    scenarios: int = 0,
+) -> Dict[str, Any]:
+    """Describe the agent and selection an evaluation run used.
+
+    ``agent`` is :func:`describe_agent_config` or :func:`describe_sdk_agent`.
+    ``evaluation.defaults.max_turns`` overrides the agent's own limit at run
+    time, so the manifest records the limit the run actually used.
+    """
+    try:
+        from omniagents._version import __version__ as version
+    except Exception:  # pragma: no cover - version module always present in a checkout
+        version = "unknown"
+    fields = dict(agent)
+    if (defaults or {}).get("max_turns") is not None:
+        fields["max_turns"] = int(defaults["max_turns"])  # type: ignore[index]
+    return {
+        **fields,
         "omniagents_version": version,
         "select": select or None,
         "exclude": exclude or None,
-        "split": split or getattr(eval_config, "split", None),
-        "holdout": dict(getattr(eval_config, "holdout_manifest", None) or {}) or None,
+        "split": split or None,
+        "holdout": dict(holdout or {}) or None,
         "repeats": int(repeats),
-        "scenarios": len(cfg.get("scenarios") or []),
+        "scenarios": int(scenarios),
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }

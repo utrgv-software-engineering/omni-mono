@@ -22,7 +22,7 @@ from omniagents.core.evaluation import (
 from omniagents.core.eval.pipeline import (
     _failure_category_map,
     _load_local_measures,
-    _run_judges,
+    run_judges,
 )
 from omniagents.core.utils.jinja import render_template
 from omniagents.core.project.runtime import load_project
@@ -256,12 +256,11 @@ class OmniAgentsAgentAdapter:
                 if key in scenario:
                     scen[key] = scenario[key]
         try:
-            metadata = await _run_judges(
-                self.compiled_yaml,
+            metadata = await run_judges(
                 eval_cfg,
                 scen,
                 history,
-                eval_dir=self._eval_dir,
+                Path(self._eval_dir) if self._eval_dir else self.compiled_yaml.parent,
             )
         except Exception:
             metadata = {}
