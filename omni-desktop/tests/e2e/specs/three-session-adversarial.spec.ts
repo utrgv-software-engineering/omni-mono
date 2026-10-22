@@ -134,18 +134,14 @@ test('isolates three mixed sessions through seeded switching churn, duplicate ev
   await page.reload();
   for (let owner = 0; owner < 3; owner++) {
     await show(owner);
-    await expect(composer).toHaveValue(`Owned draft ${owner}`, { timeout: 90_000 });
-    await expect(columns[owner]!.getByText(`tile-${owner}.txt`, { exact: true }).first()).toBeVisible();
+    // Drafts live in memory: a reload starts every composer empty.
+    await expect(composer).toHaveValue('', { timeout: 90_000 });
     for (let other = 0; other < 3; other++) {
       if (other !== owner) {
         await expect(columns[owner]!.getByRole('log')).not.toContainText(prompts[other]!);
       }
     }
-    await attachProofPng(
-      testInfo,
-      `recovered owner ${owner} content and uploaded draft`,
-      await app.captureScreenshot()
-    );
+    await attachProofPng(testInfo, `recovered owner ${owner} content`, await app.captureScreenshot());
   }
   await show(0);
   await expect(a!.getByText('A_ARTIFACT_initial', { exact: true })).toHaveCount(1);

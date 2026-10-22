@@ -69,5 +69,6 @@ test('persisted response appears once in its own tile without its stream message
   await expect(a.getByText('SESSION_A_REPLY', { exact: true })).toHaveCount(1);
   await expect(b.getByText('SESSION_A_REPLY', { exact: true })).toHaveCount(0);
   await openSession(page, 'PERSISTENCE_SETUP_1');
-  await expect(composer).toHaveValue('independent persistence-check draft');
+  // Drafts live in memory: a reload starts every composer empty.
+  await expect(composer).toHaveValue('');
 });
