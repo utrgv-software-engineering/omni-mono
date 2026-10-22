@@ -54,7 +54,7 @@ it('resends a lost answer to its question even after the server has consumed it'
   session.panels.set('escalation', null);
   await session.send('here it is');
   expect(fake.clientResponse).toHaveBeenCalledTimes(2);
-  expect(fake.clientResponse.mock.calls[1]?.[0]).toBe('asked');
+  expect(fake.clientResponse).toHaveBeenLastCalledWith('asked', expect.anything(), expect.anything());
   expect(fake.startRun).not.toHaveBeenCalled();
   // Anything else typed afterwards is a new message again.
   await session.send('a new question');

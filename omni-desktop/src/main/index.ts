@@ -21,6 +21,7 @@ import {
   listOrgs as githubListOrgs,
   searchRepos as githubSearchRepos,
 } from '@/main/github-auth';
+import { removeRetiredState } from '@/main/legacy-cleanup';
 import { LocalCodexAccount } from '@/main/local-codex-account';
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { MainProcessManager } from '@/main/main-process-manager';
@@ -121,6 +122,9 @@ const OMNI_CONFIG_DIR = getOmniConfigDir();
 const store = getStore();
 const secretStore = new LocalSecretStore();
 importLegacyProjectsDb(store);
+void removeRetiredState(OMNI_CONFIG_DIR).catch((error) => {
+  console.warn('[legacy-cleanup] failed:', error);
+});
 
 /**
  * Write the user's Settings → Environment vars to `<config>/.env`, which omni

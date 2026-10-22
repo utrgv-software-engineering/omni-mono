@@ -106,6 +106,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { ProcessManager, type ProcessManagerStoreData } from '@/main/process-manager';
+import { projectCheckoutPath } from '@/main/util';
 import { gitTokenEnvName } from '@/shared/git-credentials';
 import type { AgentProcessStatus, GitCredential, Project, WithTimestamp } from '@/shared/types';
 
@@ -356,6 +357,7 @@ describe('ProcessManager', () => {
         { kind: 'local-git', writable: false },
         { kind: 'git-remote', writable: false },
       ]);
+      expect(arg.sources[2]).toMatchObject({ checkoutPath: projectCheckoutPath(project.id, 'remote') });
     });
 
     it('mounts a synthesized solo folder at the workspace root', async () => {

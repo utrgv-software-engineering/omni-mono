@@ -183,6 +183,13 @@ export const getOmniConfigDir = (): string => {
   return path.join(app.getPath('home'), '.config', 'omni_code');
 };
 
+/**
+ * Clone directory for one git-remote source of a project. Every chat on the
+ * project works in this one checkout, the way chats share a local folder.
+ */
+export const projectCheckoutPath = (projectId: string, sourceId: string): string =>
+  path.join(getOmniConfigDir(), 'checkouts', projectId, sourceId);
+
 export const getDefaultWorkspaceDir = (): string => {
   return path.join(app.getPath('home'), 'Omni', 'Workspace');
 };

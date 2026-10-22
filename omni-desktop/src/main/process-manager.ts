@@ -14,6 +14,7 @@ import {
   type FetchFn,
 } from '@/main/agent-process';
 import { isCodexAccountRequest } from '@/main/local-codex-account';
+import { projectCheckoutPath } from '@/main/util';
 import { gitTokenEnvName, resolveCredentialForUrl } from '@/shared/git-credentials';
 import type { IIpcListener } from '@/shared/ipc-listener';
 import { assertManagementAdminRequest, type ManagementAdminResult } from '@/shared/management-admin';
@@ -246,7 +247,7 @@ export class ProcessManager {
       // project) falls through to the synthesized-source path below so its
       // managed directory still seeds the workspace and mirrors back.
       if (project && project.sources.length > 0) {
-        return project.sources.map((source) => this.mapDeclaredSource(source));
+        return project.sources.map((source) => this.mapDeclaredSource(project.id, source));
       }
     }
     // No attached sources (chat scratch dir / managed project dir / Personal
@@ -273,13 +274,16 @@ export class ProcessManager {
   }
 
   /** Translate one declared ``ProjectSource`` into the wire shape. */
-  private mapDeclaredSource(source: Project['sources'][number]): AgentProcessSource {
+  private mapDeclaredSource(projectId: string, source: Project['sources'][number]): AgentProcessSource {
     if (source.kind === 'git-remote') {
       const result: AgentProcessSource = {
         id: source.id,
         mountName: source.mountName,
         kind: 'git-remote',
         repoUrl: source.repoUrl,
+        // One clone per project source, shared by every chat on the project
+        // the way a local folder is.
+        checkoutPath: projectCheckoutPath(projectId, source.id),
         writable: !source.readOnly,
       };
       if (source.defaultBranch) {

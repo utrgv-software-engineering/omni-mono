@@ -11,6 +11,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from filelock import FileLock
+
 from omniagents.core.sandbox.profiles import ResolvedProfile
 from omniagents.execution import (
     EnvironmentCapability,
@@ -74,17 +76,17 @@ def _run_git(args: Sequence[str], *, cwd: Path | None = None) -> str:
     return result.stdout.strip()
 
 
-def _materialize_host_remote_checkout(
-    workspace_dir: Path, source: Mapping[str, Any]
-) -> dict[str, Any]:
+def _materialize_host_remote_checkout(source: Mapping[str, Any]) -> dict[str, Any]:
     """Ensure a host checkout of one ``git-remote`` source and localize it.
 
-    Host environments get the same remote-source semantics as sandboxes: the
-    repo is cloned blobless into ``<workspace_dir>/<mountName>`` — entirely
-    launcher-managed space — on first materialization and reused verbatim
-    afterwards (the checkout is durable working state, so no implicit fetch or
-    re-checkout ever rewrites it). A directory that exists but is not a
-    checkout of the same remote fails closed.
+    The repo is cloned blobless into the source's ``checkoutPath`` — a
+    directory the caller owns, one per project source, so every Workspace of
+    that project shares one checkout the way local folders are shared — on
+    first materialization and reused verbatim afterwards (the checkout is
+    durable working state, so no implicit fetch or re-checkout ever rewrites
+    it). A directory that exists but is not a checkout of the same remote
+    fails closed. A lock beside the checkout serializes concurrent first
+    clones from Workspaces opening at once.
 
     Private remotes authenticate exactly like the container path's
     ``AuthenticatedGitRepo``: the token is read from the environment variable
@@ -100,8 +102,25 @@ def _materialize_host_remote_checkout(
     if not isinstance(url, str) or not url.strip():
         raise ValueError(f"git-remote source {mount_name!r} has no repoUrl")
     url = url.strip()
-    dest = workspace_dir / mount_name
+    checkout_path = source.get("checkoutPath")
+    if not isinstance(checkout_path, str) or not checkout_path.strip():
+        raise ValueError(f"git-remote source {mount_name!r} has no checkoutPath")
+    dest = Path(checkout_path).expanduser().resolve()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(str(dest.parent / f".{dest.name}.lock")):
+        _ensure_checkout(dest, url, source, mount_name)
 
+    localized = {
+        key: source[key] for key in ("id", "mountName", "writable") if key in source
+    }
+    localized["kind"] = "local-git"
+    localized["path"] = str(dest)
+    return localized
+
+
+def _ensure_checkout(
+    dest: Path, url: str, source: Mapping[str, Any], mount_name: str
+) -> None:
     if (dest / ".git").exists():
         origin = _run_git(["-C", str(dest), "remote", "get-url", "origin"])
         if _normalized_git_url(origin) != _normalized_git_url(url):
@@ -137,7 +156,6 @@ def _materialize_host_remote_checkout(
                     token_env,
                     mount_name,
                 )
-        workspace_dir.mkdir(parents=True, exist_ok=True)
         _run_git([*credential_config, "clone", "--filter=blob:none", url, str(dest)])
         ref = source.get("ref")
         if isinstance(ref, str) and ref.strip():
@@ -146,13 +164,6 @@ def _materialize_host_remote_checkout(
             username, helper = persisted_helper
             _run_git(["-C", str(dest), "config", "credential.username", username])
             _run_git(["-C", str(dest), "config", "credential.helper", helper])
-
-    localized = {
-        key: source[key] for key in ("id", "mountName", "writable") if key in source
-    }
-    localized["kind"] = "local-git"
-    localized["path"] = str(dest)
-    return localized
 
 
 _FULL_CAPABILITIES = frozenset(
@@ -508,18 +519,16 @@ class ServeEnvironmentProvisioner:
             sources = [dict(source) for source in request.workspace.sources]
             materialization_root = workspace_dir.expanduser().resolve()
             # Host parity with the sandbox path: git-remote sources are cloned
-            # into the launcher-managed materialization root and then behave
-            # like any local-git source (idempotent — an existing checkout of
-            # the same remote is reused, anything else fails closed).
+            # into their caller-owned checkoutPath and then behave like any
+            # local-git source (idempotent — an existing checkout of the same
+            # remote is reused, anything else fails closed).
             local_sources: list[dict[str, Any]] = []
             for source in sources:
                 kind = source.get("kind")
                 if kind == "git-remote":
                     local_sources.append(
                         await asyncio.to_thread(
-                            _materialize_host_remote_checkout,
-                            materialization_root,
-                            source,
+                            _materialize_host_remote_checkout, source
                         )
                     )
                 elif kind in {"local", "local-git"}:

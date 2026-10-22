@@ -10,6 +10,7 @@ import {
   listOrgs as githubListOrgs,
   searchRepos as githubSearchRepos,
 } from '@/main/github-auth';
+import { removeRetiredState } from '@/main/legacy-cleanup';
 import { LocalCodexAccount } from '@/main/local-codex-account';
 import { readLocalModels, writeLocalModels } from '@/main/local-model-config';
 import { createOmniInstallManager } from '@/main/omni-install-manager';
@@ -67,6 +68,9 @@ export const wireGlobalHandlers = async (arg: { wsHandler: WsHandler; store: Ser
   importLegacyProjectsDb(store as any);
 
   const configDir = getOmniConfigDir();
+  void removeRetiredState(configDir).catch((error) => {
+    console.warn('[legacy-cleanup] failed:', error);
+  });
   const secretStore = new ServerSecretStore();
 
   const [omniInstall, cleanupOmniInstall] = createOmniInstallManager({

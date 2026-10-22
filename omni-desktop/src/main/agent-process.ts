@@ -41,8 +41,10 @@ import type {
  *   - ``local`` — host directory without git. The seed entry is the
  *     SDK's ``LocalDir`` (rejects symlinks; correct default for
  *     non-developer workspaces).
- *   - ``git-remote`` — repo URL cloned during materialization (SDK's
- *     ``GitRepo`` entry). No host directory is read.
+ *   - ``git-remote`` — repo URL cloned during materialization. On the host
+ *     it is cloned once into ``checkoutPath`` (one per project source,
+ *     shared by every chat on the project); sandboxes use the SDK's
+ *     ``GitRepo`` entry.
  *
  * ``mountName`` is the subdirectory under the workspace root. A
  * multi-source project gets N entries that materialize at
@@ -60,6 +62,8 @@ export type AgentProcessSource = { id?: string; mountName: string; writable?: bo
   | {
       kind: 'git-remote';
       repoUrl: string;
+      /** Launcher-owned clone directory for this project source. */
+      checkoutPath: string;
       ref?: string;
       /**
        * Authentication hint for a private remote. Carries the *name* of the env
@@ -244,6 +248,7 @@ const sourceDescriptor = (source: AgentProcessSource): Record<string, unknown> =
   }
   if (source.kind === 'git-remote') {
     descriptor.repoUrl = source.repoUrl;
+    descriptor.checkoutPath = source.checkoutPath;
     if (source.auth) {
       descriptor.auth = source.auth;
     }

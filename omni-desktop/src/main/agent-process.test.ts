@@ -239,7 +239,7 @@ describe('AgentProcess (serve mode)', () => {
     workspaceDir,
   });
   const remoteSource = (repoUrl = 'https://github.com/foo/bar.git', mountName = 'bar', ref?: string): Source => {
-    const s: Source = { mountName, kind: 'git-remote', repoUrl };
+    const s: Source = { mountName, kind: 'git-remote', repoUrl, checkoutPath: `/checkouts/${mountName}` };
     if (ref) {
       s.ref = ref;
     }
@@ -604,6 +604,7 @@ describe('AgentProcess (serve mode)', () => {
         mountName: 'omniagents',
         writable: true,
         repoUrl: 'https://github.com/me/omniagents.git',
+        checkoutPath: '/checkouts/omniagents',
         ref: 'main',
       },
     ]);

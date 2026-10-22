@@ -4308,6 +4308,7 @@ name = "omniagents"
 source = { editable = "omniagents" }
 dependencies = [
     { name = "beautifulsoup4" },
+    { name = "filelock" },
     { name = "jinja2" },
     { name = "jsonref" },
     { name = "openai" },
@@ -4473,6 +4474,7 @@ requires-dist = [
     { name = "fastapi", extras = ["all"], marker = "extra == 'dev'", specifier = ">=0.115.12" },
     { name = "fastapi", extras = ["all"], marker = "extra == 'server'", specifier = ">=0.115.12" },
     { name = "fastapi", extras = ["all"], marker = "extra == 'web'", specifier = ">=0.115.12" },
+    { name = "filelock", specifier = ">=3.12" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.142.4" },
     { name = "jinja2" },
     { name = "jmespath", marker = "extra == 'training'", specifier = ">=1.0" },
