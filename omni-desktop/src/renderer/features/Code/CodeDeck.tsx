@@ -918,7 +918,7 @@ export const CodeDeck = memo(() => {
               id={`focus:${activeTab?.id ?? 'none'}`}
               defaultSize={activeSidecar ? '50%' : '100%'}
               minSize={activeSidecar ? '30%' : undefined}
-              className="relative flex-1 min-w-0 min-h-0"
+              className="relative flex-1 min-w-0 min-h-0 overflow-hidden"
             >
               {tabs.map((tab) => {
                 return (

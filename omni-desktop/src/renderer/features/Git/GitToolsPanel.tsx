@@ -204,7 +204,7 @@ export function GitToolsPanel({
       )}
       {hasTabs ? (
         <Tabs key={`${repo}:${firstTab(capabilities)}`} defaultValue={firstTab(capabilities)}>
-          <TabsList variant="line" className="max-w-full overflow-x-auto">
+          <TabsList variant="line" className="max-w-full justify-start overflow-x-auto">
             {capabilities.log ? <TabsTrigger value="history">History</TabsTrigger> : null}
             {capabilities.branches ? <TabsTrigger value="branches">Branches</TabsTrigger> : null}
             {capabilities.worktrees ? <TabsTrigger value="worktrees">Worktrees</TabsTrigger> : null}

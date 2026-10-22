@@ -116,7 +116,10 @@ test('keeps generated plans and artifacts in their session through updates and r
   });
   await openSession(page, 'TILE_UI_B');
   await b.getByRole('button', { name: 'Toggle artifacts', exact: true }).click();
-  await b.getByRole('button', { name: 'B artifact', exact: true }).click();
+  // Small windows show the artifacts list as a sheet over the page.
+  const artifactsSheet = page.getByRole('dialog', { name: 'Artifacts' });
+  const artifactsList = (await artifactsSheet.isVisible()) ? artifactsSheet : b;
+  await artifactsList.getByRole('button', { name: 'B artifact', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as any).artifactScrollOwner)).toBe(bId);
   await openSession(page, 'TILE_UI_A');
   await composer.fill('Focused draft A');
