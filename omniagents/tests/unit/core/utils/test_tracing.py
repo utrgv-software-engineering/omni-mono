@@ -1,51 +1,33 @@
-import builtins
 import logging
 import sys
 import types
 
 import pytest
 
-from omniagents.core.tracing import setup_tracing
+from omniagents.core.tracing import local, setup_tracing
 
 
-def test_setup_tracing_default_provider_uses_studio(monkeypatch, caplog):
-    """Default provider maps to studio tracing."""
+@pytest.fixture
+def init_calls(monkeypatch):
     calls = []
-    stub_tracing = types.ModuleType("omniagents.studio.tracing")
+    monkeypatch.setattr(local, "init", lambda **kwargs: calls.append(kwargs))
+    return calls
 
-    def fake_init(**kwargs):
-        calls.append(kwargs)
 
-    stub_tracing.init = fake_init
-    stub_studio = types.ModuleType("omniagents.studio")
-    stub_studio.tracing = stub_tracing
-    monkeypatch.setitem(sys.modules, "omniagents.studio", stub_studio)
-    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", stub_tracing)
+def test_setup_tracing_default_provider_records_locally(init_calls, caplog):
+    """The ``default`` provider maps to local (``studio``) recording."""
     caplog.set_level(logging.INFO)
     setup_tracing({"provider": "default"})
-    # Default provider should use studio tracing
-    assert calls
-    assert "Studio tracing enabled" in caplog.text
+    assert init_calls
+    assert "Local tracing enabled" in caplog.text
 
 
-def test_setup_tracing_no_config_uses_studio(monkeypatch, caplog):
-    """No tracing config defaults to studio tracing."""
-    calls = []
-    stub_tracing = types.ModuleType("omniagents.studio.tracing")
-
-    def fake_init(**kwargs):
-        calls.append(kwargs)
-
-    stub_tracing.init = fake_init
-    stub_studio = types.ModuleType("omniagents.studio")
-    stub_studio.tracing = stub_tracing
-    monkeypatch.setitem(sys.modules, "omniagents.studio", stub_studio)
-    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", stub_tracing)
+def test_setup_tracing_no_config_records_locally(init_calls, caplog):
+    """No tracing config defaults to local recording."""
     caplog.set_level(logging.INFO)
     setup_tracing(None)
-    # No config should default to studio tracing
-    assert calls
-    assert "Studio tracing enabled" in caplog.text
+    assert init_calls
+    assert "Local tracing enabled" in caplog.text
 
 
 def test_setup_tracing_openai_provider_enables(monkeypatch, caplog):
@@ -65,68 +47,30 @@ def test_setup_tracing_openai_provider_enables(monkeypatch, caplog):
     assert "OpenAI tracing enabled" in caplog.text
 
 
-def test_setup_tracing_studio_fallback_disables_when_not_installed(
-    monkeypatch, caplog, capsys
-):
-    """When studio is not installed, tracing is disabled (not OpenAI fallback)."""
-    real_import = builtins.__import__
-    calls = []
-    stub_agents = types.ModuleType("agents")
-
-    def set_trace_processors(value):
-        calls.append(value)
-
-    stub_agents.set_trace_processors = set_trace_processors
-    monkeypatch.setitem(sys.modules, "agents", stub_agents)
-
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "omniagents.studio":
-            raise ImportError("missing studio")
-        return real_import(name, globals, locals, fromlist, level)
-
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-    caplog.set_level(logging.WARNING)
-    setup_tracing(None)  # Default should try studio, then disable
-    captured = capsys.readouterr()
-    # Should disable tracing, not fall back to OpenAI
-    assert calls == [[]]
-    assert "Studio tracing not available" in caplog.text
-    assert "no data sent to OpenAI" in captured.out
-
-
-def test_setup_tracing_studio_initializes_stub(monkeypatch, caplog):
-    calls = []
-    stub_tracing = types.ModuleType("omniagents.studio.tracing")
-
-    def fake_init(**kwargs):
-        calls.append(kwargs)
-
-    stub_tracing.init = fake_init
-    stub_studio = types.ModuleType("omniagents.studio")
-    stub_studio.tracing = stub_tracing
-    monkeypatch.setitem(sys.modules, "omniagents.studio", stub_studio)
-    monkeypatch.setitem(sys.modules, "omniagents.studio.tracing", stub_tracing)
+def test_setup_tracing_studio_passes_project_and_name(init_calls, caplog):
     caplog.set_level(logging.INFO)
     setup_tracing({"provider": "studio", "project": "proj", "name": "trace"})
-    assert calls
-    assert calls[0]["project"] == "proj"
-    assert "Studio tracing enabled" in caplog.text
+    assert init_calls[0]["project"] == "proj"
+    assert init_calls[0]["name"] == "trace"
+    assert "Local tracing enabled" in caplog.text
 
 
-def test_setup_tracing_warns_when_studio_missing(monkeypatch, caplog, capsys):
-    real_import = builtins.__import__
+def test_setup_tracing_init_failure_disables(monkeypatch, caplog, capsys):
+    """A failing local init disables tracing instead of falling back to OpenAI."""
+    calls = []
+    stub_agents = types.ModuleType("agents")
+    stub_agents.set_trace_processors = calls.append
+    monkeypatch.setitem(sys.modules, "agents", stub_agents)
 
-    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "omniagents.studio":
-            raise ImportError("missing studio")
-        return real_import(name, globals, locals, fromlist, level)
+    def failing_init(**kwargs):
+        raise ValueError("boom")
 
-    monkeypatch.setattr(builtins, "__import__", fake_import)
-    caplog.set_level(logging.WARNING)
-    setup_tracing({"provider": "studio"})
+    monkeypatch.setattr(local, "init", failing_init)
+    setup_tracing({"provider": "studio", "project": "proj"})
     captured = capsys.readouterr()
-    assert "Studio tracing not available" in caplog.text
-    assert "OmniAgents Studio tracing is not installed" in captured.out
+    assert calls == [[]]
+    assert "Error initializing local tracing: boom" in captured.out
+    assert "no data sent to OpenAI" in captured.out
 
 
 def test_setup_tracing_none_provider_disables(monkeypatch, caplog, capsys):

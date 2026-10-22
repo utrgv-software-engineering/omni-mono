@@ -13,8 +13,7 @@
 8. When told to continue autonomously through PR creation, follow through without additional checkpoints unless new blockers appear.
 
 ## Code Coverage
-- Run `make coverage-all` from the repo root to generate Python, web, and Go coverage reports.
-- The script `./scripts/run_coverage.sh` performs the same sequence if you prefer a single command.
+- Run `./scripts/run_coverage.sh` from the package root to generate Python and Ink TUI coverage reports (`make coverage-python` for Python only).
 
 ## GitHub CLI Examples
 - Push the current branch: `git push --set-upstream origin <branch>`

@@ -303,10 +303,9 @@ def _isolate_product_identity():
     """``load_project()`` installs a manifest's ``product:`` section as the
     process-wide default identity (``omniagents.core.product``). Without
     per-test restoration, any test that loads a project fixture carrying a
-    ``product:`` section (e.g. the studio ``basic_project`` fixture, slug
-    ``studio_fixture``) silently rewrites how every later test derives
-    slugs, dot-dirs, and config paths — skill roots become
-    ``.studio_fixture/skills`` instead of ``.omniagents/skills``. Snapshot
+    ``product:`` section (e.g. slug ``acme``) silently rewrites how every
+    later test derives slugs, dot-dirs, and config paths — skill roots
+    become ``.acme/skills`` instead of ``.omniagents/skills``. Snapshot
     the identity globals before each test and restore them after, so a
     test only ever sees identity state it installed itself."""
     from omniagents.core import product

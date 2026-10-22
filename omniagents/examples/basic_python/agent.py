@@ -7,7 +7,7 @@ from time import sleep
 from dotenv import load_dotenv
 from agents import Agent
 from omniagents import Runner, function_tool
-import omniagents.studio.tracing as studio_tracing  # Import Studio for tracing
+from omniagents.core.tracing import local as studio_tracing
 
 # Load environment variables from .env file
 load_dotenv()

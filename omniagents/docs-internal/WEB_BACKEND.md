@@ -91,7 +91,7 @@ A complete, self-contained plan to implement a new backend launched via `omniage
     - `SessionList.tsx`: resume flow UI.
     - `Usage.tsx`: per-turn and aggregate usage from `token`/`run_end`.
   - Reuse Studio markdown renderer:
-    - Copy/import: `omniagents/studio/server/web/src/shared/components/MarkdownMessage.tsx` (and its CSS deps) for consistent styling.
+    - Copy/import: `omniagents-studio/web/src/shared/components/MarkdownMessage.tsx` (and its CSS deps) for consistent styling.
 
 5) Packaging
 - Ensure `omniagents/backends/web/ui/dist/` is included in release wheels.
@@ -106,9 +106,9 @@ A complete, self-contained plan to implement a new backend launched via `omniage
 - Ink Backend (auto-build/server boot): `omniagents/backends/ink/__init__.py`
 - Ink TUI RPC client: `omniagents/backends/ink/tui/src/rpc/client.ts`
 - Studio React components & Tailwind setup:
-  - Markdown: `omniagents/studio/server/web/src/shared/components/MarkdownMessage.tsx`
-  - Tailwind config: `omniagents/studio/server/web/tailwind.config.js`
-  - Playground flows: `omniagents/studio/server/web/src/features/playground/PlaygroundView.tsx`
+  - Markdown: `omniagents-studio/web/src/shared/components/MarkdownMessage.tsx`
+  - Tailwind config: `omniagents-studio/web/tailwind.config.js`
+  - Playground flows: `omniagents-studio/web/src/features/playground/PlaygroundView.tsx`
 
 ## Auto-Build Details (Frontend)
 

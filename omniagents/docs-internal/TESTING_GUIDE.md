@@ -300,7 +300,7 @@ Session isolation testing ensures agents maintain separate conversation historie
 ### 10.2 Medium Priority - Selective Unit Tests [PRI-MED]
 - **omniagents/core/eval/** - Evaluation metrics and adapters
 - **omniagents/core/project/** - Project scaffolding logic
-- **omniagents/studio/server/api.py** - API endpoint logic
+- **omniagents-studio/omniagents_studio/api.py** - API endpoint logic
 
 ### 10.3 Low Priority [PRI-LOW]
 - **Backends** - Minimal smoke tests only

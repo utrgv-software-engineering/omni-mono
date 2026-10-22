@@ -1165,13 +1165,9 @@ async def run_evaluation_with_environment_async(
     # Initialize tracing if workflow_name is provided
     studio_trace = None
     if workflow_name:
-        try:
-            from omniagents.studio.tracing import trace as _studio_trace
+        from omniagents.core.tracing.local import trace as _local_trace
 
-            studio_trace = _studio_trace
-        except ImportError:
-            _logger.debug("omniagents.studio.tracing not available")
-            studio_trace = None
+        studio_trace = _local_trace
 
     # Load local measures from project
     from .pipeline import _load_local_measures
@@ -1369,13 +1365,9 @@ async def run_scenarios_against_agent(
     # Initialize tracing if workflow_name is provided
     studio_trace = None
     if workflow_name:
-        try:
-            from omniagents.studio.tracing import trace as _studio_trace
+        from omniagents.core.tracing.local import trace as _local_trace
 
-            studio_trace = _studio_trace
-        except ImportError:
-            _logger.debug("omniagents.studio.tracing not available")
-            studio_trace = None
+        studio_trace = _local_trace
 
     # Load local measures from project
     from .pipeline import _load_local_measures

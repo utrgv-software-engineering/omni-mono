@@ -1,0 +1,41 @@
+[project]
+name = "omniagents-studio"
+version = "0.1.0"
+description = "OmniAgents Studio: browse traces and run evaluations for OmniAgents projects"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "omniagents",
+    "fastapi[all]>=0.115.12",
+    "uvicorn>=0.34.1",
+]
+
+[project.scripts]
+omniagents-studio = "omniagents_studio.cli:main"
+
+[dependency-groups]
+dev = [
+    "black==26.5.1",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-xdist",
+    "pytest-timeout",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+timeout = 120
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["omniagents_studio*"]
+
+[tool.setuptools.package-data]
+"omniagents_studio" = [
+    "static/*",
+    "static/assets/*",
+]

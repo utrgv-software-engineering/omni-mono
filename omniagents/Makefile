@@ -1,22 +1,13 @@
 -include .env
 export
 
-STUDIO_WEB_DIR := omniagents/studio/server/web
-STUDIO_STATIC_DIR := omniagents/studio/server/static
 WEB_UI_DIR := omniagents/backends/web/ui
 INK_TUI_DIR := omniagents/backends/ink/tui
 
 clean:
 	rm -rf dist/ build/ *.egg-info
 
-studio-assets:
-	cd $(STUDIO_WEB_DIR) && npm ci
-	cd $(STUDIO_WEB_DIR) && npm run build
-	rm -rf $(STUDIO_STATIC_DIR)
-	mkdir -p $(STUDIO_STATIC_DIR)
-	cp -R $(STUDIO_WEB_DIR)/dist/. $(STUDIO_STATIC_DIR)/
-
-build: studio-assets
+build:
 	python -m build
 
 ink-assets:
@@ -29,8 +20,8 @@ web-assets:
 	cd $(WEB_UI_DIR) && npm run build
 	@test -f $(WEB_UI_DIR)/dist/index.html || (echo "Web UI build failed: dist/index.html not found" && exit 1)
 
-# Build everything needed for packaging (Studio static + Ink TUI dist + Web UI dist)
-package-build: studio-assets ink-assets web-assets
+# Build everything needed for packaging (Ink TUI dist + Web UI dist)
+package-build: ink-assets web-assets
 	python -m build
 
 # Releases come only from a clean, up-to-date main (dev is where work happens).
@@ -62,12 +53,6 @@ coverage-python:
 	mkdir -p coverage/python
 	pytest
 
-coverage-web:
-	mkdir -p coverage/web
-	cd $(STUDIO_WEB_DIR) && npm run test:coverage
-
-coverage-all: coverage-python coverage-web
-
 bump-patch:
 	bump2version patch
 
@@ -77,4 +62,4 @@ bump-minor:
 bump-major:
 	bump2version major
 
-.PHONY: clean studio-assets ink-assets web-assets build publish install dev format coverage-python coverage-web coverage-all bump-patch bump-minor bump-major release-guard
+.PHONY: clean ink-assets web-assets build publish install dev format coverage-python bump-patch bump-minor bump-major release-guard

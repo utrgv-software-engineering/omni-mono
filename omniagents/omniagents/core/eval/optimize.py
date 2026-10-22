@@ -308,12 +308,8 @@ def optimize_agent_from_project(
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
         if str(tracing.get("provider", "")).lower() == "studio" and workflow_name:
-            try:
-                from omniagents.studio import tracing as tracing_module
-            except ImportError:
-                tracing_module = None
-            if tracing_module is None:
-                raise ImportError("omniagents.studio.tracing not available")
+            from omniagents.core.tracing import local as tracing_module
+
             project = tracing.get("project") or "default"
             resume_tr = (tracing.get("settings") or {}).get("resume", "never")
             tracing_module.init(
@@ -823,7 +819,7 @@ def optimize_judge_from_project(
         cfg_tr = yaml.safe_load(_P(compiled_cfg_path).read_text(encoding="utf-8")) or {}
         tracing = cfg_tr.get("tracing") or {}
         if str(tracing.get("provider", "")).lower() == "studio" and workflow_name:
-            from omniagents.studio import tracing as tracing_module
+            from omniagents.core.tracing import local as tracing_module
 
             project = tracing.get("project") or "default"
             resume_tr = (tracing.get("settings") or {}).get("resume", "never")

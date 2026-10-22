@@ -35,9 +35,6 @@ jobs:
         # sandbox-bashkit: browser-sandbox contract and snapshot security
         # tests must execute rather than disappearing behind importorskip.
         run: python -m pip install '.[dev,server,sandbox-docker,sandbox-bashkit,sandbox-aci]'
-      - name: Install web dependencies
-        working-directory: omniagents/omniagents/studio/server/web
-        run: npm ci
       - name: Install ink dependencies
         working-directory: omniagents/omniagents/backends/ink/tui
         run: npm ci
@@ -60,7 +57,6 @@ jobs:
           name: coverage-reports
           path: |
             omniagents/coverage/python/coverage.xml
-            omniagents/coverage/web/lcov.info
             omniagents/coverage/ink/lcov.info
 
   # The launcher runs this runtime natively on Windows (a venv under

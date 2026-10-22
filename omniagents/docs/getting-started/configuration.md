@@ -324,7 +324,7 @@ In web mode, use the session management UI to browse and resume sessions.
 
 ## Tracing Configuration
 
-OmniAgents supports multiple tracing providers for monitoring and debugging agent execution. **By default, OmniAgents uses Studio tracing** which stores traces locally and never sends data to external servers.
+OmniAgents supports multiple tracing providers for monitoring and debugging agent execution. **By default, OmniAgents records traces locally** (the `studio` provider) and never sends data to external servers.
 
 ### Tracing Providers
 
@@ -341,9 +341,9 @@ tracing:
 
 **Provider Options:**
 
-- **studio** (default): Uses OmniAgents Studio for local trace storage and visualization
-  - Requires: `pip install omniagents[studio]`
-  - If not installed, tracing is disabled (no data sent externally)
+- **studio** (default): Records traces into local SQLite databases, the store
+  OmniAgents Studio reads. Built into `omniagents`; viewing them needs the
+  separate `omniagents-studio` package.
 - **openai**: Opt-in to OpenAI SDK's default tracing (sends traces to OpenAI)
 - **none**: Disables all tracing
 
@@ -364,13 +364,15 @@ export OMNIAGENTS_HOME="/path/to/custom/omniagents"
 
 ### Viewing Traces
 
-To view traces collected with the Studio provider:
+To view traces collected with the `studio` provider, install
+`omniagents-studio` (in the omni-mono repository) and run:
 
 ```bash
-omniagents studio
+omniagents-studio serve --project myproject
 ```
 
-This launches the OmniAgents Studio web interface for trace visualization and analysis.
+Run it from a project directory and it picks up `./project.yml`, which also
+enables the Playground and evaluation views.
 
 ## Tool Discovery
 

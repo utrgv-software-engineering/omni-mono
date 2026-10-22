@@ -11,7 +11,7 @@ from __future__ import annotations
 from omniagents import server_function
 from omniagents.core.session import Session
 from omniagents.rpc.protocol_catalog import ExecutionRequirement, ResourceScope
-from omniagents.studio import tracing
+from omniagents.core.tracing import local as tracing
 
 
 from omniagents.core.server_functions.slash import (

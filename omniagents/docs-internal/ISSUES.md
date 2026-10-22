@@ -13,17 +13,17 @@ _Last updated: 2025-10-20_
 - Status: Open
 - Severity: Medium
 - Summary: Websocket job updates only track raw evaluation counts; UI shows `completed/total` without phase context and ETA can drop to null when GEPA pauses.
-- Evidence: `AgentOptimizationManager.update_job` in `omniagents/studio/server/api.py` only updates `completed`/`eta_seconds`; UI percent in `AgentsView` derives from those counters; GEPA `log_hook` emits opaque `PROGRESS` lines.
+- Evidence: `AgentOptimizationManager.update_job` in `omniagents-studio/omniagents_studio/api.py` only updates `completed`/`eta_seconds`; UI percent in `AgentsView` derives from those counters; GEPA `log_hook` emits opaque `PROGRESS` lines.
 - Next Steps: Include stage metadata, keep ETA sticky, surface log path earlier, and render richer progress in the dialog.
-- Related: `omniagents/core/eval/optimize.py`, `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`
+- Related: `omniagents/core/eval/optimize.py`, `omniagents-studio/web/src/features/agents/AgentsView.tsx`
 
 ### B-05 • Trace streaming requires manual refresh
 - Status: Open
 - Severity: High
 - Summary: The web client expects `api.createWebSocket()` for live trace updates, but the API client ships without that method and the backend lacks a websocket endpoint.
-- Evidence: `useWebSocket` in `omniagents/studio/server/web/src/shared/hooks/useWebSocket.ts` calls missing helper; `omniagents/studio/server/web/src/lib/api.ts` exposes no websocket creator; FastAPI app defines no `/ws` route.
+- Evidence: `useWebSocket` in `omniagents-studio/web/src/shared/hooks/useWebSocket.ts` calls missing helper; `omniagents-studio/web/src/lib/api.ts` exposes no websocket creator; FastAPI app defines no `/ws` route.
 - Next Steps: Implement websocket endpoint in Studio server, add `ApiClient.createWebSocket()`, and wire reconnection telemetry to keep traces live.
-- Related: `omniagents/studio/server/api.py`
+- Related: `omniagents-studio/omniagents_studio/api.py`
 
 ### B-07 • Flet backend no longer launches
 - Status: Open
@@ -70,7 +70,7 @@ _Last updated: 2025-10-20_
 - Summary: Studio uses local React state with no router, so deep links, refresh, and sharing sections are impossible.
 - Dependencies: Introduce routing (e.g., `react-router`) and sync with trace/agent state.
 - Next Steps: Define canonical routes for home/logs/playground/agents/evaluation and persist selection in the URL.
-- Related: `omniagents/studio/server/web/src/app/App.tsx`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
+- Related: `omniagents-studio/web/src/app/App.tsx`, `omniagents-studio/web/src/app/Dashboard.tsx`
 
 ### I-03 • Surface variables in Studio UI
 - Status: Open
@@ -78,7 +78,7 @@ _Last updated: 2025-10-20_
 - Summary: Session variables exist server-side but the Playground UI has no editor or inspector for them.
 - Dependencies: Need API shape for listing/updating variables.
 - Next Steps: Add variables panel to Playground, wire to `AgentService` variable helpers, and store edits per session.
-- Related: `omniagents/core/agents/service.py`, `omniagents/studio/server/web/src/features/playground/PlaygroundView.tsx`
+- Related: `omniagents/core/agents/service.py`, `omniagents-studio/web/src/features/playground/PlaygroundView.tsx`
 
 ### I-05 • Scaffold evaluation assets by default
 - Status: Resolved
@@ -118,7 +118,7 @@ _Last updated: 2025-10-20_
 - Summary: No pipeline to auto-suggest failure categories from traces.
 - Blocked By: Requires clustering/tooling pipeline.
 - Next Steps: Prototype taxonomy generator and connect to Studio review workflow.
-- Related: `omniagents/studio/tracing/storage.py`
+- Related: `omniagents/core/tracing/storage.py`
 
 ### F-04 • Assign failure categories in Studio UI
 - Status: In progress
@@ -126,7 +126,7 @@ _Last updated: 2025-10-20_
 - Summary: Analysis panel stores category IDs but UI lacks dedicated selectors and feedback.
 - Blocked By: Better UX for multi-select and sync with `analysis_categories`.
 - Next Steps: Add chip-based selector and show category usage counts.
-- Related: `omniagents/studio/server/web/src/features/review/components/AnalysisPanel.tsx`
+- Related: `omniagents-studio/web/src/features/review/components/AnalysisPanel.tsx`
 
 ### F-06 • User model for server mode
 - Status: Planned
@@ -134,7 +134,7 @@ _Last updated: 2025-10-20_
 - Summary: Server backend assumes single user; no auth/roles for shared deployments.
 - Blocked By: Need authentication and session model.
 - Next Steps: Design user schema, integrate with FastAPI dependencies, update clients.
-- Related: `omniagents/core/agents/service.py`, `omniagents/studio/server/api.py`
+- Related: `omniagents/core/agents/service.py`, `omniagents-studio/omniagents_studio/api.py`
 
 ### F-07 • Postgres (and other DB) support
 - Status: Planned
@@ -142,7 +142,7 @@ _Last updated: 2025-10-20_
 - Summary: Storage layer only supports SQLite via `SQLiteStorage`.
 - Blocked By: Abstraction over storage manager.
 - Next Steps: Introduce interface plus Postgres implementation, support migrations, update config knobs.
-- Related: `omniagents/studio/tracing/storage.py`
+- Related: `omniagents/core/tracing/storage.py`
 
 ### F-08 • Version management UX
 - Status: Planned
@@ -150,7 +150,7 @@ _Last updated: 2025-10-20_
 - Summary: No tooling to track project versions or manage generated project releases.
 - Blocked By: Need metadata schema and UI flows.
 - Next Steps: Define version entities, integrate into Studio sidebar, expose CLI helpers.
-- Related: `omniagents/core/project/compiler.py`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
+- Related: `omniagents/core/project/compiler.py`, `omniagents-studio/web/src/app/Dashboard.tsx`
 
 ### F-09 • Generate OpenAPI specification
 - Status: Planned
@@ -158,7 +158,7 @@ _Last updated: 2025-10-20_
 - Summary: FastAPI app does not expose curated OpenAPI spec for clients.
 - Blocked By: Missing schema annotations and docs pipeline.
 - Next Steps: Harden response models, enable FastAPI docs export, commit spec file.
-- Related: `omniagents/studio/server/api.py`
+- Related: `omniagents-studio/omniagents_studio/api.py`
 
 ## Documentation
 
@@ -192,13 +192,13 @@ _Last updated: 2025-10-20_
 - Summary: Provide Kamal deployment, apt package, Brew formula, and Dockerfile for server distribution.
 
 ## Appendix
-- B-04: `omniagents/core/eval/optimize.py`, `omniagents/studio/server/api.py`, `omniagents/studio/server/web/src/features/agents/AgentsView.tsx`
-- B-05: `omniagents/studio/server/web/src/shared/hooks/useWebSocket.ts`, `omniagents/studio/server/web/src/lib/api.ts`, `omniagents/studio/server/api.py`
+- B-04: `omniagents/core/eval/optimize.py`, `omniagents-studio/omniagents_studio/api.py`, `omniagents-studio/web/src/features/agents/AgentsView.tsx`
+- B-05: `omniagents-studio/web/src/shared/hooks/useWebSocket.ts`, `omniagents-studio/web/src/lib/api.ts`, `omniagents-studio/omniagents_studio/api.py`
 - B-07: `omniagents/backends/flet/app_base.py`, `omniagents/backends/flet/ui.py`
 - B-10: `omniagents/core/eval/optimize.py`, `omniagents/core/eval/stratified_sampler.py`
-- I-01: `omniagents/studio/server/api.py`, `omniagents/studio/tracing/storage.py`, `omniagents/studio/server/web/src/features/traces/store/traceStore.ts`
-- I-02: `omniagents/studio/server/web/src/app/App.tsx`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
-- I-03: `omniagents/core/agents/service.py`, `omniagents/studio/server/web/src/features/playground/PlaygroundView.tsx`
+- I-01: `omniagents-studio/omniagents_studio/api.py`, `omniagents/core/tracing/storage.py`, `omniagents-studio/web/src/features/traces/store/traceStore.ts`
+- I-02: `omniagents-studio/web/src/app/App.tsx`, `omniagents-studio/web/src/app/Dashboard.tsx`
+- I-03: `omniagents/core/agents/service.py`, `omniagents-studio/web/src/features/playground/PlaygroundView.tsx`
 - I-04: `pyproject.toml`, `.github/workflows/tests.yml`
 - I-05: `omniagents/core/project/scaffold.py`
 - I-06: `omniagents/core/project/scaffold.py`
@@ -206,14 +206,14 @@ _Last updated: 2025-10-20_
 - I-08: `omniagents/core/project/scaffold.py`, `.github/workflows/publish.yml`
 - I-09: `omniagents/core/project/scaffold.py`
 - F-01: `omniagents/backends/flet/app_base.py`
-- F-03: `omniagents/studio/tracing/storage.py`
-- F-04: `omniagents/studio/server/web/src/features/review/components/AnalysisPanel.tsx`
-- F-06: `omniagents/core/agents/service.py`, `omniagents/studio/server/api.py`
-- F-07: `omniagents/studio/tracing/storage.py`
-- F-08: `omniagents/core/project/compiler.py`, `omniagents/studio/server/web/src/app/Dashboard.tsx`
-- F-09: `omniagents/studio/server/api.py`
+- F-03: `omniagents/core/tracing/storage.py`
+- F-04: `omniagents-studio/web/src/features/review/components/AnalysisPanel.tsx`
+- F-06: `omniagents/core/agents/service.py`, `omniagents-studio/omniagents_studio/api.py`
+- F-07: `omniagents/core/tracing/storage.py`
+- F-08: `omniagents/core/project/compiler.py`, `omniagents-studio/web/src/app/Dashboard.tsx`
+- F-09: `omniagents-studio/omniagents_studio/api.py`
 - D-01: `docs/`
 - NV-01: `omniagents/backends/flet/app_base.py`, `omniagents/core/agents/service.py`
-- L-01: `omniagents/studio/server/api.py`, `omniagents/core/agents/service.py`
+- L-01: `omniagents-studio/omniagents_studio/api.py`, `omniagents/core/agents/service.py`
 - L-02: `omniagents/backends/flet/`, `omniagents/backends/bubbletea/`, `examples/agentdeck/`
 - L-03: `.github/workflows/`, `omniagents/backends/server/`

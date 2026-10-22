@@ -1,13 +1,16 @@
 # CLAUDE.md
 
 Guidance for working in omni-mono. Each package has its own `CLAUDE.md` for
-its architecture and commands: `omniagents/`, `omni-code/`, `omni-desktop/`.
+its architecture and commands: `omniagents/`, `omni-code/`, `omni-desktop/`
+(`omniagents-studio/` documents its commands in its README).
 
 ## Layout
 
 - `omniagents/`: agent framework (`omniagents` on Gemfury)
 - `omni-code/`: the Omni Code product, built on omniagents (`omni-code` on Gemfury)
 - `omni-desktop/`: Electron + browser app that installs and runs Omni Code
+- `omniagents-studio/`: OmniAgents Studio (`omniagents-studio serve`), a web UI
+  over the traces omniagents records; depends on omniagents, not published
 
 omni-code depends on an exact `omniagents[all]==` pin, and omni-desktop
 installs an exact omni-code `pinnedVersion` (`omni-desktop/src/lib/product.ts`).
@@ -15,7 +18,8 @@ A change that spans packages lands in one commit.
 
 ## Python development
 
-The root `pyproject.toml` is a uv workspace for omniagents and omni-code:
+The root `pyproject.toml` is a uv workspace for omniagents, omni-code and
+omniagents-studio:
 
 ```bash
 uv sync --all-packages --all-groups --extra dev --extra server   # .venv at the root
