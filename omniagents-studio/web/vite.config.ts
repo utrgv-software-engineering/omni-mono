@@ -1,11 +1,22 @@
+import { readFileSync } from 'node:fs'
+
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+
+// The UI ships inside omniagents-studio and carries its version.
+const studioVersion = /__version__ = "([^"]+)"/.exec(
+  readFileSync(new URL('../omniagents_studio/__init__.py', import.meta.url), 'utf8'),
+)?.[1]
+if (!studioVersion) {
+  throw new Error('omniagents_studio/__init__.py has no __version__')
+}
 
 const studio = process.env.STUDIO_API_URL || 'http://localhost:7860'
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
+  define: { __STUDIO_VERSION__: JSON.stringify(studioVersion) },
   // streamdown (the chat UI's markdown) lazy-loads inner chunks; optimizing
   // it up front keeps chunk hashes stable for an open page.
   optimizeDeps: {

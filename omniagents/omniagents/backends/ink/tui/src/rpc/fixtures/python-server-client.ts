@@ -14,6 +14,7 @@ import type { ConversationSession } from "@omniagents/client/session/conversatio
 import { getSessionRegistry } from "@omniagents/client/session/session-registry";
 import { uuidv4 } from "@omniagents/client/util/uuid";
 import { defaultEnvironmentId } from "../host.js";
+import { CLIENT_IDENTITY } from "../../client-identity.js";
 
 const [base, scenario, reconnect] = process.argv.slice(2) as [
   string,
@@ -21,7 +22,7 @@ const [base, scenario, reconnect] = process.argv.slice(2) as [
   string,
 ];
 const url = base.replace("http:", "ws:") + "/ws";
-const client = new RPCClient(url);
+const client = new RPCClient(url, CLIENT_IDENTITY);
 const registry = getSessionRegistry(client);
 const releaseSessions = registry.retain();
 
@@ -237,7 +238,7 @@ async function ambiguousOutcome(): Promise<void> {
       await until(() => conversation.loads() > loadsBefore);
       assert.equal((await requestsOf("tool_approval_response")).length, 1);
     } else {
-      const other = new RPCClient(url);
+      const other = new RPCClient(url, CLIENT_IDENTITY);
       try {
         await other.connect();
         assert.equal(

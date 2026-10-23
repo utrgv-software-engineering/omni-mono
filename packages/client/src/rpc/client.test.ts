@@ -17,6 +17,8 @@ type InitializeRequest = {
   };
 };
 
+const IDENTITY = { name: 'test-client', version: '9.9.9' };
+
 const initializeResult = (request: InitializeRequest) => ({
   protocol_version: '2.0.0',
   identity: { name: 'omniagents', version: '1.0.0' },
@@ -80,7 +82,7 @@ class MockWebSocket {
 }
 
 async function connectedClient(): Promise<{ client: RPCClient; socket: MockWebSocket }> {
-  const client = new RPCClient('ws://example.test/ws');
+  const client = new RPCClient('ws://example.test/ws', IDENTITY);
   const connection = client.connect();
   const socket = MockWebSocket.instances.at(-1)!;
   socket.open();
@@ -102,6 +104,7 @@ describe('RPCClient GUI protocol handshake', () => {
     MockWebSocket.autoInitialize = true;
     vi.unstubAllGlobals();
   });
+
 
   it.each(['helper', 'raw'] as const)(
     'keeps %s compaction pending beyond 20 minutes while probes succeed',
@@ -194,7 +197,7 @@ describe('RPCClient GUI protocol handshake', () => {
     vi.useFakeTimers();
     const fetch = vi.fn().mockResolvedValue({ ok: false, status });
     vi.stubGlobal('fetch', fetch);
-    const client = new RPCClient('ws://example.test/ws', 'expired');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY, 'expired');
     try {
       await expect(client.connect()).rejects.toThrow(`Authentication failed (${status})`);
       expect(client.actor.getSnapshot().context.permanent).toBe(true);
@@ -209,7 +212,7 @@ describe('RPCClient GUI protocol handshake', () => {
 
   it('keeps temporary ticket-service failures retryable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
-    const client = new RPCClient('ws://example.test/ws', 'valid-token');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY, 'valid-token');
     try {
       await expect(client.connect()).rejects.toThrow('Authentication failed (503)');
       expect(client.connectionState).toBe('reconnecting');
@@ -226,7 +229,7 @@ describe('RPCClient GUI protocol handshake', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ ticket: 'initial-ticket' }) })
       .mockResolvedValue({ ok: false, status: 401 });
     vi.stubGlobal('fetch', fetch);
-    const client = new RPCClient('ws://example.test/ws', 'expiring-token');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY, 'expiring-token');
     try {
       const connected = client.connect();
       await vi.advanceTimersByTimeAsync(0);
@@ -314,7 +317,7 @@ describe('RPCClient GUI protocol handshake', () => {
         })
     );
     vi.stubGlobal('fetch', fetch);
-    const client = new RPCClient('ws://example.test/ws', 'ordinary-token');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY, 'ordinary-token');
     const pending = client.connect();
     const rejection = expect(pending).rejects.toThrow('disconnected');
     client.dispose();
@@ -338,7 +341,7 @@ describe('RPCClient GUI protocol handshake', () => {
       )
       .mockResolvedValue({ ok: true, json: async () => ({ ticket: 'new-ticket' }) });
     vi.stubGlobal('fetch', fetch);
-    const client = new RPCClient('ws://example.test/ws', 'ordinary-token');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY, 'ordinary-token');
     const old = client.connect();
     const rejection = expect(old).rejects.toThrow('disconnected');
     client.disconnect();
@@ -372,7 +375,7 @@ describe('RPCClient GUI protocol handshake', () => {
     'rejects false-success %s before events, replay or initialized',
     async (version) => {
       MockWebSocket.autoInitialize = false;
-      const client = new RPCClient('ws://example.test/ws');
+      const client = new RPCClient('ws://example.test/ws', IDENTITY);
       const event = vi.fn();
       client.on('message_output', event);
       const connection = client.connect();
@@ -398,7 +401,7 @@ describe('RPCClient GUI protocol handshake', () => {
 
   it('sends initialize then initialized before connect resolves', async () => {
     MockWebSocket.autoInitialize = false;
-    const client = new RPCClient('ws://example.test/ws');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY);
     let connected = false;
     const connection = client.connect().then(() => {
       connected = true;
@@ -417,7 +420,7 @@ describe('RPCClient GUI protocol handshake', () => {
       method: 'initialize',
       params: {
         protocol_version: '2.0.0',
-        identity: { name: 'omni-desktop', version: '1.0.0' },
+        identity: IDENTITY,
         platform: { os: 'browser', arch: 'unknown' },
         capabilities: {
           realtime: true,
@@ -460,7 +463,7 @@ describe('RPCClient GUI protocol handshake', () => {
   });
 
   it('exposes typed requests and handshake-level connection state changes', async () => {
-    const client = new RPCClient('ws://example.test/ws');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY);
     const states: string[] = [];
     const unsubscribe = client.onConnectionState((state) => states.push(state));
     const connection = client.connect();
@@ -523,7 +526,7 @@ describe('RPCClient GUI protocol handshake', () => {
 
   it('does not allow public fs/git requests onto a raw-open socket before initialized', async () => {
     MockWebSocket.autoInitialize = false;
-    const client = new RPCClient('ws://example.test/ws');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY);
     const connection = client.connect();
     const socket = MockWebSocket.instances[0]!;
     socket.open();
@@ -546,7 +549,7 @@ describe('RPCClient GUI protocol handshake', () => {
 
   it('retries without explicitly unsupported experimental operations', async () => {
     MockWebSocket.autoInitialize = false;
-    const client = new RPCClient('ws://example.test/ws');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY);
     const connection = client.connect();
     const socket = MockWebSocket.instances[0]!;
     socket.open();
@@ -583,7 +586,7 @@ describe('RPCClient GUI protocol handshake', () => {
 
   it('gates experimental features atomically when a required notification is unsupported', async () => {
     MockWebSocket.autoInitialize = false;
-    const client = new RPCClient('ws://example.test/ws');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY);
     const connection = client.connect();
     const socket = MockWebSocket.instances[0]!;
     socket.open();
@@ -616,7 +619,7 @@ describe('RPCClient GUI protocol handshake', () => {
 
   it('does not degrade an unrelated capability mismatch', async () => {
     MockWebSocket.autoInitialize = false;
-    const client = new RPCClient('ws://example.test/ws');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY);
     const connection = client.connect();
     const socket = MockWebSocket.instances[0]!;
     socket.open();
@@ -645,7 +648,7 @@ describe('RPCClient GUI protocol handshake', () => {
 
   it('bounds the whole socket plus initialize attempt and closes the timed-out transport', async () => {
     vi.useFakeTimers();
-    const client = new RPCClient('ws://example.test/ws');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY);
     try {
       const connection = client.connect();
       const socket = MockWebSocket.instances[0]!;
@@ -793,7 +796,7 @@ describe('RPCClient generated protocol integration', () => {
 
   it('rejects an unnegotiated typed MCP operation without sending a request', async () => {
     MockWebSocket.autoInitialize = false;
-    const client = new RPCClient('ws://example.test/ws');
+    const client = new RPCClient('ws://example.test/ws', IDENTITY);
     const connection = client.connect();
     const socket = MockWebSocket.instances[0]!;
     socket.open();

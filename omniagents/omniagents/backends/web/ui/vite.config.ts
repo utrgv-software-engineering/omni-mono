@@ -1,12 +1,23 @@
+import { readFileSync } from 'node:fs';
+
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
 import { defineConfig } from 'vite';
+
+// The web UI ships inside omniagents and carries its version.
+const omniagentsVersion = /__version__ = "([^"]+)"/.exec(
+  readFileSync(new URL('../../../_version.py', import.meta.url), 'utf8')
+)?.[1];
+if (!omniagentsVersion) {
+  throw new Error('omniagents/_version.py has no __version__');
+}
 
 const wsHost = process.env.OMNI_WS_HOST || '127.0.0.1';
 const wsPort = Number(process.env.OMNI_WS_PORT || 8000);
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
+  define: { __OMNIAGENTS_VERSION__: JSON.stringify(omniagentsVersion) },
   // streamdown lazy-loads inner chunks; optimizing it up front keeps chunk
   // hashes stable for an open page.
   optimizeDeps: {

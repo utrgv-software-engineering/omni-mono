@@ -9,6 +9,7 @@ import type { PlanItem } from '@omniagents/client/transcript/chat-types';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
+import { CLIENT_IDENTITY } from '@/renderer/omniagents-ui/client-identity';
 import { serverOrigin } from '@/renderer/services/ipc';
 import type { AgentRuntimeConnection } from '@/shared/types';
 
@@ -94,7 +95,7 @@ export const OmniAgentsApp = ({
 
   return (
     <UiConfigProvider connection={normalizedConnection}>
-      <RPCClientProvider>
+      <RPCClientProvider identity={CLIENT_IDENTITY}>
         <OmniAgentsCore
           sessionId={sessionId}
           executionTarget={executionTarget}

@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { RPCClient } from "@omniagents/client/rpc/client";
 import { getSessionRegistry } from "@omniagents/client/session/session-registry";
+import { CLIENT_IDENTITY } from "../client-identity.js";
 import { useAppStore } from "../store/appStore.js";
 
 export interface UseRPCOptions {
@@ -31,7 +32,7 @@ export function useRPC(options: UseRPCOptions): UseRPCResult {
   }>({ connected: false, connecting: true, error: null });
 
   useEffect(() => {
-    const rpcClient = new RPCClient(options.url, options.token);
+    const rpcClient = new RPCClient(options.url, CLIENT_IDENTITY, options.token);
     // The connection owns its conversations: they live and die with it.
     const releaseSessions = getSessionRegistry(rpcClient).retain();
     setClient(rpcClient);

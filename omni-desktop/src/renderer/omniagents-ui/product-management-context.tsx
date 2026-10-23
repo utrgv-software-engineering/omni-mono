@@ -7,6 +7,7 @@ import {
 } from '@omniagents/client/rpc/management-repository';
 import { createContext, type ReactNode, useContext, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
+import { CLIENT_IDENTITY } from '@/renderer/omniagents-ui/client-identity';
 import { emitter, wsEmitter } from '@/renderer/services/ipc';
 import type { AgentRuntimeConnection, ReasoningEffort, RuntimeModelList } from '@/shared/types';
 
@@ -53,7 +54,7 @@ const EMPTY_SNAPSHOT: ManagementSnapshot = {
 
 const noSubscribe = (): (() => void) => () => {};
 const getEmptySnapshot = (): ManagementSnapshot => EMPTY_SNAPSHOT;
-const defaultClientFactory: ProductManagementClientFactory = (url, token) => new RPCClient(url, token);
+const defaultClientFactory: ProductManagementClientFactory = (url, token) => new RPCClient(url, CLIENT_IDENTITY, token);
 const ensureProductConnection = (): Promise<AgentRuntimeConnection> => emitter.invoke('management-runtime:ensure');
 
 /**

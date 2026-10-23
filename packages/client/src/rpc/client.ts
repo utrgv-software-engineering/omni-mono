@@ -19,9 +19,11 @@ import { OmniagentsRpcError } from '../protocol/errors';
 import type {
   Capabilities,
   EnvironmentSelection,
+  Identity,
   InitializeResult,
   JsonRpcError,
   JsonRpcId,
+  Platform,
   RpcClientNotificationMap,
   RpcMethodMap,
   RpcNotificationMap,
@@ -226,10 +228,21 @@ function profileLog(msg: string): void {
   }
 }
 
+/** The machine a client runs on: Node's for a terminal client; a page
+ * cannot see its operating system, so a browser reports itself. */
+function hostPlatform(): Platform {
+  const node = (globalThis as { process?: { platform?: string; arch?: string; versions?: { node?: string } } }).process;
+  if (node?.versions?.node && typeof window === 'undefined') {
+    return { os: node.platform ?? 'unknown', arch: node.arch ?? 'unknown' };
+  }
+  return { os: 'browser', arch: 'unknown' };
+}
+
 export class RPCClient {
   private ws: WebSocket | null = null;
   private url: string;
   private token?: string;
+  private identity: Identity;
   private nextId = 0;
   private pending = new Map<JsonRpcId, PendingEntry>();
   private listeners = new Map<string, Set<Listener>>();
@@ -247,8 +260,11 @@ export class RPCClient {
   readonly elicitations: ElicitationQueue;
   readonly actor: RPCClientActor;
 
-  constructor(url: string, token?: string) {
+  /** `identity` names the application this client is part of; servers
+   * record it for the connection. */
+  constructor(url: string, identity: Identity, token?: string) {
     this.url = url;
+    this.identity = identity;
     this.token = token;
     // Sequence-aware dedup / gap recovery for the durable event stream
     // (protocol.md § "Durable Sequenced Event Replay"). Replay cursors
@@ -746,8 +762,8 @@ export class RPCClient {
       try {
         const result = await this.call('initialize', {
           protocol_version: GUI_PROTOCOL_VERSION,
-          identity: { name: 'omni-desktop', version: '1.0.0' },
-          platform: { os: 'browser', arch: 'unknown' },
+          identity: this.identity,
+          platform: hostPlatform(),
           capabilities: requestedCapabilities(requestedExperimental),
         });
         if (this.ws !== socket) {

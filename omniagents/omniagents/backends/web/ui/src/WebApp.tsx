@@ -13,6 +13,11 @@ import { toast } from 'sonner';
 
 import { WorkspacePicker } from './components/WorkspacePicker';
 
+declare const __OMNIAGENTS_VERSION__: string;
+
+/** How the web UI introduces itself to the runtime that served it. */
+const CLIENT_IDENTITY = { name: 'omniagents-web', version: __OMNIAGENTS_VERSION__ };
+
 const host: ChatHost = {
   notifyError: (title, description) => {
     toast.error(title, { description });
@@ -45,7 +50,7 @@ export function WebApp({ theme }: { theme: OmniTheme }) {
     <ChatHostProvider host={host}>
       <TooltipProvider delayDuration={300}>
         <UiConfigProvider connection={connection}>
-          <RPCClientProvider>
+          <RPCClientProvider identity={CLIENT_IDENTITY}>
             <WebChat />
           </RPCClientProvider>
         </UiConfigProvider>

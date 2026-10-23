@@ -6,6 +6,7 @@ import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const IDENTITY = { name: 'test-app', version: '1.0.0' };
 const config = vi.hoisted(() => ({ wsBaseUrl: 'ws://runtime.test/gui', token: 'ticket-secret' }));
 
 vi.mock('@omniagents/chat-ui/ui-config', () => ({
@@ -72,7 +73,7 @@ describe('RPCClientProvider', () => {
     const fake = new ContextClient();
     act(() => {
       root.render(
-        <RPCClientProvider createClient={() => fake as unknown as RPCClient}>
+        <RPCClientProvider identity={IDENTITY} createClient={() => fake as unknown as RPCClient}>
           <span />
         </RPCClientProvider>
       );
@@ -92,13 +93,13 @@ describe('RPCClientProvider', () => {
 
     act(() => {
       root.render(
-        <RPCClientProvider createClient={factory}>
+        <RPCClientProvider identity={IDENTITY} createClient={factory}>
           <Harness />
         </RPCClientProvider>
       );
     });
 
-    expect(factory).toHaveBeenCalledWith('ws://runtime.test/gui', 'ticket-secret');
+    expect(factory).toHaveBeenCalledWith('ws://runtime.test/gui', IDENTITY, 'ticket-secret');
     expect(contextClient).toBe(fake);
   });
 
@@ -114,10 +115,10 @@ describe('RPCClientProvider', () => {
     await act(async () =>
       root.render(
         <>
-          <RPCClientProvider key="A" createClient={factory}>
+          <RPCClientProvider identity={IDENTITY} key="A" createClient={factory}>
             <View />
           </RPCClientProvider>
-          <RPCClientProvider key="B" createClient={factory}>
+          <RPCClientProvider identity={IDENTITY} key="B" createClient={factory}>
             <View />
           </RPCClientProvider>
         </>
@@ -129,7 +130,7 @@ describe('RPCClientProvider', () => {
     expect(getSessionRegistry(observed[1]!).get('shared')).toBe(session);
     await act(async () =>
       root.render(
-        <RPCClientProvider key="B" createClient={factory}>
+        <RPCClientProvider identity={IDENTITY} key="B" createClient={factory}>
           <View />
         </RPCClientProvider>
       )
@@ -148,7 +149,7 @@ describe('RPCClientProvider', () => {
     await act(async () =>
       root.render(
         <StrictMode>
-          <RPCClientProvider createClient={factory}>
+          <RPCClientProvider identity={IDENTITY} createClient={factory}>
             <span>view</span>
           </RPCClientProvider>
         </StrictMode>
@@ -169,7 +170,7 @@ describe('RPCClientProvider', () => {
     });
     await act(async () =>
       root.render(
-        <RPCClientProvider createClient={factory}>
+        <RPCClientProvider identity={IDENTITY} createClient={factory}>
           <span>view</span>
         </RPCClientProvider>
       )
@@ -177,7 +178,7 @@ describe('RPCClientProvider', () => {
     config.token = 'another-identity';
     await act(async () =>
       root.render(
-        <RPCClientProvider createClient={factory}>
+        <RPCClientProvider identity={IDENTITY} createClient={factory}>
           <span>view</span>
         </RPCClientProvider>
       )

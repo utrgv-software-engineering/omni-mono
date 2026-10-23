@@ -10,6 +10,7 @@ import { App } from "./components/App.js";
 import { KeypressProvider } from "./contexts/KeypressContext.js";
 import { enableDebugLog, getDebugLogPath } from "./utils/debugLog.js";
 import { inkRenderOptions, routeConsoleOffTerminal } from "./renderOptions.js";
+import { CLIENT_IDENTITY } from "./client-identity.js";
 
 const cli = meow(
   `
@@ -38,6 +39,7 @@ const cli = meow(
 `,
   {
     importMeta: import.meta,
+    version: CLIENT_IDENTITY.version,
     flags: {
       server: {
         type: "string",

@@ -7,6 +7,9 @@ import { type ReactNode, useMemo } from 'react'
 import { api } from '../../lib/api'
 import { useToastStore } from '../../stores/toastStore'
 
+/** How Studio introduces itself to the agent runtimes it hosts. */
+const CLIENT_IDENTITY = { name: 'omniagents-studio', version: __STUDIO_VERSION__ }
+
 function useChatHost(): ChatHost {
   const pushToast = useToastStore((state) => state.pushToast)
   return useMemo(
@@ -40,7 +43,7 @@ export function AgentRuntimeProvider({ agentKey, children }: { agentKey: string;
     <ChatHostProvider host={host}>
       <TooltipProvider delayDuration={300}>
         <UiConfigProvider connection={connection}>
-          <RPCClientProvider>{children}</RPCClientProvider>
+          <RPCClientProvider identity={CLIENT_IDENTITY}>{children}</RPCClientProvider>
         </UiConfigProvider>
       </TooltipProvider>
     </ChatHostProvider>

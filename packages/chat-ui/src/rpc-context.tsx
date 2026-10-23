@@ -1,5 +1,6 @@
 import { useUiConfig } from '@omniagents/chat-ui/ui-config';
 import type { RPCClientActor } from '@omniagents/client/machines/rpc-client.machine';
+import type { Identity } from '@omniagents/client/protocol/gui-v2';
 import { RPCClient } from '@omniagents/client/rpc/client';
 import { getSessionRegistry } from '@omniagents/client/session/session-registry';
 import { useSelector } from '@xstate/react';
@@ -20,9 +21,9 @@ const RPCClientContext = createContext<RPCClientContextValue | null>(null);
 // Provider
 // ---------------------------------------------------------------------------
 
-export type RPCClientFactory = (url: string, token?: string) => RPCClient;
+export type RPCClientFactory = (url: string, identity: Identity, token?: string) => RPCClient;
 
-const defaultRPCClientFactory: RPCClientFactory = (url, token) => new RPCClient(url, token);
+const defaultRPCClientFactory: RPCClientFactory = (url, identity, token) => new RPCClient(url, identity, token);
 
 type SharedConnection = {
   client: RPCClient;
@@ -34,16 +35,16 @@ type SharedConnection = {
 // AND authentication identity form the pool key; never pool across credentials.
 // Keys stay in memory and must not be logged or persisted.
 const connectionPools = new WeakMap<RPCClientFactory, Map<string, SharedConnection>>();
-function sharedConnection(factory: RPCClientFactory, url: string, token?: string) {
+function sharedConnection(factory: RPCClientFactory, url: string, identity: Identity, token?: string) {
   let pool = connectionPools.get(factory);
   if (!pool) {
     pool = new Map();
     connectionPools.set(factory, pool);
   }
-  const key = JSON.stringify([url, token ?? null]);
+  const key = JSON.stringify([url, token ?? null, identity.name, identity.version]);
   let entry = pool.get(key);
   if (!entry) {
-    const client = factory(url, token);
+    const client = factory(url, identity, token);
     entry = { client, owners: 0, generation: 0 };
     pool.set(key, entry);
   }
@@ -80,14 +81,20 @@ function sharedConnection(factory: RPCClientFactory, url: string, token?: string
 
 export const RPCClientProvider = ({
   children,
+  identity,
   createClient = defaultRPCClientFactory,
 }: {
   children: ReactNode;
+  /** The application connecting, as servers should know it. */
+  identity: Identity;
   createClient?: RPCClientFactory;
 }) => {
   const { wsBaseUrl, token } = useUiConfig();
 
-  const connection = useMemo(() => sharedConnection(createClient, wsBaseUrl, token), [createClient, token, wsBaseUrl]);
+  const connection = useMemo(
+    () => sharedConnection(createClient, wsBaseUrl, identity, token),
+    [createClient, token, wsBaseUrl, identity]
+  );
   const { client } = connection;
   useEffect(() => connection.retain(), [connection]);
 
