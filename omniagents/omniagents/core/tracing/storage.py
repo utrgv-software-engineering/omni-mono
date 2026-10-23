@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 import threading
 from datetime import UTC, datetime, timedelta
@@ -6,7 +7,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from omniagents.core.paths import get_traces_dir
-from omniagents.core.eval.annotate import _slugify
+
+
+def _slugify(value: str) -> str:
+    """A category name as the id reviews store it."""
+    text = str(value).lower().encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", text).strip("_"))
+    return text or "category"
 
 
 class SQLiteStorage:

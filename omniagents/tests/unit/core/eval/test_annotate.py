@@ -1,54 +1,33 @@
-import json
-import sqlite3
-
 from omniagents.core.eval import annotate
+from omniagents.core.tracing.storage import SQLiteStorage
 
 
-def test_review_labels_are_the_categories_given_in_the_named_run(monkeypatch, tmp_path):
-    db_dir = tmp_path / "db"
-    db_dir.mkdir()
-    db_path = db_dir / "proj.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute("""
-        CREATE TABLE traces (
-            trace_id TEXT,
-            group_id TEXT,
-            workflow_name TEXT,
-            metadata TEXT
-        )
-        """)
-    conn.execute("""
-        CREATE TABLE failure_categories (
-            id INTEGER,
-            name TEXT,
-            project TEXT
-        )
-        """)
-    conn.execute("""
-        CREATE TABLE analysis_categories (
-            project TEXT,
-            group_id TEXT,
-            category_id INTEGER
-        )
-        """)
-    workflow_name = "base_scenarios_set_2025_01_02_03_04_05"
-    metadata = json.dumps({"omniagents": {"scenario": {"id": "abc"}}})
-    conn.execute(
-        "INSERT INTO traces VALUES (?, ?, ?, ?)",
-        ("trace-1", "group-1", workflow_name, metadata),
+def test_review_labels_are_the_categories_studio_recorded_for_the_run(
+    monkeypatch, tmp_path
+):
+    """Written the way Studio writes a review: categories on the analysis row."""
+    monkeypatch.setattr(
+        "omniagents.core.eval.annotate.get_traces_dir", lambda: tmp_path
     )
-    conn.execute(
-        "INSERT INTO failure_categories VALUES (?, ?, ?)",
-        (1, "Quality Review", "proj"),
-    )
-    conn.execute(
-        "INSERT INTO analysis_categories VALUES (?, ?, ?)",
-        ("proj", "group-1", 1),
-    )
-    conn.commit()
-    conn.close()
+    storage = SQLiteStorage(str(tmp_path / "proj.db"))
+    for trace, group, workflow, scenario in (
+        ("t1", "g1", "run_a", "abc"),
+        ("t2", "g2", "run_a", "def"),
+        ("t3", "g3", "run_b", "abc"),
+    ):
+        storage.insert_trace(
+            {
+                "id": trace,
+                "workflow_name": workflow,
+                "group_id": group,
+                "metadata": {"omniagents": {"scenario": {"id": scenario}}},
+            }
+        )
+    storage.set_analysis_categories("proj", "g1", ["quality_review", "tone"])
+    storage.set_analysis_categories("proj", "g3", ["other_run"])
 
-    monkeypatch.setattr("omniagents.core.eval.annotate.get_traces_dir", lambda: db_dir)
-
-    assert annotate.review_labels("proj", workflow_name) == {"abc": ["quality_review"]}
-    assert annotate.review_labels("proj", "another_run") == {}
+    assert annotate.review_labels("proj", "run_a") == {
+        "abc": ["quality_review", "tone"]
+    }
+    assert annotate.review_labels("proj", "run_b") == {"abc": ["other_run"]}
+    assert annotate.review_labels("proj", "no_such_run") == {}
