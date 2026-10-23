@@ -1570,3 +1570,61 @@ def test_search_reports_unavailable_rather_than_scanning_in_python(tmp_path):
             backend.search("anything", ThreadFilter(user_id="u1"), limit=10)
     finally:
         backend.close()
+
+
+def test_upgrading_a_store_removes_the_empty_conversations_reads_left(tmp_path):
+    """Reads used to create a thread for every conversation a client opened.
+    The first open after the fix deletes those, and only those, once."""
+    import sqlite3
+    import time
+
+    from omniagents.core.session import queue_inbox as inbox
+
+    path = str(tmp_path / "domain.db")
+    old = SqliteConversationStore(path=path)
+    for thread_id in ("opened", "opened-inbox", "titled", "worker", "talked"):
+        old.upsert_thread(make_thread(thread_id))
+    old.upsert_thread(make_thread("queued"))
+    old.upsert_thread(make_thread("just-created", updated_at=time.time()))
+    old.mutate_queue("opened-inbox", lambda state, receipt: (None, None))
+    inbox.accept(old, "queued", TestQueueInbox().item(), payload={"content": "q"})
+    old.mutate_thread("titled", lambda thread: setattr(thread, "title", "Plans"))
+    old.mutate_thread(
+        "worker",
+        lambda thread: (
+            setattr(thread, "source", "worker_reference"),
+            thread.metadata.update(worker_id="w1"),
+        ),
+    )
+    old.upsert_turn(make_turn("talked"))
+    old.append_item(make_item(1, thread_id="talked"))
+    old.close()
+    with sqlite3.connect(path) as conn:  # as a store from before the fix
+        conn.execute("PRAGMA user_version = 0")
+        assert conn.execute("SELECT count(*) FROM command_inboxes").fetchone()[0] == 2
+
+    upgraded = SqliteConversationStore(path=path)
+    survivors = {
+        thread_id
+        for thread_id in (
+            "opened",
+            "opened-inbox",
+            "titled",
+            "worker",
+            "talked",
+            "queued",
+            "just-created",
+        )
+        if upgraded.get_thread(thread_id) is not None
+    }
+    assert survivors == {"titled", "worker", "talked", "queued", "just-created"}
+    assert len(inbox.entries(upgraded, "queued")) == 1
+    upgraded.upsert_thread(make_thread("opened-later"))
+    upgraded.close()
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT count(*) FROM command_inboxes").fetchone()[0] == 1
+
+    # Once: a store already cleaned is not cleaned again.
+    reopened = SqliteConversationStore(path=path)
+    assert reopened.get_thread("opened-later") is not None
+    reopened.close()

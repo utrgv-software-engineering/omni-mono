@@ -33,6 +33,7 @@ import logging
 import os
 import sqlite3
 from threading import Lock
+import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from omniagents.core.paths import get_sessions_db_path
@@ -820,6 +821,26 @@ _SQLITE_MIGRATIONS = (
     "ALTER TABLE items ADD COLUMN search_text TEXT",
 )
 
+# A thread nobody made anything in: no items or turns, no title, metadata,
+# branch parent, pin or usage, and no submission. Its inbox, if it has one,
+# holds nothing.
+_SQLITE_UNUSED_THREADS = """
+    SELECT t.thread_id, c.state FROM threads t
+    LEFT JOIN command_inboxes c ON c.thread_id = t.thread_id
+    WHERE t.source = 'recorded' AND t.item_count = 0 AND t.turn_count = 0
+      AND t.title IS NULL AND t.metadata_json = '{}' AND t.usage_json = '{}'
+      AND t.compaction_json = '{}' AND t.parent_thread_id IS NULL
+      AND t.pinned = 0 AND t.updated_at < ?
+      AND NOT EXISTS (SELECT 1 FROM items i WHERE i.thread_id = t.thread_id)
+      AND NOT EXISTS (SELECT 1 FROM turns u WHERE u.thread_id = t.thread_id)
+      AND NOT EXISTS (
+          SELECT 1 FROM submission_receipts r WHERE r.thread_id = t.thread_id
+      )
+"""
+
+# ``PRAGMA user_version`` once the empty threads reads left behind are gone.
+_SQLITE_PRUNED_READ_CREATED_THREADS = 1
+
 # ---------------------------------------------------------------------
 # Full-text search (SQLite / FTS5)
 #
@@ -954,8 +975,43 @@ class SqliteConversationStore(ConversationStore):
                 pass
         conn.commit()
         self._fts_ready = self._bootstrap_fts(conn)
+        self._prune_read_created_threads(conn)
         self._conn = conn
         return conn
+
+    def _prune_read_created_threads(self, conn: sqlite3.Connection) -> None:
+        """Delete the empty conversations reads used to leave behind, once.
+
+        Reading a conversation's snapshot or queue used to create its
+        thread, so every chat a client merely opened was kept as an empty
+        conversation, listed beside the real ones. Those rows hold nothing
+        anyone made (:data:`_SQLITE_UNUSED_THREADS`). A thread touched in
+        the last few minutes is spared: work arriving creates its thread a
+        moment before recording anything, possibly in another process.
+        """
+        (version,) = conn.execute("PRAGMA user_version").fetchone()
+        if version >= _SQLITE_PRUNED_READ_CREATED_THREADS:
+            return
+        unused = [
+            thread_id
+            for thread_id, inbox in conn.execute(
+                _SQLITE_UNUSED_THREADS, (time.time() - 300,)
+            ).fetchall()
+            if inbox is None or not json.loads(inbox).get("items")
+        ]
+        for thread_id in unused:
+            conn.execute("DELETE FROM threads WHERE thread_id = ?", (thread_id,))
+            conn.execute(
+                "DELETE FROM command_inboxes WHERE thread_id = ?", (thread_id,)
+            )
+        conn.execute(f"PRAGMA user_version = {_SQLITE_PRUNED_READ_CREATED_THREADS}")
+        conn.commit()
+        if unused:
+            logger.info(
+                "Removed %d empty conversations left by reads from %s",
+                len(unused),
+                self._path,
+            )
 
     def _bootstrap_fts(self, conn: sqlite3.Connection) -> bool:
         """Create (and, on an upgrade, populate) the FTS5 index.
