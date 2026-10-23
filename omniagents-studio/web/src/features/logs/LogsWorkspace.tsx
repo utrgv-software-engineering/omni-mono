@@ -2,7 +2,7 @@ import { App } from '@omniagents/chat-ui/App'
 import type { OrganizationThread } from '@omniagents/client/rpc/conversation-organization'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 
 import { QUERY_PARAMS, ROUTES } from '../../app/routes'
@@ -162,20 +162,20 @@ function AgentLogs({ header, agents, agentKey, project, mode, threadId, traceId,
           onTrace={(id) => update({ [QUERY_PARAMS.trace]: id })}
         />
       ) : (
-        <PanelGroup direction="horizontal" className="h-full">
-          <Panel defaultSize={70} minSize={45}>
+        <ResizablePanelGroup orientation="horizontal" className="h-full">
+          <ResizablePanel defaultSize="70%" minSize="45%">
             <div className="flex h-full flex-col">
               {selectedThread && evaluationOf(selectedThread) ? <EvaluationSummary thread={selectedThread} /> : null}
               <div className="min-h-0 flex-1">
                 <App key={threadId} sessionId={threadId} readOnly />
               </div>
             </div>
-          </Panel>
-          <PanelResizeHandle className="w-1 bg-border transition-colors hover:bg-primary/20" />
-          <Panel defaultSize={30} minSize={20} maxSize={50}>
+          </ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel defaultSize="30%" minSize="20%" maxSize="50%">
             <AnalysisPanel />
-          </Panel>
-        </PanelGroup>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       )}
     </StudioPage>
   )

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@omniagents/ui/resizable'
 import { ArrowLeft } from 'lucide-react'
 import type { Span } from '../../types'
 import { Timeline } from './components/Timeline'
@@ -26,21 +26,21 @@ export function DebugView({ spans, onBack }: DebugViewProps) {
           </button>
         </div>
       )}
-      <PanelGroup direction="horizontal" className="flex-1">
-        <Panel defaultSize={70} minSize={50}>
+      <ResizablePanelGroup orientation="horizontal" className="flex-1">
+        <ResizablePanel defaultSize="70%" minSize="50%">
           <Timeline 
             spans={spans} 
             onSpanSelect={setSelectedSpan}
             selectedSpan={selectedSpan}
           />
-        </Panel>
+        </ResizablePanel>
         
-        <PanelResizeHandle className="w-1 bg-border hover:bg-primary/20 transition-colors" />
+        <ResizableHandle />
         
-        <Panel defaultSize={30} minSize={20} maxSize={50}>
+        <ResizablePanel defaultSize="30%" minSize="20%" maxSize="50%">
           <SpanInspector span={selectedSpan} />
-        </Panel>
-      </PanelGroup>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   )
 }
