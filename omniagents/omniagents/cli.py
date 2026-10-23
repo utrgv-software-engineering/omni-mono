@@ -105,6 +105,36 @@ def _run_auth_command(args) -> None:
         sys.exit(status)
 
 
+def _judge_line(judged: dict) -> str:
+    """One line on what a judge's verdicts in a run say."""
+
+    def pct(value):
+        return "NA" if value is None else f"{value:.0%}"
+
+    head = (
+        f"Judge {judged['judge']}: raw pass {pct(judged['raw_pass_rate'])} "
+        f"of {judged['answered']}"
+    )
+    if judged["status"] != "validated":
+        why = (
+            "changed since it was validated"
+            if judged["status"] == "changed"
+            else "not validated against human labels"
+        )
+        return f"{head}; {why}, so this is uncorrected"
+    if judged["corrected_pass_rate"] is None:
+        return (
+            f"{head}; too close to chance to correct "
+            f"(TPR {pct(judged['tpr'])}, TNR {pct(judged['tnr'])})"
+        )
+    low_high = judged.get("corrected_interval")
+    interval = f" [{pct(low_high[0])}, {pct(low_high[1])}]" if low_high else ""
+    return (
+        f"{head}; corrected {pct(judged['corrected_pass_rate'])}{interval} "
+        f"(TPR {pct(judged['tpr'])}, TNR {pct(judged['tnr'])})"
+    )
+
+
 def main():
     """Entry point for the omniagents CLI."""
     # Parse args first to get config path if available
@@ -917,9 +947,9 @@ def main():
     judge_dataset = judge_sub.add_parser(
         "dataset",
         help="Build (or rebuild) a failure category's judge dataset from every "
-        "reviewed answer: those reviewers saw the category in are positives. An "
-        "answer's split depends only on it and --seed, so rebuilding keeps "
-        "earlier examples where they were",
+        "reviewed answer: those reviewers saw the category in should be judged "
+        "Fail, the rest Pass. Splits are balanced by label, and rebuilding "
+        "with the same --seed keeps every earlier example where it was",
     )
     judge_dataset.add_argument(
         "--project",
@@ -1800,6 +1830,8 @@ def main():
                         f"# Measures: {measure_total} total, {measure_failed} failing "
                         f"({measure_failed_gating} gating, {measure_failed_diagnostic} diagnostic)"
                     )
+                    for judged in data.get("judges") or []:
+                        print(f"# {_judge_line(judged)}")
                     if scen_total is not None:
                         print(
                             f"# Scenarios: included={scen_included} skipped_unmeasured={scen_skipped} total={scen_total}"
@@ -1905,6 +1937,8 @@ def main():
                             f"Measures: {measure_total}  Failing: {measure_failed} "
                             f"(gating: {measure_failed_gating}, diagnostic: {measure_failed_diagnostic})"
                         )
+                        for judged in data.get("judges") or []:
+                            print(_judge_line(judged))
                         if scen_total is not None:
                             print(
                                 f"Scenarios: included={scen_included}  Skipped (no measures)={scen_skipped}  Total={scen_total}"
@@ -2140,9 +2174,10 @@ def main():
             for split in dataset["splits"]:
                 print(
                     f"{split['split']}: {split['scenario_count']} answers "
-                    f"({split['positives']} positive, {split['negatives']} negative) "
-                    f"-> {split['path']}"
+                    f"({split['fails']} Fail, {split['passes']} Pass) -> {split['path']}"
                 )
+            for warning in dataset["manifest"].get("warnings") or []:
+                print(f"Warning: {warning}")
         elif getattr(args, "judge_cmd", None) == "run":
             try:
                 from omniagents.core.eval.loader import load_eval_config
@@ -2288,28 +2323,23 @@ def main():
                         eval_config=eval_cfg,
                     )
                 )
-                cfg = eval_cfg.agent_config
-                yml_out = (
-                    (cfg.get("evaluation") or {}).get("judge_output")
-                    or (cfg.get("evaluation") or {}).get("output")
-                    or ""
-                )
                 out_path = _P(args.output) if args.output else None
-                if not out_path and yml_out:
-                    candidate = _P(yml_out)
-                    if not candidate.is_absolute():
-                        base = _P(compiled_cfg_path).resolve().parent
-                        candidate = (base / candidate).resolve()
-                    out_path = candidate
                 if not out_path:
-                    ts_dir = split_path.parents[2]
-                    out_dir = ts_dir / "judge"
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    out_path = out_dir / (split_path.stem + f"_{jkey}.json")
-                tp = out.get("counts", {}).get("TP")
-                tn = out.get("counts", {}).get("TN")
-                fp = out.get("counts", {}).get("FP")
-                fn = out.get("counts", {}).get("FN")
+                    from datetime import datetime as _dt
+
+                    from omniagents.core.eval.layout import EvalLayout
+
+                    out_path = (
+                        EvalLayout(eval_cfg.eval_dir, eval_cfg.project_root).runs_dir
+                        / "judge-checks"
+                        / f"{_dt.now().strftime('%Y%m%d_%H%M%S')}_{jkey}_{split_name}.json"
+                    )
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                # Pass is the positive class: TP = both said Pass.
+                tp = out.get("counts", {}).get("tp")
+                tn = out.get("counts", {}).get("tn")
+                fp = out.get("counts", {}).get("fp")
+                fn = out.get("counts", {}).get("fn")
                 tpr = out.get("tpr")
                 tnr = out.get("tnr")
                 try:
@@ -2346,11 +2376,12 @@ def main():
                             or (r.get("judge_output") or {}).get("reasoning")
                             or ""
                         )
+                        # pred/label True: the failure is present (Fail).
                         kind = (
-                            "FP"
+                            "false Fail"
                             if (pred is True and label is False)
                             else (
-                                "FN"
+                                "false Pass"
                                 if (pred is False and label is True)
                                 else ("UNK" if pred is None else "OK")
                             )
@@ -2437,7 +2468,9 @@ def main():
                                 if a:
                                     at = a if len(a) <= 300 else (a[:300] + "...")
                                     print(f"# Assistant: {at}")
-                        print(f"# Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
+                        print(
+                            f"# Counts (Pass positive): TP={tp} TN={tn} FP={fp} FN={fn}"
+                        )
                         print(
                             f"# TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
                         )
@@ -2470,10 +2503,10 @@ def main():
                                 sf = f.get("split_file")
                                 ln = int(f.get("split_line") or 0)
                                 kind = (
-                                    "FP"
+                                    "false Fail"
                                     if (pred is True and label is False)
                                     else (
-                                        "FN"
+                                        "false Pass"
                                         if (pred is False and label is True)
                                         else "DISAGREE"
                                     )
@@ -2505,17 +2538,24 @@ def main():
                             print(
                                 f"Passed: {passed_count}  Failed: {len(failed)}  Skipped: {len(skipped)}  Total: {total}"
                             )
-                            print(f"Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
+                            print(
+                                f"Counts (Pass positive): TP={tp} TN={tn} FP={fp} FN={fn}"
+                            )
                             print(
                                 f"TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
                             )
                 except Exception as _:
-                    print(f"Counts: TP={tp} TN={tn} FP={fp} FN={fn}")
+                    print(f"Counts (Pass positive): TP={tp} TN={tn} FP={fp} FN={fn}")
                     print(
                         f"TPR: {tpr if tpr is not None else 'NA'}  TNR: {tnr if tnr is not None else 'NA'}"
                     )
                 out_path.write_text(json.dumps(out, indent=2), encoding="utf-8")
                 print(f"Wrote results: {out_path}")
+                if out.get("validation"):
+                    print(
+                        f"Validated {jkey} on the test split; recorded in "
+                        f"judges/{jkey}/validation.yml"
+                    )
                 try:
                     results_for_exit = out.get("results") or []
                     any_disagree = any(

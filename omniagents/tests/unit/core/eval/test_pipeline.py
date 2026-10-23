@@ -233,7 +233,9 @@ def test_project_measures_load_from_the_configured_evaluations_dir(tmp_path):
     agents_dir = project_root / "agents"
     agents_dir.mkdir(parents=True)
     (agents_dir / "main.yaml").write_text("agent: {}")
-    (project_root / "project.yml").write_text("paths:\n  evaluations:\n    - custom_eval\n")
+    (project_root / "project.yml").write_text(
+        "paths:\n  evaluations:\n    - custom_eval\n"
+    )
     measures_file = project_root / "custom_eval" / "measures.py"
     measures_file.parent.mkdir()
     body = (
@@ -313,14 +315,16 @@ def test_run_judges_records_failure(monkeypatch, tmp_path):
 
 def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     agent_yaml = tmp_path / "agent.yaml"
-    agent_yaml.write_text(textwrap.dedent("""
+    agent_yaml.write_text(
+        textwrap.dedent("""
             evaluation:
               synthetic_data_generation:
                 dimensions:
                   - name: tone
                     values:
                       - name: serious
-            """))
+            """)
+    )
 
     spec_holder = {}
 
@@ -457,9 +461,14 @@ def test_run_scenario_traces_and_records_agent_error(monkeypatch, tmp_path):
     assert trace_calls[0]["metadata"]["omniagents"]["synthetic"]["selection"][
         "mapping"
     ] == {"tone": "serious"}
-    # The run's conversation records what the run was, like its trace.
+    # The run's conversation, kept in the project agent's own store (not the
+    # names the spec happened to carry), records what the run was.
     assert annotations == [
-        (("proj", "agent"), "sess-123", trace_calls[0]["metadata"]),
+        (
+            targets._store_identity(agent_yaml.resolve(), tmp_path),
+            "sess-123",
+            trace_calls[0]["metadata"],
+        ),
     ]
 
 

@@ -172,18 +172,92 @@ def remove_review(layout: EvalLayout, group_id: str) -> None:
 # -- judge datasets -------------------------------------------------------
 
 
-def _split_of(group_id: str, seed: int, fractions: tuple[float, ...]) -> str:
-    """Which split an answer belongs in: a function of the answer and the
-    seed only, so a review added later never moves an earlier one (a judge's
-    test examples stay out of its training)."""
-    digest = hashlib.sha256(f"{seed}:{group_id}".encode("utf-8")).hexdigest()
-    point = int(digest[:12], 16) / float(16**12) * sum(fractions)
-    edge = 0.0
-    for name, fraction in zip(SPLIT_NAMES, fractions):
-        edge += fraction
-        if point < edge:
-            return name
-    return SPLIT_NAMES[-1]
+def _order(group_id: str, seed: int) -> str:
+    return hashlib.sha256(f"{seed}:{group_id}".encode("utf-8")).hexdigest()
+
+
+def _assign(
+    examples: list[dict[str, Any]],
+    prior: dict[str, str],
+    seed: int,
+    fractions: tuple[float, ...],
+) -> dict[str, str]:
+    """Each example's split, keeping every one the dataset already placed
+    (so a judge's test examples never move into its training) and filling
+    each label's splits toward ``fractions`` (so Pass and Fail answers are
+    spread across train, dev and test in proportion). New examples are
+    placed in an order fixed by the seed."""
+    total = sum(fractions)
+    share = {name: f / total for name, f in zip(SPLIT_NAMES, fractions)}
+    assignment: dict[str, str] = {}
+    for label in (True, False):
+        members = [e for e in examples if e["label"] is label]
+        counts = {name: 0 for name in SPLIT_NAMES}
+        for example in members:
+            if example["id"] in prior:
+                assignment[example["id"]] = prior[example["id"]]
+                counts[prior[example["id"]]] += 1
+        fresh = sorted(
+            (e for e in members if e["id"] not in prior),
+            key=lambda e: _order(e["id"], seed),
+        )
+        for example in fresh:
+            size = sum(counts.values()) + 1
+            split = max(
+                SPLIT_NAMES,
+                key=lambda name: (
+                    share[name] * size - counts[name],
+                    -SPLIT_NAMES.index(name),
+                ),
+            )
+            assignment[example["id"]] = split
+            counts[split] += 1
+    return assignment
+
+
+def _prior_assignment(
+    folder: Path, seed: int, fractions: tuple[float, ...]
+) -> dict[str, str]:
+    """Where the dataset in ``folder`` placed each example, when it was built
+    with the same seed and fractions (otherwise it is built afresh)."""
+    manifest_path = folder / DATASET_MANIFEST
+    if not manifest_path.is_file():
+        return {}
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    if manifest.get("seed") != int(seed) or manifest.get("fractions") != [
+        float(f) for f in fractions
+    ]:
+        return {}
+    prior: dict[str, str] = {}
+    for name in SPLIT_NAMES:
+        path = folder / f"{name}.yml"
+        if path.is_file():
+            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            for example in data.get("scenarios") or []:
+                if isinstance(example, dict) and example.get("id"):
+                    prior[str(example["id"])] = name
+    return prior
+
+
+#: Fewer than this many answers of a label in dev or test leaves TPR or TNR
+#: too noisy to act on; validating a judge wants ~50 of each label in all.
+MIN_PER_LABEL_IN_SPLIT = 10
+TARGET_PER_LABEL = 50
+
+
+def _dataset_warnings(counts: dict[str, dict[str, int]]) -> list[str]:
+    warnings = []
+    for key, label in (("passes", "Pass"), ("fails", "Fail")):
+        total = sum(c[key] for c in counts.values())
+        if total < TARGET_PER_LABEL:
+            warnings.append(
+                f"{total} {label} answers in all; aim for about {TARGET_PER_LABEL} "
+                "of each label before trusting TPR and TNR"
+            )
+        for name in ("dev", "test"):
+            if counts[name][key] < MIN_PER_LABEL_IN_SPLIT:
+                warnings.append(f"{name} has {counts[name][key]} {label} answers")
+    return warnings
 
 
 def build_judge_dataset(
@@ -194,13 +268,15 @@ def build_judge_dataset(
     seed: int,
 ) -> dict[str, Any]:
     """Write ``judge-datasets/<category>/`` from the reviews: every reviewed
-    answer (one with a verdict or categories) is an example, positive when
-    reviewers saw ``category`` in it. Returns the dataset's manifest."""
+    answer (one with a verdict or categories) is an example, labelled as
+    failing (``label: true``) when reviewers saw ``category`` in it. Splits
+    are balanced by label, and an example never moves once placed
+    (:func:`_assign`). Returns the dataset's manifest."""
     if len(fractions) != 3 or sum(fractions) <= 0 or any(f < 0 for f in fractions):
         raise ReviewError(
             "Train, dev and test fractions must be three positive numbers"
         )
-    splits: dict[str, list[dict[str, Any]]] = {name: [] for name in SPLIT_NAMES}
+    examples: list[dict[str, Any]] = []
     for review in sorted(list_reviews(layout), key=lambda r: r["group_id"]):
         categories = review.get("failure_categories") or []
         if not (review.get("verdict") or categories):
@@ -216,11 +292,17 @@ def build_judge_dataset(
         }
         if review.get("history") is not None:
             example["history"] = review["history"]
-        splits[_split_of(review["group_id"], seed, fractions)].append(example)
-    if not any(splits.values()):
+        examples.append(example)
+    if not examples:
         raise ReviewError("There are no reviewed answers to build a judge dataset from")
 
     folder = layout.judge_dataset_dir(category)
+    assignment = _assign(
+        examples, _prior_assignment(folder, seed, fractions), seed, fractions
+    )
+    splits: dict[str, list[dict[str, Any]]] = {name: [] for name in SPLIT_NAMES}
+    for example in examples:
+        splits[assignment[example["id"]]].append(example)
     if folder.is_dir():
         shutil.rmtree(folder)
     folder.mkdir(parents=True)
@@ -229,28 +311,30 @@ def build_judge_dataset(
         def ignore_aliases(self, data: Any) -> bool:
             return True
 
-    for name, examples in splits.items():
+    for name, members in splits.items():
         (folder / f"{name}.yml").write_text(
             yaml.dump(
-                {"scenarios": examples},
+                {"scenarios": members},
                 Dumper=_Dumper,
                 sort_keys=False,
                 allow_unicode=True,
             ),
             encoding="utf-8",
         )
+    counts = {
+        name: {
+            "fails": sum(1 for e in members if e["label"]),
+            "passes": sum(1 for e in members if not e["label"]),
+        }
+        for name, members in splits.items()
+    }
     manifest = {
         "source": DATASET_SOURCE,
         "category": category,
         "seed": int(seed),
         "fractions": [float(f) for f in fractions],
-        "counts": {
-            name: {
-                "positives": sum(1 for e in examples if e["label"]),
-                "negatives": sum(1 for e in examples if not e["label"]),
-            }
-            for name, examples in splits.items()
-        },
+        "counts": counts,
+        "warnings": _dataset_warnings(counts),
         "built_at": _now(),
     }
     (folder / DATASET_MANIFEST).write_text(

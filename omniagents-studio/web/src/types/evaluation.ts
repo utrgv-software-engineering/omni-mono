@@ -64,14 +64,42 @@ export interface Judge {
   instructions_path: string | null
   template_path: string | null
   defined_in: string
+  /** Validated as it is now, edited since, or never validated. */
+  status: 'validated' | 'changed' | 'unvalidated'
+  /** Its one measurement on the judge dataset's test split (Pass positive). */
+  validation: JudgeValidation | null
+}
+
+export interface JudgeValidation {
+  judge_version: string
+  model: string | null
+  test: { tp: number; fn: number; tn: number; fp: number; tpr: number | null; tnr: number | null }
+  source: string
+  validated_at: string
+}
+
+/** What one judge's verdicts in a run say. */
+export interface JudgeReport {
+  judge: string
+  status: 'validated' | 'changed' | 'unvalidated'
+  judged: number
+  answered: number
+  passed: number
+  raw_pass_rate: number | null
+  /** Corrected for the judge's TPR and TNR; null unless validated as it is now. */
+  corrected_pass_rate: number | null
+  corrected_interval: [number, number] | null
+  tpr?: number | null
+  tnr?: number | null
 }
 
 export interface JudgeDatasetSplit {
   split: 'train' | 'dev' | 'test'
   path: string
   scenario_count: number
-  positives: number
-  negatives: number
+  /** Answers reviewers saw the category in: the judge should say Fail. */
+  fails: number
+  passes: number
   updated_at: string | null
 }
 
@@ -79,7 +107,14 @@ export interface JudgeDatasetSplit {
  * positive when reviewers saw the category, split into train/dev/test. */
 export interface JudgeDataset {
   category: string
-  manifest: { seed?: number; fractions?: number[]; built_at?: string; [field: string]: JsonValue | undefined }
+  manifest: {
+    seed?: number
+    fractions?: number[]
+    built_at?: string
+    /** Too few answers of a label to trust TPR and TNR. */
+    warnings?: string[]
+    [field: string]: JsonValue | undefined
+  }
   splits: JudgeDatasetSplit[]
 }
 
@@ -207,6 +242,7 @@ export interface SavedRun {
   metrics?: Metric[]
   manifest?: RunManifest | null
   warnings?: string[]
+  judges?: JudgeReport[]
 }
 
 export interface RunComparison {

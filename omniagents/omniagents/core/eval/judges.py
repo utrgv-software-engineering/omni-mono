@@ -47,6 +47,32 @@ async def evaluate_split(
     if not scenarios:
         raise SystemExit("No scenarios in split")
 
+    from omniagents.core.eval.judge_validation import (
+        TestSplitSpent,
+        check_test_unspent,
+        confusion,
+        is_test_split,
+        judge_version,
+        record_validation,
+    )
+    from omniagents.core.eval.layout import EvalLayout
+
+    # A judge dataset's test split is measured once per version of the judge;
+    # that measurement is the judge's validation.
+    layout = (
+        EvalLayout(eval_config.eval_dir, eval_config.project_root)
+        if eval_config is not None
+        else None
+    )
+    on_test = layout is not None and is_test_split(layout, Path(split_path))
+    if on_test:
+        try:
+            check_test_unspent(
+                layout, str(judge_key), judge_version(jcfg), Path(split_path)
+            )
+        except TestSplitSpent as exc:
+            raise SystemExit(str(exc)) from exc
+
     category_hint: Optional[str] = None
     try:
         category_hint = Path(split_path).parent.name
@@ -192,12 +218,19 @@ async def evaluate_split(
         # any builtin tool the judge gains in the future resolves
         # against the eval host's working directory rather than
         # raising WorkspaceRootRequiredError under strict mode.
-        res = await AgentsRunner.run(
-            agent,
-            prompt,
-            context={"workspace_root": os.getcwd()},
-            max_turns=max_turns,
-        )
+        from agents.exceptions import ModelBehaviorError
+
+        try:
+            res = await AgentsRunner.run(
+                agent,
+                prompt,
+                context={"workspace_root": os.getcwd()},
+                max_turns=max_turns,
+            )
+        except ModelBehaviorError as exc:
+            # A reply that is not the verdict schema is no verdict: counted
+            # as unanswered, not as Pass or Fail, and the check goes on.
+            return {"error": "invalid_judge_output", "detail": str(exc)}
         return getattr(res, "final_output", None)
 
     def _predict_label_from_judge_output(val: Any, category: str) -> bool | None:
@@ -257,7 +290,7 @@ async def evaluate_split(
         except Exception:
             pass
     idx = 0
-    tp = tn = fp = fn = 0
+    pairs: List[tuple] = []
     for sc in scenarios:
         sid = str(sc.get("id") or sc.get("name"))
         label = bool(sc.get("label"))
@@ -280,14 +313,8 @@ async def evaluate_split(
         out = await _run_judge(judge_agent, prompt, max_turns=max_turns)
         pred = _predict_label_from_judge_output(out, sc.get("target_category") or "")
         agree = None if pred is None else (pred == label)
-        if pred is True and label is True:
-            tp += 1
-        elif pred is False and label is False:
-            tn += 1
-        elif pred is True and label is False:
-            fp += 1
-        elif pred is False and label is True:
-            fn += 1
+        # A label marks the failure present; Pass is the positive class.
+        pairs.append((not label, None if pred is None else not pred))
         results.append(
             {
                 "id": sid,
@@ -319,14 +346,20 @@ async def evaluate_split(
             except Exception:
                 pass
 
-    tpr = (tp / (tp + fn)) if (tp + fn) > 0 else None
-    tnr = (tn / (tn + fp)) if (tn + fp) > 0 else None
-
+    counts = confusion(pairs)
+    validation = (
+        record_validation(
+            layout, str(judge_key), jcfg, Path(split_path), counts, source="judge run"
+        )
+        if on_test
+        else None
+    )
     return {
         "split": str(split_path),
         "judge": str(judge_key),
-        "counts": {"TP": tp, "TN": tn, "FP": fp, "FN": fn},
-        "tpr": tpr,
-        "tnr": tnr,
+        "counts": counts,
+        "tpr": counts["tpr"],
+        "tnr": counts["tnr"],
+        "validation": validation,
         "results": results,
     }

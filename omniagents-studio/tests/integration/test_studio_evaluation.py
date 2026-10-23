@@ -266,7 +266,7 @@ def test_a_review_of_an_evaluation_answer_is_committed_with_it(
         headers=AUTH,
     )
     assert dataset.status_code == 200, dataset.text
-    assert sum(s["positives"] for s in dataset.json()["splits"]) == 1
+    assert sum(s["fails"] for s in dataset.json()["splits"]) == 1
 
     kept = env.client.post(
         "/api/evaluation/baselines",

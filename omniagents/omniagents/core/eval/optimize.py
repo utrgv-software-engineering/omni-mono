@@ -879,37 +879,20 @@ def optimize_judge_from_project(
     best = result.best_candidate
 
     def _judge_metrics(ds, cand):
+        from omniagents.core.eval.judge_validation import confusion
+
         ev = adapter.evaluate(ds, cand, capture_traces=False)
-        tp = tn = fp = fn = 0
-        total = len(ds)
+        pairs = []
         for i, item in enumerate(ds):
-            try:
-                label = bool(item.get("label"))
-            except Exception:
-                label = False
-            pred = None
-            try:
-                pred = ev.outputs[i].get("pred")
-            except Exception:
-                pred = None
-            if pred is True and label is True:
-                tp += 1
-            elif pred is False and label is False:
-                tn += 1
-            elif pred is True and label is False:
-                fp += 1
-            elif pred is False and label is True:
-                fn += 1
-        denom_acc = max(1, total)
-        acc = (tp + tn) / denom_acc
-        tpr = (tp / (tp + fn)) if (tp + fn) > 0 else None
-        tnr = (tn / (tn + fp)) if (tn + fp) > 0 else None
-        return {
-            "accuracy": acc,
-            "counts": {"TP": tp, "TN": tn, "FP": fp, "FN": fn},
-            "tpr": tpr,
-            "tnr": tnr,
-        }
+            pred = ev.outputs[i].get("pred") if i < len(ev.outputs) else None
+            # A label (and a True prediction) marks the failure present;
+            # Pass is the positive class.
+            pairs.append(
+                (not bool(item.get("label")), None if pred is None else not pred)
+            )
+        counts = confusion(pairs)
+        counts["accuracy"] = (counts["tp"] + counts["tn"]) / max(1, len(ds))
+        return counts
 
     dev_metrics = _judge_metrics(devset, best)
     test_metrics = _judge_metrics(testset, best)
@@ -923,11 +906,11 @@ def optimize_judge_from_project(
         },
         "metrics": {
             "dev_accuracy": dev_acc,
-            "dev_counts": dev_metrics.get("counts"),
+            "dev_counts": {k: dev_metrics[k] for k in ("tp", "fn", "tn", "fp")},
             "dev_tpr": dev_metrics.get("tpr"),
             "dev_tnr": dev_metrics.get("tnr"),
             "test_accuracy": test_acc,
-            "test_counts": test_metrics.get("counts"),
+            "test_counts": {k: test_metrics[k] for k in ("tp", "fn", "tn", "fp")},
             "test_tpr": test_metrics.get("tpr"),
             "test_tnr": test_metrics.get("tnr"),
         },
@@ -942,10 +925,10 @@ def optimize_judge_from_project(
     d = dev_metrics
     t = test_metrics
     print(
-        f"Dev: TPR={_fmt(d['tpr'])} TNR={_fmt(d['tnr'])} Counts: TP={d['counts']['TP']} TN={d['counts']['TN']} FP={d['counts']['FP']} FN={d['counts']['FN']}"
+        f"Dev: TPR={_fmt(d['tpr'])} TNR={_fmt(d['tnr'])} (Pass positive) Counts: TP={d['tp']} TN={d['tn']} FP={d['fp']} FN={d['fn']}"
     )
     print(
-        f"Test: TPR={_fmt(t['tpr'])} TNR={_fmt(t['tnr'])} Counts: TP={t['counts']['TP']} TN={t['counts']['TN']} FP={t['counts']['FP']} FN={t['counts']['FN']}"
+        f"Test: TPR={_fmt(t['tpr'])} TNR={_fmt(t['tnr'])} (Pass positive) Counts: TP={t['tp']} TN={t['tn']} FP={t['fp']} FN={t['fn']}"
     )
     print(f"Wrote: {out_json}")
 
@@ -1000,6 +983,23 @@ def optimize_judge_from_project(
         except Exception as exc:  # noqa: BLE001 - reported, the run's results stand
             apply_error = str(exc)
             print(f"Could not apply the optimized judge: {apply_error}")
+    if applied:
+        # The applied judge was measured once on the test split, above: that
+        # is its validation.
+        from omniagents.core.eval.judge_validation import record_validation
+        from omniagents.core.eval.layout import EvalLayout
+
+        applied_cfg = load_eval_config(
+            str(proj_path), agent_key=(str(agent_key or "") or None)
+        ).config["judges"][jkey]
+        record_validation(
+            EvalLayout(_eval_config.eval_dir, _eval_config.project_root),
+            jkey,
+            applied_cfg,
+            ts_path,
+            test_metrics,
+            source="judge optimize",
+        )
     return {
         "run_dir": str(run_dir),
         "out_json": str(out_json),

@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-
+from omniagents.core.eval.judge_validation import validation_status
 from omniagents.core.eval.layout import (
     DATASET_MANIFEST,
     GENERATED_MANIFEST,
@@ -901,7 +901,8 @@ class EvalWorkspace:
 
     def judges(self) -> list[dict[str, Any]]:
         """Each judge: where it is defined, its model, what it reads, the
-        failure category it decides, and its instructions and template."""
+        failure category it decides, its instructions and template, and
+        whether it is validated as it is now (``status``, ``validation``)."""
         config = self.config()
         out = []
         for key, cfg in sorted((config.config.get("judges") or {}).items()):
@@ -933,6 +934,8 @@ class EvalWorkspace:
                     "instructions_path": instructions_path,
                     "template_path": template_path,
                     "defined_in": str(config.judge_sources.get(str(key)) or ""),
+                    # validated / changed (since validation) / unvalidated
+                    **validation_status(self.layout, str(key), cfg),
                 }
             )
         return out
@@ -1131,10 +1134,12 @@ class EvalWorkspace:
                     {
                         "split": split,
                         "path": str(path),
-                        "scenario_count": int(counts.get("positives") or 0)
-                        + int(counts.get("negatives") or 0),
-                        "positives": int(counts.get("positives") or 0),
-                        "negatives": int(counts.get("negatives") or 0),
+                        "scenario_count": int(counts.get("fails") or 0)
+                        + int(counts.get("passes") or 0),
+                        # A failing answer shows the category: its judge
+                        # should say Fail.
+                        "fails": int(counts.get("fails") or 0),
+                        "passes": int(counts.get("passes") or 0),
                         "updated_at": _iso(path),
                     }
                 )

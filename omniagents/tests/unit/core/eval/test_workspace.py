@@ -408,7 +408,8 @@ def test_judge_datasets_are_built_from_reviews_and_keep_their_splits(
     assert manifest["source"] == "reviews" and manifest["seed"] == 7
     # Eight reviewed answers; a note alone is not a verdict.
     assert sum(s["scenario_count"] for s in dataset["splits"]) == 8
-    assert sum(s["positives"] for s in dataset["splits"]) == 4
+    assert sum(s["fails"] for s in dataset["splits"]) == 4
+    assert manifest["warnings"]  # far fewer than ~50 of each label
 
     def assignment():
         out = {}
@@ -437,6 +438,27 @@ def test_judge_datasets_are_built_from_reviews_and_keep_their_splits(
 
     workspace.remove_judge_dataset("wrong_units")
     assert workspace.judge_datasets() == [] and not folder.exists()
+
+
+def test_judge_dataset_splits_are_balanced_by_label(project, monkeypatch):
+    workspace = EvalWorkspace(project)
+    run = _saved_run(workspace, monkeypatch, [False] * 40)
+    for index, record in enumerate(run["runs"]):
+        failing = index < 10  # a quarter of the answers show the failure
+        workspace.save_review(
+            record["trace_group_id"],
+            reviewer="ana",
+            verdict="unacceptable" if failing else "acceptable",
+            failure_categories=["wrong_units"] if failing else [],
+        )
+    dataset = workspace.create_judge_dataset(
+        "wrong_units", fractions=(0.2, 0.4, 0.4), seed=3
+    )
+    splits = {s["split"]: s for s in dataset["splits"]}
+    # Each label is split 20/40/40, so dev and test each get their share of
+    # the rarer Fail answers rather than whatever chance gives them.
+    assert [splits[n]["fails"] for n in ("train", "dev", "test")] == [2, 4, 4]
+    assert [splits[n]["passes"] for n in ("train", "dev", "test")] == [6, 12, 12]
 
 
 def test_a_judge_dataset_built_from_scenario_labels_is_refused(project):

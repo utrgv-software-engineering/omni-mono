@@ -40,7 +40,7 @@ impossible to make again, and everything a reported number depends on.
 - `reviews/<run id>.jsonl`: people's verdicts on a run's answers, made in Studio's Logs. One line per reviewed conversation: the verdict (`acceptable`/`unacceptable`), failure categories seen, notes, reviewer and time, with the scenario and the answer as reviewed (`reply`, and the whole conversation as `history` when a judge of the project reads conversations), so it stands on its own after the run is gone.
 - `generated/<set>/`: a generated scenario set (`scenarios.yml`, `manifest.json`). Regenerating costs model calls and never gives the same set.
 - `holdout/`: the suite's train/dev/test assignment (`manifest.yml` and one file of names per split). Fixed, so a test split stays a test split.
-- `judge-datasets/<category>/`: a category's judge dataset, built from every reviewed answer (`train.yml`, `dev.yml`, `test.yml`, `manifest.yml`). An answer is positive when reviewers saw the category in it; its split depends only on it and the seed, so rebuilding after more reviews never moves an earlier example and a judge's test examples stay out of its training.
+- `judge-datasets/<category>/`: a category's judge dataset, built from every reviewed answer (`train.yml`, `dev.yml`, `test.yml`, `manifest.yml`). An answer is labelled Fail when reviewers saw the category in it, Pass otherwise. Splits are balanced by label (each label is divided by the fractions), and rebuilding with the same seed keeps every earlier example where it was, so a judge's test examples stay out of its training. The manifest warns when there are too few answers of a label (validating a judge wants about 50 of each).
 - `baselines/<name>/`: a run kept as evidence for a number someone reports, with the agent it tested (`omniagents eval baseline <run id> --name <name>`, or Studio).
 
 Local results (the scaffolded `.gitignore` ignores them):
@@ -177,9 +177,17 @@ python -m omniagents.cli eval scenarios run -P path/to/project.yml --set myset
 # build the judge dataset (train/dev/test) for one category from the reviews
 python -m omniagents.cli judge dataset -P path/to/project.yml -c <failure_category>
 
-# Evaluate an LLM‑as‑Judge on a dataset split (it judges the reviewed answers)
+# Iterate on the judge against the dev split (it judges the reviewed answers)
 python -m omniagents.cli judge run -P path/to/project.yml -c <category> -s dev -j <judge_key>
+# Then validate it: once, on the test split
+python -m omniagents.cli judge run -P path/to/project.yml -c <category> -s test -j <judge_key>
 ```
+
+Validating a judge (`omniagents.core.eval.judge_validation`)
+
+- TPR and TNR treat **Pass as the positive class**: TPR is how often the judge says Pass when a person said Pass, TNR how often it says Fail when a person said Fail. Iterate on dev until both are above 90% (80% at least).
+- A judge's run on its dataset's **test split** is its validation, recorded in `judges/<key>/validation.yml` (committed): the judge version measured (a hash of its settings, instructions and template), the test split, the counts, TPR and TNR. The test split is measured **once per version**: running it again on an unchanged judge and split is refused. Editing the judge makes a new, unvalidated version. `judge optimize --apply` records the applied judge's test measurement the same way.
+- A run reports, per judge, its **raw pass rate** and, for a judge validated as it is now, the **corrected rate** with a 95% bootstrap interval (Rogan-Gladen: `(p_obs + TNR - 1) / (TPR + TNR - 1)`, resampling the test labels and the run's verdicts). An unvalidated judge, or one changed since validation, is reported uncorrected and says so (the run's `judges` list, the CLI summary, Studio's run detail and Judges tab).
 
 Notes
 

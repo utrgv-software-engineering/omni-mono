@@ -86,9 +86,13 @@ The agent picker in the header chooses what runs are made against.
   catch each and how many scenarios and reviews use it; measures, built in or
   the project's `measures.py`, with a stub written for a new one.
 - **Judges**: each judge's model, what it reads, the category it decides, its
-  instructions and template; judge datasets, built per category from every
-  reviewed answer, with each answer's label and the reply the judge reads;
-  optimizing a judge on a dataset.
+  instructions and template, and whether it is validated as it is now (its
+  TPR and TNR on its dataset's test split, Pass positive); judge datasets,
+  built per category from every reviewed answer and balanced by label, with
+  each answer's Pass/Fail label, the reply the judge reads and a warning when
+  a label is too scarce; optimizing a judge on a dataset. A run's detail shows
+  each judge's raw pass rate and, for a validated judge, the rate corrected
+  for its errors.
 - **Optimize**: improving an agent's instructions against a judge dataset; the
   best instructions are saved into the agent's files.
 

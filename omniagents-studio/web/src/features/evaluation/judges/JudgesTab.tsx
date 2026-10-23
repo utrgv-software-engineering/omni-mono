@@ -12,7 +12,7 @@ import { useEffect, useState } from 'react'
 import { cn } from '../../../lib/utils'
 import { api } from '../../../lib/api'
 import type { Judge, JudgeDataset } from '../../../types/evaluation'
-import { excerpt, when } from '../format'
+import { excerpt, percent, when } from '../format'
 import { JobPanel } from '../jobs'
 import { useJob } from '../useJob'
 
@@ -45,7 +45,9 @@ export function JudgesTab() {
             className={cn('w-full rounded-md px-2 py-1.5 text-left hover:bg-muted', current?.key === judge.key && 'bg-muted font-medium')}
           >
             <div className="truncate">{judge.label}</div>
-            <div className="truncate text-xs text-muted-foreground">{judge.failure_category ?? 'no category'}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {judge.failure_category ?? 'no category'} · {STATUS[judge.status]}
+            </div>
           </button>
         ))}
       </nav>
@@ -135,6 +137,7 @@ function JudgeEditor({ judge }: { judge: Judge }) {
         <div>
           <h3 className="text-base font-semibold">{judge.label}</h3>
           <p className="font-mono text-xs text-muted-foreground">{judge.defined_in}</p>
+          <Validation judge={judge} />
         </div>
         <div className="flex gap-2">
           <Button size="sm" disabled={!changed || save.isPending} onClick={() => save.mutate()}>
@@ -219,9 +222,9 @@ function JudgeDatasets({ judges }: { judges: Judge[] }) {
       <div>
         <h3 className="text-base font-semibold">Judge datasets</h3>
         <p className="text-xs text-muted-foreground">
-          One per category, built from every answer reviewed in Logs: positives are the answers reviewers saw the category
-          in. Each answer&apos;s split depends only on it and the seed, so building again after more reviews adds the new
-          ones and keeps the rest where they were.
+          One per category, built from every answer reviewed in Logs: the judge should say Fail where reviewers saw the
+          category, Pass elsewhere. Splits are balanced by label, and building again with the same seed adds new reviews
+          and keeps every earlier answer where it was.
         </p>
       </div>
       <BuildJudgeDataset />
@@ -236,7 +239,7 @@ function JudgeDatasets({ judges }: { judges: Judge[] }) {
             {dataset.splits.map((split) => (
               <button key={split.split} type="button" onClick={() => setBrowsing(browsing === split.path ? null : split.path)}>
                 <Badge variant={browsing === split.path ? 'default' : 'outline'}>
-                  {split.split}: {split.positives}+ / {split.negatives}−
+                  {split.split}: {split.fails} Fail / {split.passes} Pass
                 </Badge>
               </button>
             ))}
@@ -244,6 +247,13 @@ function JudgeDatasets({ judges }: { judges: Judge[] }) {
               <Trash2 />
             </Button>
           </div>
+          {dataset.manifest.warnings?.length ? (
+            <ul className="list-disc pl-5 text-xs text-amber-700 dark:text-amber-400">
+              {dataset.manifest.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          ) : null}
           {dataset.splits.some((split) => split.path === browsing) ? <SplitBrowser path={browsing!} /> : null}
           <OptimizeJudge dataset={dataset} judges={judges} />
         </div>
@@ -270,7 +280,7 @@ function SplitBrowser({ path }: { path: string }) {
           <TableRow key={String(scenario.id ?? scenario.name)}>
             <TableCell className="align-top text-xs">{scenario.name}</TableCell>
             <TableCell className="align-top">
-              <Badge variant={scenario.label ? 'destructive' : 'secondary'}>{scenario.label ? 'shows it' : 'does not'}</Badge>
+              <Badge variant={scenario.label ? 'destructive' : 'secondary'}>{scenario.label ? 'Fail' : 'Pass'}</Badge>
             </TableCell>
             <TableCell className="max-w-xl whitespace-normal align-top text-xs text-muted-foreground">
               {scenario.reply === null ? <em>No reply</em> : excerpt(scenario.reply, 240)}
@@ -376,5 +386,38 @@ function BuildJudgeDataset() {
       </Button>
       {build.error ? <span className="text-xs text-destructive">{(build.error as Error).message}</span> : null}
     </div>
+  )
+}
+
+const STATUS: Record<Judge['status'], string> = {
+  validated: 'validated',
+  changed: 'changed since validation',
+  unvalidated: 'not validated',
+}
+
+/**
+ * Whether the judge as it is now can be trusted: its one measurement on the
+ * test split of its judge dataset (Pass positive). Until then, runs report
+ * its verdicts uncorrected.
+ */
+function Validation({ judge }: { judge: Judge }) {
+  const test = judge.validation?.test
+  if (judge.status === 'unvalidated' || !test) {
+    return (
+      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+        Not validated: run it once on its judge dataset&apos;s test split (<code>omniagents judge run -s test</code>) before
+        trusting its pass rates.
+      </p>
+    )
+  }
+  const rates = `TPR ${percent(test.tpr)}, TNR ${percent(test.tnr)} on ${test.tp + test.fn + test.tn + test.fp} test answers`
+  return judge.status === 'validated' ? (
+    <p className="mt-1 text-xs text-muted-foreground">
+      Validated {when(judge.validation!.validated_at)}: {rates}.
+    </p>
+  ) : (
+    <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+      Changed since it was validated ({rates}); runs report it uncorrected until it is measured on the test split again.
+    </p>
   )
 }

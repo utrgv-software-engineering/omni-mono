@@ -7,7 +7,7 @@ import { Fragment } from 'react'
 
 import { api } from '../../../lib/api'
 import type { JsonValue } from '../../../types'
-import type { Metric, RunComparison, RunManifest } from '../../../types/evaluation'
+import type { JudgeReport, Metric, RunComparison, RunManifest } from '../../../types/evaluation'
 import { excerpt, percent, rateWithInterval, when } from '../format'
 
 const MANIFEST_LABELS: Array<[keyof RunManifest, string]> = [
@@ -47,6 +47,52 @@ function Manifest({ manifest }: { manifest: RunManifest | null | undefined }) {
         </Fragment>
       ))}
     </dl>
+  )
+}
+
+/**
+ * What each judge's verdicts say. A judge's raw pass rate is biased by its
+ * errors; for one validated as it is now, the corrected rate (and interval)
+ * is the estimate to report.
+ */
+function Judges({ judges }: { judges: JudgeReport[] }) {
+  if (judges.length === 0) return null
+  return (
+    <section className="space-y-2">
+      <h4 className="text-sm font-semibold">Judges</h4>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Judge</TableHead>
+            <TableHead>Raw pass rate</TableHead>
+            <TableHead>Corrected</TableHead>
+            <TableHead>Judge accuracy</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {judges.map((judged) => (
+            <TableRow key={judged.judge}>
+              <TableCell className="font-mono text-xs">{judged.judge}</TableCell>
+              <TableCell className="text-xs">
+                {percent(judged.raw_pass_rate)} <span className="text-muted-foreground">of {judged.answered}</span>
+              </TableCell>
+              <TableCell className="text-xs">
+                {judged.corrected_pass_rate !== null
+                  ? rateWithInterval(judged.corrected_pass_rate, judged.corrected_interval)
+                  : judged.status === 'validated'
+                    ? 'too close to chance to correct'
+                    : judged.status === 'changed'
+                      ? 'judge changed since validation'
+                      : 'not validated'}
+              </TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {judged.tpr !== undefined ? `TPR ${percent(judged.tpr)}, TNR ${percent(judged.tnr)}` : '—'}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </section>
   )
 }
 
@@ -135,6 +181,7 @@ export function RunDetail({
         <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs">{data.warnings.join('\n')}</div>
       ) : null}
       <Metrics metrics={data.metrics ?? []} />
+      <Judges judges={data.judges ?? []} />
       <section className="space-y-2">
         <h4 className="text-sm font-semibold">What it ran with</h4>
         <Manifest manifest={data.manifest} />

@@ -475,9 +475,10 @@ async def run_evaluation_async(
         target = ProjectAgentTarget(
             cfg_path, project_root=project_root, agent_config=agent_config
         )
-    return await run_suite(
+    suite_cfg = eval_cfg if eval_cfg is not None else cfg
+    data = await run_suite(
         target,
-        eval_cfg if eval_cfg is not None else cfg,
+        suite_cfg,
         eval_dir=eval_dir,
         project_root=project_root,
         environment=environment,
@@ -488,6 +489,18 @@ async def run_evaluation_async(
         include_history=include_history,
         selection=selection,
     )
+    if eval_config is not None:
+        # What each judge's verdicts say: the raw pass rate, and the
+        # corrected one for a judge validated as it is now.
+        from omniagents.core.eval.judge_validation import judge_report
+        from omniagents.core.eval.layout import EvalLayout
+
+        data["judges"] = judge_report(
+            EvalLayout(eval_config.eval_dir, eval_config.project_root),
+            suite_cfg.get("judges") or {},
+            data.get("runs") or [],
+        )
+    return data
 
 
 def run_evaluation(
