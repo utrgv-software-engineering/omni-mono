@@ -1,6 +1,6 @@
 # Pinned shadcn registry
 
-This directory is the offline source of truth for stock components in `src/renderer/ds/ui`.
+This directory is the offline source of truth for stock components in `src/components`.
 
 - Registry: `new-york-v4`
 - Primitive implementation: Radix

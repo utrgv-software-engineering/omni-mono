@@ -83,7 +83,7 @@ Managers expose a timestamped `getStatus()` and broadcast updates via `sendToWin
 ### Renderer structure
 
 - `src/renderer/features/` — feature modules; each owns its components + a `state.ts` (nanostores atom bundle). Current features: `Agents`, `AppControl`, `Banner`, `Browser`, `Code`, `CommandPalette`, `Console`, `Files`, `Gallery`, `Git`, `Jobs`, `Omni`, `Onboarding`, `Plugins`, `Projects`, `Review`, `ScheduledTasks`, `SettingsModal`, `Toast`, `Voice`, `XTermLogViewer`.
-- `src/renderer/ds/` — design system primitives (Fluent + Radix + custom)
+- `src/renderer/ds/` — desktop-only compositions (page headers, tabs, tree); the shadcn primitives and theme tokens live in `packages/ui` (`@omniagents/ui`)
 - `src/renderer/services/` — cross-cutting: `ipc`, `store` (mirrors main-process store into an atom), `status` (polls `main-process:get-status`), `agent-process`, `session-control`, `config`, `dev`
 - `src/renderer/common/` — shared UI (webview, layouts)
 - `src/renderer/transport/` — Electron and WS transport adapters
