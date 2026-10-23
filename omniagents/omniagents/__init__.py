@@ -64,6 +64,11 @@ try:
 except Exception:
     pass
 
+try:
+    from .patches import loop_local_http_client as _loop_http_patch  # noqa: F401
+except Exception:
+    pass
+
 # Register the `openai-oauth` (Codex / ChatGPT) model-provider builder so any
 # agent can use `model_provider: { type: openai-oauth }` after signing in with
 # `omniagents auth codex login`. A no-op until tokens exist.

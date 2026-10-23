@@ -59,7 +59,7 @@ export function AnalysisPanel() {
   // Load failure categories when project changes
   useEffect(() => {
     if (selectedProject) {
-      loadFailureCategories(selectedProject)
+      loadFailureCategories()
     }
   }, [selectedProject, loadFailureCategories])
   
@@ -410,9 +410,9 @@ export function AnalysisPanel() {
                   {category.description && (
                     <div className="text-xs text-muted-foreground">{category.description}</div>
                   )}
-                  {category.usageCount !== undefined && category.usageCount > 0 && (
+                  {category.review_count > 0 && (
                     <div className="text-xs text-muted-foreground mt-0.5">
-                      Used in {category.usageCount} conversation{category.usageCount !== 1 ? 's' : ''}
+                      Used in {category.review_count} conversation{category.review_count !== 1 ? 's' : ''}
                     </div>
                   )}
                 </div>
@@ -422,7 +422,7 @@ export function AnalysisPanel() {
                   onClick={() => setCategoryToDelete({
                     id: category.id,
                     name: category.name,
-                    usageCount: category.usageCount || 0
+                    usageCount: category.review_count
                   })}
                   className="p-1 hover:bg-destructive/10 rounded-sm transition-colors"
                   title="Delete category"

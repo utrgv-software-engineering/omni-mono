@@ -1,8 +1,11 @@
+import { NativeSelect, NativeSelectOption } from '@omniagents/ui/native-select'
 import { ArrowLeft, BarChart3 } from 'lucide-react'
+
 import { cn } from '../../lib/utils'
+import type { AgentSummary } from '../../types'
+import { EVALUATION_TABS, type EvaluationTab } from './evaluationTabs'
 import { ThemeToggle } from './ThemeToggle'
 
-type EvaluationTab = 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories' | 'measures' | 'results'
 
 interface EvaluationHeaderProps {
   activeTab: EvaluationTab
@@ -10,31 +13,33 @@ interface EvaluationHeaderProps {
   onBack: () => void
   projectName?: string | null
   isLoading?: boolean
+  agents: AgentSummary[]
+  agent: string | null
+  onAgentChange: (agent: string | null) => void
 }
 
-const tabs: { key: EvaluationTab; label: string }[] = [
-  { key: 'scenarios', label: 'Scenarios' },
-  { key: 'datasets', label: 'Datasets' },
-  { key: 'dimensions', label: 'Dimensions' },
-  { key: 'judges', label: 'Judges' },
-  { key: 'categories', label: 'Categories' },
-  { key: 'measures', label: 'Measures' },
-  { key: 'results', label: 'Results' },
-]
-
-export function EvaluationHeader({ activeTab, onTabChange, onBack, projectName, isLoading }: EvaluationHeaderProps) {
+export function EvaluationHeader({
+  activeTab,
+  onTabChange,
+  onBack,
+  projectName,
+  isLoading,
+  agents,
+  agent,
+  onAgentChange,
+}: EvaluationHeaderProps) {
   return (
     <div className="border-b border-border bg-background">
-      <div className="flex items-center justify-between px-4 h-14">
+      <div className="flex h-14 items-center justify-between gap-3 px-4">
         <div className="flex items-center gap-3">
           <button
             onClick={onBack}
             className="flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="h-4 w-4" />
           </button>
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-600 text-white">
-            <BarChart3 className="w-4 h-4" />
+            <BarChart3 className="h-4 w-4" />
           </div>
           <div className="flex flex-col">
             <span className="text-base font-semibold">Evaluation</span>
@@ -44,15 +49,26 @@ export function EvaluationHeader({ activeTab, onTabChange, onBack, projectName, 
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Agent
+            <NativeSelect size="sm" value={agent ?? ''} onChange={(e) => onAgentChange(e.target.value || null)}>
+              <NativeSelectOption value="">Entrypoint</NativeSelectOption>
+              {agents.map((a) => (
+                <NativeSelectOption key={a.key} value={a.key}>
+                  {a.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
           <ThemeToggle />
-          <div className="flex items-center gap-1 p-1 bg-muted rounded-md">
-            {tabs.map((tab) => (
+          <div className="flex items-center gap-1 rounded-md bg-muted p-1">
+            {EVALUATION_TABS.map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => onTabChange(tab.key)}
                 className={cn(
-                  'px-3 py-1 text-xs font-medium rounded-md transition-colors',
-                  activeTab === tab.key ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground'
+                  'rounded-md px-3 py-1 text-xs font-medium transition-colors',
+                  activeTab === tab.key ? 'bg-background shadow-xs' : 'text-muted-foreground hover:text-foreground',
                 )}
               >
                 {tab.label}

@@ -1355,7 +1355,9 @@ class EvalWorkspace:
                 )
             from omniagents.core.eval.loader import filter_scenarios
 
-            set_path = Path(self.scenario_set(scenario_set)["path"])
+            chosen = self.scenario_set(scenario_set)
+            set_path = Path(chosen["path"])
+            label = name or chosen["label"]
             scenarios = filter_scenarios(
                 self._read_scenarios(set_path), select, exclude
             )
@@ -1372,6 +1374,7 @@ class EvalWorkspace:
             if not eval_cfg.get("scenarios"):
                 raise EvalWorkspaceError("The project has no scenarios to run")
             results_for = self.eval_dir / "scenarios.yml"
+            label = name or "suite"
             measured_only = not include_unmeasured
         if max_turns is not None:
             eval_cfg["defaults"] = {
@@ -1392,7 +1395,7 @@ class EvalWorkspace:
             results_for,
             data,
             source=source,
-            scenario_name=name or None,
+            scenario_name=label,
             agent=self.agent_key(),
             workflow_name=data.get("workflow_name"),
         )

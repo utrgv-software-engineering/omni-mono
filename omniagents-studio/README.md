@@ -1,11 +1,11 @@
 # OmniAgents Studio
 
-A local web UI for OmniAgents projects: review and annotate every
-conversation the project's agents had (from the conversation store, with run
-timing from traces when tracing is on), see what each agent runs with, chat with
-agents in a Playground (the shared OmniAgents chat UI against the agent's real
-runtime), and run evaluation workflows (dimensions, scenario sets, measures,
-judges, suites, optimization).
+A local web UI for OmniAgents projects: review every conversation the
+project's agents had (from the conversation store, with run timing from traces
+when tracing is on), see and edit what each agent runs with, chat with agents in
+a Playground (the shared OmniAgents chat UI against the agent's real runtime),
+and evaluate them: scenarios and dimensions, runs with their intervals and
+comparisons, failure categories, measures, judges and optimization.
 
 Studio only reads and writes what OmniAgents already keeps on disk. Traces are
 recorded by `omniagents` itself when a project turns them on
@@ -39,6 +39,9 @@ cd web && npm run lint && npx vitest run && npm run build
 make assets                      # the bundle a wheel ships, in omniagents_studio/static
 ```
 
-Layout: `omniagents_studio/api.py` (FastAPI app), `agent_runtimes.py` (each
-agent's real runtime, mounted at `/api/agents/<key>/runtime`), `server.py`
-(serve/export), `cli.py`, `web/` (React sources), `docs/` (design notes).
+Layout: `omniagents_studio/api.py` (the app, traces and reviews),
+`agent_runtimes.py` (each agent's real runtime, mounted at
+`/api/agents/<key>/runtime`), `agents.py` (describing and editing agents),
+`evaluation.py` (the project's evaluation, over `EvalWorkspace`), `jobs.py`,
+`server.py` (serve/export), `cli.py`, `web/` (React sources). `docs/STUDIO.md`
+describes each screen and what it is built on.

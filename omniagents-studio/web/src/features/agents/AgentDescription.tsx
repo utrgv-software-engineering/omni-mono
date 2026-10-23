@@ -53,8 +53,7 @@ function NameList({ items }: { items: Array<{ name: string; description?: string
 /**
  * What a run of the agent is given, as its runtime resolves it: the built
  * agent's model, tools and rendered instructions, with its subagents,
- * capabilities, skills and approval policy. Read-only; the agent's files
- * are the place to change it.
+ * guardrails, structured output, capabilities, skills and approval policy.
  */
 export function AgentDescription({ agentKey }: { agentKey: string }) {
   const { data, isLoading, error } = useQuery<Description, Error>({
@@ -149,6 +148,46 @@ export function AgentDescription({ agentKey }: { agentKey: string }) {
           </ul>
         </Section>
       ) : null}
+
+      <Section title="Guardrails">
+        {Object.values(data.guardrails).every((names) => names.length === 0) ? (
+          <Empty>No guardrails.</Empty>
+        ) : (
+          <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
+            {(
+              [
+                ['input', "On the user's input"],
+                ['output', 'On the final output'],
+                ['tool_input', "On each tool call's arguments"],
+                ['tool_output', "On each tool call's result"],
+              ] as const
+            )
+              .filter(([key]) => data.guardrails[key].length > 0)
+              .map(([key, label]) => (
+                <div key={key} className="contents">
+                  <dt className="text-muted-foreground">{label}</dt>
+                  <dd className="font-mono">{data.guardrails[key].join(', ')}</dd>
+                </div>
+              ))}
+          </dl>
+        )}
+      </Section>
+
+      <Section title="Output">
+        {data.output ? (
+          <>
+            <p className="text-xs">
+              Ends with structured output <span className="font-mono">{data.output.name}</span>
+              {data.output.strict ? ' (strict schema)' : ''}.
+            </p>
+            <pre className="mt-2 max-h-64 overflow-auto rounded-sm bg-muted p-2 text-[11px]">
+              {JSON.stringify(data.output.schema, null, 2)}
+            </pre>
+          </>
+        ) : (
+          <Empty>A text reply.</Empty>
+        )}
+      </Section>
 
       <Section title="Approvals and limits">
         <ul className="space-y-1 text-xs">

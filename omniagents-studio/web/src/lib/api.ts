@@ -1,49 +1,56 @@
 import type {
-  Trace,
-  TraceWithSpans,
-  FailureCategory,
-  AnalysisData,
   AgentDescription,
   AgentSummary,
-  EvaluationDimension,
-  EvaluationDimensionsResponse,
+  AnalysisData,
+  FailureCategory,
   StudioProjectMetadata,
-  EvaluationScenariosResponse,
-  EvaluationScenarioPromotionPayload,
-  EvaluationScenarioPromotionResponse,
-  EvaluationScenarioCreatePayload,
-  EvaluationScenarioUpdatePayload,
-  EvaluationScenarioDeletePayload,
-  EvaluationScenarioMutationResponse,
-  EvaluationScenarioRunRequest,
-  EvaluationScenarioRunResponse,
-  EvaluationScenarioGenerationRequest,
-  EvaluationScenarioGenerationResponse,
-  EvaluationDatasetsResponse,
-  EvaluationDatasetSplitDetails,
-  EvaluationScenarioSplitPayload,
-  EvaluationScenarioSplitResponse,
-  EvaluationDatasetDeletePayload,
-  EvaluationDatasetDeleteResponse,
-  EvaluationScenarioSetDeletePayload,
-  EvaluationScenarioSetDeleteResponse,
-  EvaluationJudgeCreatePayload,
-  EvaluationJudgeUpdatePayload,
-  EvaluationJudgesResponse,
-  EvaluationJudgeDeleteResponse,
-  EvaluationJudgeOptimizationRequest,
-  EvaluationJudgeOptimizationResponse,
-  EvaluationAgentOptimizationRequest,
-  EvaluationAgentOptimizationResponse,
-  EvaluationSuiteRunRequest,
-  EvaluationSuiteRunResponse,
-  EvaluationMeasuresResponse,
-  EvaluationMeasureCreatePayload,
-  EvaluationMeasureUpdatePayload,
-  EvaluationMeasureDeleteResponse,
-  EvaluationResultsListResponse,
-  EvaluationResultsDetailResponse,
+  Trace,
+  TraceWithSpans,
 } from '../types'
+import type {
+  AgentOptions,
+  AgentSource,
+  Dimension,
+  Holdout,
+  Job,
+  JobRequest,
+  Judge,
+  JudgeDataset,
+  JudgeDatasetSplitDetail,
+  Measure,
+  RunComparison,
+  SavedRun,
+  SavedRunEntry,
+  Scenario,
+  ScenarioMatch,
+  ScenarioSet,
+} from '../types/evaluation'
+
+/** A refused request: the server's reason, and an agent edit's problems. */
+export class ApiError extends Error {
+  readonly status: number
+  readonly problems: string[]
+
+  constructor(status: number, message: string, problems: string[] = []) {
+    super(message)
+    this.status = status
+    this.problems = problems
+  }
+}
+
+async function errorFrom(response: Response): Promise<ApiError> {
+  let detail: unknown = null
+  try {
+    detail = ((await response.json()) as { detail?: unknown }).detail
+  } catch {
+    detail = null
+  }
+  if (detail && typeof detail === 'object' && Array.isArray((detail as { problems?: unknown }).problems)) {
+    const problems = (detail as { problems: string[] }).problems
+    return new ApiError(response.status, problems.join('\n'), problems)
+  }
+  return new ApiError(response.status, typeof detail === 'string' && detail ? detail : response.statusText)
+}
 
 const API_BASE = import.meta.env.VITE_API_URL || `${window.location.origin}/api`
 
@@ -101,7 +108,7 @@ export class ApiClient {
     })
 
     if (!response.ok) {
-      throw new Error(`API Error: ${response.statusText}`)
+      throw await errorFrom(response)
     }
 
     return response.json()
@@ -207,42 +214,6 @@ export class ApiClient {
     })
   }
 
-  async getFailureCategories(project: string): Promise<FailureCategory[]> {
-    return this.fetch(`/categories/${project}`)
-  }
-
-  async createFailureCategory(
-    project: string,
-    category: { name: string; description?: string | null; measures?: string[] | null }
-  ): Promise<FailureCategory> {
-    return this.fetch(`/categories/${project}`, {
-      method: 'POST',
-      body: JSON.stringify(category),
-    })
-  }
-
-  async updateFailureCategory(
-    project: string,
-    categorySlug: string,
-    payload: { description?: string | null; measures?: string[] | null }
-  ): Promise<FailureCategory> {
-    const encoded = encodeURIComponent(categorySlug)
-    return this.fetch(`/categories/${project}/${encoded}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    })
-  }
-
-  async deleteFailureCategory(
-    project: string,
-    categorySlug: string
-  ): Promise<{ message: string; previousUsageCount: number }> {
-    const encoded = encodeURIComponent(categorySlug)
-    return this.fetch(`/categories/${project}/${encoded}`, {
-      method: 'DELETE',
-    })
-  }
-
   async getAnalysisCategories(project: string, groupId: string): Promise<{ categoryIds: string[] }> {
     return this.fetch(`/analysis/${project}/${groupId}/categories`)
   }
@@ -258,6 +229,16 @@ export class ApiClient {
     })
   }
 
+  private send<T>(path: string, method: string, body?: unknown): Promise<T> {
+    return this.fetch(path, { method, body: body === undefined ? undefined : JSON.stringify(body) })
+  }
+
+  async getStudioProject(): Promise<StudioProjectMetadata> {
+    return this.fetch('/studio/project')
+  }
+
+  // -- agents ------------------------------------------------------------
+
   async getAgents(): Promise<{ agents: AgentSummary[] }> {
     return this.fetch('/agents')
   }
@@ -265,6 +246,35 @@ export class ApiClient {
   /** What a run of the agent is given, from its runtime. */
   async describeAgent(agentKey: string): Promise<AgentDescription> {
     return this.fetch(`/agents/${encodeURIComponent(agentKey)}`)
+  }
+
+  /** What an agent can name: the project's capabilities, tools, guardrails, agents. */
+  async agentOptions(): Promise<AgentOptions> {
+    return this.fetch('/agents/options')
+  }
+
+  async agentSource(agentKey: string): Promise<AgentSource> {
+    return this.fetch(`/agents/${encodeURIComponent(agentKey)}/source`)
+  }
+
+  /** Change settings (`null` removes one) and/or the instructions. */
+  async editAgent(
+    agentKey: string,
+    edit: { changes?: Record<string, unknown>; instructions?: string | null },
+  ): Promise<AgentSource> {
+    return this.send(`/agents/${encodeURIComponent(agentKey)}`, 'PATCH', edit)
+  }
+
+  async replaceAgentYaml(agentKey: string, yaml: string): Promise<AgentSource> {
+    return this.send(`/agents/${encodeURIComponent(agentKey)}/source`, 'PUT', { yaml })
+  }
+
+  async createAgent(agent: { key: string; model: string; label?: string; description?: string }): Promise<AgentSource> {
+    return this.send('/agents', 'POST', agent)
+  }
+
+  async deleteAgent(agentKey: string): Promise<{ removed: string; entrypoint: string }> {
+    return this.send(`/agents/${encodeURIComponent(agentKey)}`, 'DELETE')
   }
 
   /** Where the agent's real runtime is mounted, and the credential that
@@ -275,217 +285,171 @@ export class ApiClient {
     return { baseUrl: base.toString(), authToken: this.authToken ?? undefined }
   }
 
-  async getEvaluationDimensions(): Promise<EvaluationDimensionsResponse> {
+  // -- evaluation: what a scenario probes and how it is scored -------------
+
+  async getDimensions(): Promise<{ dimensions: Dimension[] }> {
     return this.fetch('/evaluation/dimensions')
   }
 
-  async updateEvaluationDimensions(dimensions: EvaluationDimension[]): Promise<EvaluationDimensionsResponse> {
-    return this.fetch('/evaluation/dimensions', {
-      method: 'PUT',
-      body: JSON.stringify({ dimensions }),
-    })
+  async setDimensions(dimensions: Dimension[]): Promise<{ dimensions: Dimension[] }> {
+    return this.send('/evaluation/dimensions', 'PUT', { dimensions })
   }
 
-  async getStudioProject(): Promise<StudioProjectMetadata> {
-    return this.fetch('/studio/project')
+  async getCategories(): Promise<{ categories: FailureCategory[] }> {
+    return this.fetch('/evaluation/categories')
   }
 
-  async getEvaluationScenarios(): Promise<EvaluationScenariosResponse> {
-    return this.fetch('/evaluation/scenarios')
+  async addCategory(category: { name: string; description?: string | null; measures?: string[] }): Promise<FailureCategory> {
+    return this.send('/evaluation/categories', 'POST', category)
   }
 
-  async getEvaluationDatasets(): Promise<EvaluationDatasetsResponse> {
-    return this.fetch('/evaluation/datasets')
+  async updateCategory(id: string, change: { description?: string | null; measures?: string[] | null }): Promise<FailureCategory> {
+    return this.send(`/evaluation/categories/${encodeURIComponent(id)}`, 'PATCH', change)
   }
 
-  async getEvaluationDatasetSplit(path: string): Promise<EvaluationDatasetSplitDetails> {
-    const searchParams = new URLSearchParams({ path })
-    return this.fetch(`/evaluation/datasets/split?${searchParams.toString()}`)
+  async removeCategory(id: string): Promise<{ removed_from_scenarios: number }> {
+    return this.send(`/evaluation/categories/${encodeURIComponent(id)}`, 'DELETE')
   }
 
-  async getEvaluationMeasures(): Promise<EvaluationMeasuresResponse> {
+  async getMeasures(): Promise<{ measures: Measure[] }> {
     return this.fetch('/evaluation/measures')
   }
 
-  async createEvaluationMeasure(payload: EvaluationMeasureCreatePayload): Promise<EvaluationMeasuresResponse> {
-    return this.fetch('/evaluation/measures', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async addMeasure(measure: { name: string; label?: string | null; description?: string | null; stub?: boolean }): Promise<Measure> {
+    return this.send('/evaluation/measures', 'POST', measure)
   }
 
-  async updateEvaluationMeasure(payload: EvaluationMeasureUpdatePayload): Promise<EvaluationMeasuresResponse> {
-    return this.fetch('/evaluation/measures', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    })
+  async updateMeasure(name: string, change: { label?: string | null; description?: string | null }): Promise<Measure> {
+    return this.send(`/evaluation/measures/${encodeURIComponent(name)}`, 'PATCH', change)
   }
 
-  async deleteEvaluationMeasure(name: string): Promise<EvaluationMeasureDeleteResponse> {
-    const encoded = encodeURIComponent(name)
-    return this.fetch(`/evaluation/measures/${encoded}`, {
-      method: 'DELETE',
-    })
+  async removeMeasure(name: string): Promise<{ removed: string }> {
+    return this.send(`/evaluation/measures/${encodeURIComponent(name)}`, 'DELETE')
   }
 
-  async getEvaluationJudges(): Promise<EvaluationJudgesResponse> {
+  // -- evaluation: scenarios -----------------------------------------------
+
+  async getScenarioSets(): Promise<{ sets: ScenarioSet[]; evaluations_dir: string }> {
+    return this.fetch('/evaluation/scenario-sets')
+  }
+
+  async addScenario(setPath: string, scenario: Scenario): Promise<ScenarioSet> {
+    return this.send('/evaluation/scenario-sets/scenarios', 'POST', { set_path: setPath, scenario })
+  }
+
+  async updateScenario(setPath: string, match: ScenarioMatch, scenario: Scenario): Promise<ScenarioSet> {
+    return this.send('/evaluation/scenario-sets/scenarios', 'PUT', { set_path: setPath, match, scenario })
+  }
+
+  async removeScenario(setPath: string, match: ScenarioMatch): Promise<ScenarioSet> {
+    return this.send('/evaluation/scenario-sets/scenarios/remove', 'POST', { set_path: setPath, match })
+  }
+
+  async promoteScenario(setPath: string, match: ScenarioMatch): Promise<ScenarioSet> {
+    return this.send('/evaluation/scenario-sets/scenarios/promote', 'POST', { set_path: setPath, match })
+  }
+
+  async removeScenarioSet(path: string): Promise<{ removed: string }> {
+    return this.send(`/evaluation/scenario-sets?${new URLSearchParams({ path })}`, 'DELETE')
+  }
+
+  // -- evaluation: judges ----------------------------------------------------
+
+  async getJudges(): Promise<{ judges: Judge[] }> {
     return this.fetch('/evaluation/judges')
   }
 
-  async createEvaluationJudge(payload: EvaluationJudgeCreatePayload): Promise<EvaluationJudgesResponse> {
-    return this.fetch('/evaluation/judges', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async addJudge(judge: {
+    key: string
+    model: string
+    source?: string
+    failure_category?: string | null
+    label?: string | null
+    instructions?: string | null
+    template?: string | null
+  }): Promise<Judge> {
+    return this.send('/evaluation/judges', 'POST', judge)
   }
 
-  async updateEvaluationJudge(payload: EvaluationJudgeUpdatePayload): Promise<EvaluationJudgesResponse> {
-    return this.fetch('/evaluation/judges', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    })
+  async updateJudge(
+    key: string,
+    change: Partial<Pick<Judge, 'model' | 'source' | 'failure_category' | 'label' | 'instructions' | 'template'>>,
+  ): Promise<Judge> {
+    return this.send(`/evaluation/judges/${encodeURIComponent(key)}`, 'PATCH', change)
   }
 
-  async deleteEvaluationJudge(key: string): Promise<EvaluationJudgeDeleteResponse> {
-    const encoded = encodeURIComponent(key)
-    return this.fetch(`/evaluation/judges/${encoded}`, {
-      method: 'DELETE',
-    })
+  async removeJudge(key: string): Promise<{ removed: string }> {
+    return this.send(`/evaluation/judges/${encodeURIComponent(key)}`, 'DELETE')
   }
 
-  async startJudgeOptimization(payload: EvaluationJudgeOptimizationRequest): Promise<EvaluationJudgeOptimizationResponse> {
-    return this.fetch('/evaluation/judges/optimize', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async getJudgeDatasets(): Promise<{ datasets: JudgeDataset[] }> {
+    return this.fetch('/evaluation/judge-datasets')
   }
 
-  async getJudgeOptimizationStatus(jobId: string): Promise<EvaluationJudgeOptimizationResponse> {
-    return this.fetch(`/evaluation/judges/optimize/${jobId}`)
+  async createJudgeDataset(dataset: {
+    set_path: string
+    category: string
+    fractions?: [number, number, number]
+    seed?: number
+    negatives_ratio?: number | null
+  }): Promise<JudgeDataset> {
+    return this.send('/evaluation/judge-datasets', 'POST', dataset)
   }
 
-  async startAgentOptimization(payload: EvaluationAgentOptimizationRequest): Promise<EvaluationAgentOptimizationResponse> {
-    return this.fetch('/evaluation/agents/optimize', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async getJudgeDatasetSplit(path: string): Promise<JudgeDatasetSplitDetail> {
+    return this.fetch(`/evaluation/judge-datasets/split?${new URLSearchParams({ path })}`)
   }
 
-  async getAgentOptimizationStatus(jobId: string): Promise<EvaluationAgentOptimizationResponse> {
-    return this.fetch(`/evaluation/agents/optimize/${jobId}`)
+  async removeJudgeDataset(set: string, category: string): Promise<{ removed: string }> {
+    return this.send(`/evaluation/judge-datasets?${new URLSearchParams({ set, category })}`, 'DELETE')
   }
 
-  async splitEvaluationScenario(payload: EvaluationScenarioSplitPayload): Promise<EvaluationScenarioSplitResponse> {
-    return this.fetch('/evaluation/scenarios/split', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  // -- evaluation: holdout and saved runs ------------------------------------
+
+  async getHoldout(): Promise<{ holdout: Holdout | null }> {
+    return this.fetch('/evaluation/holdout')
   }
 
-  async deleteEvaluationDataset(payload: EvaluationDatasetDeletePayload): Promise<EvaluationDatasetDeleteResponse> {
-    return this.fetch('/evaluation/datasets', {
-      method: 'DELETE',
-      body: JSON.stringify(payload),
-    })
+  async createHoldout(holdout: {
+    strata: string[]
+    fractions: [number, number, number]
+    seed: number
+    select?: string | null
+    exclude?: string | null
+  }): Promise<{ holdout: Holdout }> {
+    return this.send('/evaluation/holdout', 'POST', holdout)
   }
 
-  async promoteEvaluationScenario(payload: EvaluationScenarioPromotionPayload): Promise<EvaluationScenarioPromotionResponse> {
-    return this.fetch('/evaluation/scenarios/promote', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async getRuns(): Promise<{ runs: SavedRunEntry[] }> {
+    return this.fetch('/evaluation/runs')
   }
 
-  async deleteEvaluationScenarioSet(payload: EvaluationScenarioSetDeletePayload): Promise<EvaluationScenarioSetDeleteResponse> {
-    return this.fetch('/evaluation/scenarios/delete', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async getRun(path: string): Promise<SavedRun> {
+    return this.fetch(`/evaluation/runs/detail?${new URLSearchParams({ path })}`)
   }
 
-  async createEvaluationScenario(payload: EvaluationScenarioCreatePayload): Promise<EvaluationScenarioMutationResponse> {
-    return this.fetch('/evaluation/scenarios/item', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async compareRuns(a: string, b: string): Promise<RunComparison> {
+    return this.fetch(`/evaluation/runs/compare?${new URLSearchParams({ a, b })}`)
   }
 
-  async updateEvaluationScenario(payload: EvaluationScenarioUpdatePayload): Promise<EvaluationScenarioMutationResponse> {
-    return this.fetch('/evaluation/scenarios/item', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    })
+  // -- evaluation: jobs --------------------------------------------------------
+
+  async startJob(request: JobRequest): Promise<Job> {
+    return this.send('/evaluation/jobs', 'POST', request)
   }
 
-  async deleteEvaluationScenario(payload: EvaluationScenarioDeletePayload): Promise<EvaluationScenarioMutationResponse> {
-    return this.fetch('/evaluation/scenarios/item', {
-      method: 'DELETE',
-      body: JSON.stringify(payload),
-    })
+  async getJob(jobId: string): Promise<Job> {
+    return this.fetch(`/evaluation/jobs/${encodeURIComponent(jobId)}`)
   }
 
-  async startEvaluationScenarioRun(payload: EvaluationScenarioRunRequest): Promise<EvaluationScenarioRunResponse> {
-    return this.fetch('/evaluation/scenarios/run', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
+  async getJobs(): Promise<{ jobs: Job[] }> {
+    return this.fetch('/evaluation/jobs')
   }
 
-  async getEvaluationScenarioRunStatus(jobId: string): Promise<EvaluationScenarioRunResponse> {
-    return this.fetch(`/evaluation/scenarios/run/${jobId}`)
+  /** A socket sending the job each time it changes, until it finishes. */
+  followJob(jobId: string): Promise<WebSocket> {
+    return this.openWebSocket(`/evaluation/jobs/${encodeURIComponent(jobId)}/ws`)
   }
-
-  async startEvaluationScenarioGeneration(payload: EvaluationScenarioGenerationRequest): Promise<EvaluationScenarioGenerationResponse> {
-    return this.fetch('/evaluation/scenarios/generate', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-  }
-
-  async getEvaluationScenarioGenerationStatus(jobId: string): Promise<EvaluationScenarioGenerationResponse> {
-    return this.fetch(`/evaluation/scenarios/generate/${jobId}`)
-  }
-
-  async startEvaluationSuiteRun(payload: EvaluationSuiteRunRequest): Promise<EvaluationSuiteRunResponse> {
-    return this.fetch('/evaluation/suite/run', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    })
-  }
-
-  async getEvaluationSuiteRunStatus(jobId: string): Promise<EvaluationSuiteRunResponse> {
-    return this.fetch(`/evaluation/suite/run/${jobId}`)
-  }
-
-  async getEvaluationResults(): Promise<EvaluationResultsListResponse> {
-    return this.fetch('/evaluation/results')
-  }
-
-  async getEvaluationResultsDetail(path: string): Promise<EvaluationResultsDetailResponse> {
-    const searchParams = new URLSearchParams({ path })
-    return this.fetch(`/evaluation/results/detail?${searchParams.toString()}`)
-  }
-
-  createScenarioRunWebSocket(jobId: string): Promise<WebSocket> {
-    return this.openWebSocket(`/evaluation/scenarios/run/${jobId}/ws`)
-  }
-
-  createSuiteRunWebSocket(jobId: string): Promise<WebSocket> {
-    return this.openWebSocket(`/evaluation/suite/run/${jobId}/ws`)
-  }
-
-  createScenarioGenerationWebSocket(jobId: string): Promise<WebSocket> {
-    return this.openWebSocket(`/evaluation/scenarios/generate/${jobId}/ws`)
-  }
-
-  createJudgeOptimizationWebSocket(jobId: string): Promise<WebSocket> {
-    return this.openWebSocket(`/evaluation/judges/optimize/${jobId}/ws`)
-  }
-
-  createAgentOptimizationWebSocket(jobId: string): Promise<WebSocket> {
-    return this.openWebSocket(`/evaluation/agents/optimize/${jobId}/ws`)
-  }
-
 }
 
 export const api = new ApiClient()

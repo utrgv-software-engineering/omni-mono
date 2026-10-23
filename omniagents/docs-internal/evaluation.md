@@ -25,13 +25,16 @@ Built‑in measures
 Project layout
 
 - `project.yml`: declares paths (`evaluations/`, `target/`, etc.) and agent file.
-- `evaluations/`
-  - `evaluation.yml`: defaults, `synthetic_data_generation`, `failure_categories`.
+- `evaluations/` (or `paths.evaluations`)
+  - `evaluation.yml`: defaults, `synthetic_data_generation`, `failure_categories`, measure descriptions.
   - `judges/<judge_key>/judge.yml`: LLM-as-Judge configs; per-judge folders.
   - `judges/<judge_key>/instructions.md`, `judges/<judge_key>/template.md`: judge instructions and input template.
   - `metrics.yml`: aggregate metrics (see below).
   - `scenarios.yml`: scenarios or includes; supports dbt‑style selectors.
   - `measures.py`: project‑specific measures (auto‑loaded).
+  - `results/<run id>/results.json`: each saved run of the project's scenarios, indexed in `results/runs.json`.
+  - `splits/eval/`: the holdout.
+- `artifacts/eval/<set>/`: a generated scenario set (`generated_scenarios.yml`), its runs (`results/`) and judge datasets (`splits/<category>/`).
 
 Running evaluations
 
@@ -39,9 +42,15 @@ Running evaluations
 # Compile (optional; run compiles automatically)
 python -m omniagents.cli compile -P path/to/project.yml
 
-# Run scenarios and compute metrics
-python -m omniagents.cli eval run -P path/to/project.yml --reporter pretty
+# Run scenarios and compute metrics; the run is saved in evaluations/results/
+python -m omniagents.cli eval suite run -P path/to/project.yml --reporter pretty
 ```
+
+Programs use `omniagents.core.eval.workspace.EvalWorkspace(project)` rather than
+reading these files themselves: it edits dimensions, failure categories,
+measures, scenario sets, judges, judge datasets and the holdout in place, runs
+the suite or a scenario set, and lists, reads and compares saved runs. The CLI
+and Studio both go through it.
 
 Environment config (declarative)
 

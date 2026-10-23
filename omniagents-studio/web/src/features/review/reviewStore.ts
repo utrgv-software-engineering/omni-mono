@@ -49,7 +49,8 @@ interface ReviewStore {
   loadProjectAnalysis: (project: string) => Promise<void>
   setConversationAnalysis: (key: string, analysis: AnalysisData) => Promise<void>
   getAnalysisStats: () => AnalysisStats
-  loadFailureCategories: (project: string) => Promise<void>
+  /** The project's failure categories, with how many reviews use each. */
+  loadFailureCategories: () => Promise<void>
   createFailureCategory: (name: string, description?: string) => Promise<FailureCategory>
   deleteFailureCategory: (categoryId: string) => Promise<void>
   updateAnalysisCategories: (key: string, categoryIds: string[]) => Promise<void>
@@ -142,10 +143,10 @@ export const useReviewStore = create<ReviewStore>()(
         return stats
       },
 
-      loadFailureCategories: async (project: string) => {
+      loadFailureCategories: async () => {
         set({ categoriesLoading: true, categoriesError: null })
         try {
-          const categories = await api.getFailureCategories(project)
+          const { categories } = await api.getCategories()
           set({ failureCategories: categories, categoriesLoading: false })
         } catch (error) {
           console.error('Failed to load categories:', error)
@@ -161,7 +162,7 @@ export const useReviewStore = create<ReviewStore>()(
         if (!project) {
           throw new Error('No project selected')
         }
-        const created = await api.createFailureCategory(project, { name, description })
+        const created = await api.addCategory({ name, description })
         set((state) => ({
           failureCategories: [...state.failureCategories, created].sort((a, b) => a.name.localeCompare(b.name)),
         }))
@@ -173,7 +174,7 @@ export const useReviewStore = create<ReviewStore>()(
         if (!project) {
           throw new Error('No project selected')
         }
-        await api.deleteFailureCategory(project, categoryId)
+        await api.removeCategory(categoryId)
         set((state) => ({
           failureCategories: state.failureCategories.filter((category) => category.id !== categoryId),
           conversationAnalysis: Object.fromEntries(
@@ -210,21 +211,21 @@ export const useReviewStore = create<ReviewStore>()(
 
       loadEvaluationResults: async () => {
         try {
-          const listResponse = await api.getEvaluationResults()
+          const { runs } = await api.getRuns()
           const lookup: Record<string, EvaluationResultLookup> = {}
-          for (const result of listResponse.results) {
+          for (const entry of runs) {
             try {
-              const detail = await api.getEvaluationResultsDetail(result.path)
-              for (const scenario of detail.scenarios) {
-                if (scenario.session_id) {
-                  lookup[scenario.session_id] = {
-                    passed: scenario.passed,
-                    measureCount: scenario.measures.length,
+              const saved = await api.getRun(entry.path)
+              for (const run of saved.runs) {
+                if (run.session_id) {
+                  lookup[run.session_id] = {
+                    passed: Boolean(run.passed),
+                    measureCount: run.measures.length,
                   }
                 }
               }
             } catch {
-              // A result file that cannot be read contributes nothing.
+              // A run that cannot be read contributes nothing.
             }
           }
           set({ evaluationResults: lookup })

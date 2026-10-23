@@ -78,7 +78,7 @@ describe('ApiClient credential handling', () => {
     const client = makeClient('http://studio.test:7860/api?token=sekrit')
     fetchMock.mockResolvedValue(jsonResponse({ ticket: 'one-time-ticket', expires_in: 60 }))
 
-    const ws = (await client.createSuiteRunWebSocket('job-1')) as unknown as FakeWebSocket
+    const ws = (await client.followJob('job-1')) as unknown as FakeWebSocket
 
     // Ticket was minted over HTTP with the Authorization header.
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -89,7 +89,7 @@ describe('ApiClient credential handling', () => {
 
     // The WS URL carries the ticket, never the token.
     expect(ws.url).toBe(
-      'ws://studio.test:7860/api/evaluation/suite/run/job-1/ws?ticket=one-time-ticket'
+      'ws://studio.test:7860/api/evaluation/jobs/job-1/ws?ticket=one-time-ticket'
     )
     expect(ws.url).not.toContain('sekrit')
   })
@@ -97,17 +97,17 @@ describe('ApiClient credential handling', () => {
   it('dials without credentials when no token is configured', async () => {
     const client = makeClient('http://studio.test:7860/api')
 
-    const ws = (await client.createScenarioRunWebSocket('job-1')) as unknown as FakeWebSocket
+    const ws = (await client.followJob('job-1')) as unknown as FakeWebSocket
 
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(ws.url).toBe('ws://studio.test:7860/api/evaluation/scenarios/run/job-1/ws')
+    expect(ws.url).toBe('ws://studio.test:7860/api/evaluation/jobs/job-1/ws')
   })
 
   it('fails the dial when the ticket cannot be minted', async () => {
     const client = makeClient('http://studio.test:7860/api?token=sekrit')
     fetchMock.mockResolvedValue(jsonResponse({ detail: 'nope' }, false, 'Unauthorized'))
 
-    await expect(client.createScenarioRunWebSocket('job-2')).rejects.toThrow(
+    await expect(client.followJob('job-2')).rejects.toThrow(
       /connect ticket/
     )
     expect(FakeWebSocket.instances).toHaveLength(0)

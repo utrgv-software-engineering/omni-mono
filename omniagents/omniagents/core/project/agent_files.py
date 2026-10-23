@@ -24,6 +24,7 @@ saving an agent do":
 from __future__ import annotations
 
 import fnmatch
+import json
 import re
 import shutil
 from collections.abc import Iterable, Mapping
@@ -32,9 +33,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from ruamel.yaml.error import YAMLError
-from ruamel.yaml.scalarstring import LiteralScalarString
-
 from omniagents.core.project.runtime import build_spec_from_project, load_project
 from omniagents.core.utils.yaml_edit import (
     dump_document,
@@ -42,6 +40,8 @@ from omniagents.core.utils.yaml_edit import (
     merge_into,
     replace_file,
 )
+from ruamel.yaml.error import YAMLError
+from ruamel.yaml.scalarstring import LiteralScalarString
 
 #: Keys an edit cannot set through ``changes``: the name is the agent's
 #: directory key, and instructions are saved through ``instructions=``.
@@ -70,6 +70,8 @@ class AgentSource:
     #: Why ``agent.yml`` does not parse, when it does not (it can still be
     #: replaced with :func:`write_agent_yaml`).
     error: str | None = None
+    #: ``agent.yml``'s settings as plain data, for an editor's form.
+    settings: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -81,6 +83,7 @@ class AgentSource:
                 str(self.instructions_path) if self.instructions_path else None
             ),
             "error": self.error,
+            "settings": self.settings,
         }
 
 
@@ -176,6 +179,7 @@ def read_agent(project_ref: str | Path, key: str) -> AgentSource:
         yaml_text=text,
         instructions=instructions,
         instructions_path=instructions_path,
+        settings=json.loads(json.dumps(data, default=str)),
     )
 
 

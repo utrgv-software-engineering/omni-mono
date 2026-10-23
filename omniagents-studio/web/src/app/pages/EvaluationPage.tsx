@@ -1,115 +1,78 @@
-import { useCallback, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useCallback } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { StudioPage } from '../../shared/components/StudioPage'
-import { EvaluationHeader } from '../../shared/components/EvaluationHeader'
-import { EvaluationView } from '../../features/evaluation/EvaluationView'
-import { useStudioProject } from '../../shared/hooks/useStudioProject'
-import { ROUTES, QUERY_PARAMS } from '../routes'
-import { buildRoutePath } from '../../lib/routing'
 
-const normalizeParam = (value: string | null) => {
-  if (!value) {
-    return null
-  }
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : null
+import { CriteriaTab } from '../../features/evaluation/criteria/CriteriaTab'
+import { JudgesTab } from '../../features/evaluation/judges/JudgesTab'
+import { OptimizeTab } from '../../features/evaluation/optimize/OptimizeTab'
+import { RunsTab } from '../../features/evaluation/runs/RunsTab'
+import { ScenariosTab } from '../../features/evaluation/scenarios/ScenariosTab'
+import { api } from '../../lib/api'
+import { buildRoutePath } from '../../lib/routing'
+import { EvaluationHeader } from '../../shared/components/EvaluationHeader'
+import { EVALUATION_TABS, type EvaluationTab } from '../../shared/components/evaluationTabs'
+import { StudioPage } from '../../shared/components/StudioPage'
+import { useStudioProject } from '../../shared/hooks/useStudioProject'
+import { QUERY_PARAMS, ROUTES } from '../routes'
+
+function tabOf(value: string | null): EvaluationTab {
+  return EVALUATION_TABS.find((tab) => tab.key === value)?.key ?? 'scenarios'
 }
 
-const isValidEvaluationTab = (
-  value: string | null,
-): value is 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories' | 'measures' | 'results' =>
-  value === 'scenarios' || value === 'datasets' || value === 'dimensions' || value === 'judges' || value === 'categories' || value === 'measures' || value === 'results'
-
+/** The project's evaluation: the same files and runs `omniagents eval` uses. */
 export function EvaluationPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { data: studioProject, isLoading: studioProjectLoading, isError: studioProjectError } = useStudioProject()
+  const { data: studioProject, isLoading } = useStudioProject()
+  const agents = useQuery({ queryKey: ['agents', 'list'], queryFn: () => api.getAgents() })
+  const tab = tabOf(searchParams.get(QUERY_PARAMS.tab))
+  const agent = searchParams.get(QUERY_PARAMS.agent)
 
-  const rawTab = normalizeParam(searchParams.get(QUERY_PARAMS.tab))
-  const activeTab = isValidEvaluationTab(rawTab) ? rawTab : 'scenarios'
-
-  const updateSearch = useCallback(
-    (updates: Record<string, string | null>, options?: { replace?: boolean }) => {
+  const update = useCallback(
+    (key: string, value: string | null) => {
       const next = new URLSearchParams(searchParams)
-      let changed = false
-      for (const [key, value] of Object.entries(updates)) {
-        const current = next.get(key)
-        if (value === null) {
-          if (current !== null) {
-            next.delete(key)
-            changed = true
-          }
-        } else if (current !== value) {
-          next.set(key, value)
-          changed = true
-        }
-      }
-      if (changed) {
-        setSearchParams(next, { replace: options?.replace ?? false })
-      }
+      if (value === null) next.delete(key)
+      else next.set(key, value)
+      setSearchParams(next)
     },
     [searchParams, setSearchParams],
   )
 
-  useEffect(() => {
-    if (rawTab !== null && !isValidEvaluationTab(rawTab)) {
-      updateSearch({ [QUERY_PARAMS.tab]: null }, { replace: true })
-    }
-  }, [rawTab, updateSearch])
-
-  const handleTabChange = useCallback(
-    (tab: 'scenarios' | 'datasets' | 'dimensions' | 'judges' | 'categories' | 'measures' | 'results') => {
-      if (tab === 'scenarios') {
-        updateSearch({ [QUERY_PARAMS.tab]: null })
-      } else {
-        updateSearch({ [QUERY_PARAMS.tab]: tab })
-      }
-    },
-    [updateSearch],
-  )
-
-  const handleBack = useCallback(() => {
-    navigate(ROUTES.home)
-  }, [navigate])
-
   /** Review a run: the conversation it ran in, with the agent it ran. */
-  const handleOpenConversation = useCallback(
-    (agentKey: string | null, threadId: string) => {
-      navigate(
-        buildRoutePath('logs', {
-          query: {
-            [QUERY_PARAMS.agent]: agentKey,
-            [QUERY_PARAMS.thread]: threadId,
-          },
-        }),
-      )
-    },
+  const openConversation = useCallback(
+    (agentKey: string | null, threadId: string) =>
+      navigate(buildRoutePath('logs', { query: { [QUERY_PARAMS.agent]: agentKey, [QUERY_PARAMS.thread]: threadId } })),
     [navigate],
   )
 
-  const projectName = studioProject?.project ?? null
-  const evaluationAvailable = Boolean(studioProject?.available)
-
   const header = (
     <EvaluationHeader
-      activeTab={activeTab}
-      onTabChange={handleTabChange}
-      onBack={handleBack}
-      projectName={projectName}
-      isLoading={studioProjectLoading}
+      activeTab={tab}
+      onTabChange={(next) => update(QUERY_PARAMS.tab, next === 'scenarios' ? null : next)}
+      onBack={() => navigate(ROUTES.home)}
+      projectName={studioProject?.project ?? null}
+      isLoading={isLoading}
+      agents={agents.data?.agents ?? []}
+      agent={agent}
+      onAgentChange={(next) => update(QUERY_PARAMS.agent, next)}
     />
   )
 
   return (
     <StudioPage section="evaluation" header={header}>
-      <EvaluationView
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-        projectName={projectName}
-        isAvailable={evaluationAvailable && !studioProjectError}
-        isLoadingMetadata={studioProjectLoading}
-        onOpenConversation={handleOpenConversation}
-      />
+      {!isLoading && !studioProject?.available ? (
+        <p className="p-6 text-sm text-muted-foreground">Launch Studio from a project to evaluate its agents.</p>
+      ) : tab === 'scenarios' ? (
+        <ScenariosTab agent={agent} />
+      ) : tab === 'runs' ? (
+        <RunsTab agent={agent} onOpenConversation={openConversation} />
+      ) : tab === 'criteria' ? (
+        <CriteriaTab />
+      ) : tab === 'judges' ? (
+        <JudgesTab />
+      ) : (
+        <OptimizeTab agent={agent} />
+      )}
     </StudioPage>
   )
 }
